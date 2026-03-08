@@ -1,0 +1,82 @@
+# ============================================================
+# config.yaml — PFC Shaping 15min FMV SA
+# ============================================================
+
+# ── Connexion Databricks ─────────────────────────────────────
+# Recommandé : stocker token dans variable d'environnement DATABRICKS_TOKEN
+# plutôt qu'ici (ne jamais committer un token en clair)
+databricks:
+  host:       null   # ex. "adb-1234567890123456.7.azuredatabricks.net"
+             #      ou variable d'env DATABRICKS_HOST
+  http_path:  null   # ex. "/sql/1.0/warehouses/abcdef1234567890"
+             #      ou variable d'env DATABRICKS_HTTP_PATH
+  token:      null   # ou variable d'env DATABRICKS_TOKEN (recommandé)
+
+  # Catalog et schema Unity Catalog
+  catalog:    "fmv_prod"     # à adapter
+  schema:     "market_data"  # à adapter
+
+  # Noms des tables (sans catalog/schema — ils sont préfixés automatiquement)
+  tables:
+    epex_15min:     "epex_spot_15min"      # prix EPEX 15min
+    swissgrid_load: "swissgrid_load_15min" # charge réseau CH
+    renewables:     "generation_15min"     # production solaire + éolienne
+    eex_forwards:   "eex_forwards_euler"   # forwards calibrés par EULER
+
+# ── Chemins locaux (cache + artefacts) ──────────────────────
+paths:
+  # Cache Parquet local (évite requêtes répétées, permet offline)
+  epex_parquet:   "data/epex_15min.parquet"
+  entso_parquet:  "data/entso_15min.parquet"
+
+  # Modèles calibrés
+  model_dir:      "model/artifacts"
+
+  # Exports vers EULER
+  output_dir:     "output"
+
+# ── Paramètres du modèle ────────────────────────────────────
+model:
+  # Lookback historique pour la calibration (mois)
+  lookback_months: 36
+
+  # Paramètre de lissage gaussien de f_H (en heures)
+  gaussian_sigma: 0.5
+
+  # Nombre de tirages bootstrap pour les IC
+  n_boot: 500
+
+  # Horizon de la PFC (jours)
+  horizon_days: 1095  # 3 * 365
+
+  # Test de Chow : taille de chaque sous-fenêtre (mois)
+  chow_window_months: 12
+
+  # Heures à forte variance intra-horaire (correction exogène activée)
+  heures_rampe: [6, 7, 8, 9, 10, 17, 18, 19, 20]
+
+# ── Niveaux de base B (€/MWh) ───────────────────────────────
+# Ces prix sont chargés automatiquement depuis Databricks
+# (table eex_forwards_euler, dernier run EULER disponible).
+# La section base_prices ci-dessous sert de FALLBACK UNIQUEMENT
+# si Databricks est inaccessible.
+base_prices_fallback:
+  "2025": 75.00
+  "2026": 72.00
+  "2027": 70.00
+
+# ── Paramètres d'export ─────────────────────────────────────
+export:
+  # Timezone locale pour les timestamps CSV vers EULER
+  tz_local: "Europe/Zurich"
+
+  # Séparateur CSV
+  sep: ";"
+
+  # Colonnes exportées
+  columns:
+    - price_shape
+    - p10
+    - p90
+    - profile_type
+    - confidence

@@ -1,0 +1,94 @@
+"""
+ingest_forwards.py
+------------------
+Chargement des forwards EEX calibrés par EULER depuis Databricks.
+
+Ces forwards constituent les niveaux de base B (€/MWh) utilisés par
+l'assembleur PFC. EULER les calibre sur les prix EEX liquides ; notre
+modèle applique par-dessus la forme (shape) 15min.
+
+Table Databricks attendue (config.yaml → databricks.tables.eex_forwards) :
+    run_date        DATE        — date du run EULER (dernier run disponible)
+    delivery_period STRING      — 'YYYY' | 'YYYY-QN' | 'YYYY-MM'
+    price_eur_mwh   DOUBLE      — prix forward calibré [€/MWh]
+    product_type    STRING      — 'Cal' | 'Quarter' | 'Month'
+
+Format de sortie :
+    dict[str, float] — clés : '2025', '2025-Q1', '2025-03', etc.
+    Directement compatible avec PFCAssembler.build(base_prices=...)
+
+Usage :
+    from data.ingest_forwards import load_base_prices
+    base_prices = load_base_prices(run_date='2025-03-10')
+    # {'2025': 75.0, '2026': 72.0, '2025-Q2': 74.5, '2025-03': 82.0, ...}
+"""
+
+from __future__ import annotations
+
+import logging
+
+import pandas as pd
+
+from data.databricks_client import query_to_df, table_fqn
+
+logger = logging.getLogger(__name__)
+
+
+def load_base_prices(
+    run_date: str | None = None,
+    db_config: dict | None = None,
+) -> dict[str, float]:
+    """
+    Charge les forwards EEX depuis Databricks et retourne le dict base_prices.
+
+    Args:
+        run_date  : 'YYYY-MM-DD' du run EULER à utiliser
+                    Si None → prend le run le plus récent disponible
+        db_config : config Databricks (si None, lit config.yaml)
+
+    Returns:
+        dict[str, float] — ex. {'2025': 75.0, '2025-Q1': 80.0, '2025-03': 82.0}
+    """
+    fqn = table_fqn("eex_forwards", db_config)
+
+    if run_date is None:
+        # Dernier run disponible
+        date_sql = f"SELECT MAX(run_date) AS latest FROM {fqn}"
+        latest_df = query_to_df(date_sql, config=db_config)
+        run_date = str(latest_df["latest"].iloc[0])
+        logger.info("Forwards EEX : run_date le plus récent = %s", run_date)
+
+    sql = f"""
+        SELECT delivery_period, price_eur_mwh, product_type
+        FROM {fqn}
+        WHERE run_date = '{run_date}'
+        ORDER BY product_type, delivery_period
+    """
+
+    logger.info("Chargement forwards EEX (run=%s)...", run_date)
+    df = query_to_df(sql, config=db_config)
+
+    if df.empty:
+        raise ValueError(f"Aucun forward EEX trouvé pour run_date={run_date}")
+
+    base_prices: dict[str, float] = {}
+    for _, row in df.iterrows():
+        key = str(row["delivery_period"]).strip()
+        price = float(row["price_eur_mwh"])
+        base_prices[key] = price
+
+    logger.info(
+        "Forwards EEX chargés : %d produits (Cal=%d, Quarter=%d, Month=%d)",
+        len(base_prices),
+        df[df["product_type"] == "Cal"].shape[0],
+        df[df["product_type"] == "Quarter"].shape[0],
+        df[df["product_type"] == "Month"].shape[0],
+    )
+    return base_prices
+
+
+def latest_run_date(db_config: dict | None = None) -> str:
+    """Retourne la date du dernier run EULER disponible dans Databricks."""
+    fqn = table_fqn("eex_forwards", db_config)
+    df = query_to_df(f"SELECT MAX(run_date) AS latest FROM {fqn}", config=db_config)
+    return str(df["latest"].iloc[0])
