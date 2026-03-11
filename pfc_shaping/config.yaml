@@ -6,6 +6,7 @@
 # Recommandé : stocker token dans variable d'environnement DATABRICKS_TOKEN
 # plutôt qu'ici (ne jamais committer un token en clair)
 databricks:
+  enabled:    false  # false = aucun appel Databricks (mode local/offline)
   host:       null   # ex. "adb-1234567890123456.7.azuredatabricks.net"
              #      ou variable d'env DATABRICKS_HOST
   http_path:  null   # ex. "/sql/1.0/warehouses/abcdef1234567890"

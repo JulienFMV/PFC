@@ -1,23 +1,23 @@
 """
 backtest.py
 -----------
-Walk-forward backtest du modèle de shaping 15min.
+Walk-forward backtest du modÃ¨le de shaping 15min.
 
-Méthodologie :
-    - Période de test : configurable (ex. 2021-01-01 → 2024-12-31)
-    - Recalibration mensuelle sur données passées (lookback = 24 mois)
-    - Prédiction out-of-sample du mois suivant
-    - Comparaison prix_prédit vs prix_EPEX_réel
+MÃ©thodologie :
+    - PÃ©riode de test : configurable (ex. 2021-01-01 â†’ 2024-12-31)
+    - Recalibration mensuelle sur donnÃ©es passÃ©es (lookback = 24 mois)
+    - PrÃ©diction out-of-sample du mois suivant
+    - Comparaison prix_prÃ©dit vs prix_EPEX_rÃ©el
 
-KPIs calculés :
-    - RMSE intra-horaire (shape seul, normalisé)
+KPIs calculÃ©s :
+    - RMSE intra-horaire (shape seul, normalisÃ©)
     - MAE
     - Biais moyen par heure
-    - Couverture IC 80% (si uncertainty calibrée)
+    - Couverture IC 80% (si uncertainty calibrÃ©e)
     - Skill score vs climatologie (profil moyen flat)
 
 Sortie :
-    - DataFrame de résultats mensuels
+    - DataFrame de rÃ©sultats mensuels
     - Figures de diagnostic (optionnel avec matplotlib)
 
 Usage :
@@ -35,15 +35,15 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
-from data.calendar_ch import enrich_15min_index
-from model.shape_hourly import ShapeHourly
-from model.shape_intraday import ShapeIntraday
-from model.uncertainty import Uncertainty
-from model.assembler import PFCAssembler
+from pfc_shaping.data.calendar_ch import enrich_15min_index
+from pfc_shaping.model.shape_hourly import ShapeHourly
+from pfc_shaping.model.shape_intraday import ShapeIntraday
+from pfc_shaping.model.uncertainty import Uncertainty
+from pfc_shaping.model.assembler import PFCAssembler
 
 logger = logging.getLogger(__name__)
 
-LOOKBACK_MONTHS = 24  # mois de données pour chaque recalibration
+LOOKBACK_MONTHS = 24  # mois de donnÃ©es pour chaque recalibration
 
 
 @dataclass
@@ -51,8 +51,8 @@ class BacktestResult:
     period: str          # 'YYYY-MM'
     rmse_shape: float    # RMSE sur les facteurs f_Q (shape seul)
     mae_shape: float
-    bias_mean: float     # biais moyen (prédit - réel) / réel
-    ic80_coverage: float # fraction des réels dans [p10, p90]
+    bias_mean: float     # biais moyen (prÃ©dit - rÃ©el) / rÃ©el
+    ic80_coverage: float # fraction des rÃ©els dans [p10, p90]
     skill_score: float   # skill vs flat (0 = pas mieux, 1 = parfait)
     n_obs: int
 
@@ -81,11 +81,11 @@ class WalkForwardBacktest:
     Walk-forward backtest avec recalibration mensuelle.
 
     Args:
-        start         : début de la période de test 'YYYY-MM-DD'
-        end           : fin de la période de test 'YYYY-MM-DD'
-        lookback_months: fenêtre de calibration (mois)
-        base_price    : niveau de base fixe en €/MWh (pour reconstruire le prix)
-                        Si None, le prix est prédit en shape pur (ratios f_Q)
+        start         : dÃ©but de la pÃ©riode de test 'YYYY-MM-DD'
+        end           : fin de la pÃ©riode de test 'YYYY-MM-DD'
+        lookback_months: fenÃªtre de calibration (mois)
+        base_price    : niveau de base fixe en â‚¬/MWh (pour reconstruire le prix)
+                        Si None, le prix est prÃ©dit en shape pur (ratios f_Q)
     """
 
     def __init__(
@@ -112,14 +112,14 @@ class WalkForwardBacktest:
         Args:
             epex_df        : historique EPEX 15min complet
             entso_df       : historique ENTSO-E (optionnel)
-            with_uncertainty: calibrer et évaluer les IC bootstrap
+            with_uncertainty: calibrer et Ã©valuer les IC bootstrap
 
         Returns:
             BacktestReport
         """
         report = BacktestReport()
 
-        # Itération mensuelle sur la période de test
+        # ItÃ©ration mensuelle sur la pÃ©riode de test
         periods = pd.period_range(
             self.start.to_period("M"),
             self.end.to_period("M"),
@@ -131,18 +131,18 @@ class WalkForwardBacktest:
             period_end = period.to_timestamp(how="end").tz_localize("UTC")
             train_start = period_start - pd.DateOffset(months=self.lookback_months)
 
-            # Données de calibration (train)
+            # DonnÃ©es de calibration (train)
             train_epex = epex_df[(epex_df.index >= train_start) & (epex_df.index < period_start)]
             train_entso = (
                 entso_df[(entso_df.index >= train_start) & (entso_df.index < period_start)]
                 if entso_df is not None else None
             )
 
-            # Données de test (out-of-sample)
+            # DonnÃ©es de test (out-of-sample)
             test_epex = epex_df[(epex_df.index >= period_start) & (epex_df.index <= period_end)]
 
             if len(train_epex) < 96 * 30 or len(test_epex) < 96:
-                logger.debug("Période %s : données insuffisantes — ignorée", period)
+                logger.debug("PÃ©riode %s : donnÃ©es insuffisantes â€” ignorÃ©e", period)
                 continue
 
             logger.info("Backtest %s : train=%d obs, test=%d obs", period, len(train_epex), len(test_epex))
@@ -161,9 +161,9 @@ class WalkForwardBacktest:
                 )
                 report.results.append(result)
             except Exception as e:
-                logger.warning("Backtest %s échoué : %s", period, e)
+                logger.warning("Backtest %s Ã©chouÃ© : %s", period, e)
 
-        logger.info("Backtest terminé : %d périodes. Résumé :", len(report.results))
+        logger.info("Backtest terminÃ© : %d pÃ©riodes. RÃ©sumÃ© :", len(report.results))
         for k, v in report.summary().items():
             logger.info("  %s = %.4f", k, v)
 
@@ -178,7 +178,7 @@ class WalkForwardBacktest:
         test_entso: pd.DataFrame | None,
         with_uncertainty: bool,
     ) -> BacktestResult:
-        """Calibre et évalue sur une période mensuelle."""
+        """Calibre et Ã©value sur une pÃ©riode mensuelle."""
 
         # Calibration
         cal_train = enrich_15min_index(train_epex.index)
@@ -189,7 +189,7 @@ class WalkForwardBacktest:
         if with_uncertainty:
             unc = Uncertainty(n_boot=200, seed=0).fit(train_epex, cal_train)
 
-        # Prédiction sur période de test
+        # PrÃ©diction sur pÃ©riode de test
         assembler = PFCAssembler(sh, si, unc)
         base_prices = {period_str[:4]: self.base_price}
         pfc_pred = assembler.build(
@@ -198,25 +198,25 @@ class WalkForwardBacktest:
             horizon_days=35,
         )
 
-        # Alignement avec données réelles
+        # Alignement avec donnÃ©es rÃ©elles
         common_idx = pfc_pred.index.intersection(test_epex.index)
         if len(common_idx) == 0:
-            raise ValueError("Aucun index commun entre prédiction et test")
+            raise ValueError("Aucun index commun entre prÃ©diction et test")
 
         pred = pfc_pred.loc[common_idx, "price_shape"]
         real = test_epex.loc[common_idx, "price_eur_mwh"]
 
-        # ── KPIs ────────────────────────────────────────────────────────────────
+        # â”€â”€ KPIs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
         # RMSE et MAE sur les ratios de shape (facteur f_Q)
-        # On compare les ratios plutôt que les prix absolus (le niveau est fixé par EULER)
+        # On compare les ratios plutÃ´t que les prix absolus (le niveau est fixÃ© par EULER)
         cal_test = enrich_15min_index(common_idx)
         real_ratios = _compute_intraday_ratios(real, cal_test)
         pred_ratios = _compute_intraday_ratios(pred, cal_test)
 
         valid = ~(np.isnan(real_ratios) | np.isnan(pred_ratios))
         if valid.sum() == 0:
-            raise ValueError("Pas de ratios valides pour l'évaluation")
+            raise ValueError("Pas de ratios valides pour l'Ã©valuation")
 
         err = pred_ratios[valid] - real_ratios[valid]
         rmse = float(np.sqrt(np.mean(err ** 2)))
@@ -247,11 +247,11 @@ class WalkForwardBacktest:
         )
 
     def report(self, report: BacktestReport) -> None:
-        """Affiche un résumé console du backtest."""
-        print("\n=== BACKTEST WALK-FORWARD — PFC Shaping 15min ===")
+        """Affiche un rÃ©sumÃ© console du backtest."""
+        print("\n=== BACKTEST WALK-FORWARD â€” PFC Shaping 15min ===")
         df = report.to_dataframe()
         print(df.to_string(float_format="{:.4f}".format))
-        print("\n--- Résumé ---")
+        print("\n--- RÃ©sumÃ© ---")
         for k, v in report.summary().items():
             print(f"  {k:<25} = {v:.4f}")
         print("=" * 50)
@@ -264,7 +264,7 @@ class WalkForwardBacktest:
 def _compute_intraday_ratios(prices: pd.Series, cal: pd.DataFrame) -> np.ndarray:
     """
     Calcule le ratio prix_quart / prix_moyen_heure pour chaque point 15min.
-    Retourne un array aligné sur prices.index.
+    Retourne un array alignÃ© sur prices.index.
     """
     df = pd.DataFrame({"price": prices})
     df = df.join(cal[["heure_hce"]])

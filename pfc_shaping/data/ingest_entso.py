@@ -1,23 +1,23 @@
 """
 ingest_entso.py
 ---------------
-Ingestion des données réseau et renewables depuis Databricks :
-  - Charge réseau Swissgrid 15min
+Ingestion des donnÃ©es rÃ©seau et renewables depuis Databricks :
+  - Charge rÃ©seau Swissgrid 15min
   - Production solaire 15min
-  - Production éolienne 15min
+  - Production Ã©olienne 15min
 
-Les tables Databricks (config.yaml → databricks.tables) attendues :
+Les tables Databricks (config.yaml â†’ databricks.tables) attendues :
     swissgrid_load  : timestamp_utc TIMESTAMP, load_mw DOUBLE
     renewables      : timestamp_utc TIMESTAMP, solar_mw DOUBLE, wind_mw DOUBLE
 
 Format de sortie canonique (Parquet local) :
     index : DatetimeIndex UTC freq='15min'
     colonnes :
-        load_mw         — charge totale CH [MW]
-        solar_mw        — production solaire CH [MW]
-        wind_mw         — production éolienne CH [MW]
-        solar_regime    — {0=Faible, 1=Moyen, 2=Fort} (tertiles mensuels)
-        load_deviation  — écart normalisé vs moyenne mensuelle
+        load_mw         â€” charge totale CH [MW]
+        solar_mw        â€” production solaire CH [MW]
+        wind_mw         â€” production Ã©olienne CH [MW]
+        solar_regime    â€” {0=Faible, 1=Moyen, 2=Fort} (tertiles mensuels)
+        load_deviation  â€” Ã©cart normalisÃ© vs moyenne mensuelle
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from data.databricks_client import query_to_df, table_fqn
+from pfc_shaping.data.databricks_client import query_to_df, table_fqn
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +41,7 @@ def load_from_databricks(
     db_config: dict | None = None,
 ) -> pd.DataFrame:
     """
-    Charge load + renewables depuis Databricks pour une période donnée.
+    Charge load + renewables depuis Databricks pour une pÃ©riode donnÃ©e.
 
     Args:
         start / end : 'YYYY-MM-DD'
@@ -69,13 +69,13 @@ def load_from_databricks(
         ORDER BY timestamp_utc
     """
 
-    logger.info("Swissgrid load + renewables Databricks : %s → %s", start, end)
+    logger.info("Swissgrid load + renewables Databricks : %s â†’ %s", start, end)
     df_load = query_to_df(sql_load, config=db_config)
     df_ren  = query_to_df(sql_ren,  config=db_config)
 
     for df_, label in [(df_load, "load"), (df_ren, "renewables")]:
         if df_.empty:
-            logger.warning("Aucune donnée %s retournée pour %s → %s", label, start, end)
+            logger.warning("Aucune donnÃ©e %s retournÃ©e pour %s â†’ %s", label, start, end)
 
     df_load["timestamp_utc"] = pd.to_datetime(df_load["timestamp_utc"], utc=True)
     df_load = df_load.set_index("timestamp_utc")
@@ -94,13 +94,13 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     Enrichit le DataFrame avec solar_regime et load_deviation.
 
     solar_regime :
-        Tertiles mensuels sur solar_mw → 0=Faible, 1=Moyen, 2=Fort
-        (permet au modèle de shape de capturer l'impact du solaire sur les
+        Tertiles mensuels sur solar_mw â†’ 0=Faible, 1=Moyen, 2=Fort
+        (permet au modÃ¨le de shape de capturer l'impact du solaire sur les
         prix intra-horaires en heures de midi)
 
     load_deviation :
         (load_mw - mean_mensuel_saisonnier) / std_mensuel_saisonnier
-        Capte les déviations de charge qui modifient la pression tarifaire
+        Capte les dÃ©viations de charge qui modifient la pression tarifaire
         en particulier en heures de pointe (8h-9h, 18h-19h)
     """
     df = df.copy()
@@ -112,7 +112,7 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
 
     df["solar_regime"] = df.groupby(df.index.to_period("M"))["solar_mw"].transform(_solar_regime)
 
-    # load_deviation normalisée (z-score mensuel)
+    # load_deviation normalisÃ©e (z-score mensuel)
     monthly_mean = df.groupby(df.index.to_period("M"))["load_mw"].transform("mean")
     monthly_std = df.groupby(df.index.to_period("M"))["load_mw"].transform("std")
     df["load_deviation"] = (df["load_mw"] - monthly_mean) / monthly_std.replace(0, np.nan)
@@ -132,11 +132,11 @@ def fetch_and_cache(
     db_config: dict | None = None,
 ) -> pd.DataFrame:
     """
-    Télécharge depuis Databricks, fusionne avec le cache local et sauvegarde.
+    TÃ©lÃ©charge depuis Databricks, fusionne avec le cache local et sauvegarde.
     Recalcule les features sur l'ensemble (les tertiles mensuels peuvent changer).
 
     Returns:
-        DataFrame canonique complet mis à jour
+        DataFrame canonique complet mis Ã  jour
     """
     new_raw = load_from_databricks(start, end, db_config)
 
@@ -155,5 +155,5 @@ def fetch_and_cache(
 
     parquet_path.parent.mkdir(parents=True, exist_ok=True)
     combined.to_parquet(parquet_path, engine="pyarrow", compression="snappy")
-    logger.info("Cache ENTSO-E mis à jour : %s (%d lignes)", parquet_path, len(combined))
+    logger.info("Cache ENTSO-E mis Ã  jour : %s (%d lignes)", parquet_path, len(combined))
     return combined

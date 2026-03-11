@@ -1,28 +1,28 @@
 """
 ingest_hydro.py
 ---------------
-Ingestion des niveaux de remplissage des réservoirs hydroélectriques suisses.
+Ingestion des niveaux de remplissage des rÃ©servoirs hydroÃ©lectriques suisses.
 
 Sources :
-    - SFOE/BFE (Office fédéral de l'énergie) : données hebdomadaires
+    - SFOE/BFE (Office fÃ©dÃ©ral de l'Ã©nergie) : donnÃ©es hebdomadaires
     - Table Databricks : hydro_reservoir_levels
-      Schéma : week_start DATE, fill_pct DOUBLE (0-100), fill_gwh DOUBLE,
+      SchÃ©ma : week_start DATE, fill_pct DOUBLE (0-100), fill_gwh DOUBLE,
                max_capacity_gwh DOUBLE
 
-Variables dérivées :
-    - fill_deviation : écart au remplissage historique moyen pour la même semaine
+Variables dÃ©rivÃ©es :
+    - fill_deviation : Ã©cart au remplissage historique moyen pour la mÃªme semaine
                        (z-score sur 10 ans glissants)
-    - water_value_proxy : indicateur composite basé sur fill_deviation + snow_cover
-                          (simplifié : uniquement fill_deviation si snow_cover indisponible)
+    - water_value_proxy : indicateur composite basÃ© sur fill_deviation + snow_cover
+                          (simplifiÃ© : uniquement fill_deviation si snow_cover indisponible)
 
 Format de sortie canonique (Parquet local) :
-    index : DatetimeIndex UTC freq='W-MON' (début de semaine)
+    index : DatetimeIndex UTC freq='W-MON' (dÃ©but de semaine)
     colonnes :
-        fill_pct          — niveau de remplissage en % (0-100)
-        fill_gwh          — énergie stockée [GWh]
-        max_capacity_gwh  — capacité maximale [GWh]
-        fill_deviation    — z-score vs moyenne historique (même semaine calendaire)
-        water_value_proxy — indicateur composite (= fill_deviation si snow_cover absent)
+        fill_pct          â€” niveau de remplissage en % (0-100)
+        fill_gwh          â€” Ã©nergie stockÃ©e [GWh]
+        max_capacity_gwh  â€” capacitÃ© maximale [GWh]
+        fill_deviation    â€” z-score vs moyenne historique (mÃªme semaine calendaire)
+        water_value_proxy â€” indicateur composite (= fill_deviation si snow_cover absent)
 """
 
 from __future__ import annotations
@@ -33,13 +33,13 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from data.databricks_client import query_to_df, table_fqn
+from pfc_shaping.data.databricks_client import query_to_df, table_fqn
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_PARQUET = Path(__file__).parent.parent / "data" / "hydro_reservoir.parquet"
 
-# Nombre d'années pour la fenêtre glissante du z-score historique
+# Nombre d'annÃ©es pour la fenÃªtre glissante du z-score historique
 ROLLING_WINDOW_YEARS = 10
 
 
@@ -49,20 +49,20 @@ def load_from_databricks(
     db_config: dict | None = None,
 ) -> pd.DataFrame:
     """
-    Charge les niveaux de remplissage des réservoirs depuis Databricks.
+    Charge les niveaux de remplissage des rÃ©servoirs depuis Databricks.
 
     Args:
-        start: date de début 'YYYY-MM-DD'
+        start: date de dÃ©but 'YYYY-MM-DD'
         end: date de fin 'YYYY-MM-DD' (exclu)
         db_config: config Databricks (si None, lit config.yaml)
 
     Returns:
         DataFrame colonnes ['fill_pct', 'fill_gwh', 'max_capacity_gwh']
-        index : DatetimeIndex UTC (fréquence hebdomadaire)
+        index : DatetimeIndex UTC (frÃ©quence hebdomadaire)
     """
     fqn = table_fqn("hydro_reservoir_levels", db_config)
 
-    # Charger les données avec un buffer historique pour le calcul du z-score
+    # Charger les donnÃ©es avec un buffer historique pour le calcul du z-score
     start_with_buffer = (
         pd.Timestamp(start) - pd.DateOffset(years=ROLLING_WINDOW_YEARS)
     ).strftime("%Y-%m-%d")
@@ -75,11 +75,11 @@ def load_from_databricks(
         ORDER BY week_start
     """
 
-    logger.info("Hydro réservoirs Databricks : %s → %s (buffer %s)", start, end, start_with_buffer)
+    logger.info("Hydro rÃ©servoirs Databricks : %s â†’ %s (buffer %s)", start, end, start_with_buffer)
     raw = query_to_df(sql, config=db_config)
 
     if raw.empty:
-        logger.warning("Aucune donnée hydro retournée pour %s → %s", start, end)
+        logger.warning("Aucune donnÃ©e hydro retournÃ©e pour %s â†’ %s", start, end)
         return pd.DataFrame(
             columns=["fill_pct", "fill_gwh", "max_capacity_gwh"],
             index=pd.DatetimeIndex([], name="week_start", tz="UTC"),
@@ -92,16 +92,16 @@ def load_from_databricks(
     invalid_pct = (raw["fill_pct"] < 0) | (raw["fill_pct"] > 100)
     if invalid_pct.any():
         n_invalid = invalid_pct.sum()
-        logger.warning("%d valeurs fill_pct hors bornes [0,100] — clampées", n_invalid)
+        logger.warning("%d valeurs fill_pct hors bornes [0,100] â€” clampÃ©es", n_invalid)
         raw["fill_pct"] = raw["fill_pct"].clip(0, 100)
 
     invalid_gwh = raw["fill_gwh"] < 0
     if invalid_gwh.any():
-        logger.warning("%d valeurs fill_gwh négatives — mises à 0", invalid_gwh.sum())
+        logger.warning("%d valeurs fill_gwh nÃ©gatives â€” mises Ã  0", invalid_gwh.sum())
         raw["fill_gwh"] = raw["fill_gwh"].clip(lower=0)
 
     logger.info(
-        "Hydro chargé : %d semaines, fill_pct min=%.1f%% max=%.1f%%",
+        "Hydro chargÃ© : %d semaines, fill_pct min=%.1f%% max=%.1f%%",
         len(raw), raw["fill_pct"].min(), raw["fill_pct"].max(),
     )
     return raw
@@ -112,28 +112,28 @@ def build_water_value(df: pd.DataFrame) -> pd.DataFrame:
     Enrichit le DataFrame avec fill_deviation et water_value_proxy.
 
     fill_deviation :
-        Z-score du remplissage actuel vs la moyenne historique pour la même
-        semaine calendaire ISO, calculé sur une fenêtre glissante de 10 ans.
-        Positif = réservoirs au-dessus de la moyenne → prix attendus plus bas.
-        Négatif = réservoirs en-dessous → prix attendus plus hauts.
+        Z-score du remplissage actuel vs la moyenne historique pour la mÃªme
+        semaine calendaire ISO, calculÃ© sur une fenÃªtre glissante de 10 ans.
+        Positif = rÃ©servoirs au-dessus de la moyenne â†’ prix attendus plus bas.
+        NÃ©gatif = rÃ©servoirs en-dessous â†’ prix attendus plus hauts.
 
     water_value_proxy :
-        Indicateur composite. En l'absence de données de couverture neigeuse,
-        identique à fill_deviation.
+        Indicateur composite. En l'absence de donnÃ©es de couverture neigeuse,
+        identique Ã  fill_deviation.
 
     Args:
         df: DataFrame avec colonnes ['fill_pct', 'fill_gwh', 'max_capacity_gwh']
             et index DatetimeIndex UTC
 
     Returns:
-        DataFrame enrichi avec colonnes supplémentaires ['fill_deviation', 'water_value_proxy']
+        DataFrame enrichi avec colonnes supplÃ©mentaires ['fill_deviation', 'water_value_proxy']
     """
     df = df.copy()
 
     # Semaine ISO calendaire (1-53) pour le regroupement saisonnier
     df["iso_week"] = df.index.isocalendar().week.values.astype(int)
 
-    # Calcul du z-score par semaine calendaire sur fenêtre glissante
+    # Calcul du z-score par semaine calendaire sur fenÃªtre glissante
     df["fill_deviation"] = np.nan
 
     for iso_week in df["iso_week"].unique():
@@ -141,18 +141,18 @@ def build_water_value(df: pd.DataFrame) -> pd.DataFrame:
         week_data = df.loc[mask_week, "fill_pct"]
 
         if len(week_data) < 3:
-            # Pas assez de données pour un z-score fiable
+            # Pas assez de donnÃ©es pour un z-score fiable
             logger.debug("Semaine ISO %d : %d obs (insuffisant pour z-score)", iso_week, len(week_data))
             continue
 
-        # Fenêtre glissante : pour chaque observation, calculer mean/std
-        # sur les ROLLING_WINDOW_YEARS années précédentes
+        # FenÃªtre glissante : pour chaque observation, calculer mean/std
+        # sur les ROLLING_WINDOW_YEARS annÃ©es prÃ©cÃ©dentes
         for idx in week_data.index:
             cutoff = idx - pd.DateOffset(years=ROLLING_WINDOW_YEARS)
             historical = week_data.loc[(week_data.index >= cutoff) & (week_data.index < idx)]
 
             if len(historical) < 3:
-                # Pas assez d'historique — utiliser tout ce qui est disponible avant
+                # Pas assez d'historique â€” utiliser tout ce qui est disponible avant
                 historical = week_data.loc[week_data.index < idx]
 
             if len(historical) < 2:
@@ -166,11 +166,11 @@ def build_water_value(df: pd.DataFrame) -> pd.DataFrame:
             else:
                 df.loc[idx, "fill_deviation"] = 0.0
 
-    # Remplir les NaN restants (premières années sans historique)
+    # Remplir les NaN restants (premiÃ¨res annÃ©es sans historique)
     n_missing = df["fill_deviation"].isna().sum()
     if n_missing > 0:
         logger.info(
-            "%d semaines sans fill_deviation calculable (historique insuffisant) — rempli à 0.0",
+            "%d semaines sans fill_deviation calculable (historique insuffisant) â€” rempli Ã  0.0",
             n_missing,
         )
         df["fill_deviation"] = df["fill_deviation"].fillna(0.0)
@@ -178,11 +178,11 @@ def build_water_value(df: pd.DataFrame) -> pd.DataFrame:
     # Water value proxy : fill_deviation seul (snow_cover non disponible)
     df["water_value_proxy"] = df["fill_deviation"]
 
-    # Nettoyage colonne intermédiaire
+    # Nettoyage colonne intermÃ©diaire
     df.drop(columns=["iso_week"], inplace=True)
 
     logger.info(
-        "Water value calculé : fill_deviation mean=%.2f std=%.2f",
+        "Water value calculÃ© : fill_deviation mean=%.2f std=%.2f",
         df["fill_deviation"].mean(),
         df["fill_deviation"].std(),
     )
@@ -201,17 +201,17 @@ def fetch_and_cache(
     db_config: dict | None = None,
 ) -> pd.DataFrame:
     """
-    Télécharge depuis Databricks, fusionne avec le cache local et sauvegarde.
-    Recalcule les features sur l'ensemble (le z-score peut changer avec de nouvelles données).
+    TÃ©lÃ©charge depuis Databricks, fusionne avec le cache local et sauvegarde.
+    Recalcule les features sur l'ensemble (le z-score peut changer avec de nouvelles donnÃ©es).
 
     Args:
-        start: date de début 'YYYY-MM-DD'
+        start: date de dÃ©but 'YYYY-MM-DD'
         end: date de fin 'YYYY-MM-DD' (exclu)
         parquet_path: chemin du cache Parquet local
         db_config: config Databricks (si None, lit config.yaml)
 
     Returns:
-        DataFrame canonique complet mis à jour
+        DataFrame canonique complet mis Ã  jour
     """
     new_raw = load_from_databricks(start, end, db_config)
 
@@ -230,5 +230,5 @@ def fetch_and_cache(
 
     parquet_path.parent.mkdir(parents=True, exist_ok=True)
     combined.to_parquet(parquet_path, engine="pyarrow", compression="snappy")
-    logger.info("Cache hydro mis à jour : %s (%d lignes)", parquet_path, len(combined))
+    logger.info("Cache hydro mis Ã  jour : %s (%d lignes)", parquet_path, len(combined))
     return combined

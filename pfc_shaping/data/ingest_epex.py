@@ -3,18 +3,18 @@ ingest_epex.py
 --------------
 Ingestion des prix EPEX Spot 15 minutes depuis Databricks.
 
-La table Databricks (config.yaml → databricks.tables.epex_15min) doit exposer :
-    timestamp_utc   TIMESTAMP   — horodatage UTC du début du quart d'heure
-    price_eur_mwh   DOUBLE      — prix en €/MWh
-    area            STRING      — zone de prix ('CH', 'DE-AT', …)
+La table Databricks (config.yaml â†’ databricks.tables.epex_15min) doit exposer :
+    timestamp_utc   TIMESTAMP   â€” horodatage UTC du dÃ©but du quart d'heure
+    price_eur_mwh   DOUBLE      â€” prix en â‚¬/MWh
+    area            STRING      â€” zone de prix ('CH', 'DE-AT', â€¦)
 
-Un cache Parquet local est maintenu pour limiter les requêtes répétées
+Un cache Parquet local est maintenu pour limiter les requÃªtes rÃ©pÃ©tÃ©es
 et permettre le fonctionnement hors-ligne (backtest, dev).
 
-Nettoyage appliqué :
-  - Conservation des prix négatifs (information de marché)
+Nettoyage appliquÃ© :
+  - Conservation des prix nÃ©gatifs (information de marchÃ©)
   - Flagging des spikes > percentile 99.9 mensuel (sans suppression)
-  - Alerte si trous > 15min détectés
+  - Alerte si trous > 15min dÃ©tectÃ©s
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from data.databricks_client import query_to_df, table_fqn
+from pfc_shaping.data.databricks_client import query_to_df, table_fqn
 
 logger = logging.getLogger(__name__)
 
@@ -39,10 +39,10 @@ def load_from_databricks(
     db_config: dict | None = None,
 ) -> pd.DataFrame:
     """
-    Charge les prix EPEX 15min depuis Databricks pour une période donnée.
+    Charge les prix EPEX 15min depuis Databricks pour une pÃ©riode donnÃ©e.
 
     Args:
-        start    : date de début 'YYYY-MM-DD'
+        start    : date de dÃ©but 'YYYY-MM-DD'
         end      : date de fin   'YYYY-MM-DD' (exclu)
         area     : zone de prix ('CH' ou 'DE-AT')
         db_config: config Databricks (si None, lit config.yaml)
@@ -61,18 +61,18 @@ def load_from_databricks(
           AND timestamp_utc <  '{end}'
         ORDER BY timestamp_utc
     """
-    logger.info("EPEX Databricks : %s → %s (zone=%s)", start, end, area)
+    logger.info("EPEX Databricks : %s â†’ %s (zone=%s)", start, end, area)
     raw = query_to_df(sql, config=db_config)
 
     if raw.empty:
-        raise ValueError(f"Aucune donnée EPEX retournée pour {area} entre {start} et {end}")
+        raise ValueError(f"Aucune donnÃ©e EPEX retournÃ©e pour {area} entre {start} et {end}")
 
     raw["timestamp_utc"] = pd.to_datetime(raw["timestamp_utc"], utc=True)
     raw = raw.set_index("timestamp_utc").sort_index()
     df = raw[["price_eur_mwh"]].copy()
     df = _clean(df)
 
-    logger.info("EPEX chargé : %d lignes (%.1f%% négatifs)",
+    logger.info("EPEX chargÃ© : %d lignes (%.1f%% nÃ©gatifs)",
                 len(df), (df["price_eur_mwh"] < 0).mean() * 100)
     return df
 
@@ -90,13 +90,13 @@ def fetch_and_cache(
     db_config: dict | None = None,
 ) -> pd.DataFrame:
     """
-    Télécharge depuis Databricks, fusionne avec le cache Parquet local
-    (déduplique), et sauvegarde.
+    TÃ©lÃ©charge depuis Databricks, fusionne avec le cache Parquet local
+    (dÃ©duplique), et sauvegarde.
 
-    Utilisé lors du cycle de mise à jour hebdomadaire.
+    UtilisÃ© lors du cycle de mise Ã  jour hebdomadaire.
 
     Returns:
-        DataFrame complet mis à jour
+        DataFrame complet mis Ã  jour
     """
     new = load_from_databricks(start, end, area, db_config)
 
@@ -110,7 +110,7 @@ def fetch_and_cache(
 
     parquet_path.parent.mkdir(parents=True, exist_ok=True)
     combined.to_parquet(parquet_path, engine="pyarrow", compression="snappy")
-    logger.info("Cache EPEX mis à jour : %s (%d lignes)", parquet_path, len(combined))
+    logger.info("Cache EPEX mis Ã  jour : %s (%d lignes)", parquet_path, len(combined))
     return combined
 
 
@@ -121,20 +121,20 @@ def fetch_and_cache(
 def _clean(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
 
-    # Vérification complétude
+    # VÃ©rification complÃ©tude
     if len(df) > 1:
         full_idx = pd.date_range(df.index.min(), df.index.max(), freq="15min", tz="UTC")
         missing = full_idx.difference(df.index)
         if len(missing) > 0:
             logger.warning("%d intervalles 15min manquants", len(missing))
 
-    # Spike flag par mois (prix absolus — on garde les négatifs)
+    # Spike flag par mois (prix absolus â€” on garde les nÃ©gatifs)
     monthly_p999 = df.groupby(df.index.to_period("M"))["price_eur_mwh"].transform(
         lambda x: np.nanpercentile(np.abs(x), 99.9)
     )
     df["spike_flag"] = np.abs(df["price_eur_mwh"]) > monthly_p999
 
     if df["spike_flag"].sum() > 0:
-        logger.info("%d spikes extrêmes flaggés (conservés)", df["spike_flag"].sum())
+        logger.info("%d spikes extrÃªmes flaggÃ©s (conservÃ©s)", df["spike_flag"].sum())
 
     return df
