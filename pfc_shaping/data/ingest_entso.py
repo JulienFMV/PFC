@@ -1,91 +1,178 @@
 """
 ingest_entso.py
 ---------------
-Ingestion des donnÃ©es rÃ©seau et renewables depuis Databricks :
-  - Charge rÃ©seau Swissgrid 15min
+Ingestion des données réseau et renewables depuis l'API ENTSO-E Transparency
+(via entsoe-py) :
+  - Charge réseau Swissgrid 15min
   - Production solaire 15min
-  - Production Ã©olienne 15min
+  - Production éolienne 15min
 
-Les tables Databricks (config.yaml â†’ databricks.tables) attendues :
-    swissgrid_load  : timestamp_utc TIMESTAMP, load_mw DOUBLE
-    renewables      : timestamp_utc TIMESTAMP, solar_mw DOUBLE, wind_mw DOUBLE
+Clé API : variable d'environnement ENTSOE_API_KEY (ou fichier .env à la racine).
 
 Format de sortie canonique (Parquet local) :
     index : DatetimeIndex UTC freq='15min'
     colonnes :
-        load_mw         â€” charge totale CH [MW]
-        solar_mw        â€” production solaire CH [MW]
-        wind_mw         â€” production Ã©olienne CH [MW]
-        solar_regime    â€” {0=Faible, 1=Moyen, 2=Fort} (tertiles mensuels)
-        load_deviation  â€” Ã©cart normalisÃ© vs moyenne mensuelle
+        load_mw         — charge totale CH [MW]
+        solar_mw        — production solaire CH [MW]
+        wind_mw         — production éolienne CH [MW]
+        solar_regime    — {0=Faible, 1=Moyen, 2=Fort} (tertiles mensuels)
+        load_deviation  — écart normalisé vs moyenne mensuelle
 """
 
 from __future__ import annotations
 
 import logging
+import os
+import time
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
-
-from pfc_shaping.data.databricks_client import query_to_df, table_fqn
+from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_PARQUET = Path(__file__).parent.parent / "data" / "entso_15min.parquet"
+DEFAULT_PARQUET = Path(__file__).resolve().parent.parent / "data" / "entso_15min.parquet"
+
+# Charger .env depuis la racine du repo
+_ENV_PATH = Path(__file__).resolve().parent.parent.parent / ".env"
+load_dotenv(dotenv_path=_ENV_PATH)
+
+MAX_RETRIES = 3
+BASE_DELAY = 5
 
 
-def load_from_databricks(
+def _get_client():
+    """Crée un client ENTSO-E. Lève ValueError si pas de clé API."""
+    from entsoe import EntsoePandasClient
+
+    api_key = os.getenv("ENTSOE_API_KEY")
+    if not api_key:
+        raise ValueError(
+            "Clé API ENTSO-E non trouvée. "
+            "Définir ENTSOE_API_KEY dans l'environnement ou dans .env"
+        )
+    return EntsoePandasClient(api_key=api_key)
+
+
+def _retry(func, *args, max_retries: int = MAX_RETRIES, **kwargs):
+    """Appel avec retry + backoff exponentiel."""
+    for attempt in range(max_retries):
+        try:
+            return func(*args, **kwargs)
+        except Exception as e:
+            if attempt == max_retries - 1:
+                raise
+            delay = BASE_DELAY * (2 ** attempt)
+            logger.warning(
+                "ENTSO-E tentative %d/%d échouée (%s), retry dans %ds",
+                attempt + 1, max_retries, e, delay,
+            )
+            time.sleep(delay)
+
+
+def load_from_api(
     start: str,
     end: str,
-    db_config: dict | None = None,
+    country_code: str = "CH",
 ) -> pd.DataFrame:
     """
-    Charge load + renewables depuis Databricks pour une pÃ©riode donnÃ©e.
+    Charge load + renewables depuis l'API ENTSO-E pour une période donnée.
 
     Args:
-        start / end : 'YYYY-MM-DD'
-        db_config   : config Databricks (si None, lit config.yaml)
+        start / end  : 'YYYY-MM-DD'
+        country_code : code zone ENTSO-E (défaut 'CH')
 
     Returns:
         DataFrame colonnes ['load_mw', 'solar_mw', 'wind_mw']
         index : DatetimeIndex UTC
     """
-    load_fqn = table_fqn("swissgrid_load", db_config)
-    ren_fqn  = table_fqn("renewables", db_config)
+    client = _get_client()
 
-    sql_load = f"""
-        SELECT timestamp_utc, load_mw
-        FROM {load_fqn}
-        WHERE timestamp_utc >= '{start}'
-          AND timestamp_utc <  '{end}'
-        ORDER BY timestamp_utc
-    """
-    sql_ren = f"""
-        SELECT timestamp_utc, solar_mw, wind_mw
-        FROM {ren_fqn}
-        WHERE timestamp_utc >= '{start}'
-          AND timestamp_utc <  '{end}'
-        ORDER BY timestamp_utc
-    """
+    ts_start = pd.Timestamp(start, tz="UTC")
+    ts_end = pd.Timestamp(end, tz="UTC")
 
-    logger.info("Swissgrid load + renewables Databricks : %s â†’ %s", start, end)
-    df_load = query_to_df(sql_load, config=db_config)
-    df_ren  = query_to_df(sql_ren,  config=db_config)
+    logger.info("ENTSO-E API load + generation : %s → %s (zone=%s)", start, end, country_code)
 
-    for df_, label in [(df_load, "load"), (df_ren, "renewables")]:
-        if df_.empty:
-            logger.warning("Aucune donnÃ©e %s retournÃ©e pour %s â†’ %s", label, start, end)
+    # --- Load ---
+    df_load_raw = _retry(client.query_load, country_code, ts_start, ts_end)
+    if isinstance(df_load_raw, pd.DataFrame):
+        # query_load peut retourner DataFrame avec colonnes Forecasted/Actual
+        if "Actual Load" in df_load_raw.columns:
+            df_load = df_load_raw[["Actual Load"]].rename(columns={"Actual Load": "load_mw"})
+        else:
+            # Prendre la dernière colonne comme load
+            df_load = df_load_raw.iloc[:, -1].to_frame("load_mw")
+    else:
+        df_load = df_load_raw.to_frame("load_mw")
 
-    df_load["timestamp_utc"] = pd.to_datetime(df_load["timestamp_utc"], utc=True)
-    df_load = df_load.set_index("timestamp_utc")
+    # --- Generation par type ---
+    df_gen_raw = _retry(client.query_generation, country_code, ts_start, ts_end)
 
-    df_ren["timestamp_utc"] = pd.to_datetime(df_ren["timestamp_utc"], utc=True)
-    df_ren = df_ren.set_index("timestamp_utc")
+    # Extraire solar et wind depuis les colonnes multi-level ou flat
+    solar_mw = _extract_generation_column(df_gen_raw, "Solar")
+    wind_mw = _extract_generation_column(df_gen_raw, "Wind Onshore") + \
+              _extract_generation_column(df_gen_raw, "Wind Offshore")
 
-    df = df_load.join(df_ren, how="outer").sort_index()
+    df_gen = pd.DataFrame({"solar_mw": solar_mw, "wind_mw": wind_mw})
+
+    # --- Resample à 15min et joindre ---
+    for df_ in [df_load, df_gen]:
+        if df_.index.tz is None:
+            df_.index = df_.index.tz_localize("UTC")
+
+    # Resample si nécessaire (certaines séries sont horaires)
+    df_load_15 = _resample_to_15min(df_load)
+    df_gen_15 = _resample_to_15min(df_gen)
+
+    df = df_load_15.join(df_gen_15, how="outer").sort_index()
     df[["solar_mw", "wind_mw"]] = df[["solar_mw", "wind_mw"]].fillna(0.0)
 
+    logger.info(
+        "ENTSO-E chargé : %d lignes, load [%.0f-%.0f] MW",
+        len(df), df["load_mw"].min(), df["load_mw"].max(),
+    )
+    return df
+
+
+def _extract_generation_column(df_gen: pd.DataFrame, fuel_type: str) -> pd.Series:
+    """
+    Extrait une colonne de génération par type de combustible.
+    Gère les colonnes multi-level (Actual Aggregated, Actual Consumption)
+    et les colonnes flat.
+    """
+    if df_gen.empty:
+        return pd.Series(0.0, index=df_gen.index, dtype=float)
+
+    # Multi-level columns: ('Solar', 'Actual Aggregated'), etc.
+    if isinstance(df_gen.columns, pd.MultiIndex):
+        matching = [col for col in df_gen.columns if col[0] == fuel_type]
+        if not matching:
+            return pd.Series(0.0, index=df_gen.index, dtype=float)
+        # Préférer 'Actual Aggregated' sur 'Actual Consumption'
+        for col in matching:
+            if "Aggregated" in str(col[1]):
+                return df_gen[col].fillna(0.0)
+        return df_gen[matching[0]].fillna(0.0)
+
+    # Flat columns
+    matching = [c for c in df_gen.columns if fuel_type in c]
+    if not matching:
+        return pd.Series(0.0, index=df_gen.index, dtype=float)
+    return df_gen[matching[0]].fillna(0.0)
+
+
+def _resample_to_15min(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Si la fréquence est horaire (ou autre > 15min), forward-fill vers 15min.
+    Si déjà 15min ou plus fin, retourner tel quel.
+    """
+    if len(df) < 2:
+        return df
+
+    median_delta = df.index.to_series().diff().median()
+    if median_delta > pd.Timedelta(minutes=15):
+        df = df.resample("15min").ffill()
     return df
 
 
@@ -94,25 +181,19 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     Enrichit le DataFrame avec solar_regime et load_deviation.
 
     solar_regime :
-        Tertiles mensuels sur solar_mw â†’ 0=Faible, 1=Moyen, 2=Fort
-        (permet au modÃ¨le de shape de capturer l'impact du solaire sur les
-        prix intra-horaires en heures de midi)
+        Tertiles mensuels sur solar_mw → 0=Faible, 1=Moyen, 2=Fort
 
     load_deviation :
-        (load_mw - mean_mensuel_saisonnier) / std_mensuel_saisonnier
-        Capte les dÃ©viations de charge qui modifient la pression tarifaire
-        en particulier en heures de pointe (8h-9h, 18h-19h)
+        (load_mw - mean_mensuel) / std_mensuel
     """
     df = df.copy()
 
-    # solar_regime par mois calendaire
     def _solar_regime(x: pd.Series) -> pd.Series:
         q33, q66 = np.nanpercentile(x, [33, 66])
         return pd.cut(x, bins=[-np.inf, q33, q66, np.inf], labels=[0, 1, 2]).astype(float)
 
     df["solar_regime"] = df.groupby(df.index.to_period("M"))["solar_mw"].transform(_solar_regime)
 
-    # load_deviation normalisÃ©e (z-score mensuel)
     monthly_mean = df.groupby(df.index.to_period("M"))["load_mw"].transform("mean")
     monthly_std = df.groupby(df.index.to_period("M"))["load_mw"].transform("std")
     df["load_deviation"] = (df["load_mw"] - monthly_mean) / monthly_std.replace(0, np.nan)
@@ -129,16 +210,16 @@ def fetch_and_cache(
     start: str,
     end: str,
     parquet_path: str | Path = DEFAULT_PARQUET,
-    db_config: dict | None = None,
+    country_code: str = "CH",
 ) -> pd.DataFrame:
     """
-    TÃ©lÃ©charge depuis Databricks, fusionne avec le cache local et sauvegarde.
-    Recalcule les features sur l'ensemble (les tertiles mensuels peuvent changer).
+    Télécharge depuis l'API ENTSO-E, fusionne avec le cache local et sauvegarde.
+    Recalcule les features sur l'ensemble.
 
     Returns:
-        DataFrame canonique complet mis Ã  jour
+        DataFrame canonique complet mis à jour
     """
-    new_raw = load_from_databricks(start, end, db_config)
+    new_raw = load_from_api(start, end, country_code)
 
     parquet_path = Path(parquet_path)
     if parquet_path.exists():
@@ -150,10 +231,9 @@ def fetch_and_cache(
     else:
         combined = new_raw
 
-    # Recalcul features sur l'ensemble complet
     combined = build_features(combined)
 
     parquet_path.parent.mkdir(parents=True, exist_ok=True)
     combined.to_parquet(parquet_path, engine="pyarrow", compression="snappy")
-    logger.info("Cache ENTSO-E mis Ã  jour : %s (%d lignes)", parquet_path, len(combined))
+    logger.info("Cache ENTSO-E mis à jour : %s (%d lignes)", parquet_path, len(combined))
     return combined

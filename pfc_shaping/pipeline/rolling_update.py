@@ -3,7 +3,10 @@ rolling_update.py
 -----------------
 Weekly update cycle for PFC 15min with local-first execution.
 
-If databricks.enabled is false in config.yaml, no Databricks query is performed.
+Data sources (in order of priority):
+  1. ENTSO-E Transparency API (entsoe.enabled: true) — for EPEX prices, load, generation
+  2. Databricks (databricks.enabled: true) — for forwards and hydro
+  3. Local Parquet cache — fallback offline
 """
 
 from __future__ import annotations
@@ -84,8 +87,11 @@ def run_update(config: dict | None = None) -> Path:
     paths = config["paths"]
     params = config["model"]
     db_cfg = config.get("databricks", {})
+    entsoe_cfg = config.get("entsoe", {})
 
     databricks_enabled = bool(db_cfg.get("enabled", False))
+    entsoe_enabled = bool(entsoe_cfg.get("enabled", False))
+    country_code = entsoe_cfg.get("country_code", "CH")
 
     epex_parquet_path = _resolve_config_path(paths["epex_parquet"])
     entso_parquet_path = _resolve_config_path(paths["entso_parquet"])
@@ -96,24 +102,37 @@ def run_update(config: dict | None = None) -> Path:
     fetch_start = (pd.Timestamp.utcnow() - pd.Timedelta(days=14)).strftime("%Y-%m-%d")
     fetch_end = pd.Timestamp.utcnow().strftime("%Y-%m-%d")
 
-    logger.info("Databricks enabled: %s", databricks_enabled)
+    logger.info("ENTSO-E API enabled: %s | Databricks enabled: %s", entsoe_enabled, databricks_enabled)
 
-    # 1) EPEX
+    # 1) EPEX — priorité : ENTSO-E API > Databricks > cache local
     logger.info("1/8 Ingestion EPEX 15min")
-    if databricks_enabled:
+    if entsoe_enabled:
         try:
-            epex_df = fetch_epex(fetch_start, fetch_end, parquet_path=epex_parquet_path, db_config=db_cfg)
+            epex_df = fetch_epex(fetch_start, fetch_end, country_code=country_code, parquet_path=epex_parquet_path)
+        except Exception as e:
+            logger.warning("ENTSO-E API EPEX failed (%s) - fallback local cache", e)
+            epex_df = load_epex(epex_parquet_path)
+    elif databricks_enabled:
+        try:
+            from pfc_shaping.data.databricks_client import query_to_df, table_fqn
+            epex_df = fetch_epex(fetch_start, fetch_end, parquet_path=epex_parquet_path)
         except Exception as e:
             logger.warning("Databricks EPEX failed (%s) - local cache", e)
             epex_df = load_epex(epex_parquet_path)
     else:
         epex_df = load_epex(epex_parquet_path)
 
-    # 2) ENTSO
+    # 2) ENTSO (load + renewables) — priorité : ENTSO-E API > Databricks > cache local
     logger.info("2/8 Ingestion Swissgrid+renewables")
-    if databricks_enabled:
+    if entsoe_enabled:
         try:
-            entso_df = fetch_entso(fetch_start, fetch_end, parquet_path=entso_parquet_path, db_config=db_cfg)
+            entso_df = fetch_entso(fetch_start, fetch_end, country_code=country_code, parquet_path=entso_parquet_path)
+        except Exception as e:
+            logger.warning("ENTSO-E API load/gen failed (%s) - fallback local cache", e)
+            entso_df = _load_or_none(load_entso, entso_parquet_path, "ENTSO parquet")
+    elif databricks_enabled:
+        try:
+            entso_df = fetch_entso(fetch_start, fetch_end, parquet_path=entso_parquet_path)
         except Exception as e:
             logger.warning("Databricks ENTSO failed (%s) - local cache", e)
             entso_df = _load_or_none(load_entso, entso_parquet_path, "ENTSO parquet")
@@ -123,7 +142,7 @@ def run_update(config: dict | None = None) -> Path:
     if entso_df is None:
         logger.warning("No exogenous ENTSO data available - f_Q correction disabled")
 
-    # 3) Hydro
+    # 3) Hydro — Databricks ou cache local (pas dispo via ENTSO-E standard)
     logger.info("3/8 Ingestion hydro reservoir levels")
     if databricks_enabled:
         try:

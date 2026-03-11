@@ -25,6 +25,18 @@ databricks:
     eex_forwards:   "eex_forwards_euler"   # forwards calibrés par EULER
     hydro_reservoir_levels: "hydro_reservoir_weekly" # niveaux réservoirs SFOE/BFE
 
+# ── API ENTSO-E Transparency ───────────────────────────────
+# Clé API : variable d'environnement ENTSOE_API_KEY (fichier .env recommandé)
+entsoe:
+  enabled:       true          # true = utiliser l'API ENTSO-E pour EPEX + load + generation
+  country_code:  "CH"          # zone de prix principale
+  # Pays voisins pour les flux transfrontaliers (optionnel, futur)
+  neighbors:
+    - "FR"
+    - "DE_LU"
+    - "AT"
+    - "IT_NORD"
+
 # ── Chemins locaux (cache + artefacts) ──────────────────────
 paths:
   # Cache Parquet local (évite requêtes répétées, permet offline)
