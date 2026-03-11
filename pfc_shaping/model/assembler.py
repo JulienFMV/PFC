@@ -3,22 +3,27 @@ assembler.py
 ------------
 Assemblage de la PFC 15min N+3 ans.
 
-Formule complète :
-    P(t) = B(year) × f_S(month) × f_W(dow) × f_H(h | saison, dow) × f_Q(q | h, saison, dow)
+Formule complète (6 facteurs multiplicatifs + calibration) :
+    P_raw(t) = B(year) × f_S(month) × f_W(dow) × f_H(h) × f_Q(q) × f_WV(t)
+
+Puis calibration arbitrage-free :
+    P_cal(t) = P_raw(t) + δ(t)
+    où δ minimise ∫(δ''(t))² sous contrainte :
+        mean(P_cal sur contrat i) = prix_futures_i   ∀ i
 
 Où :
-    B(year)   = niveau de base annuel fourni en input (€/MWh)
-                (issu des forwards EEX Cal Y+1, Y+2, Y+3 ou d'une estimation)
-    f_S(month)= facteur saisonnier mensuel (normalisé : mean mensuel annuel = 1)
+    B(year)   = niveau de base annuel (forwards EEX Cal/Quarter/Month)
+    f_S(month)= facteur saisonnier mensuel (normalisé : mean = 1)
     f_W(dow)  = facteur jour de semaine (normalisé : mean hebdo = 1)
     f_H(h)    = facteur horaire intraday (ShapeHourly)
     f_Q(q)    = facteur 15min intra-horaire (ShapeIntraday)
+    f_WV(t)   = correction Water Value réservoirs hydro CH (WaterValueCorrection)
 
-Contrainte globale de cohérence énergétique (vérifiée en fin d'assemblage) :
-    mean_annuel[P(t)] ≈ B(year)   pour chaque année
-
-Le modèle produit également les colonnes p10 / p90 (intervalles de confiance)
-si un objet Uncertainty est fourni.
+Pipeline :
+    1. Cascading : enrichir les forwards manquants (Year→Q→Month)
+    2. Shape brut : P_raw = B × f_S × f_W × f_H × f_Q × f_WV
+    3. Calibration : P_cal = P_raw + δ (arbitrage-free, Maximum Smoothness)
+    4. IC bootstrap : p10, p90
 
 Horizon glissant :
     start  = demain (J+1)
@@ -52,10 +57,18 @@ class PFCAssembler:
     """
     Assembleur de la PFC 15min N+3 ans.
 
+    Intègre les 3 modules ajoutés :
+        - ContractCascader  : décomposition automatique des forwards
+        - WaterValueCorrection : correction hydro saisonnière
+        - ArbitrageFreeCalibrator : calibration no-arbitrage
+
     Args:
         shape_hourly   : instance ShapeHourly fittée
         shape_intraday : instance ShapeIntraday fittée
         uncertainty    : instance Uncertainty (optionnel, pour IC p10/p90)
+        water_value    : instance WaterValueCorrection fittée (optionnel)
+        cascader       : instance ContractCascader fittée (optionnel)
+        calibrator     : instance ArbitrageFreeCalibrator (optionnel)
     """
 
     def __init__(
@@ -63,10 +76,16 @@ class PFCAssembler:
         shape_hourly: ShapeHourly,
         shape_intraday: ShapeIntraday,
         uncertainty=None,
+        water_value=None,
+        cascader=None,
+        calibrator=None,
     ) -> None:
         self.sh = shape_hourly
         self.si = shape_intraday
         self.unc = uncertainty
+        self.wv = water_value
+        self.cascader = cascader
+        self.calibrator = calibrator
 
     def build(
         self,
@@ -74,6 +93,7 @@ class PFCAssembler:
         start_date: str | None = None,
         horizon_days: int = HORIZON_DAYS,
         entso_forecast: pd.DataFrame | None = None,
+        hydro_forecast: pd.DataFrame | None = None,
     ) -> pd.DataFrame:
         """
         Construit la PFC 15min sur l'horizon N+3.
@@ -89,10 +109,13 @@ class PFCAssembler:
             horizon_days   : nombre de jours (défaut = 3×365)
             entso_forecast : prévisions solar_regime + load_deviation sur l'horizon
                              (None → valeurs neutres utilisées)
+            hydro_forecast : prévisions fill_deviation réservoirs hydro CH
+                             (None → f_WV = 1.0 neutre)
 
         Returns:
             DataFrame colonnes ['price_shape', 'f_S', 'f_W', 'f_H', 'f_Q',
-                                'profile_type', 'confidence', 'p10', 'p90']
+                                'f_WV', 'profile_type', 'confidence',
+                                'p10', 'p90', 'calibrated']
             index : DatetimeIndex UTC freq='15min'
         """
         if start_date is None:
@@ -102,6 +125,11 @@ class PFCAssembler:
         ts_end = ts_start + pd.Timedelta(days=horizon_days)
 
         logger.info("Assemblage PFC 15min : %s → %s", ts_start.date(), ts_end.date())
+
+        # ── 0. Cascading des forwards manquants ──────────────────────────────
+        if self.cascader is not None:
+            base_prices = self.cascader.cascade(base_prices)
+            logger.info("Cascading terminé : %d produits forwards", len(base_prices))
 
         # Index complet 15min UTC
         idx = pd.date_range(ts_start, ts_end, freq="15min", inclusive="left", tz="UTC")
@@ -121,11 +149,17 @@ class PFCAssembler:
         # ── Facteur 15min f_Q ──────────────────────────────────────────────────
         f_Q = self.si.apply(idx, cal, entso_forecast)
 
+        # ── Facteur Water Value f_WV ─────────────────────────────────────────
+        if self.wv is not None:
+            f_WV = self.wv.apply(idx, cal, hydro_forecast)
+        else:
+            f_WV = pd.Series(1.0, index=idx, name="f_WV")
+
         # ── Niveau de base B par timestamp ─────────────────────────────────────
         B = self._resolve_base(idx, base_prices)
 
-        # ── Prix final ─────────────────────────────────────────────────────────
-        price = B * f_S * f_W * f_H * f_Q
+        # ── Prix brut (avant calibration) ────────────────────────────────────
+        price_raw = B * f_S * f_W * f_H * f_Q * f_WV
 
         # ── Profile type (pour traçabilité) ────────────────────────────────────
         idx_zurich = idx.tz_convert("Europe/Zurich")
@@ -136,17 +170,28 @@ class PFCAssembler:
         profile_type[months_ahead <= 12] = "M+7..M+12"
         profile_type[months_ahead <= 6] = "M+1..M+6"
 
+        # ── Calibration arbitrage-free ───────────────────────────────────────
+        calibrated = False
+        if self.calibrator is not None:
+            price_shape, calibrated = self._apply_calibration(
+                price_raw, idx, base_prices
+            )
+        else:
+            price_shape = price_raw
+
         # ── Assemblage DataFrame ───────────────────────────────────────────────
         df = pd.DataFrame(
             {
-                "price_shape": price,
+                "price_shape": price_shape,
                 "B": B,
                 "f_S": f_S,
                 "f_W": f_W,
                 "f_H": f_H,
                 "f_Q": f_Q,
+                "f_WV": f_WV,
                 "profile_type": profile_type,
                 "confidence": self._confidence_score(months_ahead),
+                "calibrated": calibrated,
             },
             index=idx,
         )
@@ -164,10 +209,89 @@ class PFCAssembler:
         self._check_energy_consistency(df, base_prices)
 
         logger.info(
-            "PFC assemblée : %d intervalles 15min, prix min=%.1f max=%.1f €/MWh",
-            len(df), df["price_shape"].min(), df["price_shape"].max()
+            "PFC assemblée : %d intervalles 15min, prix min=%.1f max=%.1f €/MWh, "
+            "calibration=%s",
+            len(df), df["price_shape"].min(), df["price_shape"].max(),
+            "OK" if calibrated else "non appliquée"
         )
         return df
+
+    # ---------------------------------------------------------------------------
+    # Calibration arbitrage-free
+    # ---------------------------------------------------------------------------
+
+    def _apply_calibration(
+        self,
+        price_raw: pd.Series,
+        idx: pd.DatetimeIndex,
+        base_prices: dict,
+    ) -> tuple[pd.Series, bool]:
+        """Applique la calibration arbitrage-free sur la courbe brute.
+
+        Convertit les base_prices en FuturesContract objects et appelle
+        le calibrator.
+
+        Returns:
+            Tuple (prix calibré, True si convergence OK)
+        """
+        from calibration.arbitrage_free import FuturesContract
+        from calibration.cascading import parse_key, _period_boundaries_utc
+
+        contracts = []
+        for key, price in base_prices.items():
+            try:
+                ptype, year, sub = parse_key(key)
+            except ValueError:
+                continue
+
+            if ptype == "Cal":
+                ms, me = 1, 12
+            elif ptype == "Quarter":
+                ms, me = {1: (1, 3), 2: (4, 6), 3: (7, 9), 4: (10, 12)}[sub]
+            elif ptype == "Month":
+                ms, me = sub, sub
+            else:
+                continue
+
+            start_utc, end_utc = _period_boundaries_utc(
+                year, ms, me, "Europe/Zurich"
+            )
+
+            # Ne calibrer que les contrats qui chevauchent notre courbe
+            if end_utc <= idx[0] or start_utc >= idx[-1]:
+                continue
+
+            contracts.append(FuturesContract(
+                name=key,
+                price=price,
+                start=start_utc,
+                end=end_utc,
+                product_type="Base",
+            ))
+
+        if not contracts:
+            logger.info("Aucun contrat futures applicable — calibration ignorée")
+            return price_raw, False
+
+        logger.info(
+            "Calibration arbitrage-free : %d contrats futures", len(contracts)
+        )
+        result = self.calibrator.calibrate(price_raw, contracts)
+
+        if result.converged:
+            logger.info(
+                "Calibration convergée : résidu max = %.6f €/MWh, "
+                "coût lissage = %.2f",
+                result.max_abs_residual,
+                result.smoothness_cost,
+            )
+        else:
+            logger.warning(
+                "Calibration NON convergée : résidu max = %.6f €/MWh",
+                result.max_abs_residual,
+            )
+
+        return result.calibrated_curve, result.converged
 
     # ---------------------------------------------------------------------------
     # Calcul des composantes
@@ -248,8 +372,10 @@ class PFCAssembler:
     def _check_energy_consistency(self, df: pd.DataFrame, base_prices: dict) -> None:
         """
         Vérifie que la moyenne annuelle de price_shape ≈ niveau de base annuel.
-        Lève une alerte si l'écart > 5%.
+        Lève une alerte si l'écart > 5% (ou > 0.5% si calibration appliquée).
         """
+        threshold = 0.005 if df["calibrated"].any() else 0.05
+
         for year, base in base_prices.items():
             if len(year) != 4 or not year.isdigit():
                 continue
@@ -259,7 +385,7 @@ class PFCAssembler:
             mean_p = df.loc[mask, "price_shape"].mean()
             if base != 0:
                 rel_err = abs(mean_p - base) / abs(base)
-                if rel_err > 0.05:
+                if rel_err > threshold:
                     logger.warning(
                         "Cohérence énergie %s : base=%.2f, mean_PFC=%.2f, écart=%.1f%%",
                         year, base, mean_p, rel_err * 100

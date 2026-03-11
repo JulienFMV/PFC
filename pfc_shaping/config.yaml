@@ -22,12 +22,14 @@ databricks:
     swissgrid_load: "swissgrid_load_15min" # charge réseau CH
     renewables:     "generation_15min"     # production solaire + éolienne
     eex_forwards:   "eex_forwards_euler"   # forwards calibrés par EULER
+    hydro_reservoir_levels: "hydro_reservoir_weekly" # niveaux réservoirs SFOE/BFE
 
 # ── Chemins locaux (cache + artefacts) ──────────────────────
 paths:
   # Cache Parquet local (évite requêtes répétées, permet offline)
   epex_parquet:   "data/epex_15min.parquet"
   entso_parquet:  "data/entso_15min.parquet"
+  hydro_parquet:  "data/hydro_reservoir.parquet"
 
   # Modèles calibrés
   model_dir:      "model/artifacts"
@@ -55,6 +57,10 @@ model:
   # Heures à forte variance intra-horaire (correction exogène activée)
   heures_rampe: [6, 7, 8, 9, 10, 17, 18, 19, 20]
 
+  # Calibration arbitrage-free (Maximum Smoothness)
+  smoothness_weight: 1.0    # poids de la pénalité de lissage
+  calibration_tol: 0.01     # tolérance convergence (€/MWh)
+
 # ── Niveaux de base B (€/MWh) ───────────────────────────────
 # Ces prix sont chargés automatiquement depuis Databricks
 # (table eex_forwards_euler, dernier run EULER disponible).
@@ -80,3 +86,4 @@ export:
     - p90
     - profile_type
     - confidence
+    - calibrated

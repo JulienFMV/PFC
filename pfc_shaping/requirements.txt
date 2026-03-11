@@ -22,6 +22,9 @@ holidays>=0.40
 # Configuration
 PyYAML>=6.0
 
+# Tests
+pytest>=7.0.0
+
 # Optionnel : visualisation (backtest / diagnostic)
 # matplotlib>=3.7.0
 # seaborn>=0.12.0

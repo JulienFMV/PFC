@@ -6,11 +6,13 @@ Cycle de mise à jour hebdomadaire de la PFC 15min N+3 ans.
 Workflow (exécuté chaque lundi matin 06h00 HEC) :
     1. Ingestion nouvelles données EPEX (semaine écoulée)
     2. Ingestion nouvelles données ENTSO-E
-    3. Test de rupture structurelle (Chow)
+    3. Ingestion niveaux réservoirs hydro CH (Water Value)
+    4. Test de rupture structurelle (Chow)
        → ajuste le lookback si nécessaire
-    4. Recalibration ShapeHourly + ShapeIntraday + Uncertainty
-    5. Assemblage PFC 15min sur N+3 ans
-    6. Export CSV + Parquet → EULER
+    5. Recalibration ShapeHourly + ShapeIntraday + WaterValue + Uncertainty
+    6. Cascading des forwards manquants
+    7. Assemblage PFC 15min + calibration arbitrage-free
+    8. Export CSV + Parquet → EULER
 
 Entrée :
     config.yaml — paramètres de lookback, horizons, clés API, chemins
@@ -80,12 +82,16 @@ def run_update(config: dict | None = None) -> Path:
     # Imports ici pour éviter les imports circulaires au niveau module
     from data.ingest_epex import fetch_and_cache, load_parquet as load_epex
     from data.ingest_entso import fetch_and_cache as fetch_entso, load_parquet as load_entso
+    from data.ingest_hydro import fetch_and_cache as fetch_hydro, load_parquet as load_hydro
     from data.ingest_forwards import load_base_prices
     from data.calendar_ch import enrich_15min_index
     from model.shape_hourly import ShapeHourly
     from model.shape_intraday import ShapeIntraday
     from model.uncertainty import Uncertainty
+    from model.water_value import WaterValueCorrection
     from model.assembler import PFCAssembler
+    from calibration.cascading import ContractCascader
+    from calibration.arbitrage_free import ArbitrageFreeCalibrator
     from pipeline.structural_break import detect_chow
     from pipeline.export_euler import export_both
 
@@ -98,7 +104,7 @@ def run_update(config: dict | None = None) -> Path:
     fetch_end   = pd.Timestamp.utcnow().strftime("%Y-%m-%d")
 
     # ── 1. Ingestion EPEX depuis Databricks ───────────────────────────────────
-    logger.info("1/6 Ingestion EPEX Spot 15min (Databricks)...")
+    logger.info("1/8 Ingestion EPEX Spot 15min (Databricks)...")
     try:
         epex_df = fetch_and_cache(
             start=fetch_start,
@@ -111,7 +117,7 @@ def run_update(config: dict | None = None) -> Path:
         epex_df = load_epex(paths["epex_parquet"])
 
     # ── 2. Ingestion charge + renewables depuis Databricks ────────────────────
-    logger.info("2/6 Ingestion Swissgrid load + renewables (Databricks)...")
+    logger.info("2/8 Ingestion Swissgrid load + renewables (Databricks)...")
     try:
         entso_df = fetch_entso(
             start=fetch_start,
@@ -127,8 +133,27 @@ def run_update(config: dict | None = None) -> Path:
             entso_df = None
             logger.warning("Pas de données exogènes disponibles — couche 2 f_Q désactivée")
 
-    # ── 3. Détection rupture structurelle ─────────────────────────────────────
-    logger.info("3/6 Test de rupture structurelle (Chow)...")
+    # ── 3. Ingestion réservoirs hydro CH (Water Value) ────────────────────────
+    logger.info("3/8 Ingestion niveaux réservoirs hydro CH (Databricks)...")
+    hydro_df = None
+    try:
+        hydro_df = fetch_hydro(
+            start=fetch_start,
+            end=fetch_end,
+            parquet_path=paths.get("hydro_parquet", "data/hydro_reservoir.parquet"),
+            db_config=db_cfg,
+        )
+    except Exception as e:
+        logger.warning("Databricks hydro échoué (%s) — tentative cache local", e)
+        try:
+            hydro_df = load_hydro(
+                paths.get("hydro_parquet", "data/hydro_reservoir.parquet")
+            )
+        except Exception:
+            logger.warning("Pas de données hydro disponibles — f_WV désactivé")
+
+    # ── 4. Détection rupture structurelle ─────────────────────────────────────
+    logger.info("4/8 Test de rupture structurelle (Chow)...")
     cal_hist = enrich_15min_index(epex_df.index)
     break_result = detect_chow(
         epex_df,
@@ -139,7 +164,7 @@ def run_update(config: dict | None = None) -> Path:
     logger.info("Rupture : %s | %s", break_result.detected, break_result.message)
     lookback_months = break_result.recommended_lookback_months
 
-    # ── 4. Filtrage sur la fenêtre lookback ───────────────────────────────────
+    # ── 5. Filtrage sur la fenêtre lookback ───────────────────────────────────
     cutoff = pd.Timestamp.utcnow() - pd.DateOffset(months=lookback_months)
     epex_fit = epex_df[epex_df.index >= cutoff]
     entso_fit = entso_df[entso_df.index >= cutoff] if entso_df is not None else None
@@ -150,25 +175,50 @@ def run_update(config: dict | None = None) -> Path:
         epex_fit.index.min().date(), epex_fit.index.max().date(), len(epex_fit)
     )
 
-    # ── 5. Recalibration des modèles ──────────────────────────────────────────
-    logger.info("4/6 Recalibration ShapeHourly...")
+    # ── 6. Recalibration des modèles ──────────────────────────────────────────
+    logger.info("5/8 Recalibration ShapeHourly...")
     sh = ShapeHourly(sigma=params.get("gaussian_sigma", 0.5))
     sh.fit(epex_fit, cal_fit)
     sh.save(paths["model_dir"] + "/shape_hourly.parquet")
 
-    logger.info("4/6 Recalibration ShapeIntraday...")
+    logger.info("5/8 Recalibration ShapeIntraday...")
     si = ShapeIntraday()
     si.fit(epex_fit, entso_fit, cal_fit)
     si.save(paths["model_dir"] + "/shape_intraday.parquet")
 
-    logger.info("4/6 Calibration Uncertainty (bootstrap)...")
+    logger.info("5/8 Calibration Uncertainty (bootstrap)...")
     unc = Uncertainty(n_boot=params.get("n_boot", 500))
     unc.fit(epex_fit, cal_fit)
     unc.save(paths["model_dir"] + "/uncertainty.parquet")
 
-    # ── 6. Assemblage PFC N+3 ─────────────────────────────────────────────────
-    logger.info("5/6 Assemblage PFC 15min N+3 ans...")
-    assembler = PFCAssembler(sh, si, unc)
+    logger.info("5/8 Calibration WaterValue (hydro CH)...")
+    wv = WaterValueCorrection()
+    if hydro_df is not None:
+        wv.fit(epex_fit, hydro_df, cal_fit)
+        wv.save(paths["model_dir"] + "/water_value.parquet")
+    else:
+        logger.info("Pas de données hydro — WaterValue avec paramètres par défaut")
+
+    # ── 7. Préparation Cascading + Calibration ────────────────────────────────
+    logger.info("6/8 Préparation cascading et calibration arbitrage-free...")
+    cascader = ContractCascader()
+    cascader.fit_seasonal_ratios(epex_fit)
+
+    calibrator = ArbitrageFreeCalibrator(
+        smoothness_weight=params.get("smoothness_weight", 1.0),
+        tol=params.get("calibration_tol", 0.01),
+    )
+
+    # ── 8. Assemblage PFC N+3 ─────────────────────────────────────────────────
+    logger.info("7/8 Assemblage PFC 15min N+3 ans (avec calibration)...")
+    assembler = PFCAssembler(
+        shape_hourly=sh,
+        shape_intraday=si,
+        uncertainty=unc,
+        water_value=wv,
+        cascader=cascader,
+        calibrator=calibrator,
+    )
 
     # Forwards EEX depuis Databricks (EULER) ; fallback sur config.yaml
     try:
@@ -181,10 +231,11 @@ def run_update(config: dict | None = None) -> Path:
     pfc_df = assembler.build(
         base_prices=base_prices,
         horizon_days=params.get("horizon_days", 3 * 365),
+        hydro_forecast=hydro_df,
     )
 
-    # ── 7. Export ──────────────────────────────────────────────────────────────
-    logger.info("6/6 Export CSV + Parquet vers EULER...")
+    # ── 9. Export ──────────────────────────────────────────────────────────────
+    logger.info("8/8 Export CSV + Parquet vers EULER...")
     exported = export_both(pfc_df, output_dir=paths["output_dir"], run_date=run_date)
 
     logger.info("=== Cycle terminé. Fichiers : %s ===", exported)
