@@ -13,7 +13,11 @@ scikit-learn>=1.3.0  # HuberRegressor, LinearRegression
 # Lissage gaussien
 # (scipy.ndimage inclus dans scipy)
 
-# Databricks SQL Connector
+# ENTSO-E Transparency API
+entsoe-py>=0.6.0
+python-dotenv>=1.0.0
+
+# Databricks SQL Connector (forwards EEX depuis EULER)
 databricks-sql-connector>=3.0.0
 
 # Calendrier fériés CH/DE

@@ -217,14 +217,12 @@ def run_update(config: dict | None = None) -> Path:
         calibrator=calibrator,
     )
 
-    if databricks_enabled:
-        try:
-            base_prices = load_base_prices(db_config=db_cfg)
-            logger.info("Base prices loaded from Databricks (%d products)", len(base_prices))
-        except Exception as e:
-            logger.warning("Databricks forwards failed (%s) - fallback config", e)
-            base_prices = config.get("base_prices_fallback", {})
-    else:
+    # Forwards EEX toujours depuis Databricks (source EULER), fallback config.yaml
+    try:
+        base_prices = load_base_prices(db_config=db_cfg)
+        logger.info("Base prices loaded from Databricks (%d products)", len(base_prices))
+    except Exception as e:
+        logger.warning("Databricks forwards failed (%s) - fallback config.yaml", e)
         base_prices = config.get("base_prices_fallback", {})
 
     pfc_df = assembler.build(
