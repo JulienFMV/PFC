@@ -178,15 +178,12 @@ def run_update(config: dict | None = None) -> Path:
     if entso_df is None:
         logger.warning("No exogenous ENTSO data available - f_Q correction disabled")
 
-    # 3) Hydro — Databricks ou cache local (pas dispo via ENTSO-E standard)
+    # 3) Hydro — priorité : opendata.swiss (SFOE) > Databricks > cache local
     logger.info("3/8 Ingestion hydro reservoir levels")
-    if databricks_enabled:
-        try:
-            hydro_df = fetch_hydro(fetch_start, fetch_end, parquet_path=hydro_parquet_path, db_config=db_cfg)
-        except Exception as e:
-            logger.warning("Databricks hydro failed (%s) - local cache", e)
-            hydro_df = _load_or_none(load_hydro, hydro_parquet_path, "hydro parquet")
-    else:
+    try:
+        hydro_df = fetch_hydro(fetch_start, fetch_end, parquet_path=hydro_parquet_path, db_config=db_cfg)
+    except Exception as e:
+        logger.warning("Hydro fetch failed (%s) - local cache", e)
         hydro_df = _load_or_none(load_hydro, hydro_parquet_path, "hydro parquet")
 
     # 4) Structural break
