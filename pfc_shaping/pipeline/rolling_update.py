@@ -4,9 +4,11 @@ rolling_update.py
 Weekly update cycle for PFC 15min with local-first execution.
 
 Data sources (in order of priority):
-  1. ENTSO-E Transparency API (entsoe.enabled: true) — for EPEX prices, load, generation
-  2. Databricks (databricks.enabled: true) — for forwards and hydro
-  3. Local Parquet cache — fallback offline
+  1. energy-charts.info (Fraunhofer ISE) — prix EPEX + load + generation CH
+  2. SMARD.de (Bundesnetzagentur) — fallback prix EPEX
+  3. ENTSO-E Transparency API — fallback load/generation
+  4. Databricks — forwards EEX (EULER) + hydro réservoirs
+  5. Local Parquet cache — fallback offline
 """
 
 from __future__ import annotations
@@ -69,10 +71,15 @@ def run_update(config: dict | None = None) -> Path:
     from pfc_shaping.calibration.arbitrage_free import ArbitrageFreeCalibrator
     from pfc_shaping.calibration.cascading import ContractCascader
     from pfc_shaping.data.calendar_ch import enrich_15min_index
-    from pfc_shaping.data.ingest_entso import fetch_and_cache as fetch_entso
-    from pfc_shaping.data.ingest_entso import load_parquet as load_entso
-    from pfc_shaping.data.ingest_epex import fetch_and_cache as fetch_epex
-    from pfc_shaping.data.ingest_epex import load_parquet as load_epex
+    from pfc_shaping.data.ingest_energy_charts import (
+        fetch_and_cache_prices as fetch_ec_prices,
+        fetch_and_cache_power as fetch_ec_power,
+        load_epex_parquet as load_epex,
+        load_power_parquet as load_entso,
+    )
+    from pfc_shaping.data.ingest_smard import fetch_and_cache as fetch_epex_smard
+    from pfc_shaping.data.ingest_epex import fetch_and_cache as fetch_epex_entsoe
+    from pfc_shaping.data.ingest_entso import fetch_and_cache as fetch_entso_api
     from pfc_shaping.data.ingest_forwards import load_base_prices
     from pfc_shaping.data.ingest_hydro import fetch_and_cache as fetch_hydro
     from pfc_shaping.data.ingest_hydro import load_parquet as load_hydro
@@ -91,6 +98,10 @@ def run_update(config: dict | None = None) -> Path:
 
     databricks_enabled = bool(db_cfg.get("enabled", False))
     entsoe_enabled = bool(entsoe_cfg.get("enabled", False))
+    smard_cfg = config.get("smard", {})
+    smard_enabled = bool(smard_cfg.get("enabled", True))
+    ec_cfg = config.get("energy_charts", {})
+    ec_enabled = bool(ec_cfg.get("enabled", True))  # energy-charts activé par défaut
     country_code = entsoe_cfg.get("country_code", "CH")
 
     epex_parquet_path = _resolve_config_path(paths["epex_parquet"])
@@ -102,42 +113,67 @@ def run_update(config: dict | None = None) -> Path:
     fetch_start = (pd.Timestamp.utcnow() - pd.Timedelta(days=14)).strftime("%Y-%m-%d")
     fetch_end = pd.Timestamp.utcnow().strftime("%Y-%m-%d")
 
-    logger.info("ENTSO-E API enabled: %s | Databricks enabled: %s", entsoe_enabled, databricks_enabled)
+    logger.info("Sources — energy-charts: %s | SMARD: %s | ENTSO-E: %s | Databricks: %s",
+                ec_enabled, smard_enabled, entsoe_enabled, databricks_enabled)
 
-    # 1) EPEX — priorité : ENTSO-E API > Databricks > cache local
+    # 1) EPEX — priorité : energy-charts > SMARD > ENTSO-E API > cache local
     logger.info("1/8 Ingestion EPEX 15min")
-    if entsoe_enabled:
+    epex_df = None
+
+    if ec_enabled:
         try:
-            epex_df = fetch_epex(fetch_start, fetch_end, country_code=country_code, parquet_path=epex_parquet_path)
+            epex_df = fetch_ec_prices(fetch_start, fetch_end,
+                                      bzn="CH",
+                                      parquet_path=epex_parquet_path)
+            logger.info("EPEX chargé depuis energy-charts (%d lignes)", len(epex_df))
         except Exception as e:
-            logger.warning("ENTSO-E API EPEX failed (%s) - fallback local cache", e)
-            epex_df = load_epex(epex_parquet_path)
-    elif databricks_enabled:
+            logger.warning("energy-charts prix échoué (%s) — fallback SMARD", e)
+
+    if epex_df is None and smard_enabled:
         try:
-            from pfc_shaping.data.databricks_client import query_to_df, table_fqn
-            epex_df = fetch_epex(fetch_start, fetch_end, parquet_path=epex_parquet_path)
+            epex_df = fetch_epex_smard(fetch_start, fetch_end,
+                                       country_code=country_code,
+                                       parquet_path=epex_parquet_path)
+            logger.info("EPEX chargé depuis SMARD (%d lignes)", len(epex_df))
         except Exception as e:
-            logger.warning("Databricks EPEX failed (%s) - local cache", e)
-            epex_df = load_epex(epex_parquet_path)
-    else:
+            logger.warning("SMARD EPEX échoué (%s) — fallback ENTSO-E", e)
+
+    if epex_df is None and entsoe_enabled:
+        try:
+            epex_df = fetch_epex_entsoe(fetch_start, fetch_end,
+                                        country_code=country_code,
+                                        parquet_path=epex_parquet_path)
+            logger.info("EPEX chargé depuis ENTSO-E (%d lignes)", len(epex_df))
+        except Exception as e:
+            logger.warning("ENTSO-E EPEX échoué (%s) — fallback cache local", e)
+
+    if epex_df is None:
         epex_df = load_epex(epex_parquet_path)
 
-    # 2) ENTSO (load + renewables) — priorité : ENTSO-E API > Databricks > cache local
-    logger.info("2/8 Ingestion Swissgrid+renewables")
-    if entsoe_enabled:
+    # 2) Load + renewables — priorité : energy-charts > ENTSO-E API > cache local
+    logger.info("2/8 Ingestion load + renewables CH")
+    entso_df = None
+
+    if ec_enabled:
         try:
-            entso_df = fetch_entso(fetch_start, fetch_end, country_code=country_code, parquet_path=entso_parquet_path)
+            entso_df = fetch_ec_power(fetch_start, fetch_end,
+                                      country="ch",
+                                      parquet_path=entso_parquet_path)
+            logger.info("Load/gen chargé depuis energy-charts (%d lignes)", len(entso_df))
         except Exception as e:
-            logger.warning("ENTSO-E API load/gen failed (%s) - fallback local cache", e)
-            entso_df = _load_or_none(load_entso, entso_parquet_path, "ENTSO parquet")
-    elif databricks_enabled:
+            logger.warning("energy-charts power échoué (%s) — fallback ENTSO-E", e)
+
+    if entso_df is None and entsoe_enabled:
         try:
-            entso_df = fetch_entso(fetch_start, fetch_end, parquet_path=entso_parquet_path)
+            entso_df = fetch_entso_api(fetch_start, fetch_end,
+                                       country_code=country_code,
+                                       parquet_path=entso_parquet_path)
+            logger.info("Load/gen chargé depuis ENTSO-E (%d lignes)", len(entso_df))
         except Exception as e:
-            logger.warning("Databricks ENTSO failed (%s) - local cache", e)
-            entso_df = _load_or_none(load_entso, entso_parquet_path, "ENTSO parquet")
-    else:
-        entso_df = _load_or_none(load_entso, entso_parquet_path, "ENTSO parquet")
+            logger.warning("ENTSO-E load/gen échoué (%s) — fallback cache local", e)
+
+    if entso_df is None:
+        entso_df = _load_or_none(load_entso, entso_parquet_path, "power parquet")
 
     if entso_df is None:
         logger.warning("No exogenous ENTSO data available - f_Q correction disabled")
