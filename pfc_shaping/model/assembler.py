@@ -346,20 +346,20 @@ class PFCAssembler:
         return f_S
 
     def _compute_f_W(self, cal: pd.DataFrame) -> pd.Series:
-        """
+        “””
         Facteur jour de semaine f_W.
-        BasÃ© sur les ratios empiriques moyens EPEX CH par type de jour.
-        (CalibrÃ© empiriquement â€” peut Ãªtre remplacÃ© par des facteurs fittÃ©s)
-        """
-        # Ratios standard marchÃ© CH (workday=1.0 baseline)
+        Utilise les ratios empiriques calibrés par ShapeHourly.fit() sur
+        l'historique EPEX. Fallback sur des défauts si non disponible.
+        “””
         _FW_DEFAULTS = {
-            "Ouvrable": 1.05,
-            "Samedi":   0.92,
-            "Dimanche": 0.78,
-            "Ferie_CH": 0.75,
-            "Ferie_DE": 0.88,
+            “Ouvrable”: 1.05,
+            “Samedi”:   0.92,
+            “Dimanche”: 0.78,
+            “Ferie_CH”: 0.75,
+            “Ferie_DE”: 0.88,
         }
-        return cal["type_jour"].map(_FW_DEFAULTS).fillna(1.0).rename("f_W")
+        f_W_map = self.sh.f_W_ if self.sh.f_W_ else _FW_DEFAULTS
+        return cal[“type_jour”].map(f_W_map).fillna(1.0).rename(“f_W”)
 
     def _confidence_score(self, months_ahead: pd.Series) -> pd.Series:
         """Score de confiance [0,1] dÃ©croissant avec l'horizon."""

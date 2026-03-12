@@ -39,7 +39,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from sklearn.linear_model import HuberRegressor, LinearRegression
+from sklearn.linear_model import HuberRegressor, Ridge
 
 logger = logging.getLogger(__name__)
 
@@ -313,7 +313,13 @@ class ShapeIntraday:
 
     def _fit_correction(self, hour_data: pd.DataFrame) -> dict | None:
         """
-        Couche 2 : correction OLS par quart sur solar_regime et load_deviation.
+        Couche 2 : correction Ridge par quart sur solar_regime et load_deviation.
+
+        Ridge (α=1.0) au lieu d'OLS pour régulariser et limiter l'overfitting
+        sur les heures de rampe avec peu d'observations.
+
+        Validation : le modèle n'est retenu que si le R² out-of-sample
+        (50/50 split temporel) est > 0 (i.e. mieux que la moyenne).
 
         Modèle par quart q :
             résidu(q) = f_Q_observed(q) - f_Q_base(q)
@@ -342,12 +348,32 @@ class ShapeIntraday:
             y = q_data["ratio_obs"].values
 
             try:
-                ols = LinearRegression()
-                ols.fit(X, y)
-                result[f"intercept_q{q}"] = float(ols.intercept_)
+                # Validation temporelle : train sur 1ère moitié, test sur 2ème
+                split = len(X) // 2
+                if split < MIN_OBS_COUCHE2 // 2:
+                    continue
+
+                X_train, X_test = X[:split], X[split:]
+                y_train, y_test = y[:split], y[split:]
+
+                ridge = Ridge(alpha=1.0)
+                ridge.fit(X_train, y_train)
+
+                # R² out-of-sample : n'accepter que si > 0 (mieux que la moyenne)
+                y_pred = ridge.predict(X_test)
+                ss_res = np.sum((y_test - y_pred) ** 2)
+                ss_tot = np.sum((y_test - y_test.mean()) ** 2)
+                r2_oos = 1 - ss_res / ss_tot if ss_tot > 0 else 0
+
+                if r2_oos <= 0:
+                    continue  # correction n'apporte rien → on la rejette
+
+                # Refit sur toutes les données si validation passée
+                ridge.fit(X, y)
+                result[f"intercept_q{q}"] = float(ridge.intercept_)
                 for i, col in enumerate(available):
                     short = "solar" if "solar" in col else "load"
-                    result[f"b_{short}_q{q}"] = float(ols.coef_[i])
+                    result[f"b_{short}_q{q}"] = float(ridge.coef_[i])
             except Exception:
                 pass
 

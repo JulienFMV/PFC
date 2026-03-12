@@ -52,21 +52,31 @@ def load_base_prices(
     fqn = table_fqn("eex_forwards", db_config)
 
     if run_date is None:
-        # Dernier run disponible
-        date_sql = f"SELECT MAX(run_date) AS latest FROM {fqn}"
-        latest_df = query_to_df(date_sql, config=db_config)
-        run_date = str(latest_df["latest"].iloc[0])
-        logger.info("Forwards EEX : run_date le plus rÃ©cent = %s", run_date)
+        # Requête atomique : dernier run disponible + données en une seule passe
+        sql = f"""
+            SELECT delivery_period, price_eur_mwh, product_type
+            FROM {fqn}
+            WHERE run_date = (SELECT MAX(run_date) FROM {fqn})
+            ORDER BY product_type, delivery_period
+        """
+        logger.info("Chargement forwards EEX (run le plus récent)...")
+        df = query_to_df(sql, config=db_config)
+        if not df.empty:
+            run_date = "latest"
+    else:
+        # Validation format date
+        import re
+        if not re.match(r"^\d{4}-\d{2}-\d{2}$", run_date):
+            raise ValueError(f"run_date invalide (attendu YYYY-MM-DD) : {run_date}")
 
-    sql = f"""
-        SELECT delivery_period, price_eur_mwh, product_type
-        FROM {fqn}
-        WHERE run_date = '{run_date}'
-        ORDER BY product_type, delivery_period
-    """
-
-    logger.info("Chargement forwards EEX (run=%s)...", run_date)
-    df = query_to_df(sql, config=db_config)
+        sql = f"""
+            SELECT delivery_period, price_eur_mwh, product_type
+            FROM {fqn}
+            WHERE run_date = ?
+            ORDER BY product_type, delivery_period
+        """
+        logger.info("Chargement forwards EEX (run=%s)...", run_date)
+        df = query_to_df(sql, params=[run_date], config=db_config)
 
     if df.empty:
         raise ValueError(f"Aucun forward EEX trouvÃ© pour run_date={run_date}")
@@ -90,5 +100,6 @@ def load_base_prices(
 def latest_run_date(db_config: dict | None = None) -> str:
     """Retourne la date du dernier run EULER disponible dans Databricks."""
     fqn = table_fqn("eex_forwards", db_config)
-    df = query_to_df(f"SELECT MAX(run_date) AS latest FROM {fqn}", config=db_config)
+    sql = f"SELECT MAX(run_date) AS latest FROM {fqn}"
+    df = query_to_df(sql, config=db_config)
     return str(df["latest"].iloc[0])

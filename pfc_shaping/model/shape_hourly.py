@@ -56,6 +56,7 @@ class ShapeHourly:
         self.sigma = sigma
         self.factors_: dict[tuple[str, str], np.ndarray] = {}
         self.n_obs_: dict[tuple[str, str], int] = {}
+        self.f_W_: dict[str, float] = {}  # ratios empiriques par type_jour
 
     def fit(self, epex_df: pd.DataFrame, calendar_df: pd.DataFrame) -> "ShapeHourly":
         """
@@ -73,6 +74,9 @@ class ShapeHourly:
         df = epex_df[["price_eur_mwh"]].copy()
         df = df.join(calendar_df[["saison", "type_jour", "heure_hce"]])
         df = df.dropna(subset=["saison", "type_jour", "heure_hce", "price_eur_mwh"])
+
+        # Calcul empirique de f_W : ratio prix moyen par type_jour / prix moyen global
+        self._fit_f_W(df)
 
         for saison in SAISONS:
             for type_jour in TYPES_JOUR:
@@ -157,7 +161,7 @@ class ShapeHourly:
         return result
 
     def save(self, path: str | Path) -> None:
-        """Sauvegarde les facteurs en Parquet."""
+        """Sauvegarde les facteurs f_H et f_W en Parquet."""
         records = []
         for (saison, type_jour), factors in self.factors_.items():
             for h, v in enumerate(factors):
@@ -166,6 +170,13 @@ class ShapeHourly:
                      "n_obs": self.n_obs_.get((saison, type_jour), 0)}
                 )
         pd.DataFrame(records).to_parquet(path, index=False)
+
+        # Sauvegarder f_W à côté (même répertoire)
+        fw_path = Path(path).with_name("f_W.parquet")
+        fw_records = [{"type_jour": k, "f_W": v} for k, v in self.f_W_.items()]
+        if fw_records:
+            pd.DataFrame(fw_records).to_parquet(fw_path, index=False)
+
         logger.info("ShapeHourly sauvegardé : %s", path)
 
     @classmethod
@@ -177,11 +188,47 @@ class ShapeHourly:
             grp = grp.sort_values("heure")
             obj.factors_[(saison, type_jour)] = grp["f_H"].values
             obj.n_obs_[(saison, type_jour)] = int(grp["n_obs"].iloc[0])
+
+        # Charger f_W si disponible
+        fw_path = Path(path).with_name("f_W.parquet")
+        if fw_path.exists():
+            fw_df = pd.read_parquet(fw_path)
+            obj.f_W_ = dict(zip(fw_df["type_jour"], fw_df["f_W"]))
         return obj
 
     # ---------------------------------------------------------------------------
     # Interne
     # ---------------------------------------------------------------------------
+
+    def _fit_f_W(self, df: pd.DataFrame) -> None:
+        """
+        Calcule les ratios empiriques f_W par type_jour depuis l'historique EPEX.
+
+        f_W(type_jour) = prix_moyen(type_jour) / prix_moyen(global)
+        Normalisé pour que la moyenne pondérée hebdomadaire ≈ 1.
+        """
+        overall_mean = df["price_eur_mwh"].mean()
+        if overall_mean == 0:
+            self.f_W_ = {tj: 1.0 for tj in TYPES_JOUR}
+            return
+
+        for tj in TYPES_JOUR:
+            mask = df["type_jour"] == tj
+            subset = df.loc[mask, "price_eur_mwh"]
+            if len(subset) >= 96:  # au moins 1 jour complet
+                self.f_W_[tj] = subset.mean() / overall_mean
+            else:
+                self.f_W_[tj] = 1.0
+                logger.warning("f_W(%s) : données insuffisantes — défaut 1.0", tj)
+
+        # Fallback : Ferie_DE → Ferie_CH si pas assez de données
+        if self.f_W_.get("Ferie_DE", 1.0) == 1.0 and "Ferie_CH" in self.f_W_:
+            self.f_W_["Ferie_DE"] = self.f_W_["Ferie_CH"]
+
+        logger.info(
+            "f_W empiriques : %s",
+            {k: round(v, 3) for k, v in self.f_W_.items()},
+        )
 
     def _fill_missing_cells(self) -> None:
         """Remplit les cellules vides par interpolation depuis les cellules existantes."""

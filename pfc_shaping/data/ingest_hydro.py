@@ -70,13 +70,13 @@ def load_from_databricks(
     sql = f"""
         SELECT week_start, fill_pct, fill_gwh, max_capacity_gwh
         FROM {fqn}
-        WHERE week_start >= '{start_with_buffer}'
-          AND week_start <  '{end}'
+        WHERE week_start >= ?
+          AND week_start <  ?
         ORDER BY week_start
     """
 
-    logger.info("Hydro rÃ©servoirs Databricks : %s â†’ %s (buffer %s)", start, end, start_with_buffer)
-    raw = query_to_df(sql, config=db_config)
+    logger.info("Hydro réservoirs Databricks : %s → %s (buffer %s)", start, end, start_with_buffer)
+    raw = query_to_df(sql, params=[start_with_buffer, end], config=db_config)
 
     if raw.empty:
         logger.warning("Aucune donnÃ©e hydro retournÃ©e pour %s â†’ %s", start, end)
