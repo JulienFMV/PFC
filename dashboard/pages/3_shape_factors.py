@@ -202,7 +202,7 @@ with tab4:
             [0.7, "#E8850C"],
             [1.0, "#D62728"],
         ],
-        colorbar=dict(title="EUR/MWh", titleside="right"),
+        colorbar=dict(title=dict(text="EUR/MWh", side="right")),
         hovertemplate="Mois: %{y}<br>Heure: %{x}h<br>Prix: %{z:.1f} EUR/MWh<extra></extra>",
     ))
     fig_heat.update_layout(
