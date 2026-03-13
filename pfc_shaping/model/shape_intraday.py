@@ -182,7 +182,7 @@ class ShapeIntraday:
         entso_df: pd.DataFrame | None = None,
     ) -> pd.Series:
         """
-        Applique f_Q sur un index 15min futur (horizon N+3).
+        Applique f_Q sur un index 15min futur (horizon N+3) — vectorisé.
 
         Pour l'horizon futur, entso_df contient les prévisions de solar_regime
         et load_deviation (ou NaN → valeur neutre utilisée).
@@ -190,7 +190,7 @@ class ShapeIntraday:
         Returns:
             pd.Series de f_Q, index=timestamps
         """
-        result = pd.Series(index=timestamps, dtype=float, name="f_Q")
+        from collections import defaultdict
 
         df_cal = calendar_df.copy()
         if entso_df is not None:
@@ -204,18 +204,58 @@ class ShapeIntraday:
         df_cal["solar_regime"] = df_cal["solar_regime"].fillna(1.0)
         df_cal["load_deviation"] = df_cal["load_deviation"].fillna(0.0)
 
-        for idx, row in df_cal.iterrows():
-            factors = self.get(
-                saison=row["saison"],
-                type_jour=row["type_jour"],
-                heure=int(row["heure_hce"]),
-                solar_regime=float(row["solar_regime"]),
-                load_deviation=float(row["load_deviation"]),
-            )
-            q = int(row["quart"]) - 1  # 0-indexed
-            result.loc[idx] = factors[q]
+        n = len(timestamps)
+        f_q_values = np.ones(n)
+        saisons = df_cal["saison"].values
+        types_jour = df_cal["type_jour"].values
+        heures = df_cal["heure_hce"].values.astype(int)
+        quarts = df_cal["quart"].values.astype(int) - 1  # 0-indexed
 
-        return result
+        # Group indices by (saison, type_jour, heure) — max 480 groups
+        key_groups: dict[tuple, list[int]] = defaultdict(list)
+        for i in range(n):
+            key_groups[(saisons[i], types_jour[i], heures[i])].append(i)
+
+        for grp_key, indices in key_groups.items():
+            saison, type_jour, heure = grp_key
+            actual_key = (saison, type_jour, int(heure))
+            if actual_key not in self.base_factors_:
+                try:
+                    actual_key = self._fallback_key(saison, type_jour, int(heure))
+                except KeyError:
+                    continue
+
+            base = self.base_factors_[actual_key]
+            idx_arr = np.array(indices)
+            q_vals = quarts[idx_arr]
+
+            if actual_key not in self.corrections_:
+                # Simple lookup — base factors already normalized
+                f_q_values[idx_arr] = base[q_vals]
+            else:
+                # Vectorised correction for ramp hours
+                corr = self.corrections_[actual_key]
+                solar_vals = df_cal["solar_regime"].values[idx_arr]
+                load_vals = df_cal["load_deviation"].values[idx_arr]
+                n_grp = len(idx_arr)
+
+                # Compute all 4 corrected factors per row: (n_grp, 4)
+                factors = np.tile(base, (n_grp, 1))
+                for q_idx in range(4):
+                    factors[:, q_idx] += (
+                        corr.get(f"b_solar_q{q_idx+1}", 0.0) * solar_vals
+                        + corr.get(f"b_load_q{q_idx+1}", 0.0) * load_vals
+                        + corr.get(f"intercept_q{q_idx+1}", 0.0)
+                    )
+                # Re-normalize each row (mean of 4 quarters = 1)
+                row_means = factors.mean(axis=1, keepdims=True)
+                row_means[row_means == 0] = 1.0
+                factors /= row_means
+
+                # Pick the correct quarter per row
+                f_q_values[idx_arr] = factors[np.arange(n_grp), q_vals]
+
+        return pd.Series(f_q_values, index=timestamps, name="f_Q")
 
     def save(self, path: str | Path) -> None:
         """Sauvegarde base_factors_ et corrections_ en deux Parquet."""

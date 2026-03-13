@@ -4,8 +4,10 @@ ingest_energy_charts.py
 Source de données unifiée via l'API energy-charts.info (Fraunhofer ISE).
 
 Remplace ingest_smard.py (prix uniquement) et ingest_entso.py (load/gen)
-par une source unique couvrant TOUTES les données CH nécessaires :
-    - Prix day-ahead EPEX CH (bzn=CH)
+par une source unique couvrant TOUTES les données nécessaires :
+    - Prix day-ahead EPEX CH (bzn=CH) — résolution horaire, ffill → 15min
+    - Prix day-ahead EPEX DE-LU (bzn=DE-LU) — résolution 15min native
+      (depuis transition SDAC le 1er oct 2025, utilisé pour calibrer f_Q)
     - Charge réseau CH (Load)
     - Production solaire, éolienne, hydraulique
     - Flux transfrontaliers (optionnel)
@@ -14,7 +16,7 @@ Avantages :
     - API publique, sans authentification
     - Source unique = moins de points de défaillance
     - Données Fraunhofer ISE très fiables (agrègent ENTSO-E + SMARD)
-    - Résolution horaire CH, forward-fill vers 15min
+    - DE-LU 15min natif depuis oct 2025 (marché le plus liquide d'Europe)
 
 API docs : https://api.energy-charts.info
 Licence  : CC BY 4.0 (Bundesnetzagentur / SMARD.de)
@@ -39,6 +41,7 @@ BASE_DELAY = 2
 REQUEST_TIMEOUT = 30
 
 DEFAULT_EPEX_PARQUET = Path(__file__).resolve().parent.parent / "data" / "epex_15min.parquet"
+DEFAULT_EPEX_DE_PARQUET = Path(__file__).resolve().parent.parent / "data" / "epex_de_15min.parquet"
 DEFAULT_ENTSO_PARQUET = Path(__file__).resolve().parent.parent / "data" / "entso_15min.parquet"
 
 
@@ -310,6 +313,35 @@ def fetch_and_cache_prices(
     parquet_path.parent.mkdir(parents=True, exist_ok=True)
     combined.to_parquet(parquet_path, engine="pyarrow", compression="snappy")
     logger.info("Cache EPEX mis à jour (energy-charts) : %s (%d lignes)", parquet_path, len(combined))
+    return combined
+
+
+def fetch_and_cache_prices_de(
+    start: str,
+    end: str,
+    parquet_path: str | Path = DEFAULT_EPEX_DE_PARQUET,
+) -> pd.DataFrame:
+    """
+    Télécharge les prix DE-LU 15min depuis energy-charts et met à jour le cache.
+
+    Les prix DE-LU sont en résolution 15min native depuis la transition SDAC
+    (1er octobre 2025). Avant cette date, les données sont horaires ffill.
+    Ces prix sont utilisés pour calibrer les facteurs f_Q (profil intra-horaire)
+    du modèle de shaping CH.
+    """
+    new = load_prices(start, end, bzn="DE-LU")
+
+    parquet_path = Path(parquet_path)
+    if parquet_path.exists():
+        existing = load_epex_parquet(parquet_path)
+        combined = pd.concat([existing, new])
+        combined = combined[~combined.index.duplicated(keep="last")].sort_index()
+    else:
+        combined = new
+
+    parquet_path.parent.mkdir(parents=True, exist_ok=True)
+    combined.to_parquet(parquet_path, engine="pyarrow", compression="snappy")
+    logger.info("Cache EPEX DE-LU mis à jour (energy-charts) : %s (%d lignes)", parquet_path, len(combined))
     return combined
 
 

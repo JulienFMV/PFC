@@ -391,23 +391,21 @@ class PFCAssembler:
 
     def _compute_f_S(self, idx: pd.DatetimeIndex, base_prices: dict) -> pd.Series:
         """
-        Seasonal monthly factor f_S = monthly_level / annual_level (vectorized).
-        Returns 1.0 when no monthly decomposition is available.
+        Seasonal monthly factor f_S.
+
+        _resolve_base picks the finest available forward (monthly > quarterly
+        > annual).  When monthly forwards exist, B is already at monthly
+        level, so applying f_S = monthly/annual would *double-count* the
+        seasonal effect (Bug: B × f_S = monthly × monthly/annual = monthly²/annual).
+
+        When only annual forwards exist (Y+2/Y+3), monthly forwards are
+        unavailable so the ratio cannot be computed either.
+
+        => f_S = 1.0 always in the current architecture.
+        The arbitrage-free calibration step handles fine-grained level
+        adjustments to match all available forward contracts.
         """
-        idx_zurich = idx.tz_convert("Europe/Zurich")
-        years = idx_zurich.year
-        months = idx_zurich.month
-        keys_m = pd.Index([f"{y}-{m:02d}" for y, m in zip(years, months)])
-        keys_y = years.astype(str)
-
-        monthly_prices = keys_m.map(base_prices).to_series(index=idx).astype(float)
-        annual_prices = keys_y.map(base_prices).to_series(index=idx).astype(float)
-
-        valid = monthly_prices.notna() & annual_prices.notna() & (annual_prices != 0)
-        f_S = pd.Series(1.0, index=idx)
-        f_S.loc[valid] = monthly_prices.loc[valid] / annual_prices.loc[valid]
-
-        return f_S
+        return pd.Series(1.0, index=idx, name="f_S")
 
     def _compute_f_W(self, cal: pd.DataFrame) -> pd.Series:
         """

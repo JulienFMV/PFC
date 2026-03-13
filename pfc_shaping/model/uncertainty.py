@@ -104,16 +104,24 @@ class Uncertainty:
 
             ratios = (grp["price_eur_mwh"] / grp["hour_mean"]).values
 
-            # Bootstrap : mediane de chaque tirage
-            boot_medians = np.array([
-                np.median(rng.choice(ratios, size=len(ratios), replace=True))
-                for _ in range(self.n_boot)
-            ])
+            # Bootstrap prediction intervals: percentiles of the ratio
+            # distribution, NOT the median.  Bootstrapping the median only
+            # measures uncertainty in the *location estimate* (shrinks to 0
+            # with more data).  We need the *predictive spread* — the p10/p90
+            # of where individual ratios fall.
+            boot_p10 = np.empty(self.n_boot)
+            boot_p50 = np.empty(self.n_boot)
+            boot_p90 = np.empty(self.n_boot)
+            for b in range(self.n_boot):
+                sample = rng.choice(ratios, size=len(ratios), replace=True)
+                boot_p10[b] = np.percentile(sample, 10)
+                boot_p50[b] = np.percentile(sample, 50)
+                boot_p90[b] = np.percentile(sample, 90)
 
             self.boot_stats_[(saison, type_jour, h, q)] = {
-                "p10": float(np.percentile(boot_medians, 10)),
-                "p50": float(np.percentile(boot_medians, 50)),
-                "p90": float(np.percentile(boot_medians, 90)),
+                "p10": float(np.mean(boot_p10)),
+                "p50": float(np.mean(boot_p50)),
+                "p90": float(np.mean(boot_p90)),
             }
 
         logger.info("Bootstrap IC terminé : %d cellules calibrées", len(self.boot_stats_))
@@ -121,7 +129,7 @@ class Uncertainty:
 
     def compute(self, pfc_df: pd.DataFrame, calendar_df: pd.DataFrame) -> pd.DataFrame:
         """
-        Calcule p10 et p90 pour chaque timestamp de la PFC.
+        Calcule p10 et p90 pour chaque timestamp de la PFC (vectorisé).
 
         Args:
             pfc_df     : DataFrame PFC avec colonnes ['price_shape', 'f_Q', 'profile_type']
@@ -130,42 +138,48 @@ class Uncertainty:
         Returns:
             DataFrame colonnes ['p10', 'p90'] aligné sur pfc_df.index
         """
-        result = pd.DataFrame({"p10": np.nan, "p90": np.nan}, index=pfc_df.index)
+        from collections import defaultdict
+
+        n = len(pfc_df)
+        prices = pfc_df["price_shape"].values
 
         now = pd.Timestamp.now(tz="UTC")
-        idx_zurich = pfc_df.index.tz_convert("Europe/Zurich")
+        days_ahead = (pfc_df.index - now).total_seconds() / 86400
+        months_ahead = np.maximum(0, np.round(days_ahead / 30)).astype(int)
+        widen_arr = np.vectorize(self._widening_factor)(months_ahead)
 
-        for i, (ts, row) in enumerate(pfc_df.iterrows()):
-            cal_row = calendar_df.loc[ts] if ts in calendar_df.index else None
-            if cal_row is None:
-                continue
+        saisons = calendar_df["saison"].values
+        types_jour = calendar_df["type_jour"].values
+        heures = calendar_df["heure_hce"].astype(int).values
+        quarts = calendar_df["quart"].astype(int).values
 
-            saison = cal_row["saison"]
-            type_jour = cal_row["type_jour"]
-            h = int(cal_row["heure_hce"])
-            q = int(cal_row["quart"])
+        # Default to ±10% fallback; override for known cells
+        stat_p10 = np.full(n, 0.9)
+        stat_p50 = np.full(n, 1.0)
+        stat_p90 = np.full(n, 1.1)
 
-            key = (saison, type_jour, h, q)
-            if key not in self.boot_stats_:
-                # Fallback : ±10% autour du prix central
-                result.at[ts, "p10"] = row["price_shape"] * 0.90
-                result.at[ts, "p90"] = row["price_shape"] * 1.10
-                continue
+        # Group indices by (saison, type_jour, heure, quart) — max 1920 keys
+        key_groups: dict[tuple, list[int]] = defaultdict(list)
+        for i in range(n):
+            key_groups[(saisons[i], types_jour[i], heures[i], quarts[i])].append(i)
 
-            stats = self.boot_stats_[key]
+        for key, indices in key_groups.items():
+            if key in self.boot_stats_:
+                s = self.boot_stats_[key]
+                idx_arr = np.array(indices)
+                stat_p10[idx_arr] = s["p10"]
+                stat_p50[idx_arr] = s["p50"]
+                stat_p90[idx_arr] = s["p90"]
 
-            # Facteur d'élargissement selon horizon
-            months_ahead = max(0, round((ts - now).days / 30))
-            widen = self._widening_factor(months_ahead)
+        # Vectorised IC computation
+        safe_p50 = np.maximum(stat_p50, 0.01)
+        half_lo = np.abs(prices - prices * stat_p10 / safe_p50)
+        half_hi = np.abs(prices * stat_p90 / safe_p50 - prices)
 
-            center = row["price_shape"]
-            half_width_p10 = abs(center - center * stats["p10"] / max(stats["p50"], 0.01))
-            half_width_p90 = abs(center * stats["p90"] / max(stats["p50"], 0.01) - center)
+        p10_out = prices - half_lo * widen_arr
+        p90_out = prices + half_hi * widen_arr
 
-            result.at[ts, "p10"] = center - half_width_p10 * widen
-            result.at[ts, "p90"] = center + half_width_p90 * widen
-
-        return result
+        return pd.DataFrame({"p10": p10_out, "p90": p90_out}, index=pfc_df.index)
 
     def save(self, path: str | Path) -> None:
         records = []
