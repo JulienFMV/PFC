@@ -57,6 +57,7 @@ class ShapeHourly:
         self.factors_: dict[tuple[str, str], np.ndarray] = {}
         self.n_obs_: dict[tuple[str, str], int] = {}
         self.f_W_: dict[str, float] = {}  # ratios empiriques par type_jour
+        self.global_factors_: np.ndarray | None = None
 
     def fit(self, epex_df: pd.DataFrame, calendar_df: pd.DataFrame) -> "ShapeHourly":
         """
@@ -158,6 +159,13 @@ class ShapeHourly:
                 idx = group.index[mask]
                 if len(idx) > 0:
                     result.loc[idx] = factors[h]
+        if result.isna().any():
+            # Defensive final fallback to keep pipeline operational.
+            fallback = np.ones(24) if self.global_factors_ is None else self.global_factors_
+            na_mask = result.isna()
+            missing_cal = calendar_df.loc[na_mask, "heure_hce"].astype(int)
+            result.loc[na_mask] = missing_cal.map(lambda h: float(fallback[h])).values
+            logger.warning("f_H fallback applied to %d missing timestamps", int(na_mask.sum()))
         return result
 
     def save(self, path: str | Path) -> None:
@@ -194,6 +202,7 @@ class ShapeHourly:
         if fw_path.exists():
             fw_df = pd.read_parquet(fw_path)
             obj.f_W_ = dict(zip(fw_df["type_jour"], fw_df["f_W"]))
+        obj.global_factors_ = obj._compute_global_fallback()
         return obj
 
     # ---------------------------------------------------------------------------
@@ -232,20 +241,62 @@ class ShapeHourly:
 
     def _fill_missing_cells(self) -> None:
         """Remplit les cellules vides par interpolation depuis les cellules existantes."""
+        self.global_factors_ = self._compute_global_fallback()
+        if self.global_factors_ is None:
+            self.global_factors_ = np.ones(24)
+
         for saison in SAISONS:
             for type_jour in TYPES_JOUR:
                 key = (saison, type_jour)
-                if key not in self.factors_:
-                    # Cherche une cellule de la même saison
-                    for tj_fallback in ["Ouvrable", "Samedi", "Dimanche"]:
-                        fb = (saison, tj_fallback)
+                if key in self.factors_:
+                    continue
+
+                filled = False
+
+                # 1) Same-season fallback
+                for tj_fallback in ["Ouvrable", "Samedi", "Dimanche", "Ferie_CH", "Ferie_DE"]:
+                    fb = (saison, tj_fallback)
+                    if fb in self.factors_:
+                        self.factors_[key] = self.factors_[fb].copy()
+                        logger.info(
+                            "Cellule (%s,%s) remplie depuis (%s,%s)",
+                            saison, type_jour, saison, tj_fallback
+                        )
+                        filled = True
+                        break
+
+                # 2) Same day-type fallback across seasons
+                if not filled:
+                    for saison_fb in SAISONS:
+                        fb = (saison_fb, type_jour)
                         if fb in self.factors_:
                             self.factors_[key] = self.factors_[fb].copy()
                             logger.info(
                                 "Cellule (%s,%s) remplie depuis (%s,%s)",
-                                saison, type_jour, saison, tj_fallback
+                                saison, type_jour, saison_fb, type_jour
                             )
+                            filled = True
                             break
+
+                # 3) Global fallback
+                if not filled:
+                    self.factors_[key] = self.global_factors_.copy()
+                    logger.warning(
+                        "Cellule (%s,%s) remplie avec fallback global",
+                        saison, type_jour
+                    )
+
+    def _compute_global_fallback(self) -> np.ndarray | None:
+        """Average profile across all available cells; normalized to mean 1."""
+        if not self.factors_:
+            return None
+        stack = np.vstack([v for v in self.factors_.values()])
+        mean_profile = np.nanmean(stack, axis=0)
+        if mean_profile.shape[0] != 24 or not np.isfinite(mean_profile).all():
+            return None
+        if mean_profile.mean() == 0:
+            return np.ones(24)
+        return mean_profile / mean_profile.mean()
 
 
 # ---------------------------------------------------------------------------

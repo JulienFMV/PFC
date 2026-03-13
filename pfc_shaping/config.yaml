@@ -65,6 +65,20 @@ paths:
 
   # Exports vers EULER
   output_dir:     "output"
+  duckdb_path:    "data/pfc_local.duckdb"
+
+  # Dossier benchmark HFC OMPEX (comparaison optionnelle)
+  hfc_benchmark_dir: "H:\\Energy\\GeCom\\MARCHE & NEGOCE\\Prix\\Analyse HFC\\HFC test\\ER -HFC_OMPEX_15min"
+
+# —— Forwards EEX (source desk quotidienne) ——————————————————————————————
+forwards:
+  # Source prioritaire: rapport XLSX quotidien du desk.
+  # Si le lecteur H: n'est pas monté, on tente le chemin UNC.
+  eex_report_path: "H:\\Energy\\GeCom\\MARCHE & NEGOCE\\Prix\\EEX - ER\\Price_Report_EEX.xlsx"
+  eex_report_path_unc: "\\\\fmvfs1\\data\\Energy\\GeCom\\MARCHE & NEGOCE\\Prix\\EEX - ER\\Price_Report_EEX.xlsx"
+  eex_markets: ["CH", "DE"]  # marchés à produire quotidiennement
+  eex_market: "CH"      # fallback compat
+  eex_as_of_date: null  # null => dernière date non nulle disponible
 
 # ── Paramètres du modèle ────────────────────────────────────
 model:
@@ -89,6 +103,12 @@ model:
   # Calibration arbitrage-free (Maximum Smoothness)
   smoothness_weight: 1.0    # poids de la pénalité de lissage
   calibration_tol: 0.01     # tolérance convergence (€/MWh)
+  calibration_fallback_to_raw: true  # si non convergence, garder P_raw (plus robuste en prod)
+
+# —— Réseau / SSL entreprise ————————————————————————————————————————————————————
+ssl:
+  # Chemin vers bundle CA corporate (PEM). Si null, comportement requests par défaut.
+  ca_bundle: "C:\\certs\\fmvsa-proxy-ca.crt"
 
 # ── Niveaux de base B (€/MWh) ───────────────────────────────
 # Ces prix sont chargés automatiquement depuis Databricks
@@ -116,3 +136,10 @@ export:
     - profile_type
     - confidence
     - calibrated
+
+# —— Quality gates (prod) ————————————————————————————————————————
+quality:
+  fail_on_benchmark: true
+  max_mae_eur_mwh: 20.0
+  max_rmse_eur_mwh: 26.0
+  max_abs_bias_eur_mwh: 5.0

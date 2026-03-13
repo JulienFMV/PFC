@@ -1,5 +1,5 @@
 """
-utils.py — Shared data loading, caching, and chart styling for the PFC dashboard.
+Shared data loading, caching, and chart helpers for the PFC dashboard.
 """
 
 from __future__ import annotations
@@ -9,19 +9,18 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import plotly.io as pio
 import streamlit as st
+import yaml
 
 logger = logging.getLogger("pfc_dashboard")
 
-# ── Project path ──────────────────────────────────────────────────────────
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(PROJECT_ROOT))
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
-# ── Plotly template ───────────────────────────────────────────────────────
 COLORS = {
     "bg": "#F3F6FB",
     "card": "#FFFFFF",
@@ -33,7 +32,6 @@ COLORS = {
     "gray": "#D4DEEE",
     "muted": "#5A6B8A",
     "band": "rgba(15,82,204,0.12)",
-    "band_border": "rgba(15,82,204,0.30)",
 }
 
 PFC_TEMPLATE = go.layout.Template(
@@ -42,130 +40,272 @@ PFC_TEMPLATE = go.layout.Template(
         plot_bgcolor=COLORS["bg"],
         font=dict(family="Inter, sans-serif", color=COLORS["text"], size=13),
         title=dict(font=dict(size=18, color=COLORS["text"]), x=0, xanchor="left"),
-        xaxis=dict(
-            gridcolor="#D9E2F1", zerolinecolor="#D9E2F1",
-            showgrid=True, gridwidth=1,
-        ),
+        xaxis=dict(gridcolor="#D9E2F1", zerolinecolor="#D9E2F1", showgrid=True, gridwidth=1),
         yaxis=dict(
-            gridcolor="#D9E2F1", zerolinecolor="#D9E2F1",
-            showgrid=True, gridwidth=1,
+            gridcolor="#D9E2F1",
+            zerolinecolor="#D9E2F1",
+            showgrid=True,
+            gridwidth=1,
             title_standoff=10,
         ),
-        legend=dict(
-            bgcolor="rgba(0,0,0,0)", bordercolor="rgba(0,0,0,0)",
-            font=dict(size=12),
-        ),
+        legend=dict(bgcolor="rgba(0,0,0,0)", bordercolor="rgba(0,0,0,0)", font=dict(size=12)),
         margin=dict(l=60, r=20, t=50, b=40),
         hovermode="x unified",
         hoverlabel=dict(bgcolor=COLORS["card"], font_color=COLORS["text"]),
     )
 )
-pio.templates["pfc_dark"] = PFC_TEMPLATE
-pio.templates.default = "pfc_dark"
+pio.templates["pfc_dashboard"] = PFC_TEMPLATE
+pio.templates.default = "pfc_dashboard"
 
-# ── Parquet paths ─────────────────────────────────────────────────────────
-DATA_DIR = PROJECT_ROOT / "pfc_shaping" / "data"
-OUTPUT_DIR = PROJECT_ROOT / "pfc_shaping" / "output"
-
-EPEX_PARQUET = DATA_DIR / "epex_15min.parquet"
-ENTSO_PARQUET = DATA_DIR / "entso_15min.parquet"
-HYDRO_PARQUET = DATA_DIR / "hydro_reservoir.parquet"
-PFC_PARQUET = OUTPUT_DIR / "pfc_15min.parquet"
-
-
-# ── Safe Parquet reader ───────────────────────────────────────────────────
 
 def _safe_read_parquet(path: Path, name: str) -> pd.DataFrame | None:
-    """Read a Parquet file with error handling for corruption."""
     if not path.exists():
         return None
     try:
         df = pd.read_parquet(path)
         if df.empty:
-            logger.warning("%s Parquet exists but is empty: %s", name, path)
+            logger.warning("%s parquet exists but is empty: %s", name, path)
             return None
         return df
-    except Exception as e:
-        logger.error("Failed to read %s Parquet at %s: %s", name, path, e)
+    except Exception as exc:
+        logger.error("Failed to read %s parquet %s: %s", name, path, exc)
         return None
 
 
-# ── Cached loaders ────────────────────────────────────────────────────────
+def _safe_read_csv(path: Path, name: str) -> pd.DataFrame | None:
+    if not path.exists():
+        return None
+    try:
+        df = pd.read_csv(path, sep=";")
+        if df.empty:
+            logger.warning("%s csv exists but is empty: %s", name, path)
+            return None
+        if "timestamp_local" in df.columns:
+            idx = pd.to_datetime(df["timestamp_local"], errors="coerce")
+            df = df.drop(columns=["timestamp_local"]).set_index(idx)
+            df = df[~df.index.isna()]
+            df.index.name = "timestamp_local"
+        return df
+    except Exception as exc:
+        logger.error("Failed to read %s csv %s: %s", name, path, exc)
+        return None
+
+
+def _resolve_config_path(raw_path: str | Path) -> Path:
+    p = Path(raw_path)
+    if p.is_absolute():
+        return p
+    return (PROJECT_ROOT / "pfc_shaping" / p).resolve()
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def load_config() -> dict:
+    cfg_path = PROJECT_ROOT / "pfc_shaping" / "config.yaml"
+    try:
+        with cfg_path.open("r", encoding="utf-8") as handle:
+            return yaml.safe_load(handle) or {}
+    except Exception as exc:
+        logger.error("Failed to load config.yaml: %s", exc)
+        return {}
+
+
+def _paths_from_config() -> dict[str, Path]:
+    cfg = load_config()
+    path_cfg = cfg.get("paths", {})
+    defaults = {
+        "epex_parquet": "data/epex_15min.parquet",
+        "entso_parquet": "data/entso_15min.parquet",
+        "hydro_parquet": "data/hydro_reservoir.parquet",
+        "output_dir": "output",
+        "duckdb_path": "data/pfc_local.duckdb",
+    }
+    merged = {k: path_cfg.get(k, v) for k, v in defaults.items()}
+    return {k: _resolve_config_path(v) for k, v in merged.items()}
+
+
+def _latest_market_file(output_dir: Path, prefix: str, suffix: str) -> Path | None:
+    dated = sorted(output_dir.glob(f"{prefix}_*{suffix}"), reverse=True)
+    if dated:
+        return dated[0]
+    static = output_dir / f"{prefix}{suffix}"
+    return static if static.exists() else None
+
 
 @st.cache_data(ttl=3600, show_spinner="Chargement prix EPEX...")
 def load_epex() -> pd.DataFrame | None:
-    return _safe_read_parquet(EPEX_PARQUET, "EPEX")
+    return _safe_read_parquet(_paths_from_config()["epex_parquet"], "EPEX")
 
 
 @st.cache_data(ttl=3600, show_spinner="Chargement load/gen...")
 def load_entso() -> pd.DataFrame | None:
-    return _safe_read_parquet(ENTSO_PARQUET, "ENTSO")
+    return _safe_read_parquet(_paths_from_config()["entso_parquet"], "ENTSO")
 
 
-@st.cache_data(ttl=3600, show_spinner="Chargement réservoirs hydro...")
+@st.cache_data(ttl=3600, show_spinner="Chargement hydro...")
 def load_hydro() -> pd.DataFrame | None:
-    df = _safe_read_parquet(HYDRO_PARQUET, "Hydro")
+    hydro_path = _paths_from_config()["hydro_parquet"]
+    df = _safe_read_parquet(hydro_path, "Hydro")
     if df is not None:
         return df
-    # Fallback: download live from SFOE
     try:
-        from pfc_shaping.data.ingest_hydro import load_from_sfoe, build_water_value
-        df = load_from_sfoe()
-        return build_water_value(df)
-    except Exception as e:
-        logger.error("SFOE hydro fallback failed: %s", e)
+        from pfc_shaping.data.ingest_hydro import build_water_value, load_from_sfoe
+
+        return build_water_value(load_from_sfoe())
+    except Exception as exc:
+        logger.error("Hydro fallback failed: %s", exc)
         return None
 
 
 @st.cache_data(ttl=3600, show_spinner="Chargement PFC...")
 def load_pfc() -> pd.DataFrame | None:
-    return _safe_read_parquet(PFC_PARQUET, "PFC")
+    output_dir = _paths_from_config()["output_dir"]
+    parquet_path = _latest_market_file(output_dir, "pfc_15min", ".parquet")
+    csv_path = _latest_market_file(output_dir, "pfc_15min", ".csv")
+    if parquet_path is not None:
+        df = _safe_read_parquet(parquet_path, "PFC")
+        if df is not None:
+            return df
+    if csv_path is not None:
+        return _safe_read_csv(csv_path, "PFC")
+    return None
 
 
-@st.cache_data(ttl=86400, show_spinner="Chargement config...")
-def load_config() -> dict:
-    import yaml
-    cfg_path = PROJECT_ROOT / "pfc_shaping" / "config.yaml"
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_pfc_metadata() -> dict[str, str]:
+    output_dir = _paths_from_config()["output_dir"]
+    parquet_path = _latest_market_file(output_dir, "pfc_15min", ".parquet")
+    csv_path = _latest_market_file(output_dir, "pfc_15min", ".csv")
+    chosen = parquet_path or csv_path
+    if chosen is None:
+        return {"file": "-", "updated_at": "-"}
+    ts = datetime.fromtimestamp(chosen.stat().st_mtime).strftime("%d/%m/%Y %H:%M")
+    return {"file": chosen.name, "updated_at": ts}
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_pfc_market(market: str) -> pd.DataFrame | None:
+    m = str(market).upper()
+    output_dir = _paths_from_config()["output_dir"]
+    if m == "CH":
+        prefix = "pfc_15min"
+    elif m == "DE":
+        prefix = "pfc_de_15min"
+    else:
+        return None
+
+    parquet_path = _latest_market_file(output_dir, prefix, ".parquet")
+    csv_path = _latest_market_file(output_dir, prefix, ".csv")
+    if parquet_path is not None:
+        df = _safe_read_parquet(parquet_path, f"PFC-{m}")
+        if df is not None:
+            return df
+    if csv_path is not None:
+        return _safe_read_csv(csv_path, f"PFC-{m}")
+    return None
+
+
+def _read_duckdb(sql: str) -> pd.DataFrame:
+    paths = _paths_from_config()
+    db_path = paths["duckdb_path"]
+    if not db_path.exists():
+        return pd.DataFrame()
     try:
-        with open(cfg_path) as f:
-            return yaml.safe_load(f)
-    except Exception as e:
-        logger.error("Failed to load config: %s", e)
-        return {}
+        import duckdb
+
+        with duckdb.connect(str(db_path), read_only=True) as con:
+            return con.execute(sql).fetch_df()
+    except Exception as exc:
+        logger.error("DuckDB query failed: %s", exc)
+        return pd.DataFrame()
 
 
-# ── Data freshness ────────────────────────────────────────────────────────
+@st.cache_data(ttl=300, show_spinner=False)
+def load_runs(limit: int = 200) -> pd.DataFrame:
+    safe_limit = max(1, int(limit))
+    return _read_duckdb(
+        f"""
+        SELECT run_id, run_ts_utc, source_forwards, row_count, calibrated, pfc_csv_path, pfc_parquet_path
+        FROM runs
+        ORDER BY run_id DESC
+        LIMIT {safe_limit}
+        """
+    )
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def load_benchmarks(limit: int = 200) -> pd.DataFrame:
+    safe_limit = max(1, int(limit))
+    return _read_duckdb(
+        f"""
+        SELECT run_id, hfc_file, n_points, mae, rmse, bias, p95_abs_error, window_start, window_end
+        FROM benchmarks
+        ORDER BY run_id DESC
+        LIMIT {safe_limit}
+        """
+    )
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def load_forecasts_hourly(run_id: str | None = None, limit: int = 5000) -> pd.DataFrame:
+    safe_limit = max(1, int(limit))
+    if run_id:
+        rid = run_id.replace("'", "''")
+        sql = (
+            "SELECT run_id, ts_local, price_shape, p10, p90 "
+            f"FROM forecasts_hourly WHERE run_id = '{rid}' ORDER BY ts_local LIMIT {safe_limit}"
+        )
+    else:
+        sql = (
+            "SELECT run_id, ts_local, price_shape, p10, p90 "
+            f"FROM forecasts_hourly ORDER BY run_id DESC, ts_local LIMIT {safe_limit}"
+        )
+    return _read_duckdb(sql)
+
 
 def data_freshness() -> dict[str, str]:
-    """Return last-modified timestamps for each data file."""
-    result = {}
-    for name, path in [("EPEX", EPEX_PARQUET), ("Load/Gen", ENTSO_PARQUET),
-                        ("Hydro", HYDRO_PARQUET), ("PFC", PFC_PARQUET)]:
+    paths = _paths_from_config()
+    pfc_meta = load_pfc_metadata()
+    table = {
+        "EPEX": paths["epex_parquet"],
+        "Load/Gen": paths["entso_parquet"],
+        "Hydro": paths["hydro_parquet"],
+    }
+    out: dict[str, str] = {}
+    for name, path in table.items():
         if path.exists():
-            mtime = datetime.fromtimestamp(path.stat().st_mtime)
-            result[name] = mtime.strftime("%d/%m/%Y %H:%M")
+            out[name] = datetime.fromtimestamp(path.stat().st_mtime).strftime("%d/%m/%Y %H:%M")
         else:
-            result[name] = "—"
-    return result
+            out[name] = "-"
+    out["PFC"] = pfc_meta["updated_at"]
+    return out
+
+
+def latest_run_summary() -> dict[str, str]:
+    runs = load_runs(limit=1)
+    if runs.empty:
+        return {"run_id": "-", "source_forwards": "-", "rows": "-", "calibrated": "-"}
+    row = runs.iloc[0]
+    return {
+        "run_id": str(row.get("run_id", "-")),
+        "source_forwards": str(row.get("source_forwards", "-")),
+        "rows": str(int(row.get("row_count", 0))) if pd.notna(row.get("row_count")) else "-",
+        "calibrated": "yes" if bool(row.get("calibrated")) else "no",
+    }
 
 
 def show_freshness_sidebar() -> None:
-    """Display data freshness info in sidebar."""
     freshness = data_freshness()
+    run = latest_run_summary()
     with st.sidebar:
-        st.markdown("##### Dernière mise à jour")
+        st.markdown("##### Derniere mise a jour")
         for name, ts in freshness.items():
-            color = COLORS["green"] if ts != "—" else COLORS["red"]
-            st.markdown(
-                f'<span style="color:{color};">●</span> **{name}** : {ts}',
-                unsafe_allow_html=True,
-            )
-        if st.button("Rafraîchir le cache", use_container_width=True):
+            color = COLORS["green"] if ts != "-" else COLORS["red"]
+            st.markdown(f'<span style="color:{color};">●</span> **{name}** : {ts}', unsafe_allow_html=True)
+        st.caption(f"Run: {run['run_id']} | src forwards: {run['source_forwards']}")
+        if st.button("Rafraichir le cache", use_container_width=True):
             st.cache_data.clear()
             st.rerun()
 
-
-# ── Chart helpers ─────────────────────────────────────────────────────────
 
 def format_eur(v: float, decimals: int = 1) -> str:
     return f"{v:,.{decimals}f} EUR/MWh"
@@ -180,7 +320,6 @@ def format_gwh(v: float, decimals: int = 0) -> str:
 
 
 def add_range_slider(fig: go.Figure) -> go.Figure:
-    """Add a range slider to the x-axis for time navigation."""
     fig.update_xaxes(
         rangeslider=dict(visible=True, bgcolor=COLORS["card"], thickness=0.04),
         rangeselector=dict(
@@ -194,21 +333,23 @@ def add_range_slider(fig: go.Figure) -> go.Figure:
             bgcolor=COLORS["card"],
             activecolor=COLORS["amber"],
             font=dict(color=COLORS["text"], size=11),
+            x=0.0,
+            xanchor="left",
+            y=1.16,
+            yanchor="top",
         ),
     )
     return fig
 
 
-def no_data_warning(name: str = "données") -> None:
+def no_data_warning(name: str = "donnees") -> None:
     st.warning(
-        f"Aucune {name} disponible. Lance `python -m pfc_shaping.pipeline.rolling_update` "
-        "pour ingérer les données.",
+        f"Aucune {name} disponible. Lance `python -m pfc_shaping.pipeline.rolling_update` pour ingerer les donnees.",
         icon="⚠️",
     )
 
 
 def export_csv_button(df: pd.DataFrame, filename: str, label: str = "Export CSV") -> None:
-    """Add a CSV download button for the given DataFrame."""
     csv = df.to_csv()
     st.download_button(
         label=label,

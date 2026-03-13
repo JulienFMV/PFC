@@ -79,6 +79,7 @@ class PFCAssembler:
         water_value=None,
         cascader=None,
         calibrator=None,
+        calibration_fallback_to_raw: bool = True,
     ) -> None:
         self.sh = shape_hourly
         self.si = shape_intraday
@@ -86,6 +87,7 @@ class PFCAssembler:
         self.wv = water_value
         self.cascader = cascader
         self.calibrator = calibrator
+        self.calibration_fallback_to_raw = calibration_fallback_to_raw
 
     def build(
         self,
@@ -163,8 +165,13 @@ class PFCAssembler:
 
         # Ã¢â€â‚¬Ã¢â€â‚¬ Profile type (pour traÃƒÂ§abilitÃƒÂ©) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         idx_zurich = idx.tz_convert("Europe/Zurich")
-        months_ahead = ((idx_zurich.to_period("M") - pd.Timestamp.now(tz="Europe/Zurich").to_period("M"))
-                        .apply(lambda x: x.n if hasattr(x, 'n') else 0))
+        now_zurich = pd.Timestamp.now(tz="Europe/Zurich")
+        # Robust month offset computation compatible with modern pandas Index API.
+        months_ahead = pd.Series(
+            (idx_zurich.year - now_zurich.year) * 12 + (idx_zurich.month - now_zurich.month),
+            index=idx,
+            dtype=int,
+        )
 
         profile_type = pd.Series("Y+2/Y+3", index=idx)
         profile_type[months_ahead <= 12] = "M+7..M+12"
@@ -237,44 +244,19 @@ class PFCAssembler:
         from pfc_shaping.calibration.arbitrage_free import FuturesContract
         from pfc_shaping.calibration.cascading import parse_key, _period_boundaries_utc
 
-        contracts = []
-        for key, price in base_prices.items():
-            try:
-                ptype, year, sub = parse_key(key)
-            except ValueError:
-                continue
-
-            if ptype == "Cal":
-                ms, me = 1, 12
-            elif ptype == "Quarter":
-                ms, me = {1: (1, 3), 2: (4, 6), 3: (7, 9), 4: (10, 12)}[sub]
-            elif ptype == "Month":
-                ms, me = sub, sub
-            else:
-                continue
-
-            start_utc, end_utc = _period_boundaries_utc(
-                year, ms, me, "Europe/Zurich"
-            )
-
-            # Ne calibrer que les contrats qui chevauchent notre courbe
-            if end_utc <= idx[0] or start_utc >= idx[-1]:
-                continue
-
-            contracts.append(FuturesContract(
-                name=key,
-                price=price,
-                start=start_utc,
-                end=end_utc,
-                product_type="Base",
-            ))
+        contracts = self._build_non_overlapping_contracts(
+            idx=idx,
+            base_prices=base_prices,
+            futures_contract_cls=FuturesContract,
+            period_boundaries_fn=_period_boundaries_utc,
+        )
 
         if not contracts:
             logger.info("Aucun contrat futures applicable Ã¢â‚¬â€ calibration ignorÃƒÂ©e")
             return price_raw, False
 
         logger.info(
-            "Calibration arbitrage-free : %d contrats futures", len(contracts)
+            "Calibration arbitrage-free : %d contrats non-overlap", len(contracts)
         )
         result = self.calibrator.calibrate(price_raw, contracts)
 
@@ -290,8 +272,70 @@ class PFCAssembler:
                 "Calibration NON convergÃƒÂ©e : rÃƒÂ©sidu max = %.6f Ã¢â€šÂ¬/MWh",
                 result.max_abs_residual,
             )
+            if self.calibration_fallback_to_raw:
+                logger.warning(
+                    "Fallback activÃ©: utilisation de P_raw (calibrated=False) "
+                    "car calibration non convergÃ©e."
+                )
+                return price_raw, False
 
         return result.calibrated_curve, result.converged
+
+    def _build_non_overlapping_contracts(
+        self,
+        idx: pd.DatetimeIndex,
+        base_prices: dict,
+        futures_contract_cls,
+        period_boundaries_fn,
+    ) -> list:
+        """
+        Build a non-overlapping monthly contract set for calibration.
+
+        This avoids rank-deficient/over-constrained systems created by
+        mixing Calendar + Quarter + Month constraints simultaneously.
+        Price priority per month: Month > Quarter > Calendar.
+        """
+        idx_local = idx.tz_convert("Europe/Zurich")
+        month_periods = []
+        seen: set[tuple[int, int]] = set()
+        for ts in idx_local:
+            key = (int(ts.year), int(ts.month))
+            if key not in seen:
+                seen.add(key)
+                month_periods.append(key)
+
+        contracts = []
+        for year, month in month_periods:
+            key_m = f"{year}-{month:02d}"
+            key_q = f"{year}-Q{(month - 1) // 3 + 1}"
+            key_y = str(year)
+
+            source_key = None
+            if key_m in base_prices:
+                source_key = key_m
+            elif key_q in base_prices:
+                source_key = key_q
+            elif key_y in base_prices:
+                source_key = key_y
+
+            if source_key is None:
+                continue
+
+            start_utc, end_utc = period_boundaries_fn(year, month, month, "Europe/Zurich")
+            if end_utc <= idx[0] or start_utc >= idx[-1]:
+                continue
+
+            contracts.append(
+                futures_contract_cls(
+                    name=f"{year}-{month:02d}<{source_key}>",
+                    price=float(base_prices[source_key]),
+                    start=start_utc,
+                    end=end_utc,
+                    product_type="Base",
+                )
+            )
+
+        return contracts
 
     # ---------------------------------------------------------------------------
     # Calcul des composantes
@@ -381,6 +425,16 @@ class PFCAssembler:
                 continue
             mask = df.index.tz_convert("Europe/Zurich").year == int(year)
             if mask.sum() == 0:
+                continue
+            year_int = int(year)
+            expected_intervals = (366 if pd.Timestamp(year=year_int, month=12, day=31).is_leap_year else 365) * 96
+            if mask.sum() < int(0.95 * expected_intervals):
+                logger.info(
+                    "CohÃƒÂ©rence ÃƒÂ©nergie %s : skip (couverture partielle %d/%d)",
+                    year,
+                    int(mask.sum()),
+                    expected_intervals,
+                )
                 continue
             mean_p = df.loc[mask, "price_shape"].mean()
             if base != 0:

@@ -26,12 +26,147 @@ Usage :
 from __future__ import annotations
 
 import logging
+import re
+from pathlib import Path
 
 import pandas as pd
 
 from pfc_shaping.data.databricks_client import query_to_df, table_fqn
 
 logger = logging.getLogger(__name__)
+
+
+_EEX_BASE_PATTERN = re.compile(r"^(Y01|Q\d{2}|M\d{2})_(\d{4})_BASE$")
+
+
+def _normalize_delivery_period(eex_code: str) -> str | None:
+    """
+    Convert EEX code format to internal delivery key format.
+
+    Examples:
+        Y01_2027_BASE -> 2027
+        Q03_2026_BASE -> 2026-Q3
+        M04_2026_BASE -> 2026-04
+    """
+    m = _EEX_BASE_PATTERN.match(eex_code.strip().upper())
+    if not m:
+        return None
+
+    prefix, year_str = m.groups()
+    year = int(year_str)
+
+    if prefix == "Y01":
+        return f"{year}"
+
+    if prefix.startswith("Q"):
+        quarter = int(prefix[1:])
+        if 1 <= quarter <= 4:
+            return f"{year}-Q{quarter}"
+        return None
+
+    if prefix.startswith("M"):
+        month = int(prefix[1:])
+        if 1 <= month <= 12:
+            return f"{year}-{month:02d}"
+        return None
+
+    return None
+
+
+def load_base_prices_from_eex_report(
+    report_path: str | Path,
+    market: str = "CH",
+    as_of_date: str | None = None,
+) -> dict[str, float]:
+    """
+    Load base prices from a daily EEX price report XLSX file.
+
+    Expected workbook layout:
+        - One sheet per market (e.g. CH/DE/FR)
+        - Row 1 contains product codes (Y01_YYYY_BASE, QNN_YYYY_BASE, MNN_YYYY_BASE)
+        - Row 4+ contains daily marks with a date in column A
+
+    Args:
+        report_path: Absolute or relative path to the EEX report XLSX.
+        market: Sheet name to load (default: CH).
+        as_of_date: Optional date (YYYY-MM-DD). If None, latest available
+                    non-zero date is selected automatically.
+
+    Returns:
+        dict[str, float]: {'2027': 82.9, '2026-Q3': 74.8, '2026-04': 84.5, ...}
+    """
+    report_path = Path(report_path)
+    if not report_path.exists():
+        raise FileNotFoundError(f"EEX report not found: {report_path}")
+
+    raw = pd.read_excel(report_path, sheet_name=market, header=None)
+    if raw.shape[0] < 4 or raw.shape[1] < 2:
+        raise ValueError(f"Unexpected EEX report format in {report_path} (sheet={market})")
+
+    product_codes = raw.iloc[0, 1:]
+    date_series = pd.to_datetime(raw.iloc[3:, 0], dayfirst=True, errors="coerce")
+    values = raw.iloc[3:, 1:]
+
+    selected_cols: list[int] = []
+    delivery_keys: dict[int, str] = {}
+    for idx, code in enumerate(product_codes):
+        if pd.isna(code):
+            continue
+        normalized = _normalize_delivery_period(str(code))
+        if normalized is None:
+            continue
+        selected_cols.append(idx)
+        delivery_keys[idx] = normalized
+
+    if not selected_cols:
+        raise ValueError(f"No Cal/Quarter/Month BASE contracts found in EEX sheet {market}")
+
+    selected = values.iloc[:, selected_cols].copy()
+    for col in selected.columns:
+        selected[col] = pd.to_numeric(
+            selected[col].astype(str).str.replace(",", ".", regex=False),
+            errors="coerce",
+        )
+
+    valid_mask = date_series.notna()
+    if as_of_date is not None:
+        target = pd.Timestamp(as_of_date).normalize()
+        valid_mask &= date_series.dt.normalize() == target
+    else:
+        valid_mask &= (selected.fillna(0) > 0).any(axis=1)
+
+    if not valid_mask.any():
+        d = f" date={as_of_date}" if as_of_date else ""
+        raise ValueError(f"No valid EEX row found in {report_path} (sheet={market}{d})")
+
+    row_pos = valid_mask[valid_mask].index[-1]
+    row_values = selected.loc[row_pos]
+    row_date = date_series.loc[row_pos]
+
+    base_prices: dict[str, float] = {}
+    for local_col, val in row_values.items():
+        if pd.isna(val) or float(val) <= 0:
+            continue
+        # local_col is absolute column index in original sheet minus 1 offset from product row,
+        # while delivery_keys uses positional index over product_codes.
+        product_idx = int(local_col) - 1
+        key = delivery_keys.get(product_idx)
+        if key is not None:
+            base_prices[key] = float(val)
+
+    if not base_prices:
+        raise ValueError(
+            f"EEX row has no positive BASE prices (sheet={market}, date={row_date.date()})"
+        )
+
+    logger.info(
+        "Forwards EEX XLSX loaded (%s, sheet=%s, date=%s): %d products",
+        report_path,
+        market,
+        row_date.date(),
+        len(base_prices),
+    )
+    return base_prices
 
 
 def load_base_prices(

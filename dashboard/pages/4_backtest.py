@@ -125,16 +125,27 @@ with tab1:
     st.plotly_chart(fig_kpi, width="stretch")
 
 with tab2:
-    st.dataframe(
-        bt_df.style.format({
+    try:
+        styled = bt_df.style.format({
             "rmse_shape": "{:.4f}",
             "mae_shape": "{:.4f}",
             "bias_mean": "{:+.4f}",
             "ic80_coverage": "{:.1%}",
             "skill_score": "{:.3f}",
-        }).background_gradient(subset=["skill_score"], cmap="RdYlGn"),
-        use_container_width=True,
-    )
+        }).background_gradient(subset=["skill_score"], cmap="RdYlGn")
+        st.dataframe(styled, use_container_width=True)
+    except ImportError:
+        st.info("`matplotlib` non installé: affichage tableau sans dégradé couleur.")
+        st.dataframe(
+            bt_df.style.format({
+                "rmse_shape": "{:.4f}",
+                "mae_shape": "{:.4f}",
+                "bias_mean": "{:+.4f}",
+                "ic80_coverage": "{:.1%}",
+                "skill_score": "{:.3f}",
+            }),
+            use_container_width=True,
+        )
     export_csv_button(bt_df, "backtest_results.csv", "Export résultats backtest")
 
 with tab3:

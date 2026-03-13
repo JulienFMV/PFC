@@ -75,7 +75,7 @@ def build_calendar(start: str, end: str) -> pd.DataFrame:
     ch_hols: set = set()
     de_hols: set = set()
     for y in years:
-        ch_hols |= set(holidays.Switzerland(years=y, prov="VS").keys())
+        ch_hols |= set(holidays.Switzerland(years=y, subdiv="VS").keys())
         de_hols |= set(holidays.Germany(years=y).keys())
 
     dates = pd.date_range(start=start, end=end, freq="D")

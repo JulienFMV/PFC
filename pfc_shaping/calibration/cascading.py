@@ -136,7 +136,7 @@ def _swiss_holidays_set(year: int) -> set:
 
     Uses the ``holidays`` library, consistent with ``calendar_ch.py``.
     """
-    return set(holidays.Switzerland(years=year, prov="VS").keys())
+    return set(holidays.Switzerland(years=year, subdiv="VS").keys())
 
 
 def _period_boundaries_utc(

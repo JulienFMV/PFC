@@ -20,13 +20,15 @@ st.set_page_config(
 # ── Pages ─────────────────────────────────────────────────────────────────
 overview = st.Page("pages/1_overview.py", title="Overview", icon="📊", default=True)
 pfc_curve = st.Page("pages/2_pfc_curve.py", title="Courbe PFC", icon="📈")
+ch_de = st.Page("pages/7_ch_de_spread.py", title="CH vs DE", icon="↔️")
 shape = st.Page("pages/3_shape_factors.py", title="Shape Factors", icon="🔬")
 backtest = st.Page("pages/4_backtest.py", title="Backtest & Diagnostics", icon="🎯")
 hydro = st.Page("pages/5_hydro.py", title="Hydro & Fondamentaux", icon="💧")
+control_tower = st.Page("pages/6_control_tower.py", title="Control Tower", icon="🧭")
 
 nav = st.navigation(
     {
-        "Monitoring": [overview, pfc_curve],
+        "Monitoring": [overview, pfc_curve, ch_de, control_tower],
         "Modèle": [shape, backtest],
         "Fondamentaux": [hydro],
     }
@@ -42,7 +44,7 @@ with st.sidebar:
                 PFC Monitor
             </span><br>
             <span style="font-size:0.75rem; color:#5A6B8A;">
-                Price Forward Curve CH &bull; 15min
+                Price Forward Curve CH+DE &bull; 15min
             </span>
         </div>
         """,

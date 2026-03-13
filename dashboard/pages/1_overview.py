@@ -10,12 +10,12 @@ import streamlit as st
 
 from utils import (
     COLORS, add_range_slider, export_csv_button, format_eur, format_gwh,
-    format_pct, load_epex, load_hydro, load_pfc, no_data_warning,
-    show_freshness_sidebar,
+    format_pct, latest_run_summary, load_benchmarks, load_epex, load_hydro, load_pfc,
+    no_data_warning, show_freshness_sidebar,
 )
 
 st.header("Overview")
-st.caption("Vue d'ensemble du marché et de la PFC — mise à jour hebdomadaire")
+st.caption("Vue d'ensemble du marche et de la PFC - mise a jour quotidienne")
 
 show_freshness_sidebar()
 
@@ -29,7 +29,10 @@ has_hydro = hydro is not None and "fill_pct" in hydro.columns
 has_pfc = pfc is not None and "price_shape" in (pfc.columns if pfc is not None else [])
 
 # ── KPI Row ───────────────────────────────────────────────────────────────
-k1, k2, k3, k4, k5 = st.columns(5)
+bench = load_benchmarks(limit=1)
+run_meta = latest_run_summary()
+
+k1, k2, k3, k4, k5, k6 = st.columns(6)
 
 with k1:
     if has_epex:
@@ -72,6 +75,13 @@ with k5:
         st.metric("Stock hydro", format_gwh(gwh), delta=f"/ {max_gwh:.0f} GWh max")
     else:
         st.metric("Stock hydro", "—")
+
+with k6:
+    if not bench.empty and "mae" in bench.columns:
+        b = bench.iloc[0]
+        st.metric("MAE vs HFC", f"{float(b['mae']):.2f} EUR/MWh", delta=f"run {run_meta['run_id']}")
+    else:
+        st.metric("MAE vs HFC", "—")
 
 st.divider()
 

@@ -14,6 +14,10 @@ env/
 
 # Data caches (Parquet stores locaux — ne pas versionner)
 pfc_shaping/data/*.parquet
+pfc_shaping/data/*.duckdb
+pfc_shaping/data/*.duckdb.wal
+pfc_shaping/data/raw/
+pfc_shaping/data/raw/**/*.xlsx
 
 # Model artifacts
 pfc_shaping/model/artifacts/

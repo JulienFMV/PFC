@@ -119,7 +119,13 @@ if show_bands and "p10" in pfc_r.columns:
 fig.update_layout(
     yaxis_title="EUR/MWh",
     height=500,
-    legend=dict(orientation="h", y=1.02, x=0),
+    legend=dict(
+        orientation="h",
+        y=1.08,
+        x=0.12,
+        xanchor="left",
+        bgcolor="rgba(255,255,255,0.65)",
+    ),
 )
 fig = add_range_slider(fig)
 st.plotly_chart(fig, width="stretch")

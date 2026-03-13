@@ -36,6 +36,7 @@ logger = logging.getLogger(__name__)
 
 # Colonnes exportées vers EULER (dans cet ordre)
 EULER_COLUMNS = ["price_shape", "p10", "p90", "profile_type", "confidence"]
+INTERNAL_COLUMNS = EULER_COLUMNS + ["calibrated"]
 
 
 def export_csv(
@@ -57,7 +58,7 @@ def export_csv(
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    df = _prepare_export(pfc_df, tz_local)
+    df = _prepare_export(pfc_df, tz_local, include_internal=False)
 
     df.to_csv(
         path,
@@ -92,7 +93,7 @@ def export_parquet(
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    df = _prepare_export(pfc_df, tz_local)
+    df = _prepare_export(pfc_df, tz_local, include_internal=True)
     df.to_parquet(path, engine="pyarrow", compression="snappy")
 
     logger.info("Export Parquet : %s (%d lignes)", path, len(df))
@@ -104,6 +105,7 @@ def export_both(
     output_dir: str | Path,
     run_date: str | None = None,
     tz_local: str = "Europe/Zurich",
+    filename_base: str | None = None,
 ) -> dict[str, Path]:
     """
     Exporte CSV + Parquet avec nommage automatique.
@@ -115,10 +117,12 @@ def export_both(
     Returns:
         dict {'csv': Path, 'parquet': Path}
     """
-    if run_date is None:
-        run_date = pd.Timestamp.now().strftime("%Y%m%d")
-
-    base = Path(output_dir) / f"pfc_15min_{run_date}"
+    if filename_base:
+        base = Path(output_dir) / filename_base
+    else:
+        if run_date is None:
+            run_date = pd.Timestamp.now().strftime("%Y%m%d")
+        base = Path(output_dir) / f"pfc_15min_{run_date}"
     return {
         "csv":     export_csv(pfc_df, base.with_suffix(".csv"), tz_local),
         "parquet": export_parquet(pfc_df, base.with_suffix(".parquet"), tz_local),
@@ -129,7 +133,7 @@ def export_both(
 # Interne
 # ---------------------------------------------------------------------------
 
-def _prepare_export(pfc_df: pd.DataFrame, tz_local: str) -> pd.DataFrame:
+def _prepare_export(pfc_df: pd.DataFrame, tz_local: str, include_internal: bool = False) -> pd.DataFrame:
     """
     Prépare le DataFrame pour l'export :
       - Convertit l'index UTC → tz_local
@@ -144,9 +148,9 @@ def _prepare_export(pfc_df: pd.DataFrame, tz_local: str) -> pd.DataFrame:
     df.index = df.index.tz_convert(tz_local)
     df.index.name = "timestamp_local"
 
-    # Sélection colonnes disponibles
-    cols = [c for c in EULER_COLUMNS if c in df.columns]
-    missing = [c for c in EULER_COLUMNS if c not in df.columns]
+    export_cols = INTERNAL_COLUMNS if include_internal else EULER_COLUMNS
+    cols = [c for c in export_cols if c in df.columns]
+    missing = [c for c in export_cols if c not in df.columns]
     if missing:
         logger.debug("Colonnes absentes de l'export : %s", missing)
 

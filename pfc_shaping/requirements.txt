@@ -28,6 +28,7 @@ holidays>=0.40
 
 # Configuration
 PyYAML>=6.0
+duckdb>=1.1.0
 
 # Tests
 pytest>=7.0.0
