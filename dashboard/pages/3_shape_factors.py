@@ -1,5 +1,5 @@
-"""
-Page 3 — Shape Factors
+﻿"""
+Page 3 â€” Shape Factors
 "Comment le prix varie intra-jour / semaine / saison"
 """
 
@@ -14,23 +14,23 @@ from utils import (
 )
 
 st.header("Shape Factors")
-st.caption("Décomposition multiplicative : saisonnier, jour, horaire, 15min")
+st.caption("DÃ©composition multiplicative : saisonnier, jour, horaire, 15min")
 
 show_freshness_sidebar()
 
 epex = load_epex()
 
 if epex is None or "price_eur_mwh" not in (epex.columns if epex is not None else []):
-    no_data_warning("prix EPEX (nécessaire pour calculer les shape factors)")
+    no_data_warning("prix EPEX (nÃ©cessaire pour calculer les shape factors)")
     st.stop()
 
-# ── Enrich with calendar ──────────────────────────────────────────────────
+# â”€â”€ Enrich with calendar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 try:
     from pfc_shaping.data.calendar_ch import enrich_15min_index
     cal = enrich_15min_index(epex.index)
 except ImportError:
     st.error(
-        "Module `holidays` non installé. "
+        "Module `holidays` non installÃ©. "
         "Lance `pip install holidays` puis relance le dashboard."
     )
     st.stop()
@@ -40,7 +40,7 @@ except Exception as e:
 
 df = epex[["price_eur_mwh"]].join(cal)
 
-# ── Sidebar filters ──────────────────────────────────────────────────────
+# â”€â”€ Sidebar filters â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 with st.sidebar:
     st.subheader("Filtres")
     saisons = sorted(df["saison"].unique().tolist())
@@ -52,14 +52,14 @@ mask = df["saison"].isin(sel_saisons) & df["type_jour"].isin(sel_types)
 df_f = df[mask]
 
 if df_f.empty:
-    st.warning("Aucune donnée pour cette combinaison de filtres.")
+    st.warning("Aucune donnÃ©e pour cette combinaison de filtres.")
     st.stop()
 
-# ══════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 tab1, tab2, tab3, tab4 = st.tabs(["Profil horaire (f_H)", "Jour semaine (f_W)",
                                    "Intra-horaire (f_Q)", "Heatmap"])
 
-# ── TAB 1: f_H ───────────────────────────────────────────────────────────
+# â”€â”€ TAB 1: f_H â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 with tab1:
     st.subheader("Facteur horaire f_H par saison x type de jour")
 
@@ -90,18 +90,18 @@ with tab1:
     )
     fig_fh.add_hline(y=1.0, line_dash="dot", line_color=COLORS["muted"], opacity=0.5)
     fig_fh.update_layout(height=450)
-    st.plotly_chart(fig_fh, use_container_width=True)
+    st.plotly_chart(fig_fh, width="stretch")
 
     with st.expander("Export"):
         export_csv_button(hourly, "shape_f_H.csv", "Export f_H")
 
-# ── TAB 2: f_W ───────────────────────────────────────────────────────────
+# â”€â”€ TAB 2: f_W â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 with tab2:
     st.subheader("Facteur jour de semaine f_W")
 
     weekly_mean = df_f["price_eur_mwh"].mean()
     if abs(weekly_mean) < 0.1:
-        st.warning("Moyenne des prix proche de zéro — f_W non calculable.")
+        st.warning("Moyenne des prix proche de zÃ©ro â€” f_W non calculable.")
     else:
         fw = (
             df_f.groupby("type_jour")["price_eur_mwh"]
@@ -130,18 +130,18 @@ with tab2:
             height=300,
             xaxis_range=[0.6, 1.2],
         )
-        st.plotly_chart(fig_fw, use_container_width=True)
+        st.plotly_chart(fig_fw, width="stretch")
 
         st.markdown(
-            "> **Lecture** : Ouvrable > 1 = prix plus elevés en semaine. "
-            "Ferie_CH < 1 = forte baisse les jours fériés suisses."
+            "> **Lecture** : Ouvrable > 1 = prix plus elevÃ©s en semaine. "
+            "Ferie_CH < 1 = forte baisse les jours fÃ©riÃ©s suisses."
         )
 
-# ── TAB 3: f_Q ───────────────────────────────────────────────────────────
+# â”€â”€ TAB 3: f_Q â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 with tab3:
     st.subheader("Facteur intra-horaire f_Q (15min)")
 
-    sel_hour = st.slider("Heure à analyser", 0, 23, 8)
+    sel_hour = st.slider("Heure Ã  analyser", 0, 23, 8)
 
     q_data = df_f[df_f["heure_hce"] == sel_hour].copy()
     if not q_data.empty:
@@ -166,18 +166,18 @@ with tab3:
             )
             fig_q.add_hline(y=1.0, line_dash="dot", line_color=COLORS["muted"])
             fig_q.update_layout(height=350)
-            st.plotly_chart(fig_q, use_container_width=True)
+            st.plotly_chart(fig_q, width="stretch")
 
             st.markdown(
-                f"> **Heure {sel_hour}h** — Q1=:00, Q2=:15, Q3=:30, Q4=:45. "
-                "Les heures de rampe (7-10h, 17-20h) montrent les plus grands écarts."
+                f"> **Heure {sel_hour}h** â€” Q1=:00, Q2=:15, Q3=:30, Q4=:45. "
+                "Les heures de rampe (7-10h, 17-20h) montrent les plus grands Ã©carts."
             )
         else:
-            st.info("Pas assez de données valides pour cette heure.")
+            st.info("Pas assez de donnÃ©es valides pour cette heure.")
     else:
-        st.info("Pas de données pour cette sélection.")
+        st.info("Pas de donnÃ©es pour cette sÃ©lection.")
 
-# ── TAB 4: Heatmap ───────────────────────────────────────────────────────
+# â”€â”€ TAB 4: Heatmap â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 with tab4:
     st.subheader("Heatmap prix moyen : Mois x Heure")
 
@@ -186,8 +186,8 @@ with tab4:
     heat_data = df_f_heat.groupby(["month", "heure_hce"])["price_eur_mwh"].mean().reset_index()
     heat_pivot = heat_data.pivot(index="month", columns="heure_hce", values="price_eur_mwh")
 
-    month_labels = ["Jan", "Fév", "Mar", "Avr", "Mai", "Jun",
-                    "Jul", "Aoû", "Sep", "Oct", "Nov", "Déc"]
+    month_labels = ["Jan", "FÃ©v", "Mar", "Avr", "Mai", "Jun",
+                    "Jul", "AoÃ»", "Sep", "Oct", "Nov", "DÃ©c"]
     # Only use labels for months present
     y_labels = [month_labels[m-1] for m in heat_pivot.index]
 
@@ -210,4 +210,4 @@ with tab4:
         yaxis=dict(autorange="reversed"),
         height=450,
     )
-    st.plotly_chart(fig_heat, use_container_width=True)
+    st.plotly_chart(fig_heat, width="stretch")

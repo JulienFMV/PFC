@@ -1,38 +1,38 @@
-"""
+﻿"""
 assembler.py
 ------------
 Assemblage de la PFC 15min N+3 ans.
 
-Formule complÃ¨te (6 facteurs multiplicatifs + calibration) :
-    P_raw(t) = B(year) Ã— f_S(month) Ã— f_W(dow) Ã— f_H(h) Ã— f_Q(q) Ã— f_WV(t)
+Formule complÃƒÂ¨te (6 facteurs multiplicatifs + calibration) :
+    P_raw(t) = B(year) Ãƒâ€” f_S(month) Ãƒâ€” f_W(dow) Ãƒâ€” f_H(h) Ãƒâ€” f_Q(q) Ãƒâ€” f_WV(t)
 
 Puis calibration arbitrage-free :
-    P_cal(t) = P_raw(t) + Î´(t)
-    oÃ¹ Î´ minimise âˆ«(Î´''(t))Â² sous contrainte :
-        mean(P_cal sur contrat i) = prix_futures_i   âˆ€ i
+    P_cal(t) = P_raw(t) + ÃŽÂ´(t)
+    oÃƒÂ¹ ÃŽÂ´ minimise Ã¢Ë†Â«(ÃŽÂ´''(t))Ã‚Â² sous contrainte :
+        mean(P_cal sur contrat i) = prix_futures_i   Ã¢Ë†â‚¬ i
 
-OÃ¹ :
+OÃƒÂ¹ :
     B(year)   = niveau de base annuel (forwards EEX Cal/Quarter/Month)
-    f_S(month)= facteur saisonnier mensuel (normalisÃ© : mean = 1)
-    f_W(dow)  = facteur jour de semaine (normalisÃ© : mean hebdo = 1)
+    f_S(month)= facteur saisonnier mensuel (normalisÃƒÂ© : mean = 1)
+    f_W(dow)  = facteur jour de semaine (normalisÃƒÂ© : mean hebdo = 1)
     f_H(h)    = facteur horaire intraday (ShapeHourly)
     f_Q(q)    = facteur 15min intra-horaire (ShapeIntraday)
-    f_WV(t)   = correction Water Value rÃ©servoirs hydro CH (WaterValueCorrection)
+    f_WV(t)   = correction Water Value rÃƒÂ©servoirs hydro CH (WaterValueCorrection)
 
 Pipeline :
-    1. Cascading : enrichir les forwards manquants (Yearâ†’Qâ†’Month)
-    2. Shape brut : P_raw = B Ã— f_S Ã— f_W Ã— f_H Ã— f_Q Ã— f_WV
-    3. Calibration : P_cal = P_raw + Î´ (arbitrage-free, Maximum Smoothness)
+    1. Cascading : enrichir les forwards manquants (YearÃ¢â€ â€™QÃ¢â€ â€™Month)
+    2. Shape brut : P_raw = B Ãƒâ€” f_S Ãƒâ€” f_W Ãƒâ€” f_H Ãƒâ€” f_Q Ãƒâ€” f_WV
+    3. Calibration : P_cal = P_raw + ÃŽÂ´ (arbitrage-free, Maximum Smoothness)
     4. IC bootstrap : p10, p90
 
 Horizon glissant :
     start  = demain (J+1)
-    end    = J + 1095 (â‰ˆ 3 ans)
+    end    = J + 1095 (Ã¢â€°Ë† 3 ans)
 
-GranularitÃ© de B et f_S selon l'horizon :
-    M+1 â†’ M+6   : B mensuel (forwards EEX Monthly)
-    M+7 â†’ M+12  : B trimestriel (forwards EEX Quarterly)
-    Y+2 â†’ Y+3   : B annuel (forwards EEX Cal)
+GranularitÃƒÂ© de B et f_S selon l'horizon :
+    M+1 Ã¢â€ â€™ M+6   : B mensuel (forwards EEX Monthly)
+    M+7 Ã¢â€ â€™ M+12  : B trimestriel (forwards EEX Quarterly)
+    Y+2 Ã¢â€ â€™ Y+3   : B annuel (forwards EEX Cal)
 """
 
 from __future__ import annotations
@@ -57,17 +57,17 @@ class PFCAssembler:
     """
     Assembleur de la PFC 15min N+3 ans.
 
-    IntÃ¨gre les 3 modules ajoutÃ©s :
-        - ContractCascader  : dÃ©composition automatique des forwards
-        - WaterValueCorrection : correction hydro saisonniÃ¨re
+    IntÃƒÂ¨gre les 3 modules ajoutÃƒÂ©s :
+        - ContractCascader  : dÃƒÂ©composition automatique des forwards
+        - WaterValueCorrection : correction hydro saisonniÃƒÂ¨re
         - ArbitrageFreeCalibrator : calibration no-arbitrage
 
     Args:
-        shape_hourly   : instance ShapeHourly fittÃ©e
-        shape_intraday : instance ShapeIntraday fittÃ©e
+        shape_hourly   : instance ShapeHourly fittÃƒÂ©e
+        shape_intraday : instance ShapeIntraday fittÃƒÂ©e
         uncertainty    : instance Uncertainty (optionnel, pour IC p10/p90)
-        water_value    : instance WaterValueCorrection fittÃ©e (optionnel)
-        cascader       : instance ContractCascader fittÃ©e (optionnel)
+        water_value    : instance WaterValueCorrection fittÃƒÂ©e (optionnel)
+        cascader       : instance ContractCascader fittÃƒÂ©e (optionnel)
         calibrator     : instance ArbitrageFreeCalibrator (optionnel)
     """
 
@@ -99,18 +99,18 @@ class PFCAssembler:
         Construit la PFC 15min sur l'horizon N+3.
 
         Args:
-            base_prices    : dict de niveaux de base, clÃ©s selon granularitÃ© :
-                             {'2025': 65.0,               â† niveau annuel Cal
-                              '2025-01': 70.0,            â† override mensuel si dispo
-                              '2025-Q1': 68.0}            â† override trimestriel si dispo
-                             Logique de prioritÃ© : mensuel > trimestriel > annuel
+            base_prices    : dict de niveaux de base, clÃƒÂ©s selon granularitÃƒÂ© :
+                             {'2025': 65.0,               Ã¢â€ Â niveau annuel Cal
+                              '2025-01': 70.0,            Ã¢â€ Â override mensuel si dispo
+                              '2025-Q1': 68.0}            Ã¢â€ Â override trimestriel si dispo
+                             Logique de prioritÃƒÂ© : mensuel > trimestriel > annuel
 
-            start_date     : 'YYYY-MM-DD' (dÃ©faut = demain)
-            horizon_days   : nombre de jours (dÃ©faut = 3Ã—365)
-            entso_forecast : prÃ©visions solar_regime + load_deviation sur l'horizon
-                             (None â†’ valeurs neutres utilisÃ©es)
-            hydro_forecast : prÃ©visions fill_deviation rÃ©servoirs hydro CH
-                             (None â†’ f_WV = 1.0 neutre)
+            start_date     : 'YYYY-MM-DD' (dÃƒÂ©faut = demain)
+            horizon_days   : nombre de jours (dÃƒÂ©faut = 3Ãƒâ€”365)
+            entso_forecast : prÃƒÂ©visions solar_regime + load_deviation sur l'horizon
+                             (None Ã¢â€ â€™ valeurs neutres utilisÃƒÂ©es)
+            hydro_forecast : prÃƒÂ©visions fill_deviation rÃƒÂ©servoirs hydro CH
+                             (None Ã¢â€ â€™ f_WV = 1.0 neutre)
 
         Returns:
             DataFrame colonnes ['price_shape', 'f_S', 'f_W', 'f_H', 'f_Q',
@@ -124,12 +124,12 @@ class PFCAssembler:
         ts_start = pd.Timestamp(start_date, tz="UTC")
         ts_end = ts_start + pd.Timedelta(days=horizon_days)
 
-        logger.info("Assemblage PFC 15min : %s â†’ %s", ts_start.date(), ts_end.date())
+        logger.info("Assemblage PFC 15min : %s Ã¢â€ â€™ %s", ts_start.date(), ts_end.date())
 
-        # â”€â”€ 0. Cascading des forwards manquants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # Ã¢â€â‚¬Ã¢â€â‚¬ 0. Cascading des forwards manquants Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         if self.cascader is not None:
             base_prices = self.cascader.cascade(base_prices)
-            logger.info("Cascading terminÃ© : %d produits forwards", len(base_prices))
+            logger.info("Cascading terminÃƒÂ© : %d produits forwards", len(base_prices))
 
         # Index complet 15min UTC
         idx = pd.date_range(ts_start, ts_end, freq="15min", inclusive="left", tz="UTC")
@@ -137,31 +137,31 @@ class PFCAssembler:
         # Enrichissement calendaire
         cal = enrich_15min_index(idx)
 
-        # â”€â”€ Facteur saisonnier mensuel f_S â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # Ã¢â€â‚¬Ã¢â€â‚¬ Facteur saisonnier mensuel f_S Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         f_S = self._compute_f_S(idx, base_prices)
 
-        # â”€â”€ Facteur jour de semaine f_W â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # Ã¢â€â‚¬Ã¢â€â‚¬ Facteur jour de semaine f_W Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         f_W = self._compute_f_W(cal)
 
-        # â”€â”€ Facteur horaire f_H â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # Ã¢â€â‚¬Ã¢â€â‚¬ Facteur horaire f_H Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         f_H = self.sh.apply(idx, cal)
 
-        # â”€â”€ Facteur 15min f_Q â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # Ã¢â€â‚¬Ã¢â€â‚¬ Facteur 15min f_Q Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         f_Q = self.si.apply(idx, cal, entso_forecast)
 
-        # â”€â”€ Facteur Water Value f_WV â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # Ã¢â€â‚¬Ã¢â€â‚¬ Facteur Water Value f_WV Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         if self.wv is not None:
             f_WV = self.wv.apply(idx, cal, hydro_forecast)
         else:
             f_WV = pd.Series(1.0, index=idx, name="f_WV")
 
-        # â”€â”€ Niveau de base B par timestamp â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # Ã¢â€â‚¬Ã¢â€â‚¬ Niveau de base B par timestamp Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         B = self._resolve_base(idx, base_prices)
 
-        # â”€â”€ Prix brut (avant calibration) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # Ã¢â€â‚¬Ã¢â€â‚¬ Prix brut (avant calibration) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         price_raw = B * f_S * f_W * f_H * f_Q * f_WV
 
-        # â”€â”€ Profile type (pour traÃ§abilitÃ©) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # Ã¢â€â‚¬Ã¢â€â‚¬ Profile type (pour traÃƒÂ§abilitÃƒÂ©) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         idx_zurich = idx.tz_convert("Europe/Zurich")
         months_ahead = ((idx_zurich.to_period("M") - pd.Timestamp.now(tz="Europe/Zurich").to_period("M"))
                         .apply(lambda x: x.n if hasattr(x, 'n') else 0))
@@ -170,7 +170,7 @@ class PFCAssembler:
         profile_type[months_ahead <= 12] = "M+7..M+12"
         profile_type[months_ahead <= 6] = "M+1..M+6"
 
-        # â”€â”€ Calibration arbitrage-free â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # Ã¢â€â‚¬Ã¢â€â‚¬ Calibration arbitrage-free Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         calibrated = False
         if self.calibrator is not None:
             price_shape, calibrated = self._apply_calibration(
@@ -179,7 +179,7 @@ class PFCAssembler:
         else:
             price_shape = price_raw
 
-        # â”€â”€ Assemblage DataFrame â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # Ã¢â€â‚¬Ã¢â€â‚¬ Assemblage DataFrame Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         df = pd.DataFrame(
             {
                 "price_shape": price_shape,
@@ -196,7 +196,7 @@ class PFCAssembler:
             index=idx,
         )
 
-        # â”€â”€ Intervalles de confiance (optionnel) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # Ã¢â€â‚¬Ã¢â€â‚¬ Intervalles de confiance (optionnel) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         if self.unc is not None:
             ic = self.unc.compute(df, cal)
             df["p10"] = ic["p10"]
@@ -205,14 +205,14 @@ class PFCAssembler:
             df["p10"] = np.nan
             df["p90"] = np.nan
 
-        # â”€â”€ VÃ©rification cohÃ©rence Ã©nergÃ©tique â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # Ã¢â€â‚¬Ã¢â€â‚¬ VÃƒÂ©rification cohÃƒÂ©rence ÃƒÂ©nergÃƒÂ©tique Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         self._check_energy_consistency(df, base_prices)
 
         logger.info(
-            "PFC assemblÃ©e : %d intervalles 15min, prix min=%.1f max=%.1f â‚¬/MWh, "
+            "PFC assemblÃƒÂ©e : %d intervalles 15min, prix min=%.1f max=%.1f Ã¢â€šÂ¬/MWh, "
             "calibration=%s",
             len(df), df["price_shape"].min(), df["price_shape"].max(),
-            "OK" if calibrated else "non appliquÃ©e"
+            "OK" if calibrated else "non appliquÃƒÂ©e"
         )
         return df
 
@@ -232,7 +232,7 @@ class PFCAssembler:
         le calibrator.
 
         Returns:
-            Tuple (prix calibrÃ©, True si convergence OK)
+            Tuple (prix calibrÃƒÂ©, True si convergence OK)
         """
         from pfc_shaping.calibration.arbitrage_free import FuturesContract
         from pfc_shaping.calibration.cascading import parse_key, _period_boundaries_utc
@@ -270,7 +270,7 @@ class PFCAssembler:
             ))
 
         if not contracts:
-            logger.info("Aucun contrat futures applicable â€” calibration ignorÃ©e")
+            logger.info("Aucun contrat futures applicable Ã¢â‚¬â€ calibration ignorÃƒÂ©e")
             return price_raw, False
 
         logger.info(
@@ -280,14 +280,14 @@ class PFCAssembler:
 
         if result.converged:
             logger.info(
-                "Calibration convergÃ©e : rÃ©sidu max = %.6f â‚¬/MWh, "
-                "coÃ»t lissage = %.2f",
+                "Calibration convergÃƒÂ©e : rÃƒÂ©sidu max = %.6f Ã¢â€šÂ¬/MWh, "
+                "coÃƒÂ»t lissage = %.2f",
                 result.max_abs_residual,
                 result.smoothness_cost,
             )
         else:
             logger.warning(
-                "Calibration NON convergÃ©e : rÃ©sidu max = %.6f â‚¬/MWh",
+                "Calibration NON convergÃƒÂ©e : rÃƒÂ©sidu max = %.6f Ã¢â€šÂ¬/MWh",
                 result.max_abs_residual,
             )
 
@@ -299,8 +299,8 @@ class PFCAssembler:
 
     def _resolve_base(self, idx: pd.DatetimeIndex, base_prices: dict) -> pd.Series:
         """
-        RÃ©sout le niveau de base B pour chaque timestamp.
-        PrioritÃ© : mensuel > trimestriel > annuel.
+        RÃƒÂ©sout le niveau de base B pour chaque timestamp.
+        PrioritÃƒÂ© : mensuel > trimestriel > annuel.
         """
         B = pd.Series(np.nan, index=idx)
         idx_zurich = idx.tz_convert("Europe/Zurich")
@@ -324,7 +324,7 @@ class PFCAssembler:
                         break
 
         if B.isna().any():
-            logger.warning("%d timestamps sans niveau de base â€” interpolation", B.isna().sum())
+            logger.warning("%d timestamps sans niveau de base Ã¢â‚¬â€ interpolation", B.isna().sum())
             B = B.interpolate(method="linear").ffill().bfill()
 
         return B
@@ -332,7 +332,7 @@ class PFCAssembler:
     def _compute_f_S(self, idx: pd.DatetimeIndex, base_prices: dict) -> pd.Series:
         """
         Facteur saisonnier mensuel f_S = niveau_mensuel / niveau_annuel.
-        Si pas de dÃ©composition mensuelle disponible â†’ f_S = 1.
+        Si pas de dÃƒÂ©composition mensuelle disponible Ã¢â€ â€™ f_S = 1.
         """
         f_S = pd.Series(1.0, index=idx)
         idx_zurich = idx.tz_convert("Europe/Zurich")
@@ -346,23 +346,23 @@ class PFCAssembler:
         return f_S
 
     def _compute_f_W(self, cal: pd.DataFrame) -> pd.Series:
-        “””
+        """
         Facteur jour de semaine f_W.
-        Utilise les ratios empiriques calibrés par ShapeHourly.fit() sur
-        l'historique EPEX. Fallback sur des défauts si non disponible.
-        “””
+        Utilise les ratios empiriques calibres par ShapeHourly.fit() sur
+        l''historique EPEX. Fallback sur des defauts si non disponible.
+        """
         _FW_DEFAULTS = {
-            “Ouvrable”: 1.05,
-            “Samedi”:   0.92,
-            “Dimanche”: 0.78,
-            “Ferie_CH”: 0.75,
-            “Ferie_DE”: 0.88,
+            "Ouvrable": 1.05,
+            "Samedi": 0.92,
+            "Dimanche": 0.78,
+            "Ferie_CH": 0.75,
+            "Ferie_DE": 0.88,
         }
         f_W_map = self.sh.f_W_ if self.sh.f_W_ else _FW_DEFAULTS
-        return cal[“type_jour”].map(f_W_map).fillna(1.0).rename(“f_W”)
+        return cal["type_jour"].map(f_W_map).fillna(1.0).rename("f_W")
 
     def _confidence_score(self, months_ahead: pd.Series) -> pd.Series:
-        """Score de confiance [0,1] dÃ©croissant avec l'horizon."""
+        """Score de confiance [0,1] dÃƒÂ©croissant avec l'horizon."""
         score = pd.Series(1.0, index=months_ahead.index)
         score[months_ahead > 6]  = 0.85
         score[months_ahead > 12] = 0.65
@@ -371,8 +371,8 @@ class PFCAssembler:
 
     def _check_energy_consistency(self, df: pd.DataFrame, base_prices: dict) -> None:
         """
-        VÃ©rifie que la moyenne annuelle de price_shape â‰ˆ niveau de base annuel.
-        LÃ¨ve une alerte si l'Ã©cart > 5% (ou > 0.5% si calibration appliquÃ©e).
+        VÃƒÂ©rifie que la moyenne annuelle de price_shape Ã¢â€°Ë† niveau de base annuel.
+        LÃƒÂ¨ve une alerte si l'ÃƒÂ©cart > 5% (ou > 0.5% si calibration appliquÃƒÂ©e).
         """
         threshold = 0.005 if df["calibrated"].any() else 0.05
 
@@ -387,10 +387,10 @@ class PFCAssembler:
                 rel_err = abs(mean_p - base) / abs(base)
                 if rel_err > threshold:
                     logger.warning(
-                        "CohÃ©rence Ã©nergie %s : base=%.2f, mean_PFC=%.2f, Ã©cart=%.1f%%",
+                        "CohÃƒÂ©rence ÃƒÂ©nergie %s : base=%.2f, mean_PFC=%.2f, ÃƒÂ©cart=%.1f%%",
                         year, base, mean_p, rel_err * 100
                     )
                 else:
                     logger.info(
-                        "CohÃ©rence Ã©nergie %s : OK (Ã©cart=%.2f%%)", year, rel_err * 100
+                        "CohÃƒÂ©rence ÃƒÂ©nergie %s : OK (ÃƒÂ©cart=%.2f%%)", year, rel_err * 100
                     )
