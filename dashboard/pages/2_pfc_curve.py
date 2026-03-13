@@ -1,6 +1,6 @@
 ﻿"""
-Page 2 â€” Courbe PFC
-"La term structure complÃ¨te"
+Page 2 — Courbe PFC
+"La term structure complète"
 """
 
 import numpy as np
@@ -14,7 +14,7 @@ from utils import (
 )
 
 st.header("Courbe PFC N+3 ans")
-st.caption("Price Forward Curve 15min â€” base, peak, off-peak avec intervalles de confiance")
+st.caption("Price Forward Curve 15min — base, peak, off-peak avec intervalles de confiance")
 
 show_freshness_sidebar()
 
@@ -24,10 +24,10 @@ if pfc is None or "price_shape" not in (pfc.columns if pfc is not None else []):
     no_data_warning("PFC")
     st.stop()
 
-# â”€â”€ Sidebar controls â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Sidebar controls ─────────────────────────────────────────────────────
 with st.sidebar:
-    st.subheader("RÃ©solution")
-    resolution = st.radio("AgrÃ©gation", ["15min", "Horaire", "Journalier", "Mensuel"],
+    st.subheader("Résolution")
+    resolution = st.radio("Agrégation", ["15min", "Horaire", "Journalier", "Mensuel"],
                           index=1, horizontal=True)
     resample_map = {"15min": None, "Horaire": "h", "Journalier": "D", "Mensuel": "MS"}
 
@@ -37,7 +37,7 @@ with st.sidebar:
     show_offpeak = st.checkbox("Off-Peak", value=False)
     show_bands = st.checkbox("Bandes IC 80%", value=True)
 
-# â”€â”€ Resample â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Resample ──────────────────────────────────────────────────────────────
 freq = resample_map[resolution]
 
 if freq:
@@ -48,7 +48,7 @@ if freq:
 else:
     pfc_r = pfc
 
-# â”€â”€ Peak / Off-Peak decomposition â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Peak / Off-Peak decomposition ────────────────────────────────────────
 idx_zurich = pfc.index.tz_convert("Europe/Zurich")
 is_peak = (idx_zurich.hour >= 8) & (idx_zurich.hour < 20) & (idx_zurich.dayofweek < 5)
 
@@ -59,7 +59,7 @@ else:
     pfc_peak = pfc.loc[is_peak, "price_shape"]
     pfc_offpeak = pfc.loc[~is_peak, "price_shape"]
 
-# â”€â”€ KPI Row â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── KPI Row ───────────────────────────────────────────────────────────────
 k1, k2, k3, k4 = st.columns(4)
 with k1:
     st.metric("Base avg", f"{pfc['price_shape'].mean():.1f} EUR/MWh")
@@ -71,13 +71,13 @@ with k3:
 with k4:
     if "calibrated" in pfc.columns:
         cal_pct = pfc["calibrated"].mean() * 100
-        st.metric("CalibrÃ©", f"{cal_pct:.0f}%")
+        st.metric("Calibré", f"{cal_pct:.0f}%")
     else:
         st.metric("Horizon", f"{len(pfc) // 96} jours")
 
 st.divider()
 
-# â”€â”€ Main PFC Chart â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Main PFC Chart ────────────────────────────────────────────────────────
 fig = go.Figure()
 
 if show_base:
@@ -124,7 +124,7 @@ fig.update_layout(
 fig = add_range_slider(fig)
 st.plotly_chart(fig, width="stretch")
 
-# â”€â”€ Monthly term structure â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Monthly term structure ────────────────────────────────────────────────
 st.subheader("Term Structure mensuelle")
 
 monthly = pfc["price_shape"].resample("MS").mean()
@@ -151,13 +151,14 @@ fig_bar.update_layout(
 )
 st.plotly_chart(fig_bar, width="stretch")
 
-# â”€â”€ Export â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Export ────────────────────────────────────────────────────────────────
 with st.expander("Export"):
-    export_csv_button(pfc_r, "pfc_curve.csv", "Export PFC (rÃ©solution sÃ©lectionnÃ©e)")
+    export_csv_button(pfc_r, "pfc_curve.csv", "Export PFC (résolution sélectionnée)")
 
-# â”€â”€ Confidence profile â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Confidence profile ────────────────────────────────────────────────────
 if "confidence" in pfc.columns:
     with st.expander("Score de confiance par horizon"):
         conf = pfc.groupby("profile_type")["confidence"].first().reset_index()
         conf.columns = ["Horizon", "Confiance"]
         st.dataframe(conf, hide_index=True, width="stretch")
+

@@ -1,5 +1,5 @@
 ﻿"""
-Page 5 â€” Hydro & Fondamentaux
+Page 5 — Hydro & Fondamentaux
 "Les drivers physiques"
 """
 
@@ -14,17 +14,17 @@ from utils import (
 )
 
 st.header("Hydro & Fondamentaux")
-st.caption("RÃ©servoirs hydroÃ©lectriques suisses â€” donnÃ©es SFOE (opendata.swiss)")
+st.caption("Réservoirs hydroélectriques suisses — données SFOE (opendata.swiss)")
 
 show_freshness_sidebar()
 
 hydro = load_hydro()
 
 if hydro is None or "fill_pct" not in (hydro.columns if hydro is not None else []):
-    no_data_warning("rÃ©servoirs hydro")
+    no_data_warning("réservoirs hydro")
     st.stop()
 
-# â”€â”€ KPI Row â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── KPI Row ───────────────────────────────────────────────────────────────
 latest = hydro.iloc[-1]
 prev = hydro.iloc[-2] if len(hydro) > 1 else latest
 
@@ -36,11 +36,11 @@ with k2:
     st.metric("Stock total", format_gwh(latest["fill_gwh"]),
               delta=f"{latest['fill_gwh'] - prev['fill_gwh']:+.0f} GWh")
 with k3:
-    st.metric("CapacitÃ© max", format_gwh(latest["max_capacity_gwh"]))
+    st.metric("Capacité max", format_gwh(latest["max_capacity_gwh"]))
 with k4:
     if "fill_deviation" in hydro.columns:
         dev = latest["fill_deviation"]
-        st.metric("Fill deviation", f"{dev:+.2f} Ïƒ",
+        st.metric("Fill deviation", f"{dev:+.2f} σ",
                   delta="Sous moyenne" if dev < 0 else "Sur moyenne",
                   delta_color="inverse" if dev < 0 else "normal")
 with k5:
@@ -49,19 +49,19 @@ with k5:
 
 st.divider()
 
-# â”€â”€ Sidebar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Sidebar ───────────────────────────────────────────────────────────────
 with st.sidebar:
     st.subheader("Options")
-    show_regions = st.checkbox("DÃ©tail par rÃ©gion", value=False)
+    show_regions = st.checkbox("Détail par région", value=False)
     available_years = sorted(hydro.index.year.unique(), reverse=True)
     current_year = pd.Timestamp.now().year
     default_years = [y for y in [current_year, current_year - 1] if y in available_years]
     year_compare = st.multiselect(
-        "AnnÃ©es Ã  comparer", available_years, default=default_years,
+        "Années à comparer", available_years, default=default_years,
     )
 
-# â”€â”€ Main chart: Fan chart â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-st.subheader("Niveaux de remplissage â€” fan chart historique")
+# ── Main chart: Fan chart ─────────────────────────────────────────────────
+st.subheader("Niveaux de remplissage — fan chart historique")
 
 hydro_plot = hydro[["fill_pct"]].copy()
 hydro_plot["week"] = hydro_plot.index.isocalendar().week.values.astype(int)
@@ -107,9 +107,9 @@ if not hist.empty:
     # Median
     fig.add_trace(go.Scatter(
         x=envelope.index, y=envelope["median"],
-        name="MÃ©diane hist.",
+        name="Médiane hist.",
         line=dict(color=COLORS["muted"], width=1.5, dash="dot"),
-        hovertemplate="Sem %{x}: %{y:.1f}%<extra>MÃ©diane</extra>",
+        hovertemplate="Sem %{x}: %{y:.1f}%<extra>Médiane</extra>",
     ))
 
     # Selected years
@@ -137,9 +137,9 @@ if not hist.empty:
     )
     st.plotly_chart(fig, width="stretch")
 else:
-    st.info("Pas assez de donnÃ©es historiques pour le fan chart.")
+    st.info("Pas assez de données historiques pour le fan chart.")
 
-# â”€â”€ Fill deviation time series â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Fill deviation time series ────────────────────────────────────────────
 if "fill_deviation" in hydro.columns:
     st.subheader("Fill deviation (z-score vs historique)")
 
@@ -151,7 +151,7 @@ if "fill_deviation" in hydro.columns:
         fig_dev.add_trace(go.Scatter(
             x=dev.index, y=dev.values,
             line=dict(color=COLORS["amber"], width=1.5),
-            hovertemplate="%{x|%b %Y}: %{y:+.2f}Ïƒ<extra></extra>",
+            hovertemplate="%{x|%b %Y}: %{y:+.2f}σ<extra></extra>",
             showlegend=False,
         ))
 
@@ -171,9 +171,9 @@ if "fill_deviation" in hydro.columns:
 
         fig_dev.add_hline(y=0, line_color=COLORS["muted"], line_width=1)
         fig_dev.add_hline(y=-1, line_dash="dot", line_color=COLORS["red"], opacity=0.5,
-                          annotation_text="-1Ïƒ")
+                          annotation_text="-1σ")
         fig_dev.add_hline(y=1, line_dash="dot", line_color=COLORS["green"], opacity=0.5,
-                          annotation_text="+1Ïƒ")
+                          annotation_text="+1σ")
         fig_dev.update_layout(
             yaxis_title="Z-score",
             height=350,
@@ -182,13 +182,13 @@ if "fill_deviation" in hydro.columns:
         st.plotly_chart(fig_dev, width="stretch")
 
         st.markdown(
-            "> **Lecture** : NÃ©gatif = rÃ©servoirs sous la moyenne historique pour cette "
-            "semaine â†’ pression haussiÃ¨re sur les prix. Positif = surplus hydro â†’ pression baissiÃ¨re."
+            "> **Lecture** : Négatif = réservoirs sous la moyenne historique pour cette "
+            "semaine → pression haussière sur les prix. Positif = surplus hydro → pression baissière."
         )
 
-# â”€â”€ Regional breakdown â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Regional breakdown ────────────────────────────────────────────────────
 if show_regions and "wallis_gwh" in hydro.columns:
-    st.subheader("DÃ©tail rÃ©gional")
+    st.subheader("Détail régional")
 
     regions = {
         "Valais": "wallis_gwh",
@@ -236,6 +236,7 @@ if show_regions and "wallis_gwh" in hydro.columns:
     for i, (k, v) in enumerate(snapshot_data.items()):
         cols[i].markdown(f"**{k}**\n\n{v}")
 
-# â”€â”€ Export â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Export ────────────────────────────────────────────────────────────────
 with st.expander("Export"):
-    export_csv_button(hydro, "hydro_reservoirs.csv", "Export donnÃ©es hydro complÃ¨tes")
+    export_csv_button(hydro, "hydro_reservoirs.csv", "Export données hydro complètes")
+
