@@ -62,6 +62,13 @@ def init_db(db_path: str | Path) -> Path:
             );
             """
         )
+        # Indexes for query performance
+        con.execute(
+            "CREATE INDEX IF NOT EXISTS idx_forecasts_ts ON forecasts_hourly(ts_local)"
+        )
+        con.execute(
+            "CREATE INDEX IF NOT EXISTS idx_forecasts_run ON forecasts_hourly(run_id)"
+        )
     return db_path
 
 

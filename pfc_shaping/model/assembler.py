@@ -1,4 +1,4 @@
-﻿"""
+"""
 assembler.py
 ------------
 Assemblage de la PFC 15min N+3 ans.
@@ -80,6 +80,7 @@ class PFCAssembler:
         cascader=None,
         calibrator=None,
         calibration_fallback_to_raw: bool = True,
+        confidence_thresholds: dict[str, float] | None = None,
     ) -> None:
         self.sh = shape_hourly
         self.si = shape_intraday
@@ -88,6 +89,9 @@ class PFCAssembler:
         self.cascader = cascader
         self.calibrator = calibrator
         self.calibration_fallback_to_raw = calibration_fallback_to_raw
+        self.confidence_thresholds = confidence_thresholds or {
+            "6m": 1.0, "12m": 0.85, "24m": 0.65, "36m": 0.45,
+        }
 
     def build(
         self,
@@ -343,49 +347,65 @@ class PFCAssembler:
 
     def _resolve_base(self, idx: pd.DatetimeIndex, base_prices: dict) -> pd.Series:
         """
-        RÃƒÂ©sout le niveau de base B pour chaque timestamp.
-        PrioritÃƒÂ© : mensuel > trimestriel > annuel.
+        Resolve base level B for each timestamp (vectorized).
+        Priority: monthly > quarterly > annual.
         """
-        B = pd.Series(np.nan, index=idx)
         idx_zurich = idx.tz_convert("Europe/Zurich")
 
-        for i, ts in enumerate(idx_zurich):
-            key_m = ts.strftime("%Y-%m")          # ex: '2025-03'
-            key_q = f"{ts.year}-Q{(ts.month-1)//3+1}"  # ex: '2025-Q1'
-            key_y = str(ts.year)                  # ex: '2025'
+        # Build vectorized keys
+        years = idx_zurich.year
+        months = idx_zurich.month
+        keys_m = pd.Index([f"{y}-{m:02d}" for y, m in zip(years, months)])
+        keys_q = pd.Index([f"{y}-Q{(m - 1) // 3 + 1}" for y, m in zip(years, months)])
+        keys_y = years.astype(str)
 
-            if key_m in base_prices:
-                B.iloc[i] = base_prices[key_m]
-            elif key_q in base_prices:
-                B.iloc[i] = base_prices[key_q]
-            elif key_y in base_prices:
-                B.iloc[i] = base_prices[key_y]
-            else:
-                # Fallback : dernier niveau annuel connu
-                for y in [str(ts.year - 1), str(ts.year - 2)]:
-                    if y in base_prices:
-                        B.iloc[i] = base_prices[y]
-                        break
+        B = keys_m.map(base_prices).to_series(index=idx).astype(float)
+
+        # Fill missing with quarterly prices
+        na_mask = B.isna()
+        if na_mask.any():
+            q_prices = keys_q[na_mask].map(base_prices)
+            B.loc[na_mask] = q_prices.values
+
+        # Fill remaining missing with annual prices
+        na_mask = B.isna()
+        if na_mask.any():
+            y_prices = keys_y[na_mask].map(base_prices)
+            B.loc[na_mask] = y_prices.values
+
+        # Fallback: previous years
+        for offset in [1, 2]:
+            na_mask = B.isna()
+            if not na_mask.any():
+                break
+            fb_keys = (years[na_mask] - offset).astype(str)
+            fb_prices = fb_keys.map(base_prices)
+            B.loc[na_mask] = fb_prices.values
 
         if B.isna().any():
-            logger.warning("%d timestamps sans niveau de base Ã¢â‚¬â€ interpolation", B.isna().sum())
+            n_na = int(B.isna().sum())
+            logger.warning("%d timestamps sans niveau de base — interpolation", n_na)
             B = B.interpolate(method="linear").ffill().bfill()
 
         return B
 
     def _compute_f_S(self, idx: pd.DatetimeIndex, base_prices: dict) -> pd.Series:
         """
-        Facteur saisonnier mensuel f_S = niveau_mensuel / niveau_annuel.
-        Si pas de dÃƒÂ©composition mensuelle disponible Ã¢â€ â€™ f_S = 1.
+        Seasonal monthly factor f_S = monthly_level / annual_level (vectorized).
+        Returns 1.0 when no monthly decomposition is available.
         """
-        f_S = pd.Series(1.0, index=idx)
         idx_zurich = idx.tz_convert("Europe/Zurich")
+        years = idx_zurich.year
+        months = idx_zurich.month
+        keys_m = pd.Index([f"{y}-{m:02d}" for y, m in zip(years, months)])
+        keys_y = years.astype(str)
 
-        for i, ts in enumerate(idx_zurich):
-            key_m = ts.strftime("%Y-%m")
-            key_y = str(ts.year)
-            if key_m in base_prices and key_y in base_prices and base_prices[key_y] != 0:
-                f_S.iloc[i] = base_prices[key_m] / base_prices[key_y]
+        monthly_prices = keys_m.map(base_prices).to_series(index=idx).astype(float)
+        annual_prices = keys_y.map(base_prices).to_series(index=idx).astype(float)
+
+        valid = monthly_prices.notna() & annual_prices.notna() & (annual_prices != 0)
+        f_S = pd.Series(1.0, index=idx)
+        f_S.loc[valid] = monthly_prices.loc[valid] / annual_prices.loc[valid]
 
         return f_S
 
@@ -406,45 +426,72 @@ class PFCAssembler:
         return cal["type_jour"].map(f_W_map).fillna(1.0).rename("f_W")
 
     def _confidence_score(self, months_ahead: pd.Series) -> pd.Series:
-        """Score de confiance [0,1] dÃƒÂ©croissant avec l'horizon."""
-        score = pd.Series(1.0, index=months_ahead.index)
-        score[months_ahead > 6]  = 0.85
-        score[months_ahead > 12] = 0.65
-        score[months_ahead > 24] = 0.45
+        """Confidence score [0,1] decreasing with horizon, configurable."""
+        ct = self.confidence_thresholds
+        score = pd.Series(ct.get("6m", 1.0), index=months_ahead.index)
+        score[months_ahead > 6]  = ct.get("12m", 0.85)
+        score[months_ahead > 12] = ct.get("24m", 0.65)
+        score[months_ahead > 24] = ct.get("36m", 0.45)
         return score
 
     def _check_energy_consistency(self, df: pd.DataFrame, base_prices: dict) -> None:
         """
-        VÃƒÂ©rifie que la moyenne annuelle de price_shape Ã¢â€°Ë† niveau de base annuel.
-        LÃƒÂ¨ve une alerte si l'ÃƒÂ©cart > 5% (ou > 0.5% si calibration appliquÃƒÂ©e).
+        Verify price_shape average matches base prices at annual, quarterly,
+        and monthly levels. Alerts if deviation exceeds threshold.
         """
         threshold = 0.005 if df["calibrated"].any() else 0.05
+        idx_zurich = df.index.tz_convert("Europe/Zurich")
 
-        for year, base in base_prices.items():
-            if len(year) != 4 or not year.isdigit():
+        for key, base in base_prices.items():
+            if base == 0:
                 continue
-            mask = df.index.tz_convert("Europe/Zurich").year == int(year)
-            if mask.sum() == 0:
+
+            # Determine mask based on key type
+            if len(key) == 4 and key.isdigit():
+                # Annual key
+                mask = idx_zurich.year == int(key)
+                year_int = int(key)
+                expected = (366 if pd.Timestamp(year=year_int, month=12, day=31).is_leap_year else 365) * 96
+                min_coverage = 0.95
+            elif len(key) == 7 and key[4] == '-' and key[5] == 'Q' and key[6].isdigit():
+                # Quarterly key e.g. '2026-Q1'
+                year_int = int(key[:4])
+                q = int(key[6])
+                q_months = {1: [1, 2, 3], 2: [4, 5, 6], 3: [7, 8, 9], 4: [10, 11, 12]}[q]
+                mask = (idx_zurich.year == year_int) & (idx_zurich.month.isin(q_months))
+                expected = sum(
+                    (28 + (m in (1, 3, 5, 7, 8, 10, 12)) * 3 + (m in (4, 6, 9, 11)) * 2) for m in q_months
+                ) * 96
+                min_coverage = 0.90
+            elif len(key) == 7 and key[4] == '-' and key[5:].isdigit():
+                # Monthly key e.g. '2026-03'
+                year_int = int(key[:4])
+                month_int = int(key[5:])
+                mask = (idx_zurich.year == year_int) & (idx_zurich.month == month_int)
+                import calendar as cal_mod
+                expected = cal_mod.monthrange(year_int, month_int)[1] * 96
+                min_coverage = 0.90
+            else:
                 continue
-            year_int = int(year)
-            expected_intervals = (366 if pd.Timestamp(year=year_int, month=12, day=31).is_leap_year else 365) * 96
-            if mask.sum() < int(0.95 * expected_intervals):
+
+            n_points = int(mask.sum())
+            if n_points == 0:
+                continue
+            if n_points < int(min_coverage * expected):
                 logger.info(
-                    "CohÃƒÂ©rence ÃƒÂ©nergie %s : skip (couverture partielle %d/%d)",
-                    year,
-                    int(mask.sum()),
-                    expected_intervals,
+                    "Energy consistency %s: skip (partial coverage %d/%d)",
+                    key, n_points, expected,
                 )
                 continue
+
             mean_p = df.loc[mask, "price_shape"].mean()
-            if base != 0:
-                rel_err = abs(mean_p - base) / abs(base)
-                if rel_err > threshold:
-                    logger.warning(
-                        "CohÃƒÂ©rence ÃƒÂ©nergie %s : base=%.2f, mean_PFC=%.2f, ÃƒÂ©cart=%.1f%%",
-                        year, base, mean_p, rel_err * 100
-                    )
-                else:
-                    logger.info(
-                        "CohÃƒÂ©rence ÃƒÂ©nergie %s : OK (ÃƒÂ©cart=%.2f%%)", year, rel_err * 100
-                    )
+            rel_err = abs(mean_p - base) / abs(base)
+            if rel_err > threshold:
+                logger.warning(
+                    "Energy consistency %s: base=%.2f, mean_PFC=%.2f, deviation=%.1f%%",
+                    key, base, mean_p, rel_err * 100
+                )
+            else:
+                logger.info(
+                    "Energy consistency %s: OK (deviation=%.2f%%)", key, rel_err * 100
+                )

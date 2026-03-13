@@ -204,7 +204,7 @@ def load_pfc_market(market: str) -> pd.DataFrame | None:
     return None
 
 
-def _read_duckdb(sql: str) -> pd.DataFrame:
+def _read_duckdb(sql: str, params: list | None = None) -> pd.DataFrame:
     paths = _paths_from_config()
     db_path = paths["duckdb_path"]
     if not db_path.exists():
@@ -213,6 +213,8 @@ def _read_duckdb(sql: str) -> pd.DataFrame:
         import duckdb
 
         with duckdb.connect(str(db_path), read_only=True) as con:
+            if params:
+                return con.execute(sql, params).fetch_df()
             return con.execute(sql).fetch_df()
     except Exception as exc:
         logger.error("DuckDB query failed: %s", exc)
@@ -249,17 +251,17 @@ def load_benchmarks(limit: int = 200) -> pd.DataFrame:
 def load_forecasts_hourly(run_id: str | None = None, limit: int = 5000) -> pd.DataFrame:
     safe_limit = max(1, int(limit))
     if run_id:
-        rid = run_id.replace("'", "''")
         sql = (
             "SELECT run_id, ts_local, price_shape, p10, p90 "
-            f"FROM forecasts_hourly WHERE run_id = '{rid}' ORDER BY ts_local LIMIT {safe_limit}"
+            f"FROM forecasts_hourly WHERE run_id = ? ORDER BY ts_local LIMIT {safe_limit}"
         )
+        return _read_duckdb(sql, [run_id])
     else:
         sql = (
             "SELECT run_id, ts_local, price_shape, p10, p90 "
             f"FROM forecasts_hourly ORDER BY run_id DESC, ts_local LIMIT {safe_limit}"
         )
-    return _read_duckdb(sql)
+        return _read_duckdb(sql)
 
 
 def data_freshness() -> dict[str, str]:
