@@ -1,6 +1,5 @@
 ﻿"""
-Page 1 — Overview
-"Où vont les prix ?"
+Page 1 - Overview
 """
 
 import numpy as np
@@ -9,205 +8,298 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from utils import (
-    COLORS, add_range_slider, export_csv_button, format_eur, format_gwh,
-    format_pct, load_epex, load_hydro, load_pfc, no_data_warning,
+    COLORS,
+    add_range_slider,
+    export_csv_button,
+    format_eur,
+    format_gwh,
+    format_pct,
+    load_entso,
+    load_epex,
+    load_hydro,
+    load_pfc,
+    no_data_warning,
     show_freshness_sidebar,
 )
 
 st.header("Overview")
-st.caption("Vue d'ensemble du marché et de la PFC — mise à jour hebdomadaire")
+st.caption("Desk view: prix EPEX, momentum, flux systeme, hydro")
 
 show_freshness_sidebar()
 
-# ── Load data ─────────────────────────────────────────────────────────────
 epex = load_epex()
+entso = load_entso()
 hydro = load_hydro()
 pfc = load_pfc()
 
 has_epex = epex is not None and "price_eur_mwh" in epex.columns
+has_entso = entso is not None and "load_mw" in entso.columns
 has_hydro = hydro is not None and "fill_pct" in hydro.columns
 has_pfc = pfc is not None and "price_shape" in (pfc.columns if pfc is not None else [])
 
-# ── KPI Row ───────────────────────────────────────────────────────────────
+# Top controls bar (style FMV)
+ctrl1, ctrl2, ctrl3, ctrl4, ctrl5, ctrl6 = st.columns([1, 1, 1, 1, 1, 1.2])
+with ctrl1:
+    country = st.selectbox("Country", ["CH", "DE", "FR", "AT"], index=0)
+with ctrl2:
+    base_peak = st.selectbox("Base/Peak", ["BASE", "PEAK"], index=0)
+with ctrl3:
+    period = st.selectbox("Period", ["YEAR", "QUARTER", "MONTH"], index=0)
+with ctrl4:
+    product = st.selectbox("Product", ["CAL-26", "CAL-27", "CAL-28", "CAL-29"], index=3)
+with ctrl5:
+    date_mode = st.selectbox("Date", ["Dernier", "Historique"], index=0)
+with ctrl6:
+    weeks = st.selectbox("Fenetre", ["13 semaines", "26 semaines", "50 semaines"], index=2)
+
+st.markdown(
+    f"<div style='padding:0.2rem 0 0.8rem 0;color:{COLORS['muted']};font-weight:600'>"
+    f"{country} | {base_peak} | {period} | {product} | {weeks}</div>",
+    unsafe_allow_html=True,
+)
+
 k1, k2, k3, k4, k5 = st.columns(5)
 
 with k1:
     if has_epex:
-        last_price = epex["price_eur_mwh"].iloc[-1]
-        prev_price = epex["price_eur_mwh"].iloc[-96] if len(epex) > 96 else last_price
-        st.metric("Spot EPEX (dernier)", format_eur(last_price),
-                  delta=f"{last_price - prev_price:+.1f}", delta_color="inverse")
+        last_price = float(epex["price_eur_mwh"].iloc[-1])
+        prev_day = float(epex["price_eur_mwh"].iloc[-96]) if len(epex) > 96 else last_price
+        st.metric("Last Price", format_eur(last_price), delta=f"{last_price - prev_day:+.2f}", delta_color="inverse")
     else:
-        st.metric("Spot EPEX", "—")
+        st.metric("Last Price", "--")
 
 with k2:
     if has_epex and len(epex) > 96 * 7:
-        avg_7d = epex["price_eur_mwh"].iloc[-96*7:].mean()
-        avg_prev_7d = epex["price_eur_mwh"].iloc[-96*14:-96*7].mean() if len(epex) > 96*14 else avg_7d
-        st.metric("Moyenne 7j", format_eur(avg_7d),
-                  delta=f"{avg_7d - avg_prev_7d:+.1f} vs sem. préc.")
+        avg_7d = float(epex["price_eur_mwh"].iloc[-96 * 7 :].mean())
+        st.metric("Moyenne 7j", format_eur(avg_7d))
     else:
-        st.metric("Moyenne 7j", "—")
+        st.metric("Moyenne 7j", "--")
 
 with k3:
-    if has_pfc:
-        front_month = pfc["price_shape"].iloc[:96*30].mean()
-        st.metric("PFC Front-Month", format_eur(front_month))
+    if has_epex and len(epex) > 96 * 30:
+        std_30d = float(epex["price_eur_mwh"].iloc[-96 * 30 :].std())
+        st.metric("Volatilite 30j", f"{std_30d:.2f} EUR/MWh")
     else:
-        st.metric("PFC Front-Month", "—")
+        st.metric("Volatilite 30j", "--")
 
 with k4:
     if has_hydro:
-        fill = hydro["fill_pct"].iloc[-1]
-        fill_prev = hydro["fill_pct"].iloc[-2] if len(hydro) > 1 else fill
-        st.metric("Réservoirs CH", format_pct(fill),
-                  delta=f"{fill - fill_prev:+.1f}pp", delta_color="normal")
+        fill = float(hydro["fill_pct"].iloc[-1])
+        fill_prev = float(hydro["fill_pct"].iloc[-2]) if len(hydro) > 1 else fill
+        st.metric("Hydro CH", format_pct(fill), delta=f"{fill - fill_prev:+.2f}pp")
     else:
-        st.metric("Réservoirs CH", "—")
+        st.metric("Hydro CH", "--")
 
 with k5:
-    if has_hydro:
-        gwh = hydro["fill_gwh"].iloc[-1]
-        max_gwh = hydro["max_capacity_gwh"].iloc[-1]
-        st.metric("Stock hydro", format_gwh(gwh), delta=f"/ {max_gwh:.0f} GWh max")
+    if has_entso:
+        load_now = float(entso["load_mw"].iloc[-1])
+        load_prev = float(entso["load_mw"].iloc[-96]) if len(entso) > 96 else load_now
+        st.metric("Load CH", f"{load_now:,.0f} MW", delta=f"{load_now - load_prev:+,.0f} MW")
     else:
-        st.metric("Stock hydro", "—")
+        st.metric("Load CH", "--")
 
 st.divider()
 
-# ── Main chart: EPEX spot + PFC overlay ───────────────────────────────────
-st.subheader("Prix spot EPEX + PFC prévisionnelle")
+left, right = st.columns([2.1, 1])
 
-if has_epex:
-    # Downsample to hourly for overview
-    epex_h = epex["price_eur_mwh"].resample("h").mean()
+with left:
+    st.subheader("Settlement Price (EUR/MWh)")
 
-    fig = go.Figure()
+    if has_epex:
+        px_h = epex["price_eur_mwh"].resample("h").mean().dropna()
+        df = pd.DataFrame({"price": px_h})
+        df["sma20"] = df["price"].rolling(24 * 20, min_periods=24).mean()
+        df["sma50"] = df["price"].rolling(24 * 50, min_periods=24).mean()
+        df["sma200"] = df["price"].rolling(24 * 200, min_periods=24).mean()
+        roll_std = df["price"].rolling(24 * 20, min_periods=24).std()
+        df["boll_low"] = df["sma20"] - 2 * roll_std
+        df["boll_up"] = df["sma20"] + 2 * roll_std
 
-    # Spot historique
-    fig.add_trace(go.Scatter(
-        x=epex_h.index, y=epex_h.values,
-        name="EPEX Spot",
-        line=dict(color=COLORS["blue"], width=1.5),
-        hovertemplate="%{y:.1f} EUR/MWh<extra>Spot</extra>",
-    ))
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=df.index, y=df["sma20"], name="SMA 20", line=dict(color="#B33A3A", width=1.6)))
+        fig.add_trace(go.Scatter(x=df.index, y=df["sma50"], name="SMA 50", line=dict(color="#9B8A3C", width=1.6)))
+        fig.add_trace(go.Scatter(x=df.index, y=df["sma200"], name="SMA 200", line=dict(color="#111827", width=1.4)))
+        fig.add_trace(
+            go.Scatter(
+                x=df.index,
+                y=df["boll_low"],
+                name="Bollinger Lower",
+                line=dict(color="#6B7280", width=1.2, dash="dot"),
+            )
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=df.index,
+                y=df["boll_up"],
+                name="Bollinger Upper",
+                line=dict(color="#6B7280", width=1.2, dash="dot"),
+            )
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=df.index,
+                y=df["price"],
+                name="Price Settlement",
+                line=dict(color=COLORS["navy"], width=2.8),
+            )
+        )
 
-    # PFC overlay
-    if has_pfc:
-        pfc_h = pfc["price_shape"].resample("h").mean()
-        fig.add_trace(go.Scatter(
-            x=pfc_h.index, y=pfc_h.values,
-            name="PFC Shape",
-            line=dict(color=COLORS["amber"], width=2),
-            hovertemplate="%{y:.1f} EUR/MWh<extra>PFC</extra>",
-        ))
+        fig.update_layout(
+            yaxis_title="EUR/MWh",
+            height=510,
+            legend=dict(orientation="h", y=1.03, x=0),
+        )
+        fig = add_range_slider(fig)
+        st.plotly_chart(fig, width="stretch")
+    else:
+        no_data_warning("prix EPEX")
 
-        # Bandes IC p10/p90
-        if "p10" in pfc.columns and "p90" in pfc.columns:
-            p10_h = pfc["p10"].resample("h").mean()
-            p90_h = pfc["p90"].resample("h").mean()
-            fig.add_trace(go.Scatter(
-                x=p90_h.index, y=p90_h.values,
-                name="p90", line=dict(width=0), showlegend=False,
-                hoverinfo="skip",
-            ))
-            fig.add_trace(go.Scatter(
-                x=p10_h.index, y=p10_h.values,
-                name="IC 80%", line=dict(width=0),
-                fill="tonexty", fillcolor=COLORS["band"],
-                hoverinfo="skip",
-            ))
+with right:
+    st.subheader("Market Snapshot")
 
-    fig.update_layout(
-        yaxis_title="EUR/MWh",
-        height=450,
-        legend=dict(orientation="h", y=1.02, x=0),
-    )
-    fig = add_range_slider(fig)
-    st.plotly_chart(fig, width="stretch")
-else:
-    no_data_warning("prix EPEX")
+    if has_epex:
+        px_h = epex["price_eur_mwh"].resample("h").mean().dropna()
+        win = px_h.iloc[-24 * 7 :] if len(px_h) > 24 * 7 else px_h
+        high = float(win.max())
+        low = float(win.min())
+        rng = high - low
+        last = float(win.iloc[-1])
+        pos = ((last - low) / rng * 100) if rng > 0 else 50.0
 
-# ── Bottom row: Hydro + recent stats ─────────────────────────────────────
-col_left, col_right = st.columns(2)
+        snapshot = pd.DataFrame(
+            {
+                "Label": ["High", "Low", "Range", "Position % in Range", "Last Price"],
+                "Value": [f"{high:.2f}", f"{low:.2f}", f"{rng:.2f}", f"{pos:.0f}%", f"{last:.2f}"],
+            }
+        )
+        st.dataframe(snapshot, hide_index=True, width="stretch")
 
-with col_left:
-    st.subheader("Réservoirs hydro CH")
+        zone = (
+            "Lower part of the range"
+            if pos < 40
+            else "Mid-range"
+            if pos < 60
+            else "Upper part of the range"
+        )
+        st.markdown(
+            f"<div style='border:1px solid #94B5FF;background:#F5F9FF;padding:0.7rem;"
+            f"text-align:center;font-weight:700;color:{COLORS['blue']}'>"
+            f"{zone}</div>",
+            unsafe_allow_html=True,
+        )
+    else:
+        st.info("Pas de snapshot sans prix EPEX.")
+
+st.divider()
+
+b1, b2 = st.columns([1.3, 1])
+
+with b1:
+    st.subheader("System Flows")
+    if has_entso:
+        ent_h = entso.resample("h").mean().dropna(how="all")
+        fig_flow = go.Figure()
+
+        if "load_mw" in ent_h.columns:
+            fig_flow.add_trace(
+                go.Scatter(
+                    x=ent_h.index,
+                    y=ent_h["load_mw"],
+                    name="Load MW",
+                    line=dict(color=COLORS["navy"], width=2),
+                )
+            )
+        if "solar_mw" in ent_h.columns:
+            fig_flow.add_trace(
+                go.Scatter(
+                    x=ent_h.index,
+                    y=ent_h["solar_mw"],
+                    name="Solar MW",
+                    line=dict(color="#F59E0B", width=1.5),
+                )
+            )
+        if "wind_mw" in ent_h.columns:
+            fig_flow.add_trace(
+                go.Scatter(
+                    x=ent_h.index,
+                    y=ent_h["wind_mw"],
+                    name="Wind MW",
+                    line=dict(color="#10B981", width=1.5),
+                )
+            )
+        if "cross_border_mw" in ent_h.columns:
+            fig_flow.add_trace(
+                go.Scatter(
+                    x=ent_h.index,
+                    y=ent_h["cross_border_mw"],
+                    name="Cross-border MW",
+                    line=dict(color=COLORS["blue_soft"], width=1.5, dash="dash"),
+                )
+            )
+
+        fig_flow.update_layout(height=360, yaxis_title="MW", legend=dict(orientation="h", y=1.02, x=0))
+        st.plotly_chart(fig_flow, width="stretch")
+    else:
+        no_data_warning("load/generation")
+
+with b2:
+    st.subheader("Hydro Reservoirs - 5Y Position")
     if has_hydro:
-        current_year = pd.Timestamp.now().year
-        hydro_plot = hydro[["fill_pct"]].copy()
-        hydro_plot["week"] = hydro_plot.index.isocalendar().week.values.astype(int)
-        hydro_plot["year"] = hydro_plot.index.year
+        h = hydro.copy()
+        h["week"] = h.index.isocalendar().week.values.astype(int)
+        h["year"] = h.index.year
+        current_year = int(h["year"].max())
+        hist = h[h["year"].between(current_year - 5, current_year - 1)]
 
-        hist = hydro_plot[hydro_plot["year"] < current_year]
         if not hist.empty:
-            envelope = hist.groupby("week")["fill_pct"].agg(["min", "median", "max"])
-            curr = hydro_plot[hydro_plot["year"] == current_year].sort_values("week")
+            env = hist.groupby("week")["fill_pct"].agg(["min", "mean", "max"])
+            curr = h[h["year"] == current_year].sort_values("week")
 
             fig_h = go.Figure()
-            fig_h.add_trace(go.Scatter(
-                x=envelope.index, y=envelope["max"],
-                name="Max historique", line=dict(width=0), showlegend=False,
-                hoverinfo="skip",
-            ))
-            fig_h.add_trace(go.Scatter(
-                x=envelope.index, y=envelope["min"],
-                name="Plage historique", line=dict(width=0),
-                fill="tonexty", fillcolor="rgba(88,166,255,0.08)",
-                hoverinfo="skip",
-            ))
-            fig_h.add_trace(go.Scatter(
-                x=envelope.index, y=envelope["median"],
-                name="Médiane hist.", line=dict(color=COLORS["muted"], width=1, dash="dot"),
-                hovertemplate="%{y:.1f}%<extra>Médiane</extra>",
-            ))
-            if not curr.empty:
-                fig_h.add_trace(go.Scatter(
-                    x=curr["week"], y=curr["fill_pct"],
-                    name=str(current_year),
-                    line=dict(color=COLORS["amber"], width=3),
-                    hovertemplate="%{y:.1f}%<extra>" + str(current_year) + "</extra>",
-                ))
-            fig_h.update_layout(
-                xaxis_title="Semaine ISO", yaxis_title="Remplissage %",
-                yaxis_range=[0, 100], height=350,
-                legend=dict(orientation="h", y=1.05, x=0),
+            fig_h.add_trace(go.Scatter(x=env.index, y=env["max"], line=dict(width=0), showlegend=False, hoverinfo="skip"))
+            fig_h.add_trace(
+                go.Scatter(
+                    x=env.index,
+                    y=env["min"],
+                    name="Min 5Y",
+                    line=dict(width=0),
+                    fill="tonexty",
+                    fillcolor="rgba(100,130,190,0.14)",
+                    hoverinfo="skip",
+                )
             )
+            fig_h.add_trace(
+                go.Scatter(
+                    x=env.index,
+                    y=env["mean"],
+                    name="Moyenne 5Y",
+                    line=dict(color=COLORS["blue_soft"], width=2, dash="dot"),
+                )
+            )
+            fig_h.add_trace(
+                go.Scatter(
+                    x=curr["week"],
+                    y=curr["fill_pct"],
+                    name=f"{current_year}",
+                    line=dict(color=COLORS["navy"], width=3),
+                )
+            )
+            fig_h.update_layout(height=360, xaxis_title="Semaine ISO", yaxis_title="Remplissage (%)", yaxis_range=[0, 100])
             st.plotly_chart(fig_h, width="stretch")
+
+            latest = curr.iloc[-1] if not curr.empty else None
+            if latest is not None:
+                st.markdown(
+                    f"**Niveau actuel:** {latest['fill_pct']:.2f}%  |  "
+                    f"**Stock:** {format_gwh(float(hydro['fill_gwh'].iloc[-1]))}"
+                )
+        else:
+            st.info("Historique insuffisant pour la bande 5 ans.")
     else:
-        no_data_warning("réservoirs hydro")
+        no_data_warning("hydro")
 
-with col_right:
-    st.subheader("Statistiques récentes")
-    if has_epex:
-        n_30d = min(96 * 30, len(epex))
-        last_30d = epex["price_eur_mwh"].iloc[-n_30d:]
-        stats = {
-            "Période": f"{last_30d.index.min().strftime('%d/%m')} — {last_30d.index.max().strftime('%d/%m/%Y')}",
-            "Moyenne": f"{last_30d.mean():.1f} EUR/MWh",
-            "Médiane": f"{last_30d.median():.1f} EUR/MWh",
-            "Min": f"{last_30d.min():.1f} EUR/MWh",
-            "Max": f"{last_30d.max():.1f} EUR/MWh",
-            "Volatilité (std)": f"{last_30d.std():.1f} EUR/MWh",
-            "Nb heures négatives": f"{(last_30d < 0).sum()}",
-        }
-        for k, v in stats.items():
-            st.markdown(f"**{k}** : {v}")
-
-        fig_dist = go.Figure()
-        fig_dist.add_trace(go.Histogram(
-            x=last_30d.values, nbinsx=50,
-            marker_color=COLORS["blue"], opacity=0.7,
-            hovertemplate="%{x:.0f} EUR/MWh<br>%{y} obs<extra></extra>",
-        ))
-        fig_dist.update_layout(
-            xaxis_title="EUR/MWh", yaxis_title="Fréquence",
-            height=220, margin=dict(l=40, r=10, t=10, b=40),
-            bargap=0.05,
-        )
-        st.plotly_chart(fig_dist, width="stretch")
-
-        export_csv_button(last_30d.to_frame(), "epex_30d.csv", "Export 30j CSV")
-    else:
-        no_data_warning("statistiques")
-
+if has_epex:
+    with st.expander("Export"):
+        export_csv_button(epex.tail(96 * 30), "epex_last_30d.csv", "Export EPEX 30 jours")
+        if has_entso:
+            export_csv_button(entso.tail(96 * 30), "entso_last_30d.csv", "Export ENTSO 30 jours")
