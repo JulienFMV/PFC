@@ -145,6 +145,17 @@ with tab3:
 
     q_data = df_f[df_f["heure_hce"] == sel_hour].copy()
     if not q_data.empty:
+        # If prices are hourly DA forward-filled to 15min, all four quarters in each
+        # hour are equal and f_Q is mechanically flat at ~1. Detect and warn explicitly.
+        intra_hour_std = q_data.groupby(q_data.index.floor("h"))["price_eur_mwh"].std(ddof=0)
+        median_std = float(intra_hour_std.dropna().median()) if not intra_hour_std.dropna().empty else 0.0
+        if median_std < 1e-6:
+            st.warning(
+                "Signal intra-horaire quasi nul: la série prix semble horaire "
+                "et forward-fill en 15min (DA), donc f_Q ≈ 1 par construction. "
+                "Utiliser une source intraday 15min réelle pour calibrer f_Q."
+            )
+
         hour_mean = q_data.groupby(q_data.index.floor("h"))["price_eur_mwh"].transform("mean")
         valid = hour_mean.abs() > 0.5
         q_data = q_data[valid]
@@ -170,7 +181,8 @@ with tab3:
 
             st.markdown(
                 f"> **Heure {sel_hour}h** — Q1=:00, Q2=:15, Q3=:30, Q4=:45. "
-                "Les heures de rampe (7-10h, 17-20h) montrent les plus grands écarts."
+                "Si toutes les barres sont ~1, la source est probablement horaire DA "
+                "forward-fill et non intraday 15min native."
             )
         else:
             st.info("Pas assez de données valides pour cette heure.")
