@@ -38,10 +38,10 @@ with st.sidebar:
         """
         <div style="text-align:center; padding: 0.5rem 0 1rem 0;">
             <span style="font-size:2rem;">⚡</span><br>
-            <span style="font-size:1.1rem; font-weight:700; color:#FF9F1C;">
+            <span style="font-size:1.1rem; font-weight:700; color:#0F52CC;">
                 PFC Monitor
             </span><br>
-            <span style="font-size:0.75rem; color:#8B949E;">
+            <span style="font-size:0.75rem; color:#5A6B8A;">
                 Price Forward Curve CH &bull; 15min
             </span>
         </div>

@@ -23,17 +23,17 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 # ── Plotly template ───────────────────────────────────────────────────────
 COLORS = {
-    "bg": "#0B0E11",
-    "card": "#161B22",
-    "text": "#E6EDF3",
-    "amber": "#FF9F1C",
-    "blue": "#58A6FF",
-    "green": "#3FB950",
-    "red": "#F85149",
-    "gray": "#484F58",
-    "muted": "#8B949E",
-    "band": "rgba(88,166,255,0.12)",
-    "band_border": "rgba(88,166,255,0.3)",
+    "bg": "#F3F6FB",
+    "card": "#FFFFFF",
+    "text": "#0E1F3D",
+    "amber": "#C08A2B",
+    "blue": "#0F52CC",
+    "green": "#1F9D55",
+    "red": "#C63D3D",
+    "gray": "#D4DEEE",
+    "muted": "#5A6B8A",
+    "band": "rgba(15,82,204,0.12)",
+    "band_border": "rgba(15,82,204,0.30)",
 }
 
 PFC_TEMPLATE = go.layout.Template(
@@ -43,11 +43,11 @@ PFC_TEMPLATE = go.layout.Template(
         font=dict(family="Inter, sans-serif", color=COLORS["text"], size=13),
         title=dict(font=dict(size=18, color=COLORS["text"]), x=0, xanchor="left"),
         xaxis=dict(
-            gridcolor="#21262D", zerolinecolor="#21262D",
+            gridcolor="#D9E2F1", zerolinecolor="#D9E2F1",
             showgrid=True, gridwidth=1,
         ),
         yaxis=dict(
-            gridcolor="#21262D", zerolinecolor="#21262D",
+            gridcolor="#D9E2F1", zerolinecolor="#D9E2F1",
             showgrid=True, gridwidth=1,
             title_standoff=10,
         ),
