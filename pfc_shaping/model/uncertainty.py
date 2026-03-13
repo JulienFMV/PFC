@@ -127,13 +127,21 @@ class Uncertainty:
         logger.info("Bootstrap IC terminé : %d cellules calibrées", len(self.boot_stats_))
         return self
 
-    def compute(self, pfc_df: pd.DataFrame, calendar_df: pd.DataFrame) -> pd.DataFrame:
+    def compute(
+        self,
+        pfc_df: pd.DataFrame,
+        calendar_df: pd.DataFrame,
+        reference_date: pd.Timestamp | None = None,
+    ) -> pd.DataFrame:
         """
         Calcule p10 et p90 pour chaque timestamp de la PFC (vectorisé).
 
         Args:
-            pfc_df     : DataFrame PFC avec colonnes ['price_shape', 'f_Q', 'profile_type']
-            calendar_df: enrichissement calendaire aligné sur pfc_df.index
+            pfc_df         : DataFrame PFC avec colonnes ['price_shape', 'f_Q', 'profile_type']
+            calendar_df    : enrichissement calendaire aligné sur pfc_df.index
+            reference_date : date de référence pour le calcul de l'horizon
+                             (défaut = now). Passer la date "as-of" pour le
+                             backtest afin que l'horizon widening soit correct.
 
         Returns:
             DataFrame colonnes ['p10', 'p90'] aligné sur pfc_df.index
@@ -143,7 +151,7 @@ class Uncertainty:
         n = len(pfc_df)
         prices = pfc_df["price_shape"].values
 
-        now = pd.Timestamp.now(tz="UTC")
+        now = reference_date if reference_date is not None else pd.Timestamp.now(tz="UTC")
         days_ahead = (pfc_df.index - now).total_seconds() / 86400
         months_ahead = np.maximum(0, np.round(days_ahead / 30)).astype(int)
         widen_arr = np.vectorize(self._widening_factor)(months_ahead)

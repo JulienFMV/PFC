@@ -100,6 +100,7 @@ class PFCAssembler:
         horizon_days: int = HORIZON_DAYS,
         entso_forecast: pd.DataFrame | None = None,
         hydro_forecast: pd.DataFrame | None = None,
+        reference_date: pd.Timestamp | None = None,
     ) -> pd.DataFrame:
         """
         Construit la PFC 15min sur l'horizon N+3.
@@ -209,7 +210,7 @@ class PFCAssembler:
 
         # Ã¢â€â‚¬Ã¢â€â‚¬ Intervalles de confiance (optionnel) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         if self.unc is not None:
-            ic = self.unc.compute(df, cal)
+            ic = self.unc.compute(df, cal, reference_date=reference_date)
             df["p10"] = ic["p10"]
             df["p90"] = ic["p90"]
         else:
