@@ -100,7 +100,7 @@ def main() -> None:
         sh.fit(train_lb, cal, hydro_df=hydro_df)
 
         si = ShapeIntraday()
-        si.fit(train_lb, entso_df=entso_df, calendar_df=cal)
+        si.fit(train_lb, entso_df=entso_df, calendar_df=cal, hydro_df=hydro_df)
 
         unc = Uncertainty()
         unc.fit(train_lb, cal)
