@@ -69,6 +69,28 @@ def derive_base_prices(
     else:
         seasonal_ratio = monthly_avg / global_mean
 
+    # ── 2b. Peak/Base ratio from history ───────────────────────────
+    # Peak = weekday 08:00-20:00 Zurich time
+    is_weekday = recent_zh.dayofweek < 5
+    is_peak_hour = (recent_zh.hour >= 8) & (recent_zh.hour < 20)
+    peak_mask = is_weekday & is_peak_hour
+
+    peak_avg_by_month = recent[peak_mask].groupby(recent_zh[peak_mask].month)["price_eur_mwh"].mean()
+    base_avg_by_month = recent.groupby(recent_zh.month)["price_eur_mwh"].mean()
+
+    peak_ratio_by_month = {}
+    for m in range(1, 13):
+        if m in peak_avg_by_month.index and m in base_avg_by_month.index and base_avg_by_month[m] > 0:
+            peak_ratio_by_month[m] = float(peak_avg_by_month[m] / base_avg_by_month[m])
+        else:
+            peak_ratio_by_month[m] = 1.15  # default Swiss peak/base ratio
+
+    logger.info(
+        "Peak/Base ratios: winter=%.2f, summer=%.2f",
+        np.mean([peak_ratio_by_month.get(m, 1.15) for m in [12, 1, 2]]),
+        np.mean([peak_ratio_by_month.get(m, 1.15) for m in [6, 7, 8]]),
+    )
+
     logger.info(
         "Seasonal ratios: winter=%.2f, summer=%.2f",
         seasonal_ratio[[12, 1, 2]].mean(),
@@ -94,15 +116,21 @@ def derive_base_prices(
         cal_level = anchor * (1 + annual_decay) ** i
         base_prices[str(year)] = round(cal_level, 1)
 
-        # Monthly prices
+        # Monthly prices (base + peak)
         for month in range(1, 13):
             ratio = seasonal_ratio.get(month, 1.0)
-            base_prices[f"{year}-{month:02d}"] = round(cal_level * ratio, 1)
+            monthly_base = round(cal_level * ratio, 1)
+            base_prices[f"{year}-{month:02d}"] = monthly_base
+            # Peak price = base × peak/base ratio for that month
+            pk_ratio = peak_ratio_by_month.get(month, 1.15)
+            base_prices[f"{year}-{month:02d}-Peak"] = round(monthly_base * pk_ratio, 1)
 
         # Quarterly prices (average of months)
         for q, months in {1: [1, 2, 3], 2: [4, 5, 6], 3: [7, 8, 9], 4: [10, 11, 12]}.items():
             q_prices = [base_prices[f"{year}-{m:02d}"] for m in months]
+            q_peak_prices = [base_prices[f"{year}-{m:02d}-Peak"] for m in months]
             base_prices[f"{year}-Q{q}"] = round(float(np.mean(q_prices)), 1)
+            base_prices[f"{year}-Q{q}-Peak"] = round(float(np.mean(q_peak_prices)), 1)
 
     logger.info(
         "Forward proxy: %d keys, Cal range: %s",

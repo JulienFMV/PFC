@@ -133,6 +133,8 @@ def main() -> None:
         pfc_prices = pfc.loc[common_idx, "price_shape"]
         spot_prices = test.loc[common_idx, "price_eur_mwh"]
 
+        from scipy.stats import spearmanr
+
         errors = pfc_prices.values - spot_prices.values
         rmse = float(np.sqrt(np.mean(errors**2)))
         mae = float(np.mean(np.abs(errors)))
@@ -160,10 +162,93 @@ def main() -> None:
             covered = (spot_prices >= p10.values) & (spot_prices <= p90.values)
             ic80_coverage = float(covered.mean())
 
+        # ── Shape quality metrics (Maciejowska et al. 2025) ────────────
+        # Group by day for daily profile metrics
+        dates_zh = idx_zh.date
+        unique_dates = sorted(set(dates_zh))
+
+        corr_f_list = []    # daily Pearson profile correlation
+        spearman_list = []  # daily Spearman rank correlation
+        mpd_list = []       # Min-Max Price Deviation (hours)
+        mhd_list = []       # Max Hour Deviation (hours)
+        cov_e_list = []     # Coefficient of Variation of daily errors
+
+        for d in unique_dates:
+            day_mask = dates_zh == d
+            n_pts = day_mask.sum()
+            if n_pts < 92:  # need ~full day (96 quarter-hours)
+                continue
+
+            pfc_day = pfc_prices.values[day_mask]
+            spot_day = spot_prices.values[day_mask]
+            err_day = errors[day_mask]
+
+            # Aggregate to hourly for profile metrics
+            n_h = n_pts // 4
+            if n_h < 20:
+                continue
+            pfc_hourly = np.array([pfc_day[i*4:(i+1)*4].mean() for i in range(n_h)])
+            spot_hourly = np.array([spot_day[i*4:(i+1)*4].mean() for i in range(n_h)])
+
+            # Corr-f: Pearson correlation of daily profile
+            if np.std(pfc_hourly) > 0 and np.std(spot_hourly) > 0:
+                corr_f_list.append(float(np.corrcoef(pfc_hourly, spot_hourly)[0, 1]))
+
+            # Spearman rank correlation
+            if len(pfc_hourly) >= 3:
+                rho, _ = spearmanr(pfc_hourly, spot_hourly)
+                if np.isfinite(rho):
+                    spearman_list.append(float(rho))
+
+            # MPD: |argmax error| + |argmin error|
+            h_max_pfc = int(np.argmax(pfc_hourly))
+            h_max_spot = int(np.argmax(spot_hourly))
+            h_min_pfc = int(np.argmin(pfc_hourly))
+            h_min_spot = int(np.argmin(spot_hourly))
+            mpd_list.append(abs(h_max_pfc - h_max_spot) + abs(h_min_pfc - h_min_spot))
+
+            # MHD: |argmax error|
+            mhd_list.append(abs(h_max_pfc - h_max_spot))
+
+            # Cov-e: CV of intra-day errors
+            err_hourly = np.array([err_day[i*4:(i+1)*4].mean() for i in range(n_h)])
+            mean_abs_err = np.mean(np.abs(err_hourly))
+            if mean_abs_err > 0.01:
+                cov_e_list.append(float(np.std(err_hourly) / mean_abs_err))
+
+        corr_f = float(np.median(corr_f_list)) if corr_f_list else 0.0
+        spearman_rho = float(np.median(spearman_list)) if spearman_list else 0.0
+        mpd = float(np.mean(mpd_list)) if mpd_list else 99.0
+        mhd = float(np.mean(mhd_list)) if mhd_list else 99.0
+        cov_e = float(np.median(cov_e_list)) if cov_e_list else 99.0
+
+        # ── Peak/Offpeak spread accuracy ───────────────────────────────
+        # Peak = weekday 08:00-20:00 Zurich time
+        is_weekday = idx_zh.dayofweek < 5
+        is_peak_hour = (idx_zh.hour >= 8) & (idx_zh.hour < 20)
+        peak_mask = is_weekday & is_peak_hour
+        offpeak_mask = ~peak_mask
+
+        if peak_mask.sum() > 96 and offpeak_mask.sum() > 96:
+            pfc_spread = pfc_prices.values[peak_mask].mean() - pfc_prices.values[offpeak_mask].mean()
+            spot_spread = spot_prices.values[peak_mask].mean() - spot_prices.values[offpeak_mask].mean()
+            spread_error = float(abs(pfc_spread - spot_spread))
+            spread_ratio = float(pfc_spread / spot_spread) if abs(spot_spread) > 0.1 else 1.0
+        else:
+            spread_error = 99.0
+            spread_ratio = 1.0
+
         elapsed = time.time() - t0
 
         # ── Output metrics (Karpathy format) ─────────────────────────────
         print("---")
+        print(f"corr_f:           {corr_f:.6f}")
+        print(f"spearman_rho:     {spearman_rho:.6f}")
+        print(f"mpd:              {mpd:.6f}")
+        print(f"mhd:              {mhd:.6f}")
+        print(f"cov_e:            {cov_e:.6f}")
+        print(f"spread_error:     {spread_error:.6f}")
+        print(f"spread_ratio:     {spread_ratio:.6f}")
         print(f"rmse:             {rmse:.6f}")
         print(f"rmse_shape:       {rmse_shape:.6f}")
         print(f"mae:              {mae:.6f}")
@@ -171,6 +256,7 @@ def main() -> None:
         print(f"rmse_hourly_std:  {rmse_hourly_std:.6f}")
         print(f"ic80_coverage:    {ic80_coverage:.6f}")
         print(f"n_points:         {len(common_idx)}")
+        print(f"n_days:           {len(unique_dates)}")
         print(f"test_period:      {common_idx.min().date()} -> {common_idx.max().date()}")
         print(f"eval_seconds:     {elapsed:.1f}")
         print(f"status:           ok")

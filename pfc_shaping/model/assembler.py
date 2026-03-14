@@ -299,6 +299,11 @@ class PFCAssembler:
         This avoids rank-deficient/over-constrained systems created by
         mixing Calendar + Quarter + Month constraints simultaneously.
         Price priority per month: Month > Quarter > Calendar.
+
+        Also injects Peak contracts when peak prices are available in
+        base_prices (keys ending with '-Peak', e.g. '2026-01-Peak',
+        '2026-Q1-Peak'). Peak constraints allow the calibrator to match
+        both baseload and peakload forward quotes simultaneously.
         """
         idx_local = idx.tz_convert("Europe/Zurich")
         month_periods = []
@@ -315,6 +320,7 @@ class PFCAssembler:
             key_q = f"{year}-Q{(month - 1) // 3 + 1}"
             key_y = str(year)
 
+            # ── Base contract ──────────────────────────────────────────
             source_key = None
             if key_m in base_prices:
                 source_key = key_m
@@ -339,6 +345,28 @@ class PFCAssembler:
                     product_type="Base",
                 )
             )
+
+            # ── Peak contract (if available) ───────────────────────────
+            peak_key = None
+            for pk in [f"{key_m}-Peak", f"{key_q}-Peak", f"{key_y}-Peak"]:
+                if pk in base_prices:
+                    peak_key = pk
+                    break
+
+            if peak_key is not None:
+                contracts.append(
+                    futures_contract_cls(
+                        name=f"{year}-{month:02d}-Peak<{peak_key}>",
+                        price=float(base_prices[peak_key]),
+                        start=start_utc,
+                        end=end_utc,
+                        product_type="Peak",
+                    )
+                )
+
+        n_peak = sum(1 for c in contracts if c.product_type == "Peak")
+        if n_peak > 0:
+            logger.info("Peak contracts injected: %d / %d total", n_peak, len(contracts))
 
         return contracts
 
@@ -413,6 +441,10 @@ class PFCAssembler:
         Facteur jour de semaine f_W.
         Utilise les ratios saisonniers f_W(saison, type_jour) si disponibles,
         sinon fallback sur f_W(type_jour) global.
+
+        After computing raw f_W, normalizes per calendar month so that
+        mean(f_W) = 1 within each month. This ensures f_W does not leak
+        level information (which belongs in B and f_S).
         """
         _FW_DEFAULTS = {
             "Ouvrable": 1.05,
@@ -430,11 +462,21 @@ class PFCAssembler:
                 self.sh.f_W_seasonal_.get(k, f_W_global.get(k[1], 1.0))
                 for k in keys
             ]
-            return pd.Series(values, index=cal.index, name="f_W", dtype=float)
+            f_W = pd.Series(values, index=cal.index, name="f_W", dtype=float)
+        else:
+            # Fallback to global f_W
+            f_W_map = self.sh.f_W_ if self.sh.f_W_ else _FW_DEFAULTS
+            f_W = cal["type_jour"].map(f_W_map).fillna(1.0).rename("f_W")
 
-        # Fallback to global f_W
-        f_W_map = self.sh.f_W_ if self.sh.f_W_ else _FW_DEFAULTS
-        return cal["type_jour"].map(f_W_map).fillna(1.0).rename("f_W")
+        # Normalize f_W per month so mean(f_W) = 1 within each month
+        idx_zh = cal.index.tz_convert("Europe/Zurich")
+        month_key = pd.Index([f"{t.year}-{t.month:02d}" for t in idx_zh])
+        monthly_mean = f_W.groupby(month_key).transform("mean")
+        # Avoid division by zero
+        monthly_mean = monthly_mean.replace(0, 1.0)
+        f_W = f_W / monthly_mean
+
+        return f_W
 
     def _confidence_score(self, months_ahead: pd.Series) -> pd.Series:
         """Confidence score [0,1] decreasing with horizon, configurable."""

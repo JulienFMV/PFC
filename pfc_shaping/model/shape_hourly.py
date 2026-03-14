@@ -232,7 +232,8 @@ class ShapeHourly:
         Aussi calcule f_W_seasonal_ par (saison, type_jour) pour capturer
         la différence weekend hiver vs été.
         """
-        overall_mean = df["price_eur_mwh"].mean()
+        # Use exponential decay weights (consistent with f_H estimation)
+        overall_mean = np.average(df["price_eur_mwh"], weights=df["_weight"])
         if overall_mean == 0:
             self.f_W_ = {tj: 1.0 for tj in TYPES_JOUR}
             return
@@ -240,9 +241,12 @@ class ShapeHourly:
         # ── Global f_W (fallback) ──────────────────────────────────────
         for tj in TYPES_JOUR:
             mask = df["type_jour"] == tj
-            subset = df.loc[mask, "price_eur_mwh"]
+            subset = df.loc[mask]
             if len(subset) >= 96:  # au moins 1 jour complet
-                self.f_W_[tj] = subset.mean() / overall_mean
+                self.f_W_[tj] = float(
+                    np.average(subset["price_eur_mwh"], weights=subset["_weight"])
+                    / overall_mean
+                )
             else:
                 self.f_W_[tj] = 1.0
                 logger.warning("f_W(%s) : données insuffisantes — défaut 1.0", tj)
@@ -255,7 +259,12 @@ class ShapeHourly:
         for saison in SAISONS:
             mask_s = df["saison"] == saison
             season_data = df.loc[mask_s]
-            season_mean = season_data["price_eur_mwh"].mean() if len(season_data) > 0 else overall_mean
+            if len(season_data) > 0:
+                season_mean = float(np.average(
+                    season_data["price_eur_mwh"], weights=season_data["_weight"]
+                ))
+            else:
+                season_mean = overall_mean
 
             if season_mean == 0 or len(season_data) < 96:
                 for tj in TYPES_JOUR:
@@ -264,9 +273,12 @@ class ShapeHourly:
 
             for tj in TYPES_JOUR:
                 mask_tj = season_data["type_jour"] == tj
-                subset = season_data.loc[mask_tj, "price_eur_mwh"]
+                subset = season_data.loc[mask_tj]
                 if len(subset) >= 96:
-                    self.f_W_seasonal_[(saison, tj)] = subset.mean() / season_mean
+                    self.f_W_seasonal_[(saison, tj)] = float(
+                        np.average(subset["price_eur_mwh"], weights=subset["_weight"])
+                        / season_mean
+                    )
                 else:
                     # Fallback to global f_W for this type_jour
                     self.f_W_seasonal_[(saison, tj)] = self.f_W_.get(tj, 1.0)
