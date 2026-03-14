@@ -360,3 +360,34 @@ def export_csv_button(df: pd.DataFrame, filename: str, label: str = "Export CSV"
         mime="text/csv",
         use_container_width=True,
     )
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_model_quality() -> dict[str, float] | None:
+    """Load latest eval metrics from eval.log (autoresearch_eval.py output).
+
+    Returns dict of metric_name -> value, or None if no eval available.
+    """
+    eval_path = PROJECT_ROOT / "eval.log"
+    if not eval_path.exists():
+        return None
+    try:
+        lines = eval_path.read_text().strip().splitlines()
+        metrics: dict[str, float] = {}
+        in_block = False
+        for line in lines:
+            if line.strip() == "---":
+                in_block = True
+                metrics = {}  # reset to last block
+                continue
+            if in_block and ":" in line:
+                key, val = line.split(":", 1)
+                key = key.strip()
+                val = val.strip()
+                try:
+                    metrics[key] = float(val)
+                except ValueError:
+                    metrics[key] = val  # type: ignore[assignment]
+        return metrics if metrics else None
+    except Exception:
+        return None

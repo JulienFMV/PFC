@@ -10,8 +10,8 @@ import streamlit as st
 
 from utils import (
     COLORS, add_range_slider, export_csv_button, format_eur, format_gwh,
-    format_pct, latest_run_summary, load_benchmarks, load_epex, load_hydro, load_pfc,
-    no_data_warning, show_freshness_sidebar,
+    format_pct, latest_run_summary, load_benchmarks, load_epex, load_hydro,
+    load_model_quality, load_pfc, no_data_warning, show_freshness_sidebar,
 )
 
 st.header("Overview")
@@ -137,6 +137,47 @@ if has_epex:
     st.plotly_chart(fig, width="stretch")
 else:
     no_data_warning("prix EPEX")
+
+# ── Model Quality (from eval.log) ─────────────────────────────────────────
+mq = load_model_quality()
+if mq and mq.get("status") == "ok":
+    st.subheader("Qualite du modele")
+    q1, q2, q3, q4, q5, q6 = st.columns(6)
+
+    corr_f = mq.get("corr_f", 0)
+    dispatch = mq.get("dispatch_vs_flat", 0)
+    spread_r = mq.get("spread_ratio", 0)
+    ic80 = mq.get("ic80_coverage", 0)
+    rmse_s = mq.get("rmse_shape", 0)
+    bias = mq.get("bias", 0)
+
+    with q1:
+        st.metric("Corr-f (profil)", f"{corr_f:.3f}",
+                  delta="OK" if corr_f > 0.85 else "faible",
+                  delta_color="normal" if corr_f > 0.85 else "inverse")
+    with q2:
+        st.metric("Dispatch vs flat", f"{dispatch:.1%}",
+                  delta="OK" if dispatch > 0.9 else "faible",
+                  delta_color="normal" if dispatch > 0.9 else "inverse")
+    with q3:
+        st.metric("Spread Peak/OP", f"{spread_r:.3f}",
+                  delta=f"{(1 - spread_r) * 100:+.1f}% vs spot",
+                  delta_color="inverse")
+    with q4:
+        st.metric("IC 80%", f"{ic80:.1%}",
+                  delta="OK" if 0.75 <= ic80 <= 0.85 else "hors cible",
+                  delta_color="normal" if 0.75 <= ic80 <= 0.85 else "inverse")
+    with q5:
+        st.metric("RMSE shape", f"{rmse_s:.1f} EUR",
+                  delta=f"bias {bias:+.1f}",
+                  delta_color="inverse")
+    with q6:
+        n_days = mq.get("n_days", 0)
+        period = mq.get("test_period", "")
+        st.metric("Test", f"{int(n_days)}j",
+                  delta=str(period) if period else None)
+
+    st.divider()
 
 # ── Bottom row: Hydro + recent stats ─────────────────────────────────────
 col_left, col_right = st.columns(2)

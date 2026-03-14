@@ -1,0 +1,60 @@
+2026-03-14 21:24:42.260 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-03-14 21:24:42.262 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-03-14 21:24:42.262 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-03-14 21:24:42.262 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-03-14 21:24:42.262 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-03-14 21:24:42.262 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-03-14 21:24:42.263 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-03-14 21:24:42.263 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-03-14 21:24:42.263 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-03-14 21:24:42.264 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-03-14 21:24:42.264 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-03-14 21:24:42.264 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-03-14 21:24:42.264 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-03-14 21:24:42.304 
+  [33m[1mWarning:[0m to view this Streamlit app on a browser, run it with the following
+  command:
+
+    streamlit run autoresearch_eval.py [ARGUMENTS]
+2026-03-14 21:24:42.304 Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-03-14 21:24:42.304 Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-03-14 21:24:42.304 Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-03-14 21:24:42.304 No runtime found, using MemoryCacheStorageManager
+2026-03-14 21:24:42.379 Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-03-14 21:24:42.379 Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-03-14 21:24:42.379 Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+ENTSO-E loaded: 34942 rows, cols=['cross_border_mw', 'nuclear_mw', 'hydro_ror_mw', 'hydro_reservoir_mw', 'hydro_pumped_mw', 'wind_mw', 'solar_mw', 'load_mw', 'solar_regime', 'load_deviation']
+Hydro reservoir loaded: 1367 weeks, fill range=827.0%-9616.0%
+Cellule (Automne, Ferie_CH) : 0 obs insuffisantes — fallback sur Ouvrable
+Energy conservation VIOLATED for Cal 2026: year_price=102.2000, weighted_avg=102.0700, error=0.130011 €/MWh
+Energy conservation VIOLATED for 2026-Q1: q_price=136.9000, weighted_avg=136.1018, error=0.798240 €/MWh
+Energy conservation VIOLATED for 2026-Q2: q_price=70.4000, weighted_avg=70.4462, error=0.046154 €/MWh
+Energy conservation VIOLATED for 2026-Q3: q_price=80.2000, weighted_avg=80.0620, error=0.138043 €/MWh
+Energy conservation VIOLATED for 2026-Q4: q_price=121.2000, weighted_avg=121.0883, error=0.111679 €/MWh
+/Users/julienbattaglia/Desktop/PFC/pfc_shaping/calibration/arbitrage_free.py:461: RuntimeWarning: divide by zero encountered in matmul
+  smoothness_cost = float(delta_for_log @ (H @ delta_for_log))
+/Users/julienbattaglia/Desktop/PFC/pfc_shaping/calibration/arbitrage_free.py:461: RuntimeWarning: overflow encountered in matmul
+  smoothness_cost = float(delta_for_log @ (H @ delta_for_log))
+/Users/julienbattaglia/Desktop/PFC/pfc_shaping/calibration/arbitrage_free.py:461: RuntimeWarning: invalid value encountered in matmul
+  smoothness_cost = float(delta_for_log @ (H @ delta_for_log))
+---
+corr_f:           0.877411
+spearman_rho:     0.876468
+mpd:              7.661017
+mhd:              3.983051
+cov_e:            0.303363
+spread_error:     0.923697
+spread_ratio:     0.954864
+dispatch_capture: 0.991995
+dispatch_vs_flat: 0.952087
+rmse:             37.859288
+rmse_shape:       31.673538
+mae:              30.752475
+bias:             17.692184
+rmse_hourly_std:  3.984554
+ic80_coverage:    0.803354
+n_points:         5665
+n_days:           60
+test_period:      2026-01-12 -> 2026-03-12
+eval_seconds:     13.6
+status:           ok
