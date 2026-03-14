@@ -114,6 +114,14 @@ def parse_key(key: str) -> tuple[str, int, int | None]:
     if m:
         return ("Month", int(m.group(1)), int(m.group(2)))
 
+    # Peak/product-type suffixed keys (e.g. '2026-01-Peak') are handled
+    # by the assembler, not the cascader. Return a sentinel type.
+    if "-Peak" in key or "-Offpeak" in key:
+        # Strip suffix and parse base key, return product-suffixed type
+        base_key = key.replace("-Peak", "").replace("-Offpeak", "")
+        base_type, yr, sub = parse_key(base_key)
+        return (f"{base_type}_Peak", yr, sub)
+
     raise ValueError(f"Unrecognised delivery period key: {key!r}")
 
 
@@ -428,6 +436,7 @@ class ContractCascader:
         years = [
             (yr, price)
             for key, price in base_prices.items()
+            if "-Peak" not in key and "-Offpeak" not in key
             for ptype, yr, _ in [parse_key(key)]
             if ptype == "Cal"
         ]
@@ -456,6 +465,7 @@ class ContractCascader:
         quarters = [
             (yr, q, price)
             for key, price in list(result.items())
+            if "-Peak" not in key and "-Offpeak" not in key
             for ptype, yr, q in [parse_key(key)]
             if ptype == "Quarter"
         ]
@@ -694,6 +704,8 @@ class ContractCascader:
 
         # Check year → quarter conservation
         for key, year_price in list(prices.items()):
+            if "-Peak" in key or "-Offpeak" in key:
+                continue
             ptype, year, _ = parse_key(key)
             if ptype != "Cal":
                 continue
@@ -728,6 +740,8 @@ class ContractCascader:
 
         # Check quarter → month conservation
         for key, q_price in list(prices.items()):
+            if "-Peak" in key or "-Offpeak" in key:
+                continue
             ptype, year, q = parse_key(key)
             if ptype != "Quarter":
                 continue
@@ -827,6 +841,8 @@ class ContractCascader:
         specs: list[ContractSpec] = []
 
         for key, price in base_prices.items():
+            if "-Peak" in key or "-Offpeak" in key:
+                continue
             ptype, year, sub = parse_key(key)
 
             if ptype == "Cal":

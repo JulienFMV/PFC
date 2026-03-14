@@ -101,11 +101,26 @@ def main() -> None:
         # Base prices
         base_prices = derive_base_prices(train, start_year=cutoff.year, n_years=1)
 
-        # Assemble PFC
+        # Cascading + Calibrator
+        from pfc_shaping.calibration.cascading import ContractCascader
+        from pfc_shaping.calibration.arbitrage_free import ArbitrageFreeCalibrator
+
+        cascader = ContractCascader()
+        cascader.fit_seasonal_ratios(train)
+
+        calibrator = ArbitrageFreeCalibrator(
+            smoothness_weight=model_cfg.get("smoothness_weight", 1.0),
+            tol=model_cfg.get("calibration_tol", 0.01),
+            regularisation=1e-6,  # higher regularisation for Base+Peak stability
+        )
+
+        # Assemble PFC (with calibrator + cascader)
         assembler = PFCAssembler(
             shape_hourly=sh,
             shape_intraday=si,
             uncertainty=unc,
+            cascader=cascader,
+            calibrator=calibrator,
         )
 
         # ENTSO-E forecast for the test period (use actual data as "perfect forecast")
@@ -238,6 +253,54 @@ def main() -> None:
             spread_error = 99.0
             spread_ratio = 1.0
 
+        # ── Dispatch revenue metric (simplified hydro DFL) ────────────
+        # Simulate a 100 MW hydro plant dispatching 8h/day in the most
+        # expensive hours according to the PFC vs the actual spot.
+        # Revenue gap = how much revenue is lost due to shape errors.
+        dispatch_hours = 8  # turbine 8h/day
+        capacity_mw = 100
+        revenue_pfc = 0.0
+        revenue_perfect = 0.0
+        revenue_flat = 0.0
+        n_dispatch_days = 0
+
+        for d in unique_dates:
+            day_mask = dates_zh == d
+            n_pts = day_mask.sum()
+            if n_pts < 92:
+                continue
+
+            spot_day = spot_prices.values[day_mask]
+            pfc_day = pfc_prices.values[day_mask]
+
+            # Aggregate to hourly
+            n_h = n_pts // 4
+            if n_h < 20:
+                continue
+            spot_hourly = np.array([spot_day[i*4:(i+1)*4].mean() for i in range(n_h)])
+            pfc_hourly = np.array([pfc_day[i*4:(i+1)*4].mean() for i in range(n_h)])
+
+            # PFC-based dispatch: pick top dispatch_hours by PFC price
+            pfc_top_hours = np.argsort(pfc_hourly)[-dispatch_hours:]
+            # Perfect dispatch: pick top dispatch_hours by actual spot
+            perfect_top_hours = np.argsort(spot_hourly)[-dispatch_hours:]
+            # Flat dispatch: first dispatch_hours hours (baseline)
+            flat_hours = list(range(dispatch_hours))
+
+            revenue_pfc += spot_hourly[pfc_top_hours].sum() * capacity_mw
+            revenue_perfect += spot_hourly[perfect_top_hours].sum() * capacity_mw
+            revenue_flat += spot_hourly[flat_hours].sum() * capacity_mw
+            n_dispatch_days += 1
+
+        if n_dispatch_days > 0 and revenue_perfect > 0:
+            # Capture ratio: how much of perfect-foresight revenue does PFC capture?
+            dispatch_capture = float(revenue_pfc / revenue_perfect)
+            # Improvement over flat dispatch
+            dispatch_vs_flat = float((revenue_pfc - revenue_flat) / (revenue_perfect - revenue_flat)) if revenue_perfect != revenue_flat else 1.0
+        else:
+            dispatch_capture = 0.0
+            dispatch_vs_flat = 0.0
+
         elapsed = time.time() - t0
 
         # ── Output metrics (Karpathy format) ─────────────────────────────
@@ -249,6 +312,8 @@ def main() -> None:
         print(f"cov_e:            {cov_e:.6f}")
         print(f"spread_error:     {spread_error:.6f}")
         print(f"spread_ratio:     {spread_ratio:.6f}")
+        print(f"dispatch_capture: {dispatch_capture:.6f}")
+        print(f"dispatch_vs_flat: {dispatch_vs_flat:.6f}")
         print(f"rmse:             {rmse:.6f}")
         print(f"rmse_shape:       {rmse_shape:.6f}")
         print(f"mae:              {mae:.6f}")

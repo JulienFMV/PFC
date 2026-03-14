@@ -60,6 +60,9 @@ class ShapeHourly:
         self.f_W_: dict[str, float] = {}  # ratios empiriques par type_jour (global)
         self.f_W_seasonal_: dict[tuple[str, str], float] = {}  # (saison, type_jour) -> ratio
         self.global_factors_: np.ndarray | None = None
+        # Horizon-dependent: per-year factors and linear trends
+        self.factors_by_year_: dict[tuple[str, str, int], np.ndarray] = {}
+        self.trend_per_hour_: dict[tuple[str, str], np.ndarray] = {}  # slope per hour
 
     def fit(self, epex_df: pd.DataFrame, calendar_df: pd.DataFrame) -> "ShapeHourly":
         """
@@ -129,9 +132,12 @@ class ShapeHourly:
         # Fallback : remplir les cellules vides avec la moyenne des cellules existantes
         self._fill_missing_cells()
 
+        # Compute per-year profiles and linear trends for horizon-dependent shaping
+        self._fit_trends(df)
+
         logger.info(
-            "ShapeHourly fitted : %d cellules, sigma=%.1f",
-            len(self.factors_), self.sigma
+            "ShapeHourly fitted : %d cellules, sigma=%.1f, %d trends",
+            len(self.factors_), self.sigma, len(self.trend_per_hour_)
         )
         return self
 
@@ -154,27 +160,88 @@ class ShapeHourly:
 
         raise KeyError(f"Aucun facteur disponible pour {key} et ses fallbacks")
 
-    def apply(self, timestamps: pd.DatetimeIndex, calendar_df: pd.DataFrame) -> pd.Series:
+    def get_for_horizon(self, saison: str, type_jour: str, years_ahead: float = 0.0) -> np.ndarray:
+        """
+        Retourne f_H ajusté par la tendance pour un horizon donné.
+
+        Pour years_ahead=0, identique à get(). Pour years_ahead>0,
+        applique la tendance linéaire estimée sur les profils historiques
+        par année (ex: duck curve solaire se creusant).
+
+        Args:
+            saison: Saison cible
+            type_jour: Type de jour cible
+            years_ahead: Nombre d'années dans le futur (0 = court terme)
+
+        Returns:
+            np.ndarray shape (24,) — facteurs normalisés à mean=1
+        """
+        base = self.get(saison, type_jour)
+        if years_ahead <= 0.5 or (saison, type_jour) not in self.trend_per_hour_:
+            return base
+
+        trend = self.trend_per_hour_[(saison, type_jour)]
+        adjusted = base + trend * years_ahead
+        # Ensure no negative factors and re-normalize to mean=1
+        adjusted = np.maximum(adjusted, 0.1)
+        adjusted = adjusted / adjusted.mean()
+        return adjusted
+
+    def apply(self, timestamps: pd.DatetimeIndex, calendar_df: pd.DataFrame,
+              reference_date: pd.Timestamp | None = None) -> pd.Series:
         """
         Applique les facteurs f_H sur un index 15min futur.
+
+        Si reference_date est fourni, applique des shapes horizon-dépendants
+        (trend-adjusted) pour les timestamps éloignés (>1 an).
 
         Args:
             timestamps  : DatetimeIndex UTC (futur N+3 ans)
             calendar_df : enrichissement calendaire de timestamps
+            reference_date : date de référence pour calculer years_ahead
 
         Returns:
             pd.Series de f_H pour chaque timestamp, index=timestamps
         """
+        if reference_date is None:
+            reference_date = pd.Timestamp.now(tz="UTC")
+
         result = pd.Series(index=timestamps, dtype=float, name="f_H")
+
         for (saison, type_jour), group in calendar_df.groupby(["saison", "type_jour"]):
-            factors = self.get(saison, type_jour)
             for h in range(24):
                 mask = (group["heure_hce"] == h)
                 idx = group.index[mask]
-                if len(idx) > 0:
+                if len(idx) == 0:
+                    continue
+
+                if self.trend_per_hour_:
+                    # Apply horizon-dependent factors per timestamp
+                    years_ahead = (idx - reference_date).total_seconds() / (365.25 * 86400)
+                    factors_arr = self.get(saison, type_jour)
+                    trend = self.trend_per_hour_.get((saison, type_jour))
+
+                    if trend is not None:
+                        # Vectorized: base + trend * years_ahead (clamped for short-term)
+                        ya = np.maximum(years_ahead.values.astype(float), 0.0)
+                        adjusted = factors_arr[h] + trend[h] * ya
+                        adjusted = np.maximum(adjusted, 0.1)
+                        result.loc[idx] = adjusted
+                    else:
+                        result.loc[idx] = factors_arr[h]
+                else:
+                    factors = self.get(saison, type_jour)
                     result.loc[idx] = factors[h]
+
+        # Re-normalize per day to preserve mean=1 constraint
+        if self.trend_per_hour_:
+            idx_zh = timestamps.tz_convert("Europe/Zurich")
+            day_key = pd.Index([f"{t.year}-{t.month:02d}-{t.day:02d}" for t in idx_zh])
+            daily_mean = result.groupby(day_key).transform("mean")
+            daily_mean = daily_mean.replace(0, 1.0)
+            result = result / daily_mean
+
         if result.isna().any():
-            # Defensive final fallback to keep pipeline operational.
             fallback = np.ones(24) if self.global_factors_ is None else self.global_factors_
             na_mask = result.isna()
             missing_cal = calendar_df.loc[na_mask, "heure_hce"].astype(int)
@@ -222,6 +289,76 @@ class ShapeHourly:
     # ---------------------------------------------------------------------------
     # Interne
     # ---------------------------------------------------------------------------
+
+    def _fit_trends(self, df: pd.DataFrame) -> None:
+        """
+        Compute per-year f_H profiles and fit linear trends per hour.
+
+        This enables horizon-dependent shaping: for Y+2/Y+3, the solar
+        duck curve deepens, evening peaks may shift, etc. The trend is
+        fitted as a linear regression of f_H(h) across calendar years.
+
+        Only cells with >= 3 years of data get trends.
+        """
+        df_year = df.index.tz_convert("Europe/Zurich").year if df.index.tz is not None else df.index.year
+        years = sorted(set(df_year))
+        if len(years) < 3:
+            logger.info("Trends: need >= 3 years, have %d — skipping", len(years))
+            return
+
+        for saison in SAISONS:
+            for type_jour in TYPES_JOUR:
+                yearly_profiles = {}
+                for yr in years:
+                    mask = (
+                        (df["saison"] == saison) &
+                        (df["type_jour"] == type_jour) &
+                        (df_year == yr)
+                    )
+                    subset = df.loc[mask]
+                    if len(subset) < 96:
+                        continue
+                    hourly_mean = (
+                        subset.groupby("heure_hce")["price_eur_mwh"]
+                        .mean()
+                        .reindex(range(24))
+                        .interpolate(method="linear")
+                    )
+                    daily_mean = hourly_mean.mean()
+                    if daily_mean == 0:
+                        continue
+                    profile = hourly_mean.values / daily_mean
+                    yearly_profiles[yr] = profile
+                    self.factors_by_year_[(saison, type_jour, yr)] = profile
+
+                if len(yearly_profiles) < 3:
+                    continue
+
+                # Fit linear trend per hour across years
+                yr_arr = np.array(sorted(yearly_profiles.keys()))
+                profiles = np.array([yearly_profiles[y] for y in yr_arr])  # (n_years, 24)
+
+                # Normalize years to "years since last year"
+                yr_centered = yr_arr - yr_arr[-1]  # last year = 0
+
+                slopes = np.zeros(24)
+                for h in range(24):
+                    # Simple linear regression: f_H(h) = a + b * year
+                    coeffs = np.polyfit(yr_centered, profiles[:, h], 1)
+                    slopes[h] = coeffs[0]  # slope per year
+
+                # Only keep trends that are meaningful (|slope| > 0.001 for at least some hours)
+                if np.max(np.abs(slopes)) > 0.001:
+                    self.trend_per_hour_[(saison, type_jour)] = slopes
+                    logger.debug(
+                        "Trend (%s,%s): max_slope=%.4f at h=%d",
+                        saison, type_jour, np.max(np.abs(slopes)), np.argmax(np.abs(slopes))
+                    )
+
+        logger.info(
+            "Trends fitted: %d cells with significant trends",
+            len(self.trend_per_hour_)
+        )
 
     def _fit_f_W(self, df: pd.DataFrame) -> None:
         """
