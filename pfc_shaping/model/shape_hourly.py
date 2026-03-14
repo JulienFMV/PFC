@@ -52,11 +52,13 @@ class ShapeHourly:
         n_obs_   : dict[(saison, type_jour)] -> int (nombre d'obs utilisées)
     """
 
-    def __init__(self, sigma: float = GAUSSIAN_SIGMA) -> None:
+    def __init__(self, sigma: float = GAUSSIAN_SIGMA, halflife_days: float = 180.0) -> None:
         self.sigma = sigma
+        self.halflife_days = halflife_days  # exponential decay half-life
         self.factors_: dict[tuple[str, str], np.ndarray] = {}
         self.n_obs_: dict[tuple[str, str], int] = {}
-        self.f_W_: dict[str, float] = {}  # ratios empiriques par type_jour
+        self.f_W_: dict[str, float] = {}  # ratios empiriques par type_jour (global)
+        self.f_W_seasonal_: dict[tuple[str, str], float] = {}  # (saison, type_jour) -> ratio
         self.global_factors_: np.ndarray | None = None
 
     def fit(self, epex_df: pd.DataFrame, calendar_df: pd.DataFrame) -> "ShapeHourly":
@@ -76,6 +78,12 @@ class ShapeHourly:
         df = df.join(calendar_df[["saison", "type_jour", "heure_hce"]])
         df = df.dropna(subset=["saison", "type_jour", "heure_hce", "price_eur_mwh"])
 
+        # Compute exponential decay weights (recent data counts more)
+        t_max = df.index.max()
+        days_ago = (t_max - df.index).total_seconds() / 86400.0
+        decay_rate = np.log(2) / self.halflife_days
+        df["_weight"] = np.exp(-decay_rate * days_ago)
+
         # Calcul empirique de f_W : ratio prix moyen par type_jour / prix moyen global
         self._fit_f_W(df)
 
@@ -91,8 +99,14 @@ class ShapeHourly:
                     )
                     continue
 
-                # Prix moyen par heure (aggrège les 4 quarts)
-                hourly_mean = subset.groupby("heure_hce")["price_eur_mwh"].mean()
+                # Prix moyen pondéré par heure (exponential decay)
+                hourly_mean = (
+                    subset.groupby("heure_hce")
+                    .apply(
+                        lambda g: np.average(g["price_eur_mwh"], weights=g["_weight"]),
+                        include_groups=False,
+                    )
+                )
                 hourly_mean = hourly_mean.reindex(range(24)).interpolate(method="linear")
 
                 # Normalisation : f_H moyen = 1
@@ -214,13 +228,16 @@ class ShapeHourly:
         Calcule les ratios empiriques f_W par type_jour depuis l'historique EPEX.
 
         f_W(type_jour) = prix_moyen(type_jour) / prix_moyen(global)
-        Normalisé pour que la moyenne pondérée hebdomadaire ≈ 1.
+
+        Aussi calcule f_W_seasonal_ par (saison, type_jour) pour capturer
+        la différence weekend hiver vs été.
         """
         overall_mean = df["price_eur_mwh"].mean()
         if overall_mean == 0:
             self.f_W_ = {tj: 1.0 for tj in TYPES_JOUR}
             return
 
+        # ── Global f_W (fallback) ──────────────────────────────────────
         for tj in TYPES_JOUR:
             mask = df["type_jour"] == tj
             subset = df.loc[mask, "price_eur_mwh"]
@@ -234,9 +251,39 @@ class ShapeHourly:
         if self.f_W_.get("Ferie_DE", 1.0) == 1.0 and "Ferie_CH" in self.f_W_:
             self.f_W_["Ferie_DE"] = self.f_W_["Ferie_CH"]
 
+        # ── Seasonal f_W : f_W(saison, type_jour) ─────────────────────
+        for saison in SAISONS:
+            mask_s = df["saison"] == saison
+            season_data = df.loc[mask_s]
+            season_mean = season_data["price_eur_mwh"].mean() if len(season_data) > 0 else overall_mean
+
+            if season_mean == 0 or len(season_data) < 96:
+                for tj in TYPES_JOUR:
+                    self.f_W_seasonal_[(saison, tj)] = self.f_W_.get(tj, 1.0)
+                continue
+
+            for tj in TYPES_JOUR:
+                mask_tj = season_data["type_jour"] == tj
+                subset = season_data.loc[mask_tj, "price_eur_mwh"]
+                if len(subset) >= 96:
+                    self.f_W_seasonal_[(saison, tj)] = subset.mean() / season_mean
+                else:
+                    # Fallback to global f_W for this type_jour
+                    self.f_W_seasonal_[(saison, tj)] = self.f_W_.get(tj, 1.0)
+
+            # Fallback fériés
+            key_de = (saison, "Ferie_DE")
+            key_ch = (saison, "Ferie_CH")
+            if self.f_W_seasonal_.get(key_de, 1.0) == 1.0 and key_ch in self.f_W_seasonal_:
+                self.f_W_seasonal_[key_de] = self.f_W_seasonal_[key_ch]
+
         logger.info(
-            "f_W empiriques : %s",
+            "f_W global : %s",
             {k: round(v, 3) for k, v in self.f_W_.items()},
+        )
+        logger.info(
+            "f_W seasonal : %d cellules calibrées",
+            len(self.f_W_seasonal_),
         )
 
     def _fill_missing_cells(self) -> None:

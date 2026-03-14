@@ -411,8 +411,8 @@ class PFCAssembler:
     def _compute_f_W(self, cal: pd.DataFrame) -> pd.Series:
         """
         Facteur jour de semaine f_W.
-        Utilise les ratios empiriques calibres par ShapeHourly.fit() sur
-        l''historique EPEX. Fallback sur des defauts si non disponible.
+        Utilise les ratios saisonniers f_W(saison, type_jour) si disponibles,
+        sinon fallback sur f_W(type_jour) global.
         """
         _FW_DEFAULTS = {
             "Ouvrable": 1.05,
@@ -421,6 +421,18 @@ class PFCAssembler:
             "Ferie_CH": 0.75,
             "Ferie_DE": 0.88,
         }
+
+        # Prefer seasonal f_W if available
+        if self.sh.f_W_seasonal_:
+            keys = list(zip(cal["saison"], cal["type_jour"]))
+            f_W_global = self.sh.f_W_ if self.sh.f_W_ else _FW_DEFAULTS
+            values = [
+                self.sh.f_W_seasonal_.get(k, f_W_global.get(k[1], 1.0))
+                for k in keys
+            ]
+            return pd.Series(values, index=cal.index, name="f_W", dtype=float)
+
+        # Fallback to global f_W
         f_W_map = self.sh.f_W_ if self.sh.f_W_ else _FW_DEFAULTS
         return cal["type_jour"].map(f_W_map).fillna(1.0).rename("f_W")
 

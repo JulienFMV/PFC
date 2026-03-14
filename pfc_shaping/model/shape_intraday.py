@@ -46,8 +46,9 @@ logger = logging.getLogger(__name__)
 SAISONS = ["Hiver", "Printemps", "Ete", "Automne"]
 TYPES_JOUR = ["Ouvrable", "Samedi", "Dimanche", "Ferie_CH", "Ferie_DE"]
 
-# Heures à forte variance intra-horaire → correction exogène activée
-HEURES_RAMPE = set(range(6, 11)) | set(range(17, 21))
+# Correction exogène sur TOUTES les heures (le gate R² > 0 OOS
+# rejette automatiquement les heures où ça n'aide pas)
+HEURES_RAMPE = set(range(24))
 
 # Nombre minimum d'observations pour estimer une cellule
 MIN_OBS_COUCHE1 = 8   # ≥ 8 occurrences de l'heure dans la cellule
