@@ -86,7 +86,7 @@ model:
   lookback_months: 12
 
   # Paramètre de lissage gaussien de f_H (en heures)
-  gaussian_sigma: 1.17
+  gaussian_sigma: 1.5
 
   # Nombre de tirages bootstrap pour les IC
   n_boot: 500
