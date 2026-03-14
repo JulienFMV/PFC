@@ -52,9 +52,15 @@ class ShapeHourly:
         n_obs_   : dict[(saison, type_jour)] -> int (nombre d'obs utilisées)
     """
 
-    def __init__(self, sigma: float = GAUSSIAN_SIGMA, halflife_days: float = 180.0) -> None:
+    def __init__(
+        self,
+        sigma: float = GAUSSIAN_SIGMA,
+        halflife_days: float = 180.0,
+        hydro_weight_sigma: float = 0.25,
+    ) -> None:
         self.sigma = sigma
         self.halflife_days = halflife_days  # exponential decay half-life
+        self.hydro_weight_sigma = hydro_weight_sigma  # kernel bandwidth for reservoir analogue weighting
         self.factors_: dict[tuple[str, str], np.ndarray] = {}
         self.n_obs_: dict[tuple[str, str], int] = {}
         self.f_W_: dict[str, float] = {}  # ratios empiriques par type_jour (global)
@@ -63,8 +69,15 @@ class ShapeHourly:
         # Horizon-dependent: per-year factors and linear trends
         self.factors_by_year_: dict[tuple[str, str, int], np.ndarray] = {}
         self.trend_per_hour_: dict[tuple[str, str], np.ndarray] = {}  # slope per hour
+        # Hydro reservoir analogue data (set by fit if hydro_df is provided)
+        self._hydro_fill_weekly: pd.Series | None = None
 
-    def fit(self, epex_df: pd.DataFrame, calendar_df: pd.DataFrame) -> "ShapeHourly":
+    def fit(
+        self,
+        epex_df: pd.DataFrame,
+        calendar_df: pd.DataFrame,
+        hydro_df: pd.DataFrame | None = None,
+    ) -> "ShapeHourly":
         """
         Estime les facteurs de forme sur l'historique EPEX 15min.
 
@@ -73,6 +86,11 @@ class ShapeHourly:
                          index DatetimeIndex UTC freq≈15min
             calendar_df: DataFrame issu de calendar_ch.enrich_15min_index(),
                          colonnes ['type_jour', 'saison', 'heure_hce', 'quart']
+            hydro_df   : Optional weekly hydro reservoir data with 'fill_pct' column.
+                         If provided, historical days are weighted by reservoir
+                         fill similarity to the most recent level (KYOS analogue
+                         approach). This improves shape estimation for Swiss hydro-
+                         dominated markets.
 
         Returns:
             self
@@ -86,6 +104,10 @@ class ShapeHourly:
         days_ago = (t_max - df.index).total_seconds() / 86400.0
         decay_rate = np.log(2) / self.halflife_days
         df["_weight"] = np.exp(-decay_rate * days_ago)
+
+        # ── Analogue-based hydro reservoir weighting (KYOS approach) ──
+        if hydro_df is not None and "fill_pct" in hydro_df.columns:
+            self._apply_hydro_analogue_weights(df, hydro_df)
 
         # Calcul empirique de f_W : ratio prix moyen par type_jour / prix moyen global
         self._fit_f_W(df)
@@ -481,6 +503,68 @@ class ShapeHourly:
                         "Cellule (%s,%s) remplie avec fallback global",
                         saison, type_jour
                     )
+
+    def _apply_hydro_analogue_weights(
+        self, df: pd.DataFrame, hydro_df: pd.DataFrame
+    ) -> None:
+        """
+        Multiply existing temporal weights by reservoir-similarity kernel.
+
+        KYOS approach: for each historical timestamp, find the contemporary
+        reservoir fill level, compute a Gaussian kernel weight based on
+        distance to the most recent fill level, and multiply with the
+        temporal decay weight. This gives higher weight to historical
+        periods with similar hydro conditions.
+
+        Modifies df["_weight"] in-place.
+        """
+        fill = hydro_df["fill_pct"].dropna()
+        if len(fill) < 10:
+            logger.info("Hydro analogue: insufficient data (%d weeks) — skipping", len(fill))
+            return
+
+        # Normalize to [0, 1] if stored as percentage (0-100)
+        if fill.max() > 1.5:
+            fill = fill / 100.0
+
+        # Store for forecast-time analogue lookup
+        self._hydro_fill_weekly = fill
+
+        # Current (most recent) fill level
+        current_fill = float(fill.iloc[-1])
+        logger.info("Hydro analogue: current fill=%.1f%%, σ=%.2f", current_fill * 100, self.hydro_weight_sigma)
+
+        # Map each timestamp in df to its weekly fill level
+        # Create daily fill series by forward-filling weekly data
+        date_range = pd.date_range(fill.index.min(), df.index.max(), freq="D", tz="UTC")
+        fill_daily = fill.reindex(date_range, method="ffill")
+
+        # Map: for each day in df, look up fill_pct
+        df_dates = df.index.normalize()
+        fill_at_date = fill_daily.reindex(df_dates)
+
+        valid_mask = fill_at_date.notna()
+        if valid_mask.sum() == 0:
+            logger.info("Hydro analogue: no overlap with EPEX data — skipping")
+            return
+
+        fill_values = fill_at_date.values.astype(float)
+        # Gaussian kernel: w = exp(-0.5 * ((fill - current) / sigma)^2)
+        # Floor at 0.3 to prevent over-aggressive downweighting of
+        # dissimilar reservoir states (preserves seasonal diversity)
+        sigma = self.hydro_weight_sigma
+        hydro_weight = np.exp(-0.5 * ((fill_values - current_fill) / sigma) ** 2)
+        hydro_weight = np.where(np.isnan(hydro_weight), 1.0, hydro_weight)
+        hydro_weight = np.maximum(hydro_weight, 0.3)  # floor
+
+        # Combine: multiply existing temporal decay weight with hydro analogue weight
+        df["_weight"] = df["_weight"].values * hydro_weight
+
+        n_boosted = int((hydro_weight > 0.5).sum())
+        logger.info(
+            "Hydro analogue: %d/%d timestamps boosted (weight > 0.5)",
+            n_boosted, len(hydro_weight),
+        )
 
     def _compute_global_fallback(self) -> np.ndarray | None:
         """Average profile across all available cells; normalized to mean 1."""

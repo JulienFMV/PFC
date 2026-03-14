@@ -88,9 +88,16 @@ def main() -> None:
             entso_df = entso_full.reindex(train_lb.index)
             print(f"ENTSO-E loaded: {len(entso_df)} rows, cols={list(entso_df.columns)}", file=sys.stderr)
 
-        # Fit shape models
+        # Load hydro reservoir data (KYOS analogue weighting)
+        hydro_path = ROOT / "pfc_shaping" / "data" / "hydro_reservoir.parquet"
+        hydro_df = None
+        if hydro_path.exists():
+            hydro_df = pd.read_parquet(hydro_path)
+            print(f"Hydro reservoir loaded: {len(hydro_df)} weeks, fill range={hydro_df['fill_pct'].min():.1%}-{hydro_df['fill_pct'].max():.1%}", file=sys.stderr)
+
+        # Fit shape models (with hydro analogue weighting)
         sh = ShapeHourly(sigma=sigma)
-        sh.fit(train_lb, cal)
+        sh.fit(train_lb, cal, hydro_df=hydro_df)
 
         si = ShapeIntraday()
         si.fit(train_lb, entso_df=entso_df, calendar_df=cal)
@@ -108,10 +115,12 @@ def main() -> None:
         cascader = ContractCascader()
         cascader.fit_seasonal_ratios(train)
 
+        calibration_mode = model_cfg.get("calibration_mode", "multiplicative")
         calibrator = ArbitrageFreeCalibrator(
             smoothness_weight=model_cfg.get("smoothness_weight", 1.0),
             tol=model_cfg.get("calibration_tol", 0.01),
             regularisation=1e-6,  # higher regularisation for Base+Peak stability
+            mode=calibration_mode,  # SOTA: multiplicative preserves model structure
         )
 
         # Assemble PFC (with calibrator + cascader)

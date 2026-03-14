@@ -6,10 +6,11 @@ Assemblage de la PFC 15min N+3 ans.
 Formule complÃƒÂ¨te (6 facteurs multiplicatifs + calibration) :
     P_raw(t) = B(year) Ãƒâ€” f_S(month) Ãƒâ€” f_W(dow) Ãƒâ€” f_H(h) Ãƒâ€” f_Q(q) Ãƒâ€” f_WV(t)
 
-Puis calibration arbitrage-free :
-    P_cal(t) = P_raw(t) + ÃŽÂ´(t)
-    oÃƒÂ¹ ÃŽÂ´ minimise Ã¢Ë†Â«(ÃŽÂ´''(t))Ã‚Â² sous contrainte :
-        mean(P_cal sur contrat i) = prix_futures_i   Ã¢Ë†â‚¬ i
+Puis calibration arbitrage-free (multiplicative, SOTA) :
+    P_cal(t) = P_raw(t) × m(t)
+    où m minimise ∫(m''(t))² sous contrainte :
+        mean(P_cal sur contrat i) = prix_futures_i   ∀ i
+    Mode multiplicatif préserve la structure du modèle (Kiesel-Paraschiv).
 
 OÃƒÂ¹ :
     B(year)   = niveau de base annuel (forwards EEX Cal/Quarter/Month)

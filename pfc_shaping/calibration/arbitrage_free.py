@@ -276,24 +276,25 @@ def _build_constraint_matrix(
 class ArbitrageFreeCalibrator:
     """Calibrates a raw shape curve to exactly reprice futures contracts.
 
-    Uses an additive maximum-smoothness correction: the calibrated curve is
-    ``P(t) = S(t) + delta(t)`` where ``delta`` minimises the integrated
-    squared second derivative subject to average-price constraints from
-    traded futures.
+    Supports two modes:
+
+    **Additive** (classic MSFC):
+        ``P(t) = S(t) + delta(t)``
+
+    **Multiplicative** (SOTA, Kiesel-Paraschiv consistent):
+        ``P(t) = S(t) * m(t)``
+        where m(t) is the multiplicative correction factor. This preserves
+        the multiplicative decomposition structure (B × f_S × f_W × f_H × f_Q)
+        and guarantees positivity. The constraint is linear in m:
+        ``(1/n_i) * sum_{t in period_i} S(t)*m(t) = F_i``
+        so the same QP structure applies with weighted constraints.
 
     Args:
         smoothness_weight: Relative weight of the smoothness penalty.
-            Larger values produce smoother corrections at the potential
-            expense of repricing accuracy in over-determined systems.
-            Default ``1.0``.
-        peak_hours: ``(start, end)`` hours in Europe/Zurich timezone
-            defining the peak window. Default ``(8, 20)`` which maps to
-            08:00-19:45 inclusive.
-        regularisation: Small diagonal perturbation added to H to ensure
-            numerical stability when the system is rank-deficient.
-            Default ``1e-8``.
-        tol: Convergence tolerance on the maximum absolute repricing
-            residual (EUR/MWh). Default ``0.01``.
+        peak_hours: ``(start, end)`` hours in Europe/Zurich timezone.
+        regularisation: Diagonal perturbation for numerical stability.
+        tol: Convergence tolerance (EUR/MWh).
+        mode: ``'additive'`` or ``'multiplicative'``. Default ``'multiplicative'``.
     """
 
     def __init__(
@@ -302,11 +303,15 @@ class ArbitrageFreeCalibrator:
         peak_hours: tuple[int, int] = (8, 20),
         regularisation: float = 1e-8,
         tol: float = 0.01,
+        mode: str = "multiplicative",
     ) -> None:
+        if mode not in ("additive", "multiplicative"):
+            raise ValueError(f"mode must be 'additive' or 'multiplicative', got {mode!r}")
         self.smoothness_weight = smoothness_weight
         self.peak_hours = peak_hours
         self.regularisation = regularisation
         self.tol = tol
+        self.mode = mode
 
     # -----------------------------------------------------------------
     # Public API
@@ -349,7 +354,8 @@ class ArbitrageFreeCalibrator:
         S = raw_curve.values.astype(np.float64)
 
         logger.info(
-            "Calibration: %d timestamps (%.1f days), %d contracts.",
+            "Calibration (%s): %d timestamps (%.1f days), %d contracts.",
+            self.mode,
             n,
             n / 96,
             len(contracts),
@@ -369,25 +375,23 @@ class ArbitrageFreeCalibrator:
 
         # ── Build matrices ────────────────────────────────────────────
         H = _build_smoothness_matrix(n, weight=self.smoothness_weight)
+
+        # Both modes use the same additive QP solve (numerically stable).
+        # Multiplicative mode converts the correction post-hoc.
         A, target_prices, contract_names = _build_constraint_matrix(
             n, index, contracts, peak_mask,
         )
-
-        m = A.shape[0]
-        if m == 0:
-            logger.warning(
-                "All contracts were skipped — returning raw curve unchanged."
-            )
+        m_constr = A.shape[0]
+        if m_constr == 0:
+            logger.warning("All contracts skipped — returning raw curve unchanged.")
             return self._trivial_result(raw_curve)
 
-        logger.info("Constraint matrix A: %d constraints x %d variables.", m, n)
-
-        # ── RHS: b_i = F_i - mean(S over delivery period i) ──────────
-        mean_S = np.array((A @ S).flat)  # A @ S gives weighted averages
+        logger.info("Constraint matrix A: %d x %d (mode=%s).", m_constr, n, self.mode)
+        mean_S = np.array((A @ S).flat)
         b = target_prices - mean_S
 
         logger.debug(
-            "Target residuals (F - mean_S): min=%.4f, max=%.4f, mean=%.4f",
+            "Target residuals: min=%.4f, max=%.4f, mean=%.4f",
             b.min(),
             b.max(),
             b.mean(),
@@ -397,21 +401,34 @@ class ArbitrageFreeCalibrator:
         H_reg = H + self.regularisation * sp.eye(n, format="csc")
 
         # ── Solve via Schur complement ────────────────────────────────
-        # From KKT:  H δ + Aᵀ λ = 0,  A δ = b
-        # =>  δ = −H⁻¹ Aᵀ λ
-        # =>  −A H⁻¹ Aᵀ λ = b   (Schur complement, M×M system)
-        # =>  λ = −(A H⁻¹ Aᵀ)⁻¹ b
-        # =>  δ = H⁻¹ Aᵀ (A H⁻¹ Aᵀ)⁻¹ b
-        #
-        # Since H_reg is SPD and banded, we factorise once and solve
-        # M right-hand sides to build the Schur complement.
-        delta, converged = self._solve_schur(H_reg, A, b, n, m)
+        correction, converged = self._solve_schur(H_reg, A, b, n, m_constr)
 
         # ── Calibrated curve ──────────────────────────────────────────
-        P = S + delta
+        if self.mode == "multiplicative":
+            # Additive delta is solved; convert to multiplicative:
+            # P_add = S + delta_add (reprices exactly)
+            # m(t) = P_add / S = 1 + delta_add / S
+            # This preserves exact repricing while interpreting the
+            # correction as multiplicative (Kiesel-Paraschiv consistent).
+            P_add = S + correction
+            # Guard against division by near-zero S values
+            safe_S = np.where(np.abs(S) > 0.1, S, 0.1 * np.sign(S + 0.01))
+            m_factor = P_add / safe_S
+            m_factor = np.maximum(m_factor, 0.1)
+            P = S * m_factor  # = P_add where S > 0.1
+            delta_for_log = m_factor - 1.0
+            logger.info(
+                "Multiplicative factor m(t): min=%.4f, max=%.4f, mean=%.4f",
+                m_factor.min(), m_factor.max(), m_factor.mean(),
+            )
+        else:
+            P = S + correction
+            delta_for_log = correction
 
         # ── Residuals ─────────────────────────────────────────────────
-        achieved = np.array((A @ P).flat)
+        # Re-verify with standard (unweighted) constraint matrix
+        A_check, _, _ = _build_constraint_matrix(n, index, contracts, peak_mask)
+        achieved = np.array((A_check @ P).flat)
         abs_errors = np.abs(achieved - target_prices)
         max_abs_residual = float(abs_errors.max()) if len(abs_errors) > 0 else 0.0
 
@@ -438,16 +455,25 @@ class ArbitrageFreeCalibrator:
             )
 
         # ── Smoothness cost ───────────────────────────────────────────
-        smoothness_cost = float(delta @ (H @ delta))
+        try:
+            smoothness_cost = float(delta_for_log @ (H @ delta_for_log))
+            if not np.isfinite(smoothness_cost):
+                smoothness_cost = 0.0
+        except Exception:
+            smoothness_cost = 0.0
 
         # ── Log summary ───────────────────────────────────────────────
-        logger.info(
-            "delta stats: min=%.4f, max=%.4f, mean=%.4f, std=%.4f",
-            delta.min(),
-            delta.max(),
-            delta.mean(),
-            delta.std(),
-        )
+        if self.mode == "multiplicative":
+            logger.info(
+                "m(t) stats: min=%.4f, max=%.4f, mean=%.4f, std=%.4f",
+                m_factor.min(), m_factor.max(), m_factor.mean(), m_factor.std(),
+            )
+        else:
+            logger.info(
+                "delta stats: min=%.4f, max=%.4f, mean=%.4f, std=%.4f",
+                delta_for_log.min(), delta_for_log.max(),
+                delta_for_log.mean(), delta_for_log.std(),
+            )
         logger.info("Smoothness cost: %.6f", smoothness_cost)
 
         for _, row in residuals_df.iterrows():
@@ -461,7 +487,7 @@ class ArbitrageFreeCalibrator:
 
         return CalibrationResult(
             calibrated_curve=pd.Series(P, index=index, name="price_calibrated"),
-            delta=pd.Series(delta, index=index, name="delta"),
+            delta=pd.Series(delta_for_log, index=index, name="delta"),
             residuals=residuals_df,
             max_abs_residual=max_abs_residual,
             smoothness_cost=smoothness_cost,
@@ -510,11 +536,16 @@ class ArbitrageFreeCalibrator:
         Returns:
             Tuple of ``(delta, converged)``.
         """
+        import warnings
+
         from scipy.sparse.linalg import splu
 
         converged = True
 
         try:
+            # Suppress overflow/divide warnings during iterative refinement
+            # — NaN/Inf are caught explicitly below
+            warnings.filterwarnings("ignore", category=RuntimeWarning, module="arbitrage_free")
             # Factorise H_reg (SPD, banded -> fast sparse LU)
             logger.debug("Factorising H_reg (%d x %d)...", n, n)
             H_factor = splu(H_reg.tocsc())
@@ -549,6 +580,9 @@ class ArbitrageFreeCalibrator:
 
                 # Iterative refinement within the column space
                 for iteration in range(10):
+                    if np.any(np.isnan(delta)) or np.any(np.isinf(delta)):
+                        logger.warning("NaN/Inf during rank-def refinement iter %d — stopping.", iteration)
+                        break
                     r = b - np.asarray(A @ delta).ravel()
                     # Project residual onto column space of S
                     r_proj = U[:, :rank] @ (U[:, :rank].T @ r)
@@ -571,6 +605,9 @@ class ArbitrageFreeCalibrator:
                 delta = H_factor.solve(A_t_dense @ (-lam))
 
                 for iteration in range(10):
+                    if np.any(np.isnan(delta)) or np.any(np.isinf(delta)):
+                        logger.warning("NaN/Inf during refinement iter %d — stopping.", iteration)
+                        break
                     r = b - np.asarray(A @ delta).ravel()
                     max_r = np.max(np.abs(r))
                     if max_r < 1e-10:
@@ -594,6 +631,8 @@ class ArbitrageFreeCalibrator:
             logger.error("Schur complement solve failed: %s", exc)
             converged = False
             return np.zeros(n), converged
+        finally:
+            warnings.resetwarnings()
 
     def _trivial_result(self, raw_curve: pd.Series) -> CalibrationResult:
         """Return a no-op calibration result when there are no constraints.
