@@ -18,7 +18,7 @@ Energy conservation constraint (hour-weighted average):
 where h_child_i is the number of delivery hours in child period i.
 
 Peak / Off-Peak decomposition:
-    Peak   = 08:00–20:00 Mon–Fri excl. Swiss holidays (canton VS)
+    Peak   = 08:00–20:00 Mon–Fri excl. Swiss national holidays (EEX standard)
     Base   = all hours
     OffPeak = (Base × total_h - Peak × peak_h) / offpeak_h
 """
@@ -140,11 +140,18 @@ def month_key(year: int, m: int) -> str:
 # ---------------------------------------------------------------------------
 
 def _swiss_holidays_set(year: int) -> set:
-    """Return a set of ``datetime.date`` for Swiss public holidays (canton VS).
+    """Return a set of ``datetime.date`` for Swiss national public holidays.
 
-    Uses the ``holidays`` library, consistent with ``calendar_ch.py``.
+    Uses national-level holidays (no cantonal subdivision) for consistency
+    with EEX peak/off-peak contract definitions.  EEX counts peak hours
+    using national holidays, not cantonal ones.
+
+    Note: ``calendar_ch.py`` uses ``subdiv="VS"`` for *dispatch shape*
+    classification (Ferie_CH), which is correct — FMV operates in Valais.
+    The distinction matters: VS has extra holidays (e.g. St-Joseph, Ascension
+    cantonale) that EEX does not recognise as non-peak.
     """
-    return set(holidays.Switzerland(years=year, subdiv="VS").keys())
+    return set(holidays.Switzerland(years=year).keys())
 
 
 def _period_boundaries_utc(

@@ -321,7 +321,7 @@ class PFCAssembler:
             key_q = f"{year}-Q{(month - 1) // 3 + 1}"
             key_y = str(year)
 
-            # ── Base contract ──────────────────────────────────────────
+            # ── Find base price ────────────────────────────────────────
             source_key = None
             if key_m in base_prices:
                 source_key = key_m
@@ -337,17 +337,9 @@ class PFCAssembler:
             if end_utc <= idx[0] or start_utc >= idx[-1]:
                 continue
 
-            contracts.append(
-                futures_contract_cls(
-                    name=f"{year}-{month:02d}<{source_key}>",
-                    price=float(base_prices[source_key]),
-                    start=start_utc,
-                    end=end_utc,
-                    product_type="Base",
-                )
-            )
+            base_price = float(base_prices[source_key])
 
-            # ── Peak contract (if available) ───────────────────────────
+            # ── Find peak price ────────────────────────────────────────
             peak_key = None
             for pk in [f"{key_m}-Peak", f"{key_q}-Peak", f"{key_y}-Peak"]:
                 if pk in base_prices:
@@ -355,19 +347,56 @@ class PFCAssembler:
                     break
 
             if peak_key is not None:
+                # ── SOTA: Peak + OffPeak as DISJOINT constraints ───────
+                # Instead of overlapping Base (all hours) + Peak (peak hours),
+                # decompose into Peak + OffPeak with disjoint supports.
+                # This improves Schur complement conditioning significantly.
+                # OffPeak = (Base × total_h - Peak × peak_h) / offpeak_h
+                from pfc_shaping.calibration.cascading import count_hours
+
+                total_h, peak_h, offpeak_h = count_hours(year, month, month)
+                peak_price = float(base_prices[peak_key])
+
                 contracts.append(
                     futures_contract_cls(
                         name=f"{year}-{month:02d}-Peak<{peak_key}>",
-                        price=float(base_prices[peak_key]),
+                        price=peak_price,
                         start=start_utc,
                         end=end_utc,
                         product_type="Peak",
                     )
                 )
 
+                if offpeak_h > 0:
+                    offpeak_price = (base_price * total_h - peak_price * peak_h) / offpeak_h
+                    contracts.append(
+                        futures_contract_cls(
+                            name=f"{year}-{month:02d}-Offpeak<{source_key}>",
+                            price=offpeak_price,
+                            start=start_utc,
+                            end=end_utc,
+                            product_type="Offpeak",
+                        )
+                    )
+            else:
+                # No peak price available — use Base constraint (all hours)
+                contracts.append(
+                    futures_contract_cls(
+                        name=f"{year}-{month:02d}<{source_key}>",
+                        price=base_price,
+                        start=start_utc,
+                        end=end_utc,
+                        product_type="Base",
+                    )
+                )
+
         n_peak = sum(1 for c in contracts if c.product_type == "Peak")
+        n_offpeak = sum(1 for c in contracts if c.product_type == "Offpeak")
         if n_peak > 0:
-            logger.info("Peak contracts injected: %d / %d total", n_peak, len(contracts))
+            logger.info(
+                "Disjoint Peak+Offpeak contracts: %d peak, %d offpeak / %d total",
+                n_peak, n_offpeak, len(contracts),
+            )
 
         return contracts
 

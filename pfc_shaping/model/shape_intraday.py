@@ -72,6 +72,7 @@ class ShapeIntraday:
         self.base_factors_: dict[tuple, np.ndarray] = {}
         self.corrections_: dict[tuple, dict] = {}
         self.n_obs_: dict[tuple, int] = {}
+        self._climatological_fill: pd.Series | None = None  # mean fill per week-of-year
 
     def fit(
         self,
@@ -449,6 +450,15 @@ class ShapeIntraday:
 
         if fill.max() > 1.5:
             fill = fill / 100.0
+
+        # Store climatological fill curve for horizon-dependent use
+        if hasattr(fill.index, 'isocalendar'):
+            week_of_year = fill.index.isocalendar().week.values
+        else:
+            week_of_year = fill.index.to_series().dt.isocalendar().week.values
+        self._climatological_fill = pd.Series(
+            fill.values, index=week_of_year,
+        ).groupby(level=0).mean()
 
         current_fill = float(fill.iloc[-1])
         date_range = pd.date_range(fill.index.min(), df.index.max(), freq="D", tz="UTC")

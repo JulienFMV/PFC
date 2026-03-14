@@ -69,9 +69,9 @@ class FuturesContract:
     product_type: str = "Base"
 
     def __post_init__(self) -> None:
-        if self.product_type not in ("Base", "Peak"):
+        if self.product_type not in ("Base", "Peak", "Offpeak"):
             raise ValueError(
-                f"product_type must be 'Base' or 'Peak', got {self.product_type!r}"
+                f"product_type must be 'Base', 'Peak', or 'Offpeak', got {self.product_type!r}"
             )
         if self.start >= self.end:
             raise ValueError(
@@ -239,6 +239,8 @@ def _build_constraint_matrix(
 
         if contract.product_type == "Peak":
             in_period = in_period & peak_mask
+        elif contract.product_type == "Offpeak":
+            in_period = in_period & ~peak_mask
 
         ts_indices = np.where(in_period)[0]
         n_i = len(ts_indices)
@@ -545,7 +547,7 @@ class ArbitrageFreeCalibrator:
         try:
             # Suppress overflow/divide warnings during iterative refinement
             # — NaN/Inf are caught explicitly below
-            warnings.filterwarnings("ignore", category=RuntimeWarning, module="arbitrage_free")
+            warnings.filterwarnings("ignore", category=RuntimeWarning)
             # Factorise H_reg (SPD, banded -> fast sparse LU)
             logger.debug("Factorising H_reg (%d x %d)...", n, n)
             H_factor = splu(H_reg.tocsc())

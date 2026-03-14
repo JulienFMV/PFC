@@ -71,6 +71,7 @@ class ShapeHourly:
         self.trend_per_hour_: dict[tuple[str, str], np.ndarray] = {}  # slope per hour
         # Hydro reservoir analogue data (set by fit if hydro_df is provided)
         self._hydro_fill_weekly: pd.Series | None = None
+        self._climatological_fill: pd.Series | None = None  # mean fill per week-of-year
 
     def fit(
         self,
@@ -208,6 +209,17 @@ class ShapeHourly:
         adjusted = np.maximum(adjusted, 0.1)
         adjusted = adjusted / adjusted.mean()
         return adjusted
+
+    def get_climatological_fill(self, week: int) -> float:
+        """Return the climatological (long-term mean) fill level for a given ISO week."""
+        if self._climatological_fill is None:
+            return 0.5  # neutral default
+        if week in self._climatological_fill.index:
+            return float(self._climatological_fill[week])
+        # Interpolate nearest
+        return float(self._climatological_fill.iloc[
+            (self._climatological_fill.index - week).abs().argmin()
+        ])
 
     def apply(self, timestamps: pd.DatetimeIndex, calendar_df: pd.DataFrame,
               reference_date: pd.Timestamp | None = None) -> pd.Series:
@@ -527,12 +539,24 @@ class ShapeHourly:
         if fill.max() > 1.5:
             fill = fill / 100.0
 
-        # Store for forecast-time analogue lookup
+        # Store for forecast-time analogue lookup (includes climatological curve)
         self._hydro_fill_weekly = fill
+
+        # Compute climatological fill curve (mean fill per week-of-year)
+        # Used for horizon-dependent analogue weighting: for Y+2/Y+3,
+        # use expected fill for that time of year instead of current fill.
+        if hasattr(fill.index, 'isocalendar'):
+            week_of_year = fill.index.isocalendar().week.values
+        else:
+            week_of_year = fill.index.to_series().dt.isocalendar().week.values
+        self._climatological_fill = pd.Series(
+            fill.values, index=week_of_year,
+        ).groupby(level=0).mean()
 
         # Current (most recent) fill level
         current_fill = float(fill.iloc[-1])
-        logger.info("Hydro analogue: current fill=%.1f%%, σ=%.2f", current_fill * 100, self.hydro_weight_sigma)
+        logger.info("Hydro analogue: current fill=%.1f%%, σ=%.2f, clim weeks=%d",
+                     current_fill * 100, self.hydro_weight_sigma, len(self._climatological_fill))
 
         # Map each timestamp in df to its weekly fill level
         # Create daily fill series by forward-filling weekly data
