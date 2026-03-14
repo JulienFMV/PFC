@@ -39,7 +39,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from sklearn.linear_model import HuberRegressor, Ridge
+from sklearn.linear_model import HuberRegressor, RidgeCV
 
 logger = logging.getLogger(__name__)
 
@@ -396,7 +396,7 @@ class ShapeIntraday:
                 X_train, X_test = X[:split], X[split:]
                 y_train, y_test = y[:split], y[split:]
 
-                ridge = Ridge(alpha=1.0)
+                ridge = RidgeCV(alphas=[0.01, 0.1, 1.0, 10.0, 100.0])
                 ridge.fit(X_train, y_train)
 
                 # R² out-of-sample : n'accepter que si > 0 (mieux que la moyenne)
