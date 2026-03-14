@@ -81,9 +81,9 @@ def derive_base_prices(
     if len(yearly_avg) >= 3:
         yoy_ratios = yearly_avg.pct_change().dropna()
         # Dampened mean reversion: converge toward long-term average
-        annual_decay = float(np.clip(yoy_ratios.mean(), -0.15, -0.01))
+        annual_decay = float(np.clip(yoy_ratios.median(), -0.10, 0.0))
     else:
-        annual_decay = -0.05  # conservative 5% backwardation per year
+        annual_decay = -0.03  # conservative 3% backwardation per year
 
     logger.info("Estimated annual decay: %.1f%%", annual_decay * 100)
 
