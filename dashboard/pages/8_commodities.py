@@ -31,11 +31,15 @@ commodities = load_commodities(period="2y")
 
 if not commodities:
     from pathlib import Path
+    import os
     cache = Path(__file__).resolve().parent.parent.parent / "data" / "commodities_cache.parquet"
+    alt_cache = Path("data") / "commodities_cache.parquet"
     st.warning(
         f"Aucune donnee commodite disponible.\n\n"
-        f"Cache local (`data/commodities_cache.parquet`): {'existe' if cache.exists() else 'absent'}\n\n"
-        f"Relancez `python scripts/run_daily.py` pour generer le cache.",
+        f"Cache (abs): `{cache}` → {'existe' if cache.exists() else 'absent'}\n\n"
+        f"Cache (rel): `{alt_cache.resolve()}` → {'existe' if alt_cache.exists() else 'absent'}\n\n"
+        f"CWD: `{os.getcwd()}`\n\n"
+        f"PROJECT_ROOT: `{Path(__file__).resolve().parent.parent}`",
         icon="⚠️",
     )
     st.stop()

@@ -407,6 +407,13 @@ def load_commodities(period: str = "2y") -> dict[str, pd.DataFrame]:
     """Load commodity prices — cached parquet first, yfinance fallback."""
     # Try local cache first (works on Streamlit Cloud where yfinance may fail)
     cache_path = PROJECT_ROOT / "data" / "commodities_cache.parquet"
+    logger.info("Commodity cache path: %s (exists=%s)", cache_path, cache_path.exists())
+    if not cache_path.exists():
+        # Also try relative to CWD (Streamlit Cloud may set CWD differently)
+        alt_path = Path("data") / "commodities_cache.parquet"
+        if alt_path.exists():
+            cache_path = alt_path
+            logger.info("Using alt cache path: %s", cache_path)
     if cache_path.exists():
         try:
             combined = pd.read_parquet(cache_path)
@@ -420,6 +427,7 @@ def load_commodities(period: str = "2y") -> dict[str, pd.DataFrame]:
                         results[name] = s
             if results:
                 return results
+            logger.warning("Cache read OK but no matching columns: %s", list(combined.columns))
         except Exception as exc:
             logger.warning("Failed to read commodity cache: %s", exc)
 
