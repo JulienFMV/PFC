@@ -15,10 +15,13 @@ Contrainte d'énergie :
 
 Architecture en 2 couches :
     Couche 1 (déterministe) : profil de base historique par régression robuste Huber
-    Couche 2 (correction)   : correction additive OLS sur variables exogènes
-                              solar_regime et load_deviation, appliquée
-                              uniquement sur les heures à forte variance
-                              intra-horaire (heures de rampe solaire : 6h-10h, 17h-20h)
+    Couche 2 (correction)   : correction additive Ridge sur variables exogènes
+                              solar_regime, load_deviation et flow_deviation,
+                              appliquée sur toutes les heures (gate R² OOS > 0
+                              rejette automatiquement les heures inutiles).
+                              flow_deviation capture la flexibilité hydro CH :
+                              export à prix haut (turbinage peak), import à
+                              prix bas (pompage / baseload).
 
 Grille de calibration :
     4 saisons × 5 types_jour × 24 heures = 480 cellules
@@ -39,19 +42,28 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from sklearn.linear_model import HuberRegressor, Ridge
+from sklearn.linear_model import HuberRegressor, RidgeCV
 
 logger = logging.getLogger(__name__)
 
 SAISONS = ["Hiver", "Printemps", "Ete", "Automne"]
 TYPES_JOUR = ["Ouvrable", "Samedi", "Dimanche", "Ferie_CH", "Ferie_DE"]
 
-# Heures à forte variance intra-horaire → correction exogène activée
-HEURES_RAMPE = set(range(6, 11)) | set(range(17, 21))
+# Correction exogène sur TOUTES les heures (le gate R² > 0 OOS
+# rejette automatiquement les heures où ça n'aide pas)
+HEURES_RAMPE = set(range(24))
 
 # Nombre minimum d'observations pour estimer une cellule
 MIN_OBS_COUCHE1 = 8   # ≥ 8 occurrences de l'heure dans la cellule
-MIN_OBS_COUCHE2 = 30  # pour la régression OLS sur features exogènes
+MIN_OBS_COUCHE2 = 50  # pour la régression Ridge sur features exogènes (augmenté de 30)
+
+# Seuil R² OOS minimal pour retenir une correction Layer 2
+# Avec peu de données (< 1 an), R² > 0 passe souvent par chance.
+# 0.02 = la correction doit expliquer au moins 2% de la variance OOS.
+MIN_R2_OOS = 0.02
+
+# Amplitude maximale des coefficients Layer 2 (borne les corrections extrêmes)
+MAX_COEF_ABS = 0.05
 
 
 class ShapeIntraday:
@@ -65,16 +77,20 @@ class ShapeIntraday:
         n_obs_         : dict[(saison, type_jour, heure)] -> int
     """
 
-    def __init__(self) -> None:
+    def __init__(self, halflife_days: float = 180.0, hydro_weight_sigma: float = 0.25) -> None:
+        self.halflife_days = halflife_days
+        self.hydro_weight_sigma = hydro_weight_sigma
         self.base_factors_: dict[tuple, np.ndarray] = {}
         self.corrections_: dict[tuple, dict] = {}
         self.n_obs_: dict[tuple, int] = {}
+        self._climatological_fill: pd.Series | None = None  # mean fill per week-of-year
 
     def fit(
         self,
         epex_df: pd.DataFrame,
         entso_df: pd.DataFrame | None,
         calendar_df: pd.DataFrame,
+        hydro_df: pd.DataFrame | None = None,
     ) -> "ShapeIntraday":
         """
         Estime les facteurs f_Q sur l'historique.
@@ -85,18 +101,32 @@ class ShapeIntraday:
                          Peut être None → seule la couche 1 sera calibrée
             calendar_df: Enrichissement calendaire (colonnes ['saison','type_jour',
                          'heure_hce','quart'])
+            hydro_df   : Optional weekly hydro reservoir data with 'fill_pct' column.
+                         If provided, weights historical data by reservoir similarity.
         """
         df = epex_df[["price_eur_mwh"]].copy()
         df = df.join(calendar_df[["saison", "type_jour", "heure_hce", "quart"]])
 
         if entso_df is not None:
-            exo_cols = [c for c in ["solar_regime", "load_deviation"] if c in entso_df.columns]
+            exo_cols = [c for c in ["solar_regime", "load_deviation", "flow_deviation"] if c in entso_df.columns]
             df = df.join(entso_df[exo_cols])
         else:
             df["solar_regime"] = np.nan
             df["load_deviation"] = np.nan
 
+        if "flow_deviation" not in df.columns:
+            df["flow_deviation"] = np.nan
+
         df = df.dropna(subset=["saison", "type_jour", "heure_hce", "quart", "price_eur_mwh"])
+
+        # ── Temporal decay + hydro analogue weighting ─────────────────
+        t_max = df.index.max()
+        days_ago = (t_max - df.index).total_seconds() / 86400.0
+        decay_rate = np.log(2) / self.halflife_days
+        df["_weight"] = np.exp(-decay_rate * days_ago)
+
+        if hydro_df is not None and "fill_pct" in hydro_df.columns:
+            self._apply_hydro_weights(df, hydro_df)
 
         for saison in SAISONS:
             for type_jour in TYPES_JOUR:
@@ -142,6 +172,7 @@ class ShapeIntraday:
         heure: int,
         solar_regime: float = 1.0,
         load_deviation: float = 0.0,
+        flow_deviation: float = 0.0,
     ) -> np.ndarray:
         """
         Retourne les 4 facteurs f_Q normalisés pour une cellule.
@@ -149,6 +180,9 @@ class ShapeIntraday:
         Args:
             solar_regime  : 0=Faible, 1=Moyen, 2=Fort
             load_deviation: z-score de la charge (0 = charge normale)
+            flow_deviation: z-score du flux transfrontalier (0 = flux normal)
+                           Positif = import supérieur à la moyenne,
+                           Négatif = export supérieur à la moyenne (turbinage)
 
         Returns:
             np.ndarray shape (4,) avec mean = 1  (contrainte énergie)
@@ -166,6 +200,7 @@ class ShapeIntraday:
             delta = np.array([
                 corr.get(f"b_solar_q{q}", 0.0) * solar_regime
                 + corr.get(f"b_load_q{q}", 0.0) * load_deviation
+                + corr.get(f"b_flow_q{q}", 0.0) * flow_deviation
                 + corr.get(f"intercept_q{q}", 0.0)
                 for q in range(1, 5)
             ])
@@ -194,7 +229,7 @@ class ShapeIntraday:
 
         df_cal = calendar_df.copy()
         if entso_df is not None:
-            for col in ["solar_regime", "load_deviation"]:
+            for col in ["solar_regime", "load_deviation", "flow_deviation"]:
                 if col in entso_df.columns:
                     df_cal[col] = entso_df[col].reindex(timestamps)
         else:
@@ -203,6 +238,9 @@ class ShapeIntraday:
 
         df_cal["solar_regime"] = df_cal["solar_regime"].fillna(1.0)
         df_cal["load_deviation"] = df_cal["load_deviation"].fillna(0.0)
+        if "flow_deviation" not in df_cal.columns:
+            df_cal["flow_deviation"] = 0.0
+        df_cal["flow_deviation"] = df_cal["flow_deviation"].fillna(0.0)
 
         n = len(timestamps)
         f_q_values = np.ones(n)
@@ -237,6 +275,7 @@ class ShapeIntraday:
                 corr = self.corrections_[actual_key]
                 solar_vals = df_cal["solar_regime"].values[idx_arr]
                 load_vals = df_cal["load_deviation"].values[idx_arr]
+                flow_vals = df_cal["flow_deviation"].values[idx_arr]
                 n_grp = len(idx_arr)
 
                 # Compute all 4 corrected factors per row: (n_grp, 4)
@@ -245,6 +284,7 @@ class ShapeIntraday:
                     factors[:, q_idx] += (
                         corr.get(f"b_solar_q{q_idx+1}", 0.0) * solar_vals
                         + corr.get(f"b_load_q{q_idx+1}", 0.0) * load_vals
+                        + corr.get(f"b_flow_q{q_idx+1}", 0.0) * flow_vals
                         + corr.get(f"intercept_q{q_idx+1}", 0.0)
                     )
                 # Re-normalize each row (mean of 4 quarters = 1)
@@ -317,12 +357,12 @@ class ShapeIntraday:
 
         Huber est préféré à la moyenne simple car il downweighte les spikes
         extrêmes (prix négatifs profonds, pointes de réglage secondaire).
+
+        Uses sample_weight from temporal decay + hydro analogue if available.
         """
+        has_weights = "_weight" in hour_data.columns
         ratios = []
         for q in range(1, 5):
-            q_prices = hour_data[hour_data["quart"] == q]["price_eur_mwh"].values
-            # Grouper par "occurrence d'heure" pour calculer le ratio vs la moyenne horaire
-            # On reconstitue les groupes par (date, heure)
             q_data = hour_data[hour_data["quart"] == q].copy()
 
             # Indice temporel sans le quart → clé de l'heure parente
@@ -339,12 +379,16 @@ class ShapeIntraday:
             # Régression Huber : ratio ~ 1 (intercept only, sans features)
             X = np.ones((len(q_data), 1))
             y = q_data["ratio"].values
+            w = q_data["_weight"].values if has_weights else None
             try:
                 hub = HuberRegressor(epsilon=1.35, max_iter=200)
-                hub.fit(X, y)
+                hub.fit(X, y, sample_weight=w)
                 ratios.append(hub.intercept_ + hub.coef_[0])
             except Exception:
-                ratios.append(float(np.median(y)))
+                if w is not None:
+                    ratios.append(float(np.average(y, weights=w)))
+                else:
+                    ratios.append(float(np.median(y)))
 
         arr = np.array(ratios)
         if arr.mean() == 0:
@@ -361,17 +405,14 @@ class ShapeIntraday:
         Validation : le modèle n'est retenu que si le R² out-of-sample
         (50/50 split temporel) est > 0 (i.e. mieux que la moyenne).
 
-        Modèle par quart q :
-            résidu(q) = f_Q_observed(q) - f_Q_base(q)
-                      = α_q + β_sol_q × solar_regime + β_load_q × load_deviation
-
-        Retourne un dict avec les coefficients par quart.
+        Uses sample_weight from temporal decay + hydro analogue if available.
         """
-        cols = ["solar_regime", "load_deviation"]
+        cols = ["solar_regime", "load_deviation", "flow_deviation"]
         available = [c for c in cols if c in hour_data.columns]
         if not available:
             return None
 
+        has_weights = "_weight" in hour_data.columns
         result = {}
         for q in range(1, 5):
             q_data = hour_data[hour_data["quart"] == q].dropna(subset=available).copy()
@@ -386,6 +427,7 @@ class ShapeIntraday:
 
             X = q_data[available].values
             y = q_data["ratio_obs"].values
+            w = q_data["_weight"].values if has_weights else None
 
             try:
                 # Validation temporelle : train sur 1ère moitié, test sur 2ème
@@ -395,9 +437,10 @@ class ShapeIntraday:
 
                 X_train, X_test = X[:split], X[split:]
                 y_train, y_test = y[:split], y[split:]
+                w_train = w[:split] if w is not None else None
 
-                ridge = Ridge(alpha=1.0)
-                ridge.fit(X_train, y_train)
+                ridge = RidgeCV(alphas=[0.01, 0.1, 1.0, 10.0, 100.0])
+                ridge.fit(X_train, y_train, sample_weight=w_train)
 
                 # R² out-of-sample : n'accepter que si > 0 (mieux que la moyenne)
                 y_pred = ridge.predict(X_test)
@@ -405,19 +448,63 @@ class ShapeIntraday:
                 ss_tot = np.sum((y_test - y_test.mean()) ** 2)
                 r2_oos = 1 - ss_res / ss_tot if ss_tot > 0 else 0
 
-                if r2_oos <= 0:
-                    continue  # correction n'apporte rien → on la rejette
+                if r2_oos <= MIN_R2_OOS:
+                    continue  # correction n'apporte pas assez → rejet
 
                 # Refit sur toutes les données si validation passée
-                ridge.fit(X, y)
-                result[f"intercept_q{q}"] = float(ridge.intercept_)
+                ridge.fit(X, y, sample_weight=w)
+
+                # Clip coefficients to prevent extreme corrections
+                intercept = float(np.clip(ridge.intercept_, -MAX_COEF_ABS, MAX_COEF_ABS))
+                result[f"intercept_q{q}"] = intercept
                 for i, col in enumerate(available):
-                    short = "solar" if "solar" in col else "load"
-                    result[f"b_{short}_q{q}"] = float(ridge.coef_[i])
+                    if "solar" in col:
+                        short = "solar"
+                    elif "flow" in col:
+                        short = "flow"
+                    else:
+                        short = "load"
+                    coef = float(np.clip(ridge.coef_[i], -MAX_COEF_ABS, MAX_COEF_ABS))
+                    result[f"b_{short}_q{q}"] = coef
             except Exception:
                 pass
 
         return result if result else None
+
+    # ---------------------------------------------------------------------------
+    # Hydro analogue weighting
+    # ---------------------------------------------------------------------------
+
+    def _apply_hydro_weights(self, df: pd.DataFrame, hydro_df: pd.DataFrame) -> None:
+        """Multiply temporal weights by reservoir-fill similarity kernel (KYOS)."""
+        fill = hydro_df["fill_pct"].dropna()
+        if len(fill) < 10:
+            return
+
+        if fill.max() > 1.5:
+            fill = fill / 100.0
+
+        # Store climatological fill curve for horizon-dependent use
+        if hasattr(fill.index, 'isocalendar'):
+            week_of_year = fill.index.isocalendar().week.values
+        else:
+            week_of_year = fill.index.to_series().dt.isocalendar().week.values
+        self._climatological_fill = pd.Series(
+            fill.values, index=week_of_year,
+        ).groupby(level=0).mean()
+
+        current_fill = float(fill.iloc[-1])
+        date_range = pd.date_range(fill.index.min(), df.index.max(), freq="D", tz="UTC")
+        fill_daily = fill.reindex(date_range, method="ffill")
+        df_dates = df.index.normalize()
+        fill_at_date = fill_daily.reindex(df_dates)
+
+        fill_values = fill_at_date.values.astype(float)
+        sigma = self.hydro_weight_sigma
+        hydro_weight = np.exp(-0.5 * ((fill_values - current_fill) / sigma) ** 2)
+        hydro_weight = np.where(np.isnan(hydro_weight), 1.0, hydro_weight)
+        hydro_weight = np.maximum(hydro_weight, 0.3)
+        df["_weight"] = df["_weight"].values * hydro_weight
 
     # ---------------------------------------------------------------------------
     # Fallback

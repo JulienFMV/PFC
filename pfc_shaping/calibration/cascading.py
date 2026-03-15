@@ -18,7 +18,7 @@ Energy conservation constraint (hour-weighted average):
 where h_child_i is the number of delivery hours in child period i.
 
 Peak / Off-Peak decomposition:
-    Peak   = 08:00–20:00 Mon–Fri excl. Swiss holidays (canton VS)
+    Peak   = 08:00–20:00 Mon–Fri excl. Swiss national holidays (EEX standard)
     Base   = all hours
     OffPeak = (Base × total_h - Peak × peak_h) / offpeak_h
 """
@@ -114,6 +114,14 @@ def parse_key(key: str) -> tuple[str, int, int | None]:
     if m:
         return ("Month", int(m.group(1)), int(m.group(2)))
 
+    # Peak/product-type suffixed keys (e.g. '2026-01-Peak') are handled
+    # by the assembler, not the cascader. Return a sentinel type.
+    if "-Peak" in key or "-Offpeak" in key:
+        # Strip suffix and parse base key, return product-suffixed type
+        base_key = key.replace("-Peak", "").replace("-Offpeak", "")
+        base_type, yr, sub = parse_key(base_key)
+        return (f"{base_type}_Peak", yr, sub)
+
     raise ValueError(f"Unrecognised delivery period key: {key!r}")
 
 
@@ -131,12 +139,23 @@ def month_key(year: int, m: int) -> str:
 # Hour counting helpers
 # ---------------------------------------------------------------------------
 
-def _swiss_holidays_set(year: int) -> set:
-    """Return a set of ``datetime.date`` for Swiss public holidays (canton VS).
+def _holidays_set(year: int, country: str = "CH") -> set:
+    """Return a set of ``datetime.date`` for national public holidays.
 
-    Uses the ``holidays`` library, consistent with ``calendar_ch.py``.
+    Args:
+        year: Calendar year.
+        country: 'CH' or 'DE'. For CH uses national-level holidays (no
+                 cantonal subdivision) for consistency with EEX peak/off-peak
+                 contract definitions.
+
+    Note: ``calendar_ch.py`` uses ``subdiv="VS"`` for *dispatch shape*
+    classification (Ferie_CH), which is correct — FMV operates in Valais.
+    The distinction matters: VS has extra holidays (e.g. St-Joseph, Ascension
+    cantonale) that EEX does not recognise as non-peak.
     """
-    return set(holidays.Switzerland(years=year, subdiv="VS").keys())
+    if country == "DE":
+        return set(holidays.Germany(years=year).keys())
+    return set(holidays.Switzerland(years=year).keys())
 
 
 def _period_boundaries_utc(
@@ -170,20 +189,21 @@ def count_hours(
     month_start: int,
     month_end: int,
     tz: str = "Europe/Zurich",
+    country: str = "CH",
 ) -> tuple[int, int, int]:
     """Count total, peak, and off-peak hours for a delivery period.
 
     Correctly handles DST transitions (CET ↔ CEST) and leap years by
     generating the full hourly index in local time.
 
-    Peak hours: 08:00–20:00 on weekdays (Mon–Fri) excluding Swiss holidays
-    (canton VS).
+    Peak hours: 08:00–20:00 on weekdays (Mon–Fri) excluding national holidays.
 
     Args:
         year: Delivery year.
         month_start: First month of the period (inclusive).
         month_end: Last month of the period (inclusive).
         tz: Local timezone.
+        country: 'CH' or 'DE' — controls which holidays are excluded from peak.
 
     Returns:
         (total_hours, peak_hours, offpeak_hours)
@@ -198,14 +218,14 @@ def count_hours(
 
     # Collect holidays for all years that may be spanned
     hol_years = set(idx_local.year.unique())
-    ch_holidays: set = set()
+    hol_set: set = set()
     for y in hol_years:
-        ch_holidays |= _swiss_holidays_set(y)
+        hol_set |= _holidays_set(y, country=country)
 
-    # Peak mask: hour 08..19 on weekdays, not a Swiss holiday
+    # Peak mask: hour 08..19 on weekdays, not a holiday
     is_weekday = idx_local.weekday < 5  # Mon=0 .. Fri=4
     is_peak_hour = (idx_local.hour >= 8) & (idx_local.hour < 20)
-    is_holiday = pd.Series(idx_local.date, index=idx_utc).isin(ch_holidays).values
+    is_holiday = pd.Series(idx_local.date, index=idx_utc).isin(hol_set).values
 
     peak_mask = is_weekday & is_peak_hour & ~is_holiday
     peak_hours = int(peak_mask.sum())
@@ -428,6 +448,7 @@ class ContractCascader:
         years = [
             (yr, price)
             for key, price in base_prices.items()
+            if "-Peak" not in key and "-Offpeak" not in key
             for ptype, yr, _ in [parse_key(key)]
             if ptype == "Cal"
         ]
@@ -456,6 +477,7 @@ class ContractCascader:
         quarters = [
             (yr, q, price)
             for key, price in list(result.items())
+            if "-Peak" not in key and "-Offpeak" not in key
             for ptype, yr, q in [parse_key(key)]
             if ptype == "Quarter"
         ]
@@ -694,6 +716,8 @@ class ContractCascader:
 
         # Check year → quarter conservation
         for key, year_price in list(prices.items()):
+            if "-Peak" in key or "-Offpeak" in key:
+                continue
             ptype, year, _ = parse_key(key)
             if ptype != "Cal":
                 continue
@@ -728,6 +752,8 @@ class ContractCascader:
 
         # Check quarter → month conservation
         for key, q_price in list(prices.items()):
+            if "-Peak" in key or "-Offpeak" in key:
+                continue
             ptype, year, q = parse_key(key)
             if ptype != "Quarter":
                 continue
@@ -827,6 +853,8 @@ class ContractCascader:
         specs: list[ContractSpec] = []
 
         for key, price in base_prices.items():
+            if "-Peak" in key or "-Offpeak" in key:
+                continue
             ptype, year, sub = parse_key(key)
 
             if ptype == "Cal":

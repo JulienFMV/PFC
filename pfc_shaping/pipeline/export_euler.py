@@ -129,6 +129,35 @@ def export_both(
     }
 
 
+def export_flavors(
+    flavors: dict[str, pd.DataFrame],
+    output_dir: str | Path,
+    run_date: str | None = None,
+    tz_local: str = "Europe/Zurich",
+) -> dict[str, dict[str, Path]]:
+    """
+    Exporte les 3 variantes PFC (mid_market, client, production).
+
+    Args:
+        flavors    : dict retourné par PFCFlavors.generate()
+        output_dir : répertoire de sortie
+        run_date   : date du run (défaut = aujourd'hui)
+
+    Returns:
+        dict[flavor_name -> {'csv': Path, 'parquet': Path}]
+    """
+    if run_date is None:
+        run_date = pd.Timestamp.now().strftime("%Y%m%d")
+
+    results = {}
+    for name, df in flavors.items():
+        base = f"pfc_{name}_{run_date}"
+        results[name] = export_both(df, output_dir, filename_base=base, tz_local=tz_local)
+        logger.info("Flavor '%s' exportée : %s", name, results[name])
+
+    return results
+
+
 # ---------------------------------------------------------------------------
 # Interne
 # ---------------------------------------------------------------------------

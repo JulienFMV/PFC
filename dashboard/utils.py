@@ -335,9 +335,9 @@ def add_range_slider(fig: go.Figure) -> go.Figure:
             bgcolor=COLORS["card"],
             activecolor=COLORS["amber"],
             font=dict(color=COLORS["text"], size=11),
-            x=0.0,
-            xanchor="left",
-            y=1.16,
+            x=1.0,
+            xanchor="right",
+            y=1.06,
             yanchor="top",
         ),
     )
@@ -360,3 +360,91 @@ def export_csv_button(df: pd.DataFrame, filename: str, label: str = "Export CSV"
         mime="text/csv",
         use_container_width=True,
     )
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_model_quality() -> dict[str, float] | None:
+    """Load latest eval metrics from eval.log (autoresearch_eval.py output).
+
+    Returns dict of metric_name -> value, or None if no eval available.
+    """
+    eval_path = PROJECT_ROOT / "eval.log"
+    if not eval_path.exists():
+        return None
+    try:
+        lines = eval_path.read_text().strip().splitlines()
+        metrics: dict[str, float] = {}
+        in_block = False
+        for line in lines:
+            if line.strip() == "---":
+                in_block = True
+                metrics = {}  # reset to last block
+                continue
+            if in_block and ":" in line:
+                key, val = line.split(":", 1)
+                key = key.strip()
+                val = val.strip()
+                try:
+                    metrics[key] = float(val)
+                except ValueError:
+                    metrics[key] = val  # type: ignore[assignment]
+        return metrics if metrics else None
+    except Exception:
+        return None
+
+
+# ── Commodity data (yfinance) ─────────────────────────────────────────────
+
+COMMODITY_TICKERS = {
+    "TTF Gas": {"ticker": "TTF=F", "unit": "EUR/MWh", "color": "#E97451"},
+    "Brent": {"ticker": "BZ=F", "unit": "USD/bbl", "color": "#1F2937"},
+    "CO2 EUA (KRBN)": {"ticker": "KRBN", "unit": "USD", "color": "#16A34A"},
+}
+
+
+@st.cache_data(ttl=3600, show_spinner="Chargement commodités...")
+def load_commodities(period: str = "2y") -> dict[str, pd.DataFrame]:
+    """Download commodity price history via yfinance."""
+    try:
+        import yfinance as yf
+    except ImportError:
+        logger.warning("yfinance not installed — commodity data unavailable")
+        return {}
+    import warnings
+
+    results: dict[str, pd.DataFrame] = {}
+    for name, cfg in COMMODITY_TICKERS.items():
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                data = yf.download(cfg["ticker"], period=period, progress=False)
+            if data.empty:
+                continue
+            # Flatten multi-level columns if present
+            if isinstance(data.columns, pd.MultiIndex):
+                data.columns = data.columns.get_level_values(0)
+            results[name] = data[["Close"]].rename(columns={"Close": "close"}).copy()
+            results[name]["close"] = results[name]["close"].astype(float)
+        except Exception as exc:
+            logger.warning("Failed to download %s: %s", name, exc)
+    return results
+
+
+def compute_bollinger(series: pd.Series, window: int = 20, num_std: float = 2.0) -> pd.DataFrame:
+    """Compute SMA and Bollinger Bands."""
+    sma = series.rolling(window).mean()
+    std = series.rolling(window).std()
+    return pd.DataFrame({
+        "sma": sma,
+        "upper": sma + num_std * std,
+        "lower": sma - num_std * std,
+    }, index=series.index)
+
+
+@st.cache_data(ttl=3600, show_spinner="Chargement flows ENTSO-E...")
+def load_cross_border_flows() -> pd.DataFrame | None:
+    """Load per-border cross-border flows if available in ENTSO-E data."""
+    entso = load_entso()
+    if entso is None or "cross_border_mw" not in entso.columns:
+        return None
+    return entso[["cross_border_mw"]]

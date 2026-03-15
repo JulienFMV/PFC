@@ -52,14 +52,33 @@ class ShapeHourly:
         n_obs_   : dict[(saison, type_jour)] -> int (nombre d'obs utilisées)
     """
 
-    def __init__(self, sigma: float = GAUSSIAN_SIGMA) -> None:
+    def __init__(
+        self,
+        sigma: float = GAUSSIAN_SIGMA,
+        halflife_days: float = 180.0,
+        hydro_weight_sigma: float = 0.25,
+    ) -> None:
         self.sigma = sigma
+        self.halflife_days = halflife_days  # exponential decay half-life
+        self.hydro_weight_sigma = hydro_weight_sigma  # kernel bandwidth for reservoir analogue weighting
         self.factors_: dict[tuple[str, str], np.ndarray] = {}
         self.n_obs_: dict[tuple[str, str], int] = {}
-        self.f_W_: dict[str, float] = {}  # ratios empiriques par type_jour
+        self.f_W_: dict[str, float] = {}  # ratios empiriques par type_jour (global)
+        self.f_W_seasonal_: dict[tuple[str, str], float] = {}  # (saison, type_jour) -> ratio
         self.global_factors_: np.ndarray | None = None
+        # Horizon-dependent: per-year factors and linear trends
+        self.factors_by_year_: dict[tuple[str, str, int], np.ndarray] = {}
+        self.trend_per_hour_: dict[tuple[str, str], np.ndarray] = {}  # slope per hour
+        # Hydro reservoir analogue data (set by fit if hydro_df is provided)
+        self._hydro_fill_weekly: pd.Series | None = None
+        self._climatological_fill: pd.Series | None = None  # mean fill per week-of-year
 
-    def fit(self, epex_df: pd.DataFrame, calendar_df: pd.DataFrame) -> "ShapeHourly":
+    def fit(
+        self,
+        epex_df: pd.DataFrame,
+        calendar_df: pd.DataFrame,
+        hydro_df: pd.DataFrame | None = None,
+    ) -> "ShapeHourly":
         """
         Estime les facteurs de forme sur l'historique EPEX 15min.
 
@@ -68,6 +87,11 @@ class ShapeHourly:
                          index DatetimeIndex UTC freq≈15min
             calendar_df: DataFrame issu de calendar_ch.enrich_15min_index(),
                          colonnes ['type_jour', 'saison', 'heure_hce', 'quart']
+            hydro_df   : Optional weekly hydro reservoir data with 'fill_pct' column.
+                         If provided, historical days are weighted by reservoir
+                         fill similarity to the most recent level (KYOS analogue
+                         approach). This improves shape estimation for Swiss hydro-
+                         dominated markets.
 
         Returns:
             self
@@ -75,6 +99,16 @@ class ShapeHourly:
         df = epex_df[["price_eur_mwh"]].copy()
         df = df.join(calendar_df[["saison", "type_jour", "heure_hce"]])
         df = df.dropna(subset=["saison", "type_jour", "heure_hce", "price_eur_mwh"])
+
+        # Compute exponential decay weights (recent data counts more)
+        t_max = df.index.max()
+        days_ago = (t_max - df.index).total_seconds() / 86400.0
+        decay_rate = np.log(2) / self.halflife_days
+        df["_weight"] = np.exp(-decay_rate * days_ago)
+
+        # ── Analogue-based hydro reservoir weighting (KYOS approach) ──
+        if hydro_df is not None and "fill_pct" in hydro_df.columns:
+            self._apply_hydro_analogue_weights(df, hydro_df)
 
         # Calcul empirique de f_W : ratio prix moyen par type_jour / prix moyen global
         self._fit_f_W(df)
@@ -91,8 +125,14 @@ class ShapeHourly:
                     )
                     continue
 
-                # Prix moyen par heure (aggrège les 4 quarts)
-                hourly_mean = subset.groupby("heure_hce")["price_eur_mwh"].mean()
+                # Prix moyen pondéré par heure (exponential decay)
+                hourly_mean = (
+                    subset.groupby("heure_hce")
+                    .apply(
+                        lambda g: np.average(g["price_eur_mwh"], weights=g["_weight"]),
+                        include_groups=False,
+                    )
+                )
                 hourly_mean = hourly_mean.reindex(range(24)).interpolate(method="linear")
 
                 # Normalisation : f_H moyen = 1
@@ -115,9 +155,12 @@ class ShapeHourly:
         # Fallback : remplir les cellules vides avec la moyenne des cellules existantes
         self._fill_missing_cells()
 
+        # Compute per-year profiles and linear trends for horizon-dependent shaping
+        self._fit_trends(df)
+
         logger.info(
-            "ShapeHourly fitted : %d cellules, sigma=%.1f",
-            len(self.factors_), self.sigma
+            "ShapeHourly fitted : %d cellules, sigma=%.1f, %d trends",
+            len(self.factors_), self.sigma, len(self.trend_per_hour_)
         )
         return self
 
@@ -140,27 +183,109 @@ class ShapeHourly:
 
         raise KeyError(f"Aucun facteur disponible pour {key} et ses fallbacks")
 
-    def apply(self, timestamps: pd.DatetimeIndex, calendar_df: pd.DataFrame) -> pd.Series:
+    def get_for_horizon(self, saison: str, type_jour: str, years_ahead: float = 0.0) -> np.ndarray:
+        """
+        Retourne f_H ajusté par la tendance pour un horizon donné.
+
+        Pour years_ahead=0, identique à get(). Pour years_ahead>0,
+        applique la tendance linéaire estimée sur les profils historiques
+        par année (ex: duck curve solaire se creusant).
+
+        Args:
+            saison: Saison cible
+            type_jour: Type de jour cible
+            years_ahead: Nombre d'années dans le futur (0 = court terme)
+
+        Returns:
+            np.ndarray shape (24,) — facteurs normalisés à mean=1
+        """
+        base = self.get(saison, type_jour)
+        if years_ahead <= 0.5 or (saison, type_jour) not in self.trend_per_hour_:
+            return base
+
+        trend = self.trend_per_hour_[(saison, type_jour)]
+        # Asymptotic dampening: tanh saturates trend at long horizons
+        tau = 2.0  # years — trend saturates ~90% at Y+3.3
+        dampened_ya = tau * np.tanh(years_ahead / tau)
+        adjusted = base + trend * dampened_ya
+        # Clamp to physically reasonable range and re-normalize to mean=1
+        adjusted = np.clip(adjusted, 0.4, 2.0)
+        adjusted = adjusted / adjusted.mean()
+        return adjusted
+
+    def get_climatological_fill(self, week: int) -> float:
+        """Return the climatological (long-term mean) fill level for a given ISO week."""
+        if self._climatological_fill is None:
+            return 0.5  # neutral default
+        if week in self._climatological_fill.index:
+            return float(self._climatological_fill[week])
+        # Interpolate nearest
+        return float(self._climatological_fill.iloc[
+            (self._climatological_fill.index - week).abs().argmin()
+        ])
+
+    def apply(self, timestamps: pd.DatetimeIndex, calendar_df: pd.DataFrame,
+              reference_date: pd.Timestamp | None = None) -> pd.Series:
         """
         Applique les facteurs f_H sur un index 15min futur.
+
+        Si reference_date est fourni, applique des shapes horizon-dépendants
+        (trend-adjusted) pour les timestamps éloignés (>1 an).
 
         Args:
             timestamps  : DatetimeIndex UTC (futur N+3 ans)
             calendar_df : enrichissement calendaire de timestamps
+            reference_date : date de référence pour calculer years_ahead
 
         Returns:
             pd.Series de f_H pour chaque timestamp, index=timestamps
         """
+        if reference_date is None:
+            reference_date = pd.Timestamp.now(tz="UTC")
+
         result = pd.Series(index=timestamps, dtype=float, name="f_H")
+
         for (saison, type_jour), group in calendar_df.groupby(["saison", "type_jour"]):
-            factors = self.get(saison, type_jour)
             for h in range(24):
                 mask = (group["heure_hce"] == h)
                 idx = group.index[mask]
-                if len(idx) > 0:
+                if len(idx) == 0:
+                    continue
+
+                if self.trend_per_hour_:
+                    # Apply horizon-dependent factors per timestamp
+                    years_ahead = (idx - reference_date).total_seconds() / (365.25 * 86400)
+                    factors_arr = self.get(saison, type_jour)
+                    trend = self.trend_per_hour_.get((saison, type_jour))
+
+                    if trend is not None:
+                        # Vectorized: base + trend * dampened_years_ahead
+                        ya = np.maximum(years_ahead.values.astype(float), 0.0)
+                        # Asymptotic dampening: trend saturates at ~2 years
+                        # Beyond that, profile converges to stable shape (SOTA:
+                        # KYOS/Volue use average historical profile at long horizons)
+                        tau = 2.0
+                        dampened_ya = tau * np.tanh(ya / tau)
+                        adjusted = factors_arr[h] + trend[h] * dampened_ya
+                        adjusted = np.clip(adjusted, 0.4, 2.0)
+                        result.loc[idx] = adjusted
+                    else:
+                        result.loc[idx] = factors_arr[h]
+                else:
+                    factors = self.get(saison, type_jour)
                     result.loc[idx] = factors[h]
+
+        # Re-normalize per day to preserve mean=1 constraint
+        if self.trend_per_hour_:
+            idx_zh = timestamps.tz_convert("Europe/Zurich")
+            day_key = pd.Index([f"{t.year}-{t.month:02d}-{t.day:02d}" for t in idx_zh])
+            daily_mean = result.groupby(day_key).transform("mean")
+            daily_mean = daily_mean.replace(0, 1.0)
+            result = result / daily_mean
+            # Re-clip after normalization
+            result = result.clip(lower=0.4, upper=2.0)
+
         if result.isna().any():
-            # Defensive final fallback to keep pipeline operational.
             fallback = np.ones(24) if self.global_factors_ is None else self.global_factors_
             na_mask = result.isna()
             missing_cal = calendar_df.loc[na_mask, "heure_hce"].astype(int)
@@ -209,23 +334,100 @@ class ShapeHourly:
     # Interne
     # ---------------------------------------------------------------------------
 
+    def _fit_trends(self, df: pd.DataFrame) -> None:
+        """
+        Compute per-year f_H profiles and fit linear trends per hour.
+
+        This enables horizon-dependent shaping: for Y+2/Y+3, the solar
+        duck curve deepens, evening peaks may shift, etc. The trend is
+        fitted as a linear regression of f_H(h) across calendar years.
+
+        Only cells with >= 3 years of data get trends.
+        """
+        df_year = df.index.tz_convert("Europe/Zurich").year if df.index.tz is not None else df.index.year
+        years = sorted(set(df_year))
+        if len(years) < 3:
+            logger.info("Trends: need >= 3 years, have %d — skipping", len(years))
+            return
+
+        for saison in SAISONS:
+            for type_jour in TYPES_JOUR:
+                yearly_profiles = {}
+                for yr in years:
+                    mask = (
+                        (df["saison"] == saison) &
+                        (df["type_jour"] == type_jour) &
+                        (df_year == yr)
+                    )
+                    subset = df.loc[mask]
+                    if len(subset) < 96:
+                        continue
+                    hourly_mean = (
+                        subset.groupby("heure_hce")["price_eur_mwh"]
+                        .mean()
+                        .reindex(range(24))
+                        .interpolate(method="linear")
+                    )
+                    daily_mean = hourly_mean.mean()
+                    if daily_mean == 0:
+                        continue
+                    profile = hourly_mean.values / daily_mean
+                    yearly_profiles[yr] = profile
+                    self.factors_by_year_[(saison, type_jour, yr)] = profile
+
+                if len(yearly_profiles) < 3:
+                    continue
+
+                # Fit linear trend per hour across years
+                yr_arr = np.array(sorted(yearly_profiles.keys()))
+                profiles = np.array([yearly_profiles[y] for y in yr_arr])  # (n_years, 24)
+
+                # Normalize years to "years since last year"
+                yr_centered = yr_arr - yr_arr[-1]  # last year = 0
+
+                slopes = np.zeros(24)
+                for h in range(24):
+                    # Simple linear regression: f_H(h) = a + b * year
+                    coeffs = np.polyfit(yr_centered, profiles[:, h], 1)
+                    slopes[h] = coeffs[0]  # slope per year
+
+                # Only keep trends that are meaningful (|slope| > 0.001 for at least some hours)
+                if np.max(np.abs(slopes)) > 0.001:
+                    self.trend_per_hour_[(saison, type_jour)] = slopes
+                    logger.debug(
+                        "Trend (%s,%s): max_slope=%.4f at h=%d",
+                        saison, type_jour, np.max(np.abs(slopes)), np.argmax(np.abs(slopes))
+                    )
+
+        logger.info(
+            "Trends fitted: %d cells with significant trends",
+            len(self.trend_per_hour_)
+        )
+
     def _fit_f_W(self, df: pd.DataFrame) -> None:
         """
         Calcule les ratios empiriques f_W par type_jour depuis l'historique EPEX.
 
         f_W(type_jour) = prix_moyen(type_jour) / prix_moyen(global)
-        Normalisé pour que la moyenne pondérée hebdomadaire ≈ 1.
+
+        Aussi calcule f_W_seasonal_ par (saison, type_jour) pour capturer
+        la différence weekend hiver vs été.
         """
-        overall_mean = df["price_eur_mwh"].mean()
+        # Use exponential decay weights (consistent with f_H estimation)
+        overall_mean = np.average(df["price_eur_mwh"], weights=df["_weight"])
         if overall_mean == 0:
             self.f_W_ = {tj: 1.0 for tj in TYPES_JOUR}
             return
 
+        # ── Global f_W (fallback) ──────────────────────────────────────
         for tj in TYPES_JOUR:
             mask = df["type_jour"] == tj
-            subset = df.loc[mask, "price_eur_mwh"]
+            subset = df.loc[mask]
             if len(subset) >= 96:  # au moins 1 jour complet
-                self.f_W_[tj] = subset.mean() / overall_mean
+                self.f_W_[tj] = float(
+                    np.average(subset["price_eur_mwh"], weights=subset["_weight"])
+                    / overall_mean
+                )
             else:
                 self.f_W_[tj] = 1.0
                 logger.warning("f_W(%s) : données insuffisantes — défaut 1.0", tj)
@@ -234,9 +436,47 @@ class ShapeHourly:
         if self.f_W_.get("Ferie_DE", 1.0) == 1.0 and "Ferie_CH" in self.f_W_:
             self.f_W_["Ferie_DE"] = self.f_W_["Ferie_CH"]
 
+        # ── Seasonal f_W : f_W(saison, type_jour) ─────────────────────
+        for saison in SAISONS:
+            mask_s = df["saison"] == saison
+            season_data = df.loc[mask_s]
+            if len(season_data) > 0:
+                season_mean = float(np.average(
+                    season_data["price_eur_mwh"], weights=season_data["_weight"]
+                ))
+            else:
+                season_mean = overall_mean
+
+            if season_mean == 0 or len(season_data) < 96:
+                for tj in TYPES_JOUR:
+                    self.f_W_seasonal_[(saison, tj)] = self.f_W_.get(tj, 1.0)
+                continue
+
+            for tj in TYPES_JOUR:
+                mask_tj = season_data["type_jour"] == tj
+                subset = season_data.loc[mask_tj]
+                if len(subset) >= 96:
+                    self.f_W_seasonal_[(saison, tj)] = float(
+                        np.average(subset["price_eur_mwh"], weights=subset["_weight"])
+                        / season_mean
+                    )
+                else:
+                    # Fallback to global f_W for this type_jour
+                    self.f_W_seasonal_[(saison, tj)] = self.f_W_.get(tj, 1.0)
+
+            # Fallback fériés
+            key_de = (saison, "Ferie_DE")
+            key_ch = (saison, "Ferie_CH")
+            if self.f_W_seasonal_.get(key_de, 1.0) == 1.0 and key_ch in self.f_W_seasonal_:
+                self.f_W_seasonal_[key_de] = self.f_W_seasonal_[key_ch]
+
         logger.info(
-            "f_W empiriques : %s",
+            "f_W global : %s",
             {k: round(v, 3) for k, v in self.f_W_.items()},
+        )
+        logger.info(
+            "f_W seasonal : %d cellules calibrées",
+            len(self.f_W_seasonal_),
         )
 
     def _fill_missing_cells(self) -> None:
@@ -285,6 +525,80 @@ class ShapeHourly:
                         "Cellule (%s,%s) remplie avec fallback global",
                         saison, type_jour
                     )
+
+    def _apply_hydro_analogue_weights(
+        self, df: pd.DataFrame, hydro_df: pd.DataFrame
+    ) -> None:
+        """
+        Multiply existing temporal weights by reservoir-similarity kernel.
+
+        KYOS approach: for each historical timestamp, find the contemporary
+        reservoir fill level, compute a Gaussian kernel weight based on
+        distance to the most recent fill level, and multiply with the
+        temporal decay weight. This gives higher weight to historical
+        periods with similar hydro conditions.
+
+        Modifies df["_weight"] in-place.
+        """
+        fill = hydro_df["fill_pct"].dropna()
+        if len(fill) < 10:
+            logger.info("Hydro analogue: insufficient data (%d weeks) — skipping", len(fill))
+            return
+
+        # Normalize to [0, 1] if stored as percentage (0-100)
+        if fill.max() > 1.5:
+            fill = fill / 100.0
+
+        # Store for forecast-time analogue lookup (includes climatological curve)
+        self._hydro_fill_weekly = fill
+
+        # Compute climatological fill curve (mean fill per week-of-year)
+        # Used for horizon-dependent analogue weighting: for Y+2/Y+3,
+        # use expected fill for that time of year instead of current fill.
+        if hasattr(fill.index, 'isocalendar'):
+            week_of_year = fill.index.isocalendar().week.values
+        else:
+            week_of_year = fill.index.to_series().dt.isocalendar().week.values
+        self._climatological_fill = pd.Series(
+            fill.values, index=week_of_year,
+        ).groupby(level=0).mean()
+
+        # Current (most recent) fill level
+        current_fill = float(fill.iloc[-1])
+        logger.info("Hydro analogue: current fill=%.1f%%, σ=%.2f, clim weeks=%d",
+                     current_fill * 100, self.hydro_weight_sigma, len(self._climatological_fill))
+
+        # Map each timestamp in df to its weekly fill level
+        # Create daily fill series by forward-filling weekly data
+        date_range = pd.date_range(fill.index.min(), df.index.max(), freq="D", tz="UTC")
+        fill_daily = fill.reindex(date_range, method="ffill")
+
+        # Map: for each day in df, look up fill_pct
+        df_dates = df.index.normalize()
+        fill_at_date = fill_daily.reindex(df_dates)
+
+        valid_mask = fill_at_date.notna()
+        if valid_mask.sum() == 0:
+            logger.info("Hydro analogue: no overlap with EPEX data — skipping")
+            return
+
+        fill_values = fill_at_date.values.astype(float)
+        # Gaussian kernel: w = exp(-0.5 * ((fill - current) / sigma)^2)
+        # Floor at 0.3 to prevent over-aggressive downweighting of
+        # dissimilar reservoir states (preserves seasonal diversity)
+        sigma = self.hydro_weight_sigma
+        hydro_weight = np.exp(-0.5 * ((fill_values - current_fill) / sigma) ** 2)
+        hydro_weight = np.where(np.isnan(hydro_weight), 1.0, hydro_weight)
+        hydro_weight = np.maximum(hydro_weight, 0.3)  # floor
+
+        # Combine: multiply existing temporal decay weight with hydro analogue weight
+        df["_weight"] = df["_weight"].values * hydro_weight
+
+        n_boosted = int((hydro_weight > 0.5).sum())
+        logger.info(
+            "Hydro analogue: %d/%d timestamps boosted (weight > 0.5)",
+            n_boosted, len(hydro_weight),
+        )
 
     def _compute_global_fallback(self) -> np.ndarray | None:
         """Average profile across all available cells; normalized to mean 1."""

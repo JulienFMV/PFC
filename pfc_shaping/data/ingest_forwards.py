@@ -37,6 +37,7 @@ logger = logging.getLogger(__name__)
 
 
 _EEX_BASE_PATTERN = re.compile(r"^(Y01|Q\d{2}|M\d{2})_(\d{4})_BASE$")
+_EEX_PRODUCT_PATTERN = re.compile(r"^(Y01|Q\d{2}|M\d{2})_(\d{4})_(BASE|PEAK)$")
 
 
 def _normalize_delivery_period(eex_code: str) -> str | None:
@@ -73,17 +74,164 @@ def _normalize_delivery_period(eex_code: str) -> str | None:
     return None
 
 
+def _normalize_product(eex_code: str) -> tuple[str, str] | None:
+    """Parse EEX code into (delivery_key, load_type).
+
+    Examples:
+        Y01_2027_BASE -> ('2027', 'BASE')
+        Q03_2026_PEAK -> ('2026-Q3', 'PEAK')
+        M04_2026_BASE -> ('2026-04', 'BASE')
+        303_2026_PEAK -> None  (weekly products ignored)
+    """
+    m = _EEX_PRODUCT_PATTERN.match(eex_code.strip().upper())
+    if not m:
+        return None
+
+    prefix, year_str, load_type = m.groups()
+    year = int(year_str)
+
+    if prefix == "Y01":
+        return f"{year}", load_type
+    if prefix.startswith("Q"):
+        quarter = int(prefix[1:])
+        if 1 <= quarter <= 4:
+            return f"{year}-Q{quarter}", load_type
+    if prefix.startswith("M"):
+        month = int(prefix[1:])
+        if 1 <= month <= 12:
+            return f"{year}-{month:02d}", load_type
+    return None
+
+
+def load_forwards_timeseries(
+    report_path: str | Path,
+    market: str = "CH",
+) -> pd.DataFrame:
+    """Extract full timeseries from EEX report (all dates, BASE + PEAK).
+
+    Returns:
+        DataFrame with columns: date, product, load_type, product_type, price
+        - product: '2027', '2026-Q3', '2026-04', etc.
+        - load_type: 'BASE' or 'PEAK'
+        - product_type: 'Cal', 'Quarter', 'Month'
+    """
+    report_path = Path(report_path)
+    if not report_path.exists():
+        raise FileNotFoundError(f"EEX report not found: {report_path}")
+
+    raw = pd.read_excel(report_path, sheet_name=market, header=None)
+    if raw.shape[0] < 4 or raw.shape[1] < 2:
+        raise ValueError(f"Unexpected format in {report_path} (sheet={market})")
+
+    product_codes = raw.iloc[0, 1:]
+    date_series = pd.to_datetime(raw.iloc[3:, 0], dayfirst=True, errors="coerce")
+    values = raw.iloc[3:, 1:]
+
+    # Parse all valid product columns (BASE + PEAK)
+    col_info: dict[int, tuple[str, str, str]] = {}  # col_idx -> (product, load_type, product_type)
+    for idx, code in enumerate(product_codes):
+        if pd.isna(code):
+            continue
+        parsed = _normalize_product(str(code))
+        if parsed is None:
+            continue
+        delivery_key, load_type = parsed
+        if len(delivery_key) == 4:
+            ptype = "Cal"
+        elif "-Q" in delivery_key:
+            ptype = "Quarter"
+        else:
+            ptype = "Month"
+        col_info[idx] = (delivery_key, load_type, ptype)
+
+    if not col_info:
+        raise ValueError(f"No valid products found in EEX sheet {market}")
+
+    rows = []
+    for row_idx in values.index:
+        dt = date_series.loc[row_idx]
+        if pd.isna(dt):
+            continue
+        for col_idx, (product, load_type, ptype) in col_info.items():
+            val = values.iloc[row_idx - values.index[0], col_idx]
+            price = pd.to_numeric(str(val).replace(",", "."), errors="coerce") if not pd.isna(val) else None
+            if price is not None and price > 0:
+                rows.append({
+                    "date": dt.normalize(),
+                    "product": product,
+                    "load_type": load_type,
+                    "product_type": ptype,
+                    "price": float(price),
+                })
+
+    df = pd.DataFrame(rows)
+    if df.empty:
+        raise ValueError(f"No valid prices in EEX sheet {market}")
+
+    df["date"] = pd.to_datetime(df["date"])
+    logger.info(
+        "EEX timeseries loaded (%s, sheet=%s): %d obs, %d products, %s → %s",
+        report_path.name, market, len(df),
+        df["product"].nunique(),
+        df["date"].min().date(), df["date"].max().date(),
+    )
+    return df
+
+
+def update_forwards_parquet(
+    report_path: str | Path,
+    parquet_path: str | Path = "data/eex_forwards_history.parquet",
+    markets: list[str] | None = None,
+) -> pd.DataFrame:
+    """Ingest EEX report and append to historical Parquet (dedup on date+product+load_type+market).
+
+    Returns the updated full DataFrame.
+    """
+    if markets is None:
+        markets = ["CH", "DE"]
+
+    parquet_path = Path(parquet_path)
+    dfs = []
+    for mkt in markets:
+        try:
+            ts = load_forwards_timeseries(report_path, market=mkt)
+            ts["market"] = mkt
+            dfs.append(ts)
+        except Exception as exc:
+            logger.warning("Skipping market %s: %s", mkt, exc)
+
+    if not dfs:
+        raise ValueError("No market data loaded from EEX report")
+
+    new_data = pd.concat(dfs, ignore_index=True)
+
+    if parquet_path.exists():
+        existing = pd.read_parquet(parquet_path)
+        combined = pd.concat([existing, new_data], ignore_index=True)
+        combined = combined.drop_duplicates(
+            subset=["date", "product", "load_type", "market"], keep="last"
+        )
+    else:
+        parquet_path.parent.mkdir(parents=True, exist_ok=True)
+        combined = new_data
+
+    combined = combined.sort_values(["market", "date", "product", "load_type"]).reset_index(drop=True)
+    combined.to_parquet(parquet_path, index=False)
+    logger.info("Forwards history saved: %s (%d rows)", parquet_path, len(combined))
+    return combined
+
+
 def load_base_prices_from_eex_report(
     report_path: str | Path,
     market: str = "CH",
     as_of_date: str | None = None,
 ) -> dict[str, float]:
     """
-    Load base prices from a daily EEX price report XLSX file.
+    Load forward prices from a daily EEX price report XLSX file (BASE + PEAK).
 
     Expected workbook layout:
         - One sheet per market (e.g. CH/DE/FR)
-        - Row 1 contains product codes (Y01_YYYY_BASE, QNN_YYYY_BASE, MNN_YYYY_BASE)
+        - Row 1 contains product codes (Y01_YYYY_BASE/PEAK, QNN_YYYY_BASE/PEAK, MNN_YYYY_BASE/PEAK)
         - Row 4+ contains daily marks with a date in column A
 
     Args:
@@ -93,7 +241,9 @@ def load_base_prices_from_eex_report(
                     non-zero date is selected automatically.
 
     Returns:
-        dict[str, float]: {'2027': 82.9, '2026-Q3': 74.8, '2026-04': 84.5, ...}
+        dict[str, float]: {'2027': 82.9, '2027-Peak': 95.1, '2026-Q3': 74.8,
+                           '2026-Q3-Peak': 88.2, '2026-04': 84.5, '2026-04-Peak': 92.0, ...}
+        PEAK products use '-Peak' suffix. BASE products have no suffix.
     """
     report_path = Path(report_path)
     if not report_path.exists():
@@ -112,14 +262,17 @@ def load_base_prices_from_eex_report(
     for idx, code in enumerate(product_codes):
         if pd.isna(code):
             continue
-        normalized = _normalize_delivery_period(str(code))
-        if normalized is None:
+        parsed = _normalize_product(str(code))
+        if parsed is None:
             continue
+        delivery_key, load_type = parsed
+        if load_type == "PEAK":
+            delivery_key = f"{delivery_key}-Peak"
         selected_cols.append(idx)
-        delivery_keys[idx] = normalized
+        delivery_keys[idx] = delivery_key
 
     if not selected_cols:
-        raise ValueError(f"No Cal/Quarter/Month BASE contracts found in EEX sheet {market}")
+        raise ValueError(f"No Cal/Quarter/Month contracts found in EEX sheet {market}")
 
     selected = values.iloc[:, selected_cols].copy()
     for col in selected.columns:
@@ -156,15 +309,18 @@ def load_base_prices_from_eex_report(
 
     if not base_prices:
         raise ValueError(
-            f"EEX row has no positive BASE prices (sheet={market}, date={row_date.date()})"
+            f"EEX row has no positive prices (sheet={market}, date={row_date.date()})"
         )
 
+    n_base = sum(1 for k in base_prices if not k.endswith("-Peak"))
+    n_peak = sum(1 for k in base_prices if k.endswith("-Peak"))
     logger.info(
-        "Forwards EEX XLSX loaded (%s, sheet=%s, date=%s): %d products",
+        "Forwards EEX XLSX loaded (%s, sheet=%s, date=%s): %d BASE + %d PEAK products",
         report_path,
         market,
         row_date.date(),
-        len(base_prices),
+        n_base,
+        n_peak,
     )
     return base_prices
 

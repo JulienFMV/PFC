@@ -40,10 +40,10 @@ SEED = 42
 # (l'incertitude des profiles augmente sur l'horizon long car les marchés
 # et mix énergétique peuvent changer structurellement)
 HORIZON_WIDENING = {
-    6:  1.00,   # M+1..M+6   : IC calibré
-    12: 1.15,   # M+7..M+12  : +15%
-    24: 1.40,   # Y+2        : +40%
-    36: 1.70,   # Y+3        : +70%
+    6:  2.50,   # M+1..M+6   : widen to capture forward-spot basis risk
+    12: 2.80,   # M+7..M+12  : additional term-structure uncertainty
+    24: 3.50,   # Y+2        : wider for structural market changes
+    36: 4.20,   # Y+3        : widest for long-term energy transition
 }
 
 
@@ -64,10 +64,19 @@ class Uncertainty:
 
     def fit(self, epex_df: pd.DataFrame, calendar_df: pd.DataFrame) -> "Uncertainty":
         """
-        Calibre les IC sur l'historique EPEX 15min.
+        Calibre les IC sur l'historique EPEX.
+
+        Uses hourly price variation (day-to-day) rather than intra-hourly f_Q
+        ratios, because EPEX data is hourly-resolution (identical prices within
+        each hour). For each (saison, type_jour, heure) cell, computes the
+        distribution of normalized price deviations:
+            dev = (price - cell_mean) / cell_mean
+
+        This captures how much the actual price deviates from the typical
+        level for that cell, providing meaningful prediction intervals.
 
         Args:
-            epex_df    : prix EPEX 15min ('price_eur_mwh')
+            epex_df    : prix EPEX ('price_eur_mwh')
             calendar_df: enrichissement calendaire ('saison','type_jour','heure_hce','quart')
         """
         rng = np.random.default_rng(self.seed)
@@ -76,39 +85,26 @@ class Uncertainty:
             calendar_df[["saison", "type_jour", "heure_hce", "quart"]]
         ).dropna()
 
-        groups = df.groupby(["saison", "type_jour", "heure_hce", "quart"])
-        total = len(groups)
-        logger.info("Bootstrap IC : %d cellules × %d tirages", total, self.n_boot)
+        # ── Hourly-level uncertainty (one entry per hour, not per quarter) ──
+        # Group by (saison, type_jour, heure) — 480 cells max
+        hourly_groups = df.groupby(["saison", "type_jour", "heure_hce"])
+        logger.info("Bootstrap IC : %d hourly cells × %d tirages", len(hourly_groups), self.n_boot)
 
-        for (saison, type_jour, h, q), grp in groups:
-            # Construction des ratios f_Q observés
-            hour_data = df[
-                (df["saison"] == saison) &
-                (df["type_jour"] == type_jour) &
-                (df["heure_hce"] == h)
-            ]
-            if len(grp) < 10:
-                self.boot_stats_[(saison, type_jour, h, q)] = {"p10": 0.9, "p50": 1.0, "p90": 1.1}
+        hourly_stats: dict[tuple, dict] = {}
+        for (saison, type_jour, h), grp in hourly_groups:
+            if len(grp) < 20:
+                hourly_stats[(saison, type_jour, h)] = {"p10": 0.85, "p50": 1.0, "p90": 1.15}
                 continue
 
-            # Ratio observé : prix_quart / moyenne_heure
-            grp = grp.copy()
-            grp["hour_key"] = grp.index.floor("h")
-            hour_means = hour_data.groupby(hour_data.index.floor("h"))["price_eur_mwh"].mean()
-            grp["hour_mean"] = grp["hour_key"].map(hour_means)
-            grp = grp[grp["hour_mean"].abs() > 0.1]
-
-            if len(grp) < 5:
-                self.boot_stats_[(saison, type_jour, h, q)] = {"p10": 0.9, "p50": 1.0, "p90": 1.1}
+            cell_mean = grp["price_eur_mwh"].mean()
+            if abs(cell_mean) < 1.0:
+                hourly_stats[(saison, type_jour, h)] = {"p10": 0.85, "p50": 1.0, "p90": 1.15}
                 continue
 
-            ratios = (grp["price_eur_mwh"] / grp["hour_mean"]).values
+            # Normalized price ratio: actual / cell_mean
+            ratios = (grp["price_eur_mwh"] / cell_mean).values
 
-            # Bootstrap prediction intervals: percentiles of the ratio
-            # distribution, NOT the median.  Bootstrapping the median only
-            # measures uncertainty in the *location estimate* (shrinks to 0
-            # with more data).  We need the *predictive spread* — the p10/p90
-            # of where individual ratios fall.
+            # Bootstrap prediction intervals on the ratio distribution
             boot_p10 = np.empty(self.n_boot)
             boot_p50 = np.empty(self.n_boot)
             boot_p90 = np.empty(self.n_boot)
@@ -118,22 +114,37 @@ class Uncertainty:
                 boot_p50[b] = np.percentile(sample, 50)
                 boot_p90[b] = np.percentile(sample, 90)
 
-            self.boot_stats_[(saison, type_jour, h, q)] = {
+            hourly_stats[(saison, type_jour, h)] = {
                 "p10": float(np.mean(boot_p10)),
                 "p50": float(np.mean(boot_p50)),
                 "p90": float(np.mean(boot_p90)),
             }
 
-        logger.info("Bootstrap IC terminé : %d cellules calibrées", len(self.boot_stats_))
+        # ── Propagate to (saison, type_jour, heure, quart) keys ──────────
+        # All 4 quarters within an hour get the same hourly uncertainty
+        for (saison, type_jour, h), stats in hourly_stats.items():
+            for q in range(1, 5):
+                self.boot_stats_[(saison, type_jour, h, q)] = stats
+
+        logger.info("Bootstrap IC terminé : %d hourly cells → %d quarter cells",
+                     len(hourly_stats), len(self.boot_stats_))
         return self
 
-    def compute(self, pfc_df: pd.DataFrame, calendar_df: pd.DataFrame) -> pd.DataFrame:
+    def compute(
+        self,
+        pfc_df: pd.DataFrame,
+        calendar_df: pd.DataFrame,
+        reference_date: pd.Timestamp | None = None,
+    ) -> pd.DataFrame:
         """
         Calcule p10 et p90 pour chaque timestamp de la PFC (vectorisé).
 
         Args:
-            pfc_df     : DataFrame PFC avec colonnes ['price_shape', 'f_Q', 'profile_type']
-            calendar_df: enrichissement calendaire aligné sur pfc_df.index
+            pfc_df         : DataFrame PFC avec colonnes ['price_shape', 'f_Q', 'profile_type']
+            calendar_df    : enrichissement calendaire aligné sur pfc_df.index
+            reference_date : date de référence pour le calcul de l'horizon
+                             (défaut = now). Passer la date "as-of" pour le
+                             backtest afin que l'horizon widening soit correct.
 
         Returns:
             DataFrame colonnes ['p10', 'p90'] aligné sur pfc_df.index
@@ -143,7 +154,7 @@ class Uncertainty:
         n = len(pfc_df)
         prices = pfc_df["price_shape"].values
 
-        now = pd.Timestamp.now(tz="UTC")
+        now = reference_date if reference_date is not None else pd.Timestamp.now(tz="UTC")
         days_ahead = (pfc_df.index - now).total_seconds() / 86400
         months_ahead = np.maximum(0, np.round(days_ahead / 30)).astype(int)
         widen_arr = np.vectorize(self._widening_factor)(months_ahead)
