@@ -414,7 +414,7 @@ class LEARForecaster:
                 scaler = StandardScaler()
                 X_scaled = scaler.fit_transform(X_arr)
 
-                model = ElasticNetCV(l1_ratio=0.3, max_iter=self.max_iter, cv=5)
+                model = ElasticNetCV(l1_ratio=0.1, max_iter=self.max_iter, cv=5)
                 model.fit(X_scaled, y_t)
                 fitted.append((model, mu, sigma, scaler, X_w, y_w))
             except Exception as exc:
