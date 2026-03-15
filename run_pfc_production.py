@@ -373,6 +373,18 @@ try:
     lear_forecast.to_parquet(f"{lear_base}.parquet", index=False)
     lear_forecast.to_csv(f"{lear_base}.csv", index=False)
     logger.info("  LEAR standalone saved: %s.parquet", lear_base)
+
+    # Rolling backtest (D+1, last 30 days)
+    logger.info("  Running LEAR backtest (30 days, D+1)...")
+    t_bt = time.time()
+    try:
+        bt = lear.backtest(n_days=30, horizon=1)
+        bt_path = f"pfc_shaping/output/lear_backtest_{pd.Timestamp.now().strftime('%Y-%m-%d')}.parquet"
+        bt.to_parquet(bt_path, index=False)
+        logger.info("  Backtest saved: %s (%.1fs)", bt_path, time.time() - t_bt)
+    except Exception as bt_exc:
+        logger.warning("  Backtest failed: %s", bt_exc)
+
     logger.info("  LEAR completed in %.1fs", time.time() - t_lear)
 
 except Exception as exc:
