@@ -195,8 +195,11 @@ from pfc_shaping.calibration.cascading import ContractCascader
 
 cascader = ContractCascader()
 cascader.fit_seasonal_ratios(epex_ch)
+cascader.fit_peak_ratios(epex_ch)
 
 cascaded_prices = cascader.cascade(base_prices)
+# Synthesize Peak forwards where only Base is quoted (e.g. Cal 2028+)
+cascaded_prices = cascader.synthesize_peak_prices(cascaded_prices)
 
 logger.info("  Input keys: %d", len(base_prices))
 logger.info("  Cascaded keys: %d", len(cascaded_prices))
@@ -390,7 +393,9 @@ logger.info("  DE forward source: %s", fwd_source_de)
 # ── Cascade DE forwards ──
 cascader_de = ContractCascader(tz="Europe/Berlin")
 cascader_de.fit_seasonal_ratios(epex_de)
+cascader_de.fit_peak_ratios(epex_de)
 cascaded_prices_de = cascader_de.cascade(base_prices_de)
+cascaded_prices_de = cascader_de.synthesize_peak_prices(cascaded_prices_de)
 
 logger.info("  DE cascaded keys: %d", len(cascaded_prices_de))
 for k in sorted(cascaded_prices_de.keys()):
