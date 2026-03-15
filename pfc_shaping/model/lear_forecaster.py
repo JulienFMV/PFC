@@ -885,7 +885,7 @@ class LEARForecaster:
                         forecast = forecast - correction2
 
                 # Expanding-window bias correction (subtract accumulated mean bias)
-                if len(error_history[hour]) >= 5:
+                if len(error_history[hour]) >= 3:
                     recent_bias = float(np.mean(error_history[hour][-14:]))  # last 14 days
                     forecast = forecast - 0.7 * recent_bias  # strong correction
 
