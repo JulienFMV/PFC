@@ -195,6 +195,22 @@ def load_lear_forecast() -> pd.DataFrame | None:
     return None
 
 
+@st.cache_data(ttl=3600, show_spinner="Chargement backtest LEAR...")
+def load_lear_backtest() -> pd.DataFrame | None:
+    """Load latest LEAR backtest results."""
+    output_dir = _paths_from_config()["output_dir"]
+    import glob
+    pattern = str(output_dir / "lear_backtest_*.parquet")
+    files = sorted(glob.glob(pattern))
+    if not files:
+        return None
+    try:
+        return pd.read_parquet(files[-1])
+    except Exception as exc:
+        logger.error("Failed to read LEAR backtest: %s", exc)
+        return None
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_pfc_metadata() -> dict[str, str]:
     output_dir = _paths_from_config()["output_dir"]

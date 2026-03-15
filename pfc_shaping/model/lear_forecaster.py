@@ -498,6 +498,136 @@ class LEARForecaster:
             result.loc[row.name, "price_p10"] = row["price_lear"] - 1.28 * spread
             result.loc[row.name, "price_p90"] = row["price_lear"] + 1.28 * spread
 
+    def backtest(
+        self,
+        n_days: int = 30,
+        horizon: int = 1,
+    ) -> pd.DataFrame:
+        """Rolling out-of-sample backtest: predict D+horizon for each of the last n_days.
+
+        For each test day T (going back from the last available date):
+        1. Use data up to T-1 to fit LASSO
+        2. Predict hour-by-hour for day T+horizon-1
+        3. Compare to actual EPEX spot
+
+        Args:
+            n_days: Number of days to backtest.
+            horizon: Forecast horizon in days (1 = day-ahead).
+
+        Returns:
+            DataFrame with columns: date, hour, forecast, actual, error
+        """
+        if not self._fitted:
+            raise RuntimeError("Call fit() before backtest()")
+
+        # Pivot prices to daily matrix
+        idx_local = self.prices_h_.index.tz_convert(self.tz)
+        df = pd.DataFrame({
+            "date": idx_local.date,
+            "hour": idx_local.hour,
+            "price": self.prices_h_.values,
+        })
+        price_pivot = df.pivot_table(
+            index="date", columns="hour", values="price", aggfunc="mean"
+        )
+        complete = price_pivot.dropna(thresh=23)
+        all_dates = complete.index
+
+        if len(all_dates) < n_days + 30:
+            n_days = min(n_days, len(all_dates) - 30)
+            if n_days < 5:
+                raise ValueError("Not enough data for backtest")
+
+        results = []
+        test_dates = all_dates[-(n_days + horizon - 1): -horizon + 1] if horizon > 1 else all_dates[-n_days:]
+
+        for test_idx, test_date in enumerate(test_dates):
+            # Find position in all_dates
+            pos = list(all_dates).index(test_date)
+            target_pos = pos + horizon - 1
+            if target_pos >= len(all_dates):
+                continue
+            target_date = all_dates[target_pos]
+
+            # Cutoff: use only data up to test_date (exclusive of target)
+            cutoff_pos = pos
+            if cutoff_pos < 30:
+                continue
+
+            for hour in range(24):
+                # Build features on truncated data
+                prices_trunc = self.prices_h_[:pd.Timestamp(test_date, tz=self.tz).tz_convert("UTC")]
+                exog_trunc = self.exog_.loc[:prices_trunc.index[-1]]
+
+                X_full, y_full = self._build_features(
+                    prices_trunc, exog_trunc, target_hour=hour
+                )
+
+                if len(y_full) < 30:
+                    continue
+
+                # Multi-window average
+                preds = []
+                for window in self.CALIBRATION_WINDOWS:
+                    n = min(window, len(y_full))
+                    X_w = X_full.iloc[-n:]
+                    y_w = y_full.iloc[-n:]
+
+                    y_arr = y_w.values.astype(float)
+                    y_t, mu, sigma = _asinh_transform(y_arr)
+
+                    try:
+                        model = LassoLarsCV(max_iter=self.max_iter, cv=5)
+                        X_arr = np.nan_to_num(X_w.values.astype(float), nan=0.0)
+                        model.fit(X_arr, y_t)
+                    except Exception:
+                        continue
+
+                    x_pred = self._build_prediction_row(
+                        X_full, y_full, target_date, hour, horizon,
+                    )
+                    if x_pred is not None:
+                        x_arr = np.nan_to_num(x_pred.reshape(1, -1), nan=0.0)
+                        pred_t = model.predict(x_arr)[0]
+                        preds.append(_asinh_inverse(pred_t, mu, sigma))
+
+                if not preds:
+                    continue
+
+                forecast = float(np.mean(preds))
+                actual = complete.loc[target_date, hour] if hour in complete.columns else np.nan
+
+                if not np.isnan(actual):
+                    results.append({
+                        "date": str(target_date),
+                        "hour": hour,
+                        "forecast": forecast,
+                        "actual": float(actual),
+                        "error": forecast - float(actual),
+                        "horizon": horizon,
+                    })
+
+            if (test_idx + 1) % 5 == 0:
+                logger.info("  Backtest: %d/%d days done", test_idx + 1, len(test_dates))
+
+        if not results:
+            raise ValueError("Backtest produced no results")
+
+        bt = pd.DataFrame(results)
+        bt["abs_error"] = bt["error"].abs()
+        bt["ape"] = (bt["abs_error"] / bt["actual"].abs().clip(lower=1)) * 100
+
+        mae = bt["abs_error"].mean()
+        rmse = np.sqrt((bt["error"] ** 2).mean())
+        mape = bt["ape"].mean()
+        corr = bt["forecast"].corr(bt["actual"])
+
+        logger.info(
+            "LEAR backtest (D+%d, %d days): MAE=%.1f, RMSE=%.1f, MAPE=%.1f%%, corr=%.3f",
+            horizon, bt["date"].nunique(), mae, rmse, mape, corr,
+        )
+        return bt
+
     def blend_with_pfc(
         self,
         pfc_15min: pd.DataFrame,

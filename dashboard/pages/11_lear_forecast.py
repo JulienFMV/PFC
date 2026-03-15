@@ -11,7 +11,7 @@ import streamlit as st
 
 from utils import (
     COLORS, add_range_slider, export_csv_button, load_epex,
-    load_lear_forecast, load_pfc, show_freshness_sidebar,
+    load_lear_backtest, load_lear_forecast, load_pfc, show_freshness_sidebar,
 )
 
 st.header("Prevision Court Terme (LEAR)")
@@ -23,6 +23,7 @@ show_freshness_sidebar()
 lear = load_lear_forecast()
 epex = load_epex()
 pfc = load_pfc()
+backtest = load_lear_backtest()
 
 if lear is None:
     st.warning("Aucun forecast LEAR disponible. Lancez `python run_pfc_production.py`.")
@@ -247,182 +248,155 @@ with tab2:
 
 
 # ════════════════════════════════════════════════════════════════════════
-# TAB 3: Backtest (if actuals available)
+# TAB 3: Backtest vs Spot (rolling out-of-sample)
 # ════════════════════════════════════════════════════════════════════════
 with tab3:
-    if not has_actuals or len(actuals) < 2:
-        st.info(
-            "Backtest disponible apres realisation des prix spot.\n\n"
-            "Les heures deja realisees seront comparees automatiquement."
+    st.subheader("Backtest LEAR vs Spot EPEX (out-of-sample)")
+    st.caption("Test retroactif : que predisait le LEAR chaque jour passe ?")
+
+    if backtest is None or backtest.empty:
+        st.warning(
+            "Aucun backtest disponible.\n\n"
+            "Le backtest est genere automatiquement par `run_pfc_production.py` "
+            "(30 jours, D+1 rolling)."
         )
-
-        # Show PFC vs LEAR comparison instead
-        if pfc is not None and not pfc.empty and "price_shape" in pfc.columns:
-            st.subheader("LEAR vs PFC structurel")
-
-            pfc_h = pfc.loc[
-                (pfc.index >= forecast_start) & (pfc.index <= forecast_end),
-                "price_shape",
-            ].resample("h").mean()
-
-            common_pfc = pfc_h.index.intersection(lear_ts.index)
-            if len(common_pfc) > 10:
-                comp = pd.DataFrame({
-                    "LEAR": lear_ts.loc[common_pfc, "price_lear"],
-                    "PFC": pfc_h.loc[common_pfc],
-                })
-                comp["Ecart"] = comp["LEAR"] - comp["PFC"]
-
-                c1, c2, c3 = st.columns(3)
-                with c1:
-                    st.metric("Ecart moyen", f"{comp['Ecart'].mean():+.1f}")
-                    st.caption("LEAR - PFC (EUR/MWh)")
-                with c2:
-                    st.metric("Correl.", f"{comp['LEAR'].corr(comp['PFC']):.3f}")
-                with c3:
-                    rmse = np.sqrt((comp["Ecart"] ** 2).mean())
-                    st.metric("RMSE", f"{rmse:.1f}")
-                    st.caption("EUR/MWh")
-
-                fig_comp = go.Figure()
-                fig_comp.add_trace(go.Scatter(
-                    x=comp.index, y=comp["LEAR"],
-                    name="LEAR", line=dict(color=COLORS["amber"], width=2),
-                ))
-                fig_comp.add_trace(go.Scatter(
-                    x=comp.index, y=comp["PFC"],
-                    name="PFC", line=dict(color=COLORS["muted"], width=1.5, dash="dot"),
-                ))
-                fig_comp.update_layout(
-                    yaxis_title="EUR/MWh", height=350,
-                    legend=dict(orientation="h", y=1.05, x=0),
-                )
-                st.plotly_chart(fig_comp, use_container_width=True)
-
-                # Scatter LEAR vs PFC
-                fig_scat = go.Figure()
-                fig_scat.add_trace(go.Scatter(
-                    x=comp["PFC"], y=comp["LEAR"],
-                    mode="markers",
-                    marker=dict(size=5, color=COLORS["amber"], opacity=0.5),
-                    showlegend=False,
-                    hovertemplate="PFC: %{x:.1f}<br>LEAR: %{y:.1f}<extra></extra>",
-                ))
-                # 45-degree line
-                mn = min(comp["PFC"].min(), comp["LEAR"].min())
-                mx = max(comp["PFC"].max(), comp["LEAR"].max())
-                fig_scat.add_trace(go.Scatter(
-                    x=[mn, mx], y=[mn, mx],
-                    mode="lines", line=dict(color=COLORS["muted"], dash="dash"),
-                    showlegend=False,
-                ))
-                fig_scat.update_layout(
-                    xaxis_title="PFC structurel (EUR/MWh)",
-                    yaxis_title="LEAR (EUR/MWh)",
-                    height=350,
-                    title="LEAR vs PFC — scatter",
-                )
-                st.plotly_chart(fig_scat, use_container_width=True)
     else:
-        st.subheader("Backtest LEAR vs Spot realise")
+        bt = backtest.copy()
 
-        comp = pd.DataFrame({
-            "Forecast": lear_ts.loc[common, "price_lear"],
-            "Actuel": actuals,
-        }).dropna()
+        # KPIs
+        mae = bt["abs_error"].mean()
+        rmse = np.sqrt((bt["error"] ** 2).mean())
+        mape = bt["ape"].mean()
+        bias = bt["error"].mean()
+        corr = bt["forecast"].corr(bt["actual"])
 
-        if len(comp) < 2:
-            st.warning("Pas assez de donnees pour le backtest")
-        else:
-            comp["Erreur"] = comp["Forecast"] - comp["Actuel"]
-            comp["Erreur_abs"] = comp["Erreur"].abs()
-            comp["APE"] = (comp["Erreur_abs"] / comp["Actuel"].abs().clip(lower=1)) * 100
+        b1, b2, b3, b4, b5 = st.columns(5)
+        with b1:
+            st.metric("MAE", f"{mae:.1f}")
+            st.caption("EUR/MWh")
+        with b2:
+            st.metric("RMSE", f"{rmse:.1f}")
+            st.caption("EUR/MWh")
+        with b3:
+            st.metric("MAPE", f"{mape:.1f}%")
+        with b4:
+            st.metric("Biais", f"{bias:+.1f}")
+            st.caption("EUR/MWh")
+        with b5:
+            st.metric("Correl.", f"{corr:.3f}")
 
-            # KPIs
-            b1, b2, b3, b4, b5 = st.columns(5)
-            mae = comp["Erreur_abs"].mean()
-            rmse = np.sqrt((comp["Erreur"] ** 2).mean())
-            mape = comp["APE"].mean()
-            bias = comp["Erreur"].mean()
-            corr = comp["Forecast"].corr(comp["Actuel"])
+        st.divider()
 
-            with b1:
-                st.metric("MAE", f"{mae:.1f}")
-                st.caption("EUR/MWh")
-            with b2:
-                st.metric("RMSE", f"{rmse:.1f}")
-                st.caption("EUR/MWh")
-            with b3:
-                st.metric("MAPE", f"{mape:.1f}%")
-            with b4:
-                st.metric("Biais", f"{bias:+.1f}")
-                st.caption("EUR/MWh")
-            with b5:
-                st.metric("Correl.", f"{corr:.3f}")
+        # Time series: forecast vs actual
+        # Build hourly timestamps from date + hour
+        bt["ts"] = pd.to_datetime(bt["date"]) + pd.to_timedelta(bt["hour"], unit="h")
+        bt_sorted = bt.sort_values("ts")
 
-            st.divider()
+        fig_bt = go.Figure()
+        fig_bt.add_trace(go.Scatter(
+            x=bt_sorted["ts"], y=bt_sorted["actual"],
+            name="Spot EPEX (realise)",
+            line=dict(color=COLORS["blue"], width=2),
+            hovertemplate="%{y:.1f} EUR/MWh<extra>Spot</extra>",
+        ))
+        fig_bt.add_trace(go.Scatter(
+            x=bt_sorted["ts"], y=bt_sorted["forecast"],
+            name="LEAR (D+1 prevu)",
+            line=dict(color=COLORS["amber"], width=2),
+            hovertemplate="%{y:.1f} EUR/MWh<extra>LEAR</extra>",
+        ))
+        fig_bt.update_layout(
+            yaxis_title="EUR/MWh", height=450,
+            legend=dict(orientation="h", y=1.05, x=0),
+            hovermode="x unified",
+        )
+        fig_bt = add_range_slider(fig_bt)
+        st.plotly_chart(fig_bt, use_container_width=True)
 
-            # Time series comparison
-            fig_bt = go.Figure()
-            fig_bt.add_trace(go.Scatter(
-                x=comp.index, y=comp["Actuel"],
-                name="Spot realise",
-                line=dict(color=COLORS["blue"], width=2),
+        # Scatter: forecast vs actual
+        col_scat, col_err = st.columns(2)
+
+        with col_scat:
+            st.subheader("Prevu vs Realise")
+            fig_scat = go.Figure()
+            fig_scat.add_trace(go.Scatter(
+                x=bt["actual"], y=bt["forecast"],
+                mode="markers",
+                marker=dict(size=4, color=COLORS["amber"], opacity=0.4),
+                showlegend=False,
+                hovertemplate="Spot: %{x:.1f}<br>LEAR: %{y:.1f}<extra></extra>",
             ))
-            fig_bt.add_trace(go.Scatter(
-                x=comp.index, y=comp["Forecast"],
-                name="LEAR Forecast",
-                line=dict(color=COLORS["amber"], width=2),
+            mn = min(bt["actual"].min(), bt["forecast"].min())
+            mx = max(bt["actual"].max(), bt["forecast"].max())
+            fig_scat.add_trace(go.Scatter(
+                x=[mn, mx], y=[mn, mx],
+                mode="lines", line=dict(color=COLORS["muted"], dash="dash"),
+                showlegend=False,
             ))
-            fig_bt.update_layout(
-                yaxis_title="EUR/MWh", height=400,
-                legend=dict(orientation="h", y=1.05, x=0),
-                hovermode="x unified",
+            fig_scat.update_layout(
+                xaxis_title="Spot realise (EUR/MWh)",
+                yaxis_title="LEAR prevu (EUR/MWh)",
+                height=350,
             )
-            st.plotly_chart(fig_bt, use_container_width=True)
+            st.plotly_chart(fig_scat, use_container_width=True)
 
-            # Error distribution
+        with col_err:
+            st.subheader("Distribution erreurs")
             fig_err = go.Figure(go.Histogram(
-                x=comp["Erreur"].values,
-                nbinsx=40,
+                x=bt["error"].values,
+                nbinsx=50,
                 marker_color=COLORS["amber"],
                 opacity=0.7,
                 hovertemplate="%{x:.1f} EUR/MWh<br>%{y} obs<extra></extra>",
             ))
-            fig_err.add_vline(x=0, line_color=COLORS["muted"], line_dash="dash")
+            fig_err.add_shape(
+                type="line", x0=0, x1=0, y0=0, y1=1, yref="paper",
+                line=dict(color=COLORS["muted"], dash="dash"),
+            )
             fig_err.update_layout(
                 xaxis_title="Erreur (EUR/MWh)",
                 yaxis_title="Frequence",
-                height=250,
-                title="Distribution des erreurs",
+                height=350,
             )
             st.plotly_chart(fig_err, use_container_width=True)
 
-            # Hourly MAE
-            st.subheader("MAE par heure de livraison")
-            comp_local = comp.copy()
-            comp_local["hour"] = comp_local.index.tz_convert(TZ).hour
-            hourly_mae = comp_local.groupby("hour")["Erreur_abs"].mean()
+        # MAE per hour
+        st.subheader("MAE par heure de livraison")
+        hourly_mae = bt.groupby("hour")["abs_error"].mean()
 
-            fig_hmae = go.Figure(go.Bar(
-                x=hourly_mae.index, y=hourly_mae.values,
-                marker_color=[
-                    COLORS["red"] if v > mae * 1.3 else COLORS["amber"]
-                    for v in hourly_mae.values
-                ],
-                hovertemplate="H%{x:02d}: MAE=%{y:.1f} EUR/MWh<extra></extra>",
-            ))
-            fig_hmae.add_hline(y=mae, line_color=COLORS["muted"], line_dash="dot",
-                               annotation_text=f"MAE global: {mae:.1f}")
-            fig_hmae.update_layout(
-                xaxis_title="Heure (CET/CEST)",
-                yaxis_title="MAE (EUR/MWh)",
-                height=300,
-                xaxis=dict(dtick=1),
-            )
-            st.plotly_chart(fig_hmae, use_container_width=True)
+        fig_hmae = go.Figure(go.Bar(
+            x=hourly_mae.index, y=hourly_mae.values,
+            marker_color=[
+                COLORS["red"] if v > mae * 1.3 else COLORS["amber"]
+                for v in hourly_mae.values
+            ],
+            hovertemplate="H%{x:02d}: MAE=%{y:.1f} EUR/MWh<extra></extra>",
+        ))
+        fig_hmae.add_hline(y=mae, line_color=COLORS["muted"], line_dash="dot",
+                           annotation_text=f"MAE global: {mae:.1f}")
+        fig_hmae.update_layout(
+            xaxis_title="Heure (CET/CEST)",
+            yaxis_title="MAE (EUR/MWh)",
+            height=300,
+            xaxis=dict(dtick=1),
+        )
+        st.plotly_chart(fig_hmae, use_container_width=True)
 
-            export_csv_button(comp, "lear_backtest.csv", "Export backtest")
+        # Daily MAE
+        st.subheader("MAE par jour")
+        daily_mae = bt.groupby("date")["abs_error"].mean()
+        fig_dmae = go.Figure(go.Bar(
+            x=daily_mae.index, y=daily_mae.values,
+            marker_color=COLORS["blue"],
+            hovertemplate="%{x}: MAE=%{y:.1f}<extra></extra>",
+        ))
+        fig_dmae.add_hline(y=mae, line_color=COLORS["muted"], line_dash="dot")
+        fig_dmae.update_layout(
+            yaxis_title="MAE (EUR/MWh)", height=250,
+        )
+        st.plotly_chart(fig_dmae, use_container_width=True)
+
+        export_csv_button(bt, "lear_backtest.csv", "Export backtest")
 
 
 # ════════════════════════════════════════════════════════════════════════
