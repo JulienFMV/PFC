@@ -45,13 +45,14 @@ pct_import = (entso_view["cross_border_mw"] > 0).mean() * 100
 k1, k2, k3, k4 = st.columns(4)
 with k1:
     direction = "Import" if avg_xb > 0 else "Export"
-    st.metric(f"Flux moyen ({direction})", f"{abs(avg_xb):.0f} MW")
+    st.metric(f"Flux moy.", f"{abs(avg_xb):.0f} MW",
+              delta=direction)
 with k2:
-    st.metric("Max import", f"{max_import:.0f} MW")
+    st.metric("Max imp.", f"{max_import:.0f} MW")
 with k3:
-    st.metric("Max export", f"{abs(max_export):.0f} MW")
+    st.metric("Max exp.", f"{abs(max_export):.0f} MW")
 with k4:
-    st.metric("% temps en import", f"{pct_import:.0f}%")
+    st.metric("% import", f"{pct_import:.0f}%")
 
 st.divider()
 

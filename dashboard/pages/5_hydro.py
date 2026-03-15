@@ -31,36 +31,36 @@ if not has_hydro and not has_entso:
     st.stop()
 
 # ── KPI Row ───────────────────────────────────────────────────────────────
-k1, k2, k3, k4, k5, k6 = st.columns(6)
+row1 = st.columns(3)
+row2 = st.columns(3)
 
 if has_hydro:
     latest = hydro.iloc[-1]
     prev = hydro.iloc[-2] if len(hydro) > 1 else latest
-    with k1:
-        st.metric("Remplissage CH", format_pct(latest["fill_pct"]),
+    with row1[0]:
+        st.metric("Rempliss.", format_pct(latest["fill_pct"]),
                   delta=f"{latest['fill_pct'] - prev['fill_pct']:+.1f}pp")
-    with k2:
-        st.metric("Stock hydro", format_gwh(latest["fill_gwh"]),
+    with row1[1]:
+        st.metric("Stock", format_gwh(latest["fill_gwh"]),
                   delta=f"{latest['fill_gwh'] - prev['fill_gwh']:+.0f} GWh")
-    with k3:
+    with row1[2]:
         if "fill_deviation" in hydro.columns:
             dev = latest["fill_deviation"]
-            st.metric("Fill deviation", f"{dev:+.2f} σ",
-                      delta="Sous moyenne" if dev < 0 else "Sur moyenne",
+            st.metric("Ecart moy.", f"{dev:+.2f} σ",
                       delta_color="inverse" if dev < 0 else "normal")
 
 if has_entso:
     last_week = entso.iloc[-96*7:]
-    with k4:
+    with row2[0]:
         avg_load = last_week["load_mw"].mean()
-        st.metric("Charge moy. 7j", f"{avg_load/1000:.1f} GW")
-    with k5:
+        st.metric("Charge 7j", f"{avg_load/1000:.1f} GW")
+    with row2[1]:
         avg_solar = last_week["solar_mw"].mean()
-        st.metric("Solaire moy. 7j", f"{avg_solar:.0f} MW")
-    with k6:
+        st.metric("Solaire 7j", f"{avg_solar:.0f} MW")
+    with row2[2]:
         avg_xb = last_week["cross_border_mw"].mean()
         direction = "Import" if avg_xb > 0 else "Export"
-        st.metric(f"{direction} moy. 7j", f"{abs(avg_xb):.0f} MW")
+        st.metric(f"{direction} 7j", f"{abs(avg_xb):.0f} MW")
 
 st.divider()
 

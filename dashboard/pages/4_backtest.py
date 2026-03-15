@@ -72,25 +72,25 @@ bt_df = st.session_state["bt_df"]
 k1, k2, k3, k4, k5 = st.columns(5)
 with k1:
     rmse = summary["RMSE_shape_mean"]
-    st.metric("RMSE shape", f"{rmse:.4f}",
-              delta="OK" if rmse < 0.15 else "Élevé",
+    st.metric("RMSE", f"{rmse:.4f}",
+              delta="OK" if rmse < 0.15 else "Eleve",
               delta_color="normal" if rmse < 0.15 else "inverse")
 with k2:
     mae = summary["MAE_shape_mean"]
-    st.metric("MAE shape", f"{mae:.4f}")
+    st.metric("MAE", f"{mae:.4f}")
 with k3:
     bias = summary["Bias_mean"]
-    st.metric("Biais moyen", f"{bias:+.4f}",
+    st.metric("Biais", f"{bias:+.4f}",
               delta_color="normal" if abs(bias) < 0.02 else "inverse")
 with k4:
     ic80 = summary["IC80_coverage"]
-    st.metric("Couverture IC80%", f"{ic80:.1%}",
+    st.metric("IC 80%", f"{ic80:.1%}",
               delta="OK" if 0.75 <= ic80 <= 0.85 else "Hors cible",
               delta_color="normal" if 0.75 <= ic80 <= 0.85 else "inverse")
 with k5:
     skill = summary["Skill_score_mean"]
-    st.metric("Skill score", f"{skill:.3f}",
-              delta="Mieux que flat" if skill > 0 else "Pire que flat",
+    st.metric("Skill", f"{skill:.3f}",
+              delta="> flat" if skill > 0 else "< flat",
               delta_color="normal" if skill > 0 else "inverse")
 
 st.divider()

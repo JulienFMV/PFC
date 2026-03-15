@@ -62,18 +62,19 @@ else:
 # ── KPI Row ───────────────────────────────────────────────────────────────
 k1, k2, k3, k4 = st.columns(4)
 with k1:
-    st.metric("Base avg", f"{pfc['price_shape'].mean():.1f} EUR/MWh")
+    st.metric("Base", f"{pfc['price_shape'].mean():.1f}")
 with k2:
-    st.metric("Peak avg", f"{pfc.loc[is_peak, 'price_shape'].mean():.1f} EUR/MWh")
+    st.metric("Peak", f"{pfc.loc[is_peak, 'price_shape'].mean():.1f}")
 with k3:
     spread = pfc.loc[is_peak, "price_shape"].mean() - pfc.loc[~is_peak, "price_shape"].mean()
-    st.metric("Peak spread", f"{spread:+.1f} EUR/MWh")
+    st.metric("Spread P/OP", f"{spread:+.1f}")
 with k4:
     if "calibrated" in pfc.columns:
         cal_pct = pfc["calibrated"].mean() * 100
-        st.metric("Calibré", f"{cal_pct:.0f}%")
+        st.metric("Calibre", f"{cal_pct:.0f}%")
     else:
-        st.metric("Horizon", f"{len(pfc) // 96} jours")
+        st.metric("Horizon", f"{len(pfc) // 96}j")
+st.caption("Valeurs en EUR/MWh")
 
 st.divider()
 
