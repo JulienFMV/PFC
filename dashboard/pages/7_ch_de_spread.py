@@ -43,14 +43,15 @@ joined["spread_ch_de"] = joined["ch"] - joined["de"]
 
 k1, k2, k3, k4 = st.columns(4)
 with k1:
-    st.metric("CH moyenne", f"{joined['ch'].mean():.1f} EUR/MWh")
+    st.metric("CH moy.", f"{joined['ch'].mean():.1f}")
 with k2:
-    st.metric("DE moyenne", f"{joined['de'].mean():.1f} EUR/MWh")
+    st.metric("DE moy.", f"{joined['de'].mean():.1f}")
 with k3:
-    st.metric("Spread moyen CH-DE", f"{joined['spread_ch_de'].mean():+.1f} EUR/MWh")
+    st.metric("Spread moy.", f"{joined['spread_ch_de'].mean():+.1f}")
 with k4:
     front_n = min(96 * 30, len(joined))
-    st.metric("Spread Front-Month", f"{joined['spread_ch_de'].iloc[:front_n].mean():+.1f} EUR/MWh")
+    st.metric("Spread M+1", f"{joined['spread_ch_de'].iloc[:front_n].mean():+.1f}")
+st.caption("EUR/MWh")
 
 st.divider()
 

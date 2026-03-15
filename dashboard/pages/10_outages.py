@@ -67,24 +67,24 @@ prev_7d = outages.iloc[:-96*7].last("7D").mean() if len(outages) > 96 * 14 else 
 with k1:
     total_mw = latest.get("unavailable_mw", 0)
     delta_total = now_7d.get("unavailable_mw", 0) - prev_7d.get("unavailable_mw", 0)
-    st.metric("Total indispo.", f"{total_mw:,.0f} MW",
-              delta=f"{delta_total:+,.0f} MW vs sem. prec.", delta_color="inverse")
+    st.metric("Total", f"{total_mw:,.0f} MW",
+              delta=f"{delta_total:+,.0f}", delta_color="inverse")
 
 with k2:
     nuc_mw = latest.get("unavailable_nuclear", 0)
     delta_nuc = now_7d.get("unavailable_nuclear", 0) - prev_7d.get("unavailable_nuclear", 0)
     st.metric("Nucleaire", f"{nuc_mw:,.0f} MW",
-              delta=f"{delta_nuc:+,.0f} MW", delta_color="inverse")
+              delta=f"{delta_nuc:+,.0f}", delta_color="inverse")
 
 with k3:
     hyd_mw = latest.get("unavailable_hydro", 0)
     delta_hyd = now_7d.get("unavailable_hydro", 0) - prev_7d.get("unavailable_hydro", 0)
     st.metric("Hydro", f"{hyd_mw:,.0f} MW",
-              delta=f"{delta_hyd:+,.0f} MW", delta_color="inverse")
+              delta=f"{delta_hyd:+,.0f}", delta_color="inverse")
 
 with k4:
     n_out = latest.get("n_outages", 0)
-    st.metric("Unites en arret", f"{int(n_out)}")
+    st.metric("En arret", f"{int(n_out)}")
 
 st.divider()
 
