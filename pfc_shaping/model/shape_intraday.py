@@ -15,10 +15,13 @@ Contrainte d'énergie :
 
 Architecture en 2 couches :
     Couche 1 (déterministe) : profil de base historique par régression robuste Huber
-    Couche 2 (correction)   : correction additive OLS sur variables exogènes
-                              solar_regime et load_deviation, appliquée
-                              uniquement sur les heures à forte variance
-                              intra-horaire (heures de rampe solaire : 6h-10h, 17h-20h)
+    Couche 2 (correction)   : correction additive Ridge sur variables exogènes
+                              solar_regime, load_deviation et flow_deviation,
+                              appliquée sur toutes les heures (gate R² OOS > 0
+                              rejette automatiquement les heures inutiles).
+                              flow_deviation capture la flexibilité hydro CH :
+                              export à prix haut (turbinage peak), import à
+                              prix bas (pompage / baseload).
 
 Grille de calibration :
     4 saisons × 5 types_jour × 24 heures = 480 cellules
@@ -52,7 +55,15 @@ HEURES_RAMPE = set(range(24))
 
 # Nombre minimum d'observations pour estimer une cellule
 MIN_OBS_COUCHE1 = 8   # ≥ 8 occurrences de l'heure dans la cellule
-MIN_OBS_COUCHE2 = 30  # pour la régression OLS sur features exogènes
+MIN_OBS_COUCHE2 = 50  # pour la régression Ridge sur features exogènes (augmenté de 30)
+
+# Seuil R² OOS minimal pour retenir une correction Layer 2
+# Avec peu de données (< 1 an), R² > 0 passe souvent par chance.
+# 0.02 = la correction doit expliquer au moins 2% de la variance OOS.
+MIN_R2_OOS = 0.02
+
+# Amplitude maximale des coefficients Layer 2 (borne les corrections extrêmes)
+MAX_COEF_ABS = 0.05
 
 
 class ShapeIntraday:
@@ -97,11 +108,14 @@ class ShapeIntraday:
         df = df.join(calendar_df[["saison", "type_jour", "heure_hce", "quart"]])
 
         if entso_df is not None:
-            exo_cols = [c for c in ["solar_regime", "load_deviation"] if c in entso_df.columns]
+            exo_cols = [c for c in ["solar_regime", "load_deviation", "flow_deviation"] if c in entso_df.columns]
             df = df.join(entso_df[exo_cols])
         else:
             df["solar_regime"] = np.nan
             df["load_deviation"] = np.nan
+
+        if "flow_deviation" not in df.columns:
+            df["flow_deviation"] = np.nan
 
         df = df.dropna(subset=["saison", "type_jour", "heure_hce", "quart", "price_eur_mwh"])
 
@@ -158,6 +172,7 @@ class ShapeIntraday:
         heure: int,
         solar_regime: float = 1.0,
         load_deviation: float = 0.0,
+        flow_deviation: float = 0.0,
     ) -> np.ndarray:
         """
         Retourne les 4 facteurs f_Q normalisés pour une cellule.
@@ -165,6 +180,9 @@ class ShapeIntraday:
         Args:
             solar_regime  : 0=Faible, 1=Moyen, 2=Fort
             load_deviation: z-score de la charge (0 = charge normale)
+            flow_deviation: z-score du flux transfrontalier (0 = flux normal)
+                           Positif = import supérieur à la moyenne,
+                           Négatif = export supérieur à la moyenne (turbinage)
 
         Returns:
             np.ndarray shape (4,) avec mean = 1  (contrainte énergie)
@@ -182,6 +200,7 @@ class ShapeIntraday:
             delta = np.array([
                 corr.get(f"b_solar_q{q}", 0.0) * solar_regime
                 + corr.get(f"b_load_q{q}", 0.0) * load_deviation
+                + corr.get(f"b_flow_q{q}", 0.0) * flow_deviation
                 + corr.get(f"intercept_q{q}", 0.0)
                 for q in range(1, 5)
             ])
@@ -210,7 +229,7 @@ class ShapeIntraday:
 
         df_cal = calendar_df.copy()
         if entso_df is not None:
-            for col in ["solar_regime", "load_deviation"]:
+            for col in ["solar_regime", "load_deviation", "flow_deviation"]:
                 if col in entso_df.columns:
                     df_cal[col] = entso_df[col].reindex(timestamps)
         else:
@@ -219,6 +238,9 @@ class ShapeIntraday:
 
         df_cal["solar_regime"] = df_cal["solar_regime"].fillna(1.0)
         df_cal["load_deviation"] = df_cal["load_deviation"].fillna(0.0)
+        if "flow_deviation" not in df_cal.columns:
+            df_cal["flow_deviation"] = 0.0
+        df_cal["flow_deviation"] = df_cal["flow_deviation"].fillna(0.0)
 
         n = len(timestamps)
         f_q_values = np.ones(n)
@@ -253,6 +275,7 @@ class ShapeIntraday:
                 corr = self.corrections_[actual_key]
                 solar_vals = df_cal["solar_regime"].values[idx_arr]
                 load_vals = df_cal["load_deviation"].values[idx_arr]
+                flow_vals = df_cal["flow_deviation"].values[idx_arr]
                 n_grp = len(idx_arr)
 
                 # Compute all 4 corrected factors per row: (n_grp, 4)
@@ -261,6 +284,7 @@ class ShapeIntraday:
                     factors[:, q_idx] += (
                         corr.get(f"b_solar_q{q_idx+1}", 0.0) * solar_vals
                         + corr.get(f"b_load_q{q_idx+1}", 0.0) * load_vals
+                        + corr.get(f"b_flow_q{q_idx+1}", 0.0) * flow_vals
                         + corr.get(f"intercept_q{q_idx+1}", 0.0)
                     )
                 # Re-normalize each row (mean of 4 quarters = 1)
@@ -383,7 +407,7 @@ class ShapeIntraday:
 
         Uses sample_weight from temporal decay + hydro analogue if available.
         """
-        cols = ["solar_regime", "load_deviation"]
+        cols = ["solar_regime", "load_deviation", "flow_deviation"]
         available = [c for c in cols if c in hour_data.columns]
         if not available:
             return None
@@ -424,15 +448,24 @@ class ShapeIntraday:
                 ss_tot = np.sum((y_test - y_test.mean()) ** 2)
                 r2_oos = 1 - ss_res / ss_tot if ss_tot > 0 else 0
 
-                if r2_oos <= 0:
-                    continue  # correction n'apporte rien → on la rejette
+                if r2_oos <= MIN_R2_OOS:
+                    continue  # correction n'apporte pas assez → rejet
 
                 # Refit sur toutes les données si validation passée
                 ridge.fit(X, y, sample_weight=w)
-                result[f"intercept_q{q}"] = float(ridge.intercept_)
+
+                # Clip coefficients to prevent extreme corrections
+                intercept = float(np.clip(ridge.intercept_, -MAX_COEF_ABS, MAX_COEF_ABS))
+                result[f"intercept_q{q}"] = intercept
                 for i, col in enumerate(available):
-                    short = "solar" if "solar" in col else "load"
-                    result[f"b_{short}_q{q}"] = float(ridge.coef_[i])
+                    if "solar" in col:
+                        short = "solar"
+                    elif "flow" in col:
+                        short = "flow"
+                    else:
+                        short = "load"
+                    coef = float(np.clip(ridge.coef_[i], -MAX_COEF_ABS, MAX_COEF_ABS))
+                    result[f"b_{short}_q{q}"] = coef
             except Exception:
                 pass
 

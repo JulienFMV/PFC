@@ -222,6 +222,7 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     Colonnes ajoutées :
         - solar_regime : {0, 1, 2} — terciles mensuels de production solaire
         - load_deviation : écart normalisé charge vs moyenne mensuelle
+        - flow_deviation : écart normalisé flux transfrontalier vs moyenne mensuelle
     """
     df = df.copy()
 
@@ -249,6 +250,18 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
         df["load_deviation"] = df["load_deviation"].fillna(0)
     else:
         df["load_deviation"] = 0.0
+
+    # Flow deviation : z-score mensuel du flux transfrontalier
+    # Captures la flexibilité hydro CH : export à prix haut (turbinage),
+    # import à prix bas (pompage/baseload). Signal complémentaire à load_deviation.
+    if "cross_border_mw" in df.columns:
+        monthly = df.groupby(df.index.to_period("M"))["cross_border_mw"]
+        df["flow_deviation"] = monthly.transform(
+            lambda x: (x - x.mean()) / x.std() if x.std() > 0 else 0
+        )
+        df["flow_deviation"] = df["flow_deviation"].fillna(0)
+    else:
+        df["flow_deviation"] = 0.0
 
     return df
 

@@ -178,13 +178,17 @@ def _resample_to_15min(df: pd.DataFrame) -> pd.DataFrame:
 
 def build_features(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Enrichit le DataFrame avec solar_regime et load_deviation.
+    Enrichit le DataFrame avec solar_regime, load_deviation et flow_deviation.
 
     solar_regime :
         Tertiles mensuels sur solar_mw → 0=Faible, 1=Moyen, 2=Fort
 
     load_deviation :
         (load_mw - mean_mensuel) / std_mensuel
+
+    flow_deviation :
+        (cross_border_mw - mean_mensuel) / std_mensuel
+        Capture la flexibilité hydro CH (export peak / import offpeak).
     """
     df = df.copy()
 
@@ -197,6 +201,15 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     monthly_mean = df.groupby(df.index.to_period("M"))["load_mw"].transform("mean")
     monthly_std = df.groupby(df.index.to_period("M"))["load_mw"].transform("std")
     df["load_deviation"] = (df["load_mw"] - monthly_mean) / monthly_std.replace(0, np.nan)
+
+    # Flow deviation : z-score mensuel du flux transfrontalier
+    if "cross_border_mw" in df.columns:
+        flow_mean = df.groupby(df.index.to_period("M"))["cross_border_mw"].transform("mean")
+        flow_std = df.groupby(df.index.to_period("M"))["cross_border_mw"].transform("std")
+        df["flow_deviation"] = (df["cross_border_mw"] - flow_mean) / flow_std.replace(0, np.nan)
+        df["flow_deviation"] = df["flow_deviation"].fillna(0)
+    else:
+        df["flow_deviation"] = 0.0
 
     return df
 

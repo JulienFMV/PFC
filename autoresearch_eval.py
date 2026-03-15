@@ -62,7 +62,6 @@ def main() -> None:
         from pfc_shaping.data.calendar_ch import enrich_15min_index
         from pfc_shaping.data.forward_proxy import derive_base_prices
         from pfc_shaping.model.assembler import PFCAssembler
-        from pfc_shaping.model.shape_hourly import ShapeHourly
         from pfc_shaping.model.shape_intraday import ShapeIntraday
         from pfc_shaping.model.uncertainty import Uncertainty
 
@@ -74,6 +73,7 @@ def main() -> None:
         model_cfg = config.get("model", {})
         lookback = model_cfg.get("lookback_months", 36)
         sigma = model_cfg.get("gaussian_sigma", 0.5)
+        sh_mode = model_cfg.get("shape_hourly_mode", "table")
 
         # Lookback window
         lb_cutoff = train.index.max() - pd.DateOffset(months=lookback)
@@ -96,7 +96,14 @@ def main() -> None:
             print(f"Hydro reservoir loaded: {len(hydro_df)} weeks, fill range={hydro_df['fill_pct'].min():.1%}-{hydro_df['fill_pct'].max():.1%}", file=sys.stderr)
 
         # Fit shape models (with hydro analogue weighting)
-        sh = ShapeHourly(sigma=sigma)
+        if sh_mode == "mlp":
+            from pfc_shaping.model.shape_hourly_mlp import ShapeHourlyMLP
+            sh = ShapeHourlyMLP()
+            print("Using ShapeHourlyMLP (neural)", file=sys.stderr)
+        else:
+            from pfc_shaping.model.shape_hourly import ShapeHourly
+            sh = ShapeHourly(sigma=sigma)
+            print("Using ShapeHourly (table)", file=sys.stderr)
         sh.fit(train_lb, cal, hydro_df=hydro_df)
 
         si = ShapeIntraday()

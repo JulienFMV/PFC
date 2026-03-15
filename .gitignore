@@ -13,7 +13,6 @@ venv/
 env/
 
 # Data caches (Parquet stores locaux — ne pas versionner)
-pfc_shaping/data/*.parquet
 pfc_shaping/data/*.duckdb
 pfc_shaping/data/*.duckdb.wal
 pfc_shaping/data/raw/
@@ -22,8 +21,9 @@ pfc_shaping/data/raw/**/*.xlsx
 # Model artifacts
 pfc_shaping/model/artifacts/
 
-# Output PFC (généré à chaque run)
-pfc_shaping/output/
+# Output PFC — keep latest for dashboard demo
+pfc_shaping/output/*.csv
+pfc_shaping/output/*.log
 
 # Logs
 pfc_shaping/logs/*.log

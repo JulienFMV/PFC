@@ -204,9 +204,12 @@ class ShapeHourly:
             return base
 
         trend = self.trend_per_hour_[(saison, type_jour)]
-        adjusted = base + trend * years_ahead
-        # Ensure no negative factors and re-normalize to mean=1
-        adjusted = np.maximum(adjusted, 0.1)
+        # Asymptotic dampening: tanh saturates trend at long horizons
+        tau = 2.0  # years — trend saturates ~90% at Y+3.3
+        dampened_ya = tau * np.tanh(years_ahead / tau)
+        adjusted = base + trend * dampened_ya
+        # Clamp to physically reasonable range and re-normalize to mean=1
+        adjusted = np.clip(adjusted, 0.4, 2.0)
         adjusted = adjusted / adjusted.mean()
         return adjusted
 
@@ -256,10 +259,15 @@ class ShapeHourly:
                     trend = self.trend_per_hour_.get((saison, type_jour))
 
                     if trend is not None:
-                        # Vectorized: base + trend * years_ahead (clamped for short-term)
+                        # Vectorized: base + trend * dampened_years_ahead
                         ya = np.maximum(years_ahead.values.astype(float), 0.0)
-                        adjusted = factors_arr[h] + trend[h] * ya
-                        adjusted = np.maximum(adjusted, 0.1)
+                        # Asymptotic dampening: trend saturates at ~2 years
+                        # Beyond that, profile converges to stable shape (SOTA:
+                        # KYOS/Volue use average historical profile at long horizons)
+                        tau = 2.0
+                        dampened_ya = tau * np.tanh(ya / tau)
+                        adjusted = factors_arr[h] + trend[h] * dampened_ya
+                        adjusted = np.clip(adjusted, 0.4, 2.0)
                         result.loc[idx] = adjusted
                     else:
                         result.loc[idx] = factors_arr[h]
@@ -274,6 +282,8 @@ class ShapeHourly:
             daily_mean = result.groupby(day_key).transform("mean")
             daily_mean = daily_mean.replace(0, 1.0)
             result = result / daily_mean
+            # Re-clip after normalization
+            result = result.clip(lower=0.4, upper=2.0)
 
         if result.isna().any():
             fallback = np.ones(24) if self.global_factors_ is None else self.global_factors_

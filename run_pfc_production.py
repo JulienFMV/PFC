@@ -62,8 +62,8 @@ logger.info("=" * 70)
 t1 = time.time()
 from pfc_shaping.data.calendar_ch import enrich_15min_index
 
-cal_ch = enrich_15min_index(epex_ch.index)
-cal_de = enrich_15min_index(epex_de.index)
+cal_ch = enrich_15min_index(epex_ch.index, country="CH")
+cal_de = enrich_15min_index(epex_de.index, country="DE")
 
 logger.info("  CH calendar: %d rows, types: %s", len(cal_ch), dict(cal_ch["type_jour"].value_counts()))
 logger.info("  DE calendar: %d rows", len(cal_de))
@@ -90,14 +90,30 @@ logger.info("STEP 4: Fitting ShapeHourly on CH EPEX (full history)")
 logger.info("=" * 70)
 
 t2 = time.time()
-from pfc_shaping.model.shape_hourly import ShapeHourly
 
-sh = ShapeHourly()
-sh.fit(epex_ch, cal_ch)
+import yaml
+with open("pfc_shaping/config.yaml") as _f:
+    _config = yaml.safe_load(_f)
+_model_cfg = _config.get("model", {})
+_sh_mode = _model_cfg.get("shape_hourly_mode", "table")
 
-logger.info("  Fitted %d (saison, type_jour) cells", len(sh.factors_))
-logger.info("  f_W ratios: %s", {k: round(v, 4) for k, v in sh.f_W_.items()})
-logger.info("  Sample Hiver/Ouvrable peak h=12: f_H=%.4f", sh.get("Hiver", "Ouvrable")[12])
+if _sh_mode == "mlp":
+    from pfc_shaping.model.shape_hourly_mlp import ShapeHourlyMLP
+    sh = ShapeHourlyMLP()
+    logger.info("  Using ShapeHourlyMLP (neural)")
+else:
+    from pfc_shaping.model.shape_hourly import ShapeHourly
+    sh = ShapeHourly()
+    logger.info("  Using ShapeHourly (table)")
+
+sh.fit(epex_ch, cal_ch, hydro_df=hydro)
+
+if _sh_mode == "mlp":
+    logger.info("  MLP fitted (neural shape function)")
+else:
+    logger.info("  Fitted %d (saison, type_jour) cells", len(sh.factors_))
+    logger.info("  f_W ratios: %s", {k: round(v, 4) for k, v in sh.f_W_.items()})
+    logger.info("  Sample Hiver/Ouvrable peak h=12: f_H=%.4f", sh.get("Hiver", "Ouvrable")[12])
 logger.info("  ShapeHourly fitted in %.1fs", time.time() - t2)
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -166,26 +182,13 @@ logger.info("=" * 70)
 logger.info("STEP 8: Building base_prices (EEX forward levels)")
 logger.info("=" * 70)
 
-base_prices = {
-    # Calendar years
-    "2026": 72.0,
-    "2027": 68.0,
-    "2028": 65.0,
-    "2029": 63.0,
-    # 2026 Quarters
-    "2026-Q1": 78.0,
-    "2026-Q2": 65.0,
-    "2026-Q3": 55.0,
-    "2026-Q4": 80.0,
-    # Monthly M+1..M+6 (Mar-Sep 2026)
-    "2026-03": 75.0,
-    "2026-04": 62.0,
-    "2026-05": 58.0,
-    "2026-06": 52.0,
-    "2026-07": 48.0,
-    "2026-08": 50.0,
-    "2026-09": 60.0,
-}
+from pfc_shaping.data.forward_proxy import load_base_prices as load_fwd_prices
+
+base_prices, fwd_source = load_fwd_prices(
+    epex_ch,
+    eex_report_path="Price_Report_EEX.xlsx",
+)
+logger.info("  Forward source: %s", fwd_source)
 
 # Use ContractCascader to fill in missing months
 from pfc_shaping.calibration.cascading import ContractCascader
@@ -201,10 +204,10 @@ for k in sorted(cascaded_prices.keys()):
     logger.info("    %s: %.2f EUR/MWh", k, cascaded_prices[k])
 
 # ═══════════════════════════════════════════════════════════════════════
-# 9. ASSEMBLE PFC N+3 (1095 days from 2026-03-14)
+# 9. ASSEMBLE PFC — full coverage of all EEX forward years
 # ═══════════════════════════════════════════════════════════════════════
 logger.info("=" * 70)
-logger.info("STEP 9: Assembling PFC N+3 (2026-03-14, 1095 days)")
+logger.info("STEP 9: Assembling PFC")
 logger.info("=" * 70)
 
 t6 = time.time()
@@ -224,9 +227,17 @@ from pfc_shaping.model.assembler import PFCAssembler
 latest_fill_dev = hydro["fill_deviation"].iloc[-1]
 logger.info("  Latest hydro fill_deviation: %.3f (as of %s)", latest_fill_dev, hydro.index[-1].date())
 
-# Create simple hydro forecast: latest value decaying linearly to 0 over 12 months
+# Compute horizon: cover all years with available forwards (through 31/12 of last year)
 start_date = (pd.Timestamp.utcnow() + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
-horizon_days = 1095
+max_fwd_year = max(
+    int(k[:4]) for k in cascaded_prices.keys()
+    if k[:4].isdigit() and len(k) >= 4
+)
+end_of_last_year = pd.Timestamp(f"{max_fwd_year}-12-31", tz="UTC")
+future_start_ts = pd.Timestamp(start_date, tz="UTC")
+horizon_days = (end_of_last_year - future_start_ts).days + 1
+logger.info("  Horizon: %s -> 31/12/%d = %d days (%.1f years)",
+            start_date, max_fwd_year, horizon_days, horizon_days / 365)
 future_start = pd.Timestamp(start_date, tz="UTC")
 future_end = future_start + pd.Timedelta(days=horizon_days)
 hydro_idx = pd.date_range(future_start, future_end, freq="W-MON", tz="UTC")
@@ -249,10 +260,14 @@ entso_zurich["month"] = entso.index.tz_convert("Europe/Zurich").month
 entso_zurich["hour"] = entso.index.tz_convert("Europe/Zurich").hour
 entso_zurich["qh"] = (entso.index.minute // 15) + 1
 
-clim = entso_zurich.groupby(["month", "hour", "qh"]).agg(
-    solar_regime_median=("solar_regime", "median"),
-    load_deviation_median=("load_deviation", "median"),
-).reset_index()
+agg_dict = {
+    "solar_regime_median": ("solar_regime", "median"),
+    "load_deviation_median": ("load_deviation", "median"),
+}
+if "flow_deviation" in entso_zurich.columns:
+    agg_dict["flow_deviation_median"] = ("flow_deviation", "median")
+
+clim = entso_zurich.groupby(["month", "hour", "qh"]).agg(**agg_dict).reset_index()
 
 # Map climatology onto the future index
 future_keys = pd.DataFrame({
@@ -265,20 +280,37 @@ entso_forecast = future_keys.merge(
     clim, on=["month", "hour", "qh"], how="left"
 ).set_index(future_idx)
 
-entso_forecast = entso_forecast.rename(columns={
+rename_map = {
     "solar_regime_median": "solar_regime",
     "load_deviation_median": "load_deviation",
-})[["solar_regime", "load_deviation"]]
+}
+keep_cols = ["solar_regime", "load_deviation"]
+if "flow_deviation_median" in entso_forecast.columns:
+    rename_map["flow_deviation_median"] = "flow_deviation"
+    keep_cols.append("flow_deviation")
+
+entso_forecast = entso_forecast.rename(columns=rename_map)[keep_cols]
 
 # Fill any NaN with neutral values
 entso_forecast["solar_regime"] = entso_forecast["solar_regime"].fillna(1.0)
 entso_forecast["load_deviation"] = entso_forecast["load_deviation"].fillna(0.0)
+if "flow_deviation" in entso_forecast.columns:
+    entso_forecast["flow_deviation"] = entso_forecast["flow_deviation"].fillna(0.0)
 
 logger.info("  ENTSO-E climatology forecast: %d rows", len(entso_forecast))
 logger.info("  solar_regime: mean=%.2f  std=%.2f",
             entso_forecast["solar_regime"].mean(), entso_forecast["solar_regime"].std())
 logger.info("  load_deviation: mean=%.3f  std=%.3f",
             entso_forecast["load_deviation"].mean(), entso_forecast["load_deviation"].std())
+
+# ── Load outages forecast (REMIT UMM) for shape adjustment ──
+outages_forecast = None
+outages_path = "pfc_shaping/data/outages_15min.parquet"
+if os.path.exists(outages_path):
+    outages_all = pd.read_parquet(outages_path)
+    outages_forecast = outages_all[outages_all.index >= future_start]
+    logger.info("  Outages forecast: %d rows, max unavail=%.0f MW",
+                len(outages_forecast), outages_forecast["unavailable_mw"].max() if len(outages_forecast) > 0 else 0)
 
 assembler = PFCAssembler(
     shape_hourly=sh,
@@ -295,6 +327,7 @@ pfc = assembler.build(
     horizon_days=horizon_days,
     entso_forecast=entso_forecast,
     hydro_forecast=hydro_forecast,
+    outages_forecast=outages_forecast,
 )
 
 logger.info("  PFC assembled: %d rows in %.1fs", len(pfc), time.time() - t6)
@@ -319,10 +352,83 @@ logger.info("  Saved: %s.csv", out_base)
 # Save model artifacts
 artifacts_dir = "pfc_shaping/model/artifacts"
 os.makedirs(artifacts_dir, exist_ok=True)
-sh.save(f"{artifacts_dir}/shape_hourly.parquet")
+if _sh_mode == "mlp":
+    sh.save(f"{artifacts_dir}/shape_hourly_mlp.pkl")
+else:
+    sh.save(f"{artifacts_dir}/shape_hourly.parquet")
 si.save(f"{artifacts_dir}/shape_intraday.parquet")
 wv.save(f"{artifacts_dir}/water_value.parquet")
 unc.save(f"{artifacts_dir}/uncertainty.parquet")
+
+# ═══════════════════════════════════════════════════════════════════════
+# 10b. BUILD DE PFC (reuses ShapeIntraday + Uncertainty from DE-LU)
+# ═══════════════════════════════════════════════════════════════════════
+logger.info("=" * 70)
+logger.info("STEP 10b: Building DE PFC")
+logger.info("=" * 70)
+
+t7 = time.time()
+
+# ── Fit ShapeHourly on DE EPEX (full history) ──
+if _sh_mode == "mlp":
+    from pfc_shaping.model.shape_hourly_mlp import ShapeHourlyMLP
+    sh_de = ShapeHourlyMLP()
+else:
+    from pfc_shaping.model.shape_hourly import ShapeHourly
+    sh_de = ShapeHourly()
+sh_de.fit(epex_de, cal_de)
+logger.info("  DE ShapeHourly fitted (%s mode)", _sh_mode)
+
+# ── Load DE forwards ──
+base_prices_de, fwd_source_de = load_fwd_prices(
+    epex_de,
+    eex_report_path="Price_Report_EEX.xlsx",
+    market="DE",
+)
+logger.info("  DE forward source: %s", fwd_source_de)
+
+# ── Cascade DE forwards ──
+cascader_de = ContractCascader(tz="Europe/Berlin")
+cascader_de.fit_seasonal_ratios(epex_de)
+cascaded_prices_de = cascader_de.cascade(base_prices_de)
+
+logger.info("  DE cascaded keys: %d", len(cascaded_prices_de))
+for k in sorted(cascaded_prices_de.keys()):
+    logger.info("    DE %s: %.2f EUR/MWh", k, cascaded_prices_de[k])
+
+# ── Assemble DE PFC (no WaterValue — DE has no Swiss hydro) ──
+assembler_de = PFCAssembler(
+    shape_hourly=sh_de,
+    shape_intraday=si,       # shared: trained on DE-LU
+    uncertainty=unc,          # shared: trained on DE-LU
+    water_value=None,         # no hydro correction for DE
+    cascader=cascader_de,
+    calibrator=calibrator,
+)
+
+pfc_de = assembler_de.build(
+    base_prices=cascaded_prices_de,
+    start_date=start_date,
+    horizon_days=horizon_days,
+    entso_forecast=entso_forecast,
+    hydro_forecast=None,
+    country="DE",
+)
+
+logger.info("  DE PFC assembled: %d rows in %.1fs", len(pfc_de), time.time() - t7)
+
+# ── Save DE output ──
+out_base_de = f"{out_dir}/pfc_de_15min_{today}"
+pfc_de.to_parquet(f"{out_base_de}.parquet")
+logger.info("  Saved: %s.parquet (%d rows)", out_base_de, len(pfc_de))
+pfc_de.to_csv(f"{out_base_de}.csv")
+logger.info("  Saved: %s.csv", out_base_de)
+
+# Save DE model artifacts
+if _sh_mode == "mlp":
+    sh_de.save(f"{artifacts_dir}/shape_hourly_de_mlp.pkl")
+else:
+    sh_de.save(f"{artifacts_dir}/shape_hourly_de.parquet")
 
 # ═══════════════════════════════════════════════════════════════════════
 # 11. COMPREHENSIVE STATISTICS
@@ -387,9 +493,11 @@ for key in sorted(cascaded_prices.keys()):
     if len(key) == 4 and key.isdigit():
         mask = idx_zurich.year == int(key)
         label = f"Cal {key}"
+    elif key.endswith("-Peak"):
+        continue  # Skip Peak keys in this summary (handled separately)
     elif "Q" in key:
         year = int(key[:4])
-        q = int(key[-1])
+        q = int(key.split("Q")[1][0])
         q_months = {1: [1,2,3], 2: [4,5,6], 3: [7,8,9], 4: [10,11,12]}[q]
         mask = (idx_zurich.year == year) & (idx_zurich.month.isin(q_months))
         label = f"  {key}"
@@ -448,8 +556,43 @@ for yr in sorted(idx_zurich.year.unique()):
         print("  %d: peak=%.2f  offpeak=%.2f  spread=%.2f  ratio=%.3f" % (
             yr, pk.mean(), op.mean(), spread, ratio))
 
+# ═══════════════════════════════════════════════════════════════════════
+# 12. DE PFC SUMMARY
+# ═══════════════════════════════════════════════════════════════════════
+print("\n" + "=" * 80)
+print("  DE PFC SUMMARY")
+print("=" * 80)
+print("  Timestamps: %d" % len(pfc_de))
+print("  Mean price: %.2f EUR/MWh" % pfc_de["price_shape"].mean())
+print("  Min: %.2f  Max: %.2f" % (pfc_de["price_shape"].min(), pfc_de["price_shape"].max()))
+
+idx_de_local = pfc_de.index.tz_convert("Europe/Berlin")
+print("\n--- DE ANNUAL AVERAGES ---")
+for yr in sorted(idx_de_local.year.unique()):
+    mask = idx_de_local.year == yr
+    if mask.sum() > 0:
+        p = pfc_de.loc[mask, "price_shape"]
+        print("  %d: mean=%.2f  min=%.2f  max=%.2f  n=%d" % (yr, p.mean(), p.min(), p.max(), mask.sum()))
+
+print("\n--- DE PEAK / OFF-PEAK ---")
+hour_de = idx_de_local.hour
+dow_de = idx_de_local.dayofweek
+is_peak_de = (hour_de >= 8) & (hour_de < 20) & (dow_de < 5)
+for yr in sorted(idx_de_local.year.unique()):
+    yr_mask = idx_de_local.year == yr
+    if yr_mask.sum() == 0:
+        continue
+    pk = pfc_de.loc[yr_mask & is_peak_de, "price_shape"]
+    op = pfc_de.loc[yr_mask & ~is_peak_de, "price_shape"]
+    if len(pk) > 0 and len(op) > 0:
+        spread = pk.mean() - op.mean()
+        ratio = pk.mean() / op.mean() if op.mean() != 0 else float("nan")
+        print("  %d: peak=%.2f  offpeak=%.2f  spread=%.2f  ratio=%.3f" % (
+            yr, pk.mean(), op.mean(), spread, ratio))
+
 total_time = time.time() - t0
 print("\n" + "=" * 80)
 print("  TOTAL EXECUTION TIME: %.1f seconds" % total_time)
-print("  Output: %s.parquet + .csv" % out_base)
+print("  Output CH: %s.parquet + .csv" % out_base)
+print("  Output DE: %s.parquet + .csv" % out_base_de)
 print("=" * 80)

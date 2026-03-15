@@ -85,7 +85,10 @@ model:
   # Lookback historique pour la calibration (mois)
   lookback_months: 12
 
-  # Paramètre de lissage gaussien de f_H (en heures)
+  # Mode shape hourly: "table" (lookup discret) ou "mlp" (réseau de neurones)
+  shape_hourly_mode: "mlp"
+
+  # Paramètre de lissage gaussien de f_H (en heures) — utilisé seulement en mode "table"
   gaussian_sigma: 1.5
 
   # Nombre de tirages bootstrap pour les IC

@@ -145,8 +145,15 @@ def load_base_prices(
     epex: pd.DataFrame,
     eex_report_path: str | None = None,
     config: dict | None = None,
+    market: str = "CH",
 ) -> tuple[dict[str, float], str]:
     """Load base prices: try EEX report first, then derive from spot.
+
+    Args:
+        epex: EPEX spot DataFrame for fallback proxy derivation.
+        eex_report_path: Path to EEX XLSX report.
+        config: Optional config dict.
+        market: 'CH' or 'DE' — EEX sheet to load from.
 
     Returns:
         (base_prices dict, source description string)
@@ -157,14 +164,23 @@ def load_base_prices(
         try:
             from pfc_shaping.data.ingest_forwards import load_base_prices_from_eex_report
 
-            market = "CH"
+            eex_market = market
             if config:
-                market = config.get("forwards", {}).get("eex_market", "CH")
+                eex_market = config.get("forwards", {}).get("eex_market", market)
 
-            prices = load_base_prices_from_eex_report(path, market=market)
+            prices = load_base_prices_from_eex_report(path, market=eex_market)
             if prices and len(prices) >= 3:
-                logger.info("Loaded %d EEX forward prices from XLSX: %s", len(prices), path)
-                return prices, f"EEX XLSX ({len(prices)} keys)"
+                logger.info("Loaded %d EEX forward prices from XLSX (%s): %s", len(prices), eex_market, path)
+                # Also update historical Parquet
+                try:
+                    from pfc_shaping.data.ingest_forwards import update_forwards_parquet
+                    markets = ["CH", "DE"]
+                    if config:
+                        markets = config.get("forwards", {}).get("eex_markets", markets)
+                    update_forwards_parquet(path, markets=markets)
+                except Exception as e:
+                    logger.warning("Could not update forwards history: %s", e)
+                return prices, f"EEX XLSX {eex_market} ({len(prices)} keys)"
         except Exception as exc:
             logger.warning("EEX XLSX not available: %s", exc)
 
@@ -174,11 +190,11 @@ def load_base_prices(
         try:
             from pfc_shaping.data.ingest_forwards import load_base_prices_from_eex_report
 
-            market = config.get("forwards", {}).get("eex_market", "CH")
-            prices = load_base_prices_from_eex_report(unc_path, market=market)
+            eex_market = config.get("forwards", {}).get("eex_market", market)
+            prices = load_base_prices_from_eex_report(unc_path, market=eex_market)
             if prices and len(prices) >= 3:
                 logger.info("Loaded %d EEX forward prices from UNC: %s", len(prices), unc_path)
-                return prices, f"EEX UNC ({len(prices)} keys)"
+                return prices, f"EEX UNC {eex_market} ({len(prices)} keys)"
         except Exception as exc:
             logger.warning("EEX UNC not available: %s", exc)
 

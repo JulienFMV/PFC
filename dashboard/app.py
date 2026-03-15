@@ -19,18 +19,24 @@ st.set_page_config(
 
 # ── Pages ─────────────────────────────────────────────────────────────────
 overview = st.Page("pages/1_overview.py", title="Overview", icon="📊", default=True)
+pfc_vs_fwd = st.Page("pages/2_pfc_vs_forwards.py", title="PFC vs Forwards", icon="📐")
 pfc_curve = st.Page("pages/2_pfc_curve.py", title="Courbe PFC", icon="📈")
 ch_de = st.Page("pages/7_ch_de_spread.py", title="CH vs DE", icon="↔️")
+
 shape = st.Page("pages/3_shape_factors.py", title="Shape Factors", icon="🔬")
-backtest = st.Page("pages/4_backtest.py", title="Backtest & Diagnostics", icon="🎯")
-hydro = st.Page("pages/5_hydro.py", title="Hydro & Fondamentaux", icon="💧")
+backtest = st.Page("pages/4_backtest.py", title="Backtest", icon="🎯")
 control_tower = st.Page("pages/6_control_tower.py", title="Control Tower", icon="🧭")
+
+hydro = st.Page("pages/5_hydro.py", title="Hydro & Production", icon="💧")
+outages = st.Page("pages/10_outages.py", title="Indisponibilites", icon="🔴")
+flows_map = st.Page("pages/9_flows_map.py", title="Flux transfrontaliers", icon="🗺️")
+commodities = st.Page("pages/8_commodities.py", title="Commodites", icon="🛢️")
 
 nav = st.navigation(
     {
-        "Monitoring": [overview, pfc_curve, ch_de, control_tower],
-        "Modèle": [shape, backtest],
-        "Fondamentaux": [hydro],
+        "Marche": [overview, pfc_vs_fwd, pfc_curve, ch_de],
+        "Modele": [shape, backtest, control_tower],
+        "Fondamentaux": [hydro, outages, flows_map, commodities],
     }
 )
 
