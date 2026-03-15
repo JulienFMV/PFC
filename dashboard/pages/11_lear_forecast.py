@@ -148,9 +148,11 @@ with tab1:
             ))
 
     # Vertical line: now
-    fig.add_vline(
-        x=forecast_start.isoformat(), line_width=1, line_dash="dash",
-        line_color=COLORS["muted"], annotation_text="Aujourd'hui",
+    fig.add_shape(
+        type="line",
+        x0=forecast_start, x1=forecast_start,
+        y0=0, y1=1, yref="paper",
+        line=dict(color=COLORS["muted"], width=1, dash="dash"),
     )
 
     fig.update_layout(
