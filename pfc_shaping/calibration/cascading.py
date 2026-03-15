@@ -276,14 +276,134 @@ class ContractCascader:
     # Fitting seasonal ratios
     # ------------------------------------------------------------------
 
+    def fit_peak_ratios(
+        self,
+        spot_history: pd.DataFrame,
+    ) -> "ContractCascader":
+        """Learn Peak/Base ratios from EPEX Spot history.
+
+        Computes average Peak/Base price ratio per month across available
+        full years. Used to synthesize Peak forwards when only Base is quoted.
+
+        Args:
+            spot_history: DataFrame with ``price_eur_mwh`` column, tz-aware UTC index.
+
+        Returns:
+            self, for method chaining.
+        """
+        if spot_history.empty or "price_eur_mwh" not in spot_history.columns:
+            return self
+
+        df = spot_history[["price_eur_mwh"]].copy()
+        if df.index.tz is None:
+            return self
+
+        idx_local = df.index.tz_convert(self.tz)
+        df["year"] = idx_local.year
+        df["month"] = idx_local.month
+        is_weekday = idx_local.weekday < 5
+        is_peak_hour = (idx_local.hour >= 8) & (idx_local.hour < 20)
+        df["is_peak"] = is_weekday & is_peak_hour
+
+        year_counts = df.groupby("year").size()
+        median_count = year_counts.median()
+        full_years = year_counts[year_counts >= 0.95 * median_count].index.tolist()
+
+        if not full_years:
+            return self
+
+        df_full = df[df["year"].isin(full_years)]
+
+        peak_base_ratios: dict[int, list[float]] = {m: [] for m in range(1, 13)}
+        for yr in full_years:
+            yr_data = df_full[df_full["year"] == yr]
+            for m in range(1, 13):
+                m_data = yr_data[yr_data["month"] == m]
+                if len(m_data) < 24:
+                    continue
+                base_avg = m_data["price_eur_mwh"].mean()
+                peak_avg = m_data.loc[m_data["is_peak"], "price_eur_mwh"].mean()
+                if base_avg > 0 and not np.isnan(peak_avg):
+                    peak_base_ratios[m].append(peak_avg / base_avg)
+
+        self.peak_base_ratios_ = {
+            m: float(np.mean(vals)) for m, vals in peak_base_ratios.items() if vals
+        }
+
+        if self.peak_base_ratios_:
+            logger.info(
+                "Peak/Base ratios fitted — range: [%.3f .. %.3f] (mean=%.3f)",
+                min(self.peak_base_ratios_.values()),
+                max(self.peak_base_ratios_.values()),
+                np.mean(list(self.peak_base_ratios_.values())),
+            )
+        return self
+
+    def synthesize_peak_prices(
+        self,
+        base_prices: dict[str, float],
+    ) -> dict[str, float]:
+        """Add synthetic Peak forwards where only Base exists.
+
+        For each Base product (Month, Quarter, Cal) that lacks a corresponding
+        Peak price, synthesizes one using historical Peak/Base ratios.
+
+        Args:
+            base_prices: Dict of forward prices (will be modified in-place).
+
+        Returns:
+            The enriched dict with synthetic Peak entries added.
+        """
+        if not hasattr(self, "peak_base_ratios_") or not self.peak_base_ratios_:
+            default_ratio = 1.05  # conservative 5% peak premium
+            logger.warning("No fitted peak ratios — using default %.2f", default_ratio)
+            ratios = {m: default_ratio for m in range(1, 13)}
+        else:
+            ratios = self.peak_base_ratios_
+
+        result = dict(base_prices)
+        n_synth = 0
+
+        for key, price in list(base_prices.items()):
+            if "-Peak" in key or "-Offpeak" in key:
+                continue
+            peak_key = f"{key}-Peak"
+            if peak_key in result:
+                continue  # Already has market peak
+
+            try:
+                ptype, year, sub = parse_key(key)
+            except ValueError:
+                continue
+
+            if ptype == "Month" and sub is not None:
+                ratio = ratios.get(sub, 1.05)
+            elif ptype == "Quarter" and sub is not None:
+                # Average ratio across months in the quarter
+                months = QUARTER_MONTHS.get(sub, [])
+                ratio = np.mean([ratios.get(m, 1.05) for m in months])
+            elif ptype == "Cal":
+                ratio = np.mean(list(ratios.values()))
+            else:
+                continue
+
+            result[peak_key] = round(price * ratio, 6)
+            n_synth += 1
+
+        if n_synth > 0:
+            logger.info("Synthesized %d Peak forwards from historical ratios", n_synth)
+        return result
+
     def fit_seasonal_ratios(
         self,
         spot_history: pd.DataFrame,
     ) -> "ContractCascader":
-        """Learn seasonal ratios from EPEX Spot history.
+        """Learn seasonal ratios from EPEX Spot history with optional trends.
 
         Computes average quarterly and monthly ratios relative to the annual
-        mean, averaged over all available full calendar years.
+        mean. If 3+ full years are available, also fits a linear trend per
+        month/quarter to capture structural evolution (e.g. increasing solar
+        → summer compression, heat pumps → winter elevation).
 
         The ratios are stored in ``self.seasonal_ratios_`` as::
 
@@ -292,7 +412,8 @@ class ContractCascader:
                 "month":   {1: r_m1, 2: r_m2, ..., 12: r_m12},
             }
 
-        where r_qi = mean(spot in quarter i) / mean(spot in year).
+        Additionally, ``self.seasonal_trends_`` stores per-period linear
+        trends (ratio change per year) for forward-looking ratio adjustment.
 
         Args:
             spot_history: DataFrame with a ``price_eur_mwh`` column and a
@@ -301,16 +422,12 @@ class ContractCascader:
 
         Returns:
             self, for method chaining.
-
-        Raises:
-            ValueError: If the input data is empty or missing required column.
         """
         if spot_history.empty:
             raise ValueError("spot_history is empty")
         if "price_eur_mwh" not in spot_history.columns:
             raise ValueError("spot_history must contain a 'price_eur_mwh' column")
 
-        # Work in local time for quarter/month grouping
         df = spot_history[["price_eur_mwh"]].copy()
         if df.index.tz is None:
             raise ValueError("spot_history index must be timezone-aware (UTC)")
@@ -320,11 +437,9 @@ class ContractCascader:
         df["month"] = idx_local.month
         df["quarter"] = idx_local.quarter
 
-        # Only use full calendar years
         year_counts = df.groupby("year").size()
-        # A full year has ~8760 quarter-hours (or hours); accept years with >95% coverage
         median_count = year_counts.median()
-        full_years = year_counts[year_counts >= 0.95 * median_count].index.tolist()
+        full_years = sorted(year_counts[year_counts >= 0.95 * median_count].index.tolist())
 
         if len(full_years) == 0:
             raise ValueError("No full calendar years found in spot_history")
@@ -336,9 +451,9 @@ class ContractCascader:
             full_years,
         )
 
-        # Compute per-year ratios, then average across years
-        quarter_ratios_all: dict[int, list[float]] = {q: [] for q in range(1, 5)}
-        month_ratios_all: dict[int, list[float]] = {m: [] for m in range(1, 13)}
+        # Compute per-year ratios
+        quarter_ratios_all: dict[int, list[tuple[int, float]]] = {q: [] for q in range(1, 5)}
+        month_ratios_all: dict[int, list[tuple[int, float]]] = {m: [] for m in range(1, 13)}
 
         for yr in full_years:
             yr_data = df_full[df_full["year"] == yr]
@@ -351,24 +466,61 @@ class ContractCascader:
             for q in range(1, 5):
                 q_mean = yr_data[yr_data["quarter"] == q]["price_eur_mwh"].mean()
                 if not np.isnan(q_mean):
-                    quarter_ratios_all[q].append(q_mean / yr_mean)
+                    quarter_ratios_all[q].append((yr, q_mean / yr_mean))
 
             for m in range(1, 13):
                 m_mean = yr_data[yr_data["month"] == m]["price_eur_mwh"].mean()
                 if not np.isnan(m_mean):
-                    month_ratios_all[m].append(m_mean / yr_mean)
+                    month_ratios_all[m].append((yr, m_mean / yr_mean))
 
+        # Average ratios (backward-compatible)
         quarter_ratios = {
-            q: float(np.mean(vals)) for q, vals in quarter_ratios_all.items() if vals
+            q: float(np.mean([r for _, r in vals])) for q, vals in quarter_ratios_all.items() if vals
         }
         month_ratios = {
-            m: float(np.mean(vals)) for m, vals in month_ratios_all.items() if vals
+            m: float(np.mean([r for _, r in vals])) for m, vals in month_ratios_all.items() if vals
         }
 
         self.seasonal_ratios_ = {
             "quarter": quarter_ratios,
             "month": month_ratios,
         }
+
+        # Fit linear trends per period if 3+ years available
+        self.seasonal_trends_: dict[str, dict[int, float]] | None = None
+        self._reference_year_ = max(full_years) if full_years else None
+
+        if len(full_years) >= 3:
+            q_trends: dict[int, float] = {}
+            m_trends: dict[int, float] = {}
+
+            for q, vals in quarter_ratios_all.items():
+                if len(vals) >= 3:
+                    years_arr = np.array([y for y, _ in vals], dtype=float)
+                    ratios_arr = np.array([r for _, r in vals], dtype=float)
+                    slope = np.polyfit(years_arr, ratios_arr, 1)[0]
+                    q_trends[q] = float(slope)
+
+            for m, vals in month_ratios_all.items():
+                if len(vals) >= 3:
+                    years_arr = np.array([y for y, _ in vals], dtype=float)
+                    ratios_arr = np.array([r for _, r in vals], dtype=float)
+                    slope = np.polyfit(years_arr, ratios_arr, 1)[0]
+                    m_trends[m] = float(slope)
+
+            if q_trends or m_trends:
+                self.seasonal_trends_ = {
+                    "quarter": q_trends,
+                    "month": m_trends,
+                }
+                logger.info(
+                    "Seasonal trends fitted (ref_year=%d) — "
+                    "Q trends: [%s], M trends range: [%.4f .. %.4f]",
+                    self._reference_year_,
+                    ", ".join(f"Q{q}:{t:+.4f}/yr" for q, t in sorted(q_trends.items())),
+                    min(m_trends.values()) if m_trends else 0,
+                    max(m_trends.values()) if m_trends else 0,
+                )
 
         logger.info(
             "Seasonal ratios fitted — Q: [%.3f, %.3f, %.3f, %.3f], "
@@ -404,15 +556,51 @@ class ContractCascader:
             },
         }
 
-    def _get_ratios(self) -> dict[str, dict[int, float]]:
-        """Return fitted ratios if available, otherwise defaults."""
-        if self.seasonal_ratios_ is not None:
+    def _get_ratios(self, target_year: int | None = None) -> dict[str, dict[int, float]]:
+        """Return fitted ratios, optionally adjusted for target_year trend.
+
+        If ``target_year`` is provided and seasonal trends were fitted,
+        adjusts ratios with linear trend extrapolation from the reference
+        year (last year of training data). Trend is clamped to avoid
+        unreasonable extrapolation (max ±20% change from base ratio).
+
+        Args:
+            target_year: Delivery year for trend adjustment (e.g. 2029).
+                If None, returns base ratios without trend.
+        """
+        if self.seasonal_ratios_ is None:
+            logger.warning(
+                "No fitted seasonal ratios — using built-in defaults. "
+                "Call fit_seasonal_ratios() with EPEX Spot history for better accuracy."
+            )
+            return self._default_seasonal_ratios()
+
+        # No trend adjustment requested or no trends fitted
+        if target_year is None or self.seasonal_trends_ is None or self._reference_year_ is None:
             return self.seasonal_ratios_
-        logger.warning(
-            "No fitted seasonal ratios — using built-in defaults. "
-            "Call fit_seasonal_ratios() with EPEX Spot history for better accuracy."
-        )
-        return self._default_seasonal_ratios()
+
+        years_ahead = target_year - self._reference_year_
+        if years_ahead <= 0:
+            return self.seasonal_ratios_
+
+        # Apply trend with clamp (max ±20% deviation from base ratio)
+        max_deviation = 0.20
+
+        adjusted_q = {}
+        for q, base_r in self.seasonal_ratios_["quarter"].items():
+            trend = self.seasonal_trends_.get("quarter", {}).get(q, 0.0)
+            delta = trend * years_ahead
+            delta = np.clip(delta, -max_deviation * base_r, max_deviation * base_r)
+            adjusted_q[q] = base_r + delta
+
+        adjusted_m = {}
+        for m, base_r in self.seasonal_ratios_["month"].items():
+            trend = self.seasonal_trends_.get("month", {}).get(m, 0.0)
+            delta = trend * years_ahead
+            delta = np.clip(delta, -max_deviation * base_r, max_deviation * base_r)
+            adjusted_m[m] = base_r + delta
+
+        return {"quarter": adjusted_q, "month": adjusted_m}
 
     # ------------------------------------------------------------------
     # Cascading logic
@@ -442,7 +630,6 @@ class ContractCascader:
             Enriched copy of ``base_prices`` with all derived prices added.
         """
         result = dict(base_prices)
-        ratios = self._get_ratios()
 
         # --- Step 1: Year → Quarters ---
         years = [
@@ -454,26 +641,23 @@ class ContractCascader:
         ]
 
         for year, year_price in years:
+            ratios = self._get_ratios(target_year=year)
             q_keys = [quarter_key(year, q) for q in range(1, 5)]
             existing_qs = [k for k in q_keys if k in result]
 
             if len(existing_qs) == 4:
-                # All quarters already present — skip
                 continue
 
             if len(existing_qs) > 0:
-                # Partial quarters present — cascade only the missing ones
                 self._cascade_year_partial(
                     year, year_price, result, ratios["quarter"]
                 )
             else:
-                # No quarters — full cascade
                 self._cascade_year_full(
                     year, year_price, result, ratios["quarter"]
                 )
 
         # --- Step 2: Quarter → Months ---
-        # Re-scan after quarter generation
         quarters = [
             (yr, q, price)
             for key, price in list(result.items())
@@ -483,6 +667,7 @@ class ContractCascader:
         ]
 
         for year, q, q_price in quarters:
+            ratios = self._get_ratios(target_year=year)
             months = QUARTER_MONTHS[q]
             m_keys = [month_key(year, m) for m in months]
             existing_ms = [k for k in m_keys if k in result]
