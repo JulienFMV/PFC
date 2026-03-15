@@ -67,7 +67,7 @@ class LEARForecaster:
     - MLP ensemble member captures nonlinear price dynamics
     """
 
-    CALIBRATION_WINDOWS = [42, 56, 84, 365]  # days
+    CALIBRATION_WINDOWS = [42, 56, 84, 180, 365]  # days
     LAGS_DAYS = [1, 2, 3, 7]  # price lag structure
 
     def __init__(
