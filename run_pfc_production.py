@@ -368,10 +368,11 @@ try:
     # Blend with PFC (D1-7 = LEAR, D8-10 = blend, D11+ = pure PFC)
     pfc = lear.blend_with_pfc(pfc, lear_forecast)
 
-    # Save LEAR standalone forecast
-    lear_out = f"pfc_shaping/output/lear_forecast_{pd.Timestamp.now().strftime('%Y-%m-%d')}.csv"
-    lear_forecast.to_csv(lear_out, index=False)
-    logger.info("  LEAR standalone saved: %s", lear_out)
+    # Save LEAR standalone forecast (parquet + CSV)
+    lear_base = f"pfc_shaping/output/lear_forecast_{pd.Timestamp.now().strftime('%Y-%m-%d')}"
+    lear_forecast.to_parquet(f"{lear_base}.parquet", index=False)
+    lear_forecast.to_csv(f"{lear_base}.csv", index=False)
+    logger.info("  LEAR standalone saved: %s.parquet", lear_base)
     logger.info("  LEAR completed in %.1fs", time.time() - t_lear)
 
 except Exception as exc:

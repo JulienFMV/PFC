@@ -170,6 +170,31 @@ def load_pfc() -> pd.DataFrame | None:
     return None
 
 
+@st.cache_data(ttl=3600, show_spinner="Chargement LEAR forecast...")
+def load_lear_forecast() -> pd.DataFrame | None:
+    """Load latest LEAR short-term forecast (parquet or CSV)."""
+    output_dir = _paths_from_config()["output_dir"]
+    import glob
+    # Try parquet first, then CSV
+    for ext in [".parquet", ".csv"]:
+        pattern = str(output_dir / f"lear_forecast_*{ext}")
+        files = sorted(glob.glob(pattern))
+        if not files:
+            continue
+        try:
+            if ext == ".parquet":
+                df = pd.read_parquet(files[-1])
+            else:
+                df = pd.read_csv(files[-1])
+            if df.empty:
+                continue
+            df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
+            return df
+        except Exception as exc:
+            logger.error("Failed to read LEAR forecast: %s", exc)
+    return None
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_pfc_metadata() -> dict[str, str]:
     output_dir = _paths_from_config()["output_dir"]
