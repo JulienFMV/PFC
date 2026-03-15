@@ -531,7 +531,7 @@ class LEARForecaster:
         var_ratio = min(actual_std / lasso_std, 2.5)  # cap at 2.5x
         recalibrated = actual_mean + (raw_pred - lasso_mean) * var_ratio
         # Variance clamp: 1.2 std from recent mean
-        recalibrated = float(np.clip(recalibrated, actual_mean - 1.2 * actual_std, actual_mean + 1.2 * actual_std))
+        recalibrated = float(np.clip(recalibrated, actual_mean - 1.0 * actual_std, actual_mean + 1.0 * actual_std))
 
         return recalibrated
 
@@ -865,7 +865,7 @@ class LEARForecaster:
                         var_ratio = min(hour_std / lasso_s, 2.5)
                         forecast = hour_mean + (raw_forecast - lasso_m) * var_ratio
                         # Variance clamp: 1.2 std from recent mean (optimal via grid search)
-                        forecast = float(np.clip(forecast, hour_mean - 1.2 * hour_std, hour_mean + 1.2 * hour_std))
+                        forecast = float(np.clip(forecast, hour_mean - 1.0 * hour_std, hour_mean + 1.0 * hour_std))
                     else:
                         forecast = raw_forecast
                 else:
