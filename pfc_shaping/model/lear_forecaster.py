@@ -873,7 +873,7 @@ class LEARForecaster:
 
                 # AR error correction: use previous day's error
                 if hour in prev_day_errors:
-                    ar_coef = 0.4
+                    ar_coef = 0.5
                     prev_err = prev_day_errors[hour]
                     if np.isfinite(prev_err):
                         correction = ar_coef * np.clip(prev_err, -100, 100)
