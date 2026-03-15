@@ -120,18 +120,28 @@ if has_epex:
             p90_h = pfc["p90"].resample("h").mean()
             fig.add_trace(go.Scatter(
                 x=p90_h.index, y=p90_h.values,
-                name="p90", line=dict(width=0), showlegend=False,
-                hoverinfo="skip",
+                name="p90",
+                line=dict(width=0.5, color="rgba(15,82,204,0.3)"),
+                showlegend=False,
+                hovertemplate="%{y:.1f}<extra>p90</extra>",
             ))
             fig.add_trace(go.Scatter(
                 x=p10_h.index, y=p10_h.values,
-                name="IC 80%", line=dict(width=0),
-                fill="tonexty", fillcolor=COLORS["band"],
-                hoverinfo="skip",
+                name="IC 80%",
+                line=dict(width=0.5, color="rgba(15,82,204,0.3)"),
+                fill="tonexty", fillcolor="rgba(15,82,204,0.18)",
+                hovertemplate="%{y:.1f}<extra>p10</extra>",
             ))
+
+    # Auto-clip Y axis to keep IC 80% visible
+    all_y = epex_h.dropna()
+    y_max = all_y.quantile(0.99) * 1.15
+    y_min = max(all_y.quantile(0.01), -50)
 
     fig.update_layout(
         yaxis_title="EUR/MWh", height=450,
+        yaxis_range=[y_min, y_max],
+        hovermode="x unified",
         legend=dict(orientation="h", y=1.02, x=0),
     )
     fig = add_range_slider(fig)
