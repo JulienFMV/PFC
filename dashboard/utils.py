@@ -404,7 +404,26 @@ COMMODITY_TICKERS = {
 
 @st.cache_data(ttl=3600, show_spinner="Chargement commodités...")
 def load_commodities(period: str = "2y") -> dict[str, pd.DataFrame]:
-    """Download commodity price history via yfinance."""
+    """Load commodity prices — cached parquet first, yfinance fallback."""
+    # Try local cache first (works on Streamlit Cloud where yfinance may fail)
+    cache_path = PROJECT_ROOT / "data" / "commodities_cache.parquet"
+    if cache_path.exists():
+        try:
+            combined = pd.read_parquet(cache_path)
+            results: dict[str, pd.DataFrame] = {}
+            for name in COMMODITY_TICKERS:
+                col = f"{name}|close"
+                if col in combined.columns:
+                    s = combined[[col]].dropna().rename(columns={col: "close"})
+                    s["close"] = s["close"].astype(float)
+                    if not s.empty:
+                        results[name] = s
+            if results:
+                return results
+        except Exception as exc:
+            logger.warning("Failed to read commodity cache: %s", exc)
+
+    # Fallback: live download via yfinance
     try:
         import yfinance as yf
     except ImportError:
@@ -412,7 +431,7 @@ def load_commodities(period: str = "2y") -> dict[str, pd.DataFrame]:
         return {}
     import warnings
 
-    results: dict[str, pd.DataFrame] = {}
+    results = {}
     for name, cfg in COMMODITY_TICKERS.items():
         try:
             with warnings.catch_warnings():
@@ -420,7 +439,6 @@ def load_commodities(period: str = "2y") -> dict[str, pd.DataFrame]:
                 data = yf.download(cfg["ticker"], period=period, progress=False)
             if data.empty:
                 continue
-            # Flatten multi-level columns if present
             if isinstance(data.columns, pd.MultiIndex):
                 data.columns = data.columns.get_level_values(0)
             results[name] = data[["Close"]].rename(columns={"Close": "close"}).copy()
