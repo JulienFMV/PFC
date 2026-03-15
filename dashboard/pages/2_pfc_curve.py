@@ -107,18 +107,33 @@ if show_offpeak and not pfc_offpeak.empty:
 if show_bands and "p10" in pfc_r.columns:
     fig.add_trace(go.Scatter(
         x=pfc_r.index, y=pfc_r["p90"],
-        line=dict(width=0), showlegend=False, hoverinfo="skip",
+        name="p90",
+        line=dict(width=0.5, color="rgba(15,82,204,0.3)"),
+        showlegend=False,
+        hovertemplate="%{y:.1f}<extra>p90</extra>",
     ))
     fig.add_trace(go.Scatter(
         x=pfc_r.index, y=pfc_r["p10"],
-        name="IC 80%", line=dict(width=0),
-        fill="tonexty", fillcolor=COLORS["band"],
-        hoverinfo="skip",
+        name="IC 80%",
+        line=dict(width=0.5, color="rgba(15,82,204,0.3)"),
+        fill="tonexty", fillcolor="rgba(15,82,204,0.18)",
+        hovertemplate="%{y:.1f}<extra>p10</extra>",
     ))
+
+# Auto-clip Y axis to make IC 80% visible (spikes >p99 écrasent tout sinon)
+y_data = pfc_r["price_shape"].dropna()
+if "p10" in pfc_r.columns:
+    y_min = max(pfc_r["p10"].quantile(0.01), -50)
+    y_max = pfc_r["p90"].quantile(0.99) * 1.15
+else:
+    y_min = max(y_data.quantile(0.01), -50)
+    y_max = y_data.quantile(0.99) * 1.15
 
 fig.update_layout(
     yaxis_title="EUR/MWh",
+    yaxis_range=[y_min, y_max],
     height=500,
+    hovermode="x unified",
     legend=dict(
         orientation="h",
         y=1.08,
