@@ -134,6 +134,10 @@ if has_forwards and not fwd_all.empty:
 
     # Merge PFC averages with EEX
     matrix = pfc_avg.merge(fwd_pivot, on="product", how="outer")
+    # Ensure numeric types (None → NaN for proper display)
+    for col in ["eex_base", "eex_peak", "pfc_base", "pfc_peak", "pfc_offpeak", "pfc_p10", "pfc_p90"]:
+        if col in matrix.columns:
+            matrix[col] = pd.to_numeric(matrix[col], errors="coerce")
     matrix["diff_base"] = matrix["pfc_base"] - matrix["eex_base"]
     matrix["diff_peak"] = matrix["pfc_peak"] - matrix["eex_peak"]
     matrix["diff_base_pct"] = (matrix["diff_base"] / matrix["eex_base"] * 100).round(1)
@@ -212,7 +216,7 @@ def format_matrix_table(df, show_cols):
         return ""
 
     diff_cols = [c for c in display.columns if "Ecart" in c]
-    styled = display.style.format("{:.1f}", na_rep="—")
+    styled = display.style.format("{:.1f}", na_rep="—", precision=1)
     if diff_cols:
         styled = styled.map(color_diff, subset=diff_cols)
 
