@@ -1,0 +1,11 @@
+commit	rmse	rmse_shape	status	description
+baseline	39.133808	31.009326	keep	baseline (before forward_proxy tracked)
+2e8661d	39.049287	31.040408	keep	increase gaussian_sigma 0.5->1.17 (cached module)
+5335d98	39.672952	32.015023	keep	new baseline with forward_proxy.py tracked
+9939703	39.546785	32.039475	keep	lookback 36->24 months
+b5b1817	39.362490	31.885730	keep	lookback 24->18 months
+04f8566	39.284937	31.742073	keep	lookback 18->12 months
+bc410a1	39.284937	31.742073	keep	median decay + allow flat + default -3%
+b988a99	39.283641	31.808269	keep	gaussian_sigma 1.17->1.5
+a313746	39.283641	31.808269	keep	RidgeCV auto alpha (no change, but cleaner)
+bc80a7d	38.726491	31.710908	keep	f_W seasonal + f_Q all hours + exp decay + ENTSO-E

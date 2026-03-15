@@ -37,6 +37,14 @@ pfc_shaping/logs/*.log
 .DS_Store
 Thumbs.db
 
+# Eval / autoresearch logs
+eval_lear.log
+eval_stderr.log
+prod_stderr.log
+
+# Output parquet (generated, not source)
+pfc_shaping/output/*.parquet
+
 # Secrets — NE JAMAIS COMMITTER
 .env
 *.token
