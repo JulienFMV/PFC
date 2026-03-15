@@ -336,6 +336,50 @@ pfc = assembler.build(
 logger.info("  PFC assembled: %d rows in %.1fs", len(pfc), time.time() - t6)
 
 # ═══════════════════════════════════════════════════════════════════════
+# 9b. LEAR SHORT-TERM OVERLAY (D+1 to D+10)
+# ═══════════════════════════════════════════════════════════════════════
+logger.info("=" * 70)
+logger.info("STEP 9b: LEAR short-term forecast (D+1..D+10)")
+logger.info("=" * 70)
+t_lear = time.time()
+
+try:
+    from pfc_shaping.model.lear_forecaster import LEARForecaster
+
+    # Load commodities for gas/CO2 features
+    commodities_path = "data/commodities_cache.parquet"
+    commodities_df = None
+    if os.path.exists(commodities_path):
+        commodities_df = pd.read_parquet(commodities_path)
+
+    lear = LEARForecaster(tz="Europe/Zurich")
+    lear.fit(
+        epex_15min=epex_ch,
+        entso_15min=entso,
+        outages_15min=outages_all if outages_forecast is not None else None,
+        commodities=commodities_df,
+        hydro=hydro,
+    )
+
+    lear_forecast = lear.predict(horizon_days=10)
+    logger.info("  LEAR forecast: %d hours, mean=%.1f EUR/MWh",
+                len(lear_forecast), lear_forecast["price_lear"].mean())
+
+    # Blend with PFC (D1-7 = LEAR, D8-10 = blend, D11+ = pure PFC)
+    pfc = lear.blend_with_pfc(pfc, lear_forecast)
+
+    # Save LEAR standalone forecast
+    lear_out = f"pfc_shaping/output/lear_forecast_{pd.Timestamp.now().strftime('%Y-%m-%d')}.csv"
+    lear_forecast.to_csv(lear_out, index=False)
+    logger.info("  LEAR standalone saved: %s", lear_out)
+    logger.info("  LEAR completed in %.1fs", time.time() - t_lear)
+
+except Exception as exc:
+    logger.warning("  LEAR overlay failed (PFC unchanged): %s", exc)
+    import traceback
+    traceback.print_exc()
+
+# ═══════════════════════════════════════════════════════════════════════
 # 10. SAVE OUTPUT
 # ═══════════════════════════════════════════════════════════════════════
 logger.info("=" * 70)
