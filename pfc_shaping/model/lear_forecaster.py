@@ -789,8 +789,9 @@ class LEARForecaster:
         results = []
         test_dates = all_dates[-(n_days + horizon - 1): -horizon + 1] if horizon > 1 else all_dates[-n_days:]
 
-        # Track previous day's errors for AR correction
-        prev_day_errors: dict[int, float] = {}  # hour -> error
+        # Track previous day's errors for AR correction (lag-1 and lag-2)
+        prev_day_errors: dict[int, float] = {}  # hour -> error (lag-1)
+        prev2_day_errors: dict[int, float] = {}  # hour -> error (lag-2)
         # Expanding-window bias correction
         error_history: dict[int, list[float]] = {h: [] for h in range(24)}
 
@@ -871,13 +872,17 @@ class LEARForecaster:
                 else:
                     forecast = raw_forecast
 
-                # AR error correction: use previous day's error
+                # AR error correction: use lag-1 and lag-2 errors
                 if hour in prev_day_errors:
-                    ar_coef = 0.6
                     prev_err = prev_day_errors[hour]
                     if np.isfinite(prev_err):
-                        correction = ar_coef * np.clip(prev_err, -100, 100)
+                        correction = 0.6 * np.clip(prev_err, -100, 100)
                         forecast = forecast - correction
+                if hour in prev2_day_errors:
+                    prev2_err = prev2_day_errors[hour]
+                    if np.isfinite(prev2_err):
+                        correction2 = 0.15 * np.clip(prev2_err, -100, 100)
+                        forecast = forecast - correction2
 
                 # Expanding-window bias correction (subtract accumulated mean bias)
                 if len(error_history[hour]) >= 5:
@@ -904,6 +909,7 @@ class LEARForecaster:
                     })
 
             # Update prev_day_errors for next iteration
+            prev2_day_errors = prev_day_errors.copy()
             prev_day_errors = day_errors
 
             if (test_idx + 1) % 5 == 0:
