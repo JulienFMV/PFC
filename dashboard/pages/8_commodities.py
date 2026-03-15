@@ -30,9 +30,12 @@ with st.sidebar:
 commodities = load_commodities(period="2y")
 
 if not commodities:
+    from pathlib import Path
+    cache = Path(__file__).resolve().parent.parent.parent / "data" / "commodities_cache.parquet"
     st.warning(
-        "Aucune donnee commodite disponible. Verifiez que `yfinance` est installe "
-        "et que la connexion internet est active.",
+        f"Aucune donnee commodite disponible.\n\n"
+        f"Cache local (`data/commodities_cache.parquet`): {'existe' if cache.exists() else 'absent'}\n\n"
+        f"Relancez `python scripts/run_daily.py` pour generer le cache.",
         icon="⚠️",
     )
     st.stop()
