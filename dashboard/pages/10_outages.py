@@ -294,6 +294,8 @@ with tab3:
                         x=daily["unavailable_mw"],
                         y=daily["price_eur_mwh"],
                         mode="markers",
+                        name="Jour",
+                        showlegend=False,
                         marker=dict(
                             size=6, color=COLORS.get("blue", "#0F52CC"),
                             opacity=0.4, line=dict(width=0),
@@ -331,6 +333,8 @@ with tab3:
                             x=daily_nuc["unavailable_nuclear"],
                             y=daily_nuc["price_eur_mwh"],
                             mode="markers",
+                            name="Jour",
+                            showlegend=False,
                             marker=dict(
                                 size=6, color="#DC3C3C",
                                 opacity=0.4, line=dict(width=0),
