@@ -359,6 +359,7 @@ try:
         outages_15min=outages_all if outages_forecast is not None else None,
         commodities=commodities_df,
         hydro=hydro,
+        epex_de_15min=epex_de,
     )
 
     lear_forecast = lear.predict(horizon_days=10)

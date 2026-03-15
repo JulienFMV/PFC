@@ -15,7 +15,7 @@ from utils import (
 )
 
 st.header("Prevision Court Terme (LEAR)")
-st.caption("LASSO Estimated AutoRegressive — D+1 a D+10")
+st.caption("Hybrid LEAR+MLP — D+1 a D+10 — Prix CH+DE cross-border")
 
 show_freshness_sidebar()
 
@@ -163,7 +163,7 @@ with tab1:
         hovermode="x unified",
     )
     fig = add_range_slider(fig)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
     # Daily summary table
     st.subheader("Resume journalier")
@@ -227,7 +227,7 @@ with tab2:
         xaxis=dict(dtick=1),
         legend=dict(orientation="h", y=1.05, x=0),
     )
-    st.plotly_chart(fig_prof, use_container_width=True)
+    st.plotly_chart(fig_prof, width="stretch")
 
     # Per-day profiles
     st.subheader("Profil par jour")
@@ -244,7 +244,7 @@ with tab2:
         colorbar=dict(title="EUR/MWh"),
     ))
     fig_heat.update_layout(height=450, yaxis=dict(autorange="reversed"))
-    st.plotly_chart(fig_heat, use_container_width=True)
+    st.plotly_chart(fig_heat, width="stretch")
 
 
 # ════════════════════════════════════════════════════════════════════════
@@ -311,7 +311,7 @@ with tab3:
             hovermode="x unified",
         )
         fig_bt = add_range_slider(fig_bt)
-        st.plotly_chart(fig_bt, use_container_width=True)
+        st.plotly_chart(fig_bt, width="stretch")
 
         # Scatter: forecast vs actual
         col_scat, col_err = st.columns(2)
@@ -338,7 +338,7 @@ with tab3:
                 yaxis_title="LEAR prevu (EUR/MWh)",
                 height=350,
             )
-            st.plotly_chart(fig_scat, use_container_width=True)
+            st.plotly_chart(fig_scat, width="stretch")
 
         with col_err:
             st.subheader("Distribution erreurs")
@@ -358,7 +358,7 @@ with tab3:
                 yaxis_title="Frequence",
                 height=350,
             )
-            st.plotly_chart(fig_err, use_container_width=True)
+            st.plotly_chart(fig_err, width="stretch")
 
         # MAE per hour
         st.subheader("MAE par heure de livraison")
@@ -380,7 +380,7 @@ with tab3:
             height=300,
             xaxis=dict(dtick=1),
         )
-        st.plotly_chart(fig_hmae, use_container_width=True)
+        st.plotly_chart(fig_hmae, width="stretch")
 
         # Daily MAE
         st.subheader("MAE par jour")
@@ -394,7 +394,7 @@ with tab3:
         fig_dmae.update_layout(
             yaxis_title="MAE (EUR/MWh)", height=250,
         )
-        st.plotly_chart(fig_dmae, use_container_width=True)
+        st.plotly_chart(fig_dmae, width="stretch")
 
         export_csv_button(bt, "lear_backtest.csv", "Export backtest")
 
@@ -406,21 +406,25 @@ with tab4:
     st.subheader("Details du modele LEAR")
 
     st.markdown("""
-**Architecture** : LASSO Estimated AutoRegressive (Ziel & Weron, 2018)
+**Architecture** : Hybrid LEAR+MLP (Ziel & Weron 2018, El Mahtout & Ziel 2026)
 
 | Composant | Detail |
 |-----------|--------|
-| Modeles | 24 LASSO independants (1 par heure) |
-| Features | Prix lagues (d-1/2/3/7), load, solaire, eolien, outages, TTF, CO2, hydro |
-| Transformation | Asinh (variance-stabilizing) |
-| Calibration | Moyenne sur 4 fenetres (28/56/84/728 jours) |
+| Modeles lineaires | 24 LASSO independants (1 par heure) |
+| Modeles non-lineaires | 24 MLP (128-64 neurones) en ensemble |
+| Features CH | Prix lagues (d-1/2/3/7), load, solaire, eolien, outages, TTF, CO2, hydro |
+| Features DE | Prix DE cross-border (d-1/2/7), spread CH-DE |
+| Transformation | Asinh (variance-stabilizing) + StandardScaler |
+| Calibration | Moyenne sur 4 fenetres (42/56/84/365 jours) |
+| Ensemble | 60% LASSO + 40% MLP |
+| Intervalles | Prediction conforme (IC calibres sur residus OOS) |
 | Blend PFC | D1-7 = LEAR, D8-10 = transition, D11+ = PFC structurel |
 
-**Pourquoi LEAR ?**
-- Gagnant consistant des competitions EPF (Electricity Price Forecasting)
-- LASSO selectionne automatiquement les features pertinentes (~30-50 sur 250+)
-- Transformation asinh gere les prix negatifs et les spikes
-- Moyenne multi-fenetres : robuste aux changements de regime de marche
+**Innovations** (El Mahtout & Ziel, 2026)
+- Prix DE cross-border : le couplage CH-DE explique ~22% de la variance
+- Ensemble hybrid LASSO+MLP : capture les interactions non-lineaires
+- Prediction conforme : intervalles calibres (couverture garantie)
+- StandardScaler : normalisation pour une meilleure convergence LASSO
 """)
 
     # Feature importance (if we can compute it)
@@ -436,7 +440,7 @@ with tab4:
             xaxis_title="Heure", yaxis_title="Fenetres moyennes",
             height=250, xaxis=dict(dtick=1),
         )
-        st.plotly_chart(fig_win, use_container_width=True)
+        st.plotly_chart(fig_win, width="stretch")
 
     # Price stats per horizon day
     st.subheader("Statistiques par jour d'horizon")
