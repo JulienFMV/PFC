@@ -1,0 +1,29 @@
+commit	score	mae	rmse	mape	corr	status	description
+baseline	0.6296	10.41	16.66	20.80	0.813	ok	baseline — current LEAR model
+160b667	0.6277	10.39	16.60	20.80	0.813	ok	ElasticNet (l1_ratio=0.5) instead of LassoLarsCV — KEEP
+c1ae7ce	0.6274	10.38	16.58	20.80	0.813	ok	ElasticNet l1_ratio=0.3 — KEEP
+aecd4c1	0.6252	10.33	16.54	20.80	0.813	ok	ElasticNet l1_ratio=0.1 — KEEP
+94a48e2	0.6255	10.32	16.55	20.80	0.813	ok	ElasticNetCV l1_ratio grid — REVERT (0.6252 was better)
+bd22326	0.6312	10.47	16.74	20.80	0.813	ok	exponential sample weighting — REVERT
+215c443	0.6218	10.24	16.44	20.80	0.813	ok	add 180-day calibration window — KEEP
+f0144a0	0.6210	10.14	16.55	20.80	0.813	ok	variance clamp 1.0 std — KEEP
+49971d4	0.6075	10.08	16.33	19.44	0.822	ok	AR coefficient 0.5 — KEEP
+9d15ae9	0.6026	10.20	16.29	18.36	0.822	ok	AR coefficient 0.6 — KEEP
+d5f8d3f	0.6128	10.64	16.54	17.66	0.815	ok	AR coefficient 0.7 — REVERT
+016f468	0.6064	10.23	16.34	18.71	0.821	ok	bias correction 0.5 — REVERT
+5c4ed8c	0.6025	10.20	16.28	18.36	0.822	ok	variance ratio cap 2.0 — KEEP
+1995157	0.6157	10.48	16.72	-	0.811	ok	peak-specific shorter windows — REVERT
+cf0f68f	0.6068	10.21	16.33	-	0.821	ok	add d-14 lag — REVERT
+932d70d	0.6056	10.19	16.43	-	0.818	ok	remove d-3 lag — REVERT
+5e869d5	0.6024	10.15	16.50	17.92	0.816	ok	lag-2 AR correction — KEEP
+30d397a	0.6084	10.18	16.67	-	0.812	ok	daily min feature — REVERT
+ccfaef1	0.6052	10.24	16.54	-	0.817	ok	var calib 60 days — REVERT
+85c7c74	0.6974	11.82	18.35	-	0.769	ok	LASSO std window 14d — REVERT
+1272e95	0.6054	10.15	16.66	-	0.812	ok	peak-offpeak spread — REVERT
+6ced780	0.6106	10.29	16.82	-	0.808	ok	RobustScaler — REVERT
+e277b4a	0.6083	10.51	16.68	-	-	ok	log1p transform — REVERT
+7bb0070	0.6052	10.21	16.58	-	0.814	ok	14d volatility feature — REVERT
+6192d1f	0.6094	10.15	16.84	-	0.808	ok	median averaging — REVERT
+ae5c19e	0.6032	10.13	16.55	-	0.815	ok	7d rolling mean — REVERT
+eab0a4d	0.6015	10.13	16.48	17.90	0.817	ok	bias warmup 3 days — KEEP
+884454e	0.6020	10.19	16.61	-	0.814	ok	bias window 7d — REVERT
