@@ -6,6 +6,7 @@ Direct visual comparison between latest CH PFC and HFC OMPEX files.
 from __future__ import annotations
 
 from pathlib import Path
+import tempfile
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -25,6 +26,7 @@ from utils import (
     pfc_hfc_metrics,
     show_freshness_sidebar,
 )
+from pfc_shaping.data.ingest_forwards import load_base_prices_from_eex_report
 
 st.header("PFC vs HFC (OMPEX)")
 st.caption("Comparaison directe de la courbe PFC CH avec les fichiers HFC du dossier benchmark")
@@ -92,6 +94,61 @@ if cmp_df.empty:
     st.error("Aucun timestamp commun entre PFC et HFC pour ce fichier.")
     st.stop()
 
+
+def _delivery_averages(series: pd.Series, label: str) -> pd.DataFrame:
+    s = pd.to_numeric(series, errors="coerce").dropna()
+    if s.empty:
+        return pd.DataFrame(columns=["product", "product_type", label])
+
+    idx = pd.DatetimeIndex(s.index)
+    df = pd.DataFrame({label: s.values}, index=idx)
+    df["year"] = df.index.year
+    df["month"] = df.index.month
+    df["is_peak"] = (df.index.dayofweek < 5) & (df.index.hour >= 8) & (df.index.hour < 20)
+
+    rows: list[dict] = []
+    for (y, m), grp in df.groupby(["year", "month"]):
+        rows.append({"product": f"{y}-{m:02d}", "product_type": "Month", label: float(grp[label].mean())})
+    for y in sorted(df["year"].unique()):
+        for q, months in {1: [1, 2, 3], 2: [4, 5, 6], 3: [7, 8, 9], 4: [10, 11, 12]}.items():
+            grp = df[(df["year"] == y) & (df["month"].isin(months))]
+            if not grp.empty:
+                rows.append({"product": f"{y}-Q{q}", "product_type": "Quarter", label: float(grp[label].mean())})
+        grp_y = df[df["year"] == y]
+        if not grp_y.empty:
+            rows.append({"product": f"{y}", "product_type": "Cal", label: float(grp_y[label].mean())})
+    return pd.DataFrame(rows)
+
+
+def _eex_dict_to_df(base_prices: dict[str, float]) -> pd.DataFrame:
+    rows = []
+    for key, val in base_prices.items():
+        k = str(key)
+        if k.endswith("-Peak"):
+            rows.append({"product": k[:-5], "eex_peak": float(val)})
+        else:
+            rows.append({"product": k, "eex_base": float(val)})
+    out = pd.DataFrame(rows)
+    if out.empty:
+        return out
+    return out.groupby("product", as_index=False).first()
+
+
+def _resolve_eex_report_path(cfg: dict) -> Path | None:
+    fwd = cfg.get("forwards", {})
+    candidates = [
+        fwd.get("eex_report_path_unc"),
+        fwd.get("eex_report_path"),
+        str(Path(__file__).resolve().parents[2] / "Price_Report_EEX.xlsx"),
+    ]
+    for c in candidates:
+        if not c:
+            continue
+        p = Path(c)
+        if p.exists():
+            return p
+    return None
+
 metrics = pfc_hfc_metrics(cmp_df)
 window_start = cmp_df.index.min()
 window_end = cmp_df.index.max()
@@ -116,7 +173,7 @@ with k3:
 with k4:
     st.metric("Bias", f"{metrics.get('bias', float('nan')):+.2f}")
 with k5:
-    st.metric("P95 |err|", f"{metrics.get('p95_abs_error', float('nan')):.2f}")
+    st.metric("P95 |diff|", f"{metrics.get('p95_abs_error', float('nan')):.2f}")
 
 if gate_ok:
     st.success(
@@ -173,13 +230,13 @@ with col_a:
         go.Scatter(
             x=cmp_recent.index,
             y=cmp_recent["err"],
-            name="Erreur (PFC-HFC)",
+            name="Difference (PFC-HFC)",
             mode="lines",
             line=dict(color=COLORS["red"], width=1.6),
         )
     )
     fig_err.add_hline(y=0, line_dash="dot", line_color=COLORS["muted"])
-    fig_err.update_layout(title="Erreur signee", yaxis_title="EUR/MWh", height=320)
+    fig_err.update_layout(title="Difference signee", yaxis_title="EUR/MWh", height=320)
     st.plotly_chart(fig_err, use_container_width=True)
 
 with col_b:
@@ -188,13 +245,13 @@ with col_b:
         go.Histogram(
             x=cmp_df["err"],
             nbinsx=50,
-            name="Distribution erreur",
+            name="Distribution difference",
             marker_color=COLORS["blue"],
             opacity=0.85,
         )
     )
     fig_hist.add_vline(x=0, line_dash="dot", line_color=COLORS["muted"])
-    fig_hist.update_layout(title="Distribution des erreurs", xaxis_title="EUR/MWh", height=320)
+    fig_hist.update_layout(title="Distribution des differences", xaxis_title="EUR/MWh", height=320)
     st.plotly_chart(fig_hist, use_container_width=True)
 
 hm = cmp_df.copy()
@@ -214,12 +271,107 @@ fig_heat = go.Figure(
     )
 )
 fig_heat.update_layout(
-    title="Heatmap |erreur| moyenne par heure x jour",
+    title="Heatmap |difference| moyenne par heure x jour",
     xaxis_title="Jour",
     yaxis_title="Heure",
     height=420,
 )
 st.plotly_chart(fig_heat, use_container_width=True)
+
+st.divider()
+st.subheader("Calibration EEX du jour")
+st.caption("Comparaison des niveaux moyens PFC et HFC contre les forwards EEX (BASE)")
+
+cfg = load_config() or {}
+eex_report_path = _resolve_eex_report_path(cfg)
+eex_uploaded = st.file_uploader("Uploader Price_Report_EEX.xlsx (optionnel)", type=["xlsx"], key="eex_upload_main")
+eex_base: dict[str, float] | None = None
+eex_source = "-"
+
+try:
+    if eex_uploaded is not None:
+        with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
+            tmp.write(eex_uploaded.getbuffer())
+            tmp_path = Path(tmp.name)
+        eex_base = load_base_prices_from_eex_report(tmp_path, market="CH")
+        eex_source = eex_uploaded.name
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+    elif eex_report_path is not None:
+        eex_base = load_base_prices_from_eex_report(eex_report_path, market="CH")
+        eex_source = str(eex_report_path)
+except Exception as exc:
+    st.warning(f"Lecture EEX impossible: {exc}")
+    eex_base = None
+
+if not eex_base:
+    st.info("Aucun prix EEX disponible. Upload le fichier Price_Report_EEX.xlsx pour comparer la calibration.")
+else:
+    pfc_avg = _delivery_averages(cmp_df["pfc"], "pfc_base")
+    hfc_avg = _delivery_averages(cmp_df["hfc"], "hfc_base")
+    eex_df = _eex_dict_to_df(eex_base)
+
+    calib = (
+        pfc_avg.merge(hfc_avg, on=["product", "product_type"], how="inner")
+        .merge(eex_df[["product", "eex_base"]], on="product", how="inner")
+    )
+    if calib.empty:
+        st.warning("Aucun produit commun entre l'horizon compare PFC/HFC et les produits EEX.")
+    else:
+        calib["diff_pfc_eex"] = calib["pfc_base"] - calib["eex_base"]
+        calib["diff_hfc_eex"] = calib["hfc_base"] - calib["eex_base"]
+        calib["abs_pfc_eex"] = calib["diff_pfc_eex"].abs()
+        calib["abs_hfc_eex"] = calib["diff_hfc_eex"].abs()
+        calib["best_calibrated"] = calib.apply(
+            lambda r: "PFC" if r["abs_pfc_eex"] <= r["abs_hfc_eex"] else "HFC", axis=1
+        )
+
+        mae_pfc = float(calib["abs_pfc_eex"].mean())
+        mae_hfc = float(calib["abs_hfc_eex"].mean())
+        pfc_win = float((calib["best_calibrated"] == "PFC").mean() * 100.0)
+
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            st.metric("Produits compares", int(len(calib)))
+        with c2:
+            st.metric("MAE PFC vs EEX", f"{mae_pfc:.2f}")
+        with c3:
+            st.metric("MAE HFC vs EEX", f"{mae_hfc:.2f}")
+        with c4:
+            st.metric("PFC mieux calibree", f"{pfc_win:.1f}%")
+
+        st.caption(f"Source EEX: `{eex_source}`")
+
+        fig_cal = go.Figure()
+        fig_cal.add_trace(
+            go.Bar(x=calib["product"], y=calib["abs_pfc_eex"], name="|PFC - EEX|", marker_color=COLORS["blue"])
+        )
+        fig_cal.add_trace(
+            go.Bar(x=calib["product"], y=calib["abs_hfc_eex"], name="|HFC - EEX|", marker_color=COLORS["amber"])
+        )
+        fig_cal.update_layout(
+            barmode="group",
+            height=360,
+            xaxis_title="Produit de livraison",
+            yaxis_title="Difference absolue (EUR/MWh)",
+        )
+        st.plotly_chart(fig_cal, use_container_width=True)
+
+        view = calib[
+            [
+                "product",
+                "product_type",
+                "eex_base",
+                "pfc_base",
+                "hfc_base",
+                "diff_pfc_eex",
+                "diff_hfc_eex",
+                "best_calibrated",
+            ]
+        ].sort_values(["product_type", "product"])
+        st.dataframe(view, hide_index=True, use_container_width=True)
 
 with st.expander("Table detaillee"):
     out = cmp_df.copy()
