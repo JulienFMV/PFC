@@ -270,6 +270,24 @@ def _first_matching_column(columns: list[str], candidates: list[str]) -> str | N
     return None
 
 
+def _extract_hfc_series(df: pd.DataFrame) -> pd.Series | None:
+    if df is None or df.empty:
+        return None
+    cols = [str(c) for c in df.columns]
+    ts_col = _first_matching_column(cols, ["date", "heure", "timestamp", "time"])
+    px_col = _first_matching_column(cols, ["eur/mwh", "price", "prix", "ompex"])
+    if ts_col is None or px_col is None:
+        return None
+
+    ts = pd.to_datetime(df[ts_col], dayfirst=True, errors="coerce")
+    px = pd.to_numeric(df[px_col], errors="coerce")
+    s = pd.Series(px.values, index=ts, name="hfc").dropna()
+    s = s[~s.index.isna()].sort_index()
+    if s.index.has_duplicates:
+        s = s.groupby(level=0).mean()
+    return s if not s.empty else None
+
+
 @st.cache_data(ttl=300, show_spinner=False)
 def load_hfc_series(hfc_file: str | Path) -> pd.Series | None:
     path = Path(hfc_file)
@@ -277,24 +295,20 @@ def load_hfc_series(hfc_file: str | Path) -> pd.Series | None:
         return None
     try:
         df = pd.read_excel(path, sheet_name=0)
-        if df.empty:
-            return None
-
-        cols = [str(c) for c in df.columns]
-        ts_col = _first_matching_column(cols, ["date", "heure", "timestamp", "time"])
-        px_col = _first_matching_column(cols, ["eur/mwh", "price", "prix", "ompex"])
-        if ts_col is None or px_col is None:
-            return None
-
-        ts = pd.to_datetime(df[ts_col], dayfirst=True, errors="coerce")
-        px = pd.to_numeric(df[px_col], errors="coerce")
-        s = pd.Series(px.values, index=ts, name="hfc").dropna()
-        s = s[~s.index.isna()].sort_index()
-        if s.index.has_duplicates:
-            s = s.groupby(level=0).mean()
-        return s if not s.empty else None
+        return _extract_hfc_series(df)
     except Exception as exc:
         logger.error("Failed to read HFC file %s: %s", path, exc)
+        return None
+
+
+def load_hfc_series_from_upload(uploaded_file) -> pd.Series | None:
+    if uploaded_file is None:
+        return None
+    try:
+        df = pd.read_excel(uploaded_file, sheet_name=0)
+        return _extract_hfc_series(df)
+    except Exception as exc:
+        logger.error("Failed to read uploaded HFC file: %s", exc)
         return None
 
 

@@ -19,6 +19,7 @@ from utils import (
     list_hfc_files,
     load_config,
     load_hfc_series,
+    load_hfc_series_from_upload,
     load_pfc_market,
     no_data_warning,
     pfc_hfc_metrics,
@@ -37,20 +38,37 @@ if pfc is None or pfc.empty:
 
 hfc_dir = hfc_benchmark_dir()
 files = list_hfc_files(limit=250)
-if not files:
-    st.warning(f"Aucun fichier HFC .xlsx trouve dans: {hfc_dir}")
-    st.stop()
 
 with st.sidebar:
     st.subheader("Parametres comparaison")
-    file_labels = [f.name for f in files]
-    selected_label = st.selectbox("Fichier HFC", file_labels, index=0)
-    selected_file = files[file_labels.index(selected_label)]
+    source_options = ["Upload manuel (.xlsx)"] if not files else ["Dossier benchmark", "Upload manuel (.xlsx)"]
+    source_mode = st.radio("Source HFC", source_options, index=0)
+    selected_file = None
+    if source_mode == "Dossier benchmark":
+        file_labels = [f.name for f in files]
+        selected_label = st.selectbox("Fichier HFC", file_labels, index=0)
+        selected_file = files[file_labels.index(selected_label)]
+    else:
+        if not files:
+            st.info(
+                "Sur Streamlit Cloud, le lecteur H: n'est pas accessible. "
+                "Upload un fichier HFC pour comparer."
+            )
+    uploaded_hfc = st.file_uploader("Uploader un fichier HFC", type=["xlsx"])
     zoom_days = st.slider("Fenetre recente (jours)", min_value=7, max_value=180, value=45, step=1)
 
-hfc = load_hfc_series(selected_file)
+if source_mode == "Dossier benchmark" and selected_file is not None:
+    hfc = load_hfc_series(selected_file)
+    hfc_source_label = selected_file.name
+else:
+    hfc = load_hfc_series_from_upload(uploaded_hfc)
+    hfc_source_label = uploaded_hfc.name if uploaded_hfc is not None else "-"
+
 if hfc is None or hfc.empty:
-    st.error(f"Impossible de lire {selected_file.name}. Colonnes date/prix non detectees.")
+    if source_mode == "Dossier benchmark" and selected_file is not None:
+        st.error(f"Impossible de lire {selected_file.name}. Colonnes date/prix non detectees.")
+    else:
+        st.warning("Upload requis: ajoute un fichier HFC .xlsx pour afficher la comparaison.")
     st.stop()
 
 cmp_df = align_pfc_hfc(pfc, hfc)
@@ -96,7 +114,7 @@ else:
     )
 
 st.caption(
-    f"Fichier HFC: `{selected_file.name}` | Dossier: `{hfc_dir}` | "
+    f"Fichier HFC: `{hfc_source_label}` | Dossier config: `{hfc_dir}` | "
     f"Fenetre comparee: {window_start} -> {window_end}"
 )
 
@@ -194,6 +212,6 @@ with st.expander("Table detaillee"):
 
 export_csv_button(
     cmp_df.reset_index().rename(columns={"index": "timestamp"}),
-    filename=f"pfc_vs_hfc_{Path(selected_file).stem}.csv",
+    filename=f"pfc_vs_hfc_{Path(hfc_source_label).stem}.csv",
     label="Exporter comparaison (CSV)",
 )
