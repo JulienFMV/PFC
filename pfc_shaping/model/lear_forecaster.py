@@ -35,6 +35,7 @@ import pandas as pd
 from sklearn.linear_model import ElasticNetCV
 from sklearn.neural_network import MLPRegressor
 from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import TimeSeriesSplit
 
 logger = logging.getLogger(__name__)
 
@@ -74,9 +75,11 @@ class LEARForecaster:
         self,
         tz: str = "Europe/Zurich",
         max_iter: int = 2500,
+        random_state: int = 42,
     ):
         self.tz = tz
         self.max_iter = max_iter
+        self.random_state = random_state
         self._fitted = False
 
     def fit(
@@ -393,6 +396,36 @@ class LEARForecaster:
         valid = X_df.notna().all(axis=1) & y.notna()
         return X_df.loc[valid], y.loc[valid]
 
+    @staticmethod
+    def _time_series_cv(n_samples: int) -> TimeSeriesSplit:
+        """Build leakage-safe temporal CV folds for ElasticNetCV."""
+        n_splits = max(2, min(5, n_samples // 14))
+        if n_samples < 30:
+            n_splits = 2
+        return TimeSeriesSplit(n_splits=n_splits)
+
+    @staticmethod
+    def _safe_mae(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+        if y_true.size == 0:
+            return float("inf")
+        return float(np.mean(np.abs(y_true - y_pred)))
+
+    def _weighted_model_average(
+        self,
+        preds: list[float],
+        val_maes: list[float],
+    ) -> float:
+        """Weighted mean of model predictions based on recent validation MAE."""
+        if not preds:
+            return float("nan")
+        if len(preds) == 1 or len(val_maes) != len(preds):
+            return float(np.mean(preds))
+
+        maes = np.array([m if np.isfinite(m) and m > 1e-6 else 1e-6 for m in val_maes], dtype=float)
+        weights = 1.0 / maes
+        weights = weights / weights.sum()
+        return float(np.dot(np.array(preds, dtype=float), weights))
+
     def _fit_lasso_for_hour(
         self,
         X_full: pd.DataFrame,
@@ -403,6 +436,8 @@ class LEARForecaster:
         fitted = []
         for window in self.CALIBRATION_WINDOWS:
             n = min(window, len(y_full))
+            if n < 30:
+                continue
             X_w = X_full.iloc[-n:]
             y_w = y_full.iloc[-n:]
 
@@ -413,10 +448,26 @@ class LEARForecaster:
                 X_arr = np.nan_to_num(X_w.values.astype(float), nan=0.0)
                 scaler = StandardScaler()
                 X_scaled = scaler.fit_transform(X_arr)
-
-                model = ElasticNetCV(l1_ratio=0.1, max_iter=self.max_iter, cv=5)
+                cv = self._time_series_cv(n)
+                model = ElasticNetCV(
+                    l1_ratio=0.1,
+                    max_iter=self.max_iter,
+                    cv=cv,
+                    random_state=self.random_state,
+                )
                 model.fit(X_scaled, y_t)
-                fitted.append((model, mu, sigma, scaler, X_w, y_w))
+
+                # Recent out-of-time validation error (last 14 obs in this window)
+                n_val = max(5, min(14, n // 4))
+                X_val = X_w.iloc[-n_val:]
+                y_val = y_w.iloc[-n_val:].values.astype(float)
+                Xv_arr = np.nan_to_num(X_val.values.astype(float), nan=0.0)
+                Xv_scaled = scaler.transform(Xv_arr)
+                pred_t = model.predict(Xv_scaled)
+                pred_val = _asinh_inverse(pred_t, mu, sigma)
+                val_mae = self._safe_mae(y_val, pred_val)
+
+                fitted.append((model, mu, sigma, scaler, X_w, y_w, val_mae))
             except Exception as exc:
                 logger.warning("LASSO h=%d w=%d: %s", hour, window, exc)
         return fitted
@@ -448,7 +499,7 @@ class LEARForecaster:
                 max_iter=500,
                 early_stopping=True,
                 validation_fraction=0.15,
-                random_state=42,
+                random_state=self.random_state,
                 learning_rate_init=0.001,
                 alpha=0.01,
             )
@@ -474,16 +525,24 @@ class LEARForecaster:
         y_cal = y_full.iloc[-n_cal:].values
 
         lasso_preds = []
-        for model, mu, sigma, scaler, _, _ in lasso_models:
+        val_maes = []
+        for model, mu, sigma, scaler, _, _, val_mae in lasso_models:
             X_arr = np.nan_to_num(X_cal.values.astype(float), nan=0.0)
             X_scaled = scaler.transform(X_arr)
             pred_t = model.predict(X_scaled)
             lasso_preds.append(_asinh_inverse(pred_t, mu, sigma))
+            val_maes.append(val_mae)
 
         if not lasso_preds:
             return np.array([])
 
-        combined = np.mean(lasso_preds, axis=0)
+        preds_mat = np.vstack(lasso_preds)
+        weights = np.array(
+            [1.0 / max(1e-6, v) if np.isfinite(v) else 1.0 for v in val_maes],
+            dtype=float,
+        )
+        weights = weights / weights.sum()
+        combined = np.average(preds_mat, axis=0, weights=weights)
         return np.abs(y_cal - combined)
 
     def _recalibrate_variance(
@@ -492,6 +551,8 @@ class LEARForecaster:
         hour: int,
         lasso_models: list,
         X_full: pd.DataFrame,
+        y_full: pd.Series,
+        days_ahead: int = 1,
     ) -> float:
         """Per-hour variance recalibration.
 
@@ -511,16 +572,24 @@ class LEARForecaster:
 
         X_recent = X_full.iloc[-n_recent:]
         lasso_recent = []
-        for model, mu, sigma, scaler, _, _ in lasso_models:
+        val_maes = []
+        for model, mu, sigma, scaler, _, _, val_mae in lasso_models:
             X_arr = np.nan_to_num(X_recent.values.astype(float), nan=0.0)
             X_scaled = scaler.transform(X_arr)
             pred_t = model.predict(X_scaled)
             lasso_recent.append(_asinh_inverse(pred_t, mu, sigma))
+            val_maes.append(val_mae)
 
         if not lasso_recent:
             return raw_pred
 
-        lasso_avg = np.mean(lasso_recent, axis=0)
+        preds_mat = np.vstack(lasso_recent)
+        weights = np.array(
+            [1.0 / max(1e-6, v) if np.isfinite(v) else 1.0 for v in val_maes],
+            dtype=float,
+        )
+        weights = weights / weights.sum()
+        lasso_avg = np.average(preds_mat, axis=0, weights=weights)
         lasso_mean = float(np.mean(lasso_avg))
         lasso_std = float(np.std(lasso_avg))
 
@@ -528,10 +597,19 @@ class LEARForecaster:
             return raw_pred
 
         # Expand the deviation from mean to match actual std
-        var_ratio = min(actual_std / lasso_std, 2.0)  # cap at 2.5x
+        var_ratio = min(actual_std / lasso_std, 2.2)
         recalibrated = actual_mean + (raw_pred - lasso_mean) * var_ratio
-        # Variance clamp: 1.2 std from recent mean
-        recalibrated = float(np.clip(recalibrated, actual_mean - 1.0 * actual_std, actual_mean + 1.0 * actual_std))
+
+        # Quantile-based clamp: keep extremes while avoiding unstable tails.
+        y_recent = y_full.iloc[-n_recent:].values.astype(float)
+        q_low = float(np.quantile(y_recent, 0.03))
+        q_high = float(np.quantile(y_recent, 0.97))
+        horizon_widen = 1.0 + 0.03 * max(days_ahead - 1, 0)
+        lower = min(q_low, actual_mean - 2.0 * actual_std) * horizon_widen
+        upper = max(q_high, actual_mean + 2.0 * actual_std) * horizon_widen
+        if lower > upper:
+            lower, upper = upper, lower
+        recalibrated = float(np.clip(recalibrated, lower, upper))
 
         return recalibrated
 
@@ -574,6 +652,24 @@ class LEARForecaster:
             else:
                 mlp_model, mlp_scaler = None, None
 
+            # Estimate recent per-hour bias from the model itself (last 14 observations).
+            recent_n = max(8, min(14, len(y_full) // 4))
+            recent_bias = 0.0
+            if recent_n >= 8:
+                y_recent = y_full.iloc[-recent_n:].values.astype(float)
+                pred_recent = []
+                for idx in range(recent_n):
+                    x_row = X_full.iloc[-recent_n + idx].values.astype(float).reshape(1, -1)
+                    row_preds = []
+                    row_maes = []
+                    for model, mu, sigma, scaler, _, _, val_mae in lasso_models:
+                        x_scaled = scaler.transform(np.nan_to_num(x_row, nan=0.0))
+                        pred_t = model.predict(x_scaled)[0]
+                        row_preds.append(_asinh_inverse(pred_t, mu, sigma))
+                        row_maes.append(val_mae)
+                    pred_recent.append(self._weighted_model_average(row_preds, row_maes))
+                recent_bias = float(np.mean(np.array(pred_recent, dtype=float) - y_recent))
+
             # Conformal residuals
             conf_residuals = self._compute_conformal_residuals(
                 hour, X_full, y_full, lasso_models
@@ -586,7 +682,9 @@ class LEARForecaster:
 
                 # LASSO predictions
                 window_preds = []
-                for model, mu, sigma, scaler, _, _ in lasso_models:
+                window_maes = []
+                x_pred = None
+                for model, mu, sigma, scaler, _, _, val_mae in lasso_models:
                     x_pred = self._build_prediction_row(
                         X_full, y_full, forecast_date, hour, d,
                     )
@@ -595,38 +693,66 @@ class LEARForecaster:
                         x_scaled = scaler.transform(x_arr)
                         pred_t = model.predict(x_scaled)[0]
                         window_preds.append(_asinh_inverse(pred_t, mu, sigma))
+                        window_maes.append(val_mae)
 
                 if not window_preds:
                     continue
 
-                lasso_mean = float(np.mean(window_preds))
+                lasso_mean = self._weighted_model_average(window_preds, window_maes)
 
                 # Variance recalibration
                 recalibrated = self._recalibrate_variance(
-                    lasso_mean, hour, lasso_models, X_full
+                    lasso_mean, hour, lasso_models, X_full, y_full, d
                 )
 
-                # Ensemble: average with MLP
+                # Bias correction with horizon damping.
+                horizon_bias_weight = max(0.25, 1.0 - 0.06 * (d - 1))
+                recalibrated = recalibrated - horizon_bias_weight * recent_bias
+
+                # Ensemble: adaptive average with MLP (reduce MLP weight on long horizon).
                 if mlp_model is not None and x_pred is not None:
                     x_arr = np.nan_to_num(x_pred.reshape(1, -1), nan=0.0)
                     x_mlp_scaled = mlp_scaler.transform(x_arr)
                     mlp_pred = float(mlp_model.predict(x_mlp_scaled)[0])
-                    final_pred = 0.6 * recalibrated + 0.4 * mlp_pred
+                    n_eval = max(8, min(14, len(y_full) // 4))
+                    X_eval = X_full.iloc[-n_eval:]
+                    y_eval = y_full.iloc[-n_eval:].values.astype(float)
+                    X_eval_arr = np.nan_to_num(X_eval.values.astype(float), nan=0.0)
+                    lasso_eval = []
+                    for model, mu, sigma, scaler, _, _, _ in lasso_models:
+                        pred_t = model.predict(scaler.transform(X_eval_arr))
+                        lasso_eval.append(_asinh_inverse(pred_t, mu, sigma))
+                    lasso_eval_pred = np.mean(lasso_eval, axis=0)
+                    lasso_mae = self._safe_mae(y_eval, lasso_eval_pred)
+                    mlp_eval_pred = mlp_model.predict(mlp_scaler.transform(X_eval_arr))
+                    mlp_mae = self._safe_mae(y_eval, mlp_eval_pred)
+                    inv_lasso = 1.0 / max(1e-6, lasso_mae)
+                    inv_mlp = 1.0 / max(1e-6, mlp_mae)
+                    w_mlp = inv_mlp / (inv_lasso + inv_mlp)
+                    w_mlp = max(0.15, min(0.45, w_mlp))
+                    w_mlp *= max(0.4, 1.0 - 0.08 * (d - 1))
+                    w_lasso = 1.0 - w_mlp
+                    final_pred = w_lasso * recalibrated + w_mlp * mlp_pred
                 else:
                     final_pred = recalibrated
 
                 final_pred = max(final_pred, -50.0)
 
                 # Conformal intervals
+                q_low = float(min(quantiles)) if len(quantiles) > 0 else 0.10
+                q_high = float(max(quantiles)) if len(quantiles) > 0 else 0.90
+                tail_q = max(q_high, 1.0 - q_low)
                 if len(conf_residuals) > 0:
                     horizon_scale = 1.0 + 0.05 * (d - 1)
                     scaled_residuals = conf_residuals * horizon_scale
-                    p10 = final_pred - float(np.quantile(scaled_residuals, 0.90))
-                    p90 = final_pred + float(np.quantile(scaled_residuals, 0.90))
+                    spread_q = float(np.quantile(scaled_residuals, tail_q))
+                    p10 = final_pred - spread_q
+                    p90 = final_pred + spread_q
                 else:
                     spread = abs(final_pred) * (0.05 + 0.01 * d)
-                    p10 = final_pred - 1.28 * spread
-                    p90 = final_pred + 1.28 * spread
+                    z = 1.28 if tail_q <= 0.90 else 1.64
+                    p10 = final_pred - z * spread
+                    p90 = final_pred + z * spread
 
                 all_forecasts.append({
                     "date": forecast_date,
@@ -819,22 +945,15 @@ class LEARForecaster:
                 if len(y_full) < 30:
                     continue
 
-                # Compute per-hour variance calibration on truncated data
-                n_recent = min(90, len(y_full) - 10)
-                if n_recent >= 20:
-                    recent_vals = y_full.iloc[-n_recent:]
-                    hour_mean = float(recent_vals.mean())
-                    hour_std = float(recent_vals.std())
-                else:
-                    hour_mean, hour_std = 0.0, 1.0
-
                 lasso_models = self._fit_lasso_for_hour(X_full, y_full, hour)
                 if not lasso_models:
                     continue
 
                 # LASSO predictions
                 preds = []
-                for model, mu, sigma, scaler, _, _ in lasso_models:
+                pred_maes = []
+                x_pred = None
+                for model, mu, sigma, scaler, _, _, val_mae in lasso_models:
                     x_pred = self._build_prediction_row(
                         X_full, y_full, target_date, hour, horizon,
                     )
@@ -843,45 +962,33 @@ class LEARForecaster:
                         x_scaled = scaler.transform(x_arr)
                         pred_t = model.predict(x_scaled)[0]
                         preds.append(_asinh_inverse(pred_t, mu, sigma))
+                        pred_maes.append(val_mae)
 
                 if not preds:
                     continue
 
-                raw_forecast = float(np.mean(preds))
-
-                # Variance recalibration
-                n_rec = min(28, len(X_full) - 5)
-                if n_rec >= 10 and hour_std > 1.0:
-                    X_rec = X_full.iloc[-n_rec:]
-                    lasso_rec = []
-                    for model, mu, sigma, scaler, _, _ in lasso_models:
-                        X_arr = np.nan_to_num(X_rec.values.astype(float), nan=0.0)
-                        X_scaled = scaler.transform(X_arr)
-                        pred_t = model.predict(X_scaled)
-                        lasso_rec.append(_asinh_inverse(pred_t, mu, sigma))
-                    lasso_avg = np.mean(lasso_rec, axis=0)
-                    lasso_m = float(np.mean(lasso_avg))
-                    lasso_s = float(np.std(lasso_avg))
-                    if lasso_s > 1e-6:
-                        var_ratio = min(hour_std / lasso_s, 2.0)
-                        forecast = hour_mean + (raw_forecast - lasso_m) * var_ratio
-                        # Variance clamp: 1.2 std from recent mean (optimal via grid search)
-                        forecast = float(np.clip(forecast, hour_mean - 1.0 * hour_std, hour_mean + 1.0 * hour_std))
-                    else:
-                        forecast = raw_forecast
-                else:
-                    forecast = raw_forecast
+                raw_forecast = self._weighted_model_average(preds, pred_maes)
+                forecast = self._recalibrate_variance(
+                    raw_forecast,
+                    hour,
+                    lasso_models,
+                    X_full,
+                    y_full,
+                    horizon,
+                )
 
                 # AR error correction: use lag-1 and lag-2 errors
                 if hour in prev_day_errors:
                     prev_err = prev_day_errors[hour]
                     if np.isfinite(prev_err):
-                        correction = 0.6 * np.clip(prev_err, -100, 100)
+                        ar1 = max(0.25, 0.6 - 0.05 * (horizon - 1))
+                        correction = ar1 * np.clip(prev_err, -100, 100)
                         forecast = forecast - correction
                 if hour in prev2_day_errors:
                     prev2_err = prev2_day_errors[hour]
                     if np.isfinite(prev2_err):
-                        correction2 = 0.15 * np.clip(prev2_err, -100, 100)
+                        ar2 = max(0.05, 0.15 - 0.02 * (horizon - 1))
+                        correction2 = ar2 * np.clip(prev2_err, -100, 100)
                         forecast = forecast - correction2
 
                 # Expanding-window bias correction (subtract accumulated mean bias)

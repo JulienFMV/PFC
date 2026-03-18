@@ -262,13 +262,20 @@ with tab3:
         )
     else:
         bt = backtest.copy()
+        bt_view = bt.copy()
+        if "horizon" in bt.columns:
+            horizons = sorted(pd.Series(bt["horizon"]).dropna().astype(int).unique().tolist())
+            default_idx = horizons.index(1) if 1 in horizons else 0
+            selected_h = st.selectbox("Horizon backtest affiche", horizons, index=default_idx)
+            bt_view = bt[bt["horizon"].astype(int) == int(selected_h)].copy()
+            st.caption(f"Graphes detailes filtres sur D+{selected_h}")
 
         # KPIs
-        mae = bt["abs_error"].mean()
-        rmse = np.sqrt((bt["error"] ** 2).mean())
-        mape = bt["ape"].mean()
-        bias = bt["error"].mean()
-        corr = bt["forecast"].corr(bt["actual"])
+        mae = bt_view["abs_error"].mean()
+        rmse = np.sqrt((bt_view["error"] ** 2).mean())
+        mape = bt_view["ape"].mean()
+        bias = bt_view["error"].mean()
+        corr = bt_view["forecast"].corr(bt_view["actual"])
 
         b1, b2, b3, b4, b5 = st.columns(5)
         with b1:
@@ -285,12 +292,52 @@ with tab3:
         with b5:
             st.metric("Correl.", f"{corr:.3f}")
 
+        if "horizon" in bt.columns:
+            st.subheader("Qualite par horizon")
+            h_stats = (
+                bt.groupby("horizon")
+                .agg(
+                    MAE=("abs_error", "mean"),
+                    RMSE=("error", lambda s: float(np.sqrt(np.mean(np.square(s))))),
+                    Bias=("error", "mean"),
+                    Corr=("forecast", lambda s: float(s.corr(bt.loc[s.index, "actual"]))),
+                )
+                .reset_index()
+                .sort_values("horizon")
+            )
+            st.dataframe(h_stats.round(3), hide_index=True, use_container_width=True)
+
+            fig_h = make_subplots(specs=[[{"secondary_y": True}]])
+            fig_h.add_trace(
+                go.Bar(
+                    x=h_stats["horizon"],
+                    y=h_stats["MAE"],
+                    name="MAE",
+                    marker_color=COLORS["amber"],
+                ),
+                secondary_y=False,
+            )
+            fig_h.add_trace(
+                go.Scatter(
+                    x=h_stats["horizon"],
+                    y=h_stats["Corr"],
+                    mode="lines+markers",
+                    name="Correlation",
+                    line=dict(color=COLORS["blue"], width=2),
+                ),
+                secondary_y=True,
+            )
+            fig_h.update_layout(height=280, xaxis_title="Horizon (jours)")
+            fig_h.update_yaxes(title_text="MAE (EUR/MWh)", secondary_y=False)
+            fig_h.update_yaxes(title_text="Correlation", secondary_y=True)
+            st.plotly_chart(fig_h, width="stretch")
+
         st.divider()
 
         # Time series: forecast vs actual
         # Build hourly timestamps from date + hour
-        bt["ts"] = pd.to_datetime(bt["date"]) + pd.to_timedelta(bt["hour"], unit="h")
-        bt_sorted = bt.sort_values("ts")
+        bt_view["ts"] = pd.to_datetime(bt_view["date"]) + pd.to_timedelta(bt_view["hour"], unit="h")
+        bt_sorted = bt_view.sort_values("ts")
 
         fig_bt = go.Figure()
         fig_bt.add_trace(go.Scatter(
@@ -301,7 +348,7 @@ with tab3:
         ))
         fig_bt.add_trace(go.Scatter(
             x=bt_sorted["ts"], y=bt_sorted["forecast"],
-            name="LEAR (D+1 prevu)",
+            name="LEAR (prevu)",
             line=dict(color=COLORS["amber"], width=2),
             hovertemplate="%{y:.1f} EUR/MWh<extra>LEAR</extra>",
         ))
@@ -320,14 +367,14 @@ with tab3:
             st.subheader("Prevu vs Realise")
             fig_scat = go.Figure()
             fig_scat.add_trace(go.Scatter(
-                x=bt["actual"], y=bt["forecast"],
+                x=bt_view["actual"], y=bt_view["forecast"],
                 mode="markers",
                 marker=dict(size=4, color=COLORS["amber"], opacity=0.4),
                 showlegend=False,
                 hovertemplate="Spot: %{x:.1f}<br>LEAR: %{y:.1f}<extra></extra>",
             ))
-            mn = min(bt["actual"].min(), bt["forecast"].min())
-            mx = max(bt["actual"].max(), bt["forecast"].max())
+            mn = min(bt_view["actual"].min(), bt_view["forecast"].min())
+            mx = max(bt_view["actual"].max(), bt_view["forecast"].max())
             fig_scat.add_trace(go.Scatter(
                 x=[mn, mx], y=[mn, mx],
                 mode="lines", line=dict(color=COLORS["muted"], dash="dash"),
@@ -343,7 +390,7 @@ with tab3:
         with col_err:
             st.subheader("Distribution erreurs")
             fig_err = go.Figure(go.Histogram(
-                x=bt["error"].values,
+                x=bt_view["error"].values,
                 nbinsx=50,
                 marker_color=COLORS["amber"],
                 opacity=0.7,
@@ -362,7 +409,7 @@ with tab3:
 
         # MAE per hour
         st.subheader("MAE par heure de livraison")
-        hourly_mae = bt.groupby("hour")["abs_error"].mean()
+        hourly_mae = bt_view.groupby("hour")["abs_error"].mean()
 
         fig_hmae = go.Figure(go.Bar(
             x=hourly_mae.index, y=hourly_mae.values,
@@ -384,7 +431,7 @@ with tab3:
 
         # Daily MAE
         st.subheader("MAE par jour")
-        daily_mae = bt.groupby("date")["abs_error"].mean()
+        daily_mae = bt_view.groupby("date")["abs_error"].mean()
         fig_dmae = go.Figure(go.Bar(
             x=daily_mae.index, y=daily_mae.values,
             marker_color=COLORS["blue"],
@@ -396,7 +443,7 @@ with tab3:
         )
         st.plotly_chart(fig_dmae, width="stretch")
 
-        export_csv_button(bt, "lear_backtest.csv", "Export backtest")
+        export_csv_button(bt_view, "lear_backtest.csv", "Export backtest")
 
 
 # ════════════════════════════════════════════════════════════════════════

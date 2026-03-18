@@ -375,13 +375,31 @@ try:
     lear_forecast.to_csv(f"{lear_base}.csv", index=False)
     logger.info("  LEAR standalone saved: %s.parquet", lear_base)
 
-    # Rolling backtest (D+1, last 30 days)
-    logger.info("  Running LEAR backtest (30 days, D+1)...")
+    # Rolling backtest multi-horizon (production diagnostics)
+    horizons = [1, 2, 3, 5, 7, 10]
+    logger.info("  Running LEAR backtest multi-horizon: %s", horizons)
     t_bt = time.time()
     try:
-        bt = lear.backtest(n_days=30, horizon=1)
+        bt_frames = []
+        for h in horizons:
+            bt_h = lear.backtest(n_days=30, horizon=h)
+            bt_h["horizon"] = h
+            bt_frames.append(bt_h)
+        bt = pd.concat(bt_frames, ignore_index=True)
         bt_path = f"pfc_shaping/output/lear_backtest_{pd.Timestamp.now().strftime('%Y-%m-%d')}.parquet"
         bt.to_parquet(bt_path, index=False)
+        summary = (
+            bt.groupby("horizon")
+            .agg(
+                mae=("abs_error", "mean"),
+                rmse=("error", lambda s: float(np.sqrt(np.mean(np.square(s))))),
+                bias=("error", "mean"),
+                corr=("forecast", lambda s: float(s.corr(bt.loc[s.index, "actual"]))),
+            )
+            .reset_index()
+        )
+        summary_path = f"pfc_shaping/output/lear_backtest_summary_{pd.Timestamp.now().strftime('%Y-%m-%d')}.csv"
+        summary.to_csv(summary_path, index=False)
         logger.info("  Backtest saved: %s (%.1fs)", bt_path, time.time() - t_bt)
     except Exception as bt_exc:
         logger.warning("  Backtest failed: %s", bt_exc)
