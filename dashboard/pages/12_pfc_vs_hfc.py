@@ -54,8 +54,12 @@ with st.sidebar:
                 "Sur Streamlit Cloud, le lecteur H: n'est pas accessible. "
                 "Upload un fichier HFC pour comparer."
             )
-    uploaded_hfc = st.file_uploader("Uploader un fichier HFC", type=["xlsx"])
     zoom_days = st.slider("Fenetre recente (jours)", min_value=7, max_value=180, value=45, step=1)
+
+# Main-area uploader (always visible even when sidebar is collapsed)
+uploaded_hfc = None
+if source_mode == "Upload manuel (.xlsx)":
+    uploaded_hfc = st.file_uploader("Uploader un fichier HFC (.xlsx)", type=["xlsx"], key="hfc_upload_main")
 
 if source_mode == "Dossier benchmark" and selected_file is not None:
     hfc = load_hfc_series(selected_file)
