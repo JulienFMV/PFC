@@ -403,6 +403,8 @@ def align_pfc_hfc(
         return idx
 
     pfc_s.index = _to_zurich_naive(pd.DatetimeIndex(pfc_s.index))
+    if pfc_s.index.has_duplicates:
+        pfc_s = pfc_s.groupby(level=0).mean()
     hfc_norm = hfc.copy()
     hfc_norm.index = _to_zurich_naive(pd.DatetimeIndex(hfc_norm.index))
     hfc_norm = hfc_norm.sort_index()
