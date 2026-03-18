@@ -151,6 +151,38 @@ def _resolve_eex_report_path(cfg: dict) -> Path | None:
             return p
     return None
 
+
+def _product_bounds(product: str, product_type: str) -> tuple[pd.Timestamp, pd.Timestamp] | None:
+    try:
+        if product_type == "Month":
+            start = pd.Timestamp(f"{product}-01")
+            end = (start + pd.offsets.MonthEnd(1)).normalize() + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
+            return start, end
+        if product_type == "Quarter":
+            year_str, q_str = product.split("-Q")
+            year = int(year_str)
+            q = int(q_str)
+            month_start = {1: 1, 2: 4, 3: 7, 4: 10}[q]
+            start = pd.Timestamp(year=year, month=month_start, day=1)
+            end = (start + pd.offsets.QuarterEnd(startingMonth=12)).normalize() + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
+            return start, end
+        if product_type == "Cal":
+            year = int(product)
+            start = pd.Timestamp(year=year, month=1, day=1)
+            end = pd.Timestamp(year=year, month=12, day=31, hour=23, minute=59, second=59)
+            return start, end
+    except Exception:
+        return None
+    return None
+
+
+def _sort_key(product: str, product_type: str) -> pd.Timestamp:
+    bounds = _product_bounds(product, product_type)
+    if bounds is None:
+        return pd.Timestamp.max
+    return bounds[0]
+
+
 metrics = pfc_hfc_metrics(cmp_df)
 full_window_start = cmp_df.index.min()
 full_window_end = cmp_df.index.max()
@@ -351,6 +383,24 @@ else:
     if calib.empty:
         st.warning("Aucun produit commun entre l'horizon compare PFC/HFC et les produits EEX.")
     else:
+        calib["delivery_start"] = calib.apply(
+            lambda r: (_product_bounds(str(r["product"]), str(r["product_type"])) or (pd.NaT, pd.NaT))[0],
+            axis=1,
+        )
+        calib["delivery_end"] = calib.apply(
+            lambda r: (_product_bounds(str(r["product"]), str(r["product_type"])) or (pd.NaT, pd.NaT))[1],
+            axis=1,
+        )
+        calib["sort_ts"] = calib.apply(lambda r: _sort_key(str(r["product"]), str(r["product_type"])), axis=1)
+        calib = calib.dropna(subset=["delivery_start", "delivery_end"])
+        calib = calib[
+            (calib["delivery_start"] >= scope_start.normalize())
+            & (calib["delivery_end"] <= scope_end)
+        ]
+        if calib.empty:
+            st.warning("Aucun produit forward actif dans la fenetre selectionnee (demain -> fin 2029).")
+            st.stop()
+
         calib["diff_pfc_eex"] = calib["pfc_base"] - calib["eex_base"]
         calib["diff_hfc_eex"] = calib["hfc_base"] - calib["eex_base"]
         calib["abs_pfc_eex"] = calib["diff_pfc_eex"].abs()
@@ -376,11 +426,22 @@ else:
         st.caption(f"Source EEX: `{eex_source}`")
 
         fig_cal = go.Figure()
+        plot_cal = calib.sort_values(["sort_ts", "product"])
         fig_cal.add_trace(
-            go.Bar(x=calib["product"], y=calib["abs_pfc_eex"], name="|PFC - EEX|", marker_color=COLORS["blue"])
+            go.Bar(
+                x=plot_cal["product"],
+                y=plot_cal["abs_pfc_eex"],
+                name="|PFC - EEX|",
+                marker_color=COLORS["blue"],
+            )
         )
         fig_cal.add_trace(
-            go.Bar(x=calib["product"], y=calib["abs_hfc_eex"], name="|HFC - EEX|", marker_color=COLORS["amber"])
+            go.Bar(
+                x=plot_cal["product"],
+                y=plot_cal["abs_hfc_eex"],
+                name="|HFC - EEX|",
+                marker_color=COLORS["amber"],
+            )
         )
         fig_cal.update_layout(
             barmode="group",
@@ -392,6 +453,7 @@ else:
 
         view = calib[
             [
+                "sort_ts",
                 "product",
                 "product_type",
                 "eex_base",
@@ -401,7 +463,8 @@ else:
                 "diff_hfc_eex",
                 "best_calibrated",
             ]
-        ].sort_values(["product_type", "product"])
+        ].sort_values(["sort_ts", "product"])
+        view = view.drop(columns=["sort_ts"])
         st.dataframe(view, hide_index=True, use_container_width=True)
 
         st.markdown("**Focus forwards Cal 2027-2029**")
