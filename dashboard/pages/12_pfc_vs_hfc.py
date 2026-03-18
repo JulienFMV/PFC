@@ -27,6 +27,7 @@ from utils import (
     show_freshness_sidebar,
 )
 from pfc_shaping.data.ingest_forwards import load_base_prices_from_eex_report
+from pfc_shaping.data.ingest_forwards import load_forwards_timeseries
 
 st.header("PFC vs HFC (OMPEX)")
 st.caption("Comparaison directe de la courbe PFC CH avec les fichiers HFC du dossier benchmark")
@@ -149,6 +150,19 @@ def _resolve_eex_report_path(cfg: dict) -> Path | None:
         if p.exists():
             return p
     return None
+
+
+def _latest_eex_mark_date(report_path: Path, market: str = "CH") -> pd.Timestamp | None:
+    try:
+        ts = load_forwards_timeseries(report_path, market=market)
+    except Exception:
+        return None
+    if ts.empty:
+        return None
+    base = ts[ts["load_type"] == "BASE"]
+    if not base.empty:
+        return pd.to_datetime(base["date"]).max()
+    return pd.to_datetime(ts["date"]).max()
 
 
 def _product_bounds(product: str, product_type: str) -> tuple[pd.Timestamp, pd.Timestamp] | None:
@@ -346,20 +360,35 @@ eex_report_path = _resolve_eex_report_path(cfg)
 eex_uploaded = st.file_uploader("Uploader Price_Report_EEX.xlsx (optionnel)", type=["xlsx"], key="eex_upload_main")
 eex_base: dict[str, float] | None = None
 eex_source = "-"
+eex_mark_date = None
 
 try:
     if eex_uploaded is not None:
         with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
             tmp.write(eex_uploaded.getbuffer())
             tmp_path = Path(tmp.name)
-        eex_base = load_base_prices_from_eex_report(tmp_path, market="CH")
+        latest_mark = _latest_eex_mark_date(tmp_path, market="CH")
+        if latest_mark is not None:
+            eex_base = load_base_prices_from_eex_report(
+                tmp_path, market="CH", as_of_date=str(latest_mark.date())
+            )
+            eex_mark_date = latest_mark.date()
+        else:
+            eex_base = load_base_prices_from_eex_report(tmp_path, market="CH")
         eex_source = eex_uploaded.name
         try:
             tmp_path.unlink(missing_ok=True)
         except Exception:
             pass
     elif eex_report_path is not None:
-        eex_base = load_base_prices_from_eex_report(eex_report_path, market="CH")
+        latest_mark = _latest_eex_mark_date(eex_report_path, market="CH")
+        if latest_mark is not None:
+            eex_base = load_base_prices_from_eex_report(
+                eex_report_path, market="CH", as_of_date=str(latest_mark.date())
+            )
+            eex_mark_date = latest_mark.date()
+        else:
+            eex_base = load_base_prices_from_eex_report(eex_report_path, market="CH")
         eex_source = str(eex_report_path)
 except Exception as exc:
     st.warning(f"Lecture EEX impossible: {exc}")
@@ -419,7 +448,8 @@ else:
         with c4:
             st.metric("PFC mieux calibree", f"{pfc_win:.1f}%")
 
-        st.caption(f"Source EEX: `{eex_source}`")
+        mark_txt = str(eex_mark_date) if eex_mark_date is not None else "inconnue"
+        st.caption(f"Source EEX: `{eex_source}` | Date mark utilisee: `{mark_txt}`")
 
         fig_cal = go.Figure()
         plot_cal = calib.sort_values(["sort_ts", "product"])
