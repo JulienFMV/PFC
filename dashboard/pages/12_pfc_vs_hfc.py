@@ -56,7 +56,6 @@ with st.sidebar:
                 "Sur Streamlit Cloud, le lecteur H: n'est pas accessible. "
                 "Upload un fichier HFC pour comparer."
             )
-    zoom_days = st.slider("Fenetre recente (jours)", min_value=7, max_value=180, value=45, step=1)
 
 # Main-area uploader (always visible). If provided, it has priority over folder selection.
 uploaded_hfc = st.file_uploader("Uploader un fichier HFC (.xlsx)", type=["xlsx"], key="hfc_upload_main")
@@ -254,10 +253,7 @@ st.caption(
     f"(disponible: {full_window_start} -> {full_window_end})"
 )
 
-recent_cutoff = window_end - pd.Timedelta(days=zoom_days)
-cmp_recent = cmp_scope[cmp_scope.index >= recent_cutoff]
-if cmp_recent.empty:
-    cmp_recent = cmp_scope
+cmp_recent = cmp_scope
 
 fig = go.Figure()
 fig.add_trace(
@@ -279,7 +275,7 @@ fig.add_trace(
     )
 )
 fig.update_layout(
-    title=f"PFC vs HFC - {zoom_days} derniers jours",
+    title="PFC vs HFC - Fenetre selectionnee",
     xaxis_title="Timestamp",
     yaxis_title="EUR/MWh",
     height=420,
