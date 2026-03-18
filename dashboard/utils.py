@@ -288,6 +288,50 @@ def _extract_hfc_series(df: pd.DataFrame) -> pd.Series | None:
     return s if not s.empty else None
 
 
+def _extract_hfc_series_flexible(df: pd.DataFrame) -> pd.Series | None:
+    # Try strict header-based extraction first.
+    s = _extract_hfc_series(df)
+    if s is not None and not s.empty:
+        return s
+
+    if df is None or df.empty:
+        return None
+
+    # Fallback: infer date/value columns by content quality.
+    best_date_col = None
+    best_date_score = -1.0
+    best_num_col = None
+    best_num_score = -1.0
+
+    for col in df.columns:
+        cand_dt = pd.to_datetime(df[col], dayfirst=True, errors="coerce")
+        dt_score = float(cand_dt.notna().mean())
+        if dt_score > best_date_score:
+            best_date_score = dt_score
+            best_date_col = col
+
+        cand_num = pd.to_numeric(df[col], errors="coerce")
+        num_score = float(cand_num.notna().mean())
+        if num_score > best_num_score:
+            best_num_score = num_score
+            best_num_col = col
+
+    if best_date_col is None or best_num_col is None:
+        return None
+    if best_date_col == best_num_col:
+        return None
+    if best_date_score < 0.4 or best_num_score < 0.4:
+        return None
+
+    ts = pd.to_datetime(df[best_date_col], dayfirst=True, errors="coerce")
+    px = pd.to_numeric(df[best_num_col], errors="coerce")
+    s = pd.Series(px.values, index=ts, name="hfc").dropna()
+    s = s[~s.index.isna()].sort_index()
+    if s.index.has_duplicates:
+        s = s.groupby(level=0).mean()
+    return s if not s.empty else None
+
+
 @st.cache_data(ttl=300, show_spinner=False)
 def load_hfc_series(hfc_file: str | Path) -> pd.Series | None:
     path = Path(hfc_file)
@@ -295,23 +339,34 @@ def load_hfc_series(hfc_file: str | Path) -> pd.Series | None:
         return None
     try:
         df = pd.read_excel(path, sheet_name=0)
-        return _extract_hfc_series(df)
+        return _extract_hfc_series_flexible(df)
     except Exception as exc:
         logger.error("Failed to read HFC file %s: %s", path, exc)
         return None
 
 
-def load_hfc_series_from_upload(uploaded_file) -> pd.Series | None:
+def load_hfc_series_from_upload(uploaded_file, return_error: bool = False):
     if uploaded_file is None:
-        return None
+        return (None, "no uploaded file") if return_error else None
     try:
         if hasattr(uploaded_file, "seek"):
             uploaded_file.seek(0)
-        df = pd.read_excel(uploaded_file, sheet_name=0)
-        return _extract_hfc_series(df)
+
+        xls = pd.ExcelFile(uploaded_file)
+        last_err = "no valid sheet"
+        for sheet in xls.sheet_names:
+            try:
+                df = pd.read_excel(xls, sheet_name=sheet)
+                s = _extract_hfc_series_flexible(df)
+                if s is not None and not s.empty:
+                    return (s, "") if return_error else s
+            except Exception as sheet_exc:
+                last_err = f"sheet={sheet}: {sheet_exc}"
+
+        return (None, last_err) if return_error else None
     except Exception as exc:
         logger.error("Failed to read uploaded HFC file: %s", exc)
-        return None
+        return (None, str(exc)) if return_error else None
 
 
 def align_pfc_hfc(

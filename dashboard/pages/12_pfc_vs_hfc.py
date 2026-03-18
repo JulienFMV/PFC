@@ -60,13 +60,15 @@ with st.sidebar:
 uploaded_hfc = st.file_uploader("Uploader un fichier HFC (.xlsx)", type=["xlsx"], key="hfc_upload_main")
 
 if uploaded_hfc is not None:
-    hfc = load_hfc_series_from_upload(uploaded_hfc)
+    hfc, hfc_upload_error = load_hfc_series_from_upload(uploaded_hfc, return_error=True)
     hfc_source_label = uploaded_hfc.name
 elif source_mode == "Dossier benchmark" and selected_file is not None:
     hfc = load_hfc_series(selected_file)
+    hfc_upload_error = ""
     hfc_source_label = selected_file.name
 else:
     hfc = None
+    hfc_upload_error = ""
     hfc_source_label = "-"
 
 if hfc is None or hfc.empty:
@@ -80,6 +82,9 @@ if hfc is None or hfc.empty:
                 "Fichier charge mais non lisible. Verifie le format Excel (colonnes Date + EUR/MWh) "
                 "et re-uploade le fichier."
             )
+            if hfc_upload_error:
+                st.caption("Detail technique:")
+                st.code(hfc_upload_error)
     st.stop()
 
 cmp_df = align_pfc_hfc(pfc, hfc)
