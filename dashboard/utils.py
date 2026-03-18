@@ -305,6 +305,8 @@ def load_hfc_series_from_upload(uploaded_file) -> pd.Series | None:
     if uploaded_file is None:
         return None
     try:
+        if hasattr(uploaded_file, "seek"):
+            uploaded_file.seek(0)
         df = pd.read_excel(uploaded_file, sheet_name=0)
         return _extract_hfc_series(df)
     except Exception as exc:

@@ -72,7 +72,13 @@ if hfc is None or hfc.empty:
     if source_mode == "Dossier benchmark" and selected_file is not None:
         st.error(f"Impossible de lire {selected_file.name}. Colonnes date/prix non detectees.")
     else:
-        st.warning("Upload requis: ajoute un fichier HFC .xlsx pour afficher la comparaison.")
+        if uploaded_hfc is None:
+            st.warning("Upload requis: ajoute un fichier HFC .xlsx pour afficher la comparaison.")
+        else:
+            st.error(
+                "Fichier charge mais non lisible. Verifie le format Excel (colonnes Date + EUR/MWh) "
+                "et re-uploade le fichier."
+            )
     st.stop()
 
 cmp_df = align_pfc_hfc(pfc, hfc)
