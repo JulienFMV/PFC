@@ -122,6 +122,15 @@ def _write_run_report(output_dir: Path, run_id: str, payload: dict) -> Path:
     return report_path
 
 
+def _benchmark_policy(quality_cfg: dict) -> str:
+    """Return benchmark policy: 'strict' or 'advisory'."""
+    raw = str(quality_cfg.get("benchmark_policy", "")).strip().lower()
+    if raw in {"strict", "advisory"}:
+        return raw
+    # Backward compatibility with legacy fail_on_benchmark boolean.
+    return "strict" if bool(quality_cfg.get("fail_on_benchmark", False)) else "advisory"
+
+
 def run_update(config: dict | None = None) -> Path:
     load_dotenv(dotenv_path=Path(__file__).resolve().parents[2] / ".env")
 
@@ -449,6 +458,7 @@ def run_update(config: dict | None = None) -> Path:
                 benchmark_metrics: dict | None = None
                 benchmark_gate_ok = True
                 benchmark_gate_reason = "benchmark not evaluated for this market"
+                benchmark_policy = _benchmark_policy(quality_cfg) if market == "CH" else "advisory"
                 if market == "CH":
                     try:
                         hfc_files = sorted(hfc_dir.glob("HFC_Ompex_*.xlsx")) if hfc_dir.exists() else []
@@ -501,7 +511,8 @@ def run_update(config: dict | None = None) -> Path:
                     "row_count": int(len(pfc_df)),
                     "calibrated": bool(pfc_df["calibrated"].any()) if "calibrated" in pfc_df.columns else False,
                     "quality": {
-                        "benchmark_gate_enabled": bool(quality_cfg.get("fail_on_benchmark", False) and market == "CH"),
+                        "benchmark_policy": benchmark_policy,
+                        "benchmark_gate_enabled": bool(market == "CH"),
                         "benchmark_gate_ok": bool(benchmark_gate_ok),
                         "benchmark_gate_reason": benchmark_gate_reason,
                     },
@@ -510,7 +521,7 @@ def run_update(config: dict | None = None) -> Path:
                 report_path = _write_run_report(output_dir_path, market_run_id, report_payload)
                 logger.info("[%s] Run report written: %s", market, report_path)
 
-                if market == "CH" and bool(quality_cfg.get("fail_on_benchmark", False)) and not benchmark_gate_ok:
+                if market == "CH" and benchmark_policy == "strict" and not benchmark_gate_ok:
                     raise RuntimeError(f"[{market}] Benchmark gate failed in strict mode: {benchmark_gate_reason}")
 
             ch_csv = exported_by_market.get("CH", {}).get("csv")

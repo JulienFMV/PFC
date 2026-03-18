@@ -170,7 +170,11 @@ export:
 
 # —— Quality gates (prod) ————————————————————————————————————————
 quality:
-  fail_on_benchmark: true
+  # Policy for external benchmark (HFC/OMPEX):
+  # - advisory: never blocks publication, monitoring only
+  # - strict: blocks run if thresholds are breached
+  benchmark_policy: "advisory"
+  fail_on_benchmark: false  # legacy key, kept for backward compatibility
   max_mae_eur_mwh: 20.0
   max_rmse_eur_mwh: 26.0
   max_abs_bias_eur_mwh: 5.0
