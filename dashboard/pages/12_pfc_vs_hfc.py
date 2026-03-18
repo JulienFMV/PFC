@@ -56,17 +56,18 @@ with st.sidebar:
             )
     zoom_days = st.slider("Fenetre recente (jours)", min_value=7, max_value=180, value=45, step=1)
 
-# Main-area uploader (always visible even when sidebar is collapsed)
-uploaded_hfc = None
-if source_mode == "Upload manuel (.xlsx)":
-    uploaded_hfc = st.file_uploader("Uploader un fichier HFC (.xlsx)", type=["xlsx"], key="hfc_upload_main")
+# Main-area uploader (always visible). If provided, it has priority over folder selection.
+uploaded_hfc = st.file_uploader("Uploader un fichier HFC (.xlsx)", type=["xlsx"], key="hfc_upload_main")
 
-if source_mode == "Dossier benchmark" and selected_file is not None:
+if uploaded_hfc is not None:
+    hfc = load_hfc_series_from_upload(uploaded_hfc)
+    hfc_source_label = uploaded_hfc.name
+elif source_mode == "Dossier benchmark" and selected_file is not None:
     hfc = load_hfc_series(selected_file)
     hfc_source_label = selected_file.name
 else:
-    hfc = load_hfc_series_from_upload(uploaded_hfc)
-    hfc_source_label = uploaded_hfc.name if uploaded_hfc is not None else "-"
+    hfc = None
+    hfc_source_label = "-"
 
 if hfc is None or hfc.empty:
     if source_mode == "Dossier benchmark" and selected_file is not None:
