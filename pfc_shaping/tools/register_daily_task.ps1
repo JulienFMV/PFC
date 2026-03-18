@@ -1,7 +1,7 @@
 param(
     [string]$TaskName = "PFC_Daily_Update",
     [string]$RunAt = "06:15",
-    [string]$PythonExe = "C:\Users\jbattaglia\.conda\pfc311\python.exe",
+    [string]$PythonExe = "C:\Users\jbattaglia\.conda\ppa_env\python.exe",
     [string]$RepoRoot = "H:\Energy\GeCom\CONTROLLING RISK\Analyses diverses\Python - JB\PFC"
 )
 

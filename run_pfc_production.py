@@ -15,8 +15,8 @@ import warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
 
-# Ensure project root on path
-PROJECT_ROOT = "/Users/julienbattaglia/Desktop/PFC"
+# Ensure project root on path (portable: based on current file location)
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, PROJECT_ROOT)
 os.chdir(PROJECT_ROOT)
 
@@ -407,7 +407,7 @@ out_base = f"{out_dir}/pfc_15min_{today}"
 pfc.to_parquet(f"{out_base}.parquet")
 logger.info("  Saved: %s.parquet (%d rows)", out_base, len(pfc))
 
-pfc.to_csv(f"{out_base}.csv")
+pfc.to_csv(f"{out_base}.csv", sep=";", index_label="timestamp_local")
 logger.info("  Saved: %s.csv", out_base)
 
 # Save model artifacts
@@ -484,7 +484,7 @@ logger.info("  DE PFC assembled: %d rows in %.1fs", len(pfc_de), time.time() - t
 out_base_de = f"{out_dir}/pfc_de_15min_{today}"
 pfc_de.to_parquet(f"{out_base_de}.parquet")
 logger.info("  Saved: %s.parquet (%d rows)", out_base_de, len(pfc_de))
-pfc_de.to_csv(f"{out_base_de}.csv")
+pfc_de.to_csv(f"{out_base_de}.csv", sep=";", index_label="timestamp_local")
 logger.info("  Saved: %s.csv", out_base_de)
 
 # Save DE model artifacts

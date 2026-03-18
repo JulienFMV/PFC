@@ -1,6 +1,6 @@
 """
-PFC Dashboard — Price Forward Curve Monitoring
-===============================================
+PFC Dashboard - Price Forward Curve Monitoring
+==============================================
 Streamlit multi-page app for PFC 15min CH modeling.
 
 Launch:
@@ -17,7 +17,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ── Pages ─────────────────────────────────────────────────────────────────
+# Pages
 overview = st.Page("pages/1_overview.py", title="Overview", icon="📊", default=True)
 pfc_vs_fwd = st.Page("pages/2_pfc_vs_forwards.py", title="PFC vs Forwards", icon="📐")
 pfc_curve = st.Page("pages/2_pfc_curve.py", title="Courbe PFC", icon="📈")
@@ -27,6 +27,7 @@ ch_de = st.Page("pages/7_ch_de_spread.py", title="CH vs DE", icon="↔️")
 shape = st.Page("pages/3_shape_factors.py", title="Shape Factors", icon="🔬")
 backtest = st.Page("pages/4_backtest.py", title="Backtest", icon="🔍")
 control_tower = st.Page("pages/6_control_tower.py", title="Control Tower", icon="🧭")
+hfc_compare = st.Page("pages/12_pfc_vs_hfc.py", title="PFC vs HFC", icon="🆚")
 
 hydro = st.Page("pages/5_hydro.py", title="Hydro & Production", icon="💧")
 outages = st.Page("pages/10_outages.py", title="Indisponibilites", icon="🔴")
@@ -36,12 +37,11 @@ commodities = st.Page("pages/8_commodities.py", title="Commodites", icon="🛢�
 nav = st.navigation(
     {
         "Marche": [overview, pfc_vs_fwd, pfc_curve, short_term, ch_de],
-        "Modele": [shape, backtest, control_tower],
+        "Modele": [shape, backtest, control_tower, hfc_compare],
         "Fondamentaux": [hydro, outages, flows_map, commodities],
     }
 )
 
-# ── Sidebar branding ─────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown(
         """

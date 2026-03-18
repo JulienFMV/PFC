@@ -1,7 +1,7 @@
 # PFC Operations Runbook
 
 ## 1) Preconditions
-- `C:\Users\jbattaglia\.conda\pfc311\python.exe` exists
+- `C:\Users\jbattaglia\.conda\ppa_env\python.exe` exists
 - `H:\Energy\GeCom\MARCHE & NEGOCE\Prix\EEX - ER\Price_Report_EEX.xlsx` reachable
 - `.env` contains:
   - `ENTSOE_API_KEY=...`
@@ -10,7 +10,7 @@
 ## 2) Daily run (manual)
 ```powershell
 cd "H:\Energy\GeCom\CONTROLLING RISK\Analyses diverses\Python - JB\PFC"
-C:\Users\jbattaglia\.conda\pfc311\python.exe -m pfc_shaping.pipeline.rolling_update
+C:\Users\jbattaglia\.conda\ppa_env\python.exe -m pfc_shaping.pipeline.rolling_update
 ```
 
 ## 3) Scheduler setup (Windows Task Scheduler)

@@ -145,17 +145,17 @@ def ingest_data(days_back: int = 7) -> dict:
 
 def run_pfc_production() -> bool:
     """
-    Lance run_pfc_production.py comme sous-processus.
+    Lance la pipeline de production maintenue (rolling_update).
     Retourne True si succès.
     """
     import subprocess
 
     logger.info("=" * 60)
-    logger.info("BUILD: Running PFC production pipeline")
+    logger.info("BUILD: Running rolling_update pipeline")
     logger.info("=" * 60)
 
     result = subprocess.run(
-        [sys.executable, str(ROOT / "run_pfc_production.py")],
+        [sys.executable, "-m", "pfc_shaping.pipeline.rolling_update"],
         cwd=str(ROOT),
         capture_output=True,
         text=True,
@@ -205,15 +205,21 @@ def check_quality_gates() -> bool:
     max_rmse = quality.get("max_rmse_eur_mwh", 26.0)
     max_bias = quality.get("max_abs_bias_eur_mwh", 5.0)
 
-    # Find today's PFC output
+    # Find latest CH PFC output (supports run_id naming: pfc_15min_YYYYMMDD_HHMMSS)
     import pandas as pd
-    today_str = pd.Timestamp.now().strftime("%Y-%m-%d")
-    pfc_path = ROOT / "pfc_shaping" / "output" / f"pfc_15min_{today_str}.parquet"
+    output_dir = ROOT / "pfc_shaping" / "output"
+    pfc_candidates = sorted(output_dir.glob("pfc_15min_*.parquet"), key=lambda p: p.stat().st_mtime)
+    if pfc_candidates:
+        pfc_path = pfc_candidates[-1]
+    else:
+        legacy = output_dir / f"pfc_15min_{pd.Timestamp.now().strftime('%Y-%m-%d')}.parquet"
+        pfc_path = legacy if legacy.exists() else None
 
-    if not pfc_path.exists():
-        logger.warning("PFC output not found: %s", pfc_path)
+    if pfc_path is None:
+        logger.warning("PFC output not found in: %s", output_dir)
         return False
 
+    logger.info("Using latest PFC output: %s", pfc_path.name)
     pfc = pd.read_parquet(pfc_path)
 
     # Sanity checks

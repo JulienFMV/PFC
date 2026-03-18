@@ -9,6 +9,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import plotly.io as pio
@@ -243,6 +244,113 @@ def load_pfc_market(market: str) -> pd.DataFrame | None:
     if csv_path is not None:
         return _safe_read_csv(csv_path, f"PFC-{m}")
     return None
+
+
+def hfc_benchmark_dir() -> Path:
+    cfg = load_config()
+    raw = cfg.get("paths", {}).get("hfc_benchmark_dir", "")
+    return Path(raw) if raw else Path()
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def list_hfc_files(limit: int = 200) -> list[Path]:
+    folder = hfc_benchmark_dir()
+    if not folder.exists():
+        return []
+    files = sorted(folder.glob("*.xlsx"), key=lambda p: p.stat().st_mtime, reverse=True)
+    return files[: max(1, int(limit))]
+
+
+def _first_matching_column(columns: list[str], candidates: list[str]) -> str | None:
+    lower_map = {str(c).strip().lower(): str(c) for c in columns}
+    for cand in candidates:
+        for key, original in lower_map.items():
+            if cand in key:
+                return original
+    return None
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def load_hfc_series(hfc_file: str | Path) -> pd.Series | None:
+    path = Path(hfc_file)
+    if not path.exists():
+        return None
+    try:
+        df = pd.read_excel(path, sheet_name=0)
+        if df.empty:
+            return None
+
+        cols = [str(c) for c in df.columns]
+        ts_col = _first_matching_column(cols, ["date", "heure", "timestamp", "time"])
+        px_col = _first_matching_column(cols, ["eur/mwh", "price", "prix", "ompex"])
+        if ts_col is None or px_col is None:
+            return None
+
+        ts = pd.to_datetime(df[ts_col], dayfirst=True, errors="coerce")
+        px = pd.to_numeric(df[px_col], errors="coerce")
+        s = pd.Series(px.values, index=ts, name="hfc").dropna()
+        s = s[~s.index.isna()].sort_index()
+        if s.index.has_duplicates:
+            s = s.groupby(level=0).mean()
+        return s if not s.empty else None
+    except Exception as exc:
+        logger.error("Failed to read HFC file %s: %s", path, exc)
+        return None
+
+
+def align_pfc_hfc(
+    pfc_df: pd.DataFrame,
+    hfc: pd.Series,
+    pfc_col: str = "price_shape",
+) -> pd.DataFrame:
+    if pfc_df is None or pfc_df.empty or hfc is None or hfc.empty:
+        return pd.DataFrame()
+
+    pfc = pfc_df.copy()
+    if "timestamp_local" in pfc.columns:
+        pfc_ts = pd.to_datetime(pfc["timestamp_local"], errors="coerce")
+        pfc = pfc.drop(columns=["timestamp_local"]).set_index(pfc_ts)
+    if not isinstance(pfc.index, pd.DatetimeIndex):
+        return pd.DataFrame()
+
+    pfc = pfc[~pfc.index.isna()].sort_index()
+    if pfc.index.has_duplicates:
+        pfc = pfc.groupby(level=0).mean(numeric_only=True)
+
+    if pfc_col not in pfc.columns:
+        return pd.DataFrame()
+
+    pfc_s = pd.to_numeric(pfc[pfc_col], errors="coerce").dropna()
+
+    pfc_step = pfc_s.index.to_series().diff().dropna().median()
+    hfc_step = hfc.index.to_series().diff().dropna().median()
+    if pd.notna(pfc_step) and pd.notna(hfc_step) and pfc_step < hfc_step:
+        pfc_cmp = pfc_s.resample("1h").mean()
+    else:
+        pfc_cmp = pfc_s
+
+    df = pd.concat([pfc_cmp.rename("pfc"), hfc.rename("hfc")], axis=1, join="inner").dropna()
+    if df.empty:
+        return df
+
+    df["err"] = df["pfc"] - df["hfc"]
+    df["abs_err"] = df["err"].abs()
+    return df
+
+
+def pfc_hfc_metrics(df: pd.DataFrame) -> dict[str, float]:
+    if df is None or df.empty:
+        return {}
+    err = pd.to_numeric(df["err"], errors="coerce").dropna()
+    if err.empty:
+        return {}
+    return {
+        "n_points": float(len(err)),
+        "mae": float(err.abs().mean()),
+        "rmse": float(np.sqrt((err**2).mean())),
+        "bias": float(err.mean()),
+        "p95_abs_error": float(err.abs().quantile(0.95)),
+    }
 
 
 def _read_duckdb(sql: str, params: list | None = None) -> pd.DataFrame:
