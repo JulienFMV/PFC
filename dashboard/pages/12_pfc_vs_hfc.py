@@ -94,6 +94,8 @@ if cmp_df.empty:
     st.error("Aucun timestamp commun entre PFC et HFC pour ce fichier.")
     st.stop()
 
+cmp_df = cmp_df.sort_index()
+
 
 def _delivery_averages(series: pd.Series, label: str) -> pd.DataFrame:
     s = pd.to_numeric(series, errors="coerce").dropna()
@@ -150,8 +152,36 @@ def _resolve_eex_report_path(cfg: dict) -> Path | None:
     return None
 
 metrics = pfc_hfc_metrics(cmp_df)
-window_start = cmp_df.index.min()
-window_end = cmp_df.index.max()
+full_window_start = cmp_df.index.min()
+full_window_end = cmp_df.index.max()
+
+tomorrow = pd.Timestamp.today().normalize() + pd.Timedelta(days=1)
+default_start = max(full_window_start.normalize(), tomorrow)
+default_end = min(full_window_end.normalize(), pd.Timestamp(year=2029, month=12, day=31))
+if default_start > default_end:
+    default_start = full_window_start.normalize()
+    default_end = full_window_end.normalize()
+
+fcol1, fcol2 = st.columns(2)
+with fcol1:
+    scope_start_date = st.date_input("Debut analyse", value=default_start.date())
+with fcol2:
+    scope_end_date = st.date_input("Fin analyse", value=default_end.date())
+
+scope_start = pd.Timestamp(scope_start_date)
+scope_end = pd.Timestamp(scope_end_date) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
+if scope_end < scope_start:
+    st.error("Fenetre invalide: la date de fin doit etre >= date de debut.")
+    st.stop()
+
+cmp_scope = cmp_df[(cmp_df.index >= scope_start) & (cmp_df.index <= scope_end)]
+if cmp_scope.empty:
+    st.error("Aucune donnee PFC/HFC dans la fenetre selectionnee.")
+    st.stop()
+
+metrics = pfc_hfc_metrics(cmp_scope)
+window_start = cmp_scope.index.min()
+window_end = cmp_scope.index.max()
 quality_cfg = (load_config() or {}).get("quality", {})
 mae_limit = float(quality_cfg.get("max_mae_eur_mwh", 20.0))
 rmse_limit = float(quality_cfg.get("max_rmse_eur_mwh", 26.0))
@@ -188,13 +218,14 @@ else:
 
 st.caption(
     f"Fichier HFC: `{hfc_source_label}` | Dossier config: `{hfc_dir}` | "
-    f"Fenetre comparee: {window_start} -> {window_end}"
+    f"Fenetre comparee: {window_start} -> {window_end} "
+    f"(disponible: {full_window_start} -> {full_window_end})"
 )
 
 recent_cutoff = window_end - pd.Timedelta(days=zoom_days)
-cmp_recent = cmp_df[cmp_df.index >= recent_cutoff]
+cmp_recent = cmp_scope[cmp_scope.index >= recent_cutoff]
 if cmp_recent.empty:
-    cmp_recent = cmp_df
+    cmp_recent = cmp_scope
 
 fig = go.Figure()
 fig.add_trace(
@@ -243,7 +274,7 @@ with col_b:
     fig_hist = go.Figure()
     fig_hist.add_trace(
         go.Histogram(
-            x=cmp_df["err"],
+            x=cmp_scope["err"],
             nbinsx=50,
             name="Distribution difference",
             marker_color=COLORS["blue"],
@@ -254,7 +285,7 @@ with col_b:
     fig_hist.update_layout(title="Distribution des differences", xaxis_title="EUR/MWh", height=320)
     st.plotly_chart(fig_hist, use_container_width=True)
 
-hm = cmp_df.copy()
+hm = cmp_scope.copy()
 hm["hour"] = hm.index.hour
 hm["weekday"] = hm.index.dayofweek
 pivot = hm.pivot_table(index="hour", columns="weekday", values="abs_err", aggfunc="mean")
@@ -309,8 +340,8 @@ except Exception as exc:
 if not eex_base:
     st.info("Aucun prix EEX disponible. Upload le fichier Price_Report_EEX.xlsx pour comparer la calibration.")
 else:
-    pfc_avg = _delivery_averages(cmp_df["pfc"], "pfc_base")
-    hfc_avg = _delivery_averages(cmp_df["hfc"], "hfc_base")
+    pfc_avg = _delivery_averages(cmp_scope["pfc"], "pfc_base")
+    hfc_avg = _delivery_averages(cmp_scope["hfc"], "hfc_base")
     eex_df = _eex_dict_to_df(eex_base)
 
     calib = (
@@ -373,13 +404,20 @@ else:
         ].sort_values(["product_type", "product"])
         st.dataframe(view, hide_index=True, use_container_width=True)
 
+        st.markdown("**Focus forwards Cal 2027-2029**")
+        focus = view[(view["product_type"] == "Cal") & (view["product"].isin(["2027", "2028", "2029"]))]
+        if focus.empty:
+            st.info("Aucun produit Cal 2027-2029 commun dans la fenetre et les prix EEX charges.")
+        else:
+            st.dataframe(focus, hide_index=True, use_container_width=True)
+
 with st.expander("Table detaillee"):
-    out = cmp_df.copy()
+    out = cmp_scope.copy()
     out = out.reset_index().rename(columns={"index": "timestamp"})
     st.dataframe(out.tail(500), hide_index=True, use_container_width=True)
 
 export_csv_button(
-    cmp_df.reset_index().rename(columns={"index": "timestamp"}),
+    cmp_scope.reset_index().rename(columns={"index": "timestamp"}),
     filename=f"pfc_vs_hfc_{Path(hfc_source_label).stem}.csv",
     label="Exporter comparaison (CSV)",
 )
