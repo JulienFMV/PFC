@@ -392,15 +392,31 @@ def align_pfc_hfc(
         return pd.DataFrame()
 
     pfc_s = pd.to_numeric(pfc[pfc_col], errors="coerce").dropna()
+    if pfc_s.empty:
+        return pd.DataFrame()
+
+    def _to_zurich_naive(idx: pd.DatetimeIndex) -> pd.DatetimeIndex:
+        # Compare on the same local wall-clock timeline to avoid tz mismatch
+        # (e.g., UTC-aware PFC vs naive local HFC timestamps).
+        if getattr(idx, "tz", None) is not None:
+            return idx.tz_convert("Europe/Zurich").tz_localize(None)
+        return idx
+
+    pfc_s.index = _to_zurich_naive(pd.DatetimeIndex(pfc_s.index))
+    hfc_norm = hfc.copy()
+    hfc_norm.index = _to_zurich_naive(pd.DatetimeIndex(hfc_norm.index))
+    hfc_norm = hfc_norm.sort_index()
+    if hfc_norm.index.has_duplicates:
+        hfc_norm = hfc_norm.groupby(level=0).mean()
 
     pfc_step = pfc_s.index.to_series().diff().dropna().median()
-    hfc_step = hfc.index.to_series().diff().dropna().median()
+    hfc_step = hfc_norm.index.to_series().diff().dropna().median()
     if pd.notna(pfc_step) and pd.notna(hfc_step) and pfc_step < hfc_step:
         pfc_cmp = pfc_s.resample("1h").mean()
     else:
         pfc_cmp = pfc_s
 
-    df = pd.concat([pfc_cmp.rename("pfc"), hfc.rename("hfc")], axis=1, join="inner").dropna()
+    df = pd.concat([pfc_cmp.rename("pfc"), hfc_norm.rename("hfc")], axis=1, join="inner").dropna()
     if df.empty:
         return df
 
