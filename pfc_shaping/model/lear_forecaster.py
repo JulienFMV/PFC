@@ -426,6 +426,66 @@ class LEARForecaster:
         weights = weights / weights.sum()
         return float(np.dot(np.array(preds, dtype=float), weights))
 
+    def _recent_bias_by_regime(
+        self,
+        X_full: pd.DataFrame,
+        y_full: pd.Series,
+        lasso_models: list,
+        recent_n: int = 14,
+    ) -> tuple[float, float, float]:
+        """Estimate recent bias for overall/weekday/weekend using in-sample recent fit."""
+        n = max(8, min(recent_n, len(y_full) // 4))
+        if n < 8:
+            return 0.0, 0.0, 0.0
+
+        y_recent = y_full.iloc[-n:].values.astype(float)
+        idx_recent = pd.to_datetime(X_full.iloc[-n:].index)
+        pred_recent = []
+        for i in range(n):
+            x_row = X_full.iloc[-n + i].values.astype(float).reshape(1, -1)
+            row_preds = []
+            row_maes = []
+            for model, mu, sigma, scaler, _, _, val_mae in lasso_models:
+                x_scaled = scaler.transform(np.nan_to_num(x_row, nan=0.0))
+                pred_t = model.predict(x_scaled)[0]
+                row_preds.append(_asinh_inverse(pred_t, mu, sigma))
+                row_maes.append(val_mae)
+            pred_recent.append(self._weighted_model_average(row_preds, row_maes))
+
+        err = np.array(pred_recent, dtype=float) - y_recent
+        overall = float(np.nanmean(err))
+        weekend_mask = idx_recent.dayofweek >= 5
+        if weekend_mask.any():
+            weekend = float(np.nanmean(err[weekend_mask]))
+        else:
+            weekend = overall
+        if (~weekend_mask).any():
+            weekday = float(np.nanmean(err[~weekend_mask]))
+        else:
+            weekday = overall
+        return overall, weekday, weekend
+
+    def _apply_spike_uplift(
+        self,
+        pred: float,
+        y_full: pd.Series,
+        days_ahead: int,
+    ) -> float:
+        """Add a controlled uplift in high-price regimes to reduce tail underprediction."""
+        if len(y_full) < 30:
+            return pred
+        recent = y_full.iloc[-min(90, len(y_full)) :].values.astype(float)
+        q75 = float(np.quantile(recent, 0.75))
+        q90 = float(np.quantile(recent, 0.90))
+        spread = max(1.0, q90 - q75)
+        if pred <= q75:
+            return pred
+        intensity = min(1.5, (pred - q75) / spread)
+        horizon_scale = 1.0 + 0.06 * max(days_ahead - 1, 0)
+        uplift = intensity * spread * 0.35 * horizon_scale
+        uplift = min(16.0, uplift)
+        return float(pred + uplift)
+
     def _fit_lasso_for_hour(
         self,
         X_full: pd.DataFrame,
@@ -652,23 +712,9 @@ class LEARForecaster:
             else:
                 mlp_model, mlp_scaler = None, None
 
-            # Estimate recent per-hour bias from the model itself (last 14 observations).
-            recent_n = max(8, min(14, len(y_full) // 4))
-            recent_bias = 0.0
-            if recent_n >= 8:
-                y_recent = y_full.iloc[-recent_n:].values.astype(float)
-                pred_recent = []
-                for idx in range(recent_n):
-                    x_row = X_full.iloc[-recent_n + idx].values.astype(float).reshape(1, -1)
-                    row_preds = []
-                    row_maes = []
-                    for model, mu, sigma, scaler, _, _, val_mae in lasso_models:
-                        x_scaled = scaler.transform(np.nan_to_num(x_row, nan=0.0))
-                        pred_t = model.predict(x_scaled)[0]
-                        row_preds.append(_asinh_inverse(pred_t, mu, sigma))
-                        row_maes.append(val_mae)
-                    pred_recent.append(self._weighted_model_average(row_preds, row_maes))
-                recent_bias = float(np.mean(np.array(pred_recent, dtype=float) - y_recent))
+            recent_bias, weekday_bias, weekend_bias = self._recent_bias_by_regime(
+                X_full, y_full, lasso_models, recent_n=14
+            )
 
             # Conformal residuals
             conf_residuals = self._compute_conformal_residuals(
@@ -708,6 +754,8 @@ class LEARForecaster:
                 # Bias correction with horizon damping.
                 horizon_bias_weight = max(0.25, 1.0 - 0.06 * (d - 1))
                 recalibrated = recalibrated - horizon_bias_weight * recent_bias
+                regime_bias = weekend_bias if pd.Timestamp(forecast_date).dayofweek >= 5 else weekday_bias
+                recalibrated = recalibrated - 0.55 * horizon_bias_weight * regime_bias
 
                 # Ensemble: adaptive average with MLP (reduce MLP weight on long horizon).
                 if mlp_model is not None and x_pred is not None:
@@ -736,6 +784,8 @@ class LEARForecaster:
                 else:
                     final_pred = recalibrated
 
+                # Tail regime correction to reduce underprediction of spikes.
+                final_pred = self._apply_spike_uplift(final_pred, y_full, d)
                 final_pred = max(final_pred, -50.0)
 
                 # Conformal intervals
@@ -948,6 +998,9 @@ class LEARForecaster:
                 lasso_models = self._fit_lasso_for_hour(X_full, y_full, hour)
                 if not lasso_models:
                     continue
+                recent_bias, weekday_bias, weekend_bias = self._recent_bias_by_regime(
+                    X_full, y_full, lasso_models, recent_n=14
+                )
 
                 # LASSO predictions
                 preds = []
@@ -976,6 +1029,11 @@ class LEARForecaster:
                     y_full,
                     horizon,
                 )
+                horizon_bias_weight = max(0.25, 1.0 - 0.06 * (horizon - 1))
+                forecast = forecast - horizon_bias_weight * recent_bias
+                regime_bias = weekend_bias if pd.Timestamp(target_date).dayofweek >= 5 else weekday_bias
+                forecast = forecast - 0.55 * horizon_bias_weight * regime_bias
+                forecast = self._apply_spike_uplift(forecast, y_full, horizon)
 
                 # AR error correction: use lag-1 and lag-2 errors
                 if hour in prev_day_errors:
