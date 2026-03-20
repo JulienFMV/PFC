@@ -69,7 +69,7 @@ class LEARForecaster:
     """
 
     CALIBRATION_WINDOWS = [42, 56, 84, 180, 365]  # days
-    LAGS_DAYS = [1, 2, 3, 7]  # price lag structure
+    LAGS_DAYS = [1, 2, 3, 7, 14]  # price lag structure
 
     def __init__(
         self,
@@ -257,6 +257,25 @@ class LEARForecaster:
             features_list.append(lagged.max(axis=1).values)
             feature_names.append(f"price_max_d-{lag}")
 
+        # Same-day-of-week memory: stabilize long horizons on recurring weekday/weekend regimes.
+        weekly_target_frames = []
+        weekly_mean_frames = []
+        for lag in [7, 14, 21, 28]:
+            lagged = complete.shift(lag)
+            if target_hour in lagged.columns:
+                weekly_target_frames.append(lagged[target_hour])
+            weekly_mean_frames.append(lagged.mean(axis=1))
+
+        if weekly_target_frames:
+            same_dow_target = pd.concat(weekly_target_frames, axis=1).mean(axis=1)
+            features_list.append(same_dow_target.values)
+            feature_names.append(f"price_same_dow_mean_h{target_hour:02d}")
+
+        if weekly_mean_frames:
+            same_dow_daily_mean = pd.concat(weekly_mean_frames, axis=1).mean(axis=1)
+            features_list.append(same_dow_daily_mean.values)
+            feature_names.append("price_same_dow_daily_mean")
+
         # Price momentum: d-1 vs d-2 change (trend signal)
         if target_hour in complete.columns:
             d1 = complete.shift(1)[target_hour]
@@ -377,6 +396,14 @@ class LEARForecaster:
         is_weekend = (dow >= 5).astype(float)
         features_list.append(is_weekend)
         feature_names.append("is_weekend")
+
+        # Hour-specific regime dummies for the main long-horizon failure modes.
+        if target_hour in {10, 11, 12, 13, 14}:
+            features_list.append(is_weekend)
+            feature_names.append("weekend_midday_regime")
+        if target_hour in {7, 18, 19}:
+            features_list.append((dow < 5).astype(float))
+            feature_names.append("weekday_peak_regime")
 
         # Month sin/cos (captures seasonality)
         month = pd.to_datetime(dates).month
@@ -862,7 +889,11 @@ class LEARForecaster:
 
         for i, col_name in enumerate(cols):
             # ── Price features ──
-            if col_name.startswith("price_") and "_d-" in col_name:
+            if col_name.startswith("price_same_dow_mean_h"):
+                vals = X_full[col_name].dropna()
+                x[i] = vals.iloc[-1] if not vals.empty else 0.0
+
+            elif col_name.startswith("price_") and "_d-" in col_name:
                 if "mean" in col_name or "peak" in col_name or "offpeak" in col_name or "max" in col_name:
                     # Aggregate: use last known value (shifted if needed)
                     lag_str = col_name.split("_d-")[1]
@@ -908,6 +939,14 @@ class LEARForecaster:
             elif col_name == "is_weekend":
                 if isinstance(forecast_date, datetime.date):
                     x[i] = 1.0 if forecast_date.weekday() >= 5 else 0.0
+
+            elif col_name == "weekend_midday_regime":
+                if isinstance(forecast_date, datetime.date):
+                    x[i] = 1.0 if forecast_date.weekday() >= 5 else 0.0
+
+            elif col_name == "weekday_peak_regime":
+                if isinstance(forecast_date, datetime.date):
+                    x[i] = 1.0 if forecast_date.weekday() < 5 else 0.0
 
             elif col_name == "month_sin":
                 if isinstance(forecast_date, datetime.date):
