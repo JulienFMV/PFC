@@ -32,6 +32,7 @@ from datetime import timedelta
 
 import numpy as np
 import pandas as pd
+from sklearn.ensemble import HistGradientBoostingRegressor
 from sklearn.linear_model import ElasticNetCV, QuantileRegressor
 from sklearn.neural_network import MLPRegressor
 from sklearn.preprocessing import StandardScaler
@@ -377,6 +378,13 @@ class LEARForecaster:
                     features_list.append(spread.values)
                     feature_names.append(f"ch_de_spread_d-1_h{target_hour:02d}")
 
+                    # Swiss Market Intelligence: CH-DE congestion binary
+                    # When |spread| > 2 EUR/MWh, borders are congested and
+                    # CH prices decouple from DE (autocorrelation ~0.7)
+                    congestion = (spread.abs() > 2.0).astype(float)
+                    features_list.append(congestion.values)
+                    feature_names.append("ch_de_congestion_d-1")
+
         # ── 3. Exogenous features ──
         exog_cols = [c for c in exog.columns
                      if c in ["load_mw", "solar_mw", "wind_mw", "outages_mw"]]
@@ -439,6 +447,12 @@ class LEARForecaster:
                 daily_aligned = daily_avg.reindex(complete.index)
                 features_list.append(daily_aligned.values)
                 feature_names.append("hydro_fill")
+
+                # Swiss Market Intelligence: hydro fill delta (rate of change)
+                # Captures filling (snowmelt) vs emptying (winter drawdown)
+                hydro_delta_7d = daily_aligned - daily_aligned.shift(7)
+                features_list.append(hydro_delta_7d.values)
+                feature_names.append("hydro_fill_delta_7d")
 
         # ── 6. Calendar features ──
         dow = pd.to_datetime(dates).dayofweek
@@ -731,6 +745,46 @@ class LEARForecaster:
         uplift = intensity * spread * 0.35 * horizon_scale
         uplift = min(16.0, uplift)
         return float(pred + uplift)
+
+    def _fit_gbm_for_hour(
+        self,
+        hour: int,
+        X_full: pd.DataFrame,
+        y_full: pd.Series,
+    ) -> tuple | None:
+        """Fit HistGradientBoosting for peak hours (captures nonlinearities).
+
+        GBM is used as an ensemble member alongside LASSO for peak hours
+        where price dynamics are nonlinear (load ramp, solar decline, etc.).
+        Lago et al. (2021) showed LEAR+DNN reduces MAE 5-10% on peak.
+        """
+        n = min(365, len(y_full))
+        if n < 60:
+            return None
+
+        X_train = X_full.iloc[-n:]
+        y_train = y_full.iloc[-n:]
+
+        X_arr = np.nan_to_num(X_train.values.astype(float), nan=0.0)
+        y_arr = y_train.values.astype(float)
+
+        try:
+            gbm = HistGradientBoostingRegressor(
+                max_iter=200,
+                max_depth=5,
+                learning_rate=0.05,
+                min_samples_leaf=10,
+                l2_regularization=1.0,
+                random_state=self.random_state,
+                early_stopping=True,
+                validation_fraction=0.15,
+                n_iter_no_change=20,
+            )
+            gbm.fit(X_arr, y_arr)
+            return gbm
+        except Exception as exc:
+            logger.debug("  GBM h=%d failed: %s", hour, exc)
+            return None
 
     def _fit_lasso_for_hour(
         self,
@@ -1404,6 +1458,26 @@ class LEARForecaster:
                 forecast = forecast - horizon_bias_weight * recent_bias
                 regime_bias = weekend_bias if pd.Timestamp(target_date).dayofweek >= 5 else weekday_bias
                 forecast = forecast - 0.55 * horizon_bias_weight * regime_bias
+
+                # GBM ensemble for peak hours (captures nonlinear dynamics)
+                if hour in PEAK_HOURS and x_pred is not None:
+                    gbm_model = self._fit_gbm_for_hour(hour, X_full, y_full)
+                    if gbm_model is not None:
+                        x_gbm = np.nan_to_num(x_pred.reshape(1, -1), nan=0.0)
+                        gbm_pred = float(gbm_model.predict(x_gbm)[0])
+                        # Evaluate GBM vs LASSO on recent data
+                        n_eval = max(8, min(14, len(y_full) // 4))
+                        X_ev = np.nan_to_num(X_full.iloc[-n_eval:].values.astype(float), nan=0.0)
+                        y_ev = y_full.iloc[-n_eval:].values.astype(float)
+                        gbm_mae = self._safe_mae(y_ev, gbm_model.predict(X_ev))
+                        lasso_mae_ev = self._safe_mae(y_ev, np.full(n_eval, forecast))
+                        # Adaptive weight: GBM gets 15-40% based on relative accuracy
+                        inv_gbm = 1.0 / max(1e-6, gbm_mae)
+                        inv_lasso = 1.0 / max(1e-6, lasso_mae_ev)
+                        w_gbm = inv_gbm / (inv_gbm + inv_lasso)
+                        w_gbm = max(0.15, min(0.40, w_gbm))
+                        forecast = (1.0 - w_gbm) * forecast + w_gbm * gbm_pred
+
                 forecast = self._apply_spike_uplift(forecast, y_full, horizon)
 
                 # AR error correction with regime-adaptive coefficients
