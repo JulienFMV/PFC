@@ -11,3 +11,7 @@ entsoe-py>=0.6
 requests>=2.31
 yfinance>=0.2.36
 openpyxl>=3.1
+# Optional: foundation model ensemble (zero-shot forecasting)
+# pip install torch chronos-forecasting
+# torch>=2.0
+# chronos-forecasting>=1.4

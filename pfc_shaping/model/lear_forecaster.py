@@ -37,6 +37,8 @@ from sklearn.neural_network import MLPRegressor
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import TimeSeriesSplit
 
+from pfc_shaping.model.foundation_forecaster import FoundationForecaster
+
 logger = logging.getLogger(__name__)
 
 # Peak hours (CET) for Swiss market
@@ -76,11 +78,14 @@ class LEARForecaster:
         tz: str = "Europe/Zurich",
         max_iter: int = 2500,
         random_state: int = 42,
+        use_foundation_model: bool = True,
     ):
         self.tz = tz
         self.max_iter = max_iter
         self.random_state = random_state
+        self.use_foundation_model = use_foundation_model
         self._fitted = False
+        self._fm = FoundationForecaster() if use_foundation_model else None
 
     def fit(
         self,
@@ -714,6 +719,18 @@ class LEARForecaster:
             tz=self.tz,
         )
 
+        # Foundation model: generate zero-shot forecast for full horizon
+        fm_preds = None
+        if self._fm is not None and self._fm.available:
+            fm_result = self._fm.forecast(
+                self.prices_h_,
+                horizon=24 * horizon_days,
+                quantiles=(0.10, 0.50, 0.90),
+            )
+            if fm_result is not None:
+                fm_preds = fm_result
+                logger.info("Foundation model forecast: %d hours generated", len(fm_result["median"]))
+
         all_forecasts = []
         n_mlp_used = 0
 
@@ -811,11 +828,20 @@ class LEARForecaster:
                 else:
                     final_pred = recalibrated
 
+                # Foundation model blending (if available)
+                if fm_preds is not None:
+                    fm_idx = (d - 1) * 24 + hour
+                    if fm_idx < len(fm_preds["median"]):
+                        fm_price = float(fm_preds["median"][fm_idx])
+                        # Adaptive weight: FM gets 20-30% weight, less on longer horizons
+                        w_fm = max(0.15, 0.30 - 0.02 * (d - 1))
+                        final_pred = (1.0 - w_fm) * final_pred + w_fm * fm_price
+
                 # Tail regime correction to reduce underprediction of spikes.
                 final_pred = self._apply_spike_uplift(final_pred, y_full, d)
                 final_pred = max(final_pred, -50.0)
 
-                # Conformal intervals
+                # Conformal intervals (blend with FM quantiles if available)
                 q_low = float(min(quantiles)) if len(quantiles) > 0 else 0.10
                 q_high = float(max(quantiles)) if len(quantiles) > 0 else 0.90
                 tail_q = max(q_high, 1.0 - q_low)
@@ -830,6 +856,15 @@ class LEARForecaster:
                     z = 1.28 if tail_q <= 0.90 else 1.64
                     p10 = final_pred - z * spread
                     p90 = final_pred + z * spread
+
+                # Blend with FM quantiles for better calibrated intervals
+                if fm_preds is not None:
+                    fm_idx = (d - 1) * 24 + hour
+                    if fm_idx < len(fm_preds.get("q10", [])):
+                        fm_q10 = float(fm_preds["q10"][fm_idx])
+                        fm_q90 = float(fm_preds["q90"][fm_idx])
+                        p10 = 0.6 * p10 + 0.4 * fm_q10
+                        p90 = 0.6 * p90 + 0.4 * fm_q90
 
                 all_forecasts.append({
                     "date": forecast_date,
@@ -1004,6 +1039,19 @@ class LEARForecaster:
         results = []
         test_dates = all_dates[-(n_days + horizon - 1): -horizon + 1] if horizon > 1 else all_dates[-n_days:]
 
+        # Foundation model: pre-generate all forecasts if available
+        fm_daily_cache: dict[str, dict] = {}
+        if self._fm is not None and self._fm.available:
+            for test_date in test_dates:
+                cutoff = pd.Timestamp(test_date, tz=self.tz).tz_convert("UTC")
+                prices_trunc = self.prices_h_[:cutoff]
+                if len(prices_trunc) >= 168:
+                    fm_result = self._fm.forecast(prices_trunc, horizon=24)
+                    if fm_result is not None:
+                        fm_daily_cache[str(test_date)] = fm_result
+            if fm_daily_cache:
+                logger.info("Foundation model backtest: %d/%d days cached", len(fm_daily_cache), len(test_dates))
+
         # Track previous day's errors for AR correction (lag-1 and lag-2)
         prev_day_errors: dict[int, float] = {}  # hour -> error (lag-1)
         prev2_day_errors: dict[int, float] = {}  # hour -> error (lag-2)
@@ -1092,6 +1140,15 @@ class LEARForecaster:
                 if len(error_history[hour]) >= 3:
                     recent_bias = float(np.mean(error_history[hour][-14:]))  # last 14 days
                     forecast = forecast - 0.7 * recent_bias  # strong correction
+
+                # Foundation model blending in backtest
+                fm_key = str(test_date) if horizon == 1 else str(all_dates[pos])
+                if fm_key in fm_daily_cache:
+                    fm_data = fm_daily_cache[fm_key]
+                    if hour < len(fm_data["median"]):
+                        fm_price = float(fm_data["median"][hour])
+                        w_fm = max(0.15, 0.30 - 0.02 * (horizon - 1))
+                        forecast = (1.0 - w_fm) * forecast + w_fm * fm_price
 
                 # Clamp forecast to physical bounds
                 forecast = float(np.clip(forecast, -500, 1000))
