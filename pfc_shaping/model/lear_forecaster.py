@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import logging
 from datetime import timedelta
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -145,6 +146,7 @@ class LEARForecaster:
         commodities: pd.DataFrame | None = None,
         hydro: pd.DataFrame | None = None,
         epex_de_15min: pd.DataFrame | None = None,
+        de_renewable_forecast: pd.DataFrame | None = None,
     ) -> "LEARForecaster":
         """Prepare hourly data matrices for LEAR training."""
         # Aggregate EPEX CH to hourly
@@ -200,6 +202,31 @@ class LEARForecaster:
                 if fill.index.tz is None:
                     fill.index = fill.index.tz_localize("UTC")
                 exog["hydro_fill"] = fill.resample("h").ffill()
+
+        # DE renewable forecasts (wind + solar day-ahead from ENTSO-E)
+        if de_renewable_forecast is None:
+            # Auto-load from parquet if available
+            _de_re_path = Path(__file__).resolve().parent.parent / "data" / "de_renewable_forecast.parquet"
+            if _de_re_path.exists():
+                de_renewable_forecast = pd.read_parquet(_de_re_path)
+                logger.info("DE renewable forecasts auto-loaded: %d rows", len(de_renewable_forecast))
+
+        if de_renewable_forecast is not None and not de_renewable_forecast.empty:
+            for col in ["forecast_wind_de_mw", "forecast_solar_de_mw"]:
+                if col in de_renewable_forecast.columns:
+                    s = de_renewable_forecast[col].dropna()
+                    if not s.empty:
+                        if s.index.tz is None:
+                            s.index = s.index.tz_localize("UTC")
+                        exog[col] = s.resample("h").mean()
+            # Total DE renewable forecast
+            if "forecast_wind_de_mw" in exog.columns and "forecast_solar_de_mw" in exog.columns:
+                exog["forecast_renewable_de_mw"] = (
+                    exog["forecast_wind_de_mw"].fillna(0) + exog["forecast_solar_de_mw"].fillna(0)
+                )
+            logger.info("  DE renewable forecasts: wind=%.0f MW avg, solar=%.0f MW avg",
+                        exog.get("forecast_wind_de_mw", pd.Series([0])).mean(),
+                        exog.get("forecast_solar_de_mw", pd.Series([0])).mean())
 
         # Align
         common_idx = self.prices_h_.index
@@ -385,7 +412,32 @@ class LEARForecaster:
                     features_list.append(congestion.values)
                     feature_names.append("ch_de_congestion_d-1")
 
-        # ── 3. Exogenous features ──
+        # ── 3. DE renewable forecasts (day-ahead wind + solar) ──
+        for re_col in ["forecast_wind_de_mw", "forecast_solar_de_mw", "forecast_renewable_de_mw"]:
+            if re_col in exog.columns:
+                re_series = exog[re_col].dropna()
+                if not re_series.empty:
+                    re_local = re_series.index.tz_convert(self.tz)
+                    re_df = pd.DataFrame({
+                        "date": re_local.date, "hour": re_local.hour,
+                        "value": re_series.values,
+                    })
+                    re_pivot = re_df.pivot_table(
+                        index="date", columns="hour", values="value", aggfunc="mean"
+                    )
+                    re_pivot = re_pivot.reindex(complete.index)
+
+                    # D+0 forecast (available at auction time)
+                    if target_hour in re_pivot.columns:
+                        features_list.append(re_pivot[target_hour].values)
+                        feature_names.append(f"{re_col}_d0_h{target_hour:02d}")
+
+                    # D-1 forecast (yesterday's same hour)
+                    if target_hour in re_pivot.columns:
+                        features_list.append(re_pivot.shift(1)[target_hour].values)
+                        feature_names.append(f"{re_col}_d-1_h{target_hour:02d}")
+
+        # ── 4. Exogenous features (CH) ──
         exog_cols = [c for c in exog.columns
                      if c in ["load_mw", "solar_mw", "wind_mw", "outages_mw"]]
 
