@@ -41,6 +41,22 @@ from pfc_shaping.model.foundation_forecaster import FoundationForecaster
 
 logger = logging.getLogger(__name__)
 
+# Holiday sets for Swiss and German markets (lazy-initialized)
+_HOLIDAY_CACHE: dict[int, tuple[set, set]] = {}
+
+
+def _get_holidays(year: int) -> tuple[set, set]:
+    """Return (CH holidays, DE holidays) for a given year. Cached."""
+    if year not in _HOLIDAY_CACHE:
+        try:
+            import holidays as hol
+            ch = set(hol.Switzerland(years=year, subdiv="VS").keys())
+            de = set(hol.Germany(years=year).keys())
+        except ImportError:
+            ch, de = set(), set()
+        _HOLIDAY_CACHE[year] = (ch, de)
+    return _HOLIDAY_CACHE[year]
+
 # Peak hours (CET) for Swiss market
 PEAK_HOURS = list(range(7, 20))  # h07-h19
 OFFPEAK_HOURS = [h for h in range(24) if h not in PEAK_HOURS]
@@ -417,6 +433,39 @@ class LEARForecaster:
         features_list.append(np.cos(2 * np.pi * month / 12))
         feature_names.append("month_cos")
 
+        # ── 7. Holiday features (CH + DE) ──
+        dt_dates = pd.to_datetime(dates)
+        is_holiday_ch = np.zeros(n_dates)
+        is_holiday_de = np.zeros(n_dates)
+        for i, d in enumerate(dt_dates):
+            ch_hols, de_hols = _get_holidays(d.year)
+            if d.date() in ch_hols:
+                is_holiday_ch[i] = 1.0
+            if d.date() in de_hols:
+                is_holiday_de[i] = 1.0
+        features_list.append(is_holiday_ch)
+        feature_names.append("is_holiday_ch")
+        features_list.append(is_holiday_de)
+        feature_names.append("is_holiday_de")
+
+        # ── 8. Fuel stack proxy (marginal cost of gas plants) ──
+        # gas_price * heat_rate + co2_price * emission_factor
+        gas_col = next((c for c in exog.columns if "ttf" in c.lower() or "gas" in c.lower()), None)
+        co2_col = next((c for c in exog.columns if "co2" in c.lower() or "eua" in c.lower()), None)
+        if gas_col and co2_col:
+            gas_daily = exog[gas_col].dropna()
+            co2_daily = exog[co2_col].dropna()
+            if not gas_daily.empty and not co2_daily.empty:
+                gas_local = gas_daily.index.tz_convert(self.tz)
+                gas_df = pd.DataFrame({"date": gas_local.date, "value": gas_daily.values})
+                gas_by_date = gas_df.groupby("date")["value"].mean()
+                co2_local = co2_daily.index.tz_convert(self.tz)
+                co2_df = pd.DataFrame({"date": co2_local.date, "value": co2_daily.values})
+                co2_by_date = co2_df.groupby("date")["value"].mean()
+                fuel_proxy = (gas_by_date * 2.0 + co2_by_date * 0.37).reindex(complete.index)
+                features_list.append(fuel_proxy.shift(1).values)
+                feature_names.append("fuel_stack_proxy_d-1")
+
         # Assemble
         X = np.column_stack(features_list)
         X_df = pd.DataFrame(X, index=complete.index, columns=feature_names)
@@ -447,7 +496,11 @@ class LEARForecaster:
         preds: list[float],
         val_maes: list[float],
     ) -> float:
-        """Weighted mean of model predictions based on recent validation MAE."""
+        """Weighted mean of model predictions with window pruning.
+
+        Windows with MAE > 1.5x the best window get zero weight (Marcjasz 2023).
+        Remaining windows are combined via inverse-MAE weighting.
+        """
         if not preds:
             return float("nan")
         if len(preds) == 1 or len(val_maes) != len(preds):
@@ -547,7 +600,11 @@ class LEARForecaster:
                     cv=cv,
                     random_state=self.random_state,
                 )
-                model.fit(X_scaled, y_t)
+                # Exponential decay weighting: recent obs matter more
+                # Half-life 180 days (Paraschiv et al., Swiss market)
+                days_ago = np.arange(n)[::-1].astype(float)
+                sample_weights = np.exp(-days_ago * (np.log(2) / 180))
+                model.fit(X_scaled, y_t, sample_weight=sample_weights)
 
                 # Recent out-of-time validation error (last 14 obs in this window)
                 n_val = max(5, min(14, n // 4))
@@ -985,6 +1042,16 @@ class LEARForecaster:
                 if isinstance(forecast_date, datetime.date):
                     x[i] = np.cos(2 * np.pi * forecast_date.month / 12)
 
+            elif col_name == "is_holiday_ch":
+                if isinstance(forecast_date, datetime.date):
+                    ch_hols, _ = _get_holidays(forecast_date.year)
+                    x[i] = 1.0 if forecast_date in ch_hols else 0.0
+
+            elif col_name == "is_holiday_de":
+                if isinstance(forecast_date, datetime.date):
+                    _, de_hols = _get_holidays(forecast_date.year)
+                    x[i] = 1.0 if forecast_date in de_hols else 0.0
+
             # ── Exogenous ──
             elif "_d0_" in col_name:
                 vals = X_full[col_name].dropna().tail(28)
@@ -1053,10 +1120,10 @@ class LEARForecaster:
                     len(fm_daily_cache), len(test_dates), horizon,
                 )
 
-        # Track previous day's errors for AR correction (lag-1 and lag-2)
+        # Track previous day's errors for AR correction (lag-1, lag-2, lag-7)
         prev_day_errors: dict[int, float] = {}  # hour -> error (lag-1)
         prev2_day_errors: dict[int, float] = {}  # hour -> error (lag-2)
-        # Expanding-window bias correction
+        # Expanding-window bias correction + lag-7 AR
         error_history: dict[int, list[float]] = {h: [] for h in range(24)}
 
         for test_idx, test_date in enumerate(test_dates):
@@ -1123,7 +1190,7 @@ class LEARForecaster:
                 forecast = forecast - 0.55 * horizon_bias_weight * regime_bias
                 forecast = self._apply_spike_uplift(forecast, y_full, horizon)
 
-                # AR error correction: use lag-1 and lag-2 errors
+                # AR error correction: lag-1, lag-2, and lag-7 (same-day-of-week)
                 if hour in prev_day_errors:
                     prev_err = prev_day_errors[hour]
                     if np.isfinite(prev_err):
@@ -1136,6 +1203,12 @@ class LEARForecaster:
                         ar2 = max(0.05, 0.15 - 0.02 * (horizon - 1))
                         correction2 = ar2 * np.clip(prev2_err, -100, 100)
                         forecast = forecast - correction2
+                # Lag-7: same-day-of-week error (strong weekly autocorrelation)
+                if len(error_history[hour]) >= 7:
+                    lag7_err = error_history[hour][-7]
+                    if np.isfinite(lag7_err):
+                        ar7 = max(0.03, 0.10 - 0.01 * (horizon - 1))
+                        forecast = forecast - ar7 * np.clip(lag7_err, -100, 100)
 
                 # Expanding-window bias correction (subtract accumulated mean bias)
                 if len(error_history[hour]) >= 3:
