@@ -32,7 +32,7 @@ from datetime import timedelta
 
 import numpy as np
 import pandas as pd
-from sklearn.linear_model import ElasticNetCV
+from sklearn.linear_model import ElasticNetCV, QuantileRegressor
 from sklearn.neural_network import MLPRegressor
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import TimeSeriesSplit
@@ -511,6 +511,69 @@ class LEARForecaster:
         weights = weights / weights.sum()
         return float(np.dot(np.array(preds, dtype=float), weights))
 
+    def _fit_qra(
+        self,
+        X_full: pd.DataFrame,
+        y_full: pd.Series,
+        lasso_models: list,
+        n_cal: int = 60,
+    ) -> dict[float, "QuantileRegressor"] | None:
+        """Fit QRA (Quantile Regression Averaging) on recent calibration data.
+
+        Nowotarski & Weron (2015): treat per-window predictions as features
+        in a quantile regression. Learns optimal combination weights that
+        may vary across quantiles, providing calibrated probabilistic forecasts.
+
+        Returns dict mapping quantile level -> fitted QuantileRegressor, or None.
+        """
+        n_cal = min(n_cal, len(y_full) - 30)
+        if n_cal < 20 or len(lasso_models) < 2:
+            return None
+
+        X_cal = X_full.iloc[-n_cal:]
+        y_cal = y_full.iloc[-n_cal:].values.astype(float)
+
+        # Generate per-window predictions on calibration set
+        window_preds = []
+        for model, mu, sigma, scaler, _, _, _ in lasso_models:
+            X_arr = np.nan_to_num(X_cal.values.astype(float), nan=0.0)
+            X_scaled = scaler.transform(X_arr)
+            pred_t = model.predict(X_scaled)
+            window_preds.append(_asinh_inverse(pred_t, mu, sigma))
+
+        if not window_preds:
+            return None
+
+        # Feature matrix: each column is one window's predictions
+        Z = np.column_stack(window_preds)  # (n_cal, n_windows)
+
+        qra_models = {}
+        for q in [0.10, 0.50, 0.90]:
+            try:
+                qr = QuantileRegressor(
+                    quantile=q,
+                    alpha=0.01,  # light regularization
+                    solver="highs",
+                )
+                qr.fit(Z, y_cal)
+                qra_models[q] = qr
+            except Exception:
+                pass
+
+        return qra_models if len(qra_models) >= 2 else None
+
+    def _qra_predict(
+        self,
+        qra_models: dict[float, "QuantileRegressor"],
+        window_preds: list[float],
+    ) -> dict[float, float]:
+        """Apply fitted QRA to get quantile predictions."""
+        Z = np.array(window_preds).reshape(1, -1)
+        result = {}
+        for q, model in qra_models.items():
+            result[q] = float(model.predict(Z)[0])
+        return result
+
     def _recent_bias_by_regime(
         self,
         X_full: pd.DataFrame,
@@ -823,6 +886,9 @@ class LEARForecaster:
             if len(conf_residuals) > 0:
                 self._conformal_residuals[hour] = conf_residuals
 
+            # QRA: fit quantile regression on per-window predictions
+            qra_models = self._fit_qra(X_full, y_full, lasso_models)
+
             for d in range(1, horizon_days + 1):
                 forecast_date = (last_date + timedelta(days=d)).date()
 
@@ -899,21 +965,34 @@ class LEARForecaster:
                             w_fm = max(0.05, 0.20 - 0.02 * (d - 1))
                             final_pred = (1.0 - w_fm) * final_pred + w_fm * fm_raw
 
-                # Conformal intervals (FM quantiles NOT blended — preserves calibration)
-                q_low = float(min(quantiles)) if len(quantiles) > 0 else 0.10
-                q_high = float(max(quantiles)) if len(quantiles) > 0 else 0.90
-                tail_q = max(q_high, 1.0 - q_low)
-                if len(conf_residuals) > 0:
+                # Prediction intervals: QRA (preferred) or conformal (fallback)
+                if qra_models is not None and len(window_preds) == len(lasso_models):
+                    # QRA: calibrated quantile predictions from per-window outputs
+                    qra_result = self._qra_predict(qra_models, window_preds)
+                    p10 = qra_result.get(0.10, final_pred - 15.0)
+                    p90 = qra_result.get(0.90, final_pred + 15.0)
+                    # Widen intervals for longer horizons
                     horizon_scale = 1.0 + 0.05 * (d - 1)
-                    scaled_residuals = conf_residuals * horizon_scale
-                    spread_q = float(np.quantile(scaled_residuals, tail_q))
-                    p10 = final_pred - spread_q
-                    p90 = final_pred + spread_q
+                    mid = (p10 + p90) / 2
+                    half = (p90 - p10) / 2 * horizon_scale
+                    p10 = mid - half
+                    p90 = mid + half
                 else:
-                    spread = abs(final_pred) * (0.05 + 0.01 * d)
-                    z = 1.28 if tail_q <= 0.90 else 1.64
-                    p10 = final_pred - z * spread
-                    p90 = final_pred + z * spread
+                    # Conformal fallback
+                    q_low = float(min(quantiles)) if len(quantiles) > 0 else 0.10
+                    q_high = float(max(quantiles)) if len(quantiles) > 0 else 0.90
+                    tail_q = max(q_high, 1.0 - q_low)
+                    if len(conf_residuals) > 0:
+                        horizon_scale = 1.0 + 0.05 * (d - 1)
+                        scaled_residuals = conf_residuals * horizon_scale
+                        spread_q = float(np.quantile(scaled_residuals, tail_q))
+                        p10 = final_pred - spread_q
+                        p90 = final_pred + spread_q
+                    else:
+                        spread = abs(final_pred) * (0.05 + 0.01 * d)
+                        z = 1.28 if tail_q <= 0.90 else 1.64
+                        p10 = final_pred - z * spread
+                        p90 = final_pred + z * spread
 
                 all_forecasts.append({
                     "date": forecast_date,
