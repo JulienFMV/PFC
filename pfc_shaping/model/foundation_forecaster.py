@@ -32,7 +32,6 @@ logger = logging.getLogger(__name__)
 
 # Soft imports — foundation models are optional
 _CHRONOS_AVAILABLE = False
-_CHRONOS_PIPELINE = None
 
 try:
     import torch
@@ -41,6 +40,9 @@ try:
     _CHRONOS_AVAILABLE = True
 except ImportError:
     pass
+
+# Chronos-Bolt native prediction length before variance collapse
+_BOLT_MAX_PREDICTION_LENGTH = 64
 
 
 class FoundationForecaster:
@@ -51,10 +53,16 @@ class FoundationForecaster:
     - More backends can be added (Timer-XL, TimesFM, Toto, TiRex)
 
     The model is loaded lazily on first use and cached for the session.
+
+    IMPORTANT: Chronos-Bolt returns pre-computed quantile predictions at
+    fixed levels [0.1, 0.2, ..., 0.9], NOT samples. Shape is
+    (batch, 9, prediction_length). We index directly into the quantile
+    dimension rather than computing quantiles of quantiles.
     """
 
-    # Model ID on HuggingFace — Bolt is 10x faster than base Chronos
     DEFAULT_MODEL = "amazon/chronos-bolt-base"
+    # Chronos-Bolt quantile levels (fixed by the model architecture)
+    _BOLT_QUANTILE_LEVELS = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
 
     def __init__(
         self,
@@ -91,23 +99,86 @@ class FoundationForecaster:
             )
             logger.info("Foundation model loaded successfully")
             return True
-        except Exception as exc:
-            logger.warning("Failed to load foundation model: %s", exc)
+        except Exception:
+            logger.warning("Failed to load foundation model", exc_info=True)
             self._pipeline = None
             return False
+
+    def _prepare_context(
+        self, price_history: pd.Series | np.ndarray
+    ) -> Optional[np.ndarray]:
+        """Convert price history to clean float32 array, preserving temporal continuity."""
+        if isinstance(price_history, pd.Series):
+            # Interpolate interior NaNs to preserve temporal continuity,
+            # then forward/backward fill edges
+            values = (
+                price_history
+                .interpolate(method="linear", limit_direction="both")
+                .ffill()
+                .bfill()
+                .values.astype(np.float32)
+            )
+        else:
+            arr = np.asarray(price_history, dtype=np.float32)
+            # Replace NaN with linear interpolation
+            nans = np.isnan(arr)
+            if nans.any():
+                x = np.arange(len(arr))
+                arr[nans] = np.interp(x[nans], x[~nans], arr[~nans])
+            values = arr
+
+        if len(values) < 48:
+            logger.warning(
+                "Foundation model needs >= 48 hours of history, got %d", len(values)
+            )
+            return None
+
+        return values
+
+    def _predict_chunked(
+        self, context: "torch.Tensor", horizon: int
+    ) -> Optional["torch.Tensor"]:
+        """Run Chronos-Bolt prediction, chunking if horizon > 64.
+
+        Chronos-Bolt has a native prediction length of 64 steps. For longer
+        horizons, we iterate: predict 64 steps, append the median to context,
+        and predict the next 64 steps, etc.
+
+        Returns tensor of shape (9, horizon) — 9 quantile levels.
+        """
+        chunks = []
+        remaining = horizon
+        ctx = context  # (1, T)
+
+        while remaining > 0:
+            chunk_len = min(remaining, _BOLT_MAX_PREDICTION_LENGTH)
+
+            forecast_chunk = self._pipeline.predict(
+                ctx, prediction_length=chunk_len
+            )
+            # forecast_chunk shape: (1, 9, chunk_len)
+            chunks.append(forecast_chunk[0])  # (9, chunk_len)
+
+            if remaining > chunk_len:
+                # Extend context with median (index 4 = q50) for next chunk
+                median_chunk = forecast_chunk[0, 4:5, :]  # (1, chunk_len)
+                ctx = torch.cat([ctx, median_chunk], dim=-1)
+
+            remaining -= chunk_len
+
+        # Concatenate all chunks along the horizon dimension
+        return torch.cat(chunks, dim=-1)  # (9, horizon)
 
     def forecast(
         self,
         price_history: pd.Series | np.ndarray,
         horizon: int = 24,
-        quantiles: tuple[float, ...] = (0.1, 0.5, 0.9),
     ) -> Optional[dict[str, np.ndarray]]:
         """Generate zero-shot probabilistic forecast from price history.
 
         Args:
-            price_history: Historical hourly prices (at least 168 hours recommended).
-            horizon: Number of hours to forecast (default: 24 = one day).
-            quantiles: Quantile levels for prediction intervals.
+            price_history: Historical hourly prices (>= 48 hours).
+            horizon: Number of hours to forecast.
 
         Returns:
             dict with keys 'median', 'mean', 'q10', 'q90' (or None if unavailable).
@@ -116,39 +187,40 @@ class FoundationForecaster:
         if not self._ensure_loaded():
             return None
 
-        # Convert to tensor
-        if isinstance(price_history, pd.Series):
-            values = price_history.dropna().values.astype(np.float32)
-        else:
-            values = np.asarray(price_history, dtype=np.float32)
-
-        if len(values) < 48:
-            logger.warning("Foundation model needs >= 48 hours of history, got %d", len(values))
+        values = self._prepare_context(price_history)
+        if values is None:
             return None
 
         try:
-            context = torch.tensor(values).unsqueeze(0)  # (1, T)
+            context = torch.tensor(values, dtype=torch.float32).unsqueeze(0)
 
-            # Chronos-Bolt returns (batch, num_samples, horizon) for quantiles
-            forecast = self._pipeline.predict(
-                context,
-                prediction_length=horizon,
-            )
-            # forecast shape: (1, num_samples, horizon)
+            # Chronos-Bolt returns (batch, 9_quantiles, horizon)
+            # Quantile levels: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+            quantile_preds = self._predict_chunked(context, horizon)
+            # quantile_preds shape: (9, horizon)
 
-            result = {}
-            for q in quantiles:
-                q_key = f"q{int(q * 100):02d}"
-                q_val = np.quantile(forecast[0].numpy(), q, axis=0)
-                result[q_key] = q_val
+            q_np = quantile_preds.numpy()
 
-            result["median"] = np.quantile(forecast[0].numpy(), 0.5, axis=0)
-            result["mean"] = forecast[0].numpy().mean(axis=0)
+            # Validate: check for NaN/Inf
+            if not np.all(np.isfinite(q_np)):
+                n_bad = (~np.isfinite(q_np)).sum()
+                logger.warning(
+                    "Foundation model returned %d non-finite values, skipping", n_bad
+                )
+                return None
 
+            result = {
+                "q10": q_np[0],       # index 0 = 10th percentile
+                "q20": q_np[1],       # index 1 = 20th percentile
+                "median": q_np[4],    # index 4 = 50th percentile
+                "q80": q_np[7],       # index 7 = 80th percentile
+                "q90": q_np[8],       # index 8 = 90th percentile
+                "mean": q_np[4],      # best proxy without samples
+            }
             return result
 
-        except Exception as exc:
-            logger.warning("Foundation model forecast failed: %s", exc)
+        except Exception:
+            logger.warning("Foundation model forecast failed", exc_info=True)
             return None
 
     def forecast_multi_horizon(
@@ -160,21 +232,15 @@ class FoundationForecaster:
 
         Returns DataFrame with columns: day, hour, fm_price, fm_q10, fm_q90.
         """
-        result = self.forecast(
-            price_history,
-            horizon=24 * max_days,
-            quantiles=(0.1, 0.5, 0.9),
-        )
+        result = self.forecast(price_history, horizon=24 * max_days)
         if result is None:
             return None
 
         rows = []
         for i in range(24 * max_days):
-            day = i // 24 + 1
-            hour = i % 24
             rows.append({
-                "day": day,
-                "hour": hour,
+                "day": i // 24 + 1,
+                "hour": i % 24,
                 "fm_price": float(result["median"][i]),
                 "fm_q10": float(result["q10"][i]),
                 "fm_q90": float(result["q90"][i]),
