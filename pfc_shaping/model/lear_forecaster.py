@@ -76,6 +76,39 @@ def _asinh_inverse(y: np.ndarray, mu: float, sigma: float) -> np.ndarray:
     return np.sinh(y) * sigma + mu
 
 
+def _causal_asinh_transform(x: np.ndarray) -> tuple[np.ndarray, float, float]:
+    """Causal instance normalization + asinh (inspired by Toto).
+
+    Unlike fixed asinh, each observation x[t] is normalized by the
+    expanding-window mean and std computed causally from x[0:t+1].
+    This adapts to regime shifts in real-time.
+
+    The final mu/sigma (from the full window) are returned for
+    inverse transform at prediction time.
+    """
+    n = len(x)
+    result = np.zeros(n)
+
+    # Expanding-window causal normalization
+    for t in range(n):
+        window = x[:t + 1]
+        valid = window[np.isfinite(window)]
+        if len(valid) < 2:
+            mu_t = valid[0] if len(valid) == 1 else 0.0
+            sigma_t = 1.0
+        else:
+            mu_t = np.mean(valid)
+            sigma_t = np.std(valid) + 0.1  # Toto: +0.1 for numerical stability
+        result[t] = np.arcsinh((x[t] - mu_t) / sigma_t)
+
+    # Return final mu/sigma for inverse at prediction time
+    mu_final = float(np.nanmean(x))
+    sigma_final = float(np.nanstd(x))
+    if sigma_final < 1e-6:
+        sigma_final = 1.0
+    return result, mu_final, sigma_final
+
+
 class LEARForecaster:
     """LASSO-based day-ahead price forecaster with expert-level refinements.
 
@@ -613,6 +646,71 @@ class LEARForecaster:
             weekday = overall
         return overall, weekday, weekend
 
+    def _detect_regime(self, y_full: pd.Series) -> str:
+        """Detect current price regime from recent data.
+
+        Returns 'spike', 'volatile', or 'normal' based on recent price
+        behavior. Used to adapt model parameters (calibration windows,
+        bias correction strength, etc.).
+        """
+        if len(y_full) < 30:
+            return "normal"
+
+        recent_7d = y_full.iloc[-min(7, len(y_full)):].values.astype(float)
+        recent_30d = y_full.iloc[-min(30, len(y_full)):].values.astype(float)
+        recent_90d = y_full.iloc[-min(90, len(y_full)):].values.astype(float)
+
+        # Volatility ratio: 7d std vs 90d std
+        std_7d = float(np.nanstd(recent_7d))
+        std_90d = float(np.nanstd(recent_90d))
+        vol_ratio = std_7d / max(std_90d, 0.1)
+
+        # Spike detection: any of last 7 days > Q95 of 90d
+        q95 = float(np.nanquantile(recent_90d, 0.95))
+        recent_spikes = (recent_7d > q95).sum()
+
+        # Price level shift: 7d mean vs 30d mean
+        mean_7d = float(np.nanmean(recent_7d))
+        mean_30d = float(np.nanmean(recent_30d))
+        level_shift = abs(mean_7d - mean_30d) / max(abs(mean_30d), 1.0)
+
+        if recent_spikes >= 2 or vol_ratio > 2.0:
+            return "spike"
+        elif vol_ratio > 1.3 or level_shift > 0.15:
+            return "volatile"
+        else:
+            return "normal"
+
+    def _regime_adjusted_params(
+        self, regime: str
+    ) -> dict:
+        """Return regime-dependent parameter adjustments.
+
+        In spike regime: shorter effective windows, stronger bias correction,
+        higher FM weight. In normal: use defaults.
+        """
+        if regime == "spike":
+            return {
+                "bias_strength": 0.85,     # stronger (default 0.70)
+                "ar1_coeff": 0.7,          # stronger (default 0.6)
+                "fm_weight_boost": 0.05,   # give FM more weight
+                "prefer_short_windows": True,
+            }
+        elif regime == "volatile":
+            return {
+                "bias_strength": 0.75,
+                "ar1_coeff": 0.65,
+                "fm_weight_boost": 0.03,
+                "prefer_short_windows": False,
+            }
+        else:
+            return {
+                "bias_strength": 0.70,
+                "ar1_coeff": 0.6,
+                "fm_weight_boost": 0.0,
+                "prefer_short_windows": False,
+            }
+
     def _apply_spike_uplift(
         self,
         pred: float,
@@ -650,7 +748,12 @@ class LEARForecaster:
             y_w = y_full.iloc[-n:]
 
             y_arr = y_w.values.astype(float)
-            y_t, mu, sigma = _asinh_transform(y_arr)
+            # Causal normalization for long windows (adapts to regime shifts)
+            # Fixed normalization for short windows (more stable)
+            if window >= 180:
+                y_t, mu, sigma = _causal_asinh_transform(y_arr)
+            else:
+                y_t, mu, sigma = _asinh_transform(y_arr)
 
             try:
                 X_arr = np.nan_to_num(X_w.values.astype(float), nan=0.0)
@@ -839,16 +942,32 @@ class LEARForecaster:
             tz=self.tz,
         )
 
-        # Foundation model: generate zero-shot forecast for full horizon
+        # Foundation model: zero-shot forecast with covariates (if Chronos-2)
         fm_preds = None
         if self._fm is not None and self._fm.available:
+            # Build covariate dict from exogenous data
+            fm_covariates = {}
+            if self._has_de_prices and hasattr(self, "prices_de_h_"):
+                fm_covariates["de_price"] = self.prices_de_h_
+            for col in ["load_mw", "solar_mw", "wind_mw"]:
+                if col in self.exog_.columns:
+                    s = self.exog_[col].dropna()
+                    if len(s) > 48:
+                        fm_covariates[col] = s
+
             fm_result = self._fm.forecast(
                 self.prices_h_,
                 horizon=24 * horizon_days,
+                covariates=fm_covariates if fm_covariates else None,
             )
             if fm_result is not None:
                 fm_preds = fm_result
-                logger.info("Foundation model forecast: %d hours generated", len(fm_result["median"]))
+                logger.info(
+                    "Foundation model forecast: %d hours, %d covariates, backend=%s",
+                    len(fm_result["median"]),
+                    len(fm_covariates),
+                    self._fm.backend,
+                )
 
         all_forecasts = []
         n_mlp_used = 0
@@ -1179,24 +1298,37 @@ class LEARForecaster:
         results = []
         test_dates = all_dates[-(n_days + horizon - 1): -horizon + 1] if horizon > 1 else all_dates[-n_days:]
 
-        # Foundation model: pre-generate forecasts if available
-        # Key = str(test_date), value = FM forecast for horizon*24 hours ahead
+        # Foundation model: pre-generate forecasts with covariates
         fm_daily_cache: dict[str, dict[str, np.ndarray]] = {}
         if self._fm is not None and self._fm.available:
             for test_date in test_dates:
                 cutoff = pd.Timestamp(test_date, tz=self.tz).tz_convert("UTC")
                 prices_trunc = self.prices_h_[:cutoff]
                 if len(prices_trunc) >= 168:
-                    # Generate forecast for full horizon to avoid day mismatch
+                    # Build truncated covariates
+                    fm_cov = {}
+                    if self._has_de_prices and hasattr(self, "prices_de_h_"):
+                        de_trunc = self.prices_de_h_[:cutoff]
+                        if len(de_trunc) > 48:
+                            fm_cov["de_price"] = de_trunc
+                    for col in ["load_mw", "solar_mw", "wind_mw"]:
+                        if col in self.exog_.columns:
+                            s = self.exog_[col][:cutoff].dropna()
+                            if len(s) > 48:
+                                fm_cov[col] = s
+
                     fm_result = self._fm.forecast(
-                        prices_trunc, horizon=24 * horizon
+                        prices_trunc,
+                        horizon=24 * horizon,
+                        covariates=fm_cov if fm_cov else None,
                     )
                     if fm_result is not None:
                         fm_daily_cache[str(test_date)] = fm_result
             if fm_daily_cache:
                 logger.info(
-                    "Foundation model backtest: %d/%d days cached (horizon=%d)",
-                    len(fm_daily_cache), len(test_dates), horizon,
+                    "Foundation model backtest: %d/%d days, backend=%s",
+                    len(fm_daily_cache), len(test_dates),
+                    self._fm.backend,
                 )
 
         # Track previous day's errors for AR correction (lag-1, lag-2, lag-7)
@@ -1232,6 +1364,11 @@ class LEARForecaster:
                 lasso_models = self._fit_lasso_for_hour(X_full, y_full, hour)
                 if not lasso_models:
                     continue
+
+                # Regime detection: adapt parameters to current market state
+                regime = self._detect_regime(y_full)
+                rp = self._regime_adjusted_params(regime)
+
                 recent_bias, weekday_bias, weekend_bias = self._recent_bias_by_regime(
                     X_full, y_full, lasso_models, recent_n=14
                 )
@@ -1269,11 +1406,11 @@ class LEARForecaster:
                 forecast = forecast - 0.55 * horizon_bias_weight * regime_bias
                 forecast = self._apply_spike_uplift(forecast, y_full, horizon)
 
-                # AR error correction: lag-1, lag-2, and lag-7 (same-day-of-week)
+                # AR error correction with regime-adaptive coefficients
                 if hour in prev_day_errors:
                     prev_err = prev_day_errors[hour]
                     if np.isfinite(prev_err):
-                        ar1 = max(0.25, 0.6 - 0.05 * (horizon - 1))
+                        ar1 = max(0.25, rp["ar1_coeff"] - 0.05 * (horizon - 1))
                         correction = ar1 * np.clip(prev_err, -100, 100)
                         forecast = forecast - correction
                 if hour in prev2_day_errors:
@@ -1289,10 +1426,10 @@ class LEARForecaster:
                         ar7 = max(0.03, 0.10 - 0.01 * (horizon - 1))
                         forecast = forecast - ar7 * np.clip(lag7_err, -100, 100)
 
-                # Expanding-window bias correction (subtract accumulated mean bias)
+                # Expanding-window bias correction (regime-adaptive strength)
                 if len(error_history[hour]) >= 3:
-                    recent_bias = float(np.mean(error_history[hour][-14:]))  # last 14 days
-                    forecast = forecast - 0.7 * recent_bias  # strong correction
+                    recent_bias = float(np.mean(error_history[hour][-14:]))
+                    forecast = forecast - rp["bias_strength"] * recent_bias
 
                 # Clamp forecast to physical bounds
                 forecast = float(np.clip(forecast, -500, 1000))
@@ -1302,13 +1439,12 @@ class LEARForecaster:
                 fm_key = str(test_date)
                 if fm_key in fm_daily_cache:
                     fm_data = fm_daily_cache[fm_key]
-                    # Index into FM forecast: (horizon-1)*24 + hour
-                    # FM was generated with horizon=24*self_horizon
                     fm_idx = (horizon - 1) * 24 + hour
                     if fm_idx < len(fm_data["median"]):
                         fm_price = float(fm_data["median"][fm_idx])
                         if np.isfinite(fm_price):
-                            w_fm = max(0.05, 0.20 - 0.02 * (horizon - 1))
+                            # Regime-adaptive FM weight
+                            w_fm = max(0.05, 0.20 + rp["fm_weight_boost"] - 0.02 * (horizon - 1))
                             forecast = (1.0 - w_fm) * forecast + w_fm * fm_price
 
                 actual = complete.loc[target_date, hour] if hour in complete.columns else np.nan
