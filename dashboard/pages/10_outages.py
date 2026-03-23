@@ -61,8 +61,10 @@ k1, k2, k3, k4 = st.columns(4)
 latest = outages.iloc[-1] if len(outages) > 0 else pd.Series()
 
 # Compute 7-day averages for deltas
-now_7d = outages.last("7D").mean() if len(outages) > 96 * 7 else latest
-prev_7d = outages.iloc[:-96*7].last("7D").mean() if len(outages) > 96 * 14 else now_7d
+_7d_ago = outages.index.max() - pd.Timedelta(days=7)
+now_7d = outages.loc[outages.index >= _7d_ago].mean() if len(outages) > 96 * 7 else latest
+_14d_ago = outages.index.max() - pd.Timedelta(days=14)
+prev_7d = outages.loc[(outages.index >= _14d_ago) & (outages.index < _7d_ago)].mean() if len(outages) > 96 * 14 else now_7d
 
 with k1:
     total_mw = latest.get("unavailable_mw", 0)
@@ -173,7 +175,7 @@ with tab1:
     )
     st.plotly_chart(fig_n, use_container_width=True)
 
-    export_csv_button(outages_plot, "outages_daily")
+    export_csv_button(outages_plot, "outages_daily.csv")
 
 # ════════════════════════════════════════════════════════════════════════
 # TAB 2: Detail par type — un graphe par categorie
@@ -382,7 +384,7 @@ with tab4:
     with col2:
         st.markdown("**Indisponibilite moyenne par mois (MW)**")
         outages_monthly = outages.copy()
-        idx_local = outages_monthly.index.tz_convert("Europe/Zurich")
+        idx_local = outages_monthly.index.tz_convert("Europe/Zurich") if outages_monthly.index.tz is not None else outages_monthly.index
         outages_monthly["month"] = idx_local.month
         outages_monthly["year"] = idx_local.year
         pivot = outages_monthly.groupby(["year", "month"])["unavailable_mw"].mean().unstack()
@@ -392,7 +394,7 @@ with tab4:
 
     # Raw data expander
     with st.expander("Donnees brutes (dernieres 48h)"):
-        last_48h = outages.last("48h")
+        last_48h = outages.loc[outages.index >= outages.index.max() - pd.Timedelta(hours=48)]
         st.dataframe(last_48h, height=300)
 
-    export_csv_button(outages, "outages_raw")
+    export_csv_button(outages, "outages_raw.csv")

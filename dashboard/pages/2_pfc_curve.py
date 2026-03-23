@@ -49,7 +49,7 @@ else:
     pfc_r = pfc
 
 # ── Peak / Off-Peak decomposition ────────────────────────────────────────
-idx_zurich = pfc.index.tz_convert("Europe/Zurich")
+idx_zurich = pfc.index.tz_convert("Europe/Zurich") if pfc.index.tz is not None else pfc.index
 is_peak = (idx_zurich.hour >= 8) & (idx_zurich.hour < 20) & (idx_zurich.dayofweek < 5)
 
 if freq:

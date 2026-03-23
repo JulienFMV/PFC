@@ -208,7 +208,7 @@ with tab2:
     # Historical EPEX average profile (last 30 days)
     if epex is not None and not epex.empty:
         epex_h_all = epex["price_eur_mwh"].resample("h").mean()
-        last_30d = epex_h_all.last("30D")
+        last_30d = epex_h_all.loc[epex_h_all.index >= epex_h_all.index.max() - pd.Timedelta(days=30)]
         if not last_30d.empty:
             epex_local = last_30d.index.tz_convert(TZ)
             epex_profile = last_30d.groupby(epex_local.hour).mean()
