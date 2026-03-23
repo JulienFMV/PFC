@@ -175,13 +175,9 @@ class FoundationForecaster:
                 return None
 
             n = len(prices)
-            # Use actual timestamps when available (preserves seasonality)
-            if hasattr(price_history, 'index') and isinstance(price_history.index, pd.DatetimeIndex):
-                ts = price_history.index[-n:]
-                if ts.tz is not None:
-                    ts = ts.tz_convert("UTC").tz_localize(None)
-            else:
-                ts = pd.date_range("2020-01-01", periods=n, freq="h")
+            # Use synthetic regular timestamps — real timestamps have DST gaps
+            # that cause Chronos-2 to fail with "Could not infer frequency"
+            ts = pd.date_range(end="2025-01-01", periods=n, freq="h")
             df = pd.DataFrame({
                 "timestamp": ts,
                 "item_id": "ch_price",
