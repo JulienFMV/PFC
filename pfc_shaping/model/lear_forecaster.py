@@ -792,10 +792,10 @@ class LEARForecaster:
         spread = max(1.0, q90 - q75)
         if pred <= q75:
             return pred
-        intensity = min(1.5, (pred - q75) / spread)
-        horizon_scale = 1.0 + 0.06 * max(days_ahead - 1, 0)
-        uplift = intensity * spread * 0.35 * horizon_scale
-        uplift = min(16.0, uplift)
+        intensity = min(1.2, (pred - q75) / spread)
+        horizon_scale = 1.0 + 0.04 * max(days_ahead - 1, 0)
+        uplift = intensity * spread * 0.25 * horizon_scale
+        uplift = min(12.0, uplift)
         return float(pred + uplift)
 
     def _fit_gbm_for_hour(
