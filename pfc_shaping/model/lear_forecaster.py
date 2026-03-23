@@ -984,25 +984,26 @@ class LEARForecaster:
 
         actual_mean, actual_std = self._var_calib[hour]
 
-        # Compute LASSO in-sample std on last 28 days
-        n_recent = min(28, len(X_full) - 5)
-        if n_recent < 10:
+        # Compute LASSO OOS std on last 14 days (held out from shortest
+        # calibration window to avoid in-sample variance underestimate).
+        n_oos = min(14, len(X_full) - 30)
+        if n_oos < 7:
             return raw_pred
 
-        X_recent = X_full.iloc[-n_recent:]
-        lasso_recent = []
+        X_oos = X_full.iloc[-n_oos:]
+        lasso_oos = []
         val_maes = []
         for model, mu, sigma, scaler, _, _, val_mae in lasso_models:
-            X_arr = np.nan_to_num(X_recent.values.astype(float), nan=0.0)
+            X_arr = np.nan_to_num(X_oos.values.astype(float), nan=0.0)
             X_scaled = scaler.transform(X_arr)
             pred_t = model.predict(X_scaled)
-            lasso_recent.append(_asinh_inverse(pred_t, mu, sigma))
+            lasso_oos.append(_asinh_inverse(pred_t, mu, sigma))
             val_maes.append(val_mae)
 
-        if not lasso_recent:
+        if not lasso_oos:
             return raw_pred
 
-        preds_mat = np.vstack(lasso_recent)
+        preds_mat = np.vstack(lasso_oos)
         weights = np.array(
             [1.0 / max(1e-6, v) if np.isfinite(v) else 1.0 for v in val_maes],
             dtype=float,
@@ -1016,11 +1017,13 @@ class LEARForecaster:
             return raw_pred
 
         # Expand the deviation from mean to match actual std
-        var_ratio = min(actual_std / lasso_std, 2.2)
+        # Cap at 1.8 (was 2.2) — OOS std is more realistic, less expansion needed
+        var_ratio = min(actual_std / lasso_std, 1.8)
         recalibrated = actual_mean + (raw_pred - lasso_mean) * var_ratio
 
         # Quantile-based clamp: keep extremes while avoiding unstable tails.
-        y_recent = y_full.iloc[-n_recent:].values.astype(float)
+        n_clamp = min(28, len(y_full) - 5)
+        y_recent = y_full.iloc[-n_clamp:].values.astype(float)
         q_low = float(np.quantile(y_recent, 0.03))
         q_high = float(np.quantile(y_recent, 0.97))
         horizon_widen = 1.0 + 0.03 * max(days_ahead - 1, 0)
@@ -1435,6 +1438,46 @@ class LEARForecaster:
                     self._fm.backend,
                 )
 
+        # Pre-train GBM once per peak hour (avoids 720x re-training in loop).
+        # Use data up to first test date; compute OOS weight from held-out split.
+        gbm_cache: dict[int, tuple] = {}  # hour -> (gbm_model, w_gbm)
+        first_test_date = test_dates[0]
+        prices_pretrain = self.prices_h_[:pd.Timestamp(first_test_date, tz=self.tz).tz_convert("UTC")]
+        exog_pretrain = self.exog_.loc[:prices_pretrain.index[-1]]
+        for hour in PEAK_HOURS:
+            X_pre, y_pre = self._build_features(
+                prices_pretrain, exog_pretrain, target_hour=hour
+            )
+            if len(y_pre) < 60:
+                continue
+            gbm_model = self._fit_gbm_for_hour(hour, X_pre, y_pre)
+            if gbm_model is None:
+                continue
+            # OOS weight: evaluate on last 14 days (not used for GBM training)
+            n_eval = min(14, len(y_pre) // 4)
+            if n_eval < 5:
+                continue
+            X_ev = np.nan_to_num(X_pre.iloc[-n_eval:].values.astype(float), nan=0.0)
+            y_ev = y_pre.iloc[-n_eval:].values.astype(float)
+            gbm_mae = self._safe_mae(y_ev, gbm_model.predict(X_ev))
+            # LASSO baseline for weight computation
+            lasso_pre = self._fit_lasso_for_hour(X_pre, y_pre, hour)
+            if lasso_pre:
+                lasso_eval_preds = []
+                for mdl, mu, sigma, scl, _, _, _ in lasso_pre:
+                    pred_t = mdl.predict(scl.transform(X_ev))
+                    lasso_eval_preds.append(_asinh_inverse(pred_t, mu, sigma))
+                lasso_mae_ev = self._safe_mae(y_ev, np.mean(lasso_eval_preds, axis=0))
+                inv_gbm = 1.0 / max(1e-6, gbm_mae)
+                inv_lasso = 1.0 / max(1e-6, lasso_mae_ev)
+                w_gbm = inv_gbm / (inv_gbm + inv_lasso)
+                w_gbm = max(0.15, min(0.40, w_gbm))
+            else:
+                w_gbm = 0.20  # conservative default
+            gbm_cache[hour] = (gbm_model, w_gbm)
+        if gbm_cache:
+            logger.info("Pre-trained GBM for %d peak hours", len(gbm_cache))
+
         # Track previous day's errors for AR correction (lag-1, lag-2, lag-7)
         prev_day_errors: dict[int, float] = {}  # hour -> error (lag-1)
         prev2_day_errors: dict[int, float] = {}  # hour -> error (lag-2)
@@ -1509,29 +1552,12 @@ class LEARForecaster:
                 regime_bias = weekend_bias if pd.Timestamp(target_date).dayofweek >= 5 else weekday_bias
                 forecast = forecast - 0.55 * horizon_bias_weight * regime_bias
 
-                # GBM ensemble for peak hours (captures nonlinear dynamics)
-                if hour in PEAK_HOURS and x_pred is not None:
-                    gbm_model = self._fit_gbm_for_hour(hour, X_full, y_full)
-                    if gbm_model is not None:
-                        x_gbm = np.nan_to_num(x_pred.reshape(1, -1), nan=0.0)
-                        gbm_pred = float(gbm_model.predict(x_gbm)[0])
-                        # Evaluate GBM vs LASSO on recent data
-                        n_eval = max(8, min(14, len(y_full) // 4))
-                        X_ev = np.nan_to_num(X_full.iloc[-n_eval:].values.astype(float), nan=0.0)
-                        y_ev = y_full.iloc[-n_eval:].values.astype(float)
-                        gbm_mae = self._safe_mae(y_ev, gbm_model.predict(X_ev))
-                        # Proper LASSO eval (not constant proxy)
-                        lasso_eval_preds = []
-                        for mdl, mu, sigma, scl, _, _, _ in lasso_models:
-                            pred_t = mdl.predict(scl.transform(X_ev))
-                            lasso_eval_preds.append(_asinh_inverse(pred_t, mu, sigma))
-                        lasso_mae_ev = self._safe_mae(y_ev, np.mean(lasso_eval_preds, axis=0))
-                        # Adaptive weight: GBM gets 15-40% based on relative accuracy
-                        inv_gbm = 1.0 / max(1e-6, gbm_mae)
-                        inv_lasso = 1.0 / max(1e-6, lasso_mae_ev)
-                        w_gbm = inv_gbm / (inv_gbm + inv_lasso)
-                        w_gbm = max(0.15, min(0.40, w_gbm))
-                        forecast = (1.0 - w_gbm) * forecast + w_gbm * gbm_pred
+                # GBM ensemble for peak hours (reuse pre-trained model)
+                if hour in gbm_cache and x_pred is not None:
+                    gbm_model, w_gbm = gbm_cache[hour]
+                    x_gbm = np.nan_to_num(x_pred.reshape(1, -1), nan=0.0)
+                    gbm_pred = float(gbm_model.predict(x_gbm)[0])
+                    forecast = (1.0 - w_gbm) * forecast + w_gbm * gbm_pred
 
                 forecast = self._apply_spike_uplift(forecast, y_full, horizon)
 

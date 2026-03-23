@@ -377,6 +377,22 @@ class ArbitrageFreeCalibrator:
 
         # ── Build matrices ────────────────────────────────────────────
         H = _build_smoothness_matrix(n, weight=self.smoothness_weight)
+        H_raw = H  # keep unscaled H for smoothness cost logging
+
+        # TODO(P1-01): The "multiplicative" mode solves an additive QP and
+        # converts delta to a multiplicative factor post-hoc.  The smoothness
+        # penalty H = D2^T D2 penalises curvature in absolute price space,
+        # so a 1 EUR correction at 200 EUR/MWh is penalised the same as at
+        # 20 EUR/MWh.  Ideally the QP should be formulated in log-price or
+        # relative space for true proportional smoothness.  As a partial
+        # mitigation we scale H by the inverse price level so that corrections
+        # at high-price timestamps are penalised less in absolute terms.
+        if self.mode == "multiplicative":
+            price_scale = np.maximum(np.abs(S), 1.0)
+            inv_price = 1.0 / price_scale
+            # H_scaled = diag(1/|S|) @ H @ diag(1/|S|)  — proportional smoothness
+            inv_diag = sp.diags(inv_price, format="csc")
+            H = inv_diag @ H @ inv_diag
 
         # Both modes use the same additive QP solve (numerically stable).
         # Multiplicative mode converts the correction post-hoc.
@@ -460,7 +476,7 @@ class ArbitrageFreeCalibrator:
 
         # ── Smoothness cost ───────────────────────────────────────────
         try:
-            smoothness_cost = float(delta_for_log @ (H @ delta_for_log))
+            smoothness_cost = float(delta_for_log @ (H_raw @ delta_for_log))
             if not np.isfinite(smoothness_cost):
                 smoothness_cost = 0.0
         except Exception:

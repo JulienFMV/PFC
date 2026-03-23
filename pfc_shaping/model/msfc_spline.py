@@ -113,6 +113,12 @@ def smooth_base_prices(
     x_target = (idx_zh - start_ts).total_seconds().values / 86400.0
     B_smooth_raw = interpolator(x_target)
 
+    # Clamp extrapolation to nearest knot value (P1-02)
+    # PCHIP with extrapolate=True can produce aberrant prices before the
+    # first and after the last monthly midpoint.  Clamp to a generous
+    # band around the knot range to prevent runaway extrapolation.
+    B_smooth_raw = np.clip(B_smooth_raw, y_knots.min() * 0.5, y_knots.max() * 2.0)
+
     # ── 3. Enforce mean constraints per delivery period ───────────────
     # Iterative correction: adjust knot values so that the mean
     # of the interpolated curve over each month = forward price

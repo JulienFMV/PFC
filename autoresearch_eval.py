@@ -232,16 +232,19 @@ def main() -> None:
             if n_pts < 92:  # need ~full day (96 quarter-hours)
                 continue
 
-            pfc_day = pfc_prices.values[day_mask]
-            spot_day = spot_prices.values[day_mask]
-            err_day = errors[day_mask]
+            # Use actual Zurich hours for aggregation (DST-safe)
+            day_idx = common_idx[day_mask]
+            day_hours_zh = day_idx.tz_convert("Europe/Zurich").hour
+            pfc_day_s = pd.Series(pfc_prices.values[day_mask], index=day_idx)
+            spot_day_s = pd.Series(spot_prices.values[day_mask], index=day_idx)
+            err_day_s = pd.Series(errors[day_mask], index=day_idx)
 
-            # Aggregate to hourly for profile metrics
-            n_h = n_pts // 4
+            # Aggregate to hourly by actual Zurich hour (handles 23h/25h days)
+            pfc_hourly = pfc_day_s.groupby(day_hours_zh).mean().values
+            spot_hourly = spot_day_s.groupby(day_hours_zh).mean().values
+            n_h = len(pfc_hourly)
             if n_h < 20:
                 continue
-            pfc_hourly = np.array([pfc_day[i*4:(i+1)*4].mean() for i in range(n_h)])
-            spot_hourly = np.array([spot_day[i*4:(i+1)*4].mean() for i in range(n_h)])
 
             # Corr-f: Pearson correlation of daily profile
             if np.std(pfc_hourly) > 0 and np.std(spot_hourly) > 0:
@@ -264,7 +267,7 @@ def main() -> None:
             mhd_list.append(abs(h_max_pfc - h_max_spot))
 
             # Cov-e: CV of intra-day errors
-            err_hourly = np.array([err_day[i*4:(i+1)*4].mean() for i in range(n_h)])
+            err_hourly = err_day_s.groupby(day_hours_zh).mean().values
             mean_abs_err = np.mean(np.abs(err_hourly))
             if mean_abs_err > 0.01:
                 cov_e_list.append(float(np.std(err_hourly) / mean_abs_err))
@@ -308,15 +311,18 @@ def main() -> None:
             if n_pts < 92:
                 continue
 
-            spot_day = spot_prices.values[day_mask]
-            pfc_day = pfc_prices.values[day_mask]
+            # Use actual Zurich hours for aggregation (DST-safe)
+            day_idx = common_idx[day_mask]
+            day_hours_zh = day_idx.tz_convert("Europe/Zurich").hour
+            spot_day_s = pd.Series(spot_prices.values[day_mask], index=day_idx)
+            pfc_day_s = pd.Series(pfc_prices.values[day_mask], index=day_idx)
 
-            # Aggregate to hourly
-            n_h = n_pts // 4
+            # Aggregate to hourly by actual Zurich hour (handles 23h/25h days)
+            spot_hourly = spot_day_s.groupby(day_hours_zh).mean().values
+            pfc_hourly = pfc_day_s.groupby(day_hours_zh).mean().values
+            n_h = len(spot_hourly)
             if n_h < 20:
                 continue
-            spot_hourly = np.array([spot_day[i*4:(i+1)*4].mean() for i in range(n_h)])
-            pfc_hourly = np.array([pfc_day[i*4:(i+1)*4].mean() for i in range(n_h)])
 
             # PFC-based dispatch: pick top dispatch_hours by PFC price
             pfc_top_hours = np.argsort(pfc_hourly)[-dispatch_hours:]

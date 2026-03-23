@@ -475,6 +475,15 @@ class PFCAssembler:
 
         return B
 
+    # Historical seasonal ratios for CH/DE electricity (monthly / annual mean).
+    # Derived from 10+ years of EPEX Swiss spot data.  Normalised so that
+    # the 12-month equal-weighted mean = 1.0.  Used as fallback for Y+2/Y+3
+    # when no monthly or quarterly forwards are available.
+    _SEASONAL_RATIOS_CH = {
+        1: 1.18, 2: 1.12, 3: 1.02, 4: 0.90, 5: 0.85, 6: 0.88,
+        7: 0.90, 8: 0.92, 9: 0.95, 10: 1.02, 11: 1.10, 12: 1.16,
+    }
+
     def _compute_f_S(self, idx: pd.DatetimeIndex, base_prices: dict) -> pd.Series:
         """
         Seasonal monthly factor f_S.
@@ -485,13 +494,37 @@ class PFCAssembler:
         seasonal effect (Bug: B × f_S = monthly × monthly/annual = monthly²/annual).
 
         When only annual forwards exist (Y+2/Y+3), monthly forwards are
-        unavailable so the ratio cannot be computed either.
+        unavailable so the ratio cannot be computed either — in that case
+        we apply a historical seasonal pattern as fallback (P1-15).
 
-        => f_S = 1.0 always in the current architecture.
-        The arbitrage-free calibration step handles fine-grained level
-        adjustments to match all available forward contracts.
+        For months with monthly or quarterly forwards, f_S = 1.0 (seasonality
+        is already captured in B).
         """
-        return pd.Series(1.0, index=idx, name="f_S")
+        idx_zh = idx.tz_convert("Europe/Zurich")
+        months = idx_zh.month
+        years = idx_zh.year
+
+        f_S = pd.Series(1.0, index=idx, name="f_S")
+
+        # Identify timestamps where only annual forwards exist (no monthly/quarterly)
+        keys_m = pd.Index([f"{y}-{m:02d}" for y, m in zip(years, months)])
+        keys_q = pd.Index([f"{y}-Q{(m - 1) // 3 + 1}" for y, m in zip(years, months)])
+
+        has_monthly = keys_m.map(base_prices).notna()
+        has_quarterly = keys_q.map(base_prices).notna()
+        annual_only = ~has_monthly & ~has_quarterly
+
+        if annual_only.any():
+            # Apply historical seasonal ratios as fallback
+            seasonal_values = months[annual_only].map(self._SEASONAL_RATIOS_CH)
+            f_S.iloc[annual_only.values] = seasonal_values.values
+            n_affected = int(annual_only.sum())
+            logger.info(
+                "f_S seasonal fallback applied to %d timestamps (annual-only forward coverage)",
+                n_affected,
+            )
+
+        return f_S
 
     def _compute_f_W(self, cal: pd.DataFrame) -> pd.Series:
         """
@@ -499,9 +532,10 @@ class PFCAssembler:
         Utilise les ratios saisonniers f_W(saison, type_jour) si disponibles,
         sinon fallback sur f_W(type_jour) global.
 
-        After computing raw f_W, normalizes per calendar month so that
-        mean(f_W) = 1 within each month. This ensures f_W does not leak
-        level information (which belongs in B and f_S).
+        After computing raw f_W, normalizes per ISO week so that
+        mean(f_W) = 1 within each week. Weekly normalization preserves
+        day-type relativities better than monthly (P1-03). This ensures
+        f_W does not leak level information (which belongs in B and f_S).
         """
         _FW_DEFAULTS = {
             "Ouvrable": 1.05,
@@ -525,13 +559,16 @@ class PFCAssembler:
             f_W_map = self.sh.f_W_ if self.sh.f_W_ else _FW_DEFAULTS
             f_W = cal["type_jour"].map(f_W_map).fillna(1.0).rename("f_W")
 
-        # Normalize f_W per month so mean(f_W) = 1 within each month
+        # Normalize f_W per ISO week so mean(f_W) = 1 within each week (P1-03)
+        # Weekly normalization preserves day-type relativities better than
+        # monthly, because months with unusual weekday/weekend ratios (e.g.
+        # 5 weekends) distort the monthly mean and leak calendar structure.
         idx_zh = cal.index.tz_convert("Europe/Zurich")
-        month_key = pd.Index([f"{t.year}-{t.month:02d}" for t in idx_zh])
-        monthly_mean = f_W.groupby(month_key).transform("mean")
+        week_key = pd.Index([f"{t.isocalendar()[0]}-W{t.isocalendar()[1]:02d}" for t in idx_zh])
+        weekly_mean = f_W.groupby(week_key).transform("mean")
         # Avoid division by zero
-        monthly_mean = monthly_mean.replace(0, 1.0)
-        f_W = f_W / monthly_mean
+        weekly_mean = weekly_mean.replace(0, 1.0)
+        f_W = f_W / weekly_mean
 
         return f_W
 

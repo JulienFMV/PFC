@@ -519,7 +519,7 @@ logger.info("STEP 11: Comprehensive Statistics")
 logger.info("=" * 70)
 
 print("\n" + "=" * 80)
-print("  PFC 15min PRODUCTION RUN — 2026-03-14")
+print(f"  PFC 15min PRODUCTION RUN — {today}")
 print("  Horizon: %s -> %s (%d days)" % (pfc.index.min().date(), pfc.index.max().date(), horizon_days))
 print("  Timestamps: %d (15min intervals)" % len(pfc))
 print("=" * 80)

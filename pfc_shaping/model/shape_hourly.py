@@ -385,10 +385,15 @@ class ShapeHourly:
                 # Normalize years to "years since last year"
                 yr_centered = yr_arr - yr_arr[-1]  # last year = 0
 
+                # Exponential decay weights consistent with base profile halflife=180d (P1-05)
+                # More recent years get higher weight; yr_centered has last year = 0
+                # so -yr_centered gives "years ago" (positive values)
+                trend_weights = np.exp(yr_centered * 365 * np.log(2) / 180)
+
                 slopes = np.zeros(24)
                 for h in range(24):
-                    # Simple linear regression: f_H(h) = a + b * year
-                    coeffs = np.polyfit(yr_centered, profiles[:, h], 1)
+                    # Weighted linear regression: f_H(h) = a + b * year
+                    coeffs = np.polyfit(yr_centered, profiles[:, h], 1, w=trend_weights)
                     slopes[h] = coeffs[0]  # slope per year
 
                 # Only keep trends that are meaningful (|slope| > 0.001 for at least some hours)

@@ -30,6 +30,7 @@ Format de sortie canonique (Parquet local) :
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
 
 import numpy as np
@@ -70,8 +71,16 @@ def load_from_sfoe() -> pd.DataFrame:
     """
     logger.info("Téléchargement réservoirs SFOE depuis opendata.swiss...")
 
-    resp = requests.get(SFOE_CSV_URL, timeout=REQUEST_TIMEOUT)
-    resp.raise_for_status()
+    for attempt in range(3):
+        try:
+            resp = requests.get(SFOE_CSV_URL, timeout=REQUEST_TIMEOUT)
+            resp.raise_for_status()
+            break
+        except Exception as e:
+            if attempt == 2:
+                raise
+            logger.warning("SFOE download attempt %d failed: %s — retrying...", attempt + 1, e)
+            time.sleep(2 ** attempt)
 
     # Lire le CSV (séparateur virgule, encoding UTF-8)
     from io import StringIO
