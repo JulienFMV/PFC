@@ -413,11 +413,13 @@ class ArbitrageFreeCalibrator:
             # This preserves exact repricing while interpreting the
             # correction as multiplicative (Kiesel-Paraschiv consistent).
             P_add = S + correction
-            # Guard against division by near-zero S values
-            safe_S = np.where(np.abs(S) > 0.1, S, 0.1 * np.sign(S + 0.01))
+            # Use multiplicative where S is large enough, additive otherwise
+            small_mask = np.abs(S) < 1.0
+            safe_S = np.where(small_mask, 1.0, S)
             m_factor = P_add / safe_S
             m_factor = np.maximum(m_factor, 0.1)
-            P = S * m_factor  # = P_add where S > 0.1
+            # For near-zero S, use additive result directly (no div-by-zero)
+            P = np.where(small_mask, P_add, S * m_factor)
             delta_for_log = m_factor - 1.0
             logger.info(
                 "Multiplicative factor m(t): min=%.4f, max=%.4f, mean=%.4f",

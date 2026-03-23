@@ -158,11 +158,10 @@ def _enforce_mean_constraints(
 
     y_adjusted = y_knots.copy()
 
-    for iteration in range(max_iter):
-        # Interpolate with current knots
+    for iteration in range(50):  # increased from max_iter for convergence
+        # Interpolate with current knots (floor applied AFTER mean computation)
         interpolator = PchipInterpolator(x_knots, y_adjusted, extrapolate=True)
         B_current = interpolator(x_target)
-        B_current = np.maximum(B_current, 1.0)
 
         max_error = 0.0
         for i, key in enumerate(month_keys):
@@ -187,14 +186,15 @@ def _enforce_mean_constraints(
             correction = error * 0.8  # damping factor for stability
             y_adjusted[i] += correction
 
-        if max_error < 0.5:  # converged within 0.5 EUR/MWh
-            logger.debug("MSFC converged in %d iterations (max_error=%.2f)",
+        if max_error < 0.01:  # tight tolerance: 0.01 EUR/MWh (was 0.5)
+            logger.debug("MSFC converged in %d iterations (max_error=%.4f)",
                          iteration + 1, max_error)
             break
 
-    # Final interpolation
+    # Final interpolation with positivity floor
     interpolator = PchipInterpolator(x_knots, y_adjusted, extrapolate=True)
-    return interpolator(x_target)
+    result = interpolator(x_target)
+    return np.maximum(result, 1.0)
 
 
 def _verify_constraints(

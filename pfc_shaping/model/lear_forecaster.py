@@ -456,11 +456,8 @@ class LEARForecaster:
             )
             epivot = epivot.reindex(complete.index)
 
-            # Target hour, d0 and d-1
-            if target_hour in epivot.columns:
-                features_list.append(epivot[target_hour].values)
-                feature_names.append(f"{col}_d0_h{target_hour:02d}")
-
+            # d-1 and d-7 only (d+0 removed: train/inference mismatch
+            # — realized values in training but 28d avg in production)
             for lag in [1, 7]:
                 shifted = epivot.shift(lag)
                 if target_hour in shifted.columns:
@@ -870,20 +867,23 @@ class LEARForecaster:
                     cv=cv,
                     random_state=self.random_state,
                 )
+                # Hold out last n_val observations for out-of-time validation
+                n_val = max(5, min(14, n // 4))
+                n_train = n - n_val
+
                 # Exponential decay weighting: recent obs matter more
                 # Half-life 180 days (Paraschiv et al., Swiss market)
-                days_ago = np.arange(n)[::-1].astype(float)
-                sample_weights = np.exp(-days_ago * (np.log(2) / 180))
-                model.fit(X_scaled, y_t, sample_weight=sample_weights)
+                days_ago_train = np.arange(n_train)[::-1].astype(float) + n_val
+                sample_weights = np.exp(-days_ago_train * (np.log(2) / 180))
+                model.fit(X_scaled[:n_train], y_t[:n_train],
+                          sample_weight=sample_weights)
 
-                # Recent out-of-time validation error (last 14 obs in this window)
-                n_val = max(5, min(14, n // 4))
-                X_val = X_w.iloc[-n_val:]
+                # Out-of-time validation on held-out recent data
+                Xv_scaled = scaler.transform(
+                    np.nan_to_num(X_w.iloc[-n_val:].values.astype(float), nan=0.0)
+                )
                 y_val = y_w.iloc[-n_val:].values.astype(float)
-                Xv_arr = np.nan_to_num(X_val.values.astype(float), nan=0.0)
-                Xv_scaled = scaler.transform(Xv_arr)
-                pred_t = model.predict(Xv_scaled)
-                pred_val = _asinh_inverse(pred_t, mu, sigma)
+                pred_val = _asinh_inverse(model.predict(Xv_scaled), mu, sigma)
                 val_mae = self._safe_mae(y_val, pred_val)
 
                 fitted.append((model, mu, sigma, scaler, X_w, y_w, val_mae))
@@ -912,12 +912,12 @@ class LEARForecaster:
         X_scaled = mlp_scaler.fit_transform(X_arr)
 
         try:
+            # Chronological split: last 15% for validation (no random leak)
             mlp = MLPRegressor(
                 hidden_layer_sizes=(128, 64),
                 activation="relu",
                 max_iter=500,
-                early_stopping=True,
-                validation_fraction=0.15,
+                early_stopping=False,
                 random_state=self.random_state,
                 learning_rate_init=0.001,
                 alpha=0.01,

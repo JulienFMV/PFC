@@ -125,12 +125,17 @@ def derive_base_prices(
             pk_ratio = peak_ratio_by_month.get(month, 1.15)
             base_prices[f"{year}-{month:02d}-Peak"] = round(monthly_base * pk_ratio, 1)
 
-        # Quarterly prices (average of months)
-        for q, months in {1: [1, 2, 3], 2: [4, 5, 6], 3: [7, 8, 9], 4: [10, 11, 12]}.items():
-            q_prices = [base_prices[f"{year}-{m:02d}"] for m in months]
-            q_peak_prices = [base_prices[f"{year}-{m:02d}-Peak"] for m in months]
-            base_prices[f"{year}-Q{q}"] = round(float(np.mean(q_prices)), 1)
-            base_prices[f"{year}-Q{q}-Peak"] = round(float(np.mean(q_peak_prices)), 1)
+        # Quarterly prices (hour-weighted average of months for energy conservation)
+        import calendar
+        for q, q_months in {1: [1, 2, 3], 2: [4, 5, 6], 3: [7, 8, 9], 4: [10, 11, 12]}.items():
+            q_prices = [base_prices[f"{year}-{m:02d}"] for m in q_months]
+            q_peak_prices = [base_prices[f"{year}-{m:02d}-Peak"] for m in q_months]
+            hours = [calendar.monthrange(year, m)[1] * 24 for m in q_months]
+            total_h = sum(hours)
+            base_prices[f"{year}-Q{q}"] = round(
+                sum(p * h for p, h in zip(q_prices, hours)) / total_h, 1)
+            base_prices[f"{year}-Q{q}-Peak"] = round(
+                sum(p * h for p, h in zip(q_peak_prices, hours)) / total_h, 1)
 
     logger.info(
         "Forward proxy: %d keys, Cal range: %s",

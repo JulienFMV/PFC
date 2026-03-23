@@ -49,6 +49,8 @@ REQUEST_TIMEOUT = 30
 
 def _retry_get(url: str, max_retries: int = MAX_RETRIES) -> requests.Response:
     """GET avec retry + backoff exponentiel."""
+    if max_retries < 1:
+        raise ValueError("max_retries must be >= 1")
     for attempt in range(max_retries):
         try:
             resp = requests.get(url, timeout=REQUEST_TIMEOUT)

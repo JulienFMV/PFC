@@ -60,8 +60,9 @@ def get_connection(config: dict | None = None):
 
     if _connection is not None:
         try:
-            # Test de la connexion existante
-            _connection.cursor().execute("SELECT 1")
+            # Test de la connexion existante (close cursor to avoid leak)
+            with _connection.cursor() as cur:
+                cur.execute("SELECT 1")
             return _connection
         except Exception:
             logger.info("Connexion Databricks expirée — reconnexion...")

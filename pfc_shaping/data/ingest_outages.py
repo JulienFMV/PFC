@@ -55,6 +55,8 @@ def _get_client():
 
 def _retry(func, *args, max_retries: int = MAX_RETRIES, **kwargs):
     """Appel avec retry + backoff exponentiel."""
+    if max_retries < 1:
+        raise ValueError("max_retries must be >= 1")
     for attempt in range(max_retries):
         try:
             return func(*args, **kwargs)

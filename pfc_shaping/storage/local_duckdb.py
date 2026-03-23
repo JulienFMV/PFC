@@ -121,17 +121,23 @@ def upsert_run_and_forecast(
     hourly = hourly[["run_id", "ts_local", "price_shape", "p10", "p90"]]
 
     with duckdb.connect(str(db_path)) as con:
-        con.execute("DELETE FROM forecasts_hourly WHERE run_id = ?", [run_id])
-        con.execute("DELETE FROM runs WHERE run_id = ?", [run_id])
-        con.execute(
-            """
-            INSERT INTO runs(run_id, run_ts_utc, source_forwards, pfc_csv_path, pfc_parquet_path, row_count, calibrated)
-            VALUES (?, now(), ?, ?, ?, ?, ?)
-            """,
-            [run_id, source_forwards, str(pfc_csv_path), str(pfc_parquet_path), row_count, calibrated],
-        )
-        con.register("hourly_df", hourly)
-        con.execute("INSERT INTO forecasts_hourly SELECT * FROM hourly_df")
+        con.execute("BEGIN TRANSACTION")
+        try:
+            con.execute("DELETE FROM forecasts_hourly WHERE run_id = ?", [run_id])
+            con.execute("DELETE FROM runs WHERE run_id = ?", [run_id])
+            con.execute(
+                """
+                INSERT INTO runs(run_id, run_ts_utc, source_forwards, pfc_csv_path, pfc_parquet_path, row_count, calibrated)
+                VALUES (?, now(), ?, ?, ?, ?, ?)
+                """,
+                [run_id, source_forwards, str(pfc_csv_path), str(pfc_parquet_path), row_count, calibrated],
+            )
+            con.register("hourly_df", hourly)
+            con.execute("INSERT INTO forecasts_hourly SELECT * FROM hourly_df")
+            con.execute("COMMIT")
+        except Exception:
+            con.execute("ROLLBACK")
+            raise
 
 
 def benchmark_against_hfc(

@@ -101,11 +101,38 @@ def _warn_missing_credentials(config: dict) -> None:
 
 
 @contextmanager
-def _run_lock(lock_name: str):
+def _run_lock(lock_name: str, ttl_minutes: int = 120):
     lock_path = LOCK_DIR / f"{lock_name}.lock"
+    LOCK_DIR.mkdir(parents=True, exist_ok=True)
+
     if lock_path.exists():
-        raise RuntimeError(f"Another run is active (lock exists: {lock_path})")
-    lock_path.write_text(datetime.now(timezone.utc).isoformat(), encoding="utf-8")
+        # Check if lock is stale: PID dead or TTL expired
+        try:
+            content = lock_path.read_text(encoding="utf-8").strip()
+            parts = content.split("|")
+            lock_pid = int(parts[0]) if len(parts) > 1 else -1
+            lock_ts = parts[-1]
+            lock_age = (datetime.now(timezone.utc) -
+                        datetime.fromisoformat(lock_ts)).total_seconds()
+            pid_alive = lock_pid > 0 and _pid_exists(lock_pid)
+            if pid_alive and lock_age < ttl_minutes * 60:
+                raise RuntimeError(
+                    f"Another run is active (PID {lock_pid}, age {lock_age:.0f}s, lock: {lock_path})")
+            logger.warning("Removing stale lock (PID %d alive=%s, age=%.0fs)",
+                           lock_pid, pid_alive, lock_age)
+            lock_path.unlink(missing_ok=True)
+        except (ValueError, OSError) as e:
+            logger.warning("Corrupt lock file, removing: %s", e)
+            lock_path.unlink(missing_ok=True)
+
+    # Atomic-ish creation with PID
+    try:
+        fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        os.write(fd, f"{os.getpid()}|{datetime.now(timezone.utc).isoformat()}".encode())
+        os.close(fd)
+    except FileExistsError:
+        raise RuntimeError(f"Lock race: another process grabbed the lock: {lock_path}")
+
     try:
         yield
     finally:
@@ -113,6 +140,15 @@ def _run_lock(lock_name: str):
             lock_path.unlink(missing_ok=True)
         except Exception:
             pass
+
+
+def _pid_exists(pid: int) -> bool:
+    """Check if a process with given PID exists."""
+    try:
+        os.kill(pid, 0)
+        return True
+    except (OSError, ProcessLookupError):
+        return False
 
 
 def _write_run_report(output_dir: Path, run_id: str, payload: dict) -> Path:

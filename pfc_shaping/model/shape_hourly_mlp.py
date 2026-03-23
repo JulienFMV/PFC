@@ -391,6 +391,7 @@ class ShapeHourlyMLP:
             return zeros.copy(), zeros.copy(), zeros.copy()
 
         # Reindex outages to match timestamps (forward fill for gaps)
+        outages_df = outages_df.copy()  # avoid mutating caller's DataFrame
         cols = ["unavailable_nuclear", "unavailable_hydro", "unavailable_thermal"]
         for c in cols:
             if c not in outages_df.columns:
