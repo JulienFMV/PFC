@@ -787,14 +787,14 @@ class LEARForecaster:
         elif regime == "volatile":
             return {
                 "bias_strength": 0.75,
-                "ar1_coeff": 0.65,
+                "ar1_coeff": 0.70,
                 "fm_weight_boost": 0.03,
                 "prefer_short_windows": False,
             }
         else:
             return {
                 "bias_strength": 0.70,
-                "ar1_coeff": 0.6,
+                "ar1_coeff": 0.65,
                 "fm_weight_boost": 0.0,
                 "prefer_short_windows": False,
             }
