@@ -595,10 +595,10 @@ class LEARForecaster:
         preds: list[float],
         val_maes: list[float],
     ) -> float:
-        """Weighted mean of model predictions with window pruning.
+        """Weighted mean of model predictions via inverse-MAE weighting.
 
-        Windows with MAE > 1.5x the best window get zero weight (Marcjasz 2023).
-        Remaining windows are combined via inverse-MAE weighting.
+        Note: window pruning (MAE > 1.5x best) was tested and REVERTED
+        because it degraded MAE. Simple inverse-MAE weighting is kept.
         """
         if not preds:
             return float("nan")
@@ -854,12 +854,10 @@ class LEARForecaster:
             y_w = y_full.iloc[-n:]
 
             y_arr = y_w.values.astype(float)
-            # Causal normalization for long windows (adapts to regime shifts)
-            # Fixed normalization for short windows (more stable)
-            if window >= 180:
-                y_t, mu, sigma = _causal_asinh_transform(y_arr)
-            else:
-                y_t, mu, sigma = _asinh_transform(y_arr)
+            # Fixed asinh transform for all windows (consistent forward/inverse)
+            # Causal variant was removed: inverse transform was inconsistent
+            # (per-timestep mu/sigma at training, global mu/sigma at prediction)
+            y_t, mu, sigma = _asinh_transform(y_arr)
 
             try:
                 X_arr = np.nan_to_num(X_w.values.astype(float), nan=0.0)
@@ -1522,7 +1520,12 @@ class LEARForecaster:
                         X_ev = np.nan_to_num(X_full.iloc[-n_eval:].values.astype(float), nan=0.0)
                         y_ev = y_full.iloc[-n_eval:].values.astype(float)
                         gbm_mae = self._safe_mae(y_ev, gbm_model.predict(X_ev))
-                        lasso_mae_ev = self._safe_mae(y_ev, np.full(n_eval, forecast))
+                        # Proper LASSO eval (not constant proxy)
+                        lasso_eval_preds = []
+                        for mdl, mu, sigma, scl, _, _, _ in lasso_models:
+                            pred_t = mdl.predict(scl.transform(X_ev))
+                            lasso_eval_preds.append(_asinh_inverse(pred_t, mu, sigma))
+                        lasso_mae_ev = self._safe_mae(y_ev, np.mean(lasso_eval_preds, axis=0))
                         # Adaptive weight: GBM gets 15-40% based on relative accuracy
                         inv_gbm = 1.0 / max(1e-6, gbm_mae)
                         inv_lasso = 1.0 / max(1e-6, lasso_mae_ev)
@@ -1552,10 +1555,9 @@ class LEARForecaster:
                         ar7 = max(0.03, 0.10 - 0.01 * (horizon - 1))
                         forecast = forecast - ar7 * np.clip(lag7_err, -100, 100)
 
-                # Expanding-window bias correction (regime-adaptive strength)
-                if len(error_history[hour]) >= 3:
-                    recent_bias = float(np.mean(error_history[hour][-14:]))
-                    forecast = forecast - rp["bias_strength"] * recent_bias
+                # NOTE: Expanding-window bias correction REMOVED (was double-counting
+                # with recent_bias from _recent_bias_by_regime + AR correction).
+                # Three auditors confirmed this causes over-correction.
 
                 # Clamp forecast to physical bounds
                 forecast = float(np.clip(forecast, -500, 1000))

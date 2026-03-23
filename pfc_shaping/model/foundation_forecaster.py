@@ -204,9 +204,9 @@ class FoundationForecaster:
             )
 
             # Extract quantiles from result DataFrame
-            q10_col = [c for c in result_df.columns if "0.1" in str(c)]
-            q50_col = [c for c in result_df.columns if "0.5" in str(c)]
-            q90_col = [c for c in result_df.columns if "0.9" in str(c)]
+            q10_col = [c for c in result_df.columns if str(c) == "0.1"]
+            q50_col = [c for c in result_df.columns if str(c) == "0.5"]
+            q90_col = [c for c in result_df.columns if str(c) == "0.9"]
 
             if not q50_col:
                 logger.warning("Chronos-2 returned unexpected columns: %s", result_df.columns.tolist())
@@ -238,15 +238,23 @@ class FoundationForecaster:
         price_history: pd.Series | np.ndarray,
         horizon: int,
     ) -> Optional[dict[str, np.ndarray]]:
-        """Forecast using Chronos-Bolt (univariate, chunked for long horizons)."""
+        """Forecast using Chronos-Bolt (univariate).
+
+        Uses Bolt's built-in chunking for long horizons (no custom logic needed).
+        """
         values = self._prepare_series(price_history)
         if len(values) < 48:
             return None
 
         try:
             context = torch.tensor(values, dtype=torch.float32).unsqueeze(0)
-            quantile_preds = self._predict_bolt_chunked(context, horizon)
-            q_np = quantile_preds.numpy()
+            # Let Bolt handle chunking internally (it preserves quantile
+            # calibration across chunks, unlike our previous custom logic)
+            forecast = self._pipeline.predict(
+                context, prediction_length=horizon
+            )
+            # forecast shape: (1, 9, horizon) — 9 quantile levels
+            q_np = forecast[0].numpy()
 
             if not np.all(np.isfinite(q_np)):
                 n_bad = (~np.isfinite(q_np)).sum()
@@ -260,22 +268,3 @@ class FoundationForecaster:
         except Exception:
             logger.warning("Chronos-Bolt forecast failed", exc_info=True)
             return None
-
-    def _predict_bolt_chunked(
-        self, context: "torch.Tensor", horizon: int
-    ) -> "torch.Tensor":
-        """Bolt prediction with chunking for horizon > 64."""
-        chunks = []
-        remaining = horizon
-        ctx = context
-
-        while remaining > 0:
-            chunk_len = min(remaining, _BOLT_MAX_PREDICTION_LENGTH)
-            forecast_chunk = self._pipeline.predict(ctx, prediction_length=chunk_len)
-            chunks.append(forecast_chunk[0])
-            if remaining > chunk_len:
-                median_chunk = forecast_chunk[0, 4:5, :]
-                ctx = torch.cat([ctx, median_chunk], dim=-1)
-            remaining -= chunk_len
-
-        return torch.cat(chunks, dim=-1)
