@@ -1042,8 +1042,8 @@ class LEARForecaster:
             return raw_pred
 
         # Expand the deviation from mean to match actual std
-        # Cap at 1.5 — conservative expansion to reduce positive bias
-        var_ratio = min(actual_std / lasso_std, 1.5)
+        # Cap at 1.2 — minimal expansion
+        var_ratio = min(actual_std / lasso_std, 1.2)
         recalibrated = actual_mean + (raw_pred - lasso_mean) * var_ratio
 
         # Quantile-based clamp: keep extremes while avoiding unstable tails.
