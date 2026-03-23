@@ -29,6 +29,9 @@ backtest = st.Page("pages/4_backtest.py", title="Backtest", icon="🔍")
 control_tower = st.Page("pages/6_control_tower.py", title="Control Tower", icon="🧭")
 hfc_compare = st.Page("pages/12_pfc_vs_hfc.py", title="PFC vs HFC", icon="🆚")
 
+doc_ct = st.Page("pages/13_doc_court_terme.py", title="Doc Court Terme", icon="📋")
+doc_lt = st.Page("pages/14_doc_long_terme.py", title="Doc Long Terme", icon="📋")
+
 hydro = st.Page("pages/5_hydro.py", title="Hydro & Production", icon="💧")
 outages = st.Page("pages/10_outages.py", title="Indisponibilites", icon="🔴")
 flows_map = st.Page("pages/9_flows_map.py", title="Flux transfrontaliers", icon="🗺️")
@@ -39,6 +42,7 @@ nav = st.navigation(
         "Marche": [overview, pfc_vs_fwd, pfc_curve, short_term, ch_de],
         "Modele": [shape, backtest, control_tower, hfc_compare],
         "Fondamentaux": [hydro, outages, flows_map, commodities],
+        "Documentation": [doc_ct, doc_lt],
     }
 )
 
