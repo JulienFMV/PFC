@@ -139,10 +139,32 @@ def main() -> None:
             calibrator=calibrator,
         )
 
-        # ENTSO-E forecast for the test period (use actual data as "perfect forecast")
+        # ENTSO-E forecast: climatological median (same as production)
+        # NOT actual realized data — avoids look-ahead bias in evaluation
         entso_forecast = None
         if entso_df is not None and entso_full is not None:
-            entso_forecast = entso_full[entso_full.index >= cutoff]
+            hist = entso_full[entso_full.index < cutoff]
+            if not hist.empty:
+                idx_zh = hist.index.tz_convert("Europe/Zurich")
+                hist_c = hist.copy()
+                hist_c["_month"] = idx_zh.month
+                hist_c["_hour"] = idx_zh.hour
+                hist_c["_quarter"] = idx_zh.minute // 15
+                numeric_cols = [c for c in hist_c.select_dtypes("number").columns
+                                if c not in ("_month", "_hour", "_quarter")]
+                clim = hist_c.groupby(
+                    ["_month", "_hour", "_quarter"]
+                )[numeric_cols].median()
+                # Build forecast index and map climatology
+                fwd_idx = pd.date_range(
+                    cutoff, cutoff + pd.Timedelta(days=test_months * 31),
+                    freq="15min", tz="UTC", inclusive="left")
+                fwd_zh = fwd_idx.tz_convert("Europe/Zurich")
+                keys = list(zip(fwd_zh.month, fwd_zh.hour, fwd_zh.minute // 15))
+                entso_forecast = pd.DataFrame(
+                    [clim.loc[k] if k in clim.index else {} for k in keys],
+                    index=fwd_idx,
+                ).fillna(0.0)
 
         pfc = assembler.build(
             base_prices=base_prices,

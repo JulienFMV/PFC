@@ -376,14 +376,14 @@ class ShapeIntraday:
 
             q_data["ratio"] = q_data["price_eur_mwh"] / q_data["hour_mean"]
 
-            # Régression Huber : ratio ~ 1 (intercept only, sans features)
+            # Régression Huber : ratio ~ 1 (intercept only)
             X = np.ones((len(q_data), 1))
             y = q_data["ratio"].values
             w = q_data["_weight"].values if has_weights else None
             try:
-                hub = HuberRegressor(epsilon=1.35, max_iter=200)
+                hub = HuberRegressor(epsilon=1.35, max_iter=200, fit_intercept=False)
                 hub.fit(X, y, sample_weight=w)
-                ratios.append(hub.intercept_ + hub.coef_[0])
+                ratios.append(hub.coef_[0])
             except Exception:
                 if w is not None:
                     ratios.append(float(np.average(y, weights=w)))

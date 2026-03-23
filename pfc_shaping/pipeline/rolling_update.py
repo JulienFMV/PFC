@@ -251,8 +251,8 @@ def run_update(config: dict | None = None) -> Path:
             duckdb_path = _resolve_config_path(paths.get("duckdb_path", "data/pfc_local.duckdb"))
             hfc_dir = Path(paths.get("hfc_benchmark_dir", ""))
 
-            fetch_start = (pd.Timestamp.utcnow() - pd.Timedelta(days=14)).strftime("%Y-%m-%d")
-            fetch_end = pd.Timestamp.utcnow().strftime("%Y-%m-%d")
+            fetch_start = (pd.Timestamp.now("UTC") - pd.Timedelta(days=14)).strftime("%Y-%m-%d")
+            fetch_end = pd.Timestamp.now("UTC").strftime("%Y-%m-%d")
 
             logger.info(
                 "Sources - energy-charts: %s | SMARD: %s | ENTSO-E: %s | Databricks: %s",
@@ -354,7 +354,7 @@ def run_update(config: dict | None = None) -> Path:
             lookback_months = break_result.recommended_lookback_months
             logger.info("Break detected=%s | %s", break_result.detected, break_result.message)
 
-            cutoff = pd.Timestamp.utcnow() - pd.DateOffset(months=lookback_months)
+            cutoff = pd.Timestamp.now("UTC") - pd.DateOffset(months=lookback_months)
             epex_fit = epex_df[epex_df.index >= cutoff]
             entso_fit = entso_df[entso_df.index >= cutoff] if entso_df is not None else None
             hydro_fit = hydro_df[hydro_df.index >= cutoff] if hydro_df is not None else None

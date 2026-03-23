@@ -159,40 +159,40 @@ class WaterValueCorrection:
             self.n_obs_ = len(monthly)
             return self
 
-        # ── Régression avec interactions saisonnières ────────────────────────
-        # Features : trend + fill_deviation × dummy_saison
+        # ── Régression sur prix RELATIFS (stationnarité) ──────────────────
+        # Régresse prix/moyenne_glissante_12m ~ fill_deviation × saison
+        # Élimine le biais de non-stationnarité (crise 2021-2022)
         saisons = list(DEFAULT_SEASON_SENSITIVITY.keys())
         X_cols = []
 
-        # Tendance temporelle normalisée [0, 1]
-        t_num = (monthly.index - monthly.index[0]).total_seconds()
-        t_norm = t_num / t_num.max() if t_num.max() > 0 else t_num
-        X_df = pd.DataFrame({"trend": t_norm}, index=monthly.index)
-        X_cols.append("trend")
+        # Prix relatif : ratio vs moyenne glissante 12 mois
+        rolling_mean = monthly["price_mean"].rolling(
+            12, min_periods=6, center=True
+        ).mean()
+        # Fill edges with expanding mean
+        rolling_mean = rolling_mean.fillna(monthly["price_mean"].expanding().mean())
+        rolling_mean = rolling_mean.replace(0, 1.0)  # guard div-by-zero
+        monthly["price_ratio"] = monthly["price_mean"] / rolling_mean
 
-        # Interactions fill_deviation × saison
+        X_df = pd.DataFrame(index=monthly.index)
+
+        # Interactions fill_deviation × saison (no trend needed on relative prices)
         for s in saisons:
             col = f"fd_{s}"
             X_df[col] = monthly["fill_dev_mean"] * (monthly["saison"] == s).astype(float)
             X_cols.append(col)
 
         X = X_df[X_cols].values
-        y = monthly["price_mean"].values
+        y = monthly["price_ratio"].values
 
         try:
-            reg = LinearRegression()
+            reg = LinearRegression(fit_intercept=True)
             reg.fit(X, y)
 
-            # Extraire les coefficients d'interaction saisonnière
-            # Normaliser par le prix moyen pour obtenir un effet relatif
-            price_mean_global = y.mean()
-            if price_mean_global == 0:
-                price_mean_global = 1.0
-
+            # Coefficients are already in relative space (ratio effect per % fill)
             raw_sensitivities = {}
             for i, s in enumerate(saisons):
-                coef_idx = 1 + i  # index 0 = trend
-                raw_sensitivities[s] = reg.coef_[coef_idx] / price_mean_global
+                raw_sensitivities[s] = reg.coef_[i]
 
             # β_WV = moyenne pondérée des sensibilités saisonnières
             # (pondération par le nombre de mois dans chaque saison)

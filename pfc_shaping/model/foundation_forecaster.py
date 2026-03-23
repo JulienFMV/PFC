@@ -175,8 +175,15 @@ class FoundationForecaster:
                 return None
 
             n = len(prices)
+            # Use actual timestamps when available (preserves seasonality)
+            if hasattr(price_history, 'index') and isinstance(price_history.index, pd.DatetimeIndex):
+                ts = price_history.index[-n:]
+                if ts.tz is not None:
+                    ts = ts.tz_convert("UTC").tz_localize(None)
+            else:
+                ts = pd.date_range("2020-01-01", periods=n, freq="h")
             df = pd.DataFrame({
-                "timestamp": pd.date_range("2020-01-01", periods=n, freq="h"),
+                "timestamp": ts,
                 "item_id": "ch_price",
                 "target": prices,
             })
@@ -253,17 +260,22 @@ class FoundationForecaster:
             forecast = self._pipeline.predict(
                 context, prediction_length=horizon
             )
-            # forecast shape: (1, 9, horizon) — 9 quantile levels
+            # forecast shape: (1, num_quantiles, horizon)
             q_np = forecast[0].numpy()
+            n_q = q_np.shape[0]
 
             if not np.all(np.isfinite(q_np)):
                 n_bad = (~np.isfinite(q_np)).sum()
                 logger.warning("Chronos-Bolt returned %d non-finite values", n_bad)
                 return None
 
+            # Dynamically pick quantile indices (default 9: [0.1..0.9])
+            idx_q10 = 0
+            idx_q50 = n_q // 2
+            idx_q90 = n_q - 1
             return {
-                "q10": q_np[0], "median": q_np[4], "q90": q_np[8],
-                "mean": q_np[4],
+                "q10": q_np[idx_q10], "median": q_np[idx_q50],
+                "q90": q_np[idx_q90], "mean": q_np[idx_q50],
             }
         except Exception:
             logger.warning("Chronos-Bolt forecast failed", exc_info=True)

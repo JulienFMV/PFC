@@ -129,7 +129,7 @@ class PFCAssembler:
             index : DatetimeIndex UTC freq='15min'
         """
         if start_date is None:
-            start_date = (pd.Timestamp.utcnow() + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+            start_date = (pd.Timestamp.now("UTC") + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
 
         ts_start = pd.Timestamp(start_date, tz="UTC")
         ts_end = ts_start + pd.Timedelta(days=horizon_days)

@@ -40,6 +40,7 @@ SEED = 42
 # (l'incertitude des profiles augmente sur l'horizon long car les marchés
 # et mix énergétique peuvent changer structurellement)
 HORIZON_WIDENING = {
+    1:  1.50,   # M+0 (current month) : tightest, near-term confidence
     6:  2.50,   # M+1..M+6   : widen to capture forward-spot basis risk
     12: 2.80,   # M+7..M+12  : additional term-structure uncertainty
     24: 3.50,   # Y+2        : wider for structural market changes

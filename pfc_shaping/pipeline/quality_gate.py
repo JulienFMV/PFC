@@ -66,7 +66,7 @@ def validate_input_frame(
         checks_passed += 1
 
     latest_ts = df.index.max()
-    now = pd.Timestamp.utcnow()
+    now = pd.Timestamp.now("UTC")
     if now.tzinfo is None:
         now = now.tz_localize("UTC")
     age_days = (now - latest_ts.tz_convert("UTC")).total_seconds() / 86400.0
