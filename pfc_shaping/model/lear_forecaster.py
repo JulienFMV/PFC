@@ -464,6 +464,31 @@ class LEARForecaster:
                     features_list.append(shifted[target_hour].values)
                     feature_names.append(f"{col}_d-{lag}_h{target_hour:02d}")
 
+        # ── 3b. Enriched d-1 aggregate features (compensate d+0 removal) ──
+        ch_exog_cols = [c for c in exog.columns
+                        if c in ["load_mw", "solar_mw", "wind_mw"]]
+        for col in ch_exog_cols:
+            series = exog[col].dropna()
+            if series.empty:
+                continue
+            exog_local = series.index.tz_convert(self.tz)
+            edf_agg = pd.DataFrame({
+                "date": exog_local.date,
+                "value": series.values,
+            })
+            daily_agg = edf_agg.groupby("date")["value"].agg(["mean", "max", "min"])
+            daily_agg.index = pd.to_datetime(daily_agg.index)
+            daily_agg = daily_agg.reindex(complete.index)
+            # d-1 daily mean, max, range
+            for lag in [1]:
+                shifted_agg = daily_agg.shift(lag)
+                features_list.append(shifted_agg["mean"].values)
+                feature_names.append(f"{col}_daily_mean_d-{lag}")
+                features_list.append(shifted_agg["max"].values)
+                feature_names.append(f"{col}_daily_max_d-{lag}")
+                features_list.append((shifted_agg["max"] - shifted_agg["min"]).values)
+                feature_names.append(f"{col}_daily_range_d-{lag}")
+
         # ── 4. Commodities ──
         commodity_cols = [c for c in exog.columns
                          if c in ["ttf_gas", "co2_eua_(krbn)", "brent"]]
