@@ -90,7 +90,7 @@ with tab1:
     )
     fig_fh.add_hline(y=1.0, line_dash="dot", line_color=COLORS["muted"], opacity=0.5)
     fig_fh.update_layout(height=450)
-    st.plotly_chart(fig_fh, width="stretch")
+    st.plotly_chart(fig_fh, use_container_width=True)
 
     with st.expander("Export"):
         export_csv_button(hourly, "shape_f_H.csv", "Export f_H")
@@ -130,7 +130,7 @@ with tab2:
             height=300,
             xaxis_range=[0.6, 1.2],
         )
-        st.plotly_chart(fig_fw, width="stretch")
+        st.plotly_chart(fig_fw, use_container_width=True)
 
         st.markdown(
             "> **Lecture** : Ouvrable > 1 = prix plus elevés en semaine. "
@@ -177,7 +177,7 @@ with tab3:
             )
             fig_q.add_hline(y=1.0, line_dash="dot", line_color=COLORS["muted"])
             fig_q.update_layout(height=350)
-            st.plotly_chart(fig_q, width="stretch")
+            st.plotly_chart(fig_q, use_container_width=True)
 
             st.markdown(
                 f"> **Heure {sel_hour}h** — Q1=:00, Q2=:15, Q3=:30, Q4=:45. "
@@ -222,5 +222,5 @@ with tab4:
         yaxis=dict(autorange="reversed"),
         height=450,
     )
-    st.plotly_chart(fig_heat, width="stretch")
+    st.plotly_chart(fig_heat, use_container_width=True)
 

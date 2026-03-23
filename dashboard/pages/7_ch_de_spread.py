@@ -91,7 +91,7 @@ fig.update_layout(
     legend=dict(orientation="h", y=1.04, x=0),
 )
 fig = add_range_slider(fig)
-st.plotly_chart(fig, width="stretch")
+st.plotly_chart(fig, use_container_width=True)
 
 st.subheader("Term Structure mensuelle")
 m = joined.resample("MS").mean()
@@ -116,4 +116,4 @@ fig_m.update_layout(
     yaxis2=dict(title="Spread EUR/MWh", overlaying="y", side="right", showgrid=False),
     legend=dict(orientation="h", y=1.04, x=0),
 )
-st.plotly_chart(fig_m, width="stretch")
+st.plotly_chart(fig_m, use_container_width=True)

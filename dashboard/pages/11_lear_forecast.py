@@ -163,7 +163,7 @@ with tab1:
         hovermode="x unified",
     )
     fig = add_range_slider(fig)
-    st.plotly_chart(fig, width="stretch")
+    st.plotly_chart(fig, use_container_width=True)
 
     # Daily summary table
     st.subheader("Resume journalier")
@@ -227,7 +227,7 @@ with tab2:
         xaxis=dict(dtick=1),
         legend=dict(orientation="h", y=1.05, x=0),
     )
-    st.plotly_chart(fig_prof, width="stretch")
+    st.plotly_chart(fig_prof, use_container_width=True)
 
     # Per-day profiles
     st.subheader("Profil par jour")
@@ -244,7 +244,7 @@ with tab2:
         colorbar=dict(title="EUR/MWh"),
     ))
     fig_heat.update_layout(height=450, yaxis=dict(autorange="reversed"))
-    st.plotly_chart(fig_heat, width="stretch")
+    st.plotly_chart(fig_heat, use_container_width=True)
 
 
 # ════════════════════════════════════════════════════════════════════════
@@ -330,7 +330,7 @@ with tab3:
             fig_h.update_layout(height=280, xaxis_title="Horizon (jours)")
             fig_h.update_yaxes(title_text="MAE (EUR/MWh)", secondary_y=False)
             fig_h.update_yaxes(title_text="Correlation", secondary_y=True)
-            st.plotly_chart(fig_h, width="stretch")
+            st.plotly_chart(fig_h, use_container_width=True)
 
         st.divider()
 
@@ -358,7 +358,7 @@ with tab3:
             hovermode="x unified",
         )
         fig_bt = add_range_slider(fig_bt)
-        st.plotly_chart(fig_bt, width="stretch")
+        st.plotly_chart(fig_bt, use_container_width=True)
 
         # Scatter: forecast vs actual
         col_scat, col_err = st.columns(2)
@@ -385,7 +385,7 @@ with tab3:
                 yaxis_title="LEAR prevu (EUR/MWh)",
                 height=350,
             )
-            st.plotly_chart(fig_scat, width="stretch")
+            st.plotly_chart(fig_scat, use_container_width=True)
 
         with col_err:
             st.subheader("Distribution erreurs")
@@ -405,7 +405,7 @@ with tab3:
                 yaxis_title="Frequence",
                 height=350,
             )
-            st.plotly_chart(fig_err, width="stretch")
+            st.plotly_chart(fig_err, use_container_width=True)
 
         # MAE per hour
         st.subheader("MAE par heure de livraison")
@@ -427,7 +427,7 @@ with tab3:
             height=300,
             xaxis=dict(dtick=1),
         )
-        st.plotly_chart(fig_hmae, width="stretch")
+        st.plotly_chart(fig_hmae, use_container_width=True)
 
         # Daily MAE
         st.subheader("MAE par jour")
@@ -441,7 +441,7 @@ with tab3:
         fig_dmae.update_layout(
             yaxis_title="MAE (EUR/MWh)", height=250,
         )
-        st.plotly_chart(fig_dmae, width="stretch")
+        st.plotly_chart(fig_dmae, use_container_width=True)
 
         export_csv_button(bt_view, "lear_backtest.csv", "Export backtest")
 
@@ -487,7 +487,7 @@ with tab4:
             xaxis_title="Heure", yaxis_title="Fenetres moyennes",
             height=250, xaxis=dict(dtick=1),
         )
-        st.plotly_chart(fig_win, width="stretch")
+        st.plotly_chart(fig_win, use_container_width=True)
 
     # Price stats per horizon day
     st.subheader("Statistiques par jour d'horizon")

@@ -144,7 +144,7 @@ fig.update_layout(
     ),
 )
 fig = add_range_slider(fig)
-st.plotly_chart(fig, width="stretch")
+st.plotly_chart(fig, use_container_width=True)
 
 # ── Monthly term structure ────────────────────────────────────────────────
 st.subheader("Term Structure mensuelle")
@@ -171,7 +171,7 @@ fig_bar.update_layout(
     legend=dict(orientation="h", y=1.05, x=0),
     bargap=0.15,
 )
-st.plotly_chart(fig_bar, width="stretch")
+st.plotly_chart(fig_bar, use_container_width=True)
 
 # ── Export ────────────────────────────────────────────────────────────────
 with st.expander("Export"):
@@ -182,5 +182,5 @@ if "confidence" in pfc.columns:
     with st.expander("Score de confiance par horizon"):
         conf = pfc.groupby("profile_type")["confidence"].first().reset_index()
         conf.columns = ["Horizon", "Confiance"]
-        st.dataframe(conf, hide_index=True, width="stretch")
+        st.dataframe(conf, hide_index=True, use_container_width=True)
 

@@ -89,12 +89,12 @@ with tab1:
         height=380,
         legend=dict(orientation="h", y=1.05, x=0),
     )
-    st.plotly_chart(fig, width="stretch")
+    st.plotly_chart(fig, use_container_width=True)
 
     st.dataframe(
         runs_view[["run_id", "run_ts_utc", "source_forwards", "row_count", "calibrated"]],
         hide_index=True,
-        width="stretch",
+        use_container_width=True,
     )
 
 with tab2:
@@ -128,7 +128,7 @@ with tab2:
                 )
             )
             fig_mae.update_layout(xaxis_title="Run ID", yaxis_title="EUR/MWh", height=320)
-            st.plotly_chart(fig_mae, width="stretch")
+            st.plotly_chart(fig_mae, use_container_width=True)
 
         with col_b:
             colors = [COLORS["green"] if v <= 0 else COLORS["red"] for v in bench_view["bias"].fillna(0)]
@@ -143,14 +143,14 @@ with tab2:
             )
             fig_bias.add_hline(y=0, line_dash="dot", line_color=COLORS["muted"])
             fig_bias.update_layout(xaxis_title="Run ID", yaxis_title="Bias EUR/MWh", height=320)
-            st.plotly_chart(fig_bias, width="stretch")
+            st.plotly_chart(fig_bias, use_container_width=True)
 
         st.dataframe(
             bench_view[
                 ["run_id", "n_points", "mae", "rmse", "bias", "p95_abs_error", "window_start", "window_end"]
             ],
             hide_index=True,
-            width="stretch",
+            use_container_width=True,
         )
 
 with tab3:
@@ -188,6 +188,6 @@ with tab3:
             )
         )
         fig_fc.update_layout(xaxis_title="Timestamp local", yaxis_title="EUR/MWh", height=420)
-        st.plotly_chart(fig_fc, width="stretch")
+        st.plotly_chart(fig_fc, use_container_width=True)
 
-        st.dataframe(fc.tail(200), hide_index=True, width="stretch")
+        st.dataframe(fc.tail(200), hide_index=True, use_container_width=True)

@@ -30,16 +30,9 @@ with st.sidebar:
 commodities = load_commodities(period="2y")
 
 if not commodities:
-    from pathlib import Path
-    import os
-    cache = Path(__file__).resolve().parent.parent.parent / "data" / "commodities_cache.parquet"
-    alt_cache = Path("data") / "commodities_cache.parquet"
     st.warning(
-        f"Aucune donnee commodite disponible.\n\n"
-        f"Cache (abs): `{cache}` → {'existe' if cache.exists() else 'absent'}\n\n"
-        f"Cache (rel): `{alt_cache.resolve()}` → {'existe' if alt_cache.exists() else 'absent'}\n\n"
-        f"CWD: `{os.getcwd()}`\n\n"
-        f"PROJECT_ROOT: `{Path(__file__).resolve().parent.parent}`",
+        "Aucune donnee commodite disponible. Verifiez que le cache est a jour "
+        "(lancez run_pfc_production.py pour rafraichir les donnees).",
         icon="⚠️",
     )
     st.stop()

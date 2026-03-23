@@ -26,8 +26,12 @@ from utils import (
     pfc_hfc_metrics,
     show_freshness_sidebar,
 )
-from pfc_shaping.data.ingest_forwards import load_base_prices_from_eex_report
-from pfc_shaping.data.ingest_forwards import load_forwards_timeseries
+try:
+    from pfc_shaping.data.ingest_forwards import load_base_prices_from_eex_report
+    from pfc_shaping.data.ingest_forwards import load_forwards_timeseries
+    _HAS_INGEST_FORWARDS = True
+except ImportError:
+    _HAS_INGEST_FORWARDS = False
 
 st.header("PFC vs HFC (OMPEX)")
 st.caption("Comparaison directe de la courbe PFC CH avec les fichiers HFC du dossier benchmark")
@@ -153,6 +157,8 @@ def _resolve_eex_report_path(cfg: dict) -> Path | None:
 
 
 def _latest_eex_mark_date(report_path: Path, market: str = "CH") -> pd.Timestamp | None:
+    if not _HAS_INGEST_FORWARDS:
+        return None
     try:
         ts = load_forwards_timeseries(report_path, market=market)
     except Exception:

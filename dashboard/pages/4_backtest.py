@@ -29,7 +29,7 @@ if epex is None or "price_eur_mwh" not in (epex.columns if epex is not None else
 with st.sidebar:
     st.subheader("Paramètres backtest")
     bt_start = st.date_input("Début test", value=pd.Timestamp("2024-01-01"))
-    bt_end = st.date_input("Fin test", value=pd.Timestamp("2026-02-28"))
+    bt_end = st.date_input("Fin test", value=pd.Timestamp.today() - pd.Timedelta(days=1))
     base_price = st.number_input("Base price (EUR/MWh)", value=75.0, step=5.0)
     run_bt = st.button("Lancer le backtest", type="primary", use_container_width=True)
 
@@ -122,7 +122,7 @@ with tab1:
         legend=dict(orientation="h", y=1.05, x=0),
         barmode="group",
     )
-    st.plotly_chart(fig_kpi, width="stretch")
+    st.plotly_chart(fig_kpi, use_container_width=True)
 
 with tab2:
     try:
@@ -172,7 +172,7 @@ with col1:
         name="RMSE",
     ))
     fig_rmse.update_layout(title="RMSE par période", yaxis_title="RMSE", height=300)
-    st.plotly_chart(fig_rmse, width="stretch")
+    st.plotly_chart(fig_rmse, use_container_width=True)
 
 with col2:
     fig_ic = go.Figure()
@@ -187,5 +187,5 @@ with col2:
         title="Couverture IC 80%", yaxis_title="%",
         yaxis_range=[0, 100], height=300,
     )
-    st.plotly_chart(fig_ic, width="stretch")
+    st.plotly_chart(fig_ic, use_container_width=True)
 
