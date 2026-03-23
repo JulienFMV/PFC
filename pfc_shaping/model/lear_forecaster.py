@@ -1172,7 +1172,7 @@ class LEARForecaster:
                 horizon_bias_weight = max(0.25, 1.0 - 0.06 * (d - 1))
                 recalibrated = recalibrated - horizon_bias_weight * recent_bias
                 regime_bias = weekend_bias if pd.Timestamp(forecast_date).dayofweek >= 5 else weekday_bias
-                recalibrated = recalibrated - 0.55 * horizon_bias_weight * regime_bias
+                recalibrated = recalibrated - 0.70 * horizon_bias_weight * regime_bias
 
                 # Ensemble: adaptive average with MLP (reduce MLP weight on long horizon).
                 if mlp_model is not None and x_pred is not None:
@@ -1575,7 +1575,7 @@ class LEARForecaster:
                 horizon_bias_weight = max(0.25, 1.0 - 0.06 * (horizon - 1))
                 forecast = forecast - horizon_bias_weight * recent_bias
                 regime_bias = weekend_bias if pd.Timestamp(target_date).dayofweek >= 5 else weekday_bias
-                forecast = forecast - 0.55 * horizon_bias_weight * regime_bias
+                forecast = forecast - 0.70 * horizon_bias_weight * regime_bias
 
                 # GBM ensemble for peak hours (reuse pre-trained model)
                 if hour in gbm_cache and x_pred is not None:
