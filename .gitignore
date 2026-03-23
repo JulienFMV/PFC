@@ -48,3 +48,4 @@ pfc_shaping/output/*.parquet
 # Secrets — NE JAMAIS COMMITTER
 .env
 *.token
+AutogluonModels/
