@@ -528,6 +528,103 @@ class LEARForecaster:
                 features_list.append(hydro_delta_7d.values)
                 feature_names.append("hydro_fill_delta_7d")
 
+        # ── 5b. Swiss-specific features (ALPINE v2 quick wins) ──
+        # --- Wallis-specific reservoir fill (55% of CH storage, FMV's region) ---
+        if "wallis_gwh" in exog.columns:
+            ws = exog["wallis_gwh"].dropna()
+            if not ws.empty:
+                ws_local = ws.index.tz_convert(self.tz)
+                ws_df = pd.DataFrame({"date": ws_local.date, "value": ws.values})
+                ws_daily = ws_df.groupby("date")["value"].mean()
+                ws_aligned = ws_daily.reindex(complete.index).ffill()
+                features_list.append(ws_aligned.values)
+                feature_names.append("wallis_fill_gwh")
+
+        # --- Hydro sub-types from ENTSO-E (pumped, RoR, reservoir generation) ---
+        for hydro_col in ["hydro_pumped_mw", "hydro_ror_mw"]:
+            if hydro_col in exog.columns:
+                hs = exog[hydro_col].dropna()
+                if not hs.empty:
+                    hs_local = hs.index.tz_convert(self.tz)
+                    hs_df = pd.DataFrame({
+                        "date": hs_local.date, "hour": hs_local.hour,
+                        "value": hs.values,
+                    })
+                    hs_pivot = hs_df.pivot_table(
+                        index="date", columns="hour", values="value", aggfunc="mean"
+                    ).reindex(complete.index)
+                    if target_hour in hs_pivot.columns:
+                        features_list.append(hs_pivot.shift(1)[target_hour].values)
+                        feature_names.append(f"{hydro_col}_d-1_h{target_hour:02d}")
+
+        # --- Nuclear available capacity (2960 MW total - unavailable) ---
+        if "unavailable_nuclear" in exog.columns:
+            nuc = exog["unavailable_nuclear"].dropna()
+            if not nuc.empty:
+                nuc_local = nuc.index.tz_convert(self.tz)
+                nuc_df = pd.DataFrame({"date": nuc_local.date, "value": nuc.values})
+                nuc_daily = nuc_df.groupby("date")["value"].mean()
+                nuc_aligned = nuc_daily.reindex(complete.index)
+                nuclear_avail = 2960.0 - nuc_aligned.shift(1).fillna(0)
+                features_list.append(nuclear_avail.values)
+                feature_names.append("nuclear_available_ch_mw")
+
+        # --- Nant de Drance structural break (900MW pump-storage, July 2022) ---
+        dt_idx = pd.to_datetime(complete.index)
+        ndd_online = (dt_idx >= pd.Timestamp("2022-07-01")).astype(float)
+        features_list.append(ndd_online)
+        feature_names.append("nant_de_drance_online")
+
+        # --- Winterreserve active (~500 GWh withheld from market, Oct 15 - Apr 15) ---
+        wr_month = dt_idx.month
+        wr_day = dt_idx.day
+        winterreserve = (
+            ((wr_month >= 11) | (wr_month <= 3)) |
+            ((wr_month == 10) & (wr_day >= 15)) |
+            ((wr_month == 4) & (wr_day <= 15))
+        ).astype(float)
+        # Only active since winter 2022/23
+        winterreserve = winterreserve * (dt_idx >= pd.Timestamp("2022-10-15")).astype(float)
+        features_list.append(winterreserve)
+        feature_names.append("winterreserve_active")
+
+        # --- Directional congestion (import vs export, replaces simple binary) ---
+        if "ch_de_spread_d-1_h{:02d}".format(target_hour) in feature_names:
+            spread_idx = feature_names.index(
+                "ch_de_spread_d-1_h{:02d}".format(target_hour)
+            )
+            spread_vals = features_list[spread_idx]
+            # CH importing (CH price > DE): spread > 2
+            features_list.append((spread_vals > 2.0).astype(float))
+            feature_names.append("ch_importing_congested")
+            # CH exporting (CH price < DE): spread < -2
+            features_list.append((spread_vals < -2.0).astype(float))
+            feature_names.append("ch_exporting_congested")
+
+        # ── 5c. Price dynamics features (from fmv_epex analysis) ──
+        # --- Rolling quantile distances (spike/regime detection) ---
+        if target_hour in complete.columns:
+            spot_h = complete[target_hour]
+            q90_168 = spot_h.shift(1).rolling(7, min_periods=4).quantile(0.90)
+            q10_168 = spot_h.shift(1).rolling(7, min_periods=4).quantile(0.10)
+            features_list.append((spot_h.shift(1) - q90_168).values)
+            feature_names.append("spot_dist_to_q90_7d")
+            features_list.append((spot_h.shift(1) - q10_168).values)
+            feature_names.append("spot_dist_to_q10_7d")
+
+            # --- Price ramps (first difference and abs rolling mean) ---
+            spot_d1 = spot_h.diff()
+            features_list.append(spot_d1.shift(1).values)
+            feature_names.append("spot_ramp_d-1")
+            ramp_abs_7d = spot_d1.abs().rolling(7, min_periods=3).mean()
+            features_list.append(ramp_abs_7d.shift(1).values)
+            feature_names.append("spot_ramp_abs_7d_mean")
+
+            # --- Rolling std 7d and 14d (volatility regimes) ---
+            vol_7d = spot_h.rolling(7, min_periods=4).std()
+            features_list.append(vol_7d.shift(1).values)
+            feature_names.append("spot_vol_7d")
+
         # ── 6. Calendar features ──
         dow = pd.to_datetime(dates).dayofweek
         for d in range(6):  # Mon=0 to Sat=5
