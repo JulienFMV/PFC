@@ -173,3 +173,147 @@ score = 0.35*(MAE/15.0) + 0.30*(RMSE/22.3) + 0.20*(MAPE/30.9) + 0.15*(1-corr)
 4. Stop optimizing LASSO hyperparams — diminishing returns
 5. Profile correlation (Corr-f) > MAE for hydro dispatch
 6. MAE targets: 5-7 normal, 8-10 volatile
+
+---
+
+## TOP 5 PRIORITIES TO REDUCE MAE (ordered by impact)
+
+### Priority 1: Add FR/AT/IT neighbor prices to LEAR (Impact: -1 to 3 EUR/MWh)
+
+The #1 consensus across all 4 experts. The LEAR model only sees DE prices, but CH is
+coupled with 4 neighbors. The data is available via the same ENTSO-E API.
+
+**Implementation:**
+1. In `ingest_entso.py`, add queries for FR, AT, IT-Nord area codes:
+   - FR: `10YFR-RTE------C`
+   - AT: `10YAT-APG------L`
+   - IT-Nord: `10Y1001A1001A73I`
+2. In `lear_forecaster.py` `_build_features()`, add the same lag structure (d-1, d-7)
+   for FR, AT, IT prices — same as the existing DE features.
+3. In `_build_prediction_row()`, add the corresponding lookups.
+
+Expected: ~6-8 new features per hour. Combined with existing DE, this gives the model
+a full picture of all neighbors, which is what Axpo/Alpiq use.
+
+### Priority 2: LightGBM native on ALL 24 hours (Impact: -5 to 10%)
+
+Replace `HistGradientBoostingRegressor` (sklearn) with native `lightgbm.LGBMRegressor`.
+Extend from peak-only to ALL 24 hours.
+
+**Implementation:**
+```python
+import lightgbm as lgb
+
+def _fit_gbm_for_hour(self, hour, X, y):
+    model = lgb.LGBMRegressor(
+        n_estimators=300, max_depth=6, num_leaves=31,
+        learning_rate=0.05, min_child_samples=10,
+        subsample=0.8, colsample_bytree=0.8,
+        reg_lambda=1.0, reg_alpha=0.1,
+        verbose=-1, n_jobs=-1,
+    )
+    # Chronological split (NOT random) for early stopping
+    n_val = max(7, int(len(y) * 0.15))
+    X_fit, X_val = X[:-n_val], X[-n_val:]
+    y_fit, y_val = y[:-n_val], y[-n_val:]
+    model.fit(X_fit, y_fit, eval_set=[(X_val, y_val)],
+              callbacks=[lgb.early_stopping(20, verbose=False)])
+    return model
+```
+
+In the backtest GBM pre-training block (~line 1598), change:
+```python
+# BEFORE: for hour in PEAK_HOURS:
+# AFTER:
+for hour in range(24):
+```
+
+### Priority 3: Fine-tune Chronos-2 with LoRA (Impact: -10 to 20% on FM)
+
+The model weights are now in `models/chronos-2/` (downloaded via Git LFS).
+
+**Implementation:**
+1. In `scripts/finetune_chronos2.py`, update the model path:
+   ```python
+   CHRONOS2_MODEL = "models/chronos-2"  # local, no SSL needed
+   ```
+2. Run: `python scripts/finetune_chronos2.py`
+3. After fine-tuning (2-4h on NVIDIA GPU), the model saves to
+   `pfc_shaping/model/chronos2_finetuned/`
+4. Update `foundation_forecaster.py` line 65:
+   ```python
+   CHRONOS2_MODEL = "pfc_shaping/model/chronos2_finetuned"
+   ```
+5. Run backtest to compare zero-shot vs fine-tuned.
+
+### Priority 4: Ridge stacker (LEAR + LightGBM + FM) (Impact: -5 to 8%)
+
+Instead of fixed weights or inverse-MAE, train a Ridge regression on the last 60 days
+of out-of-sample predictions from each model. The stacker learns which model is best
+for which hour and regime.
+
+**Implementation:**
+After `_weighted_model_average()` and `_fit_gbm_for_hour()` produce their predictions,
+add a stacking layer:
+
+```python
+from sklearn.linear_model import Ridge
+
+def _fit_stacker(self, lear_preds, gbm_preds, fm_preds, actuals, hours):
+    """Train per-hour Ridge stacker on last 60 OOS days."""
+    stackers = {}
+    for h in range(24):
+        mask = hours == h
+        if mask.sum() < 14:
+            continue
+        X_stack = np.column_stack([
+            lear_preds[mask], gbm_preds[mask], fm_preds[mask]
+        ])
+        y_stack = actuals[mask]
+        ridge = Ridge(alpha=1.0)
+        ridge.fit(X_stack, y_stack)
+        stackers[h] = ridge
+    return stackers
+```
+
+Use in predict(): `final = stacker[hour].predict([[lear, gbm, fm]])`
+
+### Priority 5: FR nuclear availability (Impact: -5 to 10% in volatile)
+
+The most market-moving variable in Continental Europe. When FR nuclear drops from
+61 GW to 45 GW, France imports from CH and CH prices spike by 20-40 EUR/MWh.
+
+**Implementation:**
+1. In `ingest_entso.py` or a new `ingest_remit.py`, add:
+   ```python
+   # Query French nuclear unavailability
+   client.query_unavailability_of_generation_units(
+       'FR', start, end, doctype='A77'
+   )
+   ```
+2. Aggregate by fuel_type == "Nuclear", sum unavailable MW
+3. Create feature: `fr_nuclear_available_mw = 61000 - unavailable_nuclear_fr`
+4. Add as LEAR feature with d-1 lag (the schedule is published D-1)
+
+---
+
+## WHAT NOT TO DO
+
+- Do NOT optimize AR coefficients further (diminishing returns, confirmed by experts)
+- Do NOT add complex DL models (TFT, N-HiTS) before LightGBM + stacker are working
+- Do NOT modify `autoresearch_eval_lear.py` (fixed evaluation harness)
+- Do NOT touch the PFC long-term model (stable, well-audited)
+- Do NOT use random train/test splits (always chronological for time series)
+- Do NOT add more than ~120 features to LEAR (multicollinearity degrades LASSO)
+
+## TARGET
+
+| Metric | Current | Post-Codex Target |
+|--------|---------|-------------------|
+| MAE | 9.24 | **6.5-8.0** |
+| MAE peak | ~13 | **9-11** |
+| Correlation | 0.84 | **0.90+** |
+| Score | 0.5481 | **<0.45** |
+
+Priorities 1+2+4 alone should bring MAE below 8 in normal conditions.
+Fine-tuned Chronos-2 (priority 3) is the bonus for further gains.
