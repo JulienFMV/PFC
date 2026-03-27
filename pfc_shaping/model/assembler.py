@@ -532,7 +532,7 @@ class PFCAssembler:
         if annual_only.any():
             # Apply historical seasonal ratios as fallback
             seasonal_values = months[annual_only].map(self._SEASONAL_RATIOS_CH)
-            f_S.iloc[annual_only.values] = seasonal_values.values
+            f_S.iloc[annual_only] = np.asarray(seasonal_values, dtype=float)
             n_affected = int(annual_only.sum())
             logger.info(
                 "f_S seasonal fallback applied to %d timestamps (annual-only forward coverage)",

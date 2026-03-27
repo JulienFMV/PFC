@@ -1397,7 +1397,11 @@ class LEARForecaster:
         result["timestamp"] = pd.to_datetime(result["date"]) + pd.to_timedelta(
             result["hour"], unit="h"
         )
-        result["timestamp"] = result["timestamp"].dt.tz_localize(self.tz).dt.tz_convert("UTC")
+        result["timestamp"] = result["timestamp"].dt.tz_localize(
+            self.tz,
+            nonexistent="shift_forward",
+            ambiguous="infer",
+        ).dt.tz_convert("UTC")
 
         result["days_ahead"] = (
             (pd.to_datetime(result["date"]) - pd.to_datetime(result["date"].min()))
