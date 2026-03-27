@@ -30,6 +30,8 @@ logger = logging.getLogger("PFC_PROD")
 import numpy as np
 import pandas as pd
 
+from pfc_shaping.storage.local_duckdb import init_db, upsert_lear_backtest, upsert_lear_forecast
+
 # ═══════════════════════════════════════════════════════════════════════
 # 1. LOAD ALL DATA
 # ═══════════════════════════════════════════════════════════════════════
@@ -375,6 +377,14 @@ try:
     lear_forecast.to_csv(f"{lear_base}.csv", index=False)
     logger.info("  LEAR standalone saved: %s.parquet", lear_base)
 
+    try:
+        db_path = init_db("pfc_shaping/data/pfc_local.duckdb")
+        lear_run_id = pd.Timestamp.now(tz="UTC").strftime("%Y%m%d_%H%M%S_LEAR")
+        upsert_lear_forecast(db_path, lear_run_id, lear_forecast)
+        logger.info("  LEAR forecast persisted to DuckDB: %s", lear_run_id)
+    except Exception as db_exc:
+        logger.warning("  LEAR DuckDB persistence failed: %s", db_exc)
+
     # Rolling backtest multi-horizon (production diagnostics)
     horizons = [1, 2, 3, 5, 7, 10]
     logger.info("  Running LEAR backtest multi-horizon: %s", horizons)
@@ -400,6 +410,12 @@ try:
         )
         summary_path = f"pfc_shaping/output/lear_backtest_summary_{pd.Timestamp.now().strftime('%Y-%m-%d')}.csv"
         summary.to_csv(summary_path, index=False)
+        try:
+            db_path = init_db("pfc_shaping/data/pfc_local.duckdb")
+            upsert_lear_backtest(db_path, lear_run_id, bt)
+            logger.info("  LEAR backtest persisted to DuckDB: %s", lear_run_id)
+        except Exception as db_exc:
+            logger.warning("  LEAR backtest DuckDB persistence failed: %s", db_exc)
         logger.info("  Backtest saved: %s (%.1fs)", bt_path, time.time() - t_bt)
     except Exception as bt_exc:
         logger.warning("  Backtest failed: %s", bt_exc)

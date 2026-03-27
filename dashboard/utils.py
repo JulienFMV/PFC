@@ -171,22 +171,48 @@ def load_pfc() -> pd.DataFrame | None:
     return None
 
 
-@st.cache_data(ttl=3600, show_spinner="Chargement LEAR forecast...")
+def _latest_file_by_mtime(pattern: str) -> Path | None:
+    files = [Path(p) for p in __import__("glob").glob(pattern)]
+    if not files:
+        return None
+    return max(files, key=lambda p: p.stat().st_mtime)
+
+
+@st.cache_data(ttl=60, show_spinner="Chargement LEAR forecast...")
 def load_lear_forecast() -> pd.DataFrame | None:
     """Load latest LEAR short-term forecast (parquet or CSV)."""
+    df_db = _read_duckdb(
+        """
+        SELECT run_id, timestamp_utc AS timestamp, forecast_date AS date, hour, days_ahead,
+               price_lear, price_p10, price_p90, n_windows, mlp_used, fm_used, fm_raw_price
+        FROM lear_forecasts
+        WHERE run_id = (
+            SELECT run_id
+            FROM lear_forecasts
+            GROUP BY run_id
+            ORDER BY max(timestamp_utc) DESC
+            LIMIT 1
+        )
+        ORDER BY timestamp_utc
+        """
+    )
+    if not df_db.empty:
+        df_db["timestamp"] = pd.to_datetime(df_db["timestamp"], utc=True, errors="coerce")
+        df_db["date"] = pd.to_datetime(df_db["date"], errors="coerce").dt.date
+        return df_db.dropna(subset=["timestamp"])
+
     output_dir = _paths_from_config()["output_dir"]
-    import glob
     # Try parquet first, then CSV
     for ext in [".parquet", ".csv"]:
         pattern = str(output_dir / f"lear_forecast_*{ext}")
-        files = sorted(glob.glob(pattern))
-        if not files:
+        latest = _latest_file_by_mtime(pattern)
+        if latest is None:
             continue
         try:
             if ext == ".parquet":
-                df = pd.read_parquet(files[-1])
+                df = pd.read_parquet(latest)
             else:
-                df = pd.read_csv(files[-1])
+                df = pd.read_csv(latest)
             if df.empty:
                 continue
             df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
@@ -196,17 +222,34 @@ def load_lear_forecast() -> pd.DataFrame | None:
     return None
 
 
-@st.cache_data(ttl=3600, show_spinner="Chargement backtest LEAR...")
+@st.cache_data(ttl=300, show_spinner="Chargement backtest LEAR...")
 def load_lear_backtest() -> pd.DataFrame | None:
     """Load latest LEAR backtest results."""
+    df_db = _read_duckdb(
+        """
+        SELECT run_id, horizon, forecast_ts, actual, forecast, error, abs_error
+        FROM lear_backtests
+        WHERE run_id = (
+            SELECT run_id
+            FROM lear_backtests
+            GROUP BY run_id
+            ORDER BY max(forecast_ts) DESC
+            LIMIT 1
+        )
+        ORDER BY horizon, forecast_ts
+        """
+    )
+    if not df_db.empty:
+        df_db["forecast_ts"] = pd.to_datetime(df_db["forecast_ts"], utc=True, errors="coerce")
+        return df_db.dropna(subset=["forecast_ts"])
+
     output_dir = _paths_from_config()["output_dir"]
-    import glob
     pattern = str(output_dir / "lear_backtest_*.parquet")
-    files = sorted(glob.glob(pattern))
-    if not files:
+    latest = _latest_file_by_mtime(pattern)
+    if latest is None:
         return None
     try:
-        return pd.read_parquet(files[-1])
+        return pd.read_parquet(latest)
     except Exception as exc:
         logger.error("Failed to read LEAR backtest: %s", exc)
         return None

@@ -62,12 +62,52 @@ def init_db(db_path: str | Path) -> Path:
             );
             """
         )
+        con.execute(
+            """
+            CREATE TABLE IF NOT EXISTS lear_forecasts (
+              run_id VARCHAR,
+              timestamp_utc TIMESTAMP,
+              forecast_date DATE,
+              hour INTEGER,
+              days_ahead INTEGER,
+              price_lear DOUBLE,
+              price_p10 DOUBLE,
+              price_p90 DOUBLE,
+              n_windows INTEGER,
+              mlp_used BOOLEAN,
+              fm_used BOOLEAN,
+              fm_raw_price DOUBLE
+            );
+            """
+        )
+        con.execute(
+            """
+            CREATE TABLE IF NOT EXISTS lear_backtests (
+              run_id VARCHAR,
+              horizon INTEGER,
+              forecast_ts TIMESTAMP,
+              actual DOUBLE,
+              forecast DOUBLE,
+              error DOUBLE,
+              abs_error DOUBLE
+            );
+            """
+        )
         # Indexes for query performance
         con.execute(
             "CREATE INDEX IF NOT EXISTS idx_forecasts_ts ON forecasts_hourly(ts_local)"
         )
         con.execute(
             "CREATE INDEX IF NOT EXISTS idx_forecasts_run ON forecasts_hourly(run_id)"
+        )
+        con.execute(
+            "CREATE INDEX IF NOT EXISTS idx_lear_forecasts_run ON lear_forecasts(run_id)"
+        )
+        con.execute(
+            "CREATE INDEX IF NOT EXISTS idx_lear_forecasts_ts ON lear_forecasts(timestamp_utc)"
+        )
+        con.execute(
+            "CREATE INDEX IF NOT EXISTS idx_lear_backtests_run ON lear_backtests(run_id)"
         )
     return db_path
 
@@ -199,3 +239,120 @@ def benchmark_against_hfc(
             ],
         )
     return metrics
+
+
+def upsert_lear_forecast(
+    db_path: str | Path,
+    run_id: str,
+    lear_forecast: pd.DataFrame,
+) -> None:
+    db_path = Path(db_path)
+    df = lear_forecast.copy()
+    if df.empty:
+        return
+
+    if "timestamp" not in df.columns:
+        raise ValueError("lear_forecast requires a 'timestamp' column")
+
+    df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True, errors="coerce")
+    df = df.dropna(subset=["timestamp"])
+    if df.empty:
+        return
+
+    if "date" in df.columns:
+        df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.date
+    else:
+        df["date"] = df["timestamp"].dt.date
+
+    optional_defaults = {
+        "hour": pd.Series(df["timestamp"].dt.hour, index=df.index),
+        "days_ahead": pd.Series(np.nan, index=df.index),
+        "price_p10": pd.Series(np.nan, index=df.index),
+        "price_p90": pd.Series(np.nan, index=df.index),
+        "n_windows": pd.Series(np.nan, index=df.index),
+        "mlp_used": pd.Series(False, index=df.index),
+        "fm_used": pd.Series(False, index=df.index),
+        "fm_raw_price": pd.Series(np.nan, index=df.index),
+    }
+    for col, default in optional_defaults.items():
+        if col not in df.columns:
+            df[col] = default
+
+    df["run_id"] = run_id
+    payload = df[
+        [
+            "run_id",
+            "timestamp",
+            "date",
+            "hour",
+            "days_ahead",
+            "price_lear",
+            "price_p10",
+            "price_p90",
+            "n_windows",
+            "mlp_used",
+            "fm_used",
+            "fm_raw_price",
+        ]
+    ].rename(columns={"timestamp": "timestamp_utc", "date": "forecast_date"})
+
+    with duckdb.connect(str(db_path)) as con:
+        con.execute("BEGIN TRANSACTION")
+        try:
+            con.execute("DELETE FROM lear_forecasts WHERE run_id = ?", [run_id])
+            con.register("lear_forecast_df", payload)
+            con.execute("INSERT INTO lear_forecasts SELECT * FROM lear_forecast_df")
+            con.execute("COMMIT")
+        except Exception:
+            con.execute("ROLLBACK")
+            raise
+
+
+def upsert_lear_backtest(
+    db_path: str | Path,
+    run_id: str,
+    lear_backtest: pd.DataFrame,
+) -> None:
+    db_path = Path(db_path)
+    df = lear_backtest.copy()
+    if df.empty:
+        return
+
+    ts_col = "forecast_ts" if "forecast_ts" in df.columns else None
+    if ts_col is None:
+        for candidate in ["timestamp", "ts", "datetime", "date"]:
+            if candidate in df.columns:
+                ts_col = candidate
+                break
+    if ts_col is None:
+        raise ValueError("lear_backtest requires a forecast timestamp/date column")
+
+    df[ts_col] = pd.to_datetime(df[ts_col], utc=True, errors="coerce")
+    df = df.dropna(subset=[ts_col])
+    if df.empty:
+        return
+
+    if "horizon" not in df.columns:
+        df["horizon"] = np.nan
+    if "actual" not in df.columns or "forecast" not in df.columns:
+        raise ValueError("lear_backtest requires 'actual' and 'forecast' columns")
+    if "error" not in df.columns:
+        df["error"] = df["forecast"] - df["actual"]
+    if "abs_error" not in df.columns:
+        df["abs_error"] = (df["forecast"] - df["actual"]).abs()
+
+    df["run_id"] = run_id
+    payload = df[
+        ["run_id", "horizon", ts_col, "actual", "forecast", "error", "abs_error"]
+    ].rename(columns={ts_col: "forecast_ts"})
+
+    with duckdb.connect(str(db_path)) as con:
+        con.execute("BEGIN TRANSACTION")
+        try:
+            con.execute("DELETE FROM lear_backtests WHERE run_id = ?", [run_id])
+            con.register("lear_backtest_df", payload)
+            con.execute("INSERT INTO lear_backtests SELECT * FROM lear_backtest_df")
+            con.execute("COMMIT")
+        except Exception:
+            con.execute("ROLLBACK")
+            raise
