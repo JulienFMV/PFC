@@ -9,12 +9,14 @@ Usage:
     python scripts/finetune_chronos2.py
 
 Output:
-    pfc_shaping/model/chronos2_finetuned/ — fine-tuned model checkpoint
+    pfc_shaping/model/chronos2_finetuned/ - fine-tuned model checkpoint
 """
 
 import sys
 import os
+import shutil
 import warnings
+from pathlib import Path
 
 warnings.filterwarnings("ignore")
 
@@ -27,12 +29,13 @@ import numpy as np
 
 DATA = "pfc_shaping/data"
 MODEL_OUTPUT = "pfc_shaping/model/chronos2_finetuned"
+LOCAL_MODEL_PATH = str(Path(PROJECT_ROOT) / "models" / "chronos-2")
 
 print("=" * 60)
 print("Chronos-2 LoRA Fine-Tuning on CH+DE EPEX Data")
 print("=" * 60)
 
-# ── Load data ──────────────────────────────────────────────
+# Load data
 print("\n[1/4] Loading data...")
 
 epex_ch = pd.read_parquet(f"{DATA}/epex_15min.parquet")
@@ -59,9 +62,9 @@ if has_renewables:
 
 print(f"  CH prices: {len(ch_h)} hours")
 print(f"  DE prices: {len(de_h)} hours")
-print(f"  Common: {len(common_idx)} hours ({common_idx[0].date()} → {common_idx[-1].date()})")
+print(f"  Common: {len(common_idx)} hours ({common_idx[0].date()} -> {common_idx[-1].date()})")
 
-# ── Prepare TimeSeriesDataFrame ────────────────────────────
+# Prepare TimeSeriesDataFrame
 print("\n[2/4] Preparing training data...")
 
 from autogluon.timeseries import TimeSeriesDataFrame, TimeSeriesPredictor
@@ -104,9 +107,10 @@ print(f"  Prediction length: {prediction_length} hours")
 if known_covariates:
     print(f"  Covariates: {known_covariates}")
 
-# ── Fine-tune ──────────────────────────────────────────────
+# Fine-tune
 print("\n[3/4] Fine-tuning Chronos-2 with LoRA...")
 print("  This may take 10-30 minutes on CPU/MPS...")
+print(f"  Base model: {LOCAL_MODEL_PATH if os.path.exists(LOCAL_MODEL_PATH) else 'amazon/chronos-2'}")
 
 hyperparameters = {
     "Chronos2": {
@@ -115,7 +119,7 @@ hyperparameters = {
         "fine_tune_lr": 1e-4,
         "fine_tune_steps": 1000,
         "fine_tune_batch_size": 16,
-        "model_path": "amazon/chronos-2",
+        "model_path": LOCAL_MODEL_PATH if os.path.exists(LOCAL_MODEL_PATH) else "amazon/chronos-2",
         "ag_args": {"name_suffix": "FineTuned"},
     }
 }
@@ -139,7 +143,7 @@ predictor.fit(
     enable_ensemble=False,
 )
 
-# ── Evaluate & Save ────────────────────────────────────────
+# Evaluate & Save
 print("\n[4/4] Evaluating and saving...")
 
 # Evaluate on test set
@@ -147,15 +151,23 @@ leaderboard = predictor.leaderboard(test_data)
 print("\nLeaderboard:")
 print(leaderboard.to_string())
 
-# Save
-predictor.save(MODEL_OUTPUT)
-print(f"\nModel saved to: {MODEL_OUTPUT}")
+# Export the fine-tuned LoRA adapter checkpoint so FoundationForecaster
+# can load it directly via Chronos2Pipeline.from_pretrained().
+best_model_path = Path(predictor.path) / "models" / "Chronos2FineTuned" / "W0" / "fine-tuned-ckpt"
+output_path = Path(MODEL_OUTPUT)
+if output_path.exists():
+    shutil.rmtree(output_path)
+shutil.copytree(best_model_path, output_path)
+print(f"\nModel exported to: {MODEL_OUTPUT}")
 
-# Quick test prediction
-predictions = predictor.predict(test_data)
-print(f"\nSample predictions (CH, next 6h):")
-ch_pred = predictions.loc["CH"].head(6)
-print(ch_pred.to_string())
+# Quick test prediction when no future covariates are required
+if known_covariates:
+    print("\nSkipping sample prediction: known covariates are required at prediction time.")
+else:
+    predictions = predictor.predict(test_data)
+    print(f"\nSample predictions (CH, next 6h):")
+    ch_pred = predictions.loc["CH"].head(6)
+    print(ch_pred.to_string())
 
 print("\nDone! The fine-tuned model can be loaded with:")
 print(f'  predictor = TimeSeriesPredictor.load("{MODEL_OUTPUT}")')

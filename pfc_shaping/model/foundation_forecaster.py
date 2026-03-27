@@ -18,6 +18,7 @@ Install:
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Optional
 
 import numpy as np
@@ -62,11 +63,23 @@ class FoundationForecaster:
     The model is loaded lazily on first use and cached for the session.
     """
 
-    CHRONOS2_MODEL = "amazon/chronos-2"
+    _LOCAL_FINETUNED_CHRONOS2 = Path(__file__).resolve().parent / "chronos2_finetuned"
+    _LOCAL_CHRONOS2 = Path(__file__).resolve().parents[2] / "models" / "chronos-2"
+    if _LOCAL_FINETUNED_CHRONOS2.exists():
+        CHRONOS2_MODEL = str(_LOCAL_FINETUNED_CHRONOS2)
+    elif _LOCAL_CHRONOS2.exists():
+        CHRONOS2_MODEL = str(_LOCAL_CHRONOS2)
+    else:
+        CHRONOS2_MODEL = "amazon/chronos-2"
     BOLT_MODEL = "amazon/chronos-bolt-base"
     _BOLT_QUANTILE_LEVELS = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
 
-    def __init__(self, device: str = "cpu"):
+    def __init__(self, device: str | None = None):
+        if device is None:
+            try:
+                device = "cuda" if torch.cuda.is_available() else "cpu"
+            except Exception:
+                device = "cpu"
         self._device = device
         self._pipeline = None
         self._backend = None  # "chronos2" or "bolt"

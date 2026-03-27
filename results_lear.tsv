@@ -27,3 +27,10 @@ e277b4a	0.6083	10.51	16.68	-	-	ok	log1p transform — REVERT
 ae5c19e	0.6032	10.13	16.55	-	0.815	ok	7d rolling mean — REVERT
 eab0a4d	0.6015	10.13	16.48	17.90	0.817	ok	bias warmup 3 days — KEEP
 884454e	0.6020	10.19	16.61	-	0.814	ok	bias window 7d — REVERT
+working	0.5919	10.42	16.34	15.83	0.825	ok	LightGBM 24h (GPU fallback-safe) replaces HistGradientBoosting - KEEP
+working	0.5912	10.41	16.32	15.82	0.825	ok	LightGBM 24h + French holiday feature - KEEP
+working	0.5439	9.24	15.38	15.23	0.848	ok	Chronos-2 local checkpoint + LightGBM 24h + French holiday - KEEP
+working	0.5423	9.26	15.36	14.96	0.848	ok	Chronos-2 LoRA finetuned adapter + LightGBM 24h + French holiday - KEEP
+working	0.5375	9.19	15.28	14.67	0.850	ok	Chronos-2 LoRA finetuned on GPU + LightGBM 24h + French holiday - KEEP
+working	0.5135	8.57	14.93	14.13	0.858	ok	Higher blend weight for GPU-finetuned Chronos-2 + LightGBM 24h + French holiday - KEEP
+working	0.5111	8.49	14.92	14.06	0.859	ok	Peak/short-horizon boost for GPU-finetuned Chronos-2 blend + LightGBM 24h + French holiday - KEEP

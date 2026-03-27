@@ -31,9 +31,9 @@ import logging
 from datetime import timedelta
 from pathlib import Path
 
+import lightgbm as lgb
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import HistGradientBoostingRegressor
 from sklearn.linear_model import ElasticNetCV, QuantileRegressor
 from sklearn.neural_network import MLPRegressor
 from sklearn.preprocessing import StandardScaler
@@ -43,20 +43,21 @@ from pfc_shaping.model.foundation_forecaster import FoundationForecaster
 
 logger = logging.getLogger(__name__)
 
-# Holiday sets for Swiss and German markets (lazy-initialized)
-_HOLIDAY_CACHE: dict[int, tuple[set, set]] = {}
+# Holiday sets for Swiss, German and French markets (lazy-initialized)
+_HOLIDAY_CACHE: dict[int, tuple[set, set, set]] = {}
 
 
-def _get_holidays(year: int) -> tuple[set, set]:
-    """Return (CH holidays, DE holidays) for a given year. Cached."""
+def _get_holidays(year: int) -> tuple[set, set, set]:
+    """Return (CH holidays, DE holidays, FR holidays) for a given year. Cached."""
     if year not in _HOLIDAY_CACHE:
         try:
             import holidays as hol
             ch = set(hol.Switzerland(years=year, subdiv="VS").keys())
             de = set(hol.Germany(years=year).keys())
+            fr = set(hol.France(years=year).keys())
         except ImportError:
-            ch, de = set(), set()
-        _HOLIDAY_CACHE[year] = (ch, de)
+            ch, de, fr = set(), set(), set()
+        _HOLIDAY_CACHE[year] = (ch, de, fr)
     return _HOLIDAY_CACHE[year]
 
 # Peak hours (CET) for Swiss market
@@ -137,6 +138,7 @@ class LEARForecaster:
         self.use_foundation_model = use_foundation_model
         self._fitted = False
         self._fm = FoundationForecaster() if use_foundation_model else None
+        self._lgbm_device_type = "gpu"
 
     def fit(
         self,
@@ -655,16 +657,21 @@ class LEARForecaster:
         dt_dates = pd.to_datetime(dates)
         is_holiday_ch = np.zeros(n_dates)
         is_holiday_de = np.zeros(n_dates)
+        is_holiday_fr = np.zeros(n_dates)
         for i, d in enumerate(dt_dates):
-            ch_hols, de_hols = _get_holidays(d.year)
+            ch_hols, de_hols, fr_hols = _get_holidays(d.year)
             if d.date() in ch_hols:
                 is_holiday_ch[i] = 1.0
             if d.date() in de_hols:
                 is_holiday_de[i] = 1.0
+            if d.date() in fr_hols:
+                is_holiday_fr[i] = 1.0
         features_list.append(is_holiday_ch)
         feature_names.append("is_holiday_ch")
         features_list.append(is_holiday_de)
         feature_names.append("is_holiday_de")
+        features_list.append(is_holiday_fr)
+        feature_names.append("is_holiday_fr")
 
         # ── 8. Fuel stack proxy (marginal cost of gas plants) ──
         # gas_price * heat_rate + co2_price * emission_factor
@@ -923,9 +930,9 @@ class LEARForecaster:
         X_full: pd.DataFrame,
         y_full: pd.Series,
     ) -> tuple | None:
-        """Fit HistGradientBoosting for peak hours (captures nonlinearities).
+        """Fit LightGBM for one hour (captures nonlinearities).
 
-        GBM is used as an ensemble member alongside LASSO for peak hours
+        GBM is used as an ensemble member alongside LASSO
         where price dynamics are nonlinear (load ramp, solar decline, etc.).
         Lago et al. (2021) showed LEAR+DNN reduces MAE 5-10% on peak.
         """
@@ -938,22 +945,40 @@ class LEARForecaster:
 
         X_arr = np.nan_to_num(X_train.values.astype(float), nan=0.0)
         y_arr = y_train.values.astype(float)
+        n_val = max(7, int(len(y_arr) * 0.15))
+        if len(y_arr) - n_val < 30:
+            return None
+        X_fit, X_val = X_arr[:-n_val], X_arr[-n_val:]
+        y_fit, y_val = y_arr[:-n_val], y_arr[-n_val:]
 
         try:
-            gbm = HistGradientBoostingRegressor(
-                max_iter=200,
-                max_depth=5,
+            gbm = lgb.LGBMRegressor(
+                n_estimators=300,
+                max_depth=6,
+                num_leaves=31,
                 learning_rate=0.05,
-                min_samples_leaf=10,
-                l2_regularization=1.0,
+                min_child_samples=10,
+                subsample=0.8,
+                colsample_bytree=0.8,
+                reg_lambda=1.0,
+                reg_alpha=0.1,
+                device_type=self._lgbm_device_type,
+                n_jobs=-1,
+                verbosity=-1,
                 random_state=self.random_state,
-                early_stopping=True,
-                validation_fraction=0.15,
-                n_iter_no_change=20,
             )
-            gbm.fit(X_arr, y_arr)
+            gbm.fit(
+                X_fit,
+                y_fit,
+                eval_set=[(X_val, y_val)],
+                callbacks=[lgb.early_stopping(20, verbose=False)],
+            )
             return gbm
         except Exception as exc:
+            if self._lgbm_device_type == "gpu":
+                logger.warning("  LightGBM GPU unavailable for h=%d, falling back to CPU: %s", hour, exc)
+                self._lgbm_device_type = "cpu"
+                return self._fit_gbm_for_hour(hour, X_full, y_full)
             logger.debug("  GBM h=%d failed: %s", hour, exc)
             return None
 
@@ -1309,8 +1334,17 @@ class LEARForecaster:
                     if fm_idx < len(fm_preds["median"]):
                         fm_raw = float(fm_preds["median"][fm_idx])
                         if np.isfinite(fm_raw):
-                            # Conservative weight: 10-20%, less on longer horizons
-                            w_fm = max(0.05, 0.20 - 0.02 * (d - 1))
+                            # Give more room to a local fine-tuned Chronos adapter.
+                            fm_model_name = getattr(self._fm, "CHRONOS2_MODEL", "") if self._fm is not None else ""
+                            if "chronos2_finetuned" in str(fm_model_name).lower():
+                                w_fm = max(0.14, 0.40 - 0.03 * (d - 1))
+                                if hour in PEAK_HOURS:
+                                    w_fm += 0.04
+                                if d <= 3:
+                                    w_fm += 0.03
+                                w_fm = min(0.52, w_fm)
+                            else:
+                                w_fm = max(0.05, 0.20 - 0.02 * (d - 1))
                             final_pred = (1.0 - w_fm) * final_pred + w_fm * fm_raw
 
                 # Prediction intervals: QRA (preferred) or conformal (fallback)
@@ -1471,13 +1505,18 @@ class LEARForecaster:
 
             elif col_name == "is_holiday_ch":
                 if isinstance(forecast_date, datetime.date):
-                    ch_hols, _ = _get_holidays(forecast_date.year)
+                    ch_hols, _, _ = _get_holidays(forecast_date.year)
                     x[i] = 1.0 if forecast_date in ch_hols else 0.0
 
             elif col_name == "is_holiday_de":
                 if isinstance(forecast_date, datetime.date):
-                    _, de_hols = _get_holidays(forecast_date.year)
+                    _, de_hols, _ = _get_holidays(forecast_date.year)
                     x[i] = 1.0 if forecast_date in de_hols else 0.0
+
+            elif col_name == "is_holiday_fr":
+                if isinstance(forecast_date, datetime.date):
+                    _, _, fr_hols = _get_holidays(forecast_date.year)
+                    x[i] = 1.0 if forecast_date in fr_hols else 0.0
 
             # ── Exogenous ──
             elif "_d0_" in col_name:
@@ -1560,13 +1599,13 @@ class LEARForecaster:
                     self._fm.backend,
                 )
 
-        # Pre-train GBM once per peak hour (avoids 720x re-training in loop).
+        # Pre-train GBM once per hour (avoids repeated re-training in loop).
         # Use data up to first test date; compute OOS weight from held-out split.
         gbm_cache: dict[int, tuple] = {}  # hour -> (gbm_model, w_gbm)
         first_test_date = test_dates[0]
         prices_pretrain = self.prices_h_[:pd.Timestamp(first_test_date, tz=self.tz).tz_convert("UTC")]
         exog_pretrain = self.exog_.loc[:prices_pretrain.index[-1]]
-        for hour in PEAK_HOURS:
+        for hour in range(24):
             X_pre, y_pre = self._build_features(
                 prices_pretrain, exog_pretrain, target_hour=hour
             )
@@ -1598,7 +1637,7 @@ class LEARForecaster:
                 w_gbm = 0.20  # conservative default
             gbm_cache[hour] = (gbm_model, w_gbm)
         if gbm_cache:
-            logger.info("Pre-trained GBM for %d peak hours", len(gbm_cache))
+            logger.info("Pre-trained GBM for %d hours (device=%s)", len(gbm_cache), self._lgbm_device_type)
 
         # Track previous day's errors for AR correction (lag-1, lag-2, lag-7)
         prev_day_errors: dict[int, float] = {}  # hour -> error (lag-1)
@@ -1720,7 +1759,20 @@ class LEARForecaster:
                         fm_price = float(fm_data["median"][fm_idx])
                         if np.isfinite(fm_price):
                             # Regime-adaptive FM weight
-                            w_fm = max(0.05, 0.20 + rp["fm_weight_boost"] - 0.02 * (horizon - 1))
+                            fm_model_name = getattr(self._fm, "CHRONOS2_MODEL", "") if self._fm is not None else ""
+                            if "chronos2_finetuned" in str(fm_model_name).lower():
+                                base_fm = 0.40
+                                min_fm = 0.14
+                            else:
+                                base_fm = 0.20
+                                min_fm = 0.05
+                            w_fm = max(min_fm, base_fm + rp["fm_weight_boost"] - 0.03 * (horizon - 1))
+                            if "chronos2_finetuned" in str(fm_model_name).lower():
+                                if hour in PEAK_HOURS:
+                                    w_fm += 0.04
+                                if horizon <= 3:
+                                    w_fm += 0.03
+                                w_fm = min(0.52, w_fm)
                             forecast = (1.0 - w_fm) * forecast + w_fm * fm_price
 
                 actual = complete.loc[target_date, hour] if hour in complete.columns else np.nan

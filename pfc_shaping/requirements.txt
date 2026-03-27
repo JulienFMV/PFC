@@ -9,6 +9,7 @@ pyarrow==21.0.0      # Parquet I/O
 
 # Machine Learning
 scikit-learn==1.6.1  # HuberRegressor, LinearRegression
+lightgbm==4.6.0
 
 # Lissage gaussien
 # (scipy.ndimage inclus dans scipy)
