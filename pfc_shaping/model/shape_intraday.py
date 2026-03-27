@@ -85,6 +85,12 @@ class ShapeIntraday:
         self.n_obs_: dict[tuple, int] = {}
         self._climatological_fill: pd.Series | None = None  # mean fill per week-of-year
 
+    @staticmethod
+    def _flatten_strength(years_ahead: np.ndarray) -> np.ndarray:
+        """Intrahour profiles should flatten faster than hourly shapes."""
+        ya = np.maximum(np.asarray(years_ahead, dtype=float), 0.0)
+        return np.clip((ya - 0.5) / 2.5, 0.0, 0.40)
+
     def fit(
         self,
         epex_df: pd.DataFrame,
@@ -215,6 +221,7 @@ class ShapeIntraday:
         timestamps: pd.DatetimeIndex,
         calendar_df: pd.DataFrame,
         entso_df: pd.DataFrame | None = None,
+        reference_date: pd.Timestamp | None = None,
     ) -> pd.Series:
         """
         Applique f_Q sur un index 15min futur (horizon N+3) — vectorisé.
@@ -244,6 +251,8 @@ class ShapeIntraday:
 
         n = len(timestamps)
         f_q_values = np.ones(n)
+        if reference_date is None:
+            reference_date = pd.Timestamp.now(tz="UTC")
         saisons = df_cal["saison"].values
         types_jour = df_cal["type_jour"].values
         heures = df_cal["heure_hce"].values.astype(int)
@@ -266,10 +275,17 @@ class ShapeIntraday:
             base = self.base_factors_[actual_key]
             idx_arr = np.array(indices)
             q_vals = quarts[idx_arr]
+            years_ahead = (
+                (timestamps[idx_arr] - reference_date).total_seconds() / (365.25 * 86400.0)
+            ).astype(float)
+            flatten = self._flatten_strength(years_ahead)
 
             if actual_key not in self.corrections_:
-                # Simple lookup — base factors already normalized
-                f_q_values[idx_arr] = base[q_vals]
+                # Simple lookup with horizon-aware flattening
+                factors = np.tile(base, (len(idx_arr), 1))
+                factors = 1.0 + (factors - 1.0) * (1.0 - flatten[:, None])
+                factors = factors / factors.mean(axis=1, keepdims=True)
+                f_q_values[idx_arr] = factors[np.arange(len(idx_arr)), q_vals]
             else:
                 # Vectorised correction for ramp hours
                 corr = self.corrections_[actual_key]
@@ -291,6 +307,8 @@ class ShapeIntraday:
                 row_means = factors.mean(axis=1, keepdims=True)
                 row_means[row_means == 0] = 1.0
                 factors /= row_means
+                factors = 1.0 + (factors - 1.0) * (1.0 - flatten[:, None])
+                factors = factors / factors.mean(axis=1, keepdims=True)
 
                 # Pick the correct quarter per row
                 f_q_values[idx_arr] = factors[np.arange(n_grp), q_vals]

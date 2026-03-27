@@ -60,6 +60,15 @@ BETA_WV_MAX = -0.001
 F_WV_FLOOR = 0.80
 F_WV_CAP = 1.20
 
+# L'information hydro perd en fiabilité sur les horizons éloignés.
+DEFAULT_HORIZON_HALFLIFE_DAYS = 270.0
+
+# Les déficits ont en pratique un effet plus violent que les surplus.
+SCARCITY_MULTIPLIER_MIN = 1.0
+SCARCITY_MULTIPLIER_MAX = 2.5
+ABUNDANCE_MULTIPLIER_MIN = 0.6
+ABUNDANCE_MULTIPLIER_MAX = 1.4
+
 # Mapping mois → saison (identique à calendar_ch.py)
 _MONTH_TO_SAISON = {
     1: "Hiver", 2: "Hiver", 3: "Hiver",
@@ -83,6 +92,9 @@ class WaterValueCorrection:
         self.beta_wv_: float = 0.0
         self.season_sensitivity_: dict[str, float] = {}
         self.n_obs_: int = 0
+        self.scarcity_multiplier_: float = 1.35
+        self.abundance_multiplier_: float = 1.0
+        self.horizon_halflife_days_: float = DEFAULT_HORIZON_HALFLIFE_DAYS
 
     def fit(
         self,
@@ -156,6 +168,8 @@ class WaterValueCorrection:
             )
             self.beta_wv_ = -0.03
             self.season_sensitivity_ = DEFAULT_SEASON_SENSITIVITY.copy()
+            self.scarcity_multiplier_ = 1.35
+            self.abundance_multiplier_ = 1.0
             self.n_obs_ = len(monthly)
             return self
 
@@ -218,6 +232,44 @@ class WaterValueCorrection:
                 }
             else:
                 self.season_sensitivity_ = DEFAULT_SEASON_SENSITIVITY.copy()
+
+            neg_mask = monthly["fill_dev_mean"] < 0
+            pos_mask = monthly["fill_dev_mean"] > 0
+            scarcity_slopes = []
+            abundance_slopes = []
+            for s in saisons:
+                season_mask = monthly["saison"] == s
+
+                neg_subset = monthly.loc[season_mask & neg_mask, ["fill_dev_mean", "price_ratio"]].dropna()
+                if len(neg_subset) >= 3 and neg_subset["fill_dev_mean"].std() > 1e-8:
+                    scarcity_slopes.append(abs(float(np.polyfit(
+                        neg_subset["fill_dev_mean"].values.astype(float),
+                        neg_subset["price_ratio"].values.astype(float),
+                        1,
+                    )[0])))
+
+                pos_subset = monthly.loc[season_mask & pos_mask, ["fill_dev_mean", "price_ratio"]].dropna()
+                if len(pos_subset) >= 3 and pos_subset["fill_dev_mean"].std() > 1e-8:
+                    abundance_slopes.append(abs(float(np.polyfit(
+                        pos_subset["fill_dev_mean"].values.astype(float),
+                        pos_subset["price_ratio"].values.astype(float),
+                        1,
+                    )[0])))
+
+            if scarcity_slopes and abundance_slopes:
+                self.scarcity_multiplier_ = float(np.clip(
+                    np.mean(scarcity_slopes) / max(np.mean(abundance_slopes), 1e-6),
+                    SCARCITY_MULTIPLIER_MIN,
+                    SCARCITY_MULTIPLIER_MAX,
+                ))
+                self.abundance_multiplier_ = float(np.clip(
+                    np.mean(abundance_slopes) / max(np.mean(scarcity_slopes), 1e-6),
+                    ABUNDANCE_MULTIPLIER_MIN,
+                    ABUNDANCE_MULTIPLIER_MAX,
+                ))
+            else:
+                self.scarcity_multiplier_ = 1.35
+                self.abundance_multiplier_ = 1.0
 
             self.n_obs_ = len(monthly)
 
@@ -310,18 +362,32 @@ class WaterValueCorrection:
 
         fill_dev_vals = fill_dev_aligned["fill_deviation"].fillna(0.0)
         season_sens = saison.map(sensitivity).fillna(-0.3).astype(float)
+        idx_zurich = timestamps.tz_convert("Europe/Zurich")
+        months_ahead = (
+            (idx_zurich.year - idx_zurich[0].year) * 12
+            + (idx_zurich.month - idx_zurich[0].month)
+        ).astype(float)
+        horizon_decay = np.exp(
+            -np.log(2) * (months_ahead * 30.0) / max(self.horizon_halflife_days_, 1.0)
+        )
 
-        raw_f_wv = 1.0 + beta * fill_dev_vals * season_sens
+        asym_multiplier = pd.Series(self.abundance_multiplier_, index=timestamps, dtype=float)
+        asym_multiplier.loc[fill_dev_vals < 0] = self.scarcity_multiplier_
+
+        raw_f_wv = 1.0 + beta * fill_dev_vals * season_sens * asym_multiplier * horizon_decay
 
         # ── Clamping pour éviter les valeurs aberrantes ──────────────────
         raw_f_wv = raw_f_wv.clip(lower=F_WV_FLOOR, upper=F_WV_CAP)
 
-        # ── Renormalisation : mean(f_WV) = 1 sur l'horizon ──────────────
-        mean_f = raw_f_wv.mean()
-        if abs(mean_f) > 1e-8:
-            f_wv = (raw_f_wv / mean_f).rename("f_WV")
-        else:
-            f_wv = raw_f_wv.rename("f_WV")
+        # ── Renormalisation par année de livraison : preserve annual forwards ──
+        raw_f_wv = pd.Series(raw_f_wv, index=timestamps, name="f_WV")
+        f_wv = raw_f_wv.copy()
+        delivery_year = idx_zurich.year
+        for year in np.unique(delivery_year):
+            year_mask = delivery_year == year
+            mean_f = float(raw_f_wv.loc[year_mask].mean())
+            if abs(mean_f) > 1e-8:
+                f_wv.loc[year_mask] = raw_f_wv.loc[year_mask] / mean_f
 
         # Re-clamping après renormalisation
         f_wv = f_wv.clip(lower=F_WV_FLOOR, upper=F_WV_CAP)
@@ -345,6 +411,9 @@ class WaterValueCorrection:
                 "season_sensitivity": sens,
                 "beta_wv": self.beta_wv_,
                 "n_obs": self.n_obs_,
+                "scarcity_multiplier": self.scarcity_multiplier_,
+                "abundance_multiplier": self.abundance_multiplier_,
+                "horizon_halflife_days": self.horizon_halflife_days_,
             })
 
         path = Path(path)
@@ -366,6 +435,12 @@ class WaterValueCorrection:
         obj = cls()
         obj.beta_wv_ = float(df["beta_wv"].iloc[0])
         obj.n_obs_ = int(df["n_obs"].iloc[0])
+        if "scarcity_multiplier" in df.columns:
+            obj.scarcity_multiplier_ = float(df["scarcity_multiplier"].iloc[0])
+        if "abundance_multiplier" in df.columns:
+            obj.abundance_multiplier_ = float(df["abundance_multiplier"].iloc[0])
+        if "horizon_halflife_days" in df.columns:
+            obj.horizon_halflife_days_ = float(df["horizon_halflife_days"].iloc[0])
         obj.season_sensitivity_ = dict(
             zip(df["saison"], df["season_sensitivity"])
         )

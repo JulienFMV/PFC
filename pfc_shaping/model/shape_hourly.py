@@ -204,14 +204,28 @@ class ShapeHourly:
             return base
 
         trend = self.trend_per_hour_[(saison, type_jour)]
-        # Asymptotic dampening: tanh saturates trend at long horizons
-        tau = 2.0  # years — trend saturates ~90% at Y+3.3
-        dampened_ya = tau * np.tanh(years_ahead / tau)
-        adjusted = base + trend * dampened_ya
+        trend_strength = float(self._trend_strength(np.array([years_ahead]))[0])
+        flatten_strength = float(self._flatten_strength(np.array([years_ahead]))[0])
+        adjusted = base + trend * trend_strength
+        adjusted = 1.0 + (adjusted - 1.0) * (1.0 - flatten_strength)
         # Clamp to physically reasonable range and re-normalize to mean=1
         adjusted = np.clip(adjusted, 0.4, 2.0)
         adjusted = adjusted / adjusted.mean()
         return adjusted
+
+    @staticmethod
+    def _trend_strength(years_ahead: np.ndarray) -> np.ndarray:
+        """Trend matters most at medium horizon, not infinitely far away."""
+        ya = np.maximum(np.asarray(years_ahead, dtype=float), 0.0)
+        ramp = np.clip(ya / 1.0, 0.0, 1.0)
+        decay = np.where(ya <= 1.0, 1.0, np.exp(-(ya - 1.0) / 1.5))
+        return ramp * decay
+
+    @staticmethod
+    def _flatten_strength(years_ahead: np.ndarray) -> np.ndarray:
+        """Far-horizon hourly shapes should gradually converge to a stable profile."""
+        ya = np.maximum(np.asarray(years_ahead, dtype=float), 0.0)
+        return np.clip((ya - 1.0) / 3.0, 0.0, 0.25)
 
     def get_climatological_fill(self, week: int) -> float:
         """Return the climatological (long-term mean) fill level for a given ISO week."""
@@ -259,14 +273,12 @@ class ShapeHourly:
                     trend = self.trend_per_hour_.get((saison, type_jour))
 
                     if trend is not None:
-                        # Vectorized: base + trend * dampened_years_ahead
+                        # Vectorized: medium-horizon trend, then convergence to a stable profile
                         ya = np.maximum(years_ahead.values.astype(float), 0.0)
-                        # Asymptotic dampening: trend saturates at ~2 years
-                        # Beyond that, profile converges to stable shape (SOTA:
-                        # KYOS/Volue use average historical profile at long horizons)
-                        tau = 2.0
-                        dampened_ya = tau * np.tanh(ya / tau)
-                        adjusted = factors_arr[h] + trend[h] * dampened_ya
+                        trend_strength = self._trend_strength(ya)
+                        flatten_strength = self._flatten_strength(ya)
+                        adjusted = factors_arr[h] + trend[h] * trend_strength
+                        adjusted = 1.0 + (adjusted - 1.0) * (1.0 - flatten_strength)
                         adjusted = np.clip(adjusted, 0.4, 2.0)
                         result.loc[idx] = adjusted
                     else:

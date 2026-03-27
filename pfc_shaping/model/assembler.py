@@ -147,6 +147,20 @@ class PFCAssembler:
         # Enrichissement calendaire
         cal = enrich_15min_index(idx, country=country)
 
+        local_tz = "Europe/Berlin" if country == "DE" else "Europe/Zurich"
+        idx_local = idx.tz_convert(local_tz)
+        ref_local = (
+            reference_date.tz_convert(local_tz)
+            if reference_date is not None
+            else pd.Timestamp.now(tz=local_tz)
+        )
+        # Use reference_date when provided so horizon logic is stable in backtests.
+        months_ahead = pd.Series(
+            (idx_local.year - ref_local.year) * 12 + (idx_local.month - ref_local.month),
+            index=idx,
+            dtype=int,
+        )
+
         # Ã¢â€â‚¬Ã¢â€â‚¬ Facteur saisonnier mensuel f_S Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         f_S = self._compute_f_S(idx, base_prices)
 
@@ -163,13 +177,23 @@ class PFCAssembler:
             f_H = self.sh.apply(idx, cal, reference_date=reference_date)
 
         # Ã¢â€â‚¬Ã¢â€â‚¬ Facteur 15min f_Q Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
-        f_Q = self.si.apply(idx, cal, entso_forecast)
+        f_Q = self.si.apply(idx, cal, entso_forecast, reference_date=reference_date)
 
         # Ã¢â€â‚¬Ã¢â€â‚¬ Facteur Water Value f_WV Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         if self.wv is not None:
             f_WV = self.wv.apply(idx, cal, hydro_forecast)
         else:
             f_WV = pd.Series(1.0, index=idx, name="f_WV")
+
+        # Explicit long-horizon governance:
+        # near horizon keeps rich historical shapes, far horizon converges
+        # progressively to structural level B(t).
+        shape_freedom = self._shape_freedom(months_ahead)
+        f_S = 1.0 + (f_S - 1.0) * shape_freedom["f_S"]
+        f_W = 1.0 + (f_W - 1.0) * shape_freedom["f_W"]
+        f_H = 1.0 + (f_H - 1.0) * shape_freedom["f_H"]
+        f_Q = 1.0 + (f_Q - 1.0) * shape_freedom["f_Q"]
+        f_WV = 1.0 + (f_WV - 1.0) * shape_freedom["f_WV"]
 
         # Ã¢â€â‚¬Ã¢â€â‚¬ Niveau de base B par timestamp Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         B = self._resolve_base(idx, base_prices)
@@ -183,18 +207,9 @@ class PFCAssembler:
 
         #Ã¢â€â‚¬Ã¢â€â‚¬ Prix brut (avant calibration) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         price_raw = B * f_S * f_W * f_H * f_Q * f_WV
+        price_raw = self._stabilize_raw_curve(price_raw, B, months_ahead)
 
         # Ã¢â€â‚¬Ã¢â€â‚¬ Profile type (pour traÃƒÂ§abilitÃƒÂ©) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
-        local_tz = "Europe/Berlin" if country == "DE" else "Europe/Zurich"
-        idx_local = idx.tz_convert(local_tz)
-        now_local = pd.Timestamp.now(tz=local_tz)
-        # Robust month offset computation compatible with modern pandas Index API.
-        months_ahead = pd.Series(
-            (idx_local.year - now_local.year) * 12 + (idx_local.month - now_local.month),
-            index=idx,
-            dtype=int,
-        )
-
         profile_type = pd.Series("Y+2/Y+3", index=idx)
         profile_type[months_ahead <= 12] = "M+7..M+12"
         profile_type[months_ahead <= 6] = "M+1..M+6"
@@ -580,6 +595,79 @@ class PFCAssembler:
         score[months_ahead > 12] = ct.get("24m", 0.65)
         score[months_ahead > 24] = ct.get("36m", 0.45)
         return score
+
+    def _shape_freedom(self, months_ahead: pd.Series) -> dict[str, pd.Series]:
+        """
+        Horizon-dependent freedom for each shaping block.
+
+        Close horizons can keep richer historical structure. Far horizons
+        progressively converge toward the structural base level B(t),
+        with intraday and weekday effects damped earlier than seasonality.
+        """
+
+        def _interp(
+            values: pd.Series,
+            knots: list[tuple[float, float]],
+        ) -> pd.Series:
+            x = values.astype(float).to_numpy()
+            xp = np.array([k[0] for k in knots], dtype=float)
+            fp = np.array([k[1] for k in knots], dtype=float)
+            y = np.interp(x, xp, fp)
+            return pd.Series(y, index=values.index, dtype=float)
+
+        return {
+            "f_S": _interp(
+                months_ahead,
+                [(0.0, 1.00), (6.0, 1.00), (12.0, 0.92), (24.0, 0.82), (36.0, 0.72)],
+            ),
+            "f_W": _interp(
+                months_ahead,
+                [(0.0, 1.00), (6.0, 0.95), (12.0, 0.82), (24.0, 0.58), (36.0, 0.38)],
+            ),
+            "f_H": _interp(
+                months_ahead,
+                [(0.0, 1.00), (6.0, 0.98), (12.0, 0.88), (24.0, 0.62), (36.0, 0.42)],
+            ),
+            "f_Q": _interp(
+                months_ahead,
+                [(0.0, 1.00), (6.0, 0.90), (12.0, 0.72), (24.0, 0.38), (36.0, 0.18)],
+            ),
+            "f_WV": _interp(
+                months_ahead,
+                [(0.0, 1.00), (6.0, 0.98), (12.0, 0.90), (24.0, 0.70), (36.0, 0.50)],
+            ),
+        }
+
+    def _stabilize_raw_curve(
+        self,
+        price_raw: pd.Series,
+        base_level: pd.Series,
+        months_ahead: pd.Series,
+    ) -> pd.Series:
+        """
+        Softly shrink far-horizon deviations back toward the structural base.
+
+        This is deliberately mild and starts only beyond 12 months so the
+        prompt horizon remains market-reactive while Y+2/Y+3 tails become
+        less noisy before arbitrage-free calibration.
+        """
+
+        ratio = (price_raw / base_level.replace(0.0, np.nan)).replace([np.inf, -np.inf], np.nan).fillna(1.0)
+        months = months_ahead.astype(float)
+
+        shrink = np.interp(
+            months.to_numpy(),
+            np.array([0.0, 12.0, 24.0, 36.0], dtype=float),
+            np.array([0.0, 0.0, 0.10, 0.22], dtype=float),
+        )
+        shrink = pd.Series(shrink, index=price_raw.index, dtype=float)
+
+        ratio_stable = 1.0 + (ratio - 1.0) * (1.0 - shrink)
+        far_mask = months > 12.0
+        if far_mask.any():
+            ratio_far = ratio_stable.loc[far_mask]
+            ratio_stable.loc[far_mask] = ratio_far.clip(lower=0.55, upper=1.85)
+        return (base_level * ratio_stable).rename("price_shape")
 
     def _check_energy_consistency(self, df: pd.DataFrame, base_prices: dict) -> None:
         """
