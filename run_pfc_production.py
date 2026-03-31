@@ -375,6 +375,8 @@ try:
     lear_base = f"pfc_shaping/output/lear_forecast_{pd.Timestamp.now().strftime('%Y-%m-%d')}"
     lear_forecast.to_parquet(f"{lear_base}.parquet", index=False)
     lear_forecast.to_csv(f"{lear_base}.csv", index=False)
+    lear_forecast.to_parquet("pfc_shaping/output/lear_forecast_latest.parquet", index=False)
+    lear_forecast.to_csv("pfc_shaping/output/lear_forecast_latest.csv", index=False)
     logger.info("  LEAR standalone saved: %s.parquet", lear_base)
 
     try:
@@ -398,6 +400,7 @@ try:
         bt = pd.concat(bt_frames, ignore_index=True)
         bt_path = f"pfc_shaping/output/lear_backtest_{pd.Timestamp.now().strftime('%Y-%m-%d')}.parquet"
         bt.to_parquet(bt_path, index=False)
+        bt.to_parquet("pfc_shaping/output/lear_backtest_latest.parquet", index=False)
         summary = (
             bt.groupby("horizon")
             .agg(
@@ -410,6 +413,7 @@ try:
         )
         summary_path = f"pfc_shaping/output/lear_backtest_summary_{pd.Timestamp.now().strftime('%Y-%m-%d')}.csv"
         summary.to_csv(summary_path, index=False)
+        summary.to_csv("pfc_shaping/output/lear_backtest_summary_latest.csv", index=False)
         try:
             db_path = init_db("pfc_shaping/data/pfc_local.duckdb")
             upsert_lear_backtest(db_path, lear_run_id, bt)

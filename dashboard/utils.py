@@ -202,23 +202,27 @@ def load_lear_forecast() -> pd.DataFrame | None:
         return df_db.dropna(subset=["timestamp"])
 
     output_dir = _paths_from_config()["output_dir"]
-    # Try parquet first, then CSV
+    # Prefer stable "latest" artifacts, then fall back to dated files.
     for ext in [".parquet", ".csv"]:
-        pattern = str(output_dir / f"lear_forecast_*{ext}")
-        latest = _latest_file_by_mtime(pattern)
-        if latest is None:
-            continue
-        try:
-            if ext == ".parquet":
-                df = pd.read_parquet(latest)
-            else:
-                df = pd.read_csv(latest)
-            if df.empty:
+        candidates = [
+            output_dir / f"lear_forecast_latest{ext}",
+            _latest_file_by_mtime(str(output_dir / f"lear_forecast_*{ext}")),
+        ]
+        for latest in candidates:
+            if latest is None or not Path(latest).exists():
                 continue
-            df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
-            return df
-        except Exception as exc:
-            logger.error("Failed to read LEAR forecast: %s", exc)
+            try:
+                if ext == ".parquet":
+                    df = pd.read_parquet(latest)
+                else:
+                    df = pd.read_csv(latest)
+                if df.empty:
+                    continue
+                df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
+                return df
+            except Exception as exc:
+                logger.error("Failed to read LEAR forecast %s: %s", latest, exc)
+                continue
     return None
 
 
@@ -244,15 +248,17 @@ def load_lear_backtest() -> pd.DataFrame | None:
         return df_db.dropna(subset=["forecast_ts"])
 
     output_dir = _paths_from_config()["output_dir"]
-    pattern = str(output_dir / "lear_backtest_*.parquet")
-    latest = _latest_file_by_mtime(pattern)
-    if latest is None:
-        return None
-    try:
-        return pd.read_parquet(latest)
-    except Exception as exc:
-        logger.error("Failed to read LEAR backtest: %s", exc)
-        return None
+    for latest in [
+        output_dir / "lear_backtest_latest.parquet",
+        _latest_file_by_mtime(str(output_dir / "lear_backtest_*.parquet")),
+    ]:
+        if latest is None or not Path(latest).exists():
+            continue
+        try:
+            return pd.read_parquet(latest)
+        except Exception as exc:
+            logger.error("Failed to read LEAR backtest %s: %s", latest, exc)
+    return None
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
