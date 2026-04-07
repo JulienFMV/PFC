@@ -368,6 +368,48 @@ try:
     logger.info("  LEAR forecast: %d hours, mean=%.1f EUR/MWh",
                 len(lear_forecast), lear_forecast["price_lear"].mean())
 
+    # Optional experimental PriceFM blend.
+    # Kept opt-in to avoid changing the default production behavior.
+    if os.getenv("PFC_ENABLE_PRICEFM_EXPERIMENT", "0") == "1":
+        try:
+            from pfc_shaping.model.pricefm_experimental import (
+                BEST_PRICEFM_EXPERIMENT,
+                blend_lear_with_pricefm,
+                load_pricefm_forecast,
+            )
+
+            pricefm_path = BEST_PRICEFM_EXPERIMENT.forecast_latest_path
+            if os.path.exists(pricefm_path):
+                pricefm_forecast = load_pricefm_forecast(pricefm_path)
+                lear_forecast_pricefm = blend_lear_with_pricefm(
+                    lear_forecast,
+                    pricefm_forecast,
+                    weight_pricefm=BEST_PRICEFM_EXPERIMENT.blend_weight,
+                )
+                logger.info(
+                    "  Experimental PriceFM blend applied: %.0f rows, weight=%.2f",
+                    lear_forecast_pricefm["pricefm_used"].sum(),
+                    BEST_PRICEFM_EXPERIMENT.blend_weight,
+                )
+
+                pricefm_base = f"pfc_shaping/output/lear_forecast_pricefm_experimental_{pd.Timestamp.now().strftime('%Y-%m-%d')}"
+                lear_forecast_pricefm.to_parquet(f"{pricefm_base}.parquet", index=False)
+                lear_forecast_pricefm.to_csv(f"{pricefm_base}.csv", index=False)
+                lear_forecast_pricefm.to_parquet(
+                    "pfc_shaping/output/lear_forecast_pricefm_experimental_latest.parquet", index=False
+                )
+                lear_forecast_pricefm.to_csv(
+                    "pfc_shaping/output/lear_forecast_pricefm_experimental_latest.csv", index=False
+                )
+
+                if os.getenv("PFC_APPLY_PRICEFM_EXPERIMENT_TO_PFC", "0") == "1":
+                    lear_forecast = lear_forecast_pricefm.copy()
+                    logger.info("  Experimental PriceFM blend promoted into PFC overlay")
+            else:
+                logger.info("  Experimental PriceFM forecast not found at %s", pricefm_path)
+        except Exception as pricefm_exc:
+            logger.warning("  Experimental PriceFM blend failed: %s", pricefm_exc)
+
     # Blend with PFC (D1-7 = LEAR, D8-10 = blend, D11+ = pure PFC)
     pfc = lear.blend_with_pfc(pfc, lear_forecast)
 

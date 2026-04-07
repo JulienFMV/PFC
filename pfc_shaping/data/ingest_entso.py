@@ -40,6 +40,18 @@ load_dotenv(dotenv_path=_ENV_PATH)
 
 MAX_RETRIES = 3
 BASE_DELAY = 5
+SWISS_BORDERS = {
+    "de": "DE_LU",
+    "fr": "FR",
+    "at": "AT",
+    "it": "IT_NORD",
+}
+NEIGHBOR_ZONES = {
+    "at": "AT",
+    "de": "DE_LU",
+    "fr": "FR",
+    "it": "IT_NORD",
+}
 
 
 def _get_client():
@@ -97,7 +109,7 @@ def load_from_api(
     logger.info("ENTSO-E API load + generation : %s → %s (zone=%s)", start, end, country_code)
 
     # --- Load ---
-    df_load_raw = _retry(client.query_load, country_code, ts_start, ts_end)
+    df_load_raw = _retry(client.query_load, country_code, start=ts_start, end=ts_end)
     if isinstance(df_load_raw, pd.DataFrame):
         # query_load peut retourner DataFrame avec colonnes Forecasted/Actual
         if "Actual Load" in df_load_raw.columns:
@@ -109,7 +121,7 @@ def load_from_api(
         df_load = df_load_raw.to_frame("load_mw")
 
     # --- Generation par type ---
-    df_gen_raw = _retry(client.query_generation, country_code, ts_start, ts_end)
+    df_gen_raw = _retry(client.query_generation, country_code, start=ts_start, end=ts_end)
 
     # Extraire solar et wind depuis les colonnes multi-level ou flat
     solar_mw = _extract_generation_column(df_gen_raw, "Solar")
@@ -129,6 +141,14 @@ def load_from_api(
 
     df = df_load_15.join(df_gen_15, how="outer").sort_index()
     df[["solar_mw", "wind_mw"]] = df[["solar_mw", "wind_mw"]].fillna(0.0)
+
+    neighbor_df = _load_neighbor_power_features(client, ts_start, ts_end)
+    if not neighbor_df.empty:
+        df = df.join(neighbor_df, how="outer").sort_index()
+
+    border_df = _load_swiss_border_features(client, ts_start, ts_end)
+    if not border_df.empty:
+        df = df.join(border_df, how="outer").sort_index()
 
     logger.info(
         "ENTSO-E chargé : %d lignes, load [%.0f-%.0f] MW",
@@ -178,6 +198,189 @@ def _resample_to_15min(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _to_15min_series(series: pd.Series | pd.DataFrame, name: str) -> pd.Series:
+    """Normalize ENTSO-E outputs to a named UTC 15min series."""
+    if isinstance(series, pd.DataFrame):
+        if series.empty:
+            return pd.Series(dtype=float, name=name)
+        series = series.iloc[:, 0]
+
+    series = series.rename(name).sort_index()
+    if series.index.tz is None:
+        series.index = series.index.tz_localize("UTC")
+
+    if len(series) > 1:
+        median_delta = series.index.to_series().diff().median()
+        if median_delta > pd.Timedelta(minutes=15):
+            series = series.resample("15min").ffill()
+    return series.astype(float)
+
+
+def _query_series_or_empty(func, *args, name: str, **kwargs) -> pd.Series:
+    """Run ENTSO-E query and degrade gracefully if a border is unavailable."""
+    try:
+        raw = _retry(func, *args, **kwargs)
+        return _to_15min_series(raw, name)
+    except Exception as exc:
+        logger.warning("ENTSO-E query failed for %s: %s", name, exc)
+        return pd.Series(dtype=float, name=name)
+
+
+def _load_swiss_border_features(
+    client,
+    ts_start: pd.Timestamp,
+    ts_end: pd.Timestamp,
+) -> pd.DataFrame:
+    """Load CH bilateral schedule / flow / NTC series for key neighbors."""
+    frames: list[pd.Series] = []
+
+    for border_key, border_code in SWISS_BORDERS.items():
+        sched_export = _query_series_or_empty(
+            client.query_scheduled_exchanges,
+            "CH",
+            border_code,
+            start=ts_start,
+            end=ts_end,
+            dayahead=True,
+            name=f"scheduled_export_ch_{border_key}_mw",
+        )
+        sched_import = _query_series_or_empty(
+            client.query_scheduled_exchanges,
+            border_code,
+            "CH",
+            start=ts_start,
+            end=ts_end,
+            dayahead=True,
+            name=f"scheduled_import_ch_{border_key}_mw",
+        )
+        if not sched_export.empty or not sched_import.empty:
+            sched_idx = sched_export.index.union(sched_import.index)
+            sched_export = sched_export.reindex(sched_idx).fillna(0.0)
+            sched_import = sched_import.reindex(sched_idx).fillna(0.0)
+            frames.append((sched_export - sched_import).rename(f"scheduled_net_export_ch_{border_key}_mw"))
+
+        flow_export = _query_series_or_empty(
+            client.query_crossborder_flows,
+            "CH",
+            border_code,
+            start=ts_start,
+            end=ts_end,
+            name=f"flow_export_ch_{border_key}_mw",
+        )
+        flow_import = _query_series_or_empty(
+            client.query_crossborder_flows,
+            border_code,
+            "CH",
+            start=ts_start,
+            end=ts_end,
+            name=f"flow_import_ch_{border_key}_mw",
+        )
+        if not flow_export.empty or not flow_import.empty:
+            flow_idx = flow_export.index.union(flow_import.index)
+            flow_export = flow_export.reindex(flow_idx).fillna(0.0)
+            flow_import = flow_import.reindex(flow_idx).fillna(0.0)
+            frames.append((flow_export - flow_import).rename(f"flow_net_export_ch_{border_key}_mw"))
+
+        ntc_export = _query_series_or_empty(
+            client.query_net_transfer_capacity_dayahead,
+            "CH",
+            border_code,
+            start=ts_start,
+            end=ts_end,
+            name=f"ntc_export_ch_{border_key}_mw",
+        )
+        ntc_import = _query_series_or_empty(
+            client.query_net_transfer_capacity_dayahead,
+            border_code,
+            "CH",
+            start=ts_start,
+            end=ts_end,
+            name=f"ntc_import_ch_{border_key}_mw",
+        )
+        if not ntc_export.empty or not ntc_import.empty:
+            ntc_idx = ntc_export.index.union(ntc_import.index)
+            ntc_export = ntc_export.reindex(ntc_idx).fillna(0.0)
+            ntc_import = ntc_import.reindex(ntc_idx).fillna(0.0)
+            frames.extend([
+                ntc_export.rename(f"ntc_export_ch_{border_key}_mw"),
+                ntc_import.rename(f"ntc_import_ch_{border_key}_mw"),
+                (ntc_export - ntc_import).rename(f"ntc_net_ch_{border_key}_mw"),
+                (ntc_export + ntc_import).rename(f"ntc_total_ch_{border_key}_mw"),
+            ])
+
+    if not frames:
+        return pd.DataFrame()
+
+    border_df = pd.concat(frames, axis=1).sort_index()
+    return border_df[~border_df.index.duplicated(keep="last")]
+
+
+def _load_neighbor_power_features(
+    client,
+    ts_start: pd.Timestamp,
+    ts_end: pd.Timestamp,
+) -> pd.DataFrame:
+    """Load DE/IT load and renewable signals useful for Swiss CT forecasting."""
+    frames: list[pd.DataFrame] = []
+
+    for key, zone_code in NEIGHBOR_ZONES.items():
+        try:
+            load_raw = _retry(client.query_load, zone_code, start=ts_start, end=ts_end)
+            if isinstance(load_raw, pd.DataFrame):
+                if "Actual Load" in load_raw.columns:
+                    load_df = load_raw[["Actual Load"]].rename(columns={"Actual Load": f"load_{key}_mw"})
+                else:
+                    load_df = load_raw.iloc[:, -1].to_frame(f"load_{key}_mw")
+            else:
+                load_df = load_raw.to_frame(f"load_{key}_mw")
+            if load_df.index.tz is None:
+                load_df.index = load_df.index.tz_localize("UTC")
+            load_df = _resample_to_15min(load_df)
+        except Exception as exc:
+            logger.warning("ENTSO-E neighbor load failed for %s: %s", key, exc)
+            load_df = pd.DataFrame()
+
+        try:
+            gen_raw = _retry(client.query_generation, zone_code, start=ts_start, end=ts_end)
+            solar = _extract_generation_column(gen_raw, "Solar").rename(f"solar_{key}_mw")
+            wind = (
+                _extract_generation_column(gen_raw, "Wind Onshore")
+                + _extract_generation_column(gen_raw, "Wind Offshore")
+            ).rename(f"wind_{key}_mw")
+            gen_df = pd.concat([solar, wind], axis=1)
+            if gen_df.index.tz is None:
+                gen_df.index = gen_df.index.tz_localize("UTC")
+            gen_df = _resample_to_15min(gen_df)
+        except Exception as exc:
+            logger.warning("ENTSO-E neighbor generation failed for %s: %s", key, exc)
+            gen_df = pd.DataFrame()
+
+        if load_df.empty and gen_df.empty:
+            continue
+
+        zone_df = load_df.join(gen_df, how="outer").sort_index()
+        for col in [f"solar_{key}_mw", f"wind_{key}_mw"]:
+            if col in zone_df.columns:
+                zone_df[col] = zone_df[col].fillna(0.0)
+
+        if key == "de":
+            load_col = "load_de_mw"
+            solar_col = "solar_de_mw"
+            wind_col = "wind_de_mw"
+            if all(col in zone_df.columns for col in [load_col, solar_col, wind_col]):
+                zone_df["residual_load_de_mw"] = (
+                    zone_df[load_col] - zone_df[solar_col].fillna(0.0) - zone_df[wind_col].fillna(0.0)
+                )
+
+        frames.append(zone_df)
+
+    if not frames:
+        return pd.DataFrame()
+
+    neighbor_df = pd.concat(frames, axis=1).sort_index()
+    return neighbor_df[~neighbor_df.index.duplicated(keep="last")]
+
+
 def build_features(df: pd.DataFrame) -> pd.DataFrame:
     """
     Enrichit le DataFrame avec solar_regime, load_deviation et flow_deviation.
@@ -196,7 +399,14 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
 
     def _solar_regime(x: pd.Series) -> pd.Series:
         q33, q66 = np.nanpercentile(x, [33, 66])
-        return pd.cut(x, bins=[-np.inf, q33, q66, np.inf], labels=[0, 1, 2]).astype(float)
+        if not np.isfinite(q33) or not np.isfinite(q66) or q33 >= q66:
+            return pd.Series(1.0, index=x.index)
+        return pd.cut(
+            x,
+            bins=[-np.inf, q33, q66, np.inf],
+            labels=[0, 1, 2],
+            duplicates="drop",
+        ).astype(float)
 
     df["solar_regime"] = df.groupby(df.index.to_period("M"))["solar_mw"].transform(_solar_regime)
 
@@ -212,6 +422,36 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
         df["flow_deviation"] = df["flow_deviation"].fillna(0)
     else:
         df["flow_deviation"] = 0.0
+
+    for border_key in SWISS_BORDERS:
+        sched_col = f"scheduled_net_export_ch_{border_key}_mw"
+        if sched_col in df.columns:
+            monthly = df.groupby(df.index.to_period("M"))[sched_col]
+            df[f"{sched_col}_zscore"] = monthly.transform(
+                lambda x: (x - x.mean()) / x.std() if x.std() > 0 else 0
+            ).fillna(0.0)
+
+        ntc_total_col = f"ntc_total_ch_{border_key}_mw"
+        if ntc_total_col in df.columns:
+            monthly = df.groupby(df.index.to_period("M"))[ntc_total_col]
+            df[f"{ntc_total_col}_zscore"] = monthly.transform(
+                lambda x: (x - x.mean()) / x.std() if x.std() > 0 else 0
+            ).fillna(0.0)
+
+        ntc_net_col = f"ntc_net_ch_{border_key}_mw"
+        if ntc_net_col in df.columns:
+            monthly = df.groupby(df.index.to_period("M"))[ntc_net_col]
+            df[f"{ntc_net_col}_zscore"] = monthly.transform(
+                lambda x: (x - x.mean()) / x.std() if x.std() > 0 else 0
+            ).fillna(0.0)
+
+        export_col = f"ntc_export_ch_{border_key}_mw"
+        import_col = f"ntc_import_ch_{border_key}_mw"
+        if export_col in df.columns and import_col in df.columns:
+            denom = (df[export_col].fillna(0.0) + df[import_col].fillna(0.0)).replace(0, np.nan)
+            df[f"ntc_balance_ch_{border_key}"] = (
+                (df[export_col].fillna(0.0) - df[import_col].fillna(0.0)) / denom
+            ).fillna(0.0)
 
     return df
 
@@ -239,7 +479,13 @@ def fetch_and_cache(
     parquet_path = Path(parquet_path)
     if parquet_path.exists():
         existing = load_parquet(parquet_path)
-        raw_cols = ["load_mw", "solar_mw", "wind_mw"]
+        raw_cols = [
+            c for c in existing.columns
+            if c in {"load_mw", "solar_mw", "wind_mw", "cross_border_mw", "nuclear_mw", "hydro_ror_mw",
+                     "hydro_reservoir_mw", "hydro_pumped_mw"}
+            or c.startswith(("load_", "solar_", "wind_", "residual_load_"))
+            or c.startswith(("scheduled_", "flow_net_export_", "ntc_export_", "ntc_import_", "ntc_net_", "ntc_total_"))
+        ]
         existing_raw = existing[[c for c in raw_cols if c in existing.columns]]
         combined = pd.concat([existing_raw, new_raw])
         combined = combined[~combined.index.duplicated(keep="last")].sort_index()
