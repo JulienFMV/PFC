@@ -462,41 +462,60 @@ try:
         logger.warning("  LEAR DuckDB persistence failed: %s", db_exc)
 
     # Rolling backtest multi-horizon (production diagnostics)
-    horizons = [1, 2, 3, 5, 7, 10]
-    logger.info("  Running LEAR backtest multi-horizon: %s", horizons)
-    t_bt = time.time()
-    try:
-        bt_frames = []
-        for h in horizons:
-            bt_h = lear.backtest(n_days=30, horizon=h)
-            bt_h["horizon"] = h
-            bt_frames.append(bt_h)
-        bt = pd.concat(bt_frames, ignore_index=True)
-        bt_path = f"pfc_shaping/output/lear_backtest_{pd.Timestamp.now().strftime('%Y-%m-%d')}.parquet"
-        bt.to_parquet(bt_path, index=False)
-        bt.to_parquet("pfc_shaping/output/lear_backtest_latest.parquet", index=False)
-        summary = (
-            bt.groupby("horizon")
-            .agg(
-                mae=("abs_error", "mean"),
-                rmse=("error", lambda s: float(np.sqrt(np.mean(np.square(s))))),
-                bias=("error", "mean"),
-                corr=("forecast", lambda s: float(s.corr(bt.loc[s.index, "actual"]))),
-            )
-            .reset_index()
+    backtest_mode = os.getenv("PFC_LEAR_BACKTEST_MODE", "full").strip().lower()
+    if backtest_mode not in {"full", "fast", "skip"}:
+        logger.warning("  Unknown PFC_LEAR_BACKTEST_MODE=%s, falling back to 'full'", backtest_mode)
+        backtest_mode = "full"
+
+    if backtest_mode == "skip":
+        logger.info("  LEAR backtest skipped (PFC_LEAR_BACKTEST_MODE=skip)")
+    else:
+        default_horizons = [1, 2, 3, 5, 7, 10] if backtest_mode == "full" else [1, 3, 7]
+        default_n_days = 30 if backtest_mode == "full" else 10
+        horizons_env = os.getenv("PFC_LEAR_BACKTEST_HORIZONS", "").strip()
+        n_days_env = os.getenv("PFC_LEAR_BACKTEST_DAYS", "").strip()
+        horizons = [int(x) for x in horizons_env.split(",") if x.strip()] if horizons_env else default_horizons
+        n_days = int(n_days_env) if n_days_env else default_n_days
+
+        logger.info(
+            "  Running LEAR backtest multi-horizon: mode=%s, n_days=%d, horizons=%s",
+            backtest_mode,
+            n_days,
+            horizons,
         )
-        summary_path = f"pfc_shaping/output/lear_backtest_summary_{pd.Timestamp.now().strftime('%Y-%m-%d')}.csv"
-        summary.to_csv(summary_path, index=False)
-        summary.to_csv("pfc_shaping/output/lear_backtest_summary_latest.csv", index=False)
+        t_bt = time.time()
         try:
-            db_path = init_db("pfc_shaping/data/pfc_local.duckdb")
-            upsert_lear_backtest(db_path, lear_run_id, bt)
-            logger.info("  LEAR backtest persisted to DuckDB: %s", lear_run_id)
-        except Exception as db_exc:
-            logger.warning("  LEAR backtest DuckDB persistence failed: %s", db_exc)
-        logger.info("  Backtest saved: %s (%.1fs)", bt_path, time.time() - t_bt)
-    except Exception as bt_exc:
-        logger.warning("  Backtest failed: %s", bt_exc)
+            bt_frames = []
+            for h in horizons:
+                bt_h = lear.backtest(n_days=n_days, horizon=h)
+                bt_h["horizon"] = h
+                bt_frames.append(bt_h)
+            bt = pd.concat(bt_frames, ignore_index=True)
+            bt_path = f"pfc_shaping/output/lear_backtest_{pd.Timestamp.now().strftime('%Y-%m-%d')}.parquet"
+            bt.to_parquet(bt_path, index=False)
+            bt.to_parquet("pfc_shaping/output/lear_backtest_latest.parquet", index=False)
+            summary = (
+                bt.groupby("horizon")
+                .agg(
+                    mae=("abs_error", "mean"),
+                    rmse=("error", lambda s: float(np.sqrt(np.mean(np.square(s))))),
+                    bias=("error", "mean"),
+                    corr=("forecast", lambda s: float(s.corr(bt.loc[s.index, "actual"]))),
+                )
+                .reset_index()
+            )
+            summary_path = f"pfc_shaping/output/lear_backtest_summary_{pd.Timestamp.now().strftime('%Y-%m-%d')}.csv"
+            summary.to_csv(summary_path, index=False)
+            summary.to_csv("pfc_shaping/output/lear_backtest_summary_latest.csv", index=False)
+            try:
+                db_path = init_db("pfc_shaping/data/pfc_local.duckdb")
+                upsert_lear_backtest(db_path, lear_run_id, bt)
+                logger.info("  LEAR backtest persisted to DuckDB: %s", lear_run_id)
+            except Exception as db_exc:
+                logger.warning("  LEAR backtest DuckDB persistence failed: %s", db_exc)
+            logger.info("  Backtest saved: %s (%.1fs)", bt_path, time.time() - t_bt)
+        except Exception as bt_exc:
+            logger.warning("  Backtest failed: %s", bt_exc)
 
     logger.info("  LEAR completed in %.1fs", time.time() - t_lear)
 
