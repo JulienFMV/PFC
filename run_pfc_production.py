@@ -383,6 +383,7 @@ try:
             pricefm_path = BEST_PRICEFM_EXPERIMENT.forecast_latest_path
             pricefm_meta_path = "pfc_shaping/output/pricefm_forecast_latest_meta.json"
             generate_pricefm = os.getenv("PFC_GENERATE_PRICEFM_EXPERIMENT", "1") == "1"
+            pricefm_blend_mode = os.getenv("PFC_PRICEFM_BLEND_MODE", "regime").strip().lower()
             if generate_pricefm:
                 try:
                     pricefm_python = os.getenv("PFC_PRICEFM_PYTHON", DEFAULT_PRICEFM_PYTHON)
@@ -414,12 +415,12 @@ try:
                 lear_forecast_pricefm = blend_lear_with_pricefm(
                     lear_forecast,
                     pricefm_forecast,
-                    weight_pricefm=BEST_PRICEFM_EXPERIMENT.blend_weight,
+                    weight_pricefm=None if pricefm_blend_mode == "regime" else BEST_PRICEFM_EXPERIMENT.blend_weight,
                 )
                 logger.info(
-                    "  Experimental PriceFM blend applied: %.0f rows, weight=%.2f",
+                    "  Experimental PriceFM blend applied: %.0f rows, mode=%s",
                     lear_forecast_pricefm["pricefm_used"].sum(),
-                    BEST_PRICEFM_EXPERIMENT.blend_weight,
+                    pricefm_blend_mode,
                 )
                 if os.path.exists(pricefm_meta_path):
                     logger.info("  Experimental PriceFM metadata: %s", pricefm_meta_path)
