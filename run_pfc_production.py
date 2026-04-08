@@ -20,6 +20,7 @@ warnings.filterwarnings("ignore", category=UserWarning)
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, PROJECT_ROOT)
 os.chdir(PROJECT_ROOT)
+DEFAULT_PRICEFM_PYTHON = r"C:\Users\jbattaglia\.conda\pricefm_tf\python.exe"
 
 logging.basicConfig(
     level=logging.INFO,
@@ -384,21 +385,28 @@ try:
             generate_pricefm = os.getenv("PFC_GENERATE_PRICEFM_EXPERIMENT", "1") == "1"
             if generate_pricefm:
                 try:
+                    pricefm_python = os.getenv("PFC_PRICEFM_PYTHON", DEFAULT_PRICEFM_PYTHON)
+                    if not os.path.exists(pricefm_python):
+                        pricefm_python = sys.executable
                     pricefm_cmd = [
-                        sys.executable,
+                        pricefm_python,
                         os.path.join(PROJECT_ROOT, "scripts", "generate_pricefm_experimental_forecast.py"),
                         "--horizon-days",
                         "10",
                     ]
                     logger.info("  Generating experimental PriceFM forecast...")
-                    subprocess.run(
+                    completed = subprocess.run(
                         pricefm_cmd,
                         cwd=PROJECT_ROOT,
                         check=True,
                         capture_output=True,
                         text=True,
                     )
+                    if completed.stdout:
+                        logger.info("  PriceFM generation stdout: %s", completed.stdout.strip())
                 except Exception as gen_exc:
+                    if isinstance(gen_exc, subprocess.CalledProcessError) and gen_exc.stderr:
+                        logger.warning("  Experimental PriceFM stderr: %s", gen_exc.stderr.strip())
                     logger.warning("  Experimental PriceFM generation failed: %s", gen_exc)
 
             if os.path.exists(pricefm_path):
