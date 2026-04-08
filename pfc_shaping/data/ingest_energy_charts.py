@@ -25,6 +25,7 @@ Licence  : CC BY 4.0 (Bundesnetzagentur / SMARD.de)
 from __future__ import annotations
 
 import logging
+import os
 import time
 from pathlib import Path
 
@@ -39,6 +40,7 @@ API_BASE = "https://api.energy-charts.info"
 MAX_RETRIES = 3
 BASE_DELAY = 2
 REQUEST_TIMEOUT = 30
+DEFAULT_VERIFY_BUNDLE = Path(r"C:\certs\git-ca-plus-fmv.crt")
 
 DEFAULT_EPEX_PARQUET = Path(__file__).resolve().parent.parent / "data" / "epex_15min.parquet"
 DEFAULT_EPEX_DE_PARQUET = Path(__file__).resolve().parent.parent / "data" / "epex_de_15min.parquet"
@@ -51,9 +53,16 @@ DEFAULT_ENTSO_PARQUET = Path(__file__).resolve().parent.parent / "data" / "entso
 
 def _retry_get(url: str, params: dict | None = None) -> requests.Response:
     """GET avec retry + backoff exponentiel."""
+    verify = os.getenv("PFC_REQUESTS_CA_BUNDLE")
+    if verify:
+        verify_arg: bool | str = verify
+    elif DEFAULT_VERIFY_BUNDLE.exists():
+        verify_arg = str(DEFAULT_VERIFY_BUNDLE)
+    else:
+        verify_arg = True
     for attempt in range(MAX_RETRIES):
         try:
-            resp = requests.get(url, params=params, timeout=REQUEST_TIMEOUT)
+            resp = requests.get(url, params=params, timeout=REQUEST_TIMEOUT, verify=verify_arg)
             resp.raise_for_status()
             return resp
         except Exception as e:
@@ -114,9 +123,10 @@ def load_prices(start: str, end: str, bzn: str = "CH") -> pd.DataFrame:
 
     # Resample vers 15min (forward-fill : prix DA constant sur l'heure)
     if not df.empty:
-        full_idx = pd.date_range(df.index.min(), df.index.max(), freq="15min", tz="UTC")
+        # Day-ahead hourly prices are valid for the full hour.
+        # Reindex to the full requested 15min grid, not only to the last raw stamp.
+        full_idx = pd.date_range(ts_start, ts_end - pd.Timedelta(minutes=15), freq="15min", tz="UTC")
         df = df.reindex(full_idx).ffill()
-        df = df[(df.index >= ts_start) & (df.index < ts_end)]
 
     # Spike flagging
     df = _spike_flag(df)
