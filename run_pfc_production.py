@@ -9,6 +9,7 @@ Includes ENTSO-E climatology forecast for Layer 2 Ridge corrections.
 import sys
 import os
 import logging
+import subprocess
 import time
 import warnings
 
@@ -379,6 +380,27 @@ try:
             )
 
             pricefm_path = BEST_PRICEFM_EXPERIMENT.forecast_latest_path
+            pricefm_meta_path = "pfc_shaping/output/pricefm_forecast_latest_meta.json"
+            generate_pricefm = os.getenv("PFC_GENERATE_PRICEFM_EXPERIMENT", "1") == "1"
+            if generate_pricefm:
+                try:
+                    pricefm_cmd = [
+                        sys.executable,
+                        os.path.join(PROJECT_ROOT, "scripts", "generate_pricefm_experimental_forecast.py"),
+                        "--horizon-days",
+                        "10",
+                    ]
+                    logger.info("  Generating experimental PriceFM forecast...")
+                    subprocess.run(
+                        pricefm_cmd,
+                        cwd=PROJECT_ROOT,
+                        check=True,
+                        capture_output=True,
+                        text=True,
+                    )
+                except Exception as gen_exc:
+                    logger.warning("  Experimental PriceFM generation failed: %s", gen_exc)
+
             if os.path.exists(pricefm_path):
                 pricefm_forecast = load_pricefm_forecast(pricefm_path)
                 lear_forecast_pricefm = blend_lear_with_pricefm(
@@ -391,6 +413,8 @@ try:
                     lear_forecast_pricefm["pricefm_used"].sum(),
                     BEST_PRICEFM_EXPERIMENT.blend_weight,
                 )
+                if os.path.exists(pricefm_meta_path):
+                    logger.info("  Experimental PriceFM metadata: %s", pricefm_meta_path)
 
                 pricefm_base = f"pfc_shaping/output/lear_forecast_pricefm_experimental_{pd.Timestamp.now().strftime('%Y-%m-%d')}"
                 lear_forecast_pricefm.to_parquet(f"{pricefm_base}.parquet", index=False)
