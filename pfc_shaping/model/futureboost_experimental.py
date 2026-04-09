@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import holidays
 import numpy as np
 import pandas as pd
 from sklearn.linear_model import RidgeCV
@@ -26,6 +27,22 @@ class FutureBoostExperimentalConfig:
 
 
 DEFAULT_FUTUREBOOST_EXPERIMENT = FutureBoostExperimentalConfig()
+
+
+def _holiday_flags(local_ts: pd.Series) -> tuple[pd.Series, pd.Series, pd.Series]:
+    years = sorted(set(local_ts.dt.year.astype(int).tolist()))
+    ch_holidays: set = set()
+    de_holidays: set = set()
+    fr_holidays: set = set()
+    for year in years:
+        ch_holidays |= set(holidays.Switzerland(years=year, subdiv="VS").keys())
+        de_holidays |= set(holidays.Germany(years=year).keys())
+        fr_holidays |= set(holidays.France(years=year).keys())
+    dates = local_ts.dt.date
+    is_holiday_ch = dates.isin(ch_holidays).astype(float)
+    is_holiday_de = dates.isin(de_holidays).astype(float)
+    is_holiday_fr = dates.isin(fr_holidays).astype(float)
+    return is_holiday_ch, is_holiday_de, is_holiday_fr
 
 
 def build_futureboost_features(df: pd.DataFrame) -> pd.DataFrame:
@@ -47,12 +64,21 @@ def build_futureboost_features(df: pd.DataFrame) -> pd.DataFrame:
     out["is_weekend"] = (dow >= 5).astype(float)
     out["is_peak"] = hour.isin([7, 8, 9, 17, 18, 19, 20]).astype(float)
     out["is_solar_midday"] = hour.between(10, 15).astype(float)
+    out["is_holiday_ch"], out["is_holiday_de"], out["is_holiday_fr"] = _holiday_flags(local)
 
     # A few targeted interactions are enough; avoid a large unstable design.
     out["diff_x_peak"] = out["forecast_diff"] * out["is_peak"]
     out["diff_x_weekend"] = out["forecast_diff"] * out["is_weekend"]
     out["diff_x_regime"] = out["forecast_diff"] * out["pricefm_weight_regime"]
     out["pricefm_x_regime"] = out["pricefm"] * out["pricefm_weight_regime"]
+    out["diff_lag1"] = out["forecast_diff"].shift(1).ffill().fillna(0.0)
+    out["diff_lag24"] = out["forecast_diff"].shift(24).ffill().fillna(0.0)
+    out["abs_diff_lag1"] = out["forecast_abs_diff"].shift(1).ffill().fillna(0.0)
+    out["abs_diff_lag24"] = out["forecast_abs_diff"].shift(24).ffill().fillna(0.0)
+    out["diff_change_1h"] = out["forecast_diff"] - out["diff_lag1"]
+    out["diff_x_holiday_ch"] = out["forecast_diff"] * out["is_holiday_ch"]
+    out["diff_x_holiday_de"] = out["forecast_diff"] * out["is_holiday_de"]
+    out["diff_x_holiday_fr"] = out["forecast_diff"] * out["is_holiday_fr"]
 
     feature_cols = [
         "lear",
@@ -67,10 +93,21 @@ def build_futureboost_features(df: pd.DataFrame) -> pd.DataFrame:
         "is_weekend",
         "is_peak",
         "is_solar_midday",
+        "is_holiday_ch",
+        "is_holiday_de",
+        "is_holiday_fr",
         "diff_x_peak",
         "diff_x_weekend",
         "diff_x_regime",
         "pricefm_x_regime",
+        "diff_lag1",
+        "diff_lag24",
+        "abs_diff_lag1",
+        "abs_diff_lag24",
+        "diff_change_1h",
+        "diff_x_holiday_ch",
+        "diff_x_holiday_de",
+        "diff_x_holiday_fr",
     ]
     return out[feature_cols]
 
