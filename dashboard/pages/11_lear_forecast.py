@@ -31,6 +31,16 @@ if lear is None:
 
 TZ = "Europe/Zurich"
 
+
+def _detect_experimental_mode(df: pd.DataFrame) -> str:
+    if "futureboost_used" in df.columns and df["futureboost_used"].fillna(False).any():
+        return "futureboost"
+    if "pricefm_weight" in df.columns and df["pricefm_weight"].fillna(0).nunique() > 2:
+        return "regime"
+    if "pricefm_used" in df.columns and df["pricefm_used"].fillna(False).any():
+        return "fixed"
+    return "none"
+
 # ── Prepare LEAR data ────────────────────────────────────────────────────
 lear_ts = lear.set_index("timestamp").sort_index()
 lear_local = lear_ts.index.tz_convert(TZ)
@@ -71,6 +81,50 @@ with k4:
     spread = float(lear_ts["price_lear"].max() - lear_ts["price_lear"].min())
     st.metric("Spread", f"{spread:.0f}")
     st.caption("Max - Min EUR/MWh")
+
+exp_mode = _detect_experimental_mode(lear)
+
+st.subheader("Modes experimentaux")
+st.caption(
+    "Overlays optionnels au-dessus du forecast LEAR. Ils servent a tester des variantes de blending "
+    "sans changer le comportement standard du pipeline."
+)
+
+e1, e2, e3 = st.columns(3)
+with e1:
+    st.markdown("**fixed**")
+    st.caption("Blend simple LEAR + PriceFM avec poids constant 0.15.")
+with e2:
+    st.markdown("**regime**")
+    st.caption("Poids PriceFM adapte selon le regime : peak/week-end plus fort, midi solaire coupe.")
+with e3:
+    st.markdown("**futureboost**")
+    st.caption("Meta-layer ridge leger qui apprend a corriger LEAR avec PriceFM sur historique.")
+
+mode_labels = {
+    "none": "Aucun overlay experimental detecte dans le fichier affiche.",
+    "fixed": "Overlay experimental detecte : fixed.",
+    "regime": "Overlay experimental detecte : regime.",
+    "futureboost": "Overlay experimental detecte : futureboost.",
+}
+st.info(mode_labels[exp_mode])
+
+with st.expander("Commande utile pour l'activer"):
+    st.code(
+        "$env:PFC_ENABLE_PRICEFM_EXPERIMENT='1'\n"
+        "$env:PFC_APPLY_PRICEFM_EXPERIMENT_TO_PFC='1'\n"
+        "$env:PFC_GENERATE_PRICEFM_EXPERIMENT='1'\n"
+        "$env:PFC_PRICEFM_PYTHON='C:\\Users\\jbattaglia\\.conda\\pricefm_tf\\python.exe'\n"
+        "$env:PFC_PRICEFM_BLEND_MODE='futureboost'  # ou regime / fixed\n"
+        "$env:PFC_LEAR_BACKTEST_MODE='skip'\n"
+        "C:\\Users\\jbattaglia\\.conda\\ppa_env\\python.exe run_pfc_production.py",
+        language="powershell",
+    )
+    st.caption(
+        "But : generer le forecast LEAR, produire le forecast PriceFM, puis appliquer un overlay "
+        "experimental. `fixed` sert de baseline, `regime` est l'heuristique robuste, "
+        "`futureboost` est la version meta-learned la plus ambitieuse."
+    )
 
 st.divider()
 

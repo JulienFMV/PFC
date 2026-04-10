@@ -161,6 +161,31 @@ st.markdown("""
 - 4 rapports d'experts generes (SOTA EPF, techniques avancees, foundation models, PDFs)
 """)
 
+st.header("Modes experimentaux PriceFM")
+st.markdown("""
+Trois overlays experimentaux existent au-dessus du forecast LEAR standard.
+
+| Mode | But | Principe |
+|------|-----|----------|
+| `fixed` | baseline simple | blend LEAR + PriceFM avec poids constant `0.15` |
+| `regime` | version robuste | poids plus fort en `peak` et `week-end`, coupe a `midi solaire` |
+| `futureboost` | version la plus ambitieuse | petit meta-layer ridge qui apprend a corriger LEAR avec PriceFM sur des overlaps historiques |
+
+Important : ces modes restent **opt-in**. Ils ne remplacent pas le comportement standard tant qu'ils ne sont pas suffisamment robustes.
+""")
+
+with st.expander("Commande utile pour l'activer"):
+    st.code(
+        "$env:PFC_ENABLE_PRICEFM_EXPERIMENT='1'\n"
+        "$env:PFC_APPLY_PRICEFM_EXPERIMENT_TO_PFC='1'\n"
+        "$env:PFC_GENERATE_PRICEFM_EXPERIMENT='1'\n"
+        "$env:PFC_PRICEFM_PYTHON='C:\\Users\\jbattaglia\\.conda\\pricefm_tf\\python.exe'\n"
+        "$env:PFC_PRICEFM_BLEND_MODE='futureboost'  # ou regime / fixed\n"
+        "$env:PFC_LEAR_BACKTEST_MODE='skip'\n"
+        "C:\\Users\\jbattaglia\\.conda\\ppa_env\\python.exe run_pfc_production.py",
+        language="powershell",
+    )
+
 # ── References ──
 with st.expander("References academiques"):
     st.markdown("""
