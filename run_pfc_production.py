@@ -379,6 +379,7 @@ try:
                 blend_lear_with_pricefm,
                 load_pricefm_forecast,
             )
+            from pfc_shaping.model.futureboost_experimental import apply_futureboost_experimental
 
             pricefm_path = BEST_PRICEFM_EXPERIMENT.forecast_latest_path
             pricefm_meta_path = "pfc_shaping/output/pricefm_forecast_latest_meta.json"
@@ -412,14 +413,30 @@ try:
 
             if os.path.exists(pricefm_path):
                 pricefm_forecast = load_pricefm_forecast(pricefm_path)
-                lear_forecast_pricefm = blend_lear_with_pricefm(
-                    lear_forecast,
-                    pricefm_forecast,
-                    weight_pricefm=None if pricefm_blend_mode == "regime" else BEST_PRICEFM_EXPERIMENT.blend_weight,
-                )
+                if pricefm_blend_mode == "futureboost":
+                    lear_forecast_pricefm, futureboost_meta = apply_futureboost_experimental(
+                        lear_forecast,
+                        pricefm_forecast,
+                    )
+                    logger.info(
+                        "  Experimental FutureBoost applied: %.0f rows, alpha=%s, train_rows=%d",
+                        lear_forecast_pricefm["futureboost_used"].sum(),
+                        futureboost_meta.get("alpha"),
+                        futureboost_meta.get("train_rows"),
+                    )
+                else:
+                    lear_forecast_pricefm = blend_lear_with_pricefm(
+                        lear_forecast,
+                        pricefm_forecast,
+                        weight_pricefm=None if pricefm_blend_mode == "regime" else BEST_PRICEFM_EXPERIMENT.blend_weight,
+                    )
                 logger.info(
                     "  Experimental PriceFM blend applied: %.0f rows, mode=%s",
-                    lear_forecast_pricefm["pricefm_used"].sum(),
+                    (
+                        lear_forecast_pricefm["futureboost_used"].sum()
+                        if "futureboost_used" in lear_forecast_pricefm.columns
+                        else lear_forecast_pricefm["pricefm_used"].sum()
+                    ),
                     pricefm_blend_mode,
                 )
                 if os.path.exists(pricefm_meta_path):
