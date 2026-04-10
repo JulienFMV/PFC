@@ -42,16 +42,10 @@ def _summarize(df: pd.DataFrame, label: str) -> dict:
     return out
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Compare experimental overlays on the latest LEAR forecast.")
-    parser.add_argument("--lear", type=Path, default=DEFAULT_LEAR)
-    parser.add_argument("--pricefm", type=Path, default=DEFAULT_PRICEFM)
-    parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
-    args = parser.parse_args()
-
-    lear = pd.read_csv(args.lear)
+def build_experimental_compare_payload(lear_path: Path, pricefm_path: Path) -> dict:
+    lear = pd.read_csv(lear_path)
     lear["timestamp"] = pd.to_datetime(lear["timestamp"], utc=True)
-    pricefm = load_pricefm_forecast(args.pricefm)
+    pricefm = load_pricefm_forecast(pricefm_path)
 
     fixed = blend_lear_with_pricefm(lear.copy(), pricefm, weight_pricefm=0.15)
     regime = blend_lear_with_pricefm(lear.copy(), pricefm, weight_pricefm=None)
@@ -79,13 +73,23 @@ def main() -> None:
             }
         )
 
-    payload = {
-        "lear_path": str(args.lear.resolve()),
-        "pricefm_path": str(args.pricefm.resolve()),
+    return {
+        "lear_path": str(lear_path.resolve()),
+        "pricefm_path": str(pricefm_path.resolve()),
         "futureboost_meta": futureboost_meta,
         "summaries": summaries,
         "deltas_vs_lear": deltas,
     }
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Compare experimental overlays on the latest LEAR forecast.")
+    parser.add_argument("--lear", type=Path, default=DEFAULT_LEAR)
+    parser.add_argument("--pricefm", type=Path, default=DEFAULT_PRICEFM)
+    parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
+    args = parser.parse_args()
+
+    payload = build_experimental_compare_payload(args.lear, args.pricefm)
     args.output.resolve().write_text(json.dumps(payload, indent=2), encoding="utf-8")
     print(f"output:{args.output.resolve()}")
     print(json.dumps(payload, indent=2))
