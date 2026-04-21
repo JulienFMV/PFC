@@ -6,6 +6,7 @@ Run a small multi-window campaign for the experimental FutureBoost-like meta lay
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 import json
 from pathlib import Path
 import sys
@@ -17,6 +18,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from pfc_shaping.model.futureboost_experimental import (  # noqa: E402
+    DEFAULT_FUTUREBOOST_EXPERIMENT,
     FutureBoostExperimentalRegressor,
 )
 from pfc_shaping.model.pricefm_experimental import blend_lear_with_pricefm  # noqa: E402
@@ -32,7 +34,12 @@ DEFAULT_OUTPUT = ROOT / "pfc_shaping" / "output" / "futureboost_campaign.json"
 DEFAULT_TRAIN_FRACTIONS = [0.50, 0.60, 0.70, 0.80]
 
 
-def _evaluate_one(pricefm_hourly: Path, lear_backtest: Path, train_fraction: float) -> dict:
+def _evaluate_one(
+    pricefm_hourly: Path,
+    lear_backtest: Path,
+    train_fraction: float,
+    use_cin: bool,
+) -> dict:
     merged = _build_overlap(pricefm_hourly, n_days=30, lear_backtest=lear_backtest, recompute_backtest=False)
 
     fixed = blend_lear_with_pricefm(
@@ -53,7 +60,8 @@ def _evaluate_one(pricefm_hourly: Path, lear_backtest: Path, train_fraction: flo
     train = merged.iloc[:split_idx].copy()
     test = merged.iloc[split_idx:].copy()
 
-    meta = FutureBoostExperimentalRegressor()
+    cfg = replace(DEFAULT_FUTUREBOOST_EXPERIMENT, use_causal_instance_norm=use_cin)
+    meta = FutureBoostExperimentalRegressor(config=cfg)
     meta.fit(train)
     test["futureboost"] = meta.predict(test)
 
@@ -63,6 +71,7 @@ def _evaluate_one(pricefm_hourly: Path, lear_backtest: Path, train_fraction: flo
         "n_overlap_hours": int(len(merged)),
         "train_hours": int(len(train)),
         "test_hours": int(len(test)),
+        "use_cin": bool(use_cin),
         "meta_alpha": meta.alpha_,
         "lear_score": _score_frame(test, "lear"),
         "fixed_score": _score_frame(test, "fixed_blend"),
@@ -78,14 +87,35 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Run a multi-window campaign for the FutureBoost experimental layer.")
     parser.add_argument("--pricefm-hourly", type=Path, default=DEFAULT_PRICEFM_HOURLY)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument(
+        "--mode",
+        choices=["baseline", "cin", "both"],
+        default="both",
+        help="Evaluate FutureBoost with CIN disabled, enabled, or both.",
+    )
     args = parser.parse_args()
 
     rows = []
+    if args.mode == "baseline":
+        cin_modes = [False]
+    elif args.mode == "cin":
+        cin_modes = [True]
+    else:
+        cin_modes = [False, True]
+
     for backtest in DEFAULT_BACKTESTS:
         if not backtest.exists():
             continue
-        for train_fraction in DEFAULT_TRAIN_FRACTIONS:
-            rows.append(_evaluate_one(args.pricefm_hourly.resolve(), backtest.resolve(), train_fraction))
+        for use_cin in cin_modes:
+            for train_fraction in DEFAULT_TRAIN_FRACTIONS:
+                rows.append(
+                    _evaluate_one(
+                        args.pricefm_hourly.resolve(),
+                        backtest.resolve(),
+                        train_fraction,
+                        use_cin=use_cin,
+                    )
+                )
 
     if not rows:
         raise FileNotFoundError("No backtest windows available for the FutureBoost campaign.")
@@ -94,6 +124,7 @@ def main() -> None:
         {
             "backtest": [row["backtest"] for row in rows],
             "train_fraction": [row["train_fraction"] for row in rows],
+            "use_cin": [row["use_cin"] for row in rows],
             "lear_score": [row["lear_score"]["score"] for row in rows],
             "fixed_score": [row["fixed_score"]["score"] for row in rows],
             "regime_score": [row["regime_score"]["score"] for row in rows],
@@ -103,6 +134,18 @@ def main() -> None:
         }
     )
 
+    grouped = {}
+    for use_cin, sub in df.groupby("use_cin"):
+        grouped[str(bool(use_cin))] = {
+            "n_runs": int(len(sub)),
+            "futureboost_better_than_lear": int((sub["futureboost_score"] < sub["lear_score"]).sum()),
+            "futureboost_better_than_regime": int((sub["futureboost_score"] < sub["regime_score"]).sum()),
+            "mean_delta_vs_lear": float(sub["delta_vs_lear"].mean()),
+            "mean_delta_vs_regime": float(sub["delta_vs_regime"].mean()),
+            "median_delta_vs_lear": float(sub["delta_vs_lear"].median()),
+            "median_delta_vs_regime": float(sub["delta_vs_regime"].median()),
+        }
+
     summary = {
         "n_runs": int(len(rows)),
         "futureboost_better_than_lear": int((df["futureboost_score"] < df["lear_score"]).sum()),
@@ -111,6 +154,7 @@ def main() -> None:
         "mean_delta_vs_regime": float(df["delta_vs_regime"].mean()),
         "median_delta_vs_lear": float(df["delta_vs_lear"].median()),
         "median_delta_vs_regime": float(df["delta_vs_regime"].median()),
+        "by_use_cin": grouped,
     }
 
     payload = {

@@ -81,6 +81,7 @@ def _load_price_series(path: Path, col: str) -> pd.Series:
 def build_dataset(
     countries: list[str],
     min_coverage: float = 0.85,
+    include_fr_nuclear: bool = True,
 ) -> tuple[pd.DataFrame, dict[str, float]]:
     entso = pd.read_parquet(DATA_DIR / "entso_15min.parquet").sort_index()
     if entso.index.tz is None:
@@ -136,6 +137,26 @@ def build_dataset(
     dataset = pd.concat(country_frames, axis=1).sort_index()
     dataset = dataset.dropna(how="all")
     dataset = dataset.dropna(how="any")
+
+    # Optional Swiss-specific exogenous covariate kept outside the core quartet.
+    # PriceFM scripts still rely on {price, load, solar, wind}; this column is for
+    # downstream experiments and future model extensions.
+    if include_fr_nuclear:
+        outages_path = DATA_DIR / "outages_15min.parquet"
+        if outages_path.exists():
+            outages = pd.read_parquet(outages_path).sort_index()
+            if not outages.empty and "unavailable_nuclear" in outages.columns:
+                if outages.index.tz is None:
+                    outages.index = outages.index.tz_localize("UTC")
+                fr_nuclear = outages["unavailable_nuclear"].rename("CH-fr_nuclear_unavailable_mw")
+                dataset = dataset.join(fr_nuclear, how="left")
+                dataset["CH-fr_nuclear_unavailable_mw"] = (
+                    pd.to_numeric(dataset["CH-fr_nuclear_unavailable_mw"], errors="coerce")
+                    .ffill()
+                    .fillna(0.0)
+                    .clip(lower=0.0)
+                )
+
     dataset = dataset.reset_index().rename(columns={"index": "time_utc", "timestamp": "time_utc"})
     if "time_utc" not in dataset.columns:
         dataset = dataset.rename(columns={dataset.columns[0]: "time_utc"})
@@ -163,9 +184,18 @@ def main() -> None:
         default=DEFAULT_OUTPUT,
         help="Output CSV path.",
     )
+    parser.add_argument(
+        "--no-fr-nuclear",
+        action="store_true",
+        help="Disable optional CH-fr_nuclear_unavailable_mw covariate export.",
+    )
     args = parser.parse_args()
 
-    dataset, coverage_report = build_dataset(args.countries, min_coverage=args.min_coverage)
+    dataset, coverage_report = build_dataset(
+        args.countries,
+        min_coverage=args.min_coverage,
+        include_fr_nuclear=not args.no_fr_nuclear,
+    )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     dataset.to_csv(args.output, index=False)
 
