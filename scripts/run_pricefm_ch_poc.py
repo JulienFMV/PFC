@@ -66,6 +66,11 @@ def main() -> None:
     parser.add_argument("--epochs", type=int, default=2)
     parser.add_argument("--batch-size", type=int, default=128)
     parser.add_argument("--graph-degree", type=int, default=1)
+    parser.add_argument(
+        "--with-fr-nuclear-covariate",
+        action="store_true",
+        help="Use optional '*-fr_nuclear' channel if present for all countries.",
+    )
     parser.add_argument("--output", type=Path, default=DEFAULT_RESULT)
     args = parser.parse_args()
 
@@ -103,9 +108,17 @@ def main() -> None:
         raise ValueError(f"Target country {args.target_country} not present in dataset. Found: {countries}")
 
     features = ["load", "solar", "wind"]
+    if args.with_fr_nuclear_covariate:
+        missing = [country for country in countries if f"{country}-fr_nuclear" not in df.columns]
+        if missing:
+            raise ValueError(
+                "Cannot enable fr_nuclear covariate. Missing columns for: "
+                + ", ".join(sorted(missing))
+            )
+        features.append("fr_nuclear")
     label_column = "price"
-    lag_features = ["price", "load", "solar", "wind"]
-    lead_features = ["load", "solar", "wind"]
+    lag_features = ["price"] + features
+    lead_features = list(features)
     lag_window = 96
     lead_window = 96
     quantiles = [0.10, 0.25, 0.45, 0.50, 0.55, 0.75, 0.90]
@@ -191,6 +204,9 @@ def main() -> None:
         "graph_degree": args.graph_degree,
         "phase1": phase1.get(args.target_country, {}),
         "phase2": phase2.get(args.target_country, {}),
+        "features": features,
+        "lag_features": lag_features,
+        "lead_features": lead_features,
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(payload, indent=2), encoding="utf-8")

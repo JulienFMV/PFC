@@ -138,9 +138,9 @@ def build_dataset(
     dataset = dataset.dropna(how="all")
     dataset = dataset.dropna(how="any")
 
-    # Optional Swiss-specific exogenous covariate kept outside the core quartet.
-    # PriceFM scripts still rely on {price, load, solar, wind}; this column is for
-    # downstream experiments and future model extensions.
+    # Optional Swiss/Alpine exogenous covariate.
+    # We export it per country namespace so PriceFM can consume it as an optional
+    # additional channel without changing the base quartet requirement.
     if include_fr_nuclear:
         outages_path = DATA_DIR / "outages_15min.parquet"
         if outages_path.exists():
@@ -148,14 +148,12 @@ def build_dataset(
             if not outages.empty and "unavailable_nuclear" in outages.columns:
                 if outages.index.tz is None:
                     outages.index = outages.index.tz_localize("UTC")
-                fr_nuclear = outages["unavailable_nuclear"].rename("CH-fr_nuclear_unavailable_mw")
-                dataset = dataset.join(fr_nuclear, how="left")
-                dataset["CH-fr_nuclear_unavailable_mw"] = (
-                    pd.to_numeric(dataset["CH-fr_nuclear_unavailable_mw"], errors="coerce")
-                    .ffill()
-                    .fillna(0.0)
-                    .clip(lower=0.0)
-                )
+                fr_nuclear = pd.to_numeric(outages["unavailable_nuclear"], errors="coerce")
+                fr_nuclear = fr_nuclear.ffill().fillna(0.0).clip(lower=0.0)
+                kept_countries = sorted({c.split("-")[0] for c in dataset.columns})
+                for country in kept_countries:
+                    col = f"{country}-fr_nuclear"
+                    dataset[col] = fr_nuclear.reindex(dataset.index).ffill().fillna(0.0).astype(float)
 
     dataset = dataset.reset_index().rename(columns={"index": "time_utc", "timestamp": "time_utc"})
     if "time_utc" not in dataset.columns:
