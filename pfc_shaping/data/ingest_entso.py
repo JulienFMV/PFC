@@ -150,6 +150,10 @@ def load_from_api(
     if not border_df.empty:
         df = df.join(border_df, how="outer").sort_index()
 
+    fr_nuclear_df = _load_fr_nuclear_outage_features(client, ts_start, ts_end)
+    if not fr_nuclear_df.empty:
+        df = df.join(fr_nuclear_df, how="outer").sort_index()
+
     logger.info(
         "ENTSO-E chargé : %d lignes, load [%.0f-%.0f] MW",
         len(df), df["load_mw"].min(), df["load_mw"].max(),
@@ -224,6 +228,66 @@ def _query_series_or_empty(func, *args, name: str, **kwargs) -> pd.Series:
     except Exception as exc:
         logger.warning("ENTSO-E query failed for %s: %s", name, exc)
         return pd.Series(dtype=float, name=name)
+
+
+def _load_fr_nuclear_outage_features(
+    client,
+    ts_start: pd.Timestamp,
+    ts_end: pd.Timestamp,
+) -> pd.DataFrame:
+    """Load French nuclear unavailability as a compact Swiss regime signal."""
+    cache_candidates = [
+        Path(__file__).resolve().parent.parent / "data" / "outages_fr_15min.parquet",
+        Path(__file__).resolve().parent.parent / "data" / "outages_15min.parquet",
+    ]
+    for cache_path in cache_candidates:
+        if not cache_path.exists():
+            continue
+        try:
+            cached = pd.read_parquet(cache_path)
+            if "unavailable_nuclear" not in cached.columns or cached.empty:
+                continue
+            if not isinstance(cached.index, pd.DatetimeIndex):
+                cached.index = pd.to_datetime(cached.index, utc=True)
+            elif cached.index.tz is None:
+                cached.index = cached.index.tz_localize("UTC")
+            else:
+                cached.index = cached.index.tz_convert("UTC")
+            window = cached.loc[(cached.index >= ts_start) & (cached.index < ts_end), ["unavailable_nuclear"]]
+            if window.empty:
+                continue
+            logger.info("Using cached FR nuclear outage signal from %s", cache_path)
+            return window.rename(columns={"unavailable_nuclear": "fr_nuclear_unavailable_mw"})
+        except Exception as exc:
+            logger.warning("Failed to read cached FR nuclear outages from %s: %s", cache_path, exc)
+
+    try:
+        from pfc_shaping.data.ingest_outages import _events_to_timeseries  # noqa: WPS433
+    except Exception as exc:
+        logger.warning("Failed to import outage helper for FR nuclear outages: %s", exc)
+        return pd.DataFrame()
+
+    try:
+        outages = _retry(
+            client.query_unavailability_of_generation_units,
+            "FR",
+            ts_start,
+            ts_end,
+        )
+    except Exception as exc:
+        logger.warning("ENTSO-E FR outages failed: %s", exc)
+        return pd.DataFrame()
+
+    if outages is None or (isinstance(outages, pd.DataFrame) and outages.empty):
+        return pd.DataFrame()
+
+    outage_ts = _events_to_timeseries(outages, ts_start, ts_end)
+    if outage_ts.empty or "unavailable_nuclear" not in outage_ts.columns:
+        return pd.DataFrame()
+
+    return outage_ts[["unavailable_nuclear"]].rename(
+        columns={"unavailable_nuclear": "fr_nuclear_unavailable_mw"}
+    )
 
 
 def _load_swiss_border_features(
@@ -453,6 +517,16 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
                 (df[export_col].fillna(0.0) - df[import_col].fillna(0.0)) / denom
             ).fillna(0.0)
 
+    if "fr_nuclear_unavailable_mw" in df.columns:
+        unavailable = df["fr_nuclear_unavailable_mw"].fillna(0.0).clip(lower=0.0)
+        q75 = float(unavailable.quantile(0.75)) if len(unavailable) else 0.0
+        q90 = float(unavailable.quantile(0.90)) if len(unavailable) else 0.0
+        scale = max(q90, 1.0)
+        stress_threshold = max(5000.0, q75)
+        df["fr_nuclear_unavailable_mw"] = unavailable
+        df["fr_nuclear_unavailability_ratio"] = (unavailable / scale).clip(upper=1.5)
+        df["fr_nuclear_stress_flag"] = (unavailable >= stress_threshold).astype(float)
+
     return df
 
 
@@ -482,7 +556,7 @@ def fetch_and_cache(
         raw_cols = [
             c for c in existing.columns
             if c in {"load_mw", "solar_mw", "wind_mw", "cross_border_mw", "nuclear_mw", "hydro_ror_mw",
-                     "hydro_reservoir_mw", "hydro_pumped_mw"}
+                     "hydro_reservoir_mw", "hydro_pumped_mw", "fr_nuclear_unavailable_mw"}
             or c.startswith(("load_", "solar_", "wind_", "residual_load_"))
             or c.startswith(("scheduled_", "flow_net_export_", "ntc_export_", "ntc_import_", "ntc_net_", "ntc_total_"))
         ]

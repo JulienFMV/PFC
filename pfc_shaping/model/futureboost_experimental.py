@@ -25,6 +25,7 @@ from pfc_shaping.model.pricefm_experimental import compute_pricefm_regime_weight
 class FutureBoostExperimentalConfig:
     ridge_alphas: tuple[float, ...] = (0.01, 0.1, 1.0, 3.0, 10.0, 30.0, 100.0)
     train_fraction: float = 0.70
+    use_causal_instance_norm: bool = False
     history_pricefm_path: str = "pfc_shaping/output/pricefm_ch_full_e5_predictions_hourly.csv"
     history_lear_backtests: tuple[str, ...] = (
         "pfc_shaping/output/lear_backtest_2026-03-15.parquet",
@@ -33,6 +34,21 @@ class FutureBoostExperimentalConfig:
 
 
 DEFAULT_FUTUREBOOST_EXPERIMENT = FutureBoostExperimentalConfig()
+
+
+def _causal_rolling_zscore(
+    series: pd.Series,
+    window: int = 24 * 7,
+    min_periods: int = 24,
+) -> pd.Series:
+    """Compute a causal rolling z-score (uses only past information)."""
+    s = pd.to_numeric(series, errors="coerce").astype(float)
+    shifted = s.shift(1)
+    mean = shifted.rolling(window=window, min_periods=min_periods).mean()
+    std = shifted.rolling(window=window, min_periods=min_periods).std()
+    denom = std.replace(0.0, np.nan)
+    z = (s - mean) / denom
+    return z.replace([np.inf, -np.inf], np.nan).fillna(0.0)
 
 
 def _holiday_flags(local_ts: pd.Series) -> tuple[pd.Series, pd.Series, pd.Series]:
@@ -51,7 +67,86 @@ def _holiday_flags(local_ts: pd.Series) -> tuple[pd.Series, pd.Series, pd.Series
     return is_holiday_ch, is_holiday_de, is_holiday_fr
 
 
-def build_futureboost_features(df: pd.DataFrame) -> pd.DataFrame:
+def _load_futureboost_regime_features(
+    timestamps: pd.Series | pd.DatetimeIndex,
+    entso_path: str | Path = "pfc_shaping/data/entso_15min.parquet",
+    outages_path: str | Path = "pfc_shaping/data/outages_15min.parquet",
+) -> pd.DataFrame:
+    """Load compact regime features aligned on hourly timestamps for FutureBoost."""
+    ts = pd.to_datetime(timestamps, utc=True)
+    path = Path(entso_path)
+    aligned = pd.DataFrame({"timestamp": ts})
+
+    if path.exists():
+        entso = pd.read_parquet(path)
+        if not entso.empty:
+            if not isinstance(entso.index, pd.DatetimeIndex):
+                entso.index = pd.to_datetime(entso.index, utc=True)
+            elif entso.index.tz is None:
+                entso.index = entso.index.tz_localize("UTC")
+            else:
+                entso.index = entso.index.tz_convert("UTC")
+
+            cols = [
+                c for c in [
+                    "fr_nuclear_unavailable_mw",
+                    "fr_nuclear_unavailability_ratio",
+                    "fr_nuclear_stress_flag",
+                ]
+                if c in entso.columns
+            ]
+            if cols:
+                hourly = entso[cols].resample("h").mean().reset_index().rename(columns={"index": "timestamp"})
+                aligned = aligned.merge(hourly, on="timestamp", how="left")
+
+    if "fr_nuclear_unavailable_mw" not in aligned.columns:
+        out_path = Path(outages_path)
+        if out_path.exists():
+            outages = pd.read_parquet(out_path)
+            if not outages.empty and "unavailable_nuclear" in outages.columns:
+                if not isinstance(outages.index, pd.DatetimeIndex):
+                    outages.index = pd.to_datetime(outages.index, utc=True)
+                elif outages.index.tz is None:
+                    outages.index = outages.index.tz_localize("UTC")
+                else:
+                    outages.index = outages.index.tz_convert("UTC")
+                hourly_outages = (
+                    outages[["unavailable_nuclear"]]
+                    .rename(columns={"unavailable_nuclear": "fr_nuclear_unavailable_mw"})
+                    .resample("h")
+                    .mean()
+                    .reset_index()
+                    .rename(columns={"index": "timestamp"})
+                )
+                aligned = aligned.merge(hourly_outages, on="timestamp", how="left")
+
+    if "fr_nuclear_unavailable_mw" in aligned.columns:
+        unavailable = pd.to_numeric(aligned["fr_nuclear_unavailable_mw"], errors="coerce").fillna(0.0).clip(lower=0.0)
+        q75 = float(unavailable.quantile(0.75)) if len(unavailable) else 0.0
+        q90 = float(unavailable.quantile(0.90)) if len(unavailable) else 0.0
+        scale = max(q90, 1.0)
+        stress_threshold = max(5000.0, q75)
+        aligned["fr_nuclear_unavailable_mw"] = unavailable
+        if "fr_nuclear_unavailability_ratio" not in aligned.columns:
+            aligned["fr_nuclear_unavailability_ratio"] = (unavailable / scale).clip(upper=1.5)
+        if "fr_nuclear_stress_flag" not in aligned.columns:
+            aligned["fr_nuclear_stress_flag"] = (unavailable >= stress_threshold).astype(float)
+
+    for col in [
+        "fr_nuclear_unavailable_mw",
+        "fr_nuclear_unavailability_ratio",
+        "fr_nuclear_stress_flag",
+    ]:
+        if col not in aligned.columns:
+            aligned[col] = 0.0
+        aligned[col] = pd.to_numeric(aligned[col], errors="coerce").fillna(0.0)
+    return aligned
+
+
+def build_futureboost_features(
+    df: pd.DataFrame,
+    use_causal_instance_norm: bool = False,
+) -> pd.DataFrame:
     """Create a compact, regime-aware feature matrix from LEAR and PriceFM."""
     out = df.copy()
     out["timestamp"] = pd.to_datetime(out["timestamp"], utc=True)
@@ -64,6 +159,10 @@ def build_futureboost_features(df: pd.DataFrame) -> pd.DataFrame:
     out["forecast_diff"] = out["pricefm"] - out["lear"]
     out["forecast_abs_diff"] = out["forecast_diff"].abs()
     out["forecast_ratio"] = out["pricefm"] / out["lear"].clip(lower=1.0)
+    if use_causal_instance_norm:
+        out["lear_cinz"] = _causal_rolling_zscore(out["lear"])
+        out["pricefm_cinz"] = _causal_rolling_zscore(out["pricefm"])
+        out["diff_cinz"] = _causal_rolling_zscore(out["forecast_diff"])
 
     out["hour_sin"] = np.sin(2 * np.pi * hour / 24.0)
     out["hour_cos"] = np.cos(2 * np.pi * hour / 24.0)
@@ -71,6 +170,14 @@ def build_futureboost_features(df: pd.DataFrame) -> pd.DataFrame:
     out["is_peak"] = hour.isin([7, 8, 9, 17, 18, 19, 20]).astype(float)
     out["is_solar_midday"] = hour.between(10, 15).astype(float)
     out["is_holiday_ch"], out["is_holiday_de"], out["is_holiday_fr"] = _holiday_flags(local)
+    for col in [
+        "fr_nuclear_unavailable_mw",
+        "fr_nuclear_unavailability_ratio",
+        "fr_nuclear_stress_flag",
+    ]:
+        if col not in out.columns:
+            out[col] = 0.0
+        out[col] = pd.to_numeric(out[col], errors="coerce").fillna(0.0)
 
     # A few targeted interactions are enough; avoid a large unstable design.
     out["diff_x_peak"] = out["forecast_diff"] * out["is_peak"]
@@ -85,6 +192,11 @@ def build_futureboost_features(df: pd.DataFrame) -> pd.DataFrame:
     out["diff_x_holiday_ch"] = out["forecast_diff"] * out["is_holiday_ch"]
     out["diff_x_holiday_de"] = out["forecast_diff"] * out["is_holiday_de"]
     out["diff_x_holiday_fr"] = out["forecast_diff"] * out["is_holiday_fr"]
+    out["diff_x_fr_nuclear_stress"] = out["forecast_diff"] * out["fr_nuclear_stress_flag"]
+    out["pricefm_x_fr_nuclear_stress"] = out["pricefm"] * out["fr_nuclear_stress_flag"]
+    if use_causal_instance_norm:
+        out["diff_cinz_x_peak"] = out["diff_cinz"] * out["is_peak"]
+        out["diff_cinz_x_regime"] = out["diff_cinz"] * out["pricefm_weight_regime"]
 
     feature_cols = [
         "lear",
@@ -102,6 +214,9 @@ def build_futureboost_features(df: pd.DataFrame) -> pd.DataFrame:
         "is_holiday_ch",
         "is_holiday_de",
         "is_holiday_fr",
+        "fr_nuclear_unavailable_mw",
+        "fr_nuclear_unavailability_ratio",
+        "fr_nuclear_stress_flag",
         "diff_x_peak",
         "diff_x_weekend",
         "diff_x_regime",
@@ -114,7 +229,19 @@ def build_futureboost_features(df: pd.DataFrame) -> pd.DataFrame:
         "diff_x_holiday_ch",
         "diff_x_holiday_de",
         "diff_x_holiday_fr",
+        "diff_x_fr_nuclear_stress",
+        "pricefm_x_fr_nuclear_stress",
     ]
+    if use_causal_instance_norm:
+        feature_cols.extend(
+            [
+                "lear_cinz",
+                "pricefm_cinz",
+                "diff_cinz",
+                "diff_cinz_x_peak",
+                "diff_cinz_x_regime",
+            ]
+        )
     return out[feature_cols]
 
 
@@ -133,7 +260,10 @@ class FutureBoostExperimentalRegressor:
         self._fitted = False
 
     def fit(self, df: pd.DataFrame) -> "FutureBoostExperimentalRegressor":
-        X = build_futureboost_features(df)
+        X = build_futureboost_features(
+            df,
+            use_causal_instance_norm=self.config.use_causal_instance_norm,
+        )
         y = df["actual"].astype(float).to_numpy()
         self.pipeline.fit(X, y)
         self._feature_columns = X.columns.tolist()
@@ -143,7 +273,10 @@ class FutureBoostExperimentalRegressor:
     def predict(self, df: pd.DataFrame) -> np.ndarray:
         if not self._fitted or self._feature_columns is None:
             raise RuntimeError("Call fit() before predict().")
-        X = build_futureboost_features(df)[self._feature_columns]
+        X = build_futureboost_features(
+            df,
+            use_causal_instance_norm=self.config.use_causal_instance_norm,
+        )[self._feature_columns]
         return self.pipeline.predict(X)
 
     @property
@@ -195,6 +328,8 @@ def load_futureboost_training_overlap(
         .drop_duplicates(subset=["timestamp"], keep="last")
     )
     merged = bt.merge(pricefm, on="timestamp", how="inner").sort_values("timestamp").reset_index(drop=True)
+    regime = _load_futureboost_regime_features(merged["timestamp"])
+    merged = merged.merge(regime, on="timestamp", how="left")
     if merged.empty:
         raise ValueError("No overlap between saved LEAR backtests and historical PriceFM predictions.")
     return merged
@@ -231,6 +366,8 @@ def apply_futureboost_experimental(
         pfm["timestamp"] = pd.to_datetime(pfm["timestamp"], utc=True)
 
     merged = result.merge(pfm[["timestamp", "price_pricefm"]], on="timestamp", how="left")
+    regime = _load_futureboost_regime_features(merged["timestamp"])
+    merged = merged.merge(regime, on="timestamp", how="left")
     merged["price_lear_base"] = merged["price_lear"]
     merged = merged.rename(columns={"price_lear": "lear", "price_pricefm": "pricefm"})
 
