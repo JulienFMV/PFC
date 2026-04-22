@@ -41,6 +41,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+import holidays
 import numpy as np
 import pandas as pd
 
@@ -81,6 +82,7 @@ class PFCAssembler:
         cascader=None,
         calibrator=None,
         calibration_fallback_to_raw: bool = True,
+        peak_source_policy: str = "same_first",
         confidence_thresholds: dict[str, float] | None = None,
     ) -> None:
         self.sh = shape_hourly
@@ -90,9 +92,56 @@ class PFCAssembler:
         self.cascader = cascader
         self.calibrator = calibrator
         self.calibration_fallback_to_raw = calibration_fallback_to_raw
+        self.peak_source_policy = str(peak_source_policy)
         self.confidence_thresholds = confidence_thresholds or {
             "6m": 1.0, "12m": 0.85, "24m": 0.65, "36m": 0.45,
         }
+
+    def _select_peak_key(
+        self,
+        key_m: str,
+        key_q: str,
+        key_y: str,
+        source_key: str,
+        base_prices: dict,
+    ) -> str | None:
+        """Select peak quote key used for calibration.
+
+        Policies:
+        - ``same_first`` (default): prefer same-granularity peak, then coarser fallback.
+        - ``strict_same``: only same-granularity peak.
+        - ``any``: first available by M->Q->Y priority.
+        """
+        direct = f"{source_key}-Peak"
+        if self.peak_source_policy == "strict_same":
+            return direct if direct in base_prices else None
+        if self.peak_source_policy == "same_first":
+            if direct in base_prices:
+                return direct
+            for pk in [f"{key_m}-Peak", f"{key_q}-Peak", f"{key_y}-Peak"]:
+                if pk in base_prices:
+                    return pk
+            return None
+        for pk in [f"{key_m}-Peak", f"{key_q}-Peak", f"{key_y}-Peak"]:
+            if pk in base_prices:
+                return pk
+        return None
+
+    @staticmethod
+    def _is_peak_timestamp(idx_local: pd.DatetimeIndex, country: str = "CH") -> np.ndarray:
+        """Return EEX-style peak mask on a local timezone index (15-min granularity)."""
+        years = set(int(y) for y in idx_local.year.unique())
+        holiday_set: set = set()
+        for y in years:
+            if str(country).upper() == "DE":
+                holiday_set |= set(holidays.Germany(years=y).keys())
+            else:
+                holiday_set |= set(holidays.Switzerland(years=y).keys())
+
+        is_weekday = idx_local.weekday < 5
+        is_peak_hour = (idx_local.hour >= 8) & (idx_local.hour < 20)
+        is_holiday = pd.Series(idx_local.date, index=idx_local).isin(holiday_set).to_numpy()
+        return (is_weekday & is_peak_hour & ~is_holiday).astype(bool)
 
     def build(
         self,
@@ -160,6 +209,11 @@ class PFCAssembler:
             index=idx,
             dtype=int,
         )
+        days_ahead = pd.Series(
+            (idx_local - ref_local).total_seconds() / 86400.0,
+            index=idx,
+            dtype=float,
+        )
 
         # Ã¢â€â‚¬Ã¢â€â‚¬ Facteur saisonnier mensuel f_S Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         f_S = self._compute_f_S(idx, base_prices)
@@ -206,7 +260,8 @@ class PFCAssembler:
             logger.warning("MSFC smoothing failed, using flat B: %s", exc)
 
         #Ã¢â€â‚¬Ã¢â€â‚¬ Prix brut (avant calibration) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
-        price_raw = B * f_S * f_W * f_H * f_Q * f_WV
+        f_bridge = self._near_term_bridge_factor(idx, months_ahead, days_ahead, country=country)
+        price_raw = B * f_S * f_W * f_H * f_Q * f_WV * f_bridge
         price_raw = self._stabilize_raw_curve(price_raw, B, months_ahead)
 
         # Ã¢â€â‚¬Ã¢â€â‚¬ Profile type (pour traÃƒÂ§abilitÃƒÂ©) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
@@ -222,6 +277,13 @@ class PFCAssembler:
             )
         else:
             price_shape = price_raw
+        price_shape = self._rebalance_near_term_bridge(
+            price_shape,
+            idx,
+            months_ahead,
+            days_ahead,
+            country=country,
+        )
 
         # Ã¢â€â‚¬Ã¢â€â‚¬ Assemblage DataFrame Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         df = pd.DataFrame(
@@ -233,6 +295,7 @@ class PFCAssembler:
                 "f_H": f_H,
                 "f_Q": f_Q,
                 "f_WV": f_WV,
+                "f_bridge": f_bridge,
                 "profile_type": profile_type,
                 "confidence": self._confidence_score(months_ahead),
                 "calibrated": calibrated,
@@ -250,7 +313,7 @@ class PFCAssembler:
             df["p90"] = np.nan
 
         # Ã¢â€â‚¬Ã¢â€â‚¬ VÃƒÂ©rification cohÃƒÂ©rence ÃƒÂ©nergÃƒÂ©tique Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
-        self._check_energy_consistency(df, base_prices)
+        self._check_energy_consistency(df, base_prices, country=country)
 
         logger.info(
             "PFC assemblÃƒÂ©e : %d intervalles 15min, prix min=%.1f max=%.1f Ã¢â€šÂ¬/MWh, "
@@ -382,11 +445,13 @@ class PFCAssembler:
             base_price = float(base_prices[source_key])
 
             # ── Find peak price ────────────────────────────────────────
-            peak_key = None
-            for pk in [f"{key_m}-Peak", f"{key_q}-Peak", f"{key_y}-Peak"]:
-                if pk in base_prices:
-                    peak_key = pk
-                    break
+            peak_key = self._select_peak_key(
+                key_m=key_m,
+                key_q=key_q,
+                key_y=key_y,
+                source_key=source_key,
+                base_prices=base_prices,
+            )
 
             if peak_key is not None:
                 # ── SOTA: Peak + OffPeak as DISJOINT constraints ───────
@@ -669,7 +734,95 @@ class PFCAssembler:
             ratio_stable.loc[far_mask] = ratio_far.clip(lower=0.55, upper=1.85)
         return (base_level * ratio_stable).rename("price_shape")
 
-    def _check_energy_consistency(self, df: pd.DataFrame, base_prices: dict) -> None:
+    def _near_term_bridge_factor(
+        self,
+        idx: pd.DatetimeIndex,
+        months_ahead: pd.Series,
+        days_ahead: pd.Series,
+        country: str = "CH",
+    ) -> pd.Series:
+        """
+        Re-anchor the prompt monthly bridge after the D+10 overlay window.
+
+        The short-term overlay can legitimately flatten or invert peak/offpeak
+        on a handful of days. This factor prevents that local signal from
+        leaking into the average structure of M+1..M+6 by restoring a mild,
+        normalized peak premium from D+10 onward.
+        """
+
+        local_tz = "Europe/Berlin" if country == "DE" else "Europe/Zurich"
+        idx_local = idx.tz_convert(local_tz)
+
+        is_weekday = idx_local.dayofweek < 5
+        hour = idx_local.hour
+        is_peak = is_weekday & hour.isin([8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19])
+        is_shoulder = is_weekday & hour.isin([6, 7, 20, 21])
+        is_weekend_midday = (idx_local.dayofweek >= 5) & hour.isin([10, 11, 12, 13, 14, 15])
+
+        regime_shape = np.select(
+            [is_peak, is_shoulder, is_weekend_midday],
+            [1.0, 0.35, 0.15],
+            default=-0.22,
+        )
+        regime_shape = pd.Series(regime_shape, index=idx, dtype=float)
+
+        bridge_strength = np.interp(
+            days_ahead.astype(float).to_numpy(),
+            np.array([0.0, 10.0, 20.0, 45.0, 90.0, 180.0, 365.0], dtype=float),
+            np.array([0.0, 0.0, 0.08, 0.10, 0.08, 0.04, 0.0], dtype=float),
+        )
+        bridge_strength = pd.Series(bridge_strength, index=idx, dtype=float)
+        bridge_strength = bridge_strength.where((days_ahead > 10.0) & (months_ahead <= 6), 0.0)
+
+        factor = 1.0 + bridge_strength * regime_shape
+        month_key = pd.Index(idx_local.strftime("%Y-%m"), name="month_key")
+        factor = factor / factor.groupby(month_key).transform("mean").replace(0.0, 1.0)
+        return factor.rename("f_bridge")
+
+    def _rebalance_near_term_bridge(
+        self,
+        price_shape: pd.Series,
+        idx: pd.DatetimeIndex,
+        months_ahead: pd.Series,
+        days_ahead: pd.Series,
+        country: str = "CH",
+    ) -> pd.Series:
+        """
+        Re-impose a mild prompt peak premium after calibration while
+        preserving monthly means exactly.
+        """
+
+        local_tz = "Europe/Berlin" if country == "DE" else "Europe/Zurich"
+        idx_local = idx.tz_convert(local_tz)
+
+        is_weekday = idx_local.dayofweek < 5
+        hour = idx_local.hour
+        is_peak = is_weekday & hour.isin([8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19])
+        is_shoulder = is_weekday & hour.isin([6, 7, 20, 21])
+        is_weekend_midday = (idx_local.dayofweek >= 5) & hour.isin([10, 11, 12, 13, 14, 15])
+
+        shape = np.select(
+            [is_peak, is_shoulder, is_weekend_midday],
+            [1.0, 0.25, 0.10],
+            default=-0.26,
+        )
+        shape = pd.Series(shape, index=idx, dtype=float)
+
+        strength = np.interp(
+            days_ahead.astype(float).to_numpy(),
+            np.array([0.0, 10.0, 20.0, 45.0, 90.0, 180.0, 365.0], dtype=float),
+            np.array([0.0, 0.0, 0.12, 0.15, 0.12, 0.05, 0.0], dtype=float),
+        )
+        strength = pd.Series(strength, index=idx, dtype=float)
+        strength = strength.where((days_ahead > 10.0) & (months_ahead <= 6), 0.0)
+
+        factor = 1.0 + strength * shape
+        month_key = pd.Index(idx_local.strftime("%Y-%m"), name="month_key")
+        factor = factor / factor.groupby(month_key).transform("mean").replace(0.0, 1.0)
+        rebalanced = price_shape * factor
+        return rebalanced.rename("price_shape")
+
+    def _check_energy_consistency(self, df: pd.DataFrame, base_prices: dict, country: str = "CH") -> None:
         """
         Verify price_shape average matches base prices at annual, quarterly,
         and monthly levels. Alerts if deviation exceeds threshold.
@@ -677,37 +830,58 @@ class PFCAssembler:
         threshold = 0.005 if df["calibrated"].any() else 0.05
         idx_zurich = df.index.tz_convert("Europe/Zurich")
 
+        idx_peak_mask = self._is_peak_timestamp(idx_zurich, country=country)
+        idx_offpeak_mask = ~idx_peak_mask
+
         for key, base in base_prices.items():
             if base == 0:
                 continue
 
+            product_type = "Base"
+            key_core = key
+            if isinstance(key, str) and key.endswith("-Peak"):
+                product_type = "Peak"
+                key_core = key[:-5]
+            elif isinstance(key, str) and key.endswith("-Offpeak"):
+                product_type = "Offpeak"
+                key_core = key[:-8]
+
             # Determine mask based on key type
-            if len(key) == 4 and key.isdigit():
+            if len(key_core) == 4 and key_core.isdigit():
                 # Annual key
-                mask = idx_zurich.year == int(key)
-                year_int = int(key)
+                mask_period = idx_zurich.year == int(key_core)
+                year_int = int(key_core)
                 expected = (366 if pd.Timestamp(year=year_int, month=12, day=31).is_leap_year else 365) * 96
                 min_coverage = 0.95
-            elif len(key) == 7 and key[4] == '-' and key[5] == 'Q' and key[6].isdigit():
+            elif len(key_core) == 7 and key_core[4] == '-' and key_core[5] == 'Q' and key_core[6].isdigit():
                 # Quarterly key e.g. '2026-Q1'
-                year_int = int(key[:4])
-                q = int(key[6])
+                year_int = int(key_core[:4])
+                q = int(key_core[6])
                 q_months = {1: [1, 2, 3], 2: [4, 5, 6], 3: [7, 8, 9], 4: [10, 11, 12]}[q]
-                mask = (idx_zurich.year == year_int) & (idx_zurich.month.isin(q_months))
+                mask_period = (idx_zurich.year == year_int) & (idx_zurich.month.isin(q_months))
                 expected = sum(
                     (28 + (m in (1, 3, 5, 7, 8, 10, 12)) * 3 + (m in (4, 6, 9, 11)) * 2) for m in q_months
                 ) * 96
                 min_coverage = 0.90
-            elif len(key) == 7 and key[4] == '-' and key[5:].isdigit():
+            elif len(key_core) == 7 and key_core[4] == '-' and key_core[5:].isdigit():
                 # Monthly key e.g. '2026-03'
-                year_int = int(key[:4])
-                month_int = int(key[5:])
-                mask = (idx_zurich.year == year_int) & (idx_zurich.month == month_int)
+                year_int = int(key_core[:4])
+                month_int = int(key_core[5:])
+                mask_period = (idx_zurich.year == year_int) & (idx_zurich.month == month_int)
                 import calendar as cal_mod
                 expected = cal_mod.monthrange(year_int, month_int)[1] * 96
                 min_coverage = 0.90
             else:
                 continue
+
+            if product_type == "Peak":
+                mask = mask_period & idx_peak_mask
+                expected = int(mask.sum())
+            elif product_type == "Offpeak":
+                mask = mask_period & idx_offpeak_mask
+                expected = int(mask.sum())
+            else:
+                mask = mask_period
 
             n_points = int(mask.sum())
             if n_points == 0:
@@ -721,12 +895,13 @@ class PFCAssembler:
 
             mean_p = df.loc[mask, "price_shape"].mean()
             rel_err = abs(mean_p - base) / abs(base)
+            label = key if product_type == "Base" else f"{key_core}-{product_type}"
             if rel_err > threshold:
                 logger.warning(
                     "Energy consistency %s: base=%.2f, mean_PFC=%.2f, deviation=%.1f%%",
-                    key, base, mean_p, rel_err * 100
+                    label, base, mean_p, rel_err * 100
                 )
             else:
                 logger.info(
-                    "Energy consistency %s: OK (deviation=%.2f%%)", key, rel_err * 100
+                    "Energy consistency %s: OK (deviation=%.2f%%)", label, rel_err * 100
                 )
