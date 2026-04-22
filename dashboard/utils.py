@@ -5,6 +5,7 @@ Shared data loading, caching, and chart helpers for the PFC dashboard.
 from __future__ import annotations
 
 import logging
+import json
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -176,6 +177,13 @@ def _latest_file_by_mtime(pattern: str) -> Path | None:
     if not files:
         return None
     return max(files, key=lambda p: p.stat().st_mtime)
+
+
+def _latest_existing_file(paths: list[Path]) -> Path | None:
+    existing = [p for p in paths if p.exists()]
+    if not existing:
+        return None
+    return max(existing, key=lambda p: p.stat().st_mtime)
 
 
 @st.cache_data(ttl=60, show_spinner="Chargement LEAR forecast...")
@@ -582,14 +590,119 @@ def latest_run_summary() -> dict[str, str]:
     }
 
 
+@st.cache_data(ttl=60, show_spinner=False)
+def load_short_term_health() -> dict[str, object]:
+    output_dir = _paths_from_config()["output_dir"]
+
+    static_candidates = [
+        output_dir / "healthcheck_short_term.json",
+        output_dir / "healthcheck_short_term_latest.json",
+    ]
+    dated_candidate = _latest_file_by_mtime(str(output_dir / "healthcheck_short_term_*.json"))
+    health_file = _latest_existing_file([*static_candidates, *([dated_candidate] if dated_candidate else [])])
+
+    out: dict[str, object] = {
+        "ok": False,
+        "status": "missing",
+        "last_run": "-",
+        "duration_s": None,
+        "ct_mae": None,
+        "ct_score": None,
+        "delta_vs_lear": None,
+        "health_file": str(health_file) if health_file else "-",
+    }
+    if health_file is None:
+        return out
+
+    try:
+        payload = json.loads(health_file.read_text(encoding="utf-8"))
+    except Exception:
+        return out
+
+    checks = payload.get("checks", {}) if isinstance(payload, dict) else {}
+    seconds: list[float] = []
+    if isinstance(checks, dict):
+        for value in checks.values():
+            if not isinstance(value, dict):
+                continue
+            sec = value.get("seconds")
+            if isinstance(sec, (int, float)):
+                seconds.append(float(sec))
+    total_seconds = float(sum(seconds)) if seconds else None
+
+    ts_raw = payload.get("timestamp_utc") if isinstance(payload, dict) else None
+    if isinstance(ts_raw, str):
+        ts = pd.to_datetime(ts_raw, utc=True, errors="coerce")
+    else:
+        ts = pd.to_datetime(health_file.stat().st_mtime, unit="s", utc=True, errors="coerce")
+    last_run = "-"
+    if pd.notna(ts):
+        last_run = ts.tz_convert("Europe/Zurich").strftime("%d/%m/%Y %H:%M")
+
+    eval_file = _latest_existing_file(
+        [
+            output_dir / "futureboost_experimental_eval.json",
+            output_dir / "futureboost_experimental_eval_latest.json",
+        ]
+    )
+    ct_mae = None
+    ct_score = None
+    if eval_file is not None:
+        try:
+            eval_payload = json.loads(eval_file.read_text(encoding="utf-8"))
+            fb = eval_payload.get("futureboost_test", {})
+            if isinstance(fb, dict):
+                if isinstance(fb.get("mae"), (int, float)):
+                    ct_mae = float(fb["mae"])
+                if isinstance(fb.get("score"), (int, float)):
+                    ct_score = float(fb["score"])
+        except Exception:
+            pass
+
+    campaign_file = _latest_existing_file(
+        [
+            output_dir / "futureboost_campaign_healthcheck.json",
+            output_dir / "futureboost_campaign_cin_compare.json",
+        ]
+    )
+    delta_vs_lear = None
+    if campaign_file is not None:
+        try:
+            camp_payload = json.loads(campaign_file.read_text(encoding="utf-8"))
+            summary = camp_payload.get("summary", {})
+            if isinstance(summary, dict) and isinstance(summary.get("mean_delta_vs_lear"), (int, float)):
+                delta_vs_lear = float(summary["mean_delta_vs_lear"])
+        except Exception:
+            pass
+
+    is_ok = bool(payload.get("ok", False)) if isinstance(payload, dict) else False
+    out.update(
+        {
+            "ok": is_ok,
+            "status": "ok" if is_ok else "failed",
+            "last_run": last_run,
+            "duration_s": total_seconds,
+            "ct_mae": ct_mae,
+            "ct_score": ct_score,
+            "delta_vs_lear": delta_vs_lear,
+            "health_file": str(health_file),
+        }
+    )
+    return out
+
+
 def show_freshness_sidebar() -> None:
     freshness = data_freshness()
     run = latest_run_summary()
+    health = load_short_term_health()
     with st.sidebar:
         st.markdown("##### Derniere mise a jour")
         for name, ts in freshness.items():
             color = COLORS["green"] if ts != "-" else COLORS["red"]
             st.markdown(f'<span style="color:{color};">●</span> **{name}** : {ts}', unsafe_allow_html=True)
+        health_state = "OK" if health.get("ok") else "FAIL"
+        health_ts = str(health.get("last_run", "-"))
+        st.caption(f"Healthcheck CT: {health_state} ({health_ts})")
         st.caption(f"Run: {run['run_id']} | src forwards: {run['source_forwards']}")
         if st.button("Rafraichir le cache", use_container_width=True):
             st.cache_data.clear()

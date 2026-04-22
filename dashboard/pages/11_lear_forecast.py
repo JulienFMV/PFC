@@ -11,13 +11,54 @@ import streamlit as st
 
 from utils import (
     COLORS, add_range_slider, export_csv_button, load_epex,
-    load_lear_backtest, load_lear_forecast, load_pfc, show_freshness_sidebar,
+    load_lear_backtest, load_lear_forecast, load_pfc, load_short_term_health, show_freshness_sidebar,
 )
 
 st.header("Prevision Court Terme (LEAR)")
 st.caption("Hybrid LEAR+MLP — D+1 a D+10 — Prix CH+DE cross-border")
 
 show_freshness_sidebar()
+health = load_short_term_health()
+st.subheader("Sante pipeline court terme")
+st.caption(
+    "Controle automatise de fiabilite CT: syntaxe, eval FutureBoost, campagne baseline "
+    "et (optionnel) run production."
+)
+h1, h2, h3, h4 = st.columns(4)
+with h1:
+    st.metric("Healthcheck", "OK" if health.get("ok") else "FAIL")
+with h2:
+    st.metric("Dernier run", str(health.get("last_run", "-")))
+with h3:
+    duration_s = health.get("duration_s")
+    st.metric("Duree", f"{float(duration_s)/60:.1f} min" if isinstance(duration_s, (int, float)) else "-")
+with h4:
+    ct_mae = health.get("ct_mae")
+    st.metric("CT MAE (FutureBoost)", f"{float(ct_mae):.2f}" if isinstance(ct_mae, (int, float)) else "-")
+
+ct_score = health.get("ct_score")
+delta_vs_lear = health.get("delta_vs_lear")
+st.caption(
+    f"Score composite CT (FutureBoost): {float(ct_score):.3f}"
+    if isinstance(ct_score, (int, float))
+    else "Score composite CT (FutureBoost): -"
+)
+if isinstance(delta_vs_lear, (int, float)):
+    st.caption(f"Delta moyen vs LEAR (campagne): {float(delta_vs_lear):+.3f} (negatif = mieux)")
+st.caption(f"Source healthcheck: {health.get('health_file', '-')}")
+
+with st.expander("Commande utile pour l'activer :"):
+    st.code(
+        "C:\\Users\\jbattaglia\\.conda\\ppa_env\\python.exe scripts\\healthcheck_short_term.py --with-production\n"
+        "powershell -ExecutionPolicy Bypass -File scripts\\install_healthcheck_task.ps1",
+        language="powershell",
+    )
+    st.caption(
+        "Commande 1: lance le controle complet immediatement. "
+        "Commande 2: installe la tache quotidienne."
+    )
+
+st.divider()
 
 # ── Load data ─────────────────────────────────────────────────────────────
 lear = load_lear_forecast()
@@ -324,6 +365,29 @@ with tab3:
             bt_view = bt[bt["horizon"].astype(int) == int(selected_h)].copy()
             st.caption(f"Graphes detailes filtres sur D+{selected_h}")
 
+        if "error" not in bt_view.columns and {"forecast", "actual"}.issubset(bt_view.columns):
+            bt_view["error"] = bt_view["forecast"] - bt_view["actual"]
+        if "abs_error" not in bt_view.columns and "error" in bt_view.columns:
+            bt_view["abs_error"] = bt_view["error"].abs()
+        if "ape" not in bt_view.columns and {"actual", "abs_error"}.issubset(bt_view.columns):
+            denom = bt_view["actual"].abs().clip(lower=1.0)
+            bt_view["ape"] = (bt_view["abs_error"] / denom) * 100.0
+
+        if "ts" not in bt_view.columns:
+            if "forecast_ts" in bt_view.columns:
+                bt_view["ts"] = pd.to_datetime(bt_view["forecast_ts"], errors="coerce", utc=True)
+            elif {"date", "hour"}.issubset(bt_view.columns):
+                bt_view["ts"] = pd.to_datetime(bt_view["date"], errors="coerce") + pd.to_timedelta(
+                    pd.to_numeric(bt_view["hour"], errors="coerce"), unit="h"
+                )
+            else:
+                bt_view["ts"] = pd.NaT
+
+        if "date" not in bt_view.columns and "ts" in bt_view.columns:
+            bt_view["date"] = pd.to_datetime(bt_view["ts"], errors="coerce").dt.date
+        if "hour" not in bt_view.columns and "ts" in bt_view.columns:
+            bt_view["hour"] = pd.to_datetime(bt_view["ts"], errors="coerce").dt.hour
+
         # KPIs
         mae = bt_view["abs_error"].mean()
         rmse = np.sqrt((bt_view["error"] ** 2).mean())
@@ -389,8 +453,11 @@ with tab3:
         st.divider()
 
         # Time series: forecast vs actual
-        # Build hourly timestamps from date + hour
-        bt_view["ts"] = pd.to_datetime(bt_view["date"]) + pd.to_timedelta(bt_view["hour"], unit="h")
+        # Build/normalize hourly timestamps for plotting
+        if bt_view["ts"].isna().all() and {"date", "hour"}.issubset(bt_view.columns):
+            bt_view["ts"] = pd.to_datetime(bt_view["date"], errors="coerce") + pd.to_timedelta(
+                pd.to_numeric(bt_view["hour"], errors="coerce"), unit="h"
+            )
         bt_sorted = bt_view.sort_values("ts")
 
         fig_bt = go.Figure()
