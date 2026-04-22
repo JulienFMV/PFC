@@ -14,7 +14,7 @@ from pathlib import Path
 import holidays
 import numpy as np
 import pandas as pd
-from sklearn.linear_model import RidgeCV
+from sklearn.linear_model import QuantileRegressor, RidgeCV
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
@@ -26,6 +26,10 @@ class FutureBoostExperimentalConfig:
     ridge_alphas: tuple[float, ...] = (0.01, 0.1, 1.0, 3.0, 10.0, 30.0, 100.0)
     train_fraction: float = 0.70
     use_causal_instance_norm: bool = False
+    use_qra_quantiles: bool = True
+    qra_quantiles: tuple[float, ...] = (0.10, 0.50, 0.90)
+    qra_alpha: float = 0.001
+    qra_residual_floor: float = 0.5
     history_pricefm_path: str = "pfc_shaping/output/pricefm_ch_full_e5_predictions_hourly.csv"
     history_lear_backtests: tuple[str, ...] = (
         "pfc_shaping/output/lear_backtest_2026-03-15.parquet",
@@ -258,6 +262,9 @@ class FutureBoostExperimentalRegressor:
         )
         self._feature_columns: list[str] | None = None
         self._fitted = False
+        self._qra_models: dict[float, Pipeline] = {}
+        self._qra_enabled = False
+        self._qra_residual_quantiles: dict[float, float] = {}
 
     def fit(self, df: pd.DataFrame) -> "FutureBoostExperimentalRegressor":
         X = build_futureboost_features(
@@ -267,6 +274,29 @@ class FutureBoostExperimentalRegressor:
         y = df["actual"].astype(float).to_numpy()
         self.pipeline.fit(X, y)
         self._feature_columns = X.columns.tolist()
+        point_preds = self.pipeline.predict(X)
+        residuals = y - point_preds
+        for q in self.config.qra_quantiles:
+            self._qra_residual_quantiles[float(q)] = float(np.quantile(residuals, q))
+
+        self._qra_models = {}
+        self._qra_enabled = False
+        if self.config.use_qra_quantiles:
+            try:
+                for q in self.config.qra_quantiles:
+                    qr = Pipeline(
+                        steps=[
+                            ("scale", StandardScaler()),
+                            ("quantile", QuantileRegressor(quantile=float(q), alpha=self.config.qra_alpha)),
+                        ]
+                    )
+                    qr.fit(X, y)
+                    self._qra_models[float(q)] = qr
+                self._qra_enabled = len(self._qra_models) == len(self.config.qra_quantiles)
+            except Exception:
+                # Keep a robust fallback based on residual quantiles around the point model.
+                self._qra_models = {}
+                self._qra_enabled = False
         self._fitted = True
         return self
 
@@ -279,11 +309,37 @@ class FutureBoostExperimentalRegressor:
         )[self._feature_columns]
         return self.pipeline.predict(X)
 
+    def predict_quantiles(self, df: pd.DataFrame) -> dict[float, np.ndarray]:
+        if not self._fitted or self._feature_columns is None:
+            raise RuntimeError("Call fit() before predict_quantiles().")
+        X = build_futureboost_features(
+            df,
+            use_causal_instance_norm=self.config.use_causal_instance_norm,
+        )[self._feature_columns]
+        if self._qra_enabled and self._qra_models:
+            out = {q: self._qra_models[q].predict(X) for q in sorted(self._qra_models)}
+        else:
+            point = self.pipeline.predict(X)
+            out = {
+                float(q): point + self._qra_residual_quantiles.get(float(q), 0.0)
+                for q in self.config.qra_quantiles
+            }
+
+        # Enforce monotonic quantiles row-wise.
+        qs_sorted = sorted(out)
+        stacked = np.column_stack([out[q] for q in qs_sorted])
+        stacked = np.sort(stacked, axis=1)
+        return {q: stacked[:, i] for i, q in enumerate(qs_sorted)}
+
     @property
     def alpha_(self) -> float | None:
         if not self._fitted:
             return None
         return float(self.pipeline.named_steps["ridge"].alpha_)
+
+    @property
+    def qra_enabled_(self) -> bool:
+        return bool(self._qra_enabled)
 
 
 def _load_saved_backtest(path: str | Path) -> pd.DataFrame:
@@ -373,15 +429,42 @@ def apply_futureboost_experimental(
 
     has_pricefm = merged["pricefm"].notna()
     if has_pricefm.any():
-        preds = meta.predict(merged.loc[has_pricefm, ["timestamp", "lear", "pricefm"]])
+        overlap = merged.loc[has_pricefm, ["timestamp", "lear", "pricefm"]]
+        preds = meta.predict(overlap)
         merged.loc[has_pricefm, "lear"] = preds
+        quantiles = meta.predict_quantiles(overlap)
+        q10 = quantiles.get(0.10)
+        q50 = quantiles.get(0.50)
+        q90 = quantiles.get(0.90)
+        if q10 is None or q90 is None:
+            # Fallback if custom quantiles are configured differently.
+            qs = sorted(quantiles)
+            q10 = quantiles[qs[0]]
+            q90 = quantiles[qs[-1]]
+            q50 = quantiles[qs[len(qs) // 2]]
+        merged.loc[has_pricefm, "futureboost_p10"] = q10
+        merged.loc[has_pricefm, "futureboost_p50"] = q50
+        merged.loc[has_pricefm, "futureboost_p90"] = q90
+        merged.loc[has_pricefm, "lear"] = q50
     merged = merged.rename(columns={"lear": "price_lear", "pricefm": "price_pricefm"})
+    if "futureboost_p50" in merged.columns:
+        spread_floor = max(float(config.qra_residual_floor), float(np.nanstd(training["actual"])))
+        merged["futureboost_p50"] = merged["futureboost_p50"].fillna(merged["price_lear"])
+        merged["futureboost_p10"] = merged["futureboost_p10"].fillna(
+            merged["futureboost_p50"] - spread_floor
+        )
+        merged["futureboost_p90"] = merged["futureboost_p90"].fillna(
+            merged["futureboost_p50"] + spread_floor
+        )
+        merged["futureboost_p10"] = np.minimum(merged["futureboost_p10"], merged["futureboost_p50"])
+        merged["futureboost_p90"] = np.maximum(merged["futureboost_p90"], merged["futureboost_p50"])
     merged["futureboost_used"] = has_pricefm.astype(bool)
     merged["futureboost_alpha"] = meta.alpha_
 
     metadata = {
         "train_rows": int(len(training)),
         "alpha": meta.alpha_,
+        "qra_enabled": bool(meta.qra_enabled_),
         "history_pricefm_path": str(Path(config.history_pricefm_path).resolve()),
         "history_backtests": len([p for p in config.history_lear_backtests if Path(p).exists()]),
         "future_rows": int(len(merged)),

@@ -420,9 +420,11 @@ try:
                 pricefm_forecast = load_pricefm_forecast(pricefm_path)
                 if pricefm_blend_mode == "futureboost":
                     use_cin = os.getenv("PFC_FUTUREBOOST_USE_CIN", "0") == "1"
+                    use_qra = os.getenv("PFC_FUTUREBOOST_USE_QRA", "1") == "1"
                     futureboost_cfg = replace(
                         DEFAULT_FUTUREBOOST_EXPERIMENT,
                         use_causal_instance_norm=use_cin,
+                        use_qra_quantiles=use_qra,
                     )
                     lear_forecast_pricefm, futureboost_meta = apply_futureboost_experimental(
                         lear_forecast,
@@ -430,11 +432,13 @@ try:
                         config=futureboost_cfg,
                     )
                     logger.info(
-                        "  Experimental FutureBoost applied: %.0f rows, alpha=%s, train_rows=%d, use_cin=%s",
+                        "  Experimental FutureBoost applied: %.0f rows, alpha=%s, train_rows=%d, use_cin=%s, use_qra=%s, qra_enabled=%s",
                         lear_forecast_pricefm["futureboost_used"].sum(),
                         futureboost_meta.get("alpha"),
                         futureboost_meta.get("train_rows"),
                         "1" if use_cin else "0",
+                        "1" if use_qra else "0",
+                        futureboost_meta.get("qra_enabled"),
                     )
                 else:
                     lear_forecast_pricefm = blend_lear_with_pricefm(
