@@ -146,6 +146,7 @@ class PFCAssembler:
     def build(
         self,
         base_prices: dict,
+        quoted_keys: set[str] | None = None,
         start_date: str | None = None,
         horizon_days: int = HORIZON_DAYS,
         entso_forecast: pd.DataFrame | None = None,
@@ -273,7 +274,7 @@ class PFCAssembler:
         calibrated = False
         if self.calibrator is not None:
             price_shape, calibrated = self._apply_calibration(
-                price_raw, idx, base_prices, country=country
+                price_raw, idx, base_prices, quoted_keys=quoted_keys, country=country
             )
         else:
             price_shape = price_raw
@@ -332,6 +333,7 @@ class PFCAssembler:
         price_raw: pd.Series,
         idx: pd.DatetimeIndex,
         base_prices: dict,
+        quoted_keys: set[str] | None = None,
         country: str = "CH",
     ) -> tuple[pd.Series, bool]:
         """Applique la calibration arbitrage-free sur la courbe brute.
@@ -348,6 +350,7 @@ class PFCAssembler:
         contracts = self._build_non_overlapping_contracts(
             idx=idx,
             base_prices=base_prices,
+            quoted_keys=quoted_keys,
             futures_contract_cls=FuturesContract,
             period_boundaries_fn=_period_boundaries_utc,
             country=country,
@@ -394,6 +397,7 @@ class PFCAssembler:
         self,
         idx: pd.DatetimeIndex,
         base_prices: dict,
+        quoted_keys: set[str] | None,
         futures_contract_cls,
         period_boundaries_fn,
         country: str = "CH",
@@ -421,6 +425,7 @@ class PFCAssembler:
                 month_periods.append(key)
 
         contracts = []
+        quoted_keys = set(quoted_keys or set())
         for year, month in month_periods:
             key_m = f"{year}-{month:02d}"
             key_q = f"{year}-Q{(month - 1) // 3 + 1}"
@@ -464,6 +469,8 @@ class PFCAssembler:
                 total_h, peak_h, offpeak_h = count_hours(year, month, month, tz=local_tz, country=country)
                 peak_price = float(base_prices[peak_key])
 
+                peak_is_quoted = peak_key in quoted_keys
+                peak_weight = 1.0 if peak_is_quoted else 0.20
                 contracts.append(
                     futures_contract_cls(
                         name=f"{year}-{month:02d}-Peak<{peak_key}>",
@@ -471,6 +478,8 @@ class PFCAssembler:
                         start=start_utc,
                         end=end_utc,
                         product_type="Peak",
+                        is_hard=peak_is_quoted,
+                        penalty_weight=peak_weight,
                     )
                 )
 
@@ -483,6 +492,8 @@ class PFCAssembler:
                             start=start_utc,
                             end=end_utc,
                             product_type="Offpeak",
+                            is_hard=peak_is_quoted,
+                            penalty_weight=peak_weight,
                         )
                     )
             else:
@@ -494,15 +505,18 @@ class PFCAssembler:
                         start=start_utc,
                         end=end_utc,
                         product_type="Base",
+                        is_hard=True,
+                        penalty_weight=1.0,
                     )
                 )
 
         n_peak = sum(1 for c in contracts if c.product_type == "Peak")
         n_offpeak = sum(1 for c in contracts if c.product_type == "Offpeak")
+        n_soft = sum(1 for c in contracts if not getattr(c, "is_hard", True))
         if n_peak > 0:
             logger.info(
-                "Disjoint Peak+Offpeak contracts: %d peak, %d offpeak / %d total",
-                n_peak, n_offpeak, len(contracts),
+                "Disjoint Peak+Offpeak contracts: %d peak, %d offpeak / %d total (%d soft)",
+                n_peak, n_offpeak, len(contracts), n_soft,
             )
 
         return contracts

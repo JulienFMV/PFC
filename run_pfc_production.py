@@ -31,6 +31,14 @@ logging.basicConfig(
 logger = logging.getLogger("PFC_PROD")
 logger.info("Peak source policy: %s", PEAK_SOURCE_POLICY)
 
+
+def _first_existing_path(*paths: str | None) -> str | None:
+    """Return the first configured filesystem path that exists."""
+    for path in paths:
+        if path and os.path.exists(path):
+            return path
+    return None
+
 import numpy as np
 import pandas as pd
 
@@ -101,7 +109,18 @@ import yaml
 with open("pfc_shaping/config.yaml") as _f:
     _config = yaml.safe_load(_f)
 _model_cfg = _config.get("model", {})
+_forwards_cfg = _config.get("forwards", {})
 _sh_mode = _model_cfg.get("shape_hourly_mode", "table")
+_eex_report_path = _first_existing_path(
+    _forwards_cfg.get("eex_report_path"),
+    _forwards_cfg.get("eex_report_path_unc"),
+)
+if _eex_report_path:
+    logger.info("  EEX report path selected: %s", _eex_report_path)
+else:
+    logger.warning(
+        "  No configured EEX report path found on filesystem; fallback loader will use repo-local/proxy source."
+    )
 
 if _sh_mode == "mlp":
     from pfc_shaping.model.shape_hourly_mlp import ShapeHourlyMLP
@@ -192,7 +211,8 @@ from pfc_shaping.data.forward_proxy import load_base_prices as load_fwd_prices
 
 base_prices, fwd_source = load_fwd_prices(
     epex_ch,
-    eex_report_path="Price_Report_EEX.xlsx",
+    eex_report_path=_eex_report_path,
+    config=_config,
 )
 logger.info("  Forward source: %s", fwd_source)
 
@@ -333,6 +353,7 @@ assembler = PFCAssembler(
 
 pfc = assembler.build(
     base_prices=cascaded_prices,
+    quoted_keys=set(base_prices.keys()),
     start_date=start_date,
     horizon_days=horizon_days,
     entso_forecast=entso_forecast,
@@ -611,7 +632,8 @@ logger.info("  DE ShapeHourly fitted (%s mode)", _sh_mode)
 # ── Load DE forwards ──
 base_prices_de, fwd_source_de = load_fwd_prices(
     epex_de,
-    eex_report_path="Price_Report_EEX.xlsx",
+    eex_report_path=_eex_report_path,
+    config=_config,
     market="DE",
 )
 logger.info("  DE forward source: %s", fwd_source_de)
@@ -640,6 +662,7 @@ assembler_de = PFCAssembler(
 
 pfc_de = assembler_de.build(
     base_prices=cascaded_prices_de,
+    quoted_keys=set(base_prices_de.keys()),
     start_date=start_date,
     horizon_days=horizon_days,
     entso_forecast=entso_forecast,

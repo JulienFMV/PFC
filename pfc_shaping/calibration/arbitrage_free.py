@@ -67,6 +67,8 @@ class FuturesContract:
     start: pd.Timestamp
     end: pd.Timestamp
     product_type: str = "Base"
+    is_hard: bool = True
+    penalty_weight: float = 1.0
 
     def __post_init__(self) -> None:
         if self.product_type not in ("Base", "Peak", "Offpeak"):
@@ -77,6 +79,10 @@ class FuturesContract:
             raise ValueError(
                 f"Contract {self.name}: start ({self.start}) must be before "
                 f"end ({self.end})"
+            )
+        if self.penalty_weight <= 0:
+            raise ValueError(
+                f"Contract {self.name}: penalty_weight must be positive, got {self.penalty_weight!r}"
             )
 
 
@@ -206,7 +212,7 @@ def _build_constraint_matrix(
     index: pd.DatetimeIndex,
     contracts: list[FuturesContract],
     peak_mask: np.ndarray,
-) -> tuple[sp.csc_matrix, np.ndarray, list[str]]:
+) -> tuple[sp.csc_matrix, np.ndarray, list[str], np.ndarray, np.ndarray]:
     """Build the constraint matrix A and RHS target vector.
 
     Each row of A corresponds to one futures contract.  For a base contract,
@@ -230,6 +236,8 @@ def _build_constraint_matrix(
     vals: list[np.ndarray] = []
     targets: list[float] = []
     names: list[str] = []
+    weights: list[float] = []
+    hard_flags: list[bool] = []
 
     row_idx = 0
     for contract in contracts:
@@ -257,18 +265,20 @@ def _build_constraint_matrix(
         vals.append(np.full(n_i, 1.0 / n_i))
         targets.append(contract.price)
         names.append(contract.name)
+        weights.append(float(contract.penalty_weight))
+        hard_flags.append(bool(contract.is_hard))
         row_idx += 1
 
     m = row_idx
     if m == 0:
-        return sp.csc_matrix((0, n)), np.array([]), []
+        return sp.csc_matrix((0, n)), np.array([]), [], np.array([]), np.array([])
 
     all_rows = np.concatenate(rows)
     all_cols = np.concatenate(cols)
     all_vals = np.concatenate(vals)
 
     A = sp.csc_matrix((all_vals, (all_rows, all_cols)), shape=(m, n))
-    return A, np.array(targets), names
+    return A, np.array(targets), names, np.array(weights, dtype=float), np.array(hard_flags, dtype=bool)
 
 
 # ---------------------------------------------------------------------------
@@ -396,7 +406,7 @@ class ArbitrageFreeCalibrator:
 
         # Both modes use the same additive QP solve (numerically stable).
         # Multiplicative mode converts the correction post-hoc.
-        A, target_prices, contract_names = _build_constraint_matrix(
+        A, target_prices, contract_names, contract_weights, hard_flags = _build_constraint_matrix(
             n, index, contracts, peak_mask,
         )
         m_constr = A.shape[0]
@@ -419,7 +429,15 @@ class ArbitrageFreeCalibrator:
         H_reg = H + self.regularisation * sp.eye(n, format="csc")
 
         # ── Solve via Schur complement ────────────────────────────────
-        correction, converged = self._solve_schur(H_reg, A, b, n, m_constr)
+        correction, converged = self._solve_mixed_system(
+            H_reg=H_reg,
+            A=A,
+            b=b,
+            weights=contract_weights,
+            hard_flags=hard_flags,
+            n=n,
+            m=m_constr,
+        )
 
         # ── Calibrated curve ──────────────────────────────────────────
         if self.mode == "multiplicative":
@@ -447,7 +465,7 @@ class ArbitrageFreeCalibrator:
 
         # ── Residuals ─────────────────────────────────────────────────
         # Re-verify with standard (unweighted) constraint matrix
-        A_check, _, _ = _build_constraint_matrix(n, index, contracts, peak_mask)
+        A_check, _, _, _, _ = _build_constraint_matrix(n, index, contracts, peak_mask)
         achieved = np.array((A_check @ P).flat)
         abs_errors = np.abs(achieved - target_prices)
         max_abs_residual = float(abs_errors.max()) if len(abs_errors) > 0 else 0.0
@@ -651,6 +669,101 @@ class ArbitrageFreeCalibrator:
             logger.error("Schur complement solve failed: %s", exc)
             converged = False
             return np.zeros(n), converged
+        finally:
+            warnings.resetwarnings()
+
+    def _solve_mixed_system(
+        self,
+        H_reg: sp.csc_matrix,
+        A: sp.csc_matrix,
+        b: np.ndarray,
+        weights: np.ndarray,
+        hard_flags: np.ndarray,
+        n: int,
+        m: int,
+    ) -> tuple[np.ndarray, bool]:
+        """Solve a mixed hard/soft calibration system.
+
+        Hard constraints are enforced exactly via KKT.
+        Soft constraints enter as quadratic penalties:
+            0.5 x'Hx + 0.5 ||W (A_soft x - b_soft)||^2
+        """
+        if len(hard_flags) != m:
+            return np.zeros(n), False
+
+        hard_idx = np.where(hard_flags)[0]
+        soft_idx = np.where(~hard_flags)[0]
+
+        if len(soft_idx) == 0:
+            return self._solve_schur(H_reg, A, b, n, m)
+
+        import warnings
+
+        from scipy.sparse.linalg import splu
+
+        converged = True
+
+        try:
+            warnings.filterwarnings("ignore", category=RuntimeWarning)
+            n_hard = len(hard_idx)
+            n_soft = len(soft_idx)
+            logger.info(
+                "Mixed calibration solve: %d hard constraints, %d soft constraints.",
+                n_hard,
+                n_soft,
+            )
+
+            A_soft = A[soft_idx]
+            b_soft = np.asarray(b[soft_idx], dtype=float)
+            w_soft = np.asarray(weights[soft_idx], dtype=float)
+            W_diag = np.square(w_soft)
+
+            # Factorise the smoothness operator once, then work only in
+            # contract space via Woodbury / Schur complements.
+            H_factor = splu(H_reg.tocsc())
+
+            A_soft_t_dense = A_soft.T.toarray()
+            H_inv_AsT = np.zeros((n, n_soft))
+            for j in range(n_soft):
+                H_inv_AsT[:, j] = H_factor.solve(A_soft_t_dense[:, j])
+
+            S_ss = np.asarray(A_soft @ H_inv_AsT, dtype=float)
+            W_inv = np.diag(1.0 / W_diag)
+            R = W_inv + S_ss
+            R_inv = np.linalg.pinv(R, rcond=1e-12)
+
+            Wb = W_diag * b_soft
+            H_inv_rhs = H_inv_AsT @ Wb
+            soft_rhs_proj = S_ss @ Wb
+            H_eff_inv_rhs = H_inv_rhs - H_inv_AsT @ (R_inv @ soft_rhs_proj)
+
+            if n_hard == 0:
+                delta = H_eff_inv_rhs
+                if np.any(np.isnan(delta)) or np.any(np.isinf(delta)):
+                    raise ValueError("Soft-only mixed solution contains NaN/Inf.")
+                return delta, converged
+
+            A_hard = A[hard_idx]
+            b_hard = np.asarray(b[hard_idx], dtype=float)
+            A_hard_t_dense = A_hard.T.toarray()
+            H_inv_AhT = np.zeros((n, n_hard))
+            for j in range(n_hard):
+                H_inv_AhT[:, j] = H_factor.solve(A_hard_t_dense[:, j])
+
+            S_sh = np.asarray(A_soft @ H_inv_AhT, dtype=float)
+            H_eff_inv_AhT = H_inv_AhT - H_inv_AsT @ (R_inv @ S_sh)
+
+            K = np.asarray(A_hard @ H_eff_inv_AhT, dtype=float)
+            rhs_lambda = np.asarray(A_hard @ H_eff_inv_rhs, dtype=float).ravel() - b_hard
+            lambda_vec = np.linalg.pinv(K, rcond=1e-12) @ rhs_lambda
+            delta = H_eff_inv_rhs - H_eff_inv_AhT @ lambda_vec
+
+            if np.any(np.isnan(delta)) or np.any(np.isinf(delta)):
+                raise ValueError("Mixed hard/soft solution contains NaN/Inf.")
+            return np.asarray(delta, dtype=float).ravel(), converged
+        except Exception as exc:
+            logger.error("Mixed hard/soft solve failed: %s", exc)
+            return np.zeros(n), False
         finally:
             warnings.resetwarnings()
 
