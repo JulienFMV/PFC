@@ -169,9 +169,11 @@ def load_base_prices(
         try:
             from pfc_shaping.data.ingest_forwards import load_base_prices_from_eex_report
 
-            eex_market = market
-            if config:
-                eex_market = config.get("forwards", {}).get("eex_market", market)
+            # The explicit function argument takes precedence. The config
+            # fallback is only used when callers do not pass a market.
+            eex_market = market or "CH"
+            if config and not market:
+                eex_market = config.get("forwards", {}).get("eex_market", eex_market)
 
             prices = load_base_prices_from_eex_report(path, market=eex_market)
             if prices and len(prices) >= 3:
@@ -195,7 +197,9 @@ def load_base_prices(
         try:
             from pfc_shaping.data.ingest_forwards import load_base_prices_from_eex_report
 
-            eex_market = config.get("forwards", {}).get("eex_market", market)
+            eex_market = market or "CH"
+            if not market:
+                eex_market = config.get("forwards", {}).get("eex_market", eex_market)
             prices = load_base_prices_from_eex_report(unc_path, market=eex_market)
             if prices and len(prices) >= 3:
                 logger.info("Loaded %d EEX forward prices from UNC: %s", len(prices), unc_path)
