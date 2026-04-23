@@ -21,6 +21,7 @@ PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, PROJECT_ROOT)
 os.chdir(PROJECT_ROOT)
 DEFAULT_PRICEFM_PYTHON = r"C:\Users\jbattaglia\.conda\pricefm_tf\python.exe"
+PEAK_SOURCE_POLICY = os.environ.get("PFC_PEAK_SOURCE_POLICY", "same_first").strip() or "same_first"
 
 logging.basicConfig(
     level=logging.INFO,
@@ -28,6 +29,7 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 logger = logging.getLogger("PFC_PROD")
+logger.info("Peak source policy: %s", PEAK_SOURCE_POLICY)
 
 import numpy as np
 import pandas as pd
@@ -326,6 +328,7 @@ assembler = PFCAssembler(
     water_value=wv,
     cascader=cascader,
     calibrator=calibrator,
+    peak_source_policy=PEAK_SOURCE_POLICY,
 )
 
 pfc = assembler.build(
@@ -632,6 +635,7 @@ assembler_de = PFCAssembler(
     water_value=None,         # no hydro correction for DE
     cascader=cascader_de,
     calibrator=calibrator,
+    peak_source_policy=PEAK_SOURCE_POLICY,
 )
 
 pfc_de = assembler_de.build(
