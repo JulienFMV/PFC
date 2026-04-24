@@ -198,12 +198,15 @@ def monthly_breakdown(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def extract_programme_data(path: str | Path) -> dict[str, pd.DataFrame]:
-    """Liest alle Sheets, die Programm- und Ist-Werte enthalten, in ein Dict.
+    """Liest die ProgrammeReal-Sheets der Deviwa-Datei.
 
-    Sucht heuristisch nach Spalten mit "programm" / "plan" / "geplant"
-    (Soll) und "ist" / "actual" / "spot" / "real" (Ist). Gibt pro Akteur
-    einen DataFrame mit Spalten [timestamp, programme_mw, actual_mw,
-    delta_mw, delta_pct, month] zurück.
+    Erkennt automatisch das Schema mit Spalten ``<Akteur>_Programm``,
+    ``<Akteur>_Real`` und optional ``<Akteur>_Budget`` (neues Format) sowie
+    älteres heuristisches Format mit zwei Spalten Plan/Ist pro Sheet.
+
+    Liefert ein Dict ``{Akteur: DataFrame}`` mit Spalten:
+    timestamp, programme_mw, actual_mw, budget_mw, delta_mw, delta_pct,
+    month, date, hour, dow, iso_week, year.
     """
     p = Path(path)
     if not p.exists() or p.suffix.lower() not in (".xlsx", ".xls"):
@@ -211,53 +214,96 @@ def extract_programme_data(path: str | Path) -> dict[str, pd.DataFrame]:
 
     out: dict[str, pd.DataFrame] = {}
     xls = pd.ExcelFile(p)
+
     for sheet in xls.sheet_names:
         sn = sheet.lower()
         if "hpfc" in sn:
             continue
+
         raw = pd.read_excel(xls, sheet_name=sheet)
         if raw.empty:
             continue
 
-        ts_col = None
-        prog_col = None
-        actual_col = None
-        for c in raw.columns:
-            lc = str(c).strip().lower()
-            if ts_col is None and any(k in lc for k in ["time", "date", "zeit", "datum", "stunde"]):
-                ts_col = c
-            if prog_col is None and any(k in lc for k in ["programm", "geplant", "plan", "soll", "schedule"]):
-                prog_col = c
-            if actual_col is None and any(k in lc for k in [" ist", "actual", "spot", "real", "tatsächlich", "gemessen"]):
-                actual_col = c
-
-        if ts_col is None or (prog_col is None and actual_col is None):
+        date_col = next(
+            (c for c in raw.columns if str(c).strip().lower() in ("date", "datum", "zeit", "timestamp")),
+            None,
+        )
+        if date_col is None:
             continue
 
-        ts = pd.to_datetime(raw[ts_col], errors="coerce", dayfirst=True)
-        prog = pd.to_numeric(raw[prog_col], errors="coerce") if prog_col else pd.Series(index=raw.index, dtype=float)
-        actual = pd.to_numeric(raw[actual_col], errors="coerce") if actual_col else pd.Series(index=raw.index, dtype=float)
-        mask = ts.notna() & (prog.notna() | actual.notna())
-        if mask.sum() < 24:
-            continue
+        # Neues Schema: <Akteur>_Programm / _Real / _Budget
+        actors_in_sheet: dict[str, dict[str, str]] = {}
+        for col in raw.columns:
+            cs = str(col).strip()
+            for suffix, key in [
+                ("_Programm", "programme"),
+                ("_Program", "programme"),
+                ("_Real", "actual"),
+                ("_Ist", "actual"),
+                ("_Actual", "actual"),
+                ("_Budget", "budget"),
+            ]:
+                if cs.endswith(suffix):
+                    actor_raw = cs[: -len(suffix)].replace("_", " ").strip()
+                    actors_in_sheet.setdefault(actor_raw, {})[key] = col
+                    break
 
-        out_df = pd.DataFrame({
-            "timestamp": ts[mask].values,
-            "programme_mw": prog[mask].values if prog_col else np.nan,
-            "actual_mw": actual[mask].values if actual_col else np.nan,
-        })
-        out_df["delta_mw"] = out_df["actual_mw"] - out_df["programme_mw"]
-        out_df["delta_pct"] = 100.0 * out_df["delta_mw"] / out_df["programme_mw"].replace(0, np.nan)
-        out_df["timestamp"] = pd.to_datetime(out_df["timestamp"])
-        if out_df["timestamp"].dt.tz is None:
-            out_df["timestamp"] = out_df["timestamp"].dt.tz_localize(
-                "Europe/Zurich", nonexistent="shift_forward", ambiguous="NaT"
+        if not actors_in_sheet:
+            # Fallback altes heuristisches Format
+            actors_in_sheet[sheet.strip()] = {}
+            for c in raw.columns:
+                lc = str(c).strip().lower()
+                if "programm" in lc or "plan" in lc or "geplant" in lc or "soll" in lc:
+                    actors_in_sheet[sheet.strip()].setdefault("programme", c)
+                elif " ist" in lc or "actual" in lc or "real" in lc or "spot" in lc:
+                    actors_in_sheet[sheet.strip()].setdefault("actual", c)
+                elif "budget" in lc:
+                    actors_in_sheet[sheet.strip()].setdefault("budget", c)
+
+        ts_all = pd.to_datetime(raw[date_col], errors="coerce", dayfirst=True)
+
+        for actor_raw, cols in actors_in_sheet.items():
+            if "programme" not in cols and "actual" not in cols:
+                continue
+            df_out = pd.DataFrame({"timestamp": ts_all})
+            df_out["programme_mw"] = (
+                pd.to_numeric(raw[cols["programme"]], errors="coerce") if "programme" in cols else np.nan
             )
-        out_df["month"] = out_df["timestamp"].dt.to_period("M").dt.to_timestamp()
-        out_df = out_df.dropna(subset=["timestamp"]).sort_values("timestamp")
+            df_out["actual_mw"] = (
+                pd.to_numeric(raw[cols["actual"]], errors="coerce") if "actual" in cols else np.nan
+            )
+            df_out["budget_mw"] = (
+                pd.to_numeric(raw[cols["budget"]], errors="coerce") if "budget" in cols else np.nan
+            )
+            df_out = df_out.dropna(subset=["timestamp"]).copy()
+            if df_out.empty:
+                continue
+            if df_out["timestamp"].dt.tz is None:
+                df_out["timestamp"] = df_out["timestamp"].dt.tz_localize(
+                    "Europe/Zurich", nonexistent="shift_forward", ambiguous="NaT"
+                )
+            df_out = df_out[df_out["timestamp"].notna()].sort_values("timestamp")
 
-        actor = _assign_actor(sn) or sheet.strip()
-        out[actor] = out_df
+            df_out["delta_mw"] = df_out["actual_mw"] - df_out["programme_mw"]
+            df_out["delta_pct"] = (
+                100.0 * df_out["delta_mw"] / df_out["programme_mw"].replace(0, np.nan)
+            )
+            df_out["month"] = df_out["timestamp"].dt.to_period("M").dt.to_timestamp()
+            df_out["date"] = df_out["timestamp"].dt.date
+            df_out["hour"] = df_out["timestamp"].dt.hour
+            df_out["dow"] = df_out["timestamp"].dt.dayofweek
+            df_out["iso_week"] = df_out["timestamp"].dt.isocalendar().week.astype(int)
+            df_out["year"] = df_out["timestamp"].dt.year
+
+            actor_norm = actor_raw.strip()
+            mapped = _assign_actor(actor_norm.lower()) or _assign_actor(sheet.lower())
+            if mapped:
+                actor_norm = mapped
+
+            if actor_norm in out:
+                out[actor_norm] = pd.concat([out[actor_norm], df_out], ignore_index=True)
+            else:
+                out[actor_norm] = df_out.reset_index(drop=True)
 
     return out
 
