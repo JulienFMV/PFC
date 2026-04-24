@@ -46,6 +46,17 @@ logger = logging.getLogger(__name__)
 # Holiday sets for Swiss, German and French markets (lazy-initialized)
 _HOLIDAY_CACHE: dict[int, tuple[set, set, set]] = {}
 
+# ENTSO-E "Actual Aggregated" generation is typically published with up to
+# a 1–2 day delay for CH nuclear and hydro series. A same-day auction cutoff
+# cannot rely on shift(1) alone — it must use shift(>=2) to stay out-of-sample.
+ENTSO_ACTUAL_LAG_DAYS = 2
+_ENTSO_ACTUAL_GEN_COLS = frozenset({
+    "nuclear_mw",
+    "hydro_ror_mw",
+    "hydro_reservoir_mw",
+    "hydro_pumped_mw",
+})
+
 
 def _get_holidays(year: int) -> tuple[set, set, set]:
     """Return (CH holidays, DE holidays, FR holidays) for a given year. Cached."""
@@ -475,8 +486,15 @@ class LEARForecaster:
             epivot = epivot.reindex(complete.index)
 
             # d-1 and d-7 only (d+0 removed: train/inference mismatch
-            # — realized values in training but 28d avg in production)
-            for lag in [1, 7]:
+            # — realized values in training but 28d avg in production).
+            # ENTSO actual generation (nuclear/hydro) needs a longer short
+            # lag to respect publication delay.
+            short_lag = (
+                ENTSO_ACTUAL_LAG_DAYS
+                if col in _ENTSO_ACTUAL_GEN_COLS
+                else 1
+            )
+            for lag in [short_lag, 7]:
                 shifted = epivot.shift(lag)
                 if target_hour in shifted.columns:
                     features_list.append(shifted[target_hour].values)
@@ -500,15 +518,20 @@ class LEARForecaster:
             daily_agg = edf_agg.groupby("date")["value"].agg(["mean", "max", "min"])
             daily_agg.index = pd.to_datetime(daily_agg.index)
             daily_agg = daily_agg.reindex(complete.index)
-            # d-1 daily mean, max, range
-            for lag in [1]:
-                shifted_agg = daily_agg.shift(lag)
-                features_list.append(shifted_agg["mean"].values)
-                feature_names.append(f"{col}_daily_mean_d-{lag}")
-                features_list.append(shifted_agg["max"].values)
-                feature_names.append(f"{col}_daily_max_d-{lag}")
-                features_list.append((shifted_agg["max"] - shifted_agg["min"]).values)
-                feature_names.append(f"{col}_daily_range_d-{lag}")
+            # d-1 daily mean, max, range (ENTSO actual gen uses longer lag
+            # to respect publication delay for nuclear/hydro series)
+            lag = (
+                ENTSO_ACTUAL_LAG_DAYS
+                if col in _ENTSO_ACTUAL_GEN_COLS
+                else 1
+            )
+            shifted_agg = daily_agg.shift(lag)
+            features_list.append(shifted_agg["mean"].values)
+            feature_names.append(f"{col}_daily_mean_d-{lag}")
+            features_list.append(shifted_agg["max"].values)
+            feature_names.append(f"{col}_daily_max_d-{lag}")
+            features_list.append((shifted_agg["max"] - shifted_agg["min"]).values)
+            feature_names.append(f"{col}_daily_range_d-{lag}")
 
         # ── 3c. Compact DE regime signals ──
         if "solar_de_mw" in exog.columns:
@@ -636,8 +659,12 @@ class LEARForecaster:
                     index="date", columns="hour", values="value", aggfunc="mean"
                 ).reindex(complete.index)
                 if target_hour in ratio_pivot.columns:
-                    features_list.append(ratio_pivot.shift(1)[target_hour].values)
-                    feature_names.append(f"{feat_name}_d-1_h{target_hour:02d}")
+                    features_list.append(
+                        ratio_pivot.shift(ENTSO_ACTUAL_LAG_DAYS)[target_hour].values
+                    )
+                    feature_names.append(
+                        f"{feat_name}_d-{ENTSO_ACTUAL_LAG_DAYS}_h{target_hour:02d}"
+                    )
 
         # ── 5b. Swiss-specific features (ALPINE v2 quick wins) ──
         # --- Wallis-specific reservoir fill (55% of CH storage, FMV's region) ---
@@ -665,8 +692,12 @@ class LEARForecaster:
                         index="date", columns="hour", values="value", aggfunc="mean"
                     ).reindex(complete.index)
                     if target_hour in hs_pivot.columns:
-                        features_list.append(hs_pivot.shift(1)[target_hour].values)
-                        feature_names.append(f"{hydro_col}_direct_d-1_h{target_hour:02d}")
+                        features_list.append(
+                            hs_pivot.shift(ENTSO_ACTUAL_LAG_DAYS)[target_hour].values
+                        )
+                        feature_names.append(
+                            f"{hydro_col}_direct_d-{ENTSO_ACTUAL_LAG_DAYS}_h{target_hour:02d}"
+                        )
 
         # --- Nuclear available capacity (2960 MW total - unavailable) ---
         if "unavailable_nuclear" in exog.columns:
