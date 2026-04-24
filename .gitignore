@@ -49,3 +49,4 @@ pfc_shaping/output/*.parquet
 .env
 *.token
 AutogluonModels/
+_h_cache/
