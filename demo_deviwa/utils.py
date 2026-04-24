@@ -240,7 +240,7 @@ def render_header(page_title: str) -> None:
             </div>
             <div style='text-align:right; font-size:0.8rem; color:{FMV_GREY};'>
                 Deviwa Energiepool · Demo<br/>
-                Stand: {pd.Timestamp.now(tz='Europe/Zurich').strftime('%d.%m.%Y %H:%M')}
+                Sicht: <strong style='color:{FMV_BLUE};'>Kunde</strong> · Stand: {pd.Timestamp.now(tz='Europe/Zurich').strftime('%d.%m.%Y %H:%M')}
             </div>
         </div>
         """,

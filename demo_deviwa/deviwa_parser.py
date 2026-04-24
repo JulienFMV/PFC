@@ -109,9 +109,56 @@ def _standardize_columns(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _invert_to_client_perspective(df: pd.DataFrame) -> pd.DataFrame:
+    """Konvertiert FMV-Sicht (Buchhaltung) in Kunden-Sicht.
+
+    Die Deviwa-Datei enthält Deals aus FMV-Perspektive: was FMV einkauft
+    (Intake für FMV) entspricht einem Verkauf aus Kundensicht und umgekehrt.
+    Diese Funktion wendet zwei Transformationen an:
+
+    1. ``scope`` wird getauscht: Intake ↔ Withdrawal
+    2. Alle vorzeichenbehafteten monetären/Netto-Spalten werden negiert
+       (Notional, Marktwert, PnL, Volume-Net).
+
+    Volumen-Beträge (volume_sum, volume_mean) bleiben als Absolutwerte erhalten.
+    """
+    if df is None or df.empty:
+        return df
+    df = df.copy()
+
+    if "scope" in df.columns:
+        def _flip(s):
+            if not isinstance(s, str):
+                return s
+            sl = s.strip().lower()
+            if "intake" in sl or "einspeise" in sl or sl == "in":
+                return "Withdrawal"
+            if "withdraw" in sl or "bezug" in sl or sl == "out":
+                return "Intake"
+            return s
+        df["scope"] = df["scope"].apply(_flip)
+
+    sign_flip_cols = [
+        "volume_net", "volume_net_mean",
+        "market_value_sum", "market_value_mean",
+        "notional_sum", "notional_mean",
+        "pnl_sum", "pnl_mean",
+    ]
+    for c in sign_flip_cols:
+        if c in df.columns:
+            df[c] = -pd.to_numeric(df[c], errors="coerce")
+
+    return df
+
+
 @st.cache_data(show_spinner=False)
 def load_deviwa_file(path: str | Path) -> dict[str, pd.DataFrame]:
-    """Lädt Deviwa-Datei (xlsx oder csv). Gibt ein Dict {Akteur: DataFrame} zurück."""
+    """Lädt Deviwa-Datei (xlsx oder csv) in **Kundensicht**.
+
+    Die Deals werden automatisch aus der FMV-Buchhaltungssicht in die
+    Kundensicht invertiert (Intake↔Withdrawal, Vorzeichen der monetären
+    Felder). Gibt ein Dict {Akteur: DataFrame} zurück.
+    """
     p = Path(path)
     if not p.exists():
         return {}
@@ -132,6 +179,7 @@ def load_deviwa_file(path: str | Path) -> dict[str, pd.DataFrame]:
                 continue
             df = pd.read_excel(xls, sheet_name=sheet)
             df = _standardize_columns(df)
+            df = _invert_to_client_perspective(df)
             df["_actor"] = actor
             df["_sheet"] = sheet
             if actor in out:
@@ -142,6 +190,7 @@ def load_deviwa_file(path: str | Path) -> dict[str, pd.DataFrame]:
         # Reine CSV: alle Deals zusammen, ohne Akteur-Trennung
         df = pd.read_csv(p, sep=None, engine="python")
         df = _standardize_columns(df)
+        df = _invert_to_client_perspective(df)
         if "counterparty" in df.columns:
             for cp, sub in df.groupby("counterparty"):
                 out[str(cp)] = sub.copy()
