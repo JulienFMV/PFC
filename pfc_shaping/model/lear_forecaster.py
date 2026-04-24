@@ -131,7 +131,7 @@ class LEARForecaster:
         max_iter: int = 2500,
         random_state: int = 42,
         use_foundation_model: bool = True,
-        use_extended_physical_ch_features: bool = True,
+        use_extended_physical_ch_features: bool = False,
     ):
         self.tz = tz
         self.max_iter = max_iter
@@ -599,12 +599,13 @@ class LEARForecaster:
                 })
                 daily_avg = edf.groupby("date")["value"].mean()
                 daily_aligned = daily_avg.reindex(complete.index)
-                features_list.append(daily_aligned.values)
+                hydro_fill_available = daily_aligned.shift(2)
+                features_list.append(hydro_fill_available.values)
                 feature_names.append("hydro_fill")
 
                 # Swiss Market Intelligence: hydro fill delta (rate of change)
                 # Captures filling (snowmelt) vs emptying (winter drawdown)
-                hydro_delta_7d = daily_aligned - daily_aligned.shift(7)
+                hydro_delta_7d = hydro_fill_available - hydro_fill_available.shift(7)
                 features_list.append(hydro_delta_7d.values)
                 feature_names.append("hydro_fill_delta_7d")
 
@@ -647,7 +648,7 @@ class LEARForecaster:
                 ws_df = pd.DataFrame({"date": ws_local.date, "value": ws.values})
                 ws_daily = ws_df.groupby("date")["value"].mean()
                 ws_aligned = ws_daily.reindex(complete.index).ffill()
-                features_list.append(ws_aligned.values)
+                features_list.append(ws_aligned.shift(2).values)
                 feature_names.append("wallis_fill_gwh")
 
         # --- Hydro sub-types from ENTSO-E (pumped, RoR, reservoir generation) ---
@@ -914,27 +915,39 @@ class LEARForecaster:
         lasso_models: list,
         recent_n: int = 14,
     ) -> tuple[float, float, float]:
-        """Estimate recent bias for overall/weekday/weekend using in-sample recent fit."""
-        n = max(8, min(recent_n, len(y_full) // 4))
-        if n < 8:
+        """Estimate recent bias from the held-out validation tails of LASSO windows."""
+        pred_frames = []
+        target_frames = []
+        weight_map = {}
+        for idx, (model, mu, sigma, scaler, X_w, y_w, val_mae) in enumerate(lasso_models):
+            n_val = max(5, min(14, len(y_w) // 4))
+            if n_val < 5:
+                continue
+            X_val = X_w.iloc[-n_val:]
+            y_val = y_w.iloc[-n_val:].astype(float)
+            X_arr = np.nan_to_num(X_val.values.astype(float), nan=0.0)
+            pred_t = model.predict(scaler.transform(X_arr))
+            col = f"m{idx}"
+            pred_frames.append(pd.Series(_asinh_inverse(pred_t, mu, sigma), index=X_val.index, name=col))
+            target_frames.append(y_val.rename("actual"))
+            weight_map[col] = 1.0 / max(1e-6, val_mae) if np.isfinite(val_mae) else 1.0
+
+        if not pred_frames:
             return 0.0, 0.0, 0.0
 
-        y_recent = y_full.iloc[-n:].values.astype(float)
-        idx_recent = pd.to_datetime(X_full.iloc[-n:].index)
-        pred_recent = []
-        for i in range(n):
-            x_row = X_full.iloc[-n + i].values.astype(float).reshape(1, -1)
-            row_preds = []
-            row_maes = []
-            for model, mu, sigma, scaler, _, _, val_mae in lasso_models:
-                x_scaled = scaler.transform(np.nan_to_num(x_row, nan=0.0))
-                pred_t = model.predict(x_scaled)[0]
-                row_preds.append(_asinh_inverse(pred_t, mu, sigma))
-                row_maes.append(val_mae)
-            pred_recent.append(self._weighted_model_average(row_preds, row_maes))
+        pred_df = pd.concat(pred_frames, axis=1).sort_index().tail(recent_n)
+        y_recent_s = pd.concat(target_frames, axis=1).bfill(axis=1).iloc[:, 0].reindex(pred_df.index)
+        if pred_df.empty or y_recent_s.dropna().empty:
+            return 0.0, 0.0, 0.0
+
+        weights = pd.Series(weight_map, dtype=float).reindex(pred_df.columns).fillna(1.0)
+        weights = weights / weights.sum()
+        pred_recent = pred_df.mul(weights, axis=1).sum(axis=1).values.astype(float)
+        y_recent = y_recent_s.values.astype(float)
 
         err = np.array(pred_recent, dtype=float) - y_recent
-        overall = float(np.nanmean(err))
+        overall = float(np.nanmean(err)) if np.isfinite(err).any() else 0.0
+        idx_recent = pd.to_datetime(pred_df.index)
         weekend_mask = idx_recent.dayofweek >= 5
         if weekend_mask.any():
             weekend = float(np.nanmean(err[weekend_mask]))
@@ -1113,18 +1126,19 @@ class LEARForecaster:
 
             try:
                 X_arr = np.nan_to_num(X_w.values.astype(float), nan=0.0)
+                # Hold out last n_val observations for out-of-time validation
+                n_val = max(5, min(14, n // 4))
+                n_train = n - n_val
                 scaler = StandardScaler()
-                X_scaled = scaler.fit_transform(X_arr)
-                cv = self._time_series_cv(n)
+                scaler.fit(X_arr[:n_train])
+                X_scaled = scaler.transform(X_arr)
+                cv = self._time_series_cv(n_train)
                 model = ElasticNetCV(
                     l1_ratio=0.1,
                     max_iter=self.max_iter,
                     cv=cv,
                     random_state=self.random_state,
                 )
-                # Hold out last n_val observations for out-of-time validation
-                n_val = max(5, min(14, n // 4))
-                n_train = n - n_val
 
                 # Exponential decay weighting: recent obs matter more
                 # Half-life 180 days (Paraschiv et al., Swiss market)
@@ -1190,34 +1204,34 @@ class LEARForecaster:
         y_full: pd.Series,
         lasso_models: list,
     ) -> np.ndarray:
-        """Compute conformal prediction calibration residuals."""
-        n_cal = min(90, len(y_full) - 30)
-        if n_cal < 20:
-            return np.array([])
-
-        X_cal = X_full.iloc[-n_cal:]
-        y_cal = y_full.iloc[-n_cal:].values
-
-        lasso_preds = []
-        val_maes = []
-        for model, mu, sigma, scaler, _, _, val_mae in lasso_models:
+        """Compute conformal residuals on held-out validation tails."""
+        pred_frames = []
+        target_frames = []
+        weights_raw = {}
+        for idx, (model, mu, sigma, scaler, X_w, y_w, val_mae) in enumerate(lasso_models):
+            n_val = max(5, min(14, len(y_w) // 4))
+            if n_val < 5:
+                continue
+            X_cal = X_w.iloc[-n_val:]
+            y_cal = y_w.iloc[-n_val:].astype(float)
             X_arr = np.nan_to_num(X_cal.values.astype(float), nan=0.0)
             X_scaled = scaler.transform(X_arr)
             pred_t = model.predict(X_scaled)
-            lasso_preds.append(_asinh_inverse(pred_t, mu, sigma))
-            val_maes.append(val_mae)
+            col = f"m{idx}"
+            pred_frames.append(pd.Series(_asinh_inverse(pred_t, mu, sigma), index=X_cal.index, name=col))
+            target_frames.append(y_cal.rename("actual"))
+            weights_raw[col] = 1.0 / max(1e-6, val_mae) if np.isfinite(val_mae) else 1.0
 
-        if not lasso_preds:
+        if not pred_frames:
             return np.array([])
 
-        preds_mat = np.vstack(lasso_preds)
-        weights = np.array(
-            [1.0 / max(1e-6, v) if np.isfinite(v) else 1.0 for v in val_maes],
-            dtype=float,
-        )
+        pred_df = pd.concat(pred_frames, axis=1).sort_index()
+        y_cal_s = pd.concat(target_frames, axis=1).bfill(axis=1).iloc[:, 0].reindex(pred_df.index)
+        weights = pd.Series(weights_raw, dtype=float).reindex(pred_df.columns).fillna(1.0)
         weights = weights / weights.sum()
-        combined = np.average(preds_mat, axis=0, weights=weights)
-        return np.abs(y_cal - combined)
+        combined = pred_df.mul(weights, axis=1).sum(axis=1)
+        residuals = (y_cal_s - combined).abs().dropna()
+        return residuals.values.astype(float)
 
     def _recalibrate_variance(
         self,
