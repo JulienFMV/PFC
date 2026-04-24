@@ -44,6 +44,20 @@ import pandas as pd
 
 from pfc_shaping.storage.local_duckdb import init_db, upsert_lear_backtest, upsert_lear_forecast
 
+
+def _read_required_parquet(path: str, label: str) -> pd.DataFrame:
+    """Read a required parquet dataset and fail with an actionable log message."""
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"Missing required {label} parquet: {path}")
+    try:
+        df = pd.read_parquet(path)
+    except Exception:
+        logger.exception("  Failed to read required %s parquet: %s", label, path)
+        raise
+    if df.empty:
+        raise ValueError(f"Required {label} parquet is empty: {path}")
+    return df
+
 # ═══════════════════════════════════════════════════════════════════════
 # 1. LOAD ALL DATA
 # ═══════════════════════════════════════════════════════════════════════
@@ -55,10 +69,10 @@ t0 = time.time()
 
 DATA = "pfc_shaping/data"
 
-epex_ch = pd.read_parquet(f"{DATA}/epex_15min.parquet")
-epex_de = pd.read_parquet(f"{DATA}/epex_de_15min.parquet")
-entso   = pd.read_parquet(f"{DATA}/entso_15min.parquet")
-hydro   = pd.read_parquet(f"{DATA}/hydro_reservoir.parquet")
+epex_ch = _read_required_parquet(f"{DATA}/epex_15min.parquet", "EPEX CH")
+epex_de = _read_required_parquet(f"{DATA}/epex_de_15min.parquet", "EPEX DE")
+entso = _read_required_parquet(f"{DATA}/entso_15min.parquet", "ENTSO-E")
+hydro = _read_required_parquet(f"{DATA}/hydro_reservoir.parquet", "Hydro reservoir")
 
 logger.info("  EPEX CH:  %d rows  [%s -> %s]", len(epex_ch), epex_ch.index.min().date(), epex_ch.index.max().date())
 logger.info("  EPEX DE:  %d rows  [%s -> %s]", len(epex_de), epex_de.index.min().date(), epex_de.index.max().date())
@@ -578,9 +592,11 @@ try:
     logger.info("  LEAR completed in %.1fs", time.time() - t_lear)
 
 except Exception as exc:
-    logger.warning("  LEAR overlay failed (PFC unchanged): %s", exc)
-    import traceback
-    traceback.print_exc()
+    logger.exception("  LEAR overlay failed. PFC output is not a validated CT forecast.")
+    if os.getenv("PFC_ALLOW_LEAR_FAILURE", "0") != "1":
+        raise RuntimeError(
+            "LEAR overlay failed; set PFC_ALLOW_LEAR_FAILURE=1 only for explicit fallback runs."
+        ) from exc
 
 # ═══════════════════════════════════════════════════════════════════════
 # 10. SAVE OUTPUT
