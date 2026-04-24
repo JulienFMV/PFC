@@ -31,15 +31,15 @@ CANONICAL_COLUMNS = {
     "custom": ["custom", "benutzerdefiniert"],
     "deal": ["deal", "deal id", "deal name", "geschäft"],
     "trade_date": ["deal trade date", "trade date", "handelsdatum", "tradedate"],
-    "delivery_from": ["deal delivery from", "delivery from", "lieferung von", "from"],
-    "delivery_to": ["deal delivery to", "delivery to", "lieferung bis", "to"],
+    "delivery_from": ["deal delivery start", "deal delivery from", "delivery start", "delivery from", "lieferung von", "from"],
+    "delivery_to": ["deal delivery end", "deal delivery to", "delivery end", "delivery to", "lieferung bis", "to"],
     "product": ["product", "produkt"],
     "scope": ["scope", "richtung", "intake/withdrawal"],
     "month": ["date", "month", "lieferung", "lieferperiode", "period"],
     "volume_sum": ["volume (sum)", "volume_sum", "volumen"],
     "volume_mean": ["volume (mean)", "volume_mean"],
-    "volume_net": ["volume (net)", "volume_net"],
-    "volume_net_mean": ["volume (net mean)", "volume_net_mean"],
+    "volume_net": ["volume (net)", "volume (net) (sum)", "volume_net", "volume_net_sum"],
+    "volume_net_mean": ["volume (net mean)", "volume (net) (mean)", "volume_net_mean"],
     "market_value_sum": ["market value (sum)", "market_value_sum", "marktwert"],
     "market_value_mean": ["market value (mean)", "market_value_mean"],
     "notional_sum": ["notional (sum)", "notional_sum"],
@@ -56,9 +56,18 @@ def _normalize_col(name: str) -> str:
 def _match_col(raw_name: str) -> str | None:
     n = _normalize_col(raw_name)
     for canonical, variants in CANONICAL_COLUMNS.items():
+        if any(_normalize_col(v) == n for v in variants):
+            return canonical
+    best_match: tuple[int, str] | None = None
+    for canonical, variants in CANONICAL_COLUMNS.items():
         for v in variants:
-            if _normalize_col(v) == n or _normalize_col(v) in n:
-                return canonical
+            vn = _normalize_col(v)
+            if vn in n:
+                score = len(vn)
+                if best_match is None or score > best_match[0]:
+                    best_match = (score, canonical)
+    if best_match is not None:
+        return best_match[1]
     return None
 
 
@@ -69,6 +78,14 @@ def _standardize_columns(df: pd.DataFrame) -> pd.DataFrame:
         if match:
             rename_map[c] = match
     df = df.rename(columns=rename_map)
+    if df.columns.duplicated().any():
+        # After tolerant matching, keep one canonical column by taking the first
+        # non-null value across duplicate source columns.
+        collapsed = {}
+        for col in pd.Index(df.columns).unique():
+            same = df.loc[:, df.columns == col]
+            collapsed[col] = same.bfill(axis=1).iloc[:, 0] if same.shape[1] > 1 else same.iloc[:, 0]
+        df = pd.DataFrame(collapsed, index=df.index)
 
     # Typkonvertierungen
     for col in ("trade_date", "delivery_from", "delivery_to"):
@@ -77,7 +94,7 @@ def _standardize_columns(df: pd.DataFrame) -> pd.DataFrame:
 
     if "month" in df.columns:
         # Deviwa speichert "2026-01" als String oder Datum
-        df["month"] = pd.to_datetime(df["month"], errors="coerce")
+        df["month"] = pd.to_datetime(df["month"], errors="coerce", format="mixed")
 
     numeric_cols = [
         "volume_sum", "volume_mean", "volume_net", "volume_net_mean",

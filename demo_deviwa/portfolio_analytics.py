@@ -112,19 +112,24 @@ def compute_portfolio_metrics(
 
     # Gewichtete Ø-Preise
     def _wavg(values: pd.Series, weights: pd.Series) -> float:
-        w_sum = float(weights.abs().sum())
+        values_num = pd.to_numeric(values, errors="coerce")
+        weights_num = pd.to_numeric(weights, errors="coerce").abs()
+        valid = values_num.notna() & weights_num.notna() & (weights_num > 0)
+        if not valid.any():
+            return float("nan")
+        w_sum = float(weights_num[valid].sum())
         if w_sum <= 0:
             return float("nan")
-        return float((values * weights.abs()).sum() / w_sum)
+        return float((values_num[valid] * weights_num[valid]).sum() / w_sum)
 
     metrics.notional_total_eur = float(notional.abs().sum())
-    metrics.avg_deal_price_eur_mwh = _wavg(df["deal_price_eur_mwh"].fillna(0), vol.abs())
+    metrics.avg_deal_price_eur_mwh = _wavg(df["deal_price_eur_mwh"], vol.abs())
     metrics.avg_intake_price_eur_mwh = _wavg(
-        df.loc[intake_mask, "deal_price_eur_mwh"].fillna(0),
+        df.loc[intake_mask, "deal_price_eur_mwh"],
         vol[intake_mask].abs(),
     ) if intake_mask.any() else float("nan")
     metrics.avg_withdrawal_price_eur_mwh = _wavg(
-        df.loc[withdrawal_mask, "deal_price_eur_mwh"].fillna(0),
+        df.loc[withdrawal_mask, "deal_price_eur_mwh"],
         vol[withdrawal_mask].abs(),
     ) if withdrawal_mask.any() else float("nan")
 
@@ -144,7 +149,7 @@ def compute_portfolio_metrics(
     # Ø Hedge-Preis (nur zukünftige Lieferungen)
     if open_mask.any():
         metrics.avg_hedge_price_eur_mwh = _wavg(
-            df.loc[open_mask, "deal_price_eur_mwh"].fillna(0),
+            df.loc[open_mask, "deal_price_eur_mwh"],
             vol[open_mask].abs(),
         )
 
@@ -189,7 +194,7 @@ def compute_portfolio_metrics(
             volume_mwh=("volume", "sum"),
             notional_eur=("notional", "sum"),
             avg_price_eur_mwh=("price", lambda s: _wavg(
-                s.fillna(0), tb.loc[s.index, "volume"]
+                s, tb.loc[s.index, "volume"]
             )),
         ).reset_index()
         agg = agg[agg["volume_mwh"] > 0]
@@ -203,29 +208,37 @@ def monthly_position(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty or "month" not in df.columns:
         return pd.DataFrame()
     df = _attach_deal_price(df)
-    months = pd.to_datetime(df["month"], errors="coerce")
+    months = pd.to_datetime(df["month"], errors="coerce", format="mixed")
     vol = pd.to_numeric(df.get("volume_sum"), errors="coerce").fillna(0.0)
     scope = df.get("scope", "").astype(str).str.lower()
     intake_mask = scope.str.contains("intake")
     withdrawal_mask = scope.str.contains("withdrawal")
 
     rows = []
-    for month, idx in pd.Series(df.index, index=months).groupby(months).groups.items():
+    work = pd.DataFrame({
+        "month": months,
+        "volume": vol,
+        "price": pd.to_numeric(df["deal_price_eur_mwh"], errors="coerce"),
+        "is_intake": intake_mask,
+        "is_withdrawal": withdrawal_mask,
+    }, index=df.index).dropna(subset=["month"])
+    for month, sub in work.groupby("month", sort=True):
         if pd.isna(month):
             continue
-        sub_idx = list(idx)
-        in_idx = [i for i in sub_idx if intake_mask.loc[i]]
-        out_idx = [i for i in sub_idx if withdrawal_mask.loc[i]]
-        in_vol = float(vol.loc[in_idx].abs().sum())
-        out_vol = float(vol.loc[out_idx].abs().sum())
+        in_sub = sub[sub["is_intake"]]
+        out_sub = sub[sub["is_withdrawal"]]
+        in_vol = float(in_sub["volume"].abs().sum())
+        out_vol = float(out_sub["volume"].abs().sum())
+        in_valid = in_sub["price"].notna()
+        out_valid = out_sub["price"].notna()
         in_price = float(
-            (df.loc[in_idx, "deal_price_eur_mwh"].fillna(0) * vol.loc[in_idx].abs()).sum()
-            / max(in_vol, 1e-9)
-        ) if in_vol > 0 else float("nan")
+            (in_sub.loc[in_valid, "price"] * in_sub.loc[in_valid, "volume"].abs()).sum()
+            / max(float(in_sub.loc[in_valid, "volume"].abs().sum()), 1e-9)
+        ) if in_valid.any() else float("nan")
         out_price = float(
-            (df.loc[out_idx, "deal_price_eur_mwh"].fillna(0) * vol.loc[out_idx].abs()).sum()
-            / max(out_vol, 1e-9)
-        ) if out_vol > 0 else float("nan")
+            (out_sub.loc[out_valid, "price"] * out_sub.loc[out_valid, "volume"].abs()).sum()
+            / max(float(out_sub.loc[out_valid, "volume"].abs().sum()), 1e-9)
+        ) if out_valid.any() else float("nan")
         rows.append({
             "month": month,
             "intake_mwh": in_vol,
@@ -234,6 +247,8 @@ def monthly_position(df: pd.DataFrame) -> pd.DataFrame:
             "avg_intake_price": in_price,
             "avg_withdrawal_price": out_price,
         })
+    if not rows:
+        return pd.DataFrame()
     return pd.DataFrame(rows).sort_values("month").reset_index(drop=True)
 
 

@@ -6,11 +6,16 @@ realisiertes und unrealisiertes P&L, Ø Hedge-Preis, Tenor-Struktur.
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import streamlit as st
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from portfolio_analytics import (
     compute_portfolio_metrics,
@@ -30,6 +35,7 @@ from utils import (
     freshness_badge,
     kpi_card,
     load_deviwa_auto,
+    load_epex_ch,
     load_eex_forwards,
     load_pfc,
     render_actor_selector,
@@ -83,6 +89,16 @@ st.markdown(
 
 m = compute_portfolio_metrics(df, pfc=pfc)
 pfc_avg_price = float(pfc["price_shape"].mean()) if not pfc.empty and "price_shape" in pfc.columns else float("nan")
+epex_ch = load_epex_ch()
+spot_avg_price = float(epex_ch["price"].mean()) if not epex_ch.empty and "price" in epex_ch.columns else float("nan")
+
+scope = df.get("scope", pd.Series("", index=df.index)).astype(str).str.lower()
+intake_mask = scope.str.contains("intake")
+intake_volume = pd.to_numeric(df.get("volume_sum"), errors="coerce").fillna(0.0)[intake_mask].abs()
+intake_notional = pd.to_numeric(df.get("notional_sum"), errors="coerce").fillna(0.0)[intake_mask].abs()
+counterfactual_cost = float(intake_volume.sum() * spot_avg_price) if np.isfinite(spot_avg_price) else float("nan")
+actual_cost = float(intake_notional.sum()) if not intake_notional.empty else float("nan")
+hedging_savings = counterfactual_cost - actual_cost if np.isfinite(counterfactual_cost) and np.isfinite(actual_cost) else float("nan")
 
 # ---------------------------------------------------------------------------
 # KPI-Reihe 1: Position und Notional
@@ -168,6 +184,27 @@ c8.markdown(
     ),
     unsafe_allow_html=True,
 )
+
+if np.isfinite(hedging_savings):
+    savings_color = FMV_GREEN if hedging_savings >= 0 else FMV_RED
+    st.markdown(
+        f"""
+        <div style='background:#F7FAFF; border:1px solid #D8E5FF; border-left:6px solid {savings_color};
+                    border-radius:12px; padding:0.95rem 1.15rem; margin-top:0.8rem;'>
+            <div style='font-size:0.82rem; color:{FMV_GREY}; text-transform:uppercase;
+                        letter-spacing:0.08em;'>Do-nothing-Vergleich</div>
+            <div style='font-size:1.35rem; font-weight:800; color:{FMV_NAVY};'>
+                Ihre Hedging-Strategie hat bisher {fmt_chf(hedging_savings, 0)} EUR
+                {'gespart' if hedging_savings >= 0 else 'mehr gekostet'}
+            </div>
+            <div style='font-size:0.9rem; color:{FMV_GREY}; margin-top:0.2rem;'>
+                Vergleich: gesamte Intake-Menge zum durchschnittlichen Schweizer Spotpreis
+                ({fmt_eur_mwh(spot_avg_price)}) statt zu den erfassten Deal-Preisen.
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 st.markdown("")
 
