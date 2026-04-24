@@ -204,6 +204,61 @@ def kpi_card(label: str, value: str, delta: str | None = None,
     """
 
 
+# ---------------------------------------------------------------------------
+# Gemeinsamer Deviwa-Loader und Akteur-Auswahl
+# ---------------------------------------------------------------------------
+
+DEVIWA_CANDIDATES = [
+    "Deviwa.xlsx", "Deviwa.csv", "deviwa.xlsx", "deviwa.csv",
+    "Deviwa_Deals.xlsx", "deviwa_deals.xlsx",
+]
+
+
+def find_deviwa_file() -> Path | None:
+    for name in DEVIWA_CANDIDATES:
+        p = DATA_DIR / name
+        if p.exists():
+            return p
+    return None
+
+
+@st.cache_data(show_spinner=False)
+def _load_deviwa_cached(path_str: str, mtime: float) -> dict[str, pd.DataFrame]:
+    from deviwa_parser import load_deviwa_file  # type: ignore
+    return load_deviwa_file(path_str)
+
+
+def load_deviwa_auto() -> dict[str, pd.DataFrame]:
+    """Lädt Deviwa-Datei automatisch aus /data. Leer wenn nicht vorhanden."""
+    p = find_deviwa_file()
+    if p is None:
+        return {}
+    data = _load_deviwa_cached(str(p), p.stat().st_mtime)
+    return {k: v for k, v in data.items() if not k.startswith("_")}
+
+
+def render_actor_selector(
+    data: dict[str, pd.DataFrame],
+    label: str = "Akteur auswählen",
+    include_pool: bool = True,
+    key: str | None = None,
+) -> tuple[str, pd.DataFrame]:
+    """Zeigt einen konsistenten Akteur-Selector und gibt (choice, filtered_df) zurück."""
+    actors = [a for a in data.keys() if not a.startswith("_")]
+    options = (["Gesamter Pool"] if include_pool else []) + actors
+    if not options:
+        st.warning("Keine Akteure gefunden.")
+        return ("", pd.DataFrame())
+    choice = st.radio(label, options=options, horizontal=True, key=key)
+    if choice == "Gesamter Pool":
+        frames = [v.assign(_actor=k) if "_actor" not in v.columns else v
+                  for k, v in data.items() if v is not None and not v.empty]
+        df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+    else:
+        df = data.get(choice, pd.DataFrame()).copy()
+    return choice, df
+
+
 def freshness_badge(df: pd.DataFrame, label: str = "Datenstand") -> str:
     if df is None or df.empty:
         return f"<span style='color:{FMV_RED};'>❌ {label}: keine Daten</span>"

@@ -1,4 +1,4 @@
-"""Seite 3 – Transaktionsübersicht Deviwa-Pool."""
+"""Seite 4 – Transaktionsübersicht Deviwa-Pool."""
 
 from __future__ import annotations
 

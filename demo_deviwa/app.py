@@ -1,12 +1,21 @@
-"""FMV Deviwa Demo – Startseite: Marktüberblick."""
+"""FMV Deviwa Demo – Startseite: Portfolio-Cockpit.
+
+Portfolio-Übersicht auf Energiehandels-Niveau: Hedge-Quote, Notional, MtM,
+realisiertes und unrealisiertes P&L, Ø Hedge-Preis, Tenor-Struktur.
+"""
 
 from __future__ import annotations
 
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import streamlit as st
 
+from portfolio_analytics import (
+    compute_portfolio_metrics,
+    monthly_position,
+)
 from utils import (
     FMV_ACCENT,
     FMV_BLUE,
@@ -14,144 +23,148 @@ from utils import (
     FMV_GREY,
     FMV_NAVY,
     FMV_RED,
-    fmt_delta,
+    find_deviwa_file,
+    fmt_chf,
     fmt_eur_mwh,
+    fmt_mwh,
     freshness_badge,
     kpi_card,
-    load_commodities,
+    load_deviwa_auto,
     load_eex_forwards,
-    load_epex_ch,
-    load_lear_forecast,
+    load_pfc,
+    render_actor_selector,
     render_header,
 )
 
 st.set_page_config(
-    page_title="FMV Deviwa Demo · Marktüberblick",
-    page_icon="⚡",
+    page_title="FMV Deviwa · Portfolio-Cockpit",
+    page_icon="🎯",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-render_header("Marktüberblick heute")
+render_header("Portfolio-Cockpit")
 
 with st.sidebar:
-    st.markdown(f"<div style='color:{FMV_NAVY}; font-weight:600; font-size:1rem;'>"
-                "FMV · Deviwa Energiepool</div>", unsafe_allow_html=True)
-    st.caption("Interne Demo. Daten lokal geladen.")
-    st.divider()
-    st.markdown("**Inhalt**")
     st.markdown(
-        "- Marktüberblick\n"
-        "- Kurzfristprognose (LEAR)\n"
-        "- Lastprofil-Pricing\n"
-        "- Ihre Transaktionen\n"
-        "- Marktdaten CH/DE"
+        f"<div style='color:{FMV_NAVY}; font-weight:700; font-size:1.05rem;'>"
+        "FMV · Deviwa Energiepool</div>", unsafe_allow_html=True,
+    )
+    st.caption("Demo · alle Daten lokal")
+    st.divider()
+    st.markdown("**Navigation**")
+    st.markdown(
+        "- 🎯 Portfolio-Cockpit\n- 📊 Marktüberblick\n- 📈 Kurzfristprognose\n"
+        "- 💡 Lastprofil-Pricing\n- 📒 Ihre Transaktionen\n- 🎚️ Programmqualität\n"
+        "- 🛡️ VaR & Stresstest\n- 🌍 Marktdaten"
     )
 
 # ---------------------------------------------------------------------------
-# Daten laden
+# Daten
 # ---------------------------------------------------------------------------
-epex = load_epex_ch()
-forecast = load_lear_forecast()
+data = load_deviwa_auto()
+pfc = load_pfc()
 forwards = load_eex_forwards()
-commodities = load_commodities()
 
-if epex.empty:
-    st.error("Spot-Daten nicht verfügbar. Bitte Datencache aktualisieren.")
+if not data:
+    st.warning("Keine Deviwa-Datei in `/data` gefunden. Bitte `Deviwa.xlsx` ablegen.")
     st.stop()
 
+choice, df = render_actor_selector(data, key="cockpit_actor")
+if df.empty:
+    st.stop()
+
+st.markdown(
+    f"<div style='color:{FMV_GREY}; font-size:0.95rem; margin-top:-0.6rem; margin-bottom:1rem;'>"
+    f"Ansicht: <strong style='color:{FMV_NAVY};'>{choice}</strong>"
+    f" · Zeitstempel: {pd.Timestamp.now(tz='Europe/Zurich').strftime('%d.%m.%Y %H:%M')}</div>",
+    unsafe_allow_html=True,
+)
+
+m = compute_portfolio_metrics(df, pfc=pfc)
+pfc_avg_price = float(pfc["price_shape"].mean()) if not pfc.empty and "price_shape" in pfc.columns else float("nan")
+
 # ---------------------------------------------------------------------------
-# KPI-Zeile
+# KPI-Reihe 1: Position und Notional
 # ---------------------------------------------------------------------------
-last_hour_price = float(epex["price"].dropna().iloc[-1])
-last_ts = epex.dropna().index[-1]
-prev_day_price = float(epex["price"].dropna().iloc[-25]) if len(epex) > 25 else np.nan
-delta_vs_yesterday = last_hour_price - prev_day_price
-
-# Forecast D+1 (Durchschnitt 1. Tag)
-forecast_d1 = np.nan
-if not forecast.empty and "days_ahead" in forecast.columns:
-    f_d1 = forecast[forecast["days_ahead"] == 1]
-    if not f_d1.empty:
-        forecast_d1 = float(f_d1["price_lear"].mean())
-
-# CH Base Cal-27
-cal27_price = np.nan
-cal27_delta = np.nan
-if not forwards.empty:
-    ch_base = forwards[
-        (forwards["market"].str.upper() == "CH")
-        & (forwards["load_type"].str.lower() == "base")
-        & (forwards["product"].astype(str).str.contains("2027"))
-    ].copy()
-    if not ch_base.empty:
-        ch_base = ch_base.sort_values("date")
-        cal27_price = float(ch_base["price"].iloc[-1])
-        recent = ch_base.tail(8)
-        if len(recent) >= 2:
-            cal27_delta = cal27_price - float(recent["price"].iloc[0])
-
-# Gas / CO2
-ttf_price = np.nan
-ttf_delta = np.nan
-eua_price = np.nan
-eua_delta = np.nan
-if not commodities.empty:
-    if "TTF Gas" in commodities.columns:
-        s = commodities["TTF Gas"].dropna()
-        if len(s) >= 8:
-            ttf_price = float(s.iloc[-1])
-            ttf_delta = ttf_price - float(s.iloc[-8])
-    if "CO2 EUA (KRBN)" in commodities.columns:
-        s = commodities["CO2 EUA (KRBN)"].dropna()
-        if len(s) >= 8:
-            eua_price = float(s.iloc[-1])
-            eua_delta = eua_price - float(s.iloc[-8])
-
-c1, c2, c3, c4, c5 = st.columns(5)
+c1, c2, c3, c4 = st.columns(4)
 c1.markdown(
     kpi_card(
-        "CH Spot letzte Stunde",
-        fmt_eur_mwh(last_hour_price),
-        delta=f"{fmt_delta(delta_vs_yesterday, ' EUR/MWh')} ggü. Vortag",
-        delta_color=FMV_GREEN if delta_vs_yesterday < 0 else FMV_RED,
-        help_text=str(last_ts),
+        "Brutto-Volumen",
+        fmt_mwh(m.total_volume_mwh, 0),
+        delta=f"{m.n_deals} Deals · IN {fmt_mwh(m.intake_mwh,0)} · OUT {fmt_mwh(m.withdrawal_mwh,0)}",
+        delta_color=FMV_NAVY,
     ),
     unsafe_allow_html=True,
 )
 c2.markdown(
     kpi_card(
-        "Prognose D+1 (Ø)",
-        fmt_eur_mwh(forecast_d1) if np.isfinite(forecast_d1) else "—",
-        delta="LEAR-Modell FMV",
-        delta_color=FMV_BLUE,
+        "Netto-Position",
+        fmt_mwh(m.net_volume_mwh, 0),
+        delta="Einspeisung − Bezug",
+        delta_color=FMV_GREEN if m.net_volume_mwh >= 0 else FMV_RED,
     ),
     unsafe_allow_html=True,
 )
 c3.markdown(
     kpi_card(
-        "EEX CH Base Cal-27",
-        fmt_eur_mwh(cal27_price) if np.isfinite(cal27_price) else "—",
-        delta=f"{fmt_delta(cal27_delta, ' EUR/MWh')} 7-Tage" if np.isfinite(cal27_delta) else None,
-        delta_color=FMV_GREEN if (cal27_delta or 0) < 0 else FMV_RED,
+        "Notional-Volumen",
+        f"{fmt_chf(m.notional_total_eur, 0)} EUR",
+        delta=f"Ø Deal-Preis {fmt_eur_mwh(m.avg_deal_price_eur_mwh)}",
+        delta_color=FMV_BLUE,
     ),
     unsafe_allow_html=True,
 )
 c4.markdown(
     kpi_card(
-        "TTF Gas (Front)",
-        f"{fmt_eur_mwh(ttf_price)}" if np.isfinite(ttf_price) else "—",
-        delta=f"{fmt_delta(ttf_delta, ' EUR/MWh')} 7-Tage" if np.isfinite(ttf_delta) else None,
-        delta_color=FMV_GREEN if (ttf_delta or 0) < 0 else FMV_RED,
+        "Mark-to-Market",
+        f"{fmt_chf(m.mtm_eur, 0)} EUR" if np.isfinite(m.mtm_eur) else "—",
+        delta=f"PFC Ø {fmt_eur_mwh(pfc_avg_price)}" if np.isfinite(pfc_avg_price) else None,
+        delta_color=FMV_NAVY,
+        help_text="Summe Netto-Volumen × aktueller PFC je Lieferperiode",
     ),
     unsafe_allow_html=True,
 )
+
+# ---------------------------------------------------------------------------
+# KPI-Reihe 2: Hedge und P&L
+# ---------------------------------------------------------------------------
+c5, c6, c7, c8 = st.columns(4)
 c5.markdown(
     kpi_card(
-        "CO₂ EUA",
-        f"{fmt_eur_mwh(eua_price).replace('EUR/MWh','EUR/t')}" if np.isfinite(eua_price) else "—",
-        delta=f"{fmt_delta(eua_delta, ' EUR/t')} 7-Tage" if np.isfinite(eua_delta) else None,
-        delta_color=FMV_GREEN if (eua_delta or 0) < 0 else FMV_RED,
+        "Hedge-Quote",
+        f"{m.hedge_ratio_pct:.0f} %" if np.isfinite(m.hedge_ratio_pct) else "—",
+        delta=f"{fmt_mwh(m.hedged_volume_mwh,0)} zukünftig gesichert",
+        delta_color=(FMV_GREEN if (m.hedge_ratio_pct or 0) >= 70 else
+                     FMV_ACCENT if (m.hedge_ratio_pct or 0) >= 40 else FMV_RED),
+    ),
+    unsafe_allow_html=True,
+)
+c6.markdown(
+    kpi_card(
+        "Ø Hedge-Preis",
+        fmt_eur_mwh(m.avg_hedge_price_eur_mwh) if np.isfinite(m.avg_hedge_price_eur_mwh) else "—",
+        delta=(f"Markt Ø {fmt_eur_mwh(pfc_avg_price)} · Δ {fmt_eur_mwh(m.avg_hedge_price_eur_mwh - pfc_avg_price)}"
+               if np.isfinite(m.avg_hedge_price_eur_mwh) and np.isfinite(pfc_avg_price) else None),
+        delta_color=FMV_BLUE,
+    ),
+    unsafe_allow_html=True,
+)
+c7.markdown(
+    kpi_card(
+        "Realisierter P&L",
+        f"{fmt_chf(m.realized_pnl_eur, 0)} EUR" if np.isfinite(m.realized_pnl_eur) else "—",
+        delta="abgeschlossene Lieferungen",
+        delta_color=FMV_GREEN if (m.realized_pnl_eur or 0) >= 0 else FMV_RED,
+    ),
+    unsafe_allow_html=True,
+)
+c8.markdown(
+    kpi_card(
+        "Unrealisierter P&L",
+        f"{fmt_chf(m.unrealized_pnl_eur, 0)} EUR" if np.isfinite(m.unrealized_pnl_eur) else "—",
+        delta="offene Positionen (MtM)",
+        delta_color=FMV_GREEN if (m.unrealized_pnl_eur or 0) >= 0 else FMV_RED,
     ),
     unsafe_allow_html=True,
 )
@@ -159,132 +172,227 @@ c5.markdown(
 st.markdown("")
 
 # ---------------------------------------------------------------------------
-# Chart: Spot 14 Tage + Forecast 10 Tage
+# Hedge-Gauge + Tenor-Struktur
 # ---------------------------------------------------------------------------
-st.subheader("Spotpreis CH · letzte 14 Tage + Prognose 10 Tage")
+col_gauge, col_tenor = st.columns([0.9, 1.4])
 
-hist_cutoff = epex.index.max() - pd.Timedelta(days=14)
-spot_recent = epex.loc[epex.index >= hist_cutoff, "price"].resample("h").mean()
-
-fig = go.Figure()
-fig.add_trace(go.Scatter(
-    x=spot_recent.index, y=spot_recent.values,
-    mode="lines", name="Spot realisiert",
-    line=dict(color=FMV_NAVY, width=2),
-))
-
-if not forecast.empty:
-    fcst = forecast.copy()
-    fcst = fcst.sort_values("timestamp")
-    fig.add_trace(go.Scatter(
-        x=fcst["timestamp"], y=fcst["price_p90"],
-        mode="lines", line=dict(width=0), showlegend=False,
-        hoverinfo="skip",
+with col_gauge:
+    st.subheader("Hedge-Quote")
+    hedge_pct = float(m.hedge_ratio_pct) if np.isfinite(m.hedge_ratio_pct) else 0.0
+    gauge = go.Figure(go.Indicator(
+        mode="gauge+number+delta",
+        value=hedge_pct,
+        number={"suffix": " %", "font": {"size": 42, "color": FMV_NAVY}},
+        delta={"reference": 70, "position": "top",
+               "increasing": {"color": FMV_GREEN},
+               "decreasing": {"color": FMV_RED}},
+        gauge={
+            "axis": {"range": [0, 100], "tickwidth": 1, "tickcolor": FMV_GREY},
+            "bar": {"color": FMV_BLUE, "thickness": 0.75},
+            "steps": [
+                {"range": [0, 40], "color": "#FCE8E8"},
+                {"range": [40, 70], "color": "#FFF4D6"},
+                {"range": [70, 100], "color": "#E6F4EA"},
+            ],
+            "threshold": {
+                "line": {"color": FMV_NAVY, "width": 3},
+                "thickness": 0.8, "value": 70,
+            },
+        },
     ))
-    fig.add_trace(go.Scatter(
-        x=fcst["timestamp"], y=fcst["price_p10"],
-        mode="lines", line=dict(width=0),
-        fill="tonexty", fillcolor="rgba(15,82,204,0.15)",
-        name="P10–P90 Band",
-    ))
-    fig.add_trace(go.Scatter(
-        x=fcst["timestamp"], y=fcst["price_lear"],
-        mode="lines", name="LEAR Prognose",
-        line=dict(color=FMV_BLUE, width=2.5, dash="solid"),
-    ))
+    gauge.update_layout(
+        height=320, margin=dict(l=20, r=20, t=30, b=20),
+        paper_bgcolor="white",
+    )
+    st.plotly_chart(gauge, use_container_width=True)
+    st.caption("Zielwert 70 % · unter 40 % = rot · über 70 % = grün")
 
-fig.update_layout(
-    height=420,
-    margin=dict(l=20, r=20, t=10, b=20),
-    hovermode="x unified",
-    plot_bgcolor="white",
-    paper_bgcolor="white",
-    yaxis=dict(title="EUR/MWh", gridcolor="#EEF1F6"),
-    xaxis=dict(gridcolor="#EEF1F6"),
-    legend=dict(orientation="h", y=-0.15),
-)
-st.plotly_chart(fig, use_container_width=True)
-
-# ---------------------------------------------------------------------------
-# Zweite Reihe: Forward Kurve + CO2/Gas
-# ---------------------------------------------------------------------------
-col_left, col_right = st.columns([1.1, 1])
-
-with col_left:
-    st.subheader("EEX Forward Kurve · CH Base")
-    if not forwards.empty:
-        last_date = forwards["date"].max()
-        snap = forwards[
-            (forwards["date"] == last_date)
-            & (forwards["market"].str.upper() == "CH")
-            & (forwards["load_type"].str.lower() == "base")
-        ].copy()
-        if not snap.empty:
-            snap = snap.sort_values("product")
-            fig_fwd = go.Figure()
-            fig_fwd.add_trace(go.Bar(
-                x=snap["product"], y=snap["price"],
-                marker_color=FMV_BLUE,
-                name=f"Schlusskurs {pd.Timestamp(last_date).strftime('%d.%m.%Y')}",
-            ))
-            fig_fwd.update_layout(
-                height=320, margin=dict(l=20, r=20, t=10, b=20),
-                plot_bgcolor="white", paper_bgcolor="white",
-                yaxis=dict(title="EUR/MWh", gridcolor="#EEF1F6"),
-                xaxis=dict(tickangle=-45),
-            )
-            st.plotly_chart(fig_fwd, use_container_width=True)
-        else:
-            st.info("Keine EEX CH Base Daten verfügbar.")
+with col_tenor:
+    st.subheader("Tenor-Struktur · Volumen und Ø Preis je Lieferperiode")
+    tb = m.tenor_buckets
+    if tb is None or tb.empty:
+        st.info("Keine Lieferdaten verfügbar.")
     else:
-        st.info("Forward-Daten nicht geladen.")
-
-with col_right:
-    st.subheader("Commodities · letzte 90 Tage")
-    if not commodities.empty:
-        recent_com = commodities.tail(90)
-        fig_com = go.Figure()
-        for col, color in [("TTF Gas", FMV_BLUE),
-                           ("CO2 EUA (KRBN)", FMV_ACCENT),
-                           ("Brent", FMV_GREY)]:
-            if col in recent_com.columns:
-                series = recent_com[col].dropna()
-                if not series.empty:
-                    # Normalisieren auf 100 am ersten Punkt
-                    normalized = series / series.iloc[0] * 100
-                    fig_com.add_trace(go.Scatter(
-                        x=normalized.index, y=normalized.values,
-                        mode="lines", name=col,
-                        line=dict(color=color, width=2),
-                    ))
-        fig_com.update_layout(
-            height=320, margin=dict(l=20, r=20, t=10, b=20),
-            plot_bgcolor="white", paper_bgcolor="white",
-            yaxis=dict(title="Index (Start = 100)", gridcolor="#EEF1F6"),
-            xaxis=dict(gridcolor="#EEF1F6"),
-            legend=dict(orientation="h", y=-0.2),
+        fig_tb = make_subplots(specs=[[{"secondary_y": True}]])
+        fig_tb.add_trace(
+            go.Bar(
+                x=tb["bucket"].astype(str), y=tb["volume_mwh"],
+                marker_color=FMV_BLUE, opacity=0.85,
+                name="Volumen (MWh)",
+                text=[fmt_mwh(v, 0) for v in tb["volume_mwh"]],
+                textposition="outside",
+            ),
+            secondary_y=False,
         )
-        st.plotly_chart(fig_com, use_container_width=True)
-    else:
-        st.info("Commodities nicht verfügbar.")
+        fig_tb.add_trace(
+            go.Scatter(
+                x=tb["bucket"].astype(str), y=tb["avg_price_eur_mwh"],
+                mode="lines+markers+text",
+                name="Ø Preis (EUR/MWh)",
+                line=dict(color=FMV_ACCENT, width=3),
+                marker=dict(size=10),
+                text=[fmt_eur_mwh(p) if np.isfinite(p) else "" for p in tb["avg_price_eur_mwh"]],
+                textposition="top center",
+            ),
+            secondary_y=True,
+        )
+        fig_tb.update_layout(
+            height=320, margin=dict(l=20, r=20, t=30, b=20),
+            plot_bgcolor="white", paper_bgcolor="white",
+            legend=dict(orientation="h", y=-0.18),
+        )
+        fig_tb.update_yaxes(title_text="Volumen (MWh)", gridcolor="#EEF1F6", secondary_y=False)
+        fig_tb.update_yaxes(title_text="Ø Preis (EUR/MWh)", showgrid=False, secondary_y=True)
+        st.plotly_chart(fig_tb, use_container_width=True)
+
+# ---------------------------------------------------------------------------
+# Monatsverlauf mit Ø Hedge-Preis vs Forward-Kurve
+# ---------------------------------------------------------------------------
+st.subheader("Monatliche Position und Preisniveau")
+
+mp = monthly_position(df)
+if not mp.empty:
+    fig_m = make_subplots(specs=[[{"secondary_y": True}]])
+    fig_m.add_trace(
+        go.Bar(x=mp["month"], y=mp["intake_mwh"],
+               name="Einspeisung", marker_color=FMV_GREEN, opacity=0.8),
+        secondary_y=False,
+    )
+    fig_m.add_trace(
+        go.Bar(x=mp["month"], y=-mp["withdrawal_mwh"],
+               name="Bezug", marker_color=FMV_BLUE, opacity=0.8),
+        secondary_y=False,
+    )
+    fig_m.add_trace(
+        go.Scatter(x=mp["month"], y=mp["net_mwh"],
+                   mode="lines+markers", name="Netto-Position",
+                   line=dict(color=FMV_NAVY, width=2.5)),
+        secondary_y=False,
+    )
+
+    # Ø Hedge-Preis (Intake = Kaufpreis)
+    if mp["avg_intake_price"].notna().any():
+        fig_m.add_trace(
+            go.Scatter(
+                x=mp["month"], y=mp["avg_intake_price"],
+                mode="lines+markers", name="Ø Einspeise-Preis",
+                line=dict(color=FMV_ACCENT, width=2, dash="dash"),
+                marker=dict(size=6),
+            ),
+            secondary_y=True,
+        )
+    # PFC-Kurve je Monat als Markt-Referenz
+    if not pfc.empty:
+        pfc_m = pfc["price_shape"].resample("MS").mean()
+        pfc_m.index = pfc_m.index.tz_convert("Europe/Zurich").tz_localize(None)
+        pfc_plot = pfc_m.reindex(pd.to_datetime(mp["month"]))
+        fig_m.add_trace(
+            go.Scatter(
+                x=pfc_plot.index, y=pfc_plot.values,
+                mode="lines", name="Markt (PFC)",
+                line=dict(color=FMV_RED, width=2, dash="dot"),
+            ),
+            secondary_y=True,
+        )
+
+    fig_m.add_hline(y=0, line_width=1, line_dash="dot", line_color=FMV_GREY)
+    fig_m.update_layout(
+        barmode="relative",
+        height=460, margin=dict(l=20, r=20, t=10, b=20),
+        plot_bgcolor="white", paper_bgcolor="white",
+        legend=dict(orientation="h", y=-0.15),
+        hovermode="x unified",
+    )
+    fig_m.update_yaxes(title_text="MWh", gridcolor="#EEF1F6", secondary_y=False)
+    fig_m.update_yaxes(title_text="Preis (EUR/MWh)", showgrid=False, secondary_y=True)
+    st.plotly_chart(fig_m, use_container_width=True)
+
+# ---------------------------------------------------------------------------
+# P&L Wasserfall und kumulierter Verlauf
+# ---------------------------------------------------------------------------
+col_wf, col_cum = st.columns([1, 1.3])
+
+with col_wf:
+    st.subheader("P&L-Aufschlüsselung")
+    components = []
+    if np.isfinite(m.realized_pnl_eur):
+        components.append(("Realisiert", m.realized_pnl_eur))
+    if np.isfinite(m.unrealized_pnl_eur):
+        components.append(("Unrealisiert (MtM)", m.unrealized_pnl_eur))
+    if components:
+        total = sum(v for _, v in components)
+        fig_wf = go.Figure(go.Waterfall(
+            orientation="v",
+            measure=["relative"] * len(components) + ["total"],
+            x=[c[0] for c in components] + ["Gesamt"],
+            y=[c[1] for c in components] + [total],
+            text=[f"{fmt_chf(c[1],0)} EUR" for c in components] + [f"{fmt_chf(total,0)} EUR"],
+            textposition="outside",
+            connector={"line": {"color": FMV_GREY}},
+            increasing={"marker": {"color": FMV_GREEN}},
+            decreasing={"marker": {"color": FMV_RED}},
+            totals={"marker": {"color": FMV_NAVY}},
+        ))
+        fig_wf.update_layout(
+            height=360, margin=dict(l=20, r=20, t=30, b=20),
+            plot_bgcolor="white", paper_bgcolor="white",
+            yaxis=dict(title="EUR", gridcolor="#EEF1F6"),
+        )
+        st.plotly_chart(fig_wf, use_container_width=True)
+
+with col_cum:
+    st.subheader("Kumulierter P&L im Zeitverlauf")
+    if "pnl_sum" in df.columns and "month" in df.columns:
+        g = df.copy()
+        g["month"] = pd.to_datetime(g["month"], errors="coerce")
+        pnl_m = g.groupby("month")["pnl_sum"].apply(
+            lambda s: float(pd.to_numeric(s, errors="coerce").sum())
+        ).sort_index()
+        cum = pnl_m.cumsum()
+        fig_cum = go.Figure()
+        fig_cum.add_trace(go.Bar(
+            x=pnl_m.index, y=pnl_m.values,
+            name="Monats-P&L",
+            marker_color=[FMV_GREEN if v >= 0 else FMV_RED for v in pnl_m.values],
+            opacity=0.7,
+        ))
+        fig_cum.add_trace(go.Scatter(
+            x=cum.index, y=cum.values,
+            mode="lines+markers", name="Kumuliert",
+            line=dict(color=FMV_NAVY, width=3),
+        ))
+        fig_cum.add_hline(y=0, line_width=1, line_dash="dot", line_color=FMV_GREY)
+        fig_cum.update_layout(
+            height=360, margin=dict(l=20, r=20, t=30, b=20),
+            plot_bgcolor="white", paper_bgcolor="white",
+            yaxis=dict(title="EUR", gridcolor="#EEF1F6"),
+            xaxis=dict(gridcolor="#EEF1F6"),
+            legend=dict(orientation="h", y=-0.18),
+            hovermode="x unified",
+        )
+        st.plotly_chart(fig_cum, use_container_width=True)
 
 # ---------------------------------------------------------------------------
 # Footer
 # ---------------------------------------------------------------------------
 st.divider()
-cols = st.columns(4)
-cols[0].markdown(freshness_badge(epex, "Spot CH"), unsafe_allow_html=True)
-cols[1].markdown(freshness_badge(forecast.set_index("timestamp") if not forecast.empty else forecast, "Prognose"),
-                 unsafe_allow_html=True)
-cols[2].markdown(
-    freshness_badge(
-        forwards.set_index("date") if not forwards.empty else forwards, "EEX Forwards"
-    ),
+cols = st.columns(3)
+cols[0].markdown(freshness_badge(pfc, "PFC"), unsafe_allow_html=True)
+cols[1].markdown(
+    freshness_badge(forwards.set_index("date") if not forwards.empty else forwards, "EEX Forwards"),
     unsafe_allow_html=True,
 )
-cols[3].markdown(freshness_badge(commodities, "Commodities"), unsafe_allow_html=True)
+path = find_deviwa_file()
+if path is not None:
+    mtime = pd.Timestamp(path.stat().st_mtime, unit="s", tz="Europe/Zurich")
+    cols[2].markdown(
+        f"<span style='color:{FMV_GREEN};'>● Deviwa-Datei: "
+        f"{mtime.strftime('%d.%m.%Y %H:%M')}</span>",
+        unsafe_allow_html=True,
+    )
 
 st.caption(
-    "© FMV – Forces Motrices Valaisannes · Demo-Version für den Deviwa-Energiepool. "
-    "Alle Preise in EUR/MWh sofern nicht anders angegeben."
+    "Ø Hedge-Preis: volumengewichteter Durchschnittspreis aller Deals mit Lieferung in der Zukunft. "
+    "Hedge-Quote: Anteil des Gesamtvolumens, das bereits in Zukunft festgelegt ist. "
+    "Unrealisierter P&L: Differenz zwischen Marktbewertung (PFC) und Notional der offenen Positionen."
 )
