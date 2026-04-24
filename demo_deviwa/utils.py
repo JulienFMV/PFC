@@ -15,6 +15,8 @@ ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = ROOT / "data"
 PFC_DATA_DIR = ROOT / "pfc_shaping" / "data"
 OUTPUT_DIR = ROOT / "pfc_shaping" / "output"
+EEX_YEARLY_PATH = Path(r"H:\Energy\GeCom\MARCHE & NEGOCE\Prix\EEX - ER\Price_Report_EEX_Yearly.xlsx")
+HFC_OMPEX_DIR = Path(r"H:\Energy\GeCom\MARCHE & NEGOCE\Prix\Analyse HFC\HFC test\ER -HFC_OMPEX_15min")
 
 FMV_BLUE = "#0F52CC"
 FMV_NAVY = "#0E1F3D"
@@ -108,6 +110,37 @@ def load_hydro() -> pd.DataFrame:
 
 @st.cache_data(show_spinner=False)
 def load_eex_forwards() -> pd.DataFrame:
+    if EEX_YEARLY_PATH.exists():
+        try:
+            raw = pd.read_excel(EEX_YEARLY_PATH, sheet_name="CH", header=None)
+            if raw.shape[0] >= 3 and raw.shape[1] >= 2:
+                codes = raw.iloc[0].astype(str)
+                labels = raw.iloc[1].astype(str)
+                dates = pd.to_datetime(raw.iloc[2:, 0], errors="coerce", dayfirst=True)
+                rows = []
+                for col_idx in range(1, raw.shape[1]):
+                    code = str(codes.iloc[col_idx])
+                    label = str(labels.iloc[col_idx])
+                    if not label or label.lower() == "nan" or label.startswith("Unnamed"):
+                        label = code
+                    load_type = "peak" if "PEAK" in code.upper() or " PEAK" in label.upper() else "base"
+                    prices = pd.to_numeric(raw.iloc[2:, col_idx], errors="coerce")
+                    mask = dates.notna() & prices.notna() & (prices > 0)
+                    if not mask.any():
+                        continue
+                    rows.append(pd.DataFrame({
+                        "date": dates[mask].values,
+                        "market": "CH",
+                        "product": f"{label} {code}",
+                        "load_type": load_type,
+                        "price": prices[mask].values,
+                        "source": "Price_Report_EEX_Yearly.xlsx",
+                    }))
+                if rows:
+                    return pd.concat(rows, ignore_index=True)
+        except Exception:
+            pass
+
     path = DATA_DIR / "eex_forwards_history.parquet"
     if not path.exists():
         return pd.DataFrame()
@@ -152,6 +185,36 @@ def load_lear_backtest() -> pd.DataFrame:
 @st.cache_data(show_spinner=False)
 def load_pfc() -> pd.DataFrame:
     """Letzte verfügbare PFC 15-Minuten-Kurve."""
+    if HFC_OMPEX_DIR.exists():
+        candidates_xlsx = sorted(
+            HFC_OMPEX_DIR.glob("*.xlsx"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        for path in candidates_xlsx:
+            try:
+                df = pd.read_excel(path, sheet_name="HFC")
+                if {"Date", "EUR/MWh"}.issubset(df.columns):
+                    ts = pd.to_datetime(df["Date"], errors="coerce", dayfirst=True)
+                    price = pd.to_numeric(df["EUR/MWh"], errors="coerce")
+                    out = pd.DataFrame({"price_shape": price.values}, index=ts)
+                    out = out.dropna(subset=["price_shape"])
+                    out = out[out.index.notna()].sort_index()
+                    if out.empty:
+                        continue
+                    out.index = pd.DatetimeIndex(out.index)
+                    if out.index.tz is None:
+                        out.index = out.index.tz_localize(
+                            "Europe/Zurich", nonexistent="shift_forward", ambiguous="NaT"
+                        )
+                        out = out[out.index.notna()]
+                    else:
+                        out.index = out.index.tz_convert("Europe/Zurich")
+                    out["source_file"] = path.name
+                    return out
+            except Exception:
+                continue
+
     candidates = sorted(OUTPUT_DIR.glob("pfc_15min_*.parquet"))
     if not candidates:
         return pd.DataFrame()
