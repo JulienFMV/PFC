@@ -131,11 +131,13 @@ class LEARForecaster:
         max_iter: int = 2500,
         random_state: int = 42,
         use_foundation_model: bool = True,
+        use_extended_physical_ch_features: bool = True,
     ):
         self.tz = tz
         self.max_iter = max_iter
         self.random_state = random_state
         self.use_foundation_model = use_foundation_model
+        self.use_extended_physical_ch_features = use_extended_physical_ch_features
         self._fitted = False
         self._fm = FoundationForecaster() if use_foundation_model else None
         self._lgbm_device_type = "gpu"
@@ -176,7 +178,18 @@ class LEARForecaster:
 
         # ENTSO-E
         if entso_15min is not None and not entso_15min.empty:
-            for col in ["load_mw", "solar_mw", "wind_mw"]:
+            entso_cols = [
+                "load_mw", "solar_mw", "wind_mw",
+                "load_de_mw", "solar_de_mw", "wind_de_mw", "residual_load_de_mw",
+            ]
+            if self.use_extended_physical_ch_features:
+                entso_cols.extend([
+                    "nuclear_mw",
+                    "hydro_ror_mw",
+                    "hydro_reservoir_mw",
+                    "hydro_pumped_mw",
+                ])
+            for col in entso_cols:
                 if col in entso_15min.columns:
                     exog[col] = entso_15min[col].resample("h").mean()
 
@@ -441,7 +454,10 @@ class LEARForecaster:
 
         # ── 4. Exogenous features (CH) ──
         exog_cols = [c for c in exog.columns
-                     if c in ["load_mw", "solar_mw", "wind_mw", "outages_mw"]]
+                     if c in [
+                         "load_mw", "solar_mw", "wind_mw", "outages_mw",
+                         "nuclear_mw", "hydro_ror_mw", "hydro_reservoir_mw", "hydro_pumped_mw",
+                     ]]
 
         for col in exog_cols:
             series = exog[col].dropna()
@@ -468,7 +484,10 @@ class LEARForecaster:
 
         # ── 3b. Enriched d-1 aggregate features (compensate d+0 removal) ──
         ch_exog_cols = [c for c in exog.columns
-                        if c in ["load_mw", "solar_mw", "wind_mw"]]
+                        if c in [
+                            "load_mw", "solar_mw", "wind_mw",
+                            "nuclear_mw", "hydro_ror_mw", "hydro_reservoir_mw", "hydro_pumped_mw",
+                        ]]
         for col in ch_exog_cols:
             series = exog[col].dropna()
             if series.empty:
@@ -490,6 +509,65 @@ class LEARForecaster:
                 feature_names.append(f"{col}_daily_max_d-{lag}")
                 features_list.append((shifted_agg["max"] - shifted_agg["min"]).values)
                 feature_names.append(f"{col}_daily_range_d-{lag}")
+
+        # ── 3c. Compact DE regime signals ──
+        if "solar_de_mw" in exog.columns:
+            solar_de = exog["solar_de_mw"].dropna()
+            if not solar_de.empty:
+                solar_local = solar_de.index.tz_convert(self.tz)
+                solar_df = pd.DataFrame({
+                    "date": solar_local.date,
+                    "hour": solar_local.hour,
+                    "value": solar_de.values,
+                })
+                solar_pivot = solar_df.pivot_table(
+                    index="date", columns="hour", values="value", aggfunc="mean"
+                ).reindex(complete.index)
+                midday_cols = [h for h in range(10, 16) if h in solar_pivot.columns]
+                if midday_cols:
+                    solar_midday = solar_pivot[midday_cols].mean(axis=1)
+                    solar_midday_d1 = solar_midday.shift(1)
+                    solar_midday_roll = solar_midday.shift(1).rolling(28, min_periods=7)
+                    solar_midday_mean = solar_midday_roll.mean()
+                    solar_midday_std = solar_midday_roll.std().replace(0, np.nan)
+                    solar_midday_z = ((solar_midday_d1 - solar_midday_mean) / solar_midday_std).fillna(0.0)
+                    features_list.append(solar_midday_z.values)
+                    feature_names.append("solar_de_midday_z_d-1")
+                    features_list.append((solar_midday_z > 0.75).astype(float).values)
+                    feature_names.append("solar_de_midday_high_d-1")
+
+        if "residual_load_de_mw" in exog.columns:
+            residual_de = exog["residual_load_de_mw"].dropna()
+            if not residual_de.empty:
+                residual_local = residual_de.index.tz_convert(self.tz)
+                residual_df = pd.DataFrame({
+                    "date": residual_local.date,
+                    "hour": residual_local.hour,
+                    "value": residual_de.values,
+                })
+                residual_pivot = residual_df.pivot_table(
+                    index="date", columns="hour", values="value", aggfunc="mean"
+                ).reindex(complete.index)
+                if target_hour in residual_pivot.columns:
+                    residual_hour = residual_pivot[target_hour]
+                    residual_hour_d1 = residual_hour.shift(1)
+                    residual_roll = residual_hour.shift(1).rolling(28, min_periods=7)
+                    residual_mean = residual_roll.mean()
+                    residual_std = residual_roll.std().replace(0, np.nan)
+                    residual_z = ((residual_hour_d1 - residual_mean) / residual_std).fillna(0.0)
+                    features_list.append(residual_z.values)
+                    feature_names.append(f"residual_load_de_z_d-1_h{target_hour:02d}")
+                    features_list.append((residual_z < -0.75).astype(float).values)
+                    feature_names.append(f"residual_load_de_low_d-1_h{target_hour:02d}")
+
+                residual_daily = residual_df.groupby("date")["value"].mean().reindex(complete.index)
+                residual_daily_d1 = residual_daily.shift(1)
+                residual_daily_roll = residual_daily.shift(1).rolling(28, min_periods=7)
+                residual_daily_mean = residual_daily_roll.mean()
+                residual_daily_std = residual_daily_roll.std().replace(0, np.nan)
+                residual_daily_z = ((residual_daily_d1 - residual_daily_mean) / residual_daily_std).fillna(0.0)
+                features_list.append(residual_daily_z.values)
+                feature_names.append("residual_load_de_daily_z_d-1")
 
         # ── 4. Commodities ──
         commodity_cols = [c for c in exog.columns
@@ -530,6 +608,36 @@ class LEARForecaster:
                 features_list.append(hydro_delta_7d.values)
                 feature_names.append("hydro_fill_delta_7d")
 
+        # CH physical stack compact ratios: make hydro / nuclear informative without
+        # requiring the model to infer relative scale from raw MW levels alone.
+        if self.use_extended_physical_ch_features and "load_mw" in exog.columns:
+            load_h = exog["load_mw"].replace(0, np.nan)
+            physical_ratio_cols = [
+                ("nuclear_mw", "nuclear_share_ch"),
+                ("hydro_ror_mw", "hydro_ror_share_ch"),
+                ("hydro_reservoir_mw", "hydro_reservoir_share_ch"),
+                ("hydro_pumped_mw", "hydro_pumped_share_ch"),
+            ]
+            for src_col, feat_name in physical_ratio_cols:
+                if src_col not in exog.columns:
+                    continue
+                ratio = (exog[src_col] / load_h).replace([np.inf, -np.inf], np.nan)
+                ratio = ratio.dropna()
+                if ratio.empty:
+                    continue
+                ratio_local = ratio.index.tz_convert(self.tz)
+                ratio_df = pd.DataFrame({
+                    "date": ratio_local.date,
+                    "hour": ratio_local.hour,
+                    "value": ratio.values,
+                })
+                ratio_pivot = ratio_df.pivot_table(
+                    index="date", columns="hour", values="value", aggfunc="mean"
+                ).reindex(complete.index)
+                if target_hour in ratio_pivot.columns:
+                    features_list.append(ratio_pivot.shift(1)[target_hour].values)
+                    feature_names.append(f"{feat_name}_d-1_h{target_hour:02d}")
+
         # ── 5b. Swiss-specific features (ALPINE v2 quick wins) ──
         # --- Wallis-specific reservoir fill (55% of CH storage, FMV's region) ---
         if "wallis_gwh" in exog.columns:
@@ -557,7 +665,7 @@ class LEARForecaster:
                     ).reindex(complete.index)
                     if target_hour in hs_pivot.columns:
                         features_list.append(hs_pivot.shift(1)[target_hour].values)
-                        feature_names.append(f"{hydro_col}_d-1_h{target_hour:02d}")
+                        feature_names.append(f"{hydro_col}_direct_d-1_h{target_hour:02d}")
 
         # --- Nuclear available capacity (2960 MW total - unavailable) ---
         if "unavailable_nuclear" in exog.columns:

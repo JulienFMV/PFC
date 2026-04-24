@@ -91,14 +91,16 @@ def load_from_api(
     country_code: str = "CH",
 ) -> pd.DataFrame:
     """
-    Charge load + renewables depuis l'API ENTSO-E pour une période donnée.
+    Charge load + generation détaillée depuis l'API ENTSO-E pour une période donnée.
 
     Args:
         start / end  : 'YYYY-MM-DD'
         country_code : code zone ENTSO-E (défaut 'CH')
 
     Returns:
-        DataFrame colonnes ['load_mw', 'solar_mw', 'wind_mw']
+        DataFrame colonnes ['load_mw', 'solar_mw', 'wind_mw',
+                            'nuclear_mw', 'hydro_ror_mw',
+                            'hydro_reservoir_mw', 'hydro_pumped_mw']
         index : DatetimeIndex UTC
     """
     client = _get_client()
@@ -123,12 +125,27 @@ def load_from_api(
     # --- Generation par type ---
     df_gen_raw = _retry(client.query_generation, country_code, start=ts_start, end=ts_end)
 
-    # Extraire solar et wind depuis les colonnes multi-level ou flat
+    # Extraire les technologies clés depuis les colonnes multi-level ou flat.
     solar_mw = _extract_generation_column(df_gen_raw, "Solar")
-    wind_mw = _extract_generation_column(df_gen_raw, "Wind Onshore") + \
-              _extract_generation_column(df_gen_raw, "Wind Offshore")
+    wind_mw = (
+        _extract_generation_column(df_gen_raw, "Wind Onshore")
+        + _extract_generation_column(df_gen_raw, "Wind Offshore")
+    )
+    nuclear_mw = _extract_generation_column(df_gen_raw, "Nuclear")
+    hydro_ror_mw = _extract_generation_column(df_gen_raw, "Hydro Run-of-river and poundage")
+    hydro_reservoir_mw = _extract_generation_column(df_gen_raw, "Hydro Water Reservoir")
+    hydro_pumped_mw = _extract_generation_column(df_gen_raw, "Hydro Pumped Storage")
 
-    df_gen = pd.DataFrame({"solar_mw": solar_mw, "wind_mw": wind_mw})
+    df_gen = pd.DataFrame(
+        {
+            "solar_mw": solar_mw,
+            "wind_mw": wind_mw,
+            "nuclear_mw": nuclear_mw,
+            "hydro_ror_mw": hydro_ror_mw,
+            "hydro_reservoir_mw": hydro_reservoir_mw,
+            "hydro_pumped_mw": hydro_pumped_mw,
+        }
+    )
 
     # --- Resample à 15min et joindre ---
     for df_ in [df_load, df_gen]:
@@ -140,7 +157,19 @@ def load_from_api(
     df_gen_15 = _resample_to_15min(df_gen)
 
     df = df_load_15.join(df_gen_15, how="outer").sort_index()
-    df[["solar_mw", "wind_mw"]] = df[["solar_mw", "wind_mw"]].fillna(0.0)
+    fill_zero_cols = [
+        c for c in [
+            "solar_mw",
+            "wind_mw",
+            "nuclear_mw",
+            "hydro_ror_mw",
+            "hydro_reservoir_mw",
+            "hydro_pumped_mw",
+        ]
+        if c in df.columns
+    ]
+    if fill_zero_cols:
+        df[fill_zero_cols] = df[fill_zero_cols].fillna(0.0)
 
     neighbor_df = _load_neighbor_power_features(client, ts_start, ts_end)
     if not neighbor_df.empty:
@@ -170,9 +199,11 @@ def _extract_generation_column(df_gen: pd.DataFrame, fuel_type: str) -> pd.Serie
     if df_gen.empty:
         return pd.Series(0.0, index=df_gen.index, dtype=float)
 
+    fuel_norm = str(fuel_type).strip().lower()
+
     # Multi-level columns: ('Solar', 'Actual Aggregated'), etc.
     if isinstance(df_gen.columns, pd.MultiIndex):
-        matching = [col for col in df_gen.columns if col[0] == fuel_type]
+        matching = [col for col in df_gen.columns if str(col[0]).strip().lower() == fuel_norm]
         if not matching:
             return pd.Series(0.0, index=df_gen.index, dtype=float)
         # Préférer 'Actual Aggregated' sur 'Actual Consumption'
@@ -182,7 +213,7 @@ def _extract_generation_column(df_gen: pd.DataFrame, fuel_type: str) -> pd.Serie
         return df_gen[matching[0]].fillna(0.0)
 
     # Flat columns
-    matching = [c for c in df_gen.columns if fuel_type in c]
+    matching = [c for c in df_gen.columns if fuel_norm in str(c).strip().lower()]
     if not matching:
         return pd.Series(0.0, index=df_gen.index, dtype=float)
     return df_gen[matching[0]].fillna(0.0)

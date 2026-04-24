@@ -9,6 +9,8 @@ import json
 import sys
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlencode
+from urllib.request import urlopen
 
 import numpy as np
 import pandas as pd
@@ -874,3 +876,93 @@ def load_cross_border_flows() -> pd.DataFrame | None:
     if entso is None or "cross_border_mw" not in entso.columns:
         return None
     return entso[["cross_border_mw"]]
+
+
+WEATHER_LOCATIONS = {
+    "Brig-Glis": {"lat": 46.3167, "lon": 7.9833, "elevation_m": 678},
+    "Visp": {"lat": 46.2932, "lon": 7.8819, "elevation_m": 658},
+    "Leuk": {"lat": 46.3174, "lon": 7.6347, "elevation_m": 731},
+    "Zermatt": {"lat": 46.0207, "lon": 7.7491, "elevation_m": 1608},
+    "Ulrichen": {"lat": 46.5054, "lon": 8.3063, "elevation_m": 1346},
+}
+
+
+def _open_json_url(base_url: str, params: dict[str, object]) -> dict:
+    query = urlencode(params, doseq=True)
+    with urlopen(f"{base_url}?{query}", timeout=20) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+@st.cache_data(ttl=3600, show_spinner="Chargement météo...")
+def load_weather_data(
+    locations: tuple[str, ...] = tuple(WEATHER_LOCATIONS.keys()),
+    forecast_days: int = 10,
+    past_days: int = 2,
+) -> dict[str, pd.DataFrame]:
+    """Load hourly and daily weather snapshots from Open-Meteo."""
+    hourly_frames: list[pd.DataFrame] = []
+    daily_frames: list[pd.DataFrame] = []
+    errors: list[str] = []
+
+    hourly_vars = [
+        "temperature_2m",
+        "relative_humidity_2m",
+        "precipitation",
+        "cloud_cover",
+        "wind_speed_10m",
+        "wind_gusts_10m",
+        "shortwave_radiation",
+    ]
+    daily_vars = [
+        "temperature_2m_max",
+        "temperature_2m_min",
+        "precipitation_sum",
+        "precipitation_hours",
+        "sunshine_duration",
+        "wind_speed_10m_max",
+    ]
+
+    for name in locations:
+        meta = WEATHER_LOCATIONS.get(name)
+        if meta is None:
+            continue
+        try:
+            payload = _open_json_url(
+                "https://api.open-meteo.com/v1/forecast",
+                {
+                    "latitude": meta["lat"],
+                    "longitude": meta["lon"],
+                    "hourly": hourly_vars,
+                    "daily": daily_vars,
+                    "timezone": "Europe/Zurich",
+                    "past_days": int(past_days),
+                    "forecast_days": int(forecast_days),
+                },
+            )
+            hourly = payload.get("hourly", {})
+            daily = payload.get("daily", {})
+            if hourly and "time" in hourly:
+                hdf = pd.DataFrame(hourly)
+                hdf["time"] = pd.to_datetime(hdf["time"], errors="coerce")
+                hdf["time"] = hdf["time"].dt.tz_localize("Europe/Zurich", nonexistent="shift_forward", ambiguous="NaT")
+                hdf["location"] = name
+                hdf["elevation_m"] = meta["elevation_m"]
+                hourly_frames.append(hdf.dropna(subset=["time"]).set_index("time"))
+            if daily and "time" in daily:
+                ddf = pd.DataFrame(daily)
+                ddf["time"] = pd.to_datetime(ddf["time"], errors="coerce")
+                ddf["time"] = ddf["time"].dt.tz_localize("Europe/Zurich", nonexistent="shift_forward", ambiguous="NaT")
+                ddf["location"] = name
+                ddf["elevation_m"] = meta["elevation_m"]
+                daily_frames.append(ddf.dropna(subset=["time"]).set_index("time"))
+        except Exception as exc:
+            logger.warning("Weather load failed for %s: %s", name, exc)
+            errors.append(f"{name}: {exc}")
+
+    hourly_df = pd.concat(hourly_frames).sort_index() if hourly_frames else pd.DataFrame()
+    daily_df = pd.concat(daily_frames).sort_index() if daily_frames else pd.DataFrame()
+    return {
+        "hourly": hourly_df,
+        "daily": daily_df,
+        "errors": pd.DataFrame({"error": errors}) if errors else pd.DataFrame(columns=["error"]),
+    }
