@@ -112,8 +112,20 @@ if deals.empty and programme.empty:
 # the existing `render_actor_selector` helper that returns (choice, frame).
 # ---------------------------------------------------------------------------
 
-actors_in_data: list[str] = sorted(deals["actor"].dropna().unique().tolist()) if not deals.empty else []
-data_dict: dict[str, pd.DataFrame] = {a: deals[deals["actor"] == a].reset_index(drop=True) for a in actors_in_data}
+# Actor universe = union of deals + programme. An actor with programme but
+# no deals is still inspectable (the cockpit will show "Noch keine Absicherung"
+# cards and the load curve still renders).
+actor_set: set[str] = set()
+if not deals.empty and "actor" in deals.columns:
+    actor_set.update(deals["actor"].dropna().astype(str).unique())
+if not programme.empty and "actor" in programme.columns:
+    actor_set.update(programme["actor"].dropna().astype(str).unique())
+actors_in_data: list[str] = sorted(actor_set)
+
+data_dict: dict[str, pd.DataFrame] = {
+    a: deals[deals["actor"] == a].reset_index(drop=True) if not deals.empty else pd.DataFrame()
+    for a in actors_in_data
+}
 
 choice, _ = render_actor_selector(data_dict, key="cockpit_actor")
 selected_actor: str | None = None if choice == "Gesamter Pool" else choice
@@ -125,17 +137,12 @@ selected_actor: str | None = None if choice == "Gesamter Pool" else choice
 
 today = pd.Timestamp.now(tz="Europe/Zurich")
 
-# Compute hedge ratios for current year + diversification benefit (Pool view)
+# Compute hedge ratios for the selected actor (or pool when actor=None)
 hedge_metrics = compute_hedge_by_year(deals, programme, actor=selected_actor, today=today)
 
-# For the narrative, find a "headline year" : the next year with industry
-# corridor (Y-1) is the most operationally relevant.
+# Headline year = next calendar year (Y-1 industry corridor target)
 headline_year = today.year + 1
 headline_metrics = hedge_metrics.get(headline_year)
-
-# Diversification benefit (always pool view, even when filtered by actor —
-# this is the core sales pitch of being in the pool)
-pool_div = compute_pool_diversification(headline_year, deals, programme, forwards, today=today)
 
 actor_label = selected_actor if selected_actor else "Pool Deviwa"
 banner_lines: list[str] = []
@@ -159,16 +166,24 @@ elif headline_metrics is not None and headline_metrics.programme_mwh == 0:
         f"<span style='color:{FMV_GREY};'>Cal-{headline_year} : Programm noch nicht erfasst.</span>"
     )
 
-if (
-    np.isfinite(pool_div.diversification_benefit_eur)
-    and pool_div.diversification_benefit_eur > 0
-):
-    banner_lines.append(
-        f"<span style='color:{FMV_GREY};'>Pool-Diversifikations-Vorteil {headline_year} : </span>"
-        f"<strong style='color:{FMV_BLUE}; font-size:1.05rem;'>"
-        f"{fmt_chf(pool_div.diversification_benefit_eur, 0)} EUR "
-        f"({pool_div.diversification_pct:.0f} %)</strong>"
+# Pool-level diversification benefit — only show in pool view to avoid the
+# leak where the same EUR figure reappears under each actor card. When an
+# actor is selected, the line is suppressed (the dedicated pool page shows it).
+if selected_actor is None:
+    pool_div = compute_pool_diversification(
+        headline_year, deals, programme, forwards, today=today
     )
+    if (
+        np.isfinite(pool_div.diversification_benefit_eur)
+        and pool_div.diversification_benefit_eur > 0
+    ):
+        banner_lines.append(
+            f"<span style='color:{FMV_GREY};'>Pool-Diversifikations-Vorteil "
+            f"{headline_year} : </span>"
+            f"<strong style='color:{FMV_BLUE}; font-size:1.05rem;'>"
+            f"{fmt_chf(pool_div.diversification_benefit_eur, 0)} EUR "
+            f"({pool_div.diversification_pct:.0f} %)</strong>"
+        )
 
 st.markdown(
     f"""
@@ -210,11 +225,15 @@ for i, y in enumerate(display_years):
 st.markdown("")
 st.subheader("Detail pro Lieferjahr")
 
-# Year selector (pills) — defaults to next year if it has data, else current
+# Year selector (pills) — default to the first year >= today.year+1 that has
+# programme data (= the operationally most relevant year for hedging
+# decisions). Falls back to the current year, then to the first listed year.
 default_year_idx = 0
-for i, y in enumerate(display_years):
-    if hedge_metrics.get(y) and hedge_metrics[y].programme_mwh > 0:
-        default_year_idx = i
+preferred_order = [y for y in display_years if y >= today.year + 1] + [today.year]
+for y_pref in preferred_order:
+    yhm = hedge_metrics.get(y_pref)
+    if yhm is not None and yhm.programme_mwh > 0 and y_pref in display_years:
+        default_year_idx = display_years.index(y_pref)
         break
 
 selected_year = st.radio(

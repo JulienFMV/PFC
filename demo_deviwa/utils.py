@@ -635,7 +635,13 @@ def render_year_card(
     budget,  # BudgetProjection | None
     today=None,
 ) -> str:
-    """Render a single calendar-year card as raw HTML (st.markdown unsafe_allow_html).
+    """Render a single calendar-year card as a single-line HTML string.
+
+    Important : Streamlit's ``st.markdown(html, unsafe_allow_html=True)``
+    runs Markdown rendering BEFORE HTML pass-through. Lines indented by
+    four or more spaces are treated as Markdown code blocks, which would
+    surface raw HTML tags as text in the rendered card. We therefore emit
+    a single-line string with no leading whitespace.
 
     Discipline visuelle :
       - Max 5 chiffres : Hedge %, mini-gauge, Ø price vs marché, Open MWh,
@@ -644,34 +650,37 @@ def render_year_card(
         Absicherung" — informative, not alarming.
       - Color is driven by target_status (in_corridor / below / above).
     """
-    is_current = today is not None and year == pd.Timestamp.now(tz="Europe/Zurich").year if today is None else year == today.year
-    title_suffix = " (in delivery)" if is_current else ""
+    if today is None:
+        today = pd.Timestamp.now(tz="Europe/Zurich")
+    title_suffix = " (in delivery)" if year == today.year else ""
 
-    # No data at all → empty card
+    # ── No data → empty card ────────────────────────────────────────────────
     if metrics is None or (
         metrics.programme_mwh == 0 and metrics.hedged_mwh == 0
     ):
-        return f"""
-        <div style='background:#FAFBFD; border:1px solid #E5EBF4;
-                    border-radius:10px; padding:1.0rem 1.1rem; height:100%;
-                    box-shadow: 0 1px 2px rgba(14,31,61,0.04);'>
-            <div style='font-size:0.78rem; color:{FMV_GREY}; text-transform:uppercase;
-                        letter-spacing:0.08em;'>Cal-{year}{title_suffix}</div>
-            <div style='font-size:1.55rem; font-weight:700; color:{FMV_GREY}; margin-top:0.25rem;'>—</div>
-            <div style='font-size:0.85rem; color:{FMV_GREY}; margin-top:0.5rem; line-height:1.4;'>
-                Noch keine<br/>Absicherung
-            </div>
-        </div>
-        """
+        return (
+            f"<div style='background:#FAFBFD; border:1px solid #E5EBF4;"
+            f" border-radius:10px; padding:1.0rem 1.1rem; height:100%;"
+            f" box-shadow: 0 1px 2px rgba(14,31,61,0.04);'>"
+            f"<div style='font-size:0.78rem; color:{FMV_GREY};"
+            f" text-transform:uppercase; letter-spacing:0.08em;'>"
+            f"Cal-{year}{title_suffix}</div>"
+            f"<div style='font-size:1.55rem; font-weight:700; color:{FMV_GREY};"
+            f" margin-top:0.25rem;'>—</div>"
+            f"<div style='font-size:0.85rem; color:{FMV_GREY};"
+            f" margin-top:0.5rem; line-height:1.4;'>"
+            f"Noch keine<br/>Absicherung</div>"
+            f"</div>"
+        )
 
-    # Card with data
+    # ── Card with data ──────────────────────────────────────────────────────
     ratio = metrics.hedge_ratio_pct
     ratio_str = f"{ratio:.0f} %" if np.isfinite(ratio) else "—"
     color = _hedge_status_color(metrics.target_status)
 
-    # Mini-gauge horizontale (clipped à [0, 120%] pour l'affichage)
+    # Mini-gauge horizontale (clipped to [0, 120%] for the on-screen scale)
     gauge_pct = max(0.0, min(120.0, ratio if np.isfinite(ratio) else 0.0))
-    gauge_width = int(round(gauge_pct / 120.0 * 100))  # in % of card width
+    gauge_width = int(round(gauge_pct / 120.0 * 100))
 
     # Corridor markers
     corridor_html = ""
@@ -679,17 +688,20 @@ def render_year_card(
         low_pos = int(round(metrics.target_low_pct / 120.0 * 100))
         high_pos = int(round(metrics.target_high_pct / 120.0 * 100))
         corridor_html = (
-            f"<div style='position:absolute; left:{low_pos}%; top:-2px; bottom:-2px; "
-            f"width:1px; background:{FMV_NAVY}; opacity:0.4;'></div>"
-            f"<div style='position:absolute; left:{high_pos}%; top:-2px; bottom:-2px; "
-            f"width:1px; background:{FMV_NAVY}; opacity:0.4;'></div>"
+            f"<div style='position:absolute; left:{low_pos}%; top:-2px;"
+            f" bottom:-2px; width:1px; background:{FMV_NAVY};"
+            f" opacity:0.4;'></div>"
+            f"<div style='position:absolute; left:{high_pos}%; top:-2px;"
+            f" bottom:-2px; width:1px; background:{FMV_NAVY};"
+            f" opacity:0.4;'></div>"
         )
 
     target_text = ""
     if metrics.target_low_pct is not None:
         target_text = (
-            f"<div style='font-size:0.72rem; color:{FMV_GREY}; margin-top:0.15rem;'>"
-            f"Ziel {metrics.target_low_pct}-{metrics.target_high_pct} %</div>"
+            f"<div style='font-size:0.72rem; color:{FMV_GREY};"
+            f" margin-top:0.15rem;'>Ziel {metrics.target_low_pct}-"
+            f"{metrics.target_high_pct} %</div>"
         )
 
     # Ø Hedge price vs Markt
@@ -698,8 +710,7 @@ def render_year_card(
         markt = budget.forward_price_eur_mwh if budget else float("nan")
         delta = (
             metrics.avg_hedge_price_eur_mwh - markt
-            if np.isfinite(markt)
-            else float("nan")
+            if np.isfinite(markt) else float("nan")
         )
         delta_color = (
             FMV_GREEN if np.isfinite(delta) and delta < 0
@@ -708,44 +719,45 @@ def render_year_card(
         )
         markt_str = f" · Markt {markt:.1f}" if np.isfinite(markt) else ""
         delta_str = f" ({delta:+.1f})" if np.isfinite(delta) else ""
-        price_html = f"""
-            <div style='font-size:0.85rem; color:{FMV_NAVY}; margin-top:0.6rem;'>
-                Ø Hedge {metrics.avg_hedge_price_eur_mwh:.1f}<span style='color:{delta_color};'>{markt_str}{delta_str}</span>
-            </div>
-        """
+        price_html = (
+            f"<div style='font-size:0.85rem; color:{FMV_NAVY};"
+            f" margin-top:0.6rem;'>Ø Hedge {metrics.avg_hedge_price_eur_mwh:.1f}"
+            f"<span style='color:{delta_color};'>{markt_str}{delta_str}</span>"
+            f"</div>"
+        )
 
     # Budget projection line
     budget_html = ""
     if budget is not None and np.isfinite(budget.central_eur):
         band = abs(budget.p90_eur - budget.central_eur)
-        budget_html = f"""
-            <div style='font-size:0.85rem; color:{FMV_NAVY}; margin-top:0.35rem;'>
-                Budget {fmt_chf(budget.central_eur, 0)} EUR <span style='color:{FMV_GREY};'>± {fmt_chf(band, 0)}</span>
-            </div>
-        """
+        budget_html = (
+            f"<div style='font-size:0.85rem; color:{FMV_NAVY};"
+            f" margin-top:0.35rem;'>Budget {fmt_chf(budget.central_eur, 0)} EUR"
+            f" <span style='color:{FMV_GREY};'>± {fmt_chf(band, 0)}</span>"
+            f"</div>"
+        )
 
     open_html = (
-        f"<div style='font-size:0.85rem; color:{FMV_NAVY}; margin-top:0.35rem;'>"
-        f"Offen {fmt_mwh(metrics.open_mwh, 0)}</div>"
+        f"<div style='font-size:0.85rem; color:{FMV_NAVY};"
+        f" margin-top:0.35rem;'>Offen {fmt_mwh(metrics.open_mwh, 0)}</div>"
     )
 
-    return f"""
-    <div style='background:#FFFFFF; border:1px solid #E5EBF4;
-                border-radius:10px; padding:1.0rem 1.1rem; height:100%;
-                box-shadow: 0 1px 2px rgba(14,31,61,0.04);'>
-        <div style='font-size:0.78rem; color:{FMV_GREY}; text-transform:uppercase;
-                    letter-spacing:0.08em;'>Cal-{year}{title_suffix}</div>
-        <div style='font-size:1.55rem; font-weight:700; color:{color}; margin-top:0.25rem;'>{ratio_str}</div>
-        <div style='position:relative; height:8px; background:#EEF1F6; border-radius:4px; margin-top:0.35rem; overflow:visible;'>
-            <div style='width:{gauge_width}%; height:100%; background:{color}; border-radius:4px;'></div>
-            {corridor_html}
-        </div>
-        {target_text}
-        {price_html}
-        {open_html}
-        {budget_html}
-    </div>
-    """
+    return (
+        f"<div style='background:#FFFFFF; border:1px solid #E5EBF4;"
+        f" border-radius:10px; padding:1.0rem 1.1rem; height:100%;"
+        f" box-shadow: 0 1px 2px rgba(14,31,61,0.04);'>"
+        f"<div style='font-size:0.78rem; color:{FMV_GREY};"
+        f" text-transform:uppercase; letter-spacing:0.08em;'>"
+        f"Cal-{year}{title_suffix}</div>"
+        f"<div style='font-size:1.55rem; font-weight:700; color:{color};"
+        f" margin-top:0.25rem;'>{ratio_str}</div>"
+        f"<div style='position:relative; height:8px; background:#EEF1F6;"
+        f" border-radius:4px; margin-top:0.35rem; overflow:visible;'>"
+        f"<div style='width:{gauge_width}%; height:100%; background:{color};"
+        f" border-radius:4px;'></div>{corridor_html}</div>"
+        f"{target_text}{price_html}{open_html}{budget_html}"
+        f"</div>"
+    )
 
 
 def render_load_hedge_chart(
@@ -754,11 +766,25 @@ def render_load_hedge_chart(
     delivery_year: int,
     actor: "str | None",
 ):
-    """Two-panel Plotly figure : monthly net load (top) + hedge stack (bottom).
+    """Two-panel Plotly figure for the year detail view.
 
-    Top panel : monthly programme + actual (when available) for the year.
-    Bottom panel : monthly hedge volume from deals (signed: + Intake / − Withdrawal),
-                   with the open exposure shown as the difference vs programme.
+    Top panel — "Was Sie verbrauchen / produzieren" :
+      - Programme net (bars) : forecast monthly load.
+      - Real (line+markers, when available) : the realized monthly load.
+        Helps see where the forecast already proved right or wrong YTD.
+
+    Bottom panel — "Wie Sie abgesichert sind" :
+      - Programme reference (line) : the level we need to reach.
+      - Hedge (bars, green) : volume already locked in via FMV deals.
+      - Offene Position (bars, red, stacked on hedge) : the residual
+        exposure that fills the gap up to programme.
+        → Visually : hedge + offen = programme. The user sees in one
+        glance how much is locked vs how much is still at market risk.
+
+    For Withdrawal-net months (= net short, e.g. EVTL Cal-27 over-hedged)
+    the hedge bar can exceed programme. We surface that explicitly with a
+    grey "Sur-hedge" bar above programme rather than letting the stack
+    look misleading.
     """
     import plotly.graph_objects as go
     from plotly.subplots import make_subplots
@@ -766,116 +792,164 @@ def render_load_hedge_chart(
     fig = make_subplots(
         rows=2, cols=1,
         shared_xaxes=True,
-        vertical_spacing=0.06,
-        row_heights=[0.55, 0.45],
-        subplot_titles=("Was Sie verbrauchen / produzieren (MWh / Monat)", "Wie Sie abgesichert sind (MWh / Monat)"),
+        vertical_spacing=0.08,
+        row_heights=[0.5, 0.5],
+        subplot_titles=(
+            "Was Sie verbrauchen / produzieren (MWh / Monat)",
+            "Wie Sie abgesichert sind (MWh / Monat)",
+        ),
     )
 
-    # ── Top : programme by month (filter actor + year) ───────────────────────
+    # ── Compute monthly programme (used by both panels) ─────────────────────
+    monthly_prog = pd.Series(dtype=float)
+    monthly_actual = pd.Series(dtype=float)
     if not programme.empty and "timestamp" in programme.columns:
         prog_y = programme.copy()
         if actor is not None:
             prog_y = prog_y[prog_y["actor"] == actor]
         prog_y = prog_y[prog_y["timestamp"].dt.year == delivery_year]
         if not prog_y.empty:
-            # Drop tz before to_period (Period has no tz concept). Use the
-            # local-naïve representation — months are aligned on Europe/Zurich.
+            prog_y = prog_y.copy()
             prog_y["_month"] = prog_y["timestamp"].dt.tz_localize(None).dt.to_period("M").dt.to_timestamp()
             monthly_prog = prog_y.groupby("_month")["programme_mw"].sum()
-            fig.add_trace(
-                go.Bar(
-                    x=monthly_prog.index, y=monthly_prog.values,
-                    name="Programme net",
-                    marker_color=FMV_BLUE, opacity=0.85,
-                    hovertemplate="%{x|%b %Y}<br>Programme: %{y:.0f} MWh<extra></extra>",
-                ),
-                row=1, col=1,
-            )
-            # Actual (real) overlay
+            # Hide all-zero programme (means no forecast for that year yet)
+            if (monthly_prog == 0).all():
+                monthly_prog = pd.Series(dtype=float)
             if "actual_mw" in prog_y.columns and prog_y["actual_mw"].notna().any():
                 monthly_actual = prog_y.groupby("_month")["actual_mw"].sum()
-                # Filter to months with non-zero realized values
+                # Drop months that are still entirely zero (= future, no real yet)
                 monthly_actual = monthly_actual[monthly_actual != 0]
-                if not monthly_actual.empty:
-                    fig.add_trace(
-                        go.Scatter(
-                            x=monthly_actual.index, y=monthly_actual.values,
-                            mode="lines+markers", name="Real",
-                            line=dict(color=FMV_NAVY, width=2.5),
-                            marker=dict(size=7),
-                            hovertemplate="%{x|%b %Y}<br>Real: %{y:.0f} MWh<extra></extra>",
-                        ),
-                        row=1, col=1,
-                    )
 
-    # ── Bottom : hedge by month from deals ──────────────────────────────────
+    # ── Compute monthly hedge from deals ────────────────────────────────────
+    monthly_hedge = pd.Series(dtype=float)
     if not deals.empty:
         d = deals.copy()
         if actor is not None:
             d = d[d["actor"] == actor]
         d["_month"] = pd.to_datetime(d["month"], errors="coerce")
         d = d[d["_month"].dt.year == delivery_year]
-
         if not d.empty:
-            # Signed hedge volume per month
-            d["_signed_vol"] = pd.to_numeric(d["volume_sum"], errors="coerce").fillna(0.0).abs()
+            vol = pd.to_numeric(d["volume_sum"], errors="coerce").fillna(0.0).abs()
             scope_lower = d["scope"].astype(str).str.lower()
-            d.loc[scope_lower.str.contains("withdrawal", na=False), "_signed_vol"] *= -1
-
-            # Aggregate by month
+            signed = vol.where(scope_lower.str.contains("intake", na=False), -vol)
+            d["_signed_vol"] = signed
             monthly_hedge = d.groupby("_month")["_signed_vol"].sum()
 
-            # Color : positive (hedge) green, negative (sold short) red
-            colors = [FMV_GREEN if v >= 0 else FMV_RED for v in monthly_hedge.values]
+    # ── Top panel : programme bars + real overlay ──────────────────────────
+    if not monthly_prog.empty:
+        fig.add_trace(
+            go.Bar(
+                x=monthly_prog.index, y=monthly_prog.values,
+                name="Programme net",
+                marker_color=FMV_BLUE, opacity=0.85,
+                hovertemplate="%{x|%b %Y}<br>Programme: %{y:.0f} MWh<extra></extra>",
+            ),
+            row=1, col=1,
+        )
+    if not monthly_actual.empty:
+        fig.add_trace(
+            go.Scatter(
+                x=monthly_actual.index, y=monthly_actual.values,
+                mode="lines+markers", name="Real",
+                line=dict(color=FMV_NAVY, width=2.5),
+                marker=dict(size=7),
+                hovertemplate="%{x|%b %Y}<br>Real: %{y:.0f} MWh<extra></extra>",
+            ),
+            row=1, col=1,
+        )
+
+    # ── Bottom panel : hedge stacked + open stacked + programme line ──────
+    # Align all series on a common monthly axis
+    all_months = monthly_prog.index.union(monthly_hedge.index)
+    if not all_months.empty:
+        prog_a = monthly_prog.reindex(all_months, fill_value=0.0).astype(float)
+        hedge_a = monthly_hedge.reindex(all_months, fill_value=0.0).astype(float)
+
+        # Decompose : hedge_within = clipped to [0, programme] (the part that
+        # actually covers programme), over_hedge = max(hedge − programme, 0)
+        # (the part that exceeds programme, = sold-short via Withdrawal).
+        # offene_position = max(programme − hedge, 0) (residual gap).
+        hedge_within = np.minimum(np.maximum(hedge_a, 0.0), prog_a.where(prog_a > 0, 0.0))
+        offene = np.maximum(prog_a - hedge_a, 0.0)
+        # Net-short component (hedge above programme, OR negative net hedge
+        # = client sold more than they consume)
+        over_hedge = np.maximum(hedge_a - prog_a, 0.0)
+        # When hedge is negative (short position) treat its magnitude as
+        # "Sur-hedge / Verkauf-Position" displayed below the zero axis
+        net_short = np.minimum(hedge_a, 0.0).abs()
+
+        # Stack 1 : hedge_within (covers part of programme)
+        fig.add_trace(
+            go.Bar(
+                x=all_months, y=hedge_within,
+                name="Hedge (FMV)",
+                marker_color=FMV_GREEN, opacity=0.88,
+                hovertemplate="%{x|%b %Y}<br>Hedge: %{y:.0f} MWh<extra></extra>",
+            ),
+            row=2, col=1,
+        )
+        # Stack 2 : open position (gap to programme, on top of hedge)
+        fig.add_trace(
+            go.Bar(
+                x=all_months, y=offene,
+                name="Offene Position",
+                marker_color="#E08A2B", opacity=0.85,
+                hovertemplate="%{x|%b %Y}<br>Offen: %{y:.0f} MWh<extra></extra>",
+            ),
+            row=2, col=1,
+        )
+        # Stack 3 : over-hedge (bars beyond programme, flagged grey)
+        if (over_hedge > 0).any():
             fig.add_trace(
                 go.Bar(
-                    x=monthly_hedge.index, y=monthly_hedge.values,
-                    name="Hedge net (Intake − Withdrawal)",
-                    marker_color=colors, opacity=0.85,
-                    hovertemplate="%{x|%b %Y}<br>Hedge: %{y:.0f} MWh<extra></extra>",
+                    x=all_months, y=over_hedge,
+                    name="Sur-Hedge",
+                    marker_color="#94A3B8", opacity=0.75,
+                    hovertemplate="%{x|%b %Y}<br>Sur-Hedge: %{y:.0f} MWh<extra></extra>",
+                ),
+                row=2, col=1,
+            )
+        # Net-short (negative bars below zero, when hedge is itself negative
+        # = client sold short with FMV)
+        if (net_short > 0).any():
+            fig.add_trace(
+                go.Bar(
+                    x=all_months, y=-net_short,
+                    name="Verkauf (Withdrawal)",
+                    marker_color=FMV_RED, opacity=0.78,
+                    hovertemplate="%{x|%b %Y}<br>Verkauf: %{y:.0f} MWh<extra></extra>",
+                ),
+                row=2, col=1,
+            )
+        # Programme reference line
+        if not monthly_prog.empty:
+            fig.add_trace(
+                go.Scatter(
+                    x=monthly_prog.index, y=monthly_prog.values,
+                    mode="lines+markers", name="Programme (Ziel)",
+                    line=dict(color=FMV_NAVY, width=2.2, dash="solid"),
+                    marker=dict(size=6),
+                    hovertemplate="%{x|%b %Y}<br>Programme: %{y:.0f} MWh<extra></extra>",
                 ),
                 row=2, col=1,
             )
 
-            # Open exposure overlay
-            if "_month" in d.columns:
-                # Compute open per month = programme - hedge
-                if not programme.empty:
-                    prog_for_year = programme.copy()
-                    if actor is not None:
-                        prog_for_year = prog_for_year[prog_for_year["actor"] == actor]
-                    prog_for_year = prog_for_year[prog_for_year["timestamp"].dt.year == delivery_year]
-                    if not prog_for_year.empty:
-                        prog_for_year["_month"] = prog_for_year["timestamp"].dt.tz_localize(None).dt.to_period("M").dt.to_timestamp()
-                        monthly_prog2 = prog_for_year.groupby("_month")["programme_mw"].sum()
-                        # Align indexes
-                        all_months = monthly_prog2.index.union(monthly_hedge.index)
-                        prog_aligned = monthly_prog2.reindex(all_months, fill_value=0)
-                        hedge_aligned = monthly_hedge.reindex(all_months, fill_value=0)
-                        open_monthly = prog_aligned - hedge_aligned
-                        fig.add_trace(
-                            go.Scatter(
-                                x=open_monthly.index, y=open_monthly.values,
-                                mode="lines+markers", name="Offen (Programme − Hedge)",
-                                line=dict(color=FMV_RED, width=2, dash="dot"),
-                                marker=dict(size=6),
-                                hovertemplate="%{x|%b %Y}<br>Offen: %{y:.0f} MWh<extra></extra>",
-                            ),
-                            row=2, col=1,
-                        )
-
     fig.update_layout(
-        height=520,
+        height=560,
         margin=dict(l=20, r=20, t=50, b=20),
         plot_bgcolor="white", paper_bgcolor="white",
         legend=dict(orientation="h", y=-0.08),
         hovermode="x unified",
         bargap=0.2,
+        barmode="stack",  # the bottom panel needs stack mode
     )
     fig.update_xaxes(gridcolor="#EEF1F6", row=1, col=1)
     fig.update_xaxes(gridcolor="#EEF1F6", row=2, col=1)
     fig.update_yaxes(title_text="MWh", gridcolor="#EEF1F6", row=1, col=1)
-    fig.update_yaxes(title_text="MWh", gridcolor="#EEF1F6", row=2, col=1, zeroline=True, zerolinewidth=1, zerolinecolor=FMV_GREY)
+    fig.update_yaxes(
+        title_text="MWh", gridcolor="#EEF1F6", row=2, col=1,
+        zeroline=True, zerolinewidth=1, zerolinecolor=FMV_GREY,
+    )
     return fig
 
 
@@ -982,23 +1056,60 @@ def render_hedge_ladder(
         secondary_y=True,
     )
 
-    # Cal-Y forward history overlay (filtered)
+    # Forward history overlay : Cal-Y when liquid (future year), or the
+    # available quarterlies (Q01..Q04) when the calendar contract has retired
+    # (= current year case). Same fallback logic as portfolio_yearly's
+    # get_forward_year_proxy, applied tenor by tenor for the time series.
     if not forwards.empty and "product" in forwards.columns:
-        fwd_y = forwards[
-            forwards["product"].astype(str).str.contains(f"Y01_{delivery_year}", na=False, regex=False)
-            & (forwards["load_type"].astype(str).str.lower() == "base")
+        fwd_base = forwards[
+            forwards["load_type"].astype(str).str.lower() == "base"
         ].copy()
-        if not fwd_y.empty:
-            fwd_y = fwd_y.sort_values("date")
+
+        cal_match = fwd_base[
+            fwd_base["product"].astype(str).str.contains(
+                f"Y01_{delivery_year}", na=False, regex=False
+            )
+        ].sort_values("date")
+        if not cal_match.empty:
             fig.add_trace(
                 go.Scatter(
-                    x=fwd_y["date"], y=fwd_y["price"],
-                    mode="lines", name=f"Cal-{delivery_year} Forward (CH BASE)",
+                    x=cal_match["date"], y=cal_match["price"],
+                    mode="lines", name=f"Cal-{delivery_year} Forward",
                     line=dict(color="#888888", width=1.2),
-                    hovertemplate="%{x|%d.%m.%Y}<br>Cal-" + str(delivery_year) + ": %{y:.2f}<extra></extra>",
+                    hovertemplate="%{x|%d.%m.%Y}<br>Cal-"
+                    + str(delivery_year) + ": %{y:.2f} EUR/MWh<extra></extra>",
                 ),
                 secondary_y=True,
             )
+        else:
+            # Cal-Y absent (current year) → plot each available quarterly
+            # so the user still sees a market reference. Use distinguishable
+            # shades of grey so the eye groups them.
+            quarter_shades = {
+                1: "#B5BFCB",
+                2: "#9CA9BA",
+                3: "#7E8DA1",
+                4: "#5E6E85",
+            }
+            for q in (1, 2, 3, 4):
+                q_match = fwd_base[
+                    fwd_base["product"].astype(str).str.contains(
+                        f"Q0{q}_{delivery_year}", na=False, regex=False
+                    )
+                ].sort_values("date")
+                if q_match.empty:
+                    continue
+                fig.add_trace(
+                    go.Scatter(
+                        x=q_match["date"], y=q_match["price"],
+                        mode="lines",
+                        name=f"Q{q}-{delivery_year}",
+                        line=dict(color=quarter_shades[q], width=1.0, dash="dot"),
+                        hovertemplate="%{x|%d.%m.%Y}<br>Q" + str(q) + "-"
+                        + str(delivery_year) + ": %{y:.2f} EUR/MWh<extra></extra>",
+                    ),
+                    secondary_y=True,
+                )
 
     fig.update_layout(
         height=420,
