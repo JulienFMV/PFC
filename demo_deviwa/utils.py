@@ -512,7 +512,11 @@ def render_cache_status() -> None:
             all_issues.extend(v.get("quality_issues", []) or [])
         most_recent = max(last_extracts) if last_extracts else None
         if most_recent:
-            color = FMV_GREEN if (pd.Timestamp.utcnow() - pd.Timestamp(most_recent)).total_seconds() < 86400 else FMV_ACCENT
+            now_utc = pd.Timestamp.now(tz="UTC")
+            extracted_ts = pd.Timestamp(most_recent)
+            if extracted_ts.tzinfo is None:
+                extracted_ts = extracted_ts.tz_localize("UTC")
+            color = FMV_GREEN if (now_utc - extracted_ts).total_seconds() < 86400 else FMV_ACCENT
             st.sidebar.markdown(
                 f"<div style='color:{color}; font-size:0.85rem;'>"
                 f"● Cache: {most_recent.strftime('%d.%m.%Y %H:%M')}</div>",

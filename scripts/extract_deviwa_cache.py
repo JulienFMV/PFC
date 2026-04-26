@@ -249,7 +249,12 @@ class SchemaError(ValueError):
 REQUIRED_DEALS_RAW_COLS = {
     "Counterparty", "Asset Type", "Deal", "Deal Trade Date",
     "Deal Delivery Start", "Deal Delivery End", "Product", "Scope",
-    "Date", "Volume (Sum)", "Volume (Mean)",
+    "Date",
+    # Volume — gross + net mean/sum (net colonnes utilisées par le scope flip)
+    "Volume (Sum)", "Volume (Mean)", "Volume (Net) (Sum)", "Volume (Net) (Mean)",
+    # Market value — utilisé par le scope flip (sign flip)
+    "Market Value (Sum)", "Market Value (Mean)",
+    # Notional + PnL
     "Notional (Sum)", "Notional (Mean)", "PNL (Sum)", "PNL (Mean)",
 }
 
@@ -684,17 +689,26 @@ def run_extract_step(
         return ExtractResult(file_kind=file_kind, action="no_source")
 
     fp = fingerprint(src.path)
-    prior = meta.get(file_kind, {}).get("source_fingerprint")
+    prior_meta = meta.get(file_kind, {})
+    prior = prior_meta.get("source_fingerprint")
     cache_paths_exist = all((CACHE_DIR / fname).exists() for _, fname in output_specs)
+    # Cas spécial : source connue comme vide dans le passé pour ce fingerprint.
+    # On ne re-extrait pas — le fichier source n'a juste pas de contenu utile.
+    prior_was_empty = (
+        prior_meta.get("n_rows_primary", -1) == 0
+        and prior_meta.get("source_empty_sentinel") is True
+    )
 
-    if not force and cache_paths_exist and fingerprints_match(prior, fp):
+    if not force and fingerprints_match(prior, fp) and (cache_paths_exist or prior_was_empty):
         elapsed = (time.perf_counter() - t0) * 1000
         log.info("cache_hit", extra={
             "file_kind": file_kind, "source_kind": src.kind,
             "elapsed_ms": round(elapsed, 1),
+            "empty_sentinel": prior_was_empty,
         })
         return ExtractResult(
-            file_kind=file_kind, action="skipped_up_to_date",
+            file_kind=file_kind,
+            action="skipped_up_to_date",
             source_path=str(src.path), source_kind=src.kind,
             cache_path=str(CACHE_DIR / output_specs[0][1]),
             elapsed_ms=elapsed,
@@ -756,7 +770,11 @@ def run_extract_step(
         "n_quality_issues": len(quality_all),
     })
 
-    # Update meta
+    # Update meta — y compris pour les sources vides (sentinel pour éviter de
+    # re-extraire à chaque run quand le source xlsx est vide localement).
+    primary_frame = frames.get(output_specs[0][0], pd.DataFrame())
+    source_empty_sentinel = primary_frame is None or primary_frame.empty
+
     meta[file_kind] = {
         "source_path": str(src.path),
         "source_kind": src.kind,
@@ -766,6 +784,7 @@ def run_extract_step(
         "n_rows_primary": primary_rows,
         "size_kb_primary": primary_size // 1024,
         "quality_issues": quality_all,
+        "source_empty_sentinel": source_empty_sentinel,
     }
 
     return ExtractResult(
@@ -809,34 +828,46 @@ def run_all(force: bool = False, quiet: bool = False) -> list[ExtractResult]:
         meta=meta, log=log, force=force,
     ))
 
-    # Vérifications additionnelles spécifiques aux sous-frames Deviwa
-    edsh_path = CACHE_DIR / "deviwa_edsh_suppliers.parquet"
-    if edsh_path.exists():
-        try:
-            df_edsh = pd.read_parquet(edsh_path)
-            issues_edsh = quality_check_edsh_suppliers(df_edsh)
-            for it in issues_edsh:
-                log.warning("quality_issue", extra={"file_kind": "deviwa_edsh_suppliers", "issue": it})
-            if "deviwa_deals" in meta:
-                meta["deviwa_deals"]["quality_issues"] = (
-                    meta["deviwa_deals"].get("quality_issues", []) + issues_edsh
-                )
-        except Exception as e:
-            log.warning("post_quality_check_failed", extra={"file_kind": "deviwa_edsh_suppliers", "error": str(e)})
+    # Vérifications additionnelles spécifiques aux sous-frames Deviwa.
+    # Important : on REMPLACE quality_issues, on n'append pas — sinon la liste
+    # grandit indéfiniment à chaque cache-hit run (re-lecture du parquet).
+    if "deviwa_deals" in meta:
+        deals_primary_issues = list(meta["deviwa_deals"].get("quality_issues", []) or [])
+        # On garde uniquement les issues primaires (deals), on recalcule les
+        # sous-frames issues à frais sans accumulation.
+        # Note : deals_primary_issues a été rempli à l'extract initial.
+        sub_issues: list[str] = []
 
-    prog_path = CACHE_DIR / "deviwa_programme.parquet"
-    if prog_path.exists():
-        try:
-            df_prog = pd.read_parquet(prog_path)
-            issues_prog = quality_check_programme(df_prog)
-            for it in issues_prog:
-                log.warning("quality_issue", extra={"file_kind": "deviwa_programme", "issue": it})
-            if "deviwa_deals" in meta:
-                meta["deviwa_deals"]["quality_issues"] = (
-                    meta["deviwa_deals"].get("quality_issues", []) + issues_prog
-                )
-        except Exception as e:
-            log.warning("post_quality_check_failed", extra={"file_kind": "deviwa_programme", "error": str(e)})
+        edsh_path = CACHE_DIR / "deviwa_edsh_suppliers.parquet"
+        if edsh_path.exists():
+            try:
+                df_edsh = pd.read_parquet(edsh_path)
+                issues_edsh = quality_check_edsh_suppliers(df_edsh)
+                for it in issues_edsh:
+                    log.warning("quality_issue", extra={"file_kind": "deviwa_edsh_suppliers", "issue": it})
+                sub_issues.extend(issues_edsh)
+            except Exception as e:
+                log.warning("post_quality_check_failed", extra={"file_kind": "deviwa_edsh_suppliers", "error": str(e)})
+
+        prog_path = CACHE_DIR / "deviwa_programme.parquet"
+        if prog_path.exists():
+            try:
+                df_prog = pd.read_parquet(prog_path)
+                issues_prog = quality_check_programme(df_prog)
+                for it in issues_prog:
+                    log.warning("quality_issue", extra={"file_kind": "deviwa_programme", "issue": it})
+                sub_issues.extend(issues_prog)
+            except Exception as e:
+                log.warning("post_quality_check_failed", extra={"file_kind": "deviwa_programme", "error": str(e)})
+
+        # Filtrer les issues "deals primaires" en gardant uniquement les non-EDSH
+        # et non-programme (i.e. celles de quality_check_deals), puis appendre
+        # les sub_issues fraîchement calculées. Idempotent.
+        primary_only = [
+            it for it in deals_primary_issues
+            if not it.startswith("edsh_suppliers:") and not it.startswith("programme:")
+        ]
+        meta["deviwa_deals"]["quality_issues"] = primary_only + sub_issues
 
     # ── EEX yearly ─────────────────────────────────────────────────────
     def eex_extractor(p: Path) -> pd.DataFrame:
