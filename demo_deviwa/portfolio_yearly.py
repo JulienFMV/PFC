@@ -350,7 +350,16 @@ def compute_hedge_by_year(
 
     # ── Programme aggregation per year ──────────────────────────────────────
     # Each programme row represents one hour. Sum of programme_mw × 1h = MWh.
+    #
+    # Pool case (actor=None) : we group by (actor, year) BEFORE summing.
+    # This is required so the per-actor carry-forward extrapolation below
+    # can fire for actors whose programme stops earlier than the cockpit
+    # horizon (e.g. EVTL has programme up to 2028 but deals on 2029 :
+    # without per-actor carry-forward, EVTL's 2029 programme contribution
+    # is lost, the pool sum understates the load, and the hedge ratio
+    # gets falsely inflated for that year).
     prog_yearly: dict[int, float] = {}
+    prog_actor_yearly: dict[str, dict[int, float]] = {}
     if (
         prog_f is not None
         and not prog_f.empty
@@ -359,13 +368,21 @@ def compute_hedge_by_year(
     ):
         prog_y = prog_f[["timestamp", "programme_mw"]].copy()
         prog_y["_year"] = prog_y["timestamp"].dt.year
-        agg = prog_y.groupby("_year")["programme_mw"].sum()
-        prog_yearly = {int(y): float(v) for y, v in agg.items() if pd.notna(v)}
+        if actor is None and "actor" in prog_f.columns:
+            prog_y["actor"] = prog_f["actor"].values
+            agg2 = prog_y.groupby(["actor", "_year"])["programme_mw"].sum()
+            for (a, y), v in agg2.items():
+                if pd.notna(v):
+                    prog_actor_yearly.setdefault(str(a), {})[int(y)] = float(v)
+        else:
+            agg = prog_y.groupby("_year")["programme_mw"].sum()
+            prog_yearly = {int(y): float(v) for y, v in agg.items() if pd.notna(v)}
 
     # ── Deals aggregation per year ──────────────────────────────────────────
     # Year is derived from `month`. Each row already represents the contribution
     # of one deal to one month, so per-year aggregation is a simple sum.
     deal_yearly: dict[int, dict] = {}
+    deal_actor_years: dict[str, set[int]] = {}
     if (
         deals_f is not None
         and not deals_f.empty
@@ -404,11 +421,23 @@ def compute_hedge_by_year(
                     "n_deals": int(g["deal"].nunique()) if "deal" in g.columns else len(g),
                 }
 
+            # Per-actor deal-years map (used at pool level to drive
+            # per-actor programme carry-forward).
+            if actor is None and "actor" in d.columns:
+                for (a, y), _ in d.groupby(["actor", "_year"]):
+                    deal_actor_years.setdefault(str(a), set()).add(int(y))
+
     # ── Determine the set of years to emit ──────────────────────────────────
     # Default : years with either programme or deals data.
     # If include_years is given, ALL of them get an entry (filled with zero
     # if no data and extrapolation cannot fill).
-    base_years = set(prog_yearly.keys()) | set(deal_yearly.keys())
+    if actor is None and prog_actor_yearly:
+        prog_year_keys: set[int] = set()
+        for years_map in prog_actor_yearly.values():
+            prog_year_keys |= set(years_map.keys())
+    else:
+        prog_year_keys = set(prog_yearly.keys())
+    base_years = prog_year_keys | set(deal_yearly.keys())
     if include_years is not None:
         all_years = sorted(set(include_years) | base_years)
     else:
@@ -424,22 +453,59 @@ def compute_hedge_by_year(
     # to 2027-2029 would inject ~190 GWh of phantom long exposure into
     # the pool risk and inflate VaR by ~15× without any underlying
     # commercial truth (RELL hasn't told us they need that energy).
+    #
+    # Pool case (actor=None) : extrapolation is per-actor — each actor's
+    # programme is carry-forwarded only within the years where THAT actor
+    # has deals, then we sum across actors. Doing it on the aggregated
+    # pool series would miss extrapolation for actors whose programme
+    # stops earlier than the cockpit horizon (e.g. EVTL has programme
+    # up to 2028, deals on 2029 : naïve pool aggregation drops EVTL's
+    # 2029 programme entirely and over-states the pool hedge ratio).
     extrapolated_years: set[int] = set()
     if extrapolate_missing_programme:
-        years_with_real_prog = sorted(
-            y for y, v in prog_yearly.items() if v and v > 0
-        )
-        years_with_deals = set(deal_yearly.keys())
-        for y in all_years:
-            if prog_yearly.get(y, 0.0) > 0:
-                continue  # actual data, no extrapolation needed
-            if y not in years_with_deals:
-                continue  # no commitment from the actor → don't invent a programme
-            sources = [s for s in years_with_real_prog if s < y]
-            if sources:
-                src_year = max(sources)
-                prog_yearly[y] = prog_yearly[src_year]
-                extrapolated_years.add(y)
+        if actor is None and prog_actor_yearly:
+            # Per-actor carry-forward, then re-sum into prog_yearly.
+            for a, years_map in prog_actor_yearly.items():
+                actor_years_with_real = sorted(
+                    y for y, v in years_map.items() if v and v > 0
+                )
+                actor_deal_years = deal_actor_years.get(a, set())
+                for y in all_years:
+                    if years_map.get(y, 0.0) > 0:
+                        continue
+                    if y not in actor_deal_years:
+                        continue
+                    sources = [s for s in actor_years_with_real if s < y]
+                    if sources:
+                        years_map[y] = years_map[max(sources)]
+                        extrapolated_years.add(y)
+            # Recompute the aggregated prog_yearly from the patched per-actor map.
+            prog_yearly = {}
+            for years_map in prog_actor_yearly.values():
+                for y, v in years_map.items():
+                    prog_yearly[y] = prog_yearly.get(y, 0.0) + v
+        else:
+            years_with_real_prog = sorted(
+                y for y, v in prog_yearly.items() if v and v > 0
+            )
+            years_with_deals = set(deal_yearly.keys())
+            for y in all_years:
+                if prog_yearly.get(y, 0.0) > 0:
+                    continue
+                if y not in years_with_deals:
+                    continue
+                sources = [s for s in years_with_real_prog if s < y]
+                if sources:
+                    src_year = max(sources)
+                    prog_yearly[y] = prog_yearly[src_year]
+                    extrapolated_years.add(y)
+    elif actor is None and prog_actor_yearly:
+        # Even without extrapolation, materialize prog_yearly from the
+        # per-actor map so the rest of the function works uniformly.
+        prog_yearly = {}
+        for years_map in prog_actor_yearly.values():
+            for y, v in years_map.items():
+                prog_yearly[y] = prog_yearly.get(y, 0.0) + v
 
     # ── Combine and emit YearlyHedgeMetrics per year ────────────────────────
     out: dict[int, YearlyHedgeMetrics] = {}

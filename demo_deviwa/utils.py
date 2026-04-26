@@ -623,7 +623,7 @@ def _hedge_status_color(status: str) -> str:
     return {
         "in_corridor": FMV_GREEN,
         "below": FMV_RED,
-        "above": FMV_BLUE,
+        "above": FMV_ACCENT,
         "no_data": FMV_GREY,
         "n/a": FMV_GREY,
     }.get(status, FMV_GREY)
@@ -698,10 +698,19 @@ def render_year_card(
 
     target_text = ""
     if metrics.target_low_pct is not None:
+        status_hint = ""
+        if metrics.target_status == "above":
+            status_hint = (
+                f" <span style='color:{FMV_ACCENT}; font-weight:600;'>· über Ziel</span>"
+            )
+        elif metrics.target_status == "below":
+            status_hint = (
+                f" <span style='color:{FMV_RED}; font-weight:600;'>· unter Ziel</span>"
+            )
         target_text = (
             f"<div style='font-size:0.72rem; color:{FMV_GREY};"
             f" margin-top:0.15rem;'>Ziel {metrics.target_low_pct}-"
-            f"{metrics.target_high_pct} %</div>"
+            f"{metrics.target_high_pct} %{status_hint}</div>"
         )
 
     # "Hochrechnung" badge when programme was carry-forward extrapolated
