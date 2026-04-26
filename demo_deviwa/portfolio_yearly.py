@@ -12,8 +12,11 @@ State-of-the-art utility ERM metrics, computed per **delivery year**:
     average price as the deals were executed. Useful overlaid on Cal-Y forward
     history to answer "did we hedge well?".
   - **Budget projection** : locked-in cost (notional of executed deals) +
-    at-risk band (open exposure × current Cal-Y forward, ± P10/P90 from a
-    20 %-annualized volatility assumption — POC simplification).
+    at-risk band (open exposure × current year forward proxy, ± P10/P90
+    from a 20 %-annualized volatility assumption — POC simplification).
+    The year price proxy uses the Cal-Y contract when liquid, falling back
+    to a quarter-hour-weighted average of remaining ``Q*_Y`` contracts
+    once Cal-Y enters delivery (= current calendar year case).
 
 **IMPORTANT — semantic scope of the hedge ratio :**
 
@@ -522,6 +525,104 @@ def compute_hedge_ladder(
 # Forward price lookup
 # ---------------------------------------------------------------------------
 
+def _quarter_hours(year: int, quarter: int) -> int:
+    """Number of hours in a calendar quarter (handles 28/29-Feb)."""
+    if quarter == 1:
+        start, end = pd.Timestamp(year=year, month=1, day=1), pd.Timestamp(year=year, month=4, day=1)
+    elif quarter == 2:
+        start, end = pd.Timestamp(year=year, month=4, day=1), pd.Timestamp(year=year, month=7, day=1)
+    elif quarter == 3:
+        start, end = pd.Timestamp(year=year, month=7, day=1), pd.Timestamp(year=year, month=10, day=1)
+    elif quarter == 4:
+        start, end = pd.Timestamp(year=year, month=10, day=1), pd.Timestamp(year=year + 1, month=1, day=1)
+    else:
+        raise ValueError(f"quarter must be 1..4, got {quarter}")
+    return int((end - start).total_seconds() // 3600)
+
+
+def _latest_tenor_price(
+    forwards: pd.DataFrame,
+    pattern: str,
+) -> float:
+    """Latest settle for the first product whose code contains ``pattern``."""
+    df = forwards[forwards["product"].astype(str).str.contains(pattern, na=False, regex=False)]
+    df = df.dropna(subset=["price"])
+    if df.empty:
+        return float("nan")
+    if "date" in df.columns:
+        df = df.sort_values("date")
+    return float(df["price"].iloc[-1])
+
+
+def get_forward_year_proxy(
+    forwards: pd.DataFrame,
+    delivery_year: int,
+    market: str = "CH",
+    load_type: str = "base",
+) -> float:
+    """Best available forward proxy for the **whole calendar year**.
+
+    EEX retires the Cal-Y (``Y01_{YEAR}``) contract once the year enters
+    delivery, so for the current year only quarterlies/monthlies remain.
+    This function uses a layered fallback :
+
+      1. If ``Y01_{year}`` Cal contract exists → use its latest settle.
+      2. Else : volume-weighted average of available ``Q01..Q04_{year}``
+         contracts, weighted by the number of calendar hours in each
+         quarter (handles leap years correctly via :func:`_quarter_hours`).
+         Quarters without an available forward are silently dropped from
+         the average (typical mid-year case : Q1, Q2 already settled, only
+         Q3 & Q4 remain liquid).
+      3. Else : NaN.
+
+    The function does NOT use realized spot for already-elapsed sub-periods
+    (Jan-Apr 2026 in the example case), to keep the proxy purely
+    forward-based for the budget projection. The dashboard layer can add
+    a "current year" callout that combines spot YTD + this forward proxy
+    if higher accuracy is needed for headline numbers.
+
+    Args:
+        forwards: long-format with columns ``date, market, product, load_type, price``.
+        delivery_year: e.g. 2026 (current) or 2027 (future).
+        market: market filter (default "CH").
+        load_type: "base" or "peak" (default "base").
+
+    Returns:
+        Best-available forward price as a float, NaN if no Cal/Q tenor present.
+    """
+    if forwards is None or forwards.empty:
+        return float("nan")
+
+    df = forwards
+    if "market" in df.columns:
+        df = df[df["market"].astype(str).str.upper() == market.upper()]
+    if "load_type" in df.columns:
+        df = df[df["load_type"].astype(str).str.lower() == load_type.lower()]
+    if df.empty or "product" not in df.columns or "price" not in df.columns:
+        return float("nan")
+
+    # 1. Cal-Y if available
+    cal = _latest_tenor_price(df, f"Y01_{delivery_year}")
+    if np.isfinite(cal):
+        return cal
+
+    # 2. Weighted average of remaining quarterlies
+    weighted_sum = 0.0
+    total_hours = 0
+    for q in (1, 2, 3, 4):
+        q_price = _latest_tenor_price(df, f"Q0{q}_{delivery_year}")
+        if not np.isfinite(q_price):
+            continue
+        h = _quarter_hours(delivery_year, q)
+        weighted_sum += q_price * h
+        total_hours += h
+    if total_hours > 0:
+        return weighted_sum / total_hours
+
+    # 3. Nothing available
+    return float("nan")
+
+
 def get_forward_cal_price(
     forwards: pd.DataFrame,
     delivery_year: int,
@@ -609,7 +710,9 @@ def compute_budget_projection(
     out: dict[int, BudgetProjection] = {}
 
     for y, m in metrics.items():
-        fwd_price = get_forward_cal_price(forwards, y)
+        # Year price proxy : Cal-Y for future years, quarterly-weighted average
+        # for the current year (Cal-Y already in delivery, no longer tradeable).
+        fwd_price = get_forward_year_proxy(forwards, y)
 
         # Mid-year delivery anchor (1 July of year Y in the same tz as today)
         delivery_mid = pd.Timestamp(year=y, month=7, day=1, tz=today.tz)
