@@ -55,6 +55,7 @@ Z_BY_CONF: dict[float, float] = {
     0.95: 1.6449,
     0.975: 1.9600,
     0.99: 2.3263,
+    0.999: 3.0902,  # extends the table so very-high CL doesn't silently clip to 0.99
 }
 
 # ES factor = φ(z) / (1 − α), where φ is the standard normal PDF.
@@ -143,9 +144,10 @@ class PoolRiskMetrics:
 def _z_score(confidence_level: float) -> float:
     """Return the z-score for a 1-tailed VaR confidence level.
 
-    Linearly interpolates between table values for unsupported levels.
-    Outside [0.50, 0.999] the function clips to the table extremes —
-    these levels would be nonsensical for a VaR anyway.
+    Linearly interpolates between :data:`Z_BY_CONF` entries (0.90, 0.95,
+    0.975, 0.99, 0.999) for unsupported levels. Outside the table range
+    the function clips to the table extremes ; under-/over-shooting these
+    bounds would not be meaningful for a VaR anyway.
     """
     cl = float(confidence_level)
     if cl in Z_BY_CONF:
@@ -164,11 +166,18 @@ def _z_score(confidence_level: float) -> float:
 
 
 def _years_to_delivery(year: int, today: pd.Timestamp) -> float:
-    """Years from ``today`` to 1 July of delivery ``year``, floored at 0.25.
+    """Years from ``today`` to 1 July of delivery ``year``.
 
-    Floor avoids σ → 0 for the current delivery year, which still has
-    real price uncertainty until the last day of the year.
+    Conventions :
+      - Past delivery years (``year < today.year``) → 0.0 ; the year is
+        fully settled, no remaining price uncertainty.
+      - Current delivery year (``year == today.year``) → floored at 0.25,
+        because there is still settlement-period uncertainty until the
+        last day even when the mid-year anchor is in the past.
+      - Future delivery years → exact (delivery_mid − today) in years.
     """
+    if year < today.year:
+        return 0.0
     delivery_mid = pd.Timestamp(year=year, month=7, day=1, tz=today.tz)
     seconds = (delivery_mid - today).total_seconds()
     years = seconds / (365.25 * 86400)
@@ -278,8 +287,10 @@ def compute_load_correlation_matrix(
     )
     # Aggregate to the requested frequency
     resampled = pivot.resample(freq).mean()
-    # Compute returns (relative changes) ; small floor on denominator avoids 0/0
-    returns = resampled.pct_change().replace([np.inf, -np.inf], np.nan)
+    # Compute returns (relative changes). fill_method=None disables the
+    # deprecated default forward-fill (which would silently turn missing
+    # daily values into 0% returns and bias correlations toward 0).
+    returns = resampled.pct_change(fill_method=None).replace([np.inf, -np.inf], np.nan)
     returns = returns.dropna(how="all")
     if returns.empty:
         return pd.DataFrame(index=actors, columns=actors, dtype=float)

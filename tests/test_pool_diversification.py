@@ -121,8 +121,14 @@ def test_z_score_interpolation_in_table_range():
 
 
 def test_z_score_clips_outside_table():
+    """For levels below or above the table extremes, return the bracket value."""
     assert _z_score(0.5) == Z_BY_CONF[0.90]
-    assert _z_score(0.999) == Z_BY_CONF[0.99]
+    assert _z_score(0.9999) == Z_BY_CONF[0.999]
+
+
+def test_z_score_999_in_table():
+    """0.999 is now in the table → exact value, no silent under-estimation."""
+    assert _z_score(0.999) == pytest.approx(3.0902, abs=1e-4)
 
 
 def test_es_factor_for_normal_at_95pct():
