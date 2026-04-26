@@ -30,12 +30,23 @@ References :
 from __future__ import annotations
 
 import math
+import sys
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-from portfolio_yearly import (
+# ``demo_deviwa`` is a flat script directory rather than a proper Python
+# package (no __init__.py — historical layout for the Streamlit pages).
+# To stay import-safe in all execution contexts (Streamlit runtime, pytest,
+# `python -c "import demo_deviwa.pool_diversification"`) we ensure the
+# sibling-script directory is on sys.path before resolving the local imports.
+_THIS_DIR = Path(__file__).resolve().parent
+if str(_THIS_DIR) not in sys.path:
+    sys.path.insert(0, str(_THIS_DIR))
+
+from portfolio_yearly import (  # noqa: E402  (path injection above)
     VOLATILITY_ANNUAL_PCT,
     compute_hedge_by_year,
     get_forward_year_proxy,
@@ -297,8 +308,21 @@ def compute_load_correlation_matrix(
 
     # Pearson correlation. min_periods filters out actors with too few obs.
     corr = returns.corr(method="pearson", min_periods=30)
-    # Ensure square shape with all requested actors
-    return corr.reindex(index=actors, columns=actors)
+    corr = corr.reindex(index=actors, columns=actors)
+
+    # An actor with a constant programme (zero variance) has NaN correlation
+    # with itself under Pearson — but for the dashboard heatmap we want the
+    # diagonal to be 1.0 whenever the actor has enough non-null observations
+    # (the off-diagonal entries against a flat series are genuinely undefined
+    # and stay NaN, which is mathematically correct).
+    for actor in corr.index:
+        if actor not in returns.columns:
+            continue
+        n_obs = int(returns[actor].notna().sum())
+        if n_obs >= 30:
+            corr.loc[actor, actor] = 1.0
+
+    return corr
 
 
 # ---------------------------------------------------------------------------
@@ -357,27 +381,44 @@ def compute_pool_diversification(
             actor_metrics.append(m)
 
     # Aggregate
-    forward_price = get_forward_year_proxy(forwards, delivery_year)
     horizon = _years_to_delivery(delivery_year, today)
     z = _z_score(confidence_level)
     es_factor = _es_factor(z, confidence_level)
 
-    # Pool exposure = signed sum of actor exposures
+    # An actor without a finite exposure (= no forward available for that
+    # year) cannot be priced — we filter it out of the pool numerator and
+    # denominator. If NO actor is priceable at all, we propagate NaN to
+    # the pool risk fields rather than reporting "0 risk" — these are
+    # semantically different states and the dashboard must distinguish them.
     valid = [m for m in actor_metrics if np.isfinite(m.exposure_eur)]
-    net_exposure_eur = sum(m.exposure_eur for m in valid)
-    pool_sigma_eur = abs(net_exposure_eur) * (vol_annual_pct / 100.0) * math.sqrt(horizon)
-    pool_var_eur = z * pool_sigma_eur
-    pool_es_eur = es_factor * pool_sigma_eur
+    pricing_available = len(valid) > 0
 
-    # Sum of individuals
-    sum_var = sum(m.var_eur for m in valid if np.isfinite(m.var_eur))
-    sum_es = sum(m.es_eur for m in valid if np.isfinite(m.es_eur))
-
-    benefit_eur = sum_var - pool_var_eur
-    if sum_var > 0:
-        benefit_pct = 100.0 * benefit_eur / sum_var
-    else:
+    if not pricing_available:
+        net_exposure_eur = float("nan")
+        pool_sigma_eur = float("nan")
+        pool_var_eur = float("nan")
+        pool_es_eur = float("nan")
+        sum_var = float("nan")
+        sum_es = float("nan")
+        benefit_eur = float("nan")
         benefit_pct = float("nan")
+    else:
+        net_exposure_eur = sum(m.exposure_eur for m in valid)
+        pool_sigma_eur = abs(net_exposure_eur) * (vol_annual_pct / 100.0) * math.sqrt(horizon)
+        pool_var_eur = z * pool_sigma_eur
+        pool_es_eur = es_factor * pool_sigma_eur
+
+        sum_var = sum(m.var_eur for m in valid if np.isfinite(m.var_eur))
+        sum_es = sum(m.es_eur for m in valid if np.isfinite(m.es_eur))
+
+        benefit_eur = sum_var - pool_var_eur
+        # Clamp tiny floating-point residuals so the dashboard doesn't
+        # surface things like "−1.45e−11 EUR (0.0 %)".
+        if abs(benefit_eur) < 1e-6:
+            benefit_eur = 0.0
+        benefit_pct = 100.0 * benefit_eur / sum_var if sum_var > 0 else 0.0
+        if abs(benefit_pct) < 1e-9:
+            benefit_pct = 0.0
 
     # Educational correlation matrix (does not drive VaR)
     corr = compute_load_correlation_matrix(programme, freq="D", actors=actors_list)

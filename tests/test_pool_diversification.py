@@ -321,13 +321,46 @@ def test_correlation_matrix_empty_input():
 # Edge cases
 # ---------------------------------------------------------------------------
 
-def test_pool_no_forward_gives_zero_pool_var(deals_two_actors, programme_two_actors):
-    """Empty forwards → all actor exposures NaN → pool numbers all 0 (sum of nothing)."""
+def test_pool_no_forward_propagates_nan(deals_two_actors, programme_two_actors):
+    """Empty forwards → "cannot price risk", surface as NaN.
+
+    This is semantically different from "no risk" (= 0). The dashboard
+    layer must distinguish the two states (e.g. show "—" / "Daten nicht
+    verfügbar" instead of "0 EUR Risiko, 0 % Diversifikation").
+    """
     empty_forwards = pd.DataFrame(columns=["date", "market", "product", "load_type", "price"])
     p = compute_pool_diversification(2027, deals_two_actors, programme_two_actors, empty_forwards, today=TODAY)
-    assert p.pool_var_eur == pytest.approx(0.0, abs=1e-9)
-    assert p.sum_individual_var_eur == pytest.approx(0.0, abs=1e-9)
-    assert p.diversification_benefit_eur == pytest.approx(0.0, abs=1e-9)
+    assert np.isnan(p.pool_var_eur)
+    assert np.isnan(p.sum_individual_var_eur)
+    assert np.isnan(p.diversification_benefit_eur)
+    assert np.isnan(p.diversification_pct)
+    assert np.isnan(p.net_exposure_eur)
+    assert np.isnan(p.pool_es_eur)
+
+
+def test_pool_benefit_clamps_floating_point_noise():
+    """In a same-sign pool, residual FP noise must clamp to 0 (no negative benefits)."""
+    # Two long actors with hedge=programme exactly (open=0 for both)
+    deals = pd.DataFrame(
+        [
+            _make_actor_row("X", 2027, "Intake", 100.0),
+            _make_actor_row("Y", 2027, "Intake", 200.0),
+        ]
+    )
+    ts = pd.date_range("2027-01-01 00:00", "2027-12-31 23:00", freq="h", tz="Europe/Zurich")
+    programme = pd.DataFrame(
+        [
+            *[{"actor": "X", "timestamp": t, "programme_mw": 0.05, "actual_mw": np.nan, "delta_mw": np.nan} for t in ts],
+            *[{"actor": "Y", "timestamp": t, "programme_mw": 0.10, "actual_mw": np.nan, "delta_mw": np.nan} for t in ts],
+        ]
+    )
+    forwards_simple = pd.DataFrame([
+        {"date": pd.Timestamp("2026-04-23"), "market": "CH", "product": "Y01_2027_BASE", "load_type": "base", "price": 90.0},
+    ])
+    p = compute_pool_diversification(2027, deals, programme, forwards_simple, today=TODAY)
+    # benefit must be exactly 0.0, not e.g. -1.45e-11
+    assert p.diversification_benefit_eur == 0.0
+    assert p.diversification_pct == 0.0
 
 
 def test_pool_actor_universe_filter(deals_two_actors, programme_two_actors, forwards_simple):
