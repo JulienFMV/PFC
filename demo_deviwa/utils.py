@@ -1078,64 +1078,88 @@ def render_hedge_ladder(
     daily["cum_sell"] = daily["sell_vol"].cumsum()
     daily["cum_net"] = daily["cum_buy"] - daily["cum_sell"]
 
-    # Volume-weighted average price of NET position (buys − sells)
+    # Separate volume-weighted average price for buys and sells (intuitive)
     daily["cum_buy_notional"] = daily["buy_notional"].cumsum()
     daily["cum_sell_notional"] = daily["sell_notional"].cumsum()
-    cum_net_notional = daily["cum_buy_notional"] - daily["cum_sell_notional"]
     with np.errstate(divide="ignore", invalid="ignore"):
-        daily["cum_avg_price"] = np.where(
-            daily["cum_net"] > 0,
-            cum_net_notional / daily["cum_net"].replace(0, np.nan),
+        daily["cum_buy_avg_price"] = np.where(
+            daily["cum_buy"] > 0,
+            daily["cum_buy_notional"] / daily["cum_buy"].replace(0, np.nan),
+            np.nan,
+        )
+        daily["cum_sell_avg_price"] = np.where(
+            daily["cum_sell"] > 0,
+            daily["cum_sell_notional"] / daily["cum_sell"].replace(0, np.nan),
             np.nan,
         )
 
-    # ── Net hedge (blue, the "truth" line) ──────────────────────────────────
+    # ── Net hedge (blue, the "truth" line) — STEP interpolation ─────────────
+    # `shape="hv"` holds the value flat until the next event, giving a true
+    # staircase view : nothing happens between trade dates, then a jump on
+    # the trade day. With straight interpolation the user (rightly) reads
+    # a sloped line as a continuous trend, which is wrong for sparse events.
     fig.add_trace(
         go.Scatter(
             x=daily.index, y=daily["cum_net"],
             mode="lines+markers", name="Netto-Hedge",
-            line=dict(color=FMV_BLUE, width=3),
+            line=dict(color=FMV_BLUE, width=3, shape="hv"),
             marker=dict(size=10),
             hovertemplate="%{x|%d.%m.%Y}<br>Netto-Hedge: %{y:,.0f} MWh<extra></extra>",
         ),
         secondary_y=False,
     )
 
-    # ── Cumulative buys (green, monotonic up) ───────────────────────────────
+    # ── Cumulative buys (green, monotonic up, step) ─────────────────────────
     if (daily["cum_buy"] > 0).any():
         fig.add_trace(
             go.Scatter(
                 x=daily.index, y=daily["cum_buy"],
                 mode="lines+markers", name="Käufe kumuliert",
-                line=dict(color=FMV_GREEN, width=1.8, dash="dot"),
+                line=dict(color=FMV_GREEN, width=1.8, dash="dot", shape="hv"),
                 marker=dict(size=7, symbol="triangle-up"),
                 hovertemplate="%{x|%d.%m.%Y}<br>Käufe kum.: %{y:,.0f} MWh<extra></extra>",
             ),
             secondary_y=False,
         )
 
-    # ── Cumulative sales (red, monotonic up, plotted on positive axis) ──────
+    # ── Cumulative sales (red, monotonic up, step) ──────────────────────────
     if (daily["cum_sell"] > 0).any():
         fig.add_trace(
             go.Scatter(
                 x=daily.index, y=daily["cum_sell"],
                 mode="lines+markers", name="Verkäufe kumuliert",
-                line=dict(color=FMV_RED, width=1.8, dash="dot"),
+                line=dict(color=FMV_RED, width=1.8, dash="dot", shape="hv"),
                 marker=dict(size=7, symbol="triangle-down"),
                 hovertemplate="%{x|%d.%m.%Y}<br>Verkäufe kum.: %{y:,.0f} MWh<extra></extra>",
             ),
             secondary_y=False,
         )
 
-    # ── Cumulative volume-weighted average price (right axis) ───────────────
-    if daily["cum_avg_price"].notna().any():
+    # ── Ø Käufe-Preis (right axis, step) ────────────────────────────────────
+    # Replaces the previous "Ø Netto-Hedge-Preis" which was mathematically
+    # correct (= net notional / net volume) but counter-intuitive when
+    # sales happened at a different price than buys.
+    if daily["cum_buy_avg_price"].notna().any():
         fig.add_trace(
             go.Scatter(
-                x=daily.index, y=daily["cum_avg_price"],
-                mode="lines+markers", name="Ø Netto-Hedge-Preis",
-                line=dict(color=FMV_NAVY, width=2, dash="dash"),
-                marker=dict(size=8, symbol="diamond"),
-                hovertemplate="%{x|%d.%m.%Y}<br>Ø Preis: %{y:.2f} EUR/MWh<extra></extra>",
+                x=daily.index, y=daily["cum_buy_avg_price"],
+                mode="lines+markers", name="Ø Käufe-Preis",
+                line=dict(color=FMV_GREEN, width=1.5, dash="dash", shape="hv"),
+                marker=dict(size=7, symbol="diamond"),
+                hovertemplate="%{x|%d.%m.%Y}<br>Ø Käufe : %{y:.2f} EUR/MWh<extra></extra>",
+            ),
+            secondary_y=True,
+        )
+
+    # ── Ø Verkäufe-Preis (right axis, step) ─────────────────────────────────
+    if daily["cum_sell_avg_price"].notna().any():
+        fig.add_trace(
+            go.Scatter(
+                x=daily.index, y=daily["cum_sell_avg_price"],
+                mode="lines+markers", name="Ø Verkäufe-Preis",
+                line=dict(color=FMV_RED, width=1.5, dash="dash", shape="hv"),
+                marker=dict(size=7, symbol="diamond"),
+                hovertemplate="%{x|%d.%m.%Y}<br>Ø Verkäufe : %{y:.2f} EUR/MWh<extra></extra>",
             ),
             secondary_y=True,
         )
