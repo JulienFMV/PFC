@@ -45,6 +45,23 @@ if forecast.empty:
     st.stop()
 
 # ---------------------------------------------------------------------------
+# Forecast freshness banner
+# ---------------------------------------------------------------------------
+fcst_run_ts = pd.to_datetime(forecast["timestamp"]).min() if "timestamp" in forecast.columns else None
+today_ch = pd.Timestamp.now(tz="Europe/Zurich")
+if fcst_run_ts is not None and pd.notna(fcst_run_ts):
+    if fcst_run_ts.tzinfo is None:
+        fcst_run_ts = fcst_run_ts.tz_localize("Europe/Zurich")
+    fcst_age_days = (today_ch - fcst_run_ts).days
+    if fcst_age_days > 1:
+        st.warning(
+            f"⚠️ Prognose-Lauf ist {fcst_age_days} Tage alt — frühester Forecast-Zeitpunkt "
+            f"**{fcst_run_ts.strftime('%d.%m.%Y %H:%M')}**. Der Begriff *D+1* bezieht sich "
+            f"auf den Tag nach dem letzten beobachteten Spot, nicht auf morgen real. "
+            f"Cache aktualisieren über die Seitenleiste oder LEAR neu laufen lassen."
+        )
+
+# ---------------------------------------------------------------------------
 # Accuracy KPIs (letzte 30 Tage)
 # ---------------------------------------------------------------------------
 mae_30d = np.nan
