@@ -203,16 +203,26 @@ def fingerprints_match(a: dict | None, b: dict | None) -> bool:
 # ---------------------------------------------------------------------------
 
 def write_parquet_atomic(df: pd.DataFrame, dest: Path) -> int:
-    """Write DataFrame to parquet atomically. Returns file size in bytes."""
+    """Write DataFrame to parquet atomically. Returns file size in bytes.
+
+    Use a unique tmp name (PID + nanosecond) so concurrent writers don't
+    collide on the same temp file. The final rename is atomic on POSIX
+    (rename(2)) and on NTFS (MoveFileEx with REPLACE_EXISTING).
+    """
+    import os as _os
     dest.parent.mkdir(parents=True, exist_ok=True)
-    tmp = dest.with_suffix(dest.suffix + ".tmp")
+    unique_suffix = f".{_os.getpid()}.{time.time_ns()}.tmp"
+    tmp = dest.with_suffix(dest.suffix + unique_suffix)
     try:
         df.to_parquet(tmp, compression="snappy", index=isinstance(df.index, pd.DatetimeIndex))
     except Exception:
         if tmp.exists():
-            tmp.unlink()
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
         raise
-    tmp.replace(dest)  # atomic on POSIX & NTFS
+    tmp.replace(dest)
     return dest.stat().st_size
 
 
@@ -273,6 +283,37 @@ def validate_programme_raw_schema(df: pd.DataFrame, sheet: str) -> None:
     has_date = any(c in ("date", "datum", "zeit", "timestamp") for c in cols_lower)
     if not has_date:
         raise SchemaError(f"Sheet '{sheet}': aucune colonne date/datum/timestamp trouvée.")
+    # Au moins une colonne Programme/Real attendue
+    has_prog = any(any(k in c for k in ("programm", "_program", "plan", "soll")) for c in cols_lower)
+    has_real = any(any(k in c for k in ("real", "_ist", "actual")) for c in cols_lower)
+    if not (has_prog or has_real):
+        raise SchemaError(
+            f"Sheet '{sheet}': aucune colonne Programme/Real détectée. "
+            f"Colonnes : {sorted(df.columns)}"
+        )
+
+
+# Colonnes obligatoires si on détecte un sheet EDSH avec décomposition fournisseurs.
+# Si une de ces colonnes disparaît, on fail-loud plutôt que d'écrire silencieusement
+# 0.0 partout (ce qui passerait les checks d'invariant si tous = 0).
+EDSH_SUPPLIER_REQUIRED_SUFFIXES = {"_bkw", "_enalpin", "_ewz", "_spot"}
+
+
+def validate_edsh_supplier_schema(df: pd.DataFrame, sheet: str) -> None:
+    cols_lower = [str(c).strip().lower() for c in df.columns]
+    missing: list[str] = []
+    for suffix in EDSH_SUPPLIER_REQUIRED_SUFFIXES:
+        if not any(c.endswith(suffix) for c in cols_lower):
+            missing.append(suffix)
+    # FMV : tolère le typo "ESDH_FMV" (présent dans la source) ou EDSH_FMV
+    has_fmv = any("fmv" in c for c in cols_lower)
+    if not has_fmv:
+        missing.append("_fmv (or fmv variant)")
+    if missing:
+        raise SchemaError(
+            f"EDSH sheet '{sheet}': colonnes fournisseur manquantes : {missing}.\n"
+            f"Colonnes trouvées : {sorted(df.columns)}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -432,6 +473,8 @@ def _read_deviwa_xlsx(path: Path) -> dict[str, pd.DataFrame]:
             is_edsh_full = any(s in v for v in present for s in edsh_supplier_signature)
 
             if is_edsh_full:
+                # Fail-loud si une colonne fournisseur disparaît silencieusement
+                validate_edsh_supplier_schema(raw, sheet)
                 edsh_suppliers = _extract_edsh_suppliers(raw)
                 # On extrait aussi programme/real standard pour le frame programme global
                 std = _extract_standard_programme(raw, actor or "EDSH")
@@ -460,11 +503,53 @@ def _detect_date_column(df: pd.DataFrame) -> str | None:
 
 
 def _localize_zurich(ts: pd.Series) -> pd.Series:
-    if ts.dt.tz is None:
-        return ts.dt.tz_localize(
-            "Europe/Zurich", nonexistent="shift_forward", ambiguous="NaT"
-        )
-    return ts.dt.tz_convert("Europe/Zurich")
+    """Localize naive Deviwa timestamps to Europe/Zurich without DST data loss.
+
+    Convention source Deviwa : ``timestamp = HEURE DE FIN d'intervalle``.
+    Un jour commence donc à 01:00 (= fin de l'intervalle 00:00→01:00) et
+    se termine à 00:00 du jour suivant (= fin de 23:00→00:00). Sur la
+    transition automne (CEST→CET), la source écrit deux fois "03:00"
+    pour les deux heures physiques (fin CEST puis fin CET).
+
+    On normalise en convention ``timestamp = DÉBUT d'intervalle`` en
+    soustrayant 1 heure à toutes les valeurs naïves. Après ce shift :
+      - la journée commence à 00:00 (= début de 00:00→01:00)
+      - les doublons "03:00" deviennent doublons "02:00" — pile l'heure
+        ambiguë de la transition DST automne en Europe/Zurich
+      - on peut alors utiliser ``ambiguous=array`` proprement :
+        1ère occurrence = True (CEST = avant transition)
+        2nde occurrence = False (CET = après transition)
+    Ce qui préserve les 25 heures réelles de la journée automne sans NaT.
+    """
+    if ts.dt.tz is not None:
+        return ts.dt.tz_convert("Europe/Zurich")
+
+    # Conversion fin-d'intervalle → début-d'intervalle
+    ts_start = ts - pd.Timedelta(hours=1)
+
+    # Construire l'array ``ambiguous`` : True pour la 1ère occurrence d'un
+    # timestamp dupliqué (= CEST), False pour la 2nde (= CET). Pour les
+    # heures ambiguës non dupliquées (rare), on choisit CEST par défaut
+    # (= interprétation "avant la transition").
+    counts = ts_start.value_counts()
+    dup_set = set(counts[counts >= 2].index)
+
+    amb_arr = np.ones(len(ts_start), dtype=bool)  # défaut CEST
+    if dup_set:
+        seen: dict[pd.Timestamp, int] = {}
+        for i, t in enumerate(ts_start):
+            if pd.isna(t):
+                continue
+            if t in dup_set:
+                c = seen.get(t, 0)
+                seen[t] = c + 1
+                amb_arr[i] = (c == 0)  # 1ère = CEST (True), 2nde+ = CET (False)
+
+    return ts_start.dt.tz_localize(
+        "Europe/Zurich",
+        nonexistent="shift_forward",
+        ambiguous=amb_arr,
+    )
 
 
 def _extract_standard_programme(raw: pd.DataFrame, actor: str) -> pd.DataFrame | None:
