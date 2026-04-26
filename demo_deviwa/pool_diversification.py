@@ -208,6 +208,8 @@ def compute_actor_risk(
     today: pd.Timestamp | None = None,
     confidence_level: float = 0.95,
     vol_annual_pct: float = VOLATILITY_ANNUAL_PCT,
+    *,
+    extrapolate_missing_programme: bool = True,
 ) -> ActorRiskMetrics | None:
     """Compute VaR / ES for one actor on one delivery year.
 
@@ -217,7 +219,10 @@ def compute_actor_risk(
     if today is None:
         today = pd.Timestamp.now(tz="Europe/Zurich")
 
-    metrics_by_year = compute_hedge_by_year(deals, programme, actor=actor, today=today)
+    metrics_by_year = compute_hedge_by_year(
+        deals, programme, actor=actor, today=today,
+        extrapolate_missing_programme=extrapolate_missing_programme,
+    )
     yh = metrics_by_year.get(delivery_year)
     if yh is None:
         return None
@@ -338,6 +343,8 @@ def compute_pool_diversification(
     today: pd.Timestamp | None = None,
     confidence_level: float = 0.95,
     vol_annual_pct: float = VOLATILITY_ANNUAL_PCT,
+    *,
+    extrapolate_missing_programme: bool = True,
 ) -> PoolRiskMetrics:
     """Compute the diversification breakdown for one delivery year.
 
@@ -376,6 +383,7 @@ def compute_pool_diversification(
             today=today,
             confidence_level=confidence_level,
             vol_annual_pct=vol_annual_pct,
+            extrapolate_missing_programme=extrapolate_missing_programme,
         )
         if m is not None:
             actor_metrics.append(m)

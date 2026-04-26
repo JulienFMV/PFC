@@ -115,8 +115,9 @@ class YearlyHedgeMetrics:
     Attributes:
         year: delivery calendar year (e.g. 2027).
         programme_mwh: forecast net consumption for the year, in MWh.
-            Equals 0 when no programme data exists (e.g. an actor that
-            doesn't have multi-year forecast yet).
+            When ``programme_is_extrapolated`` is True, this value comes from
+            carry-forward of the most recent year with actual data (industry-
+            standard EFET / Eurelectric convention for stable load profiles).
         hedged_mwh: net hedge volume from deals (Σ Withdrawal − Σ Intake).
             Positive = client has bought net energy (= hedged the load).
             Negative = client has net sold (= long position, unusual for a GRD).
@@ -138,6 +139,11 @@ class YearlyHedgeMetrics:
             "above"          → ratio > high (potential over-hedge)
             "no_data"        → ratio is NaN (no programme to compare)
             "n/a"            → no industry corridor for this year offset
+        programme_is_extrapolated: True if ``programme_mwh`` was carried
+            forward from an earlier year because the actor's forecast did
+            not extend to this delivery year. Dashboards should surface
+            this with a "Hochrechnung" badge so the user knows the
+            programme baseline is not a fresh client forecast.
     """
     year: int
     programme_mwh: float
@@ -151,6 +157,7 @@ class YearlyHedgeMetrics:
     target_low_pct: int | None
     target_high_pct: int | None
     target_status: str
+    programme_is_extrapolated: bool = False
 
 
 @dataclass(frozen=True)
@@ -299,6 +306,9 @@ def compute_hedge_by_year(
     programme: pd.DataFrame,
     actor: str | None = None,
     today: pd.Timestamp | None = None,
+    *,
+    extrapolate_missing_programme: bool = True,
+    include_years: list[int] | None = None,
 ) -> dict[int, YearlyHedgeMetrics]:
     """Compute the true hedge ratio per delivery year for one actor or the pool.
 
@@ -312,11 +322,24 @@ def compute_hedge_by_year(
             ``timestamp`` is tz-aware Europe/Zurich (start-of-interval).
         actor: actor name to filter by, or ``None`` for the consolidated pool.
         today: reference date for industry corridor. Defaults to now (CH).
+        extrapolate_missing_programme: when True (default), missing programme
+            years are filled with carry-forward from the most recent year that
+            has actual data. The corresponding ``YearlyHedgeMetrics`` carries
+            ``programme_is_extrapolated=True`` so the dashboard can surface a
+            "Hochrechnung" badge. When False, missing years stay at 0 and
+            ``hedge_ratio_pct`` will be NaN. Carry-forward is the standard
+            EFET / Eurelectric assumption for relatively stable load profiles
+            (most Swiss DSOs grow ≤ 2 % / year).
+        include_years: explicit list of years that must appear in the output
+            dict. Years without any data get ``programme_mwh=0,
+            hedged_mwh=0, hedge_ratio_pct=0.0, target_status="below"`` —
+            useful for the cockpit to always show 4 year cards regardless
+            of data availability.
 
     Returns:
-        Dict mapping ``delivery_year → YearlyHedgeMetrics``. Years where
-        either programme or deals data exists are included; years with
-        nothing on either side are absent from the dict.
+        Dict mapping ``delivery_year → YearlyHedgeMetrics``. By default
+        contains years where deals OR programme data exists. Use
+        ``include_years`` to force a specific set.
     """
     if today is None:
         today = pd.Timestamp.now(tz="Europe/Zurich")
@@ -381,9 +404,36 @@ def compute_hedge_by_year(
                     "n_deals": int(g["deal"].nunique()) if "deal" in g.columns else len(g),
                 }
 
-    # ── Combine and emit YearlyHedgeMetrics per year ────────────────────────
-    all_years = sorted(set(prog_yearly.keys()) | set(deal_yearly.keys()))
+    # ── Determine the set of years to emit ──────────────────────────────────
+    # Default : years with either programme or deals data.
+    # If include_years is given, ALL of them get an entry (filled with zero
+    # if no data and extrapolation cannot fill).
+    base_years = set(prog_yearly.keys()) | set(deal_yearly.keys())
+    if include_years is not None:
+        all_years = sorted(set(include_years) | base_years)
+    else:
+        all_years = sorted(base_years)
 
+    # ── Optional carry-forward extrapolation of programme ───────────────────
+    # For each year missing programme data (programme_mwh == 0), substitute
+    # the most recent prior year's programme. The flag is propagated to the
+    # output dataclass so the UI can render a "Hochrechnung" badge.
+    extrapolated_years: set[int] = set()
+    if extrapolate_missing_programme:
+        years_with_real_prog = sorted(
+            y for y, v in prog_yearly.items() if v and v > 0
+        )
+        for y in all_years:
+            if prog_yearly.get(y, 0.0) > 0:
+                continue  # actual data, no extrapolation needed
+            # Find the most recent prior year with actual data
+            sources = [s for s in years_with_real_prog if s < y]
+            if sources:
+                src_year = max(sources)
+                prog_yearly[y] = prog_yearly[src_year]
+                extrapolated_years.add(y)
+
+    # ── Combine and emit YearlyHedgeMetrics per year ────────────────────────
     out: dict[int, YearlyHedgeMetrics] = {}
     for y in all_years:
         prog_mwh = prog_yearly.get(y, 0.0)
@@ -413,6 +463,7 @@ def compute_hedge_by_year(
             target_low_pct=corridor[0] if corridor else None,
             target_high_pct=corridor[1] if corridor else None,
             target_status=status,
+            programme_is_extrapolated=(y in extrapolated_years),
         )
 
     return out
@@ -684,6 +735,9 @@ def compute_budget_projection(
     forwards: pd.DataFrame,
     actor: str | None = None,
     today: pd.Timestamp | None = None,
+    *,
+    extrapolate_missing_programme: bool = True,
+    include_years: list[int] | None = None,
 ) -> dict[int, BudgetProjection]:
     """Per delivery year : locked-in cost + at-risk band on residual exposure.
 
@@ -706,7 +760,11 @@ def compute_budget_projection(
     if today is None:
         today = pd.Timestamp.now(tz="Europe/Zurich")
 
-    metrics = compute_hedge_by_year(deals, programme, actor=actor, today=today)
+    metrics = compute_hedge_by_year(
+        deals, programme, actor=actor, today=today,
+        extrapolate_missing_programme=extrapolate_missing_programme,
+        include_years=include_years,
+    )
     out: dict[int, BudgetProjection] = {}
 
     for y, m in metrics.items():

@@ -82,6 +82,18 @@ with st.sidebar:
     st.divider()
     render_cache_status()
     st.divider()
+    st.markdown("**Konvention**")
+    extrapolate_programme = st.toggle(
+        "Programm-Hochrechnung",
+        value=True,
+        help=(
+            "Wenn ein Akteur für ein Lieferjahr noch kein Programm geliefert "
+            "hat, das letzte verfügbare Jahr fortschreiben (EFET-Standard). "
+            "Aus : Lücken bleiben leer."
+        ),
+        key="extrapolate_programme",
+    )
+    st.divider()
     st.markdown("**Navigation**")
     st.markdown(
         "- 🎯 Portfolio-Cockpit\n- 📊 Marktüberblick\n- 📈 Kurzfristprognose\n"
@@ -136,9 +148,16 @@ selected_actor: str | None = None if choice == "Gesamter Pool" else choice
 # ---------------------------------------------------------------------------
 
 today = pd.Timestamp.now(tz="Europe/Zurich")
+display_years = list(range(today.year, today.year + 4))
 
-# Compute hedge ratios for the selected actor (or pool when actor=None)
-hedge_metrics = compute_hedge_by_year(deals, programme, actor=selected_actor, today=today)
+# Compute hedge ratios for the selected actor (or pool when actor=None).
+# include_years forces 4 cards even for actors with sparse data, and
+# extrapolate_missing_programme drives the carry-forward convention.
+hedge_metrics = compute_hedge_by_year(
+    deals, programme, actor=selected_actor, today=today,
+    extrapolate_missing_programme=extrapolate_programme,
+    include_years=display_years,
+)
 
 # Headline year = next calendar year (Y-1 industry corridor target)
 headline_year = today.year + 1
@@ -171,7 +190,8 @@ elif headline_metrics is not None and headline_metrics.programme_mwh == 0:
 # actor is selected, the line is suppressed (the dedicated pool page shows it).
 if selected_actor is None:
     pool_div = compute_pool_diversification(
-        headline_year, deals, programme, forwards, today=today
+        headline_year, deals, programme, forwards, today=today,
+        extrapolate_missing_programme=extrapolate_programme,
     )
     if (
         np.isfinite(pool_div.diversification_benefit_eur)
@@ -204,11 +224,14 @@ st.markdown(
 
 st.subheader("Absicherung pro Lieferjahr")
 
-# Determine the years we want to display : current + next 3 (4 total).
-# We always show all 4, even if a year has no data — empty cards tell the
-# commercial story ("RELL hat nichts für 2027 abgesichert").
-display_years = list(range(today.year, today.year + 4))
-budget_metrics = compute_budget_projection(deals, programme, forwards, actor=selected_actor, today=today)
+# We always render 4 cards (today.year .. today.year+3). Years without data
+# show as empty grey cards ("Noch keine Absicherung") — the absence of a
+# hedge is itself a commercial signal.
+budget_metrics = compute_budget_projection(
+    deals, programme, forwards, actor=selected_actor, today=today,
+    extrapolate_missing_programme=extrapolate_programme,
+    include_years=display_years,
+)
 
 cols = st.columns(4)
 for i, y in enumerate(display_years):

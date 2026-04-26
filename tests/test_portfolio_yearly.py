@@ -291,3 +291,132 @@ def test_classify_hedge_status_branches():
     assert classify_hedge_status(40.0, (50, 80)) == "below"
     assert classify_hedge_status(75.0, (50, 80)) == "in_corridor"
     assert classify_hedge_status(95.0, (50, 80)) == "above"
+
+
+# ---------------------------------------------------------------------------
+# Programme carry-forward extrapolation
+# ---------------------------------------------------------------------------
+
+def test_extrapolation_carries_last_programme_forward(deals_minimal):
+    """When deal exists for a year without programme, carry-forward 2027 → 2028."""
+    # Programme covers 2027 only ; deals_minimal has 12 monthly Intake rows for 2027.
+    # Add a single Intake deal for 2028.
+    extra = pd.DataFrame([
+        {
+            "actor": "TEST",
+            "deal": "TEST_2028_M01",
+            "month": pd.Timestamp(year=2028, month=1, day=1),
+            "scope": "Intake",
+            "volume_sum": 50.0,
+            "notional_sum": -4000.0,
+            "pnl_sum": 0.0,
+            "trade_date": pd.Timestamp("2026-03-15"),
+        },
+    ])
+    deals_with_2028 = pd.concat([deals_minimal, extra], ignore_index=True)
+    ts = pd.date_range(
+        "2027-01-01 00:00", "2027-12-31 23:00", freq="h", tz="Europe/Zurich"
+    )
+    prog_2027 = pd.DataFrame(
+        {
+            "actor": "TEST",
+            "timestamp": ts,
+            "programme_mw": np.full(len(ts), 0.2),
+            "actual_mw": np.nan,
+            "delta_mw": np.nan,
+        }
+    )
+    today = pd.Timestamp("2026-04-26", tz="Europe/Zurich")
+    out = compute_hedge_by_year(
+        deals_with_2028, prog_2027, actor="TEST", today=today,
+        extrapolate_missing_programme=True,
+    )
+    # 2027 : real programme, no flag
+    assert out[2027].programme_mwh == pytest.approx(1752.0)
+    assert out[2027].programme_is_extrapolated is False
+    # 2028 : carry-forward from 2027, flag set
+    assert out[2028].programme_mwh == pytest.approx(1752.0)
+    assert out[2028].programme_is_extrapolated is True
+    # Ratio with 2028 hedge of 50 MWh on programme 1752 ≈ 2.85 %
+    assert out[2028].hedge_ratio_pct == pytest.approx(100 * 50 / 1752, rel=1e-6)
+
+
+def test_extrapolation_off_keeps_zero_programme(deals_minimal):
+    """When extrapolation is disabled, missing year has programme=0 and ratio=NaN."""
+    extra = pd.DataFrame([
+        {
+            "actor": "TEST",
+            "deal": "TEST_2028_M01",
+            "month": pd.Timestamp(year=2028, month=1, day=1),
+            "scope": "Intake",
+            "volume_sum": 50.0,
+            "notional_sum": -4000.0,
+            "pnl_sum": 0.0,
+            "trade_date": pd.Timestamp("2026-03-15"),
+        },
+    ])
+    deals_with_2028 = pd.concat([deals_minimal, extra], ignore_index=True)
+    ts = pd.date_range(
+        "2027-01-01 00:00", "2027-12-31 23:00", freq="h", tz="Europe/Zurich"
+    )
+    prog_2027 = pd.DataFrame(
+        {
+            "actor": "TEST",
+            "timestamp": ts,
+            "programme_mw": np.full(len(ts), 0.2),
+            "actual_mw": np.nan,
+            "delta_mw": np.nan,
+        }
+    )
+    today = pd.Timestamp("2026-04-26", tz="Europe/Zurich")
+    out = compute_hedge_by_year(
+        deals_with_2028, prog_2027, actor="TEST", today=today,
+        extrapolate_missing_programme=False,
+    )
+    assert out[2028].programme_mwh == 0.0
+    assert np.isnan(out[2028].hedge_ratio_pct)
+    assert out[2028].programme_is_extrapolated is False
+
+
+def test_include_years_forces_card_for_actor_without_data():
+    """include_years=[2027, 2028] gives entries even when no deals/programme."""
+    empty_deals = pd.DataFrame(columns=["actor", "scope", "month", "volume_sum", "notional_sum", "pnl_sum", "deal", "trade_date"])
+    empty_prog = pd.DataFrame(columns=["actor", "timestamp", "programme_mw"])
+    today = pd.Timestamp("2026-04-26", tz="Europe/Zurich")
+    out = compute_hedge_by_year(
+        empty_deals, empty_prog, actor="UNKNOWN", today=today,
+        include_years=[2027, 2028],
+    )
+    assert set(out.keys()) == {2027, 2028}
+    assert out[2027].programme_mwh == 0.0
+    assert out[2027].hedged_mwh == 0.0
+
+
+def test_extrapolation_does_not_extrapolate_backward(deals_minimal):
+    """Programme 2028 should NOT be extrapolated to fill 2026 (only forward)."""
+    ts = pd.date_range(
+        "2028-01-01 00:00", "2028-12-31 23:00", freq="h", tz="Europe/Zurich"
+    )
+    prog_2028 = pd.DataFrame(
+        {
+            "actor": "TEST",
+            "timestamp": ts,
+            "programme_mw": np.full(len(ts), 0.2),
+            "actual_mw": np.nan,
+            "delta_mw": np.nan,
+        }
+    )
+    today = pd.Timestamp("2026-04-26", tz="Europe/Zurich")
+    out = compute_hedge_by_year(
+        deals_minimal, prog_2028, actor="TEST", today=today,
+        extrapolate_missing_programme=True,
+        include_years=[2026, 2027, 2028],
+    )
+    # 2026, 2027 are BEFORE the only data year (2028) → no source to carry forward
+    assert out[2026].programme_mwh == 0.0
+    assert out[2026].programme_is_extrapolated is False
+    assert out[2027].programme_mwh == 0.0
+    assert out[2027].programme_is_extrapolated is False
+    # 2028 has actual data
+    assert out[2028].programme_mwh > 0
+    assert out[2028].programme_is_extrapolated is False

@@ -704,6 +704,17 @@ def render_year_card(
             f"{metrics.target_high_pct} %</div>"
         )
 
+    # "Hochrechnung" badge when programme was carry-forward extrapolated
+    extrapolated_badge = ""
+    if getattr(metrics, "programme_is_extrapolated", False):
+        extrapolated_badge = (
+            f"<div style='display:inline-block; font-size:0.65rem;"
+            f" color:{FMV_GREY}; background:#F0F2F8; border:1px solid #E0E4EC;"
+            f" padding:1px 6px; border-radius:6px; margin-top:0.35rem;'"
+            f" title='Programm-Forecast wurde aus dem letzten verfügbaren Jahr fortgeschrieben.'>"
+            f"ⓘ Hochrechnung</div>"
+        )
+
     # Ø Hedge price vs Markt
     price_html = ""
     if np.isfinite(metrics.avg_hedge_price_eur_mwh):
@@ -755,7 +766,7 @@ def render_year_card(
         f" border-radius:4px; margin-top:0.35rem; overflow:visible;'>"
         f"<div style='width:{gauge_width}%; height:100%; background:{color};"
         f" border-radius:4px;'></div>{corridor_html}</div>"
-        f"{target_text}{price_html}{open_html}{budget_html}"
+        f"{target_text}{extrapolated_badge}{price_html}{open_html}{budget_html}"
         f"</div>"
     )
 
