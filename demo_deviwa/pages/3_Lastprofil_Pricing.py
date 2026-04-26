@@ -520,8 +520,12 @@ if not common_idx.empty:
 st.divider()
 st.caption(
     "Methodik : jede Stunde der Last wird mit dem entsprechenden PFC-Stundenpreis "
-    "multipliziert. Peak = 08:00–20:00 Mo–Fr (Schweizer Konvention). Profile-Premium "
-    "= Differenz zwischen profil-gewichtetem Preis und einfachem Baseload-Durchschnitt. "
-    "Cal-Y Forward = Y01_{Y}_BASE Settlement vom letzten Handelstag (oder Q-Strip-Average "
-    "für das laufende Lieferjahr)."
+    "multipliziert. Peak = 08:00–20:00 Mo–Fr (Schweizer Konvention). "
+    "**Profilaufschlag** (KPI-Karte) = profil-gewichteter PFC-Preis − einfacher PFC-"
+    "Stundendurchschnitt (reine Profilform). **Profile-Premium** (Cal-Y-Vergleich) "
+    "= Profil-Pricing − flacher Cal-Y-Forward-Strip ; enthält damit zusätzlich die "
+    "Differenz zwischen PFC-Mittel und Forward-Settlement und ist daher meist grösser "
+    "als der reine Profilaufschlag. "
+    "Cal-Y Forward = Y01_{Y}_BASE Settlement vom letzten Handelstag (oder Q-Strip-"
+    "Average für das laufende Lieferjahr)."
 )
