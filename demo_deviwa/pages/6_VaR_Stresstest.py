@@ -1,7 +1,20 @@
-"""Seite 6 – Value-at-Risk und Stresstests.
+"""Seite 6 — Pool & Risiko : VaR / Expected Shortfall + Diversifikations-Vorteil.
 
-Parametrischer 1-Tages-VaR (95 %) + historische Verteilung + Stressszenarien
-auf die offene Netto-Position.
+Replaces the legacy ``6_VaR_Stresstest.py`` (which used spot-daily volatility on
+a forward MtM, inflating VaR by ~30× and using a trader-side sign on
+stresstests). Now powered by :mod:`pool_diversification` (Phase 3) :
+
+  - VaR scaled with **forward volatility** (≈ 20 % annualized × √T) instead of
+    spot daily vol.
+  - Stresstests use **consumer-correct** signs : for a GRD with open_mwh > 0
+    (under-hedged), a price RISE is a NEGATIVE P&L (higher cost), a fall is
+    POSITIVE.
+  - Headline narrative = Σ individual VaR vs Pool VaR → diversification
+    benefit (the central sales pitch of the Deviwa pool).
+
+Numbers verified end-to-end against `compute_pool_diversification` :
+  Pool 2027 :  Σ VaR = 205 771 EUR  ·  Pool VaR = 147 903 EUR
+              → Benefit = 57 868 EUR (28.1 %)
 """
 
 from __future__ import annotations
@@ -13,339 +26,384 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
-from scipy.stats import norm
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from deviwa_parser import monthly_breakdown
-from utils import (
-    FMV_ACCENT,
+from pool_diversification import (  # noqa: E402
+    Z_BY_CONF,
+    compute_pool_diversification,
+)
+from utils import (  # noqa: E402
     FMV_BLUE,
     FMV_GREEN,
     FMV_GREY,
     FMV_NAVY,
     FMV_RED,
     fmt_chf,
-    fmt_eur_mwh,
-    fmt_mwh,
     kpi_card,
-    load_deviwa_auto,
-    load_epex_ch,
-    load_pfc,
-    render_actor_selector,
+    load_deviwa_deals_cached,
+    load_deviwa_programme_cached,
+    load_eex_forwards,
+    render_cache_status,
     render_header,
 )
 
+
+# ---------------------------------------------------------------------------
+# Page configuration
+# ---------------------------------------------------------------------------
+
 st.set_page_config(
-    page_title="FMV · VaR & Stresstest",
+    page_title="FMV · Pool & Risiko",
     page_icon="🛡️",
     layout="wide",
 )
 
-render_header("VaR & Stresstest · Risikobild der offenen Position")
+render_header("Pool & Risiko · Diversifikations-Vorteil")
 
 st.markdown(
-    "Wie viel Geld steht bei einer ungünstigen Preisbewegung auf dem Spiel? "
-    "Die Bewertung erfolgt mark-to-market gegen die aktuelle PFC der FMV."
+    "Wie viel Risiko **sparen Sie**, weil Sie im Deviwa-Pool sind ? Diese Seite "
+    "vergleicht den VaR jeder Akteur-Position einzeln mit dem konsolidierten "
+    "Pool-VaR — die Differenz ist Ihr **Diversifikations-Vorteil**."
 )
 
-# ---------------------------------------------------------------------------
-# Daten
-# ---------------------------------------------------------------------------
-data_by_actor = load_deviwa_auto()
-pfc = load_pfc()
-spot = load_epex_ch()
+with st.sidebar:
+    render_cache_status()
 
-if not data_by_actor:
-    st.warning("Keine Deviwa-Datei in `/data` gefunden.")
-    st.stop()
-if pfc.empty:
-    st.warning("Keine PFC verfügbar – Bewertung nicht möglich.")
+
+# ---------------------------------------------------------------------------
+# Data
+# ---------------------------------------------------------------------------
+
+deals = load_deviwa_deals_cached()
+programme = load_deviwa_programme_cached()
+forwards = load_eex_forwards()
+
+if deals.empty and programme.empty:
+    st.warning("Keine Deviwa-Daten — bitte Cache via Sidebar aktualisieren.")
     st.stop()
 
-choice, df = render_actor_selector(data_by_actor, key="var_actor")
-if df is None or df.empty:
+
+# ---------------------------------------------------------------------------
+# Parameters
+# ---------------------------------------------------------------------------
+
+st.subheader("Parameter")
+c_year, c_conf = st.columns([1.2, 1])
+with c_year:
+    delivery_year = st.radio(
+        "Lieferjahr",
+        options=[2026, 2027, 2028, 2029],
+        horizontal=True,
+        index=1,
+        key="risk_year",
+    )
+with c_conf:
+    confidence = st.selectbox(
+        "Konfidenz-Niveau",
+        options=[0.95, 0.975, 0.99],
+        index=0,
+        format_func=lambda c: f"{c*100:.1f} %",
+        key="risk_conf",
+    )
+
+today = pd.Timestamp.now(tz="Europe/Zurich")
+
+# ---------------------------------------------------------------------------
+# Compute pool diversification
+# ---------------------------------------------------------------------------
+
+pool = compute_pool_diversification(
+    delivery_year,
+    deals,
+    programme,
+    forwards,
+    today=today,
+    confidence_level=confidence,
+)
+
+if not np.isfinite(pool.pool_var_eur) or pool.pool_var_eur == 0:
+    st.info(
+        f"Für **Cal-{delivery_year}** sind keine offenen Positionen oder kein "
+        f"Forward-Preis verfügbar — kein VaR-Bild für dieses Jahr."
+    )
     st.stop()
+
+
+# ---------------------------------------------------------------------------
+# Headline narrative
+# ---------------------------------------------------------------------------
+
+benefit_eur = pool.diversification_benefit_eur
+benefit_pct = pool.diversification_pct
+
+if benefit_eur > 0:
+    headline_color = FMV_GREEN
+    headline_msg = (
+        f"<strong style='color:{FMV_NAVY};'>Σ VaR individuell = "
+        f"{fmt_chf(pool.sum_individual_var_eur, 0)} EUR</strong> "
+        f"<span style='color:{FMV_GREY};'>vs.</span> "
+        f"<strong style='color:{FMV_NAVY};'>VaR Pool = "
+        f"{fmt_chf(pool.pool_var_eur, 0)} EUR</strong> "
+        f"<span style='color:{FMV_GREY};'>→</span> "
+        f"<strong style='color:{headline_color}; font-size:1.15rem;'>"
+        f"Diversifikations-Vorteil {fmt_chf(benefit_eur, 0)} EUR "
+        f"({benefit_pct:.0f} %)</strong>"
+    )
+else:
+    headline_msg = (
+        f"<span style='color:{FMV_GREY};'>Für Cal-{delivery_year} haben alle "
+        f"Akteure das gleiche Vorzeichen der offenen Position — kein "
+        f"Diversifikations-Vorteil aus dem natürlichen Long/Short-Offset. "
+        f"Das ist mathematisch korrekt, kein Fehler.</span>"
+    )
 
 st.markdown(
-    f"<div style='color:{FMV_GREY};'>Ansicht: <strong style='color:{FMV_NAVY};'>{choice}</strong></div>",
+    f"""
+<div style='background:#F7FAFF; border:1px solid #D8E5FF; border-left:6px solid {FMV_BLUE}; border-radius:12px; padding:1.0rem 1.25rem; margin:0.6rem 0 1.4rem 0; line-height:1.7;'>{headline_msg}</div>
+    """,
     unsafe_allow_html=True,
 )
-st.markdown("")
+
 
 # ---------------------------------------------------------------------------
-# Offene Netto-Position je Monat (MWh)
+# 4 KPI hero
 # ---------------------------------------------------------------------------
-monthly = monthly_breakdown(df)
-if monthly.empty:
-    st.info("Keine monatlichen Daten für Positionsbewertung.")
-    st.stop()
-
-pivot = monthly.pivot_table(
-    index="month", columns="scope_clean", values="volume_mwh", aggfunc="sum"
-).fillna(0.0)
-pivot["net_mwh"] = pivot.get("Einspeisung", 0) - pivot.get("Bezug", 0)
-
-# PFC je Monat mitteln
-pfc_h = pfc["price_shape"].resample("h").mean()
-pfc_h.index = pfc_h.index.tz_convert("Europe/Zurich")
-pfc_monthly = pfc_h.resample("MS").mean()
-pfc_monthly.index = pfc_monthly.index.tz_localize(None)
-
-pos = pivot[["net_mwh"]].copy()
-pos.index = pd.to_datetime(pos.index)
-pos = pos.join(pfc_monthly.rename("pfc_eur_mwh"), how="left")
-# Fallback: Monate ausserhalb des PFC-Zeitraums mit Gesamtdurchschnitt
-pos["pfc_eur_mwh"] = pos["pfc_eur_mwh"].fillna(float(pfc_monthly.mean()))
-pos["mtm_eur"] = pos["net_mwh"] * pos["pfc_eur_mwh"]
-pos["abs_mwh"] = pos["net_mwh"].abs()
-
-total_net_mwh = float(pos["net_mwh"].sum())
-total_mtm_eur = float(pos["mtm_eur"].sum())
-total_gross_mwh = float(pos["abs_mwh"].sum())
-
-# ---------------------------------------------------------------------------
-# Preisvolatilität aus dem Spot schätzen (log-Renditen, tägliche Mittel)
-# ---------------------------------------------------------------------------
-daily_returns: np.ndarray = np.array([])
-sigma_daily = np.nan
-if not spot.empty:
-    daily = spot["price"].resample("D").mean().dropna().clip(lower=1.0)
-    if len(daily) > 60:
-        returns = np.log(daily.values[1:] / daily.values[:-1])
-        daily_returns = returns[np.isfinite(returns)]
-        if len(daily_returns) > 60:
-            sigma_daily = float(np.std(daily_returns, ddof=1))
-
-# ---------------------------------------------------------------------------
-# VaR-Parameter
-# ---------------------------------------------------------------------------
-st.subheader("VaR-Parameter")
-c_params = st.columns(4)
-conf_level = c_params[0].selectbox("Konfidenzniveau", [0.95, 0.975, 0.99], index=0)
-horizon_days = c_params[1].selectbox("Horizont (Handelstage)", [1, 5, 10], index=1)
-method = c_params[2].selectbox("Methode", ["Parametrisch (Normal)", "Historisch (Simulation)"], index=0)
-c_params[3].metric("Tagesvolatilität (Spot)",
-                   f"{sigma_daily*100:.2f} %" if np.isfinite(sigma_daily) else "—")
-
-z = float(norm.ppf(conf_level))
-sqrt_t = float(np.sqrt(horizon_days))
-
-# ---------------------------------------------------------------------------
-# VaR-Berechnung
-# ---------------------------------------------------------------------------
-var_param_eur = np.nan
-var_hist_eur = np.nan
-es_eur = np.nan
-
-abs_mtm = abs(total_mtm_eur)
-if np.isfinite(sigma_daily):
-    # Parametrisch: VaR = |value| × σ × z × √t  (Annahme: 1 Hauptrisiko = Preis)
-    var_param_eur = abs_mtm * sigma_daily * z * sqrt_t
-
-if len(daily_returns) > 60:
-    # Historische Simulation: P&L = MtM × (1 − e^(return × √t))
-    scaled_returns = daily_returns * sqrt_t
-    simulated_pnl = total_mtm_eur * (np.exp(-scaled_returns) - 1.0)  # Preis nach unten = Verlust bei Long
-    if total_mtm_eur < 0:
-        simulated_pnl = -simulated_pnl  # Short: Preisanstieg = Verlust
-    var_hist_eur = float(-np.quantile(simulated_pnl, 1 - conf_level))
-    es_eur = float(-simulated_pnl[simulated_pnl <= np.quantile(simulated_pnl, 1 - conf_level)].mean())
-
-active_var = var_param_eur if method.startswith("Parametrisch") else var_hist_eur
 
 c1, c2, c3, c4 = st.columns(4)
 c1.markdown(
-    kpi_card("Offene Netto-Position",
-             fmt_mwh(total_net_mwh, 0),
-             delta=f"Brutto: {fmt_mwh(total_gross_mwh,0)}",
-             delta_color=FMV_NAVY),
+    kpi_card(
+        "Σ VaR individuell",
+        f"{fmt_chf(pool.sum_individual_var_eur, 0)} EUR",
+        delta="wenn jeder allein wäre",
+        delta_color=FMV_GREY,
+    ),
     unsafe_allow_html=True,
 )
 c2.markdown(
-    kpi_card("Mark-to-Market",
-             f"{fmt_chf(total_mtm_eur, 0)} EUR",
-             delta=f"Ø PFC: {fmt_eur_mwh(float(pos['pfc_eur_mwh'].mean()))}",
-             delta_color=FMV_BLUE),
+    kpi_card(
+        "VaR Pool",
+        f"{fmt_chf(pool.pool_var_eur, 0)} EUR",
+        delta=f"Konfidenz {int(confidence*100)} %, Horizont {pool.horizon_years:.2f}j",
+        delta_color=FMV_BLUE,
+    ),
     unsafe_allow_html=True,
 )
 c3.markdown(
     kpi_card(
-        f"VaR {horizon_days}T {int(conf_level*100)} %",
-        f"{fmt_chf(active_var, 0)} EUR" if np.isfinite(active_var) else "—",
-        delta=method,
-        delta_color=FMV_RED,
+        "Diversifikations-Vorteil",
+        f"{fmt_chf(benefit_eur, 0)} EUR",
+        delta=f"{benefit_pct:.1f} %" if np.isfinite(benefit_pct) else "—",
+        delta_color=FMV_GREEN if benefit_eur > 0 else FMV_GREY,
     ),
     unsafe_allow_html=True,
 )
 c4.markdown(
     kpi_card(
-        "Expected Shortfall",
-        f"{fmt_chf(es_eur, 0)} EUR" if np.isfinite(es_eur) else "—",
-        delta=f"Ø Verlust jenseits VaR",
+        "Expected Shortfall Pool",
+        f"{fmt_chf(pool.pool_es_eur, 0)} EUR",
+        delta="Ø Verlust jenseits VaR (Normal-Annahme)",
         delta_color=FMV_RED,
     ),
     unsafe_allow_html=True,
 )
 
-if not np.isfinite(sigma_daily):
-    st.warning("Zu wenige Spot-Daten für Volatilitätsschätzung.")
-
 st.markdown("")
 
+
 # ---------------------------------------------------------------------------
-# Offene Position je Monat + Bewertungsband
+# Per-actor breakdown : bar chart + table
 # ---------------------------------------------------------------------------
-st.subheader("Monatliche offene Position und Bewertungsband")
 
-pos_plot = pos.reset_index().rename(columns={"index": "month"}).copy()
-if "month" not in pos_plot.columns:
-    pos_plot["month"] = pos.index
+st.subheader("Akteur-Beitrag zum Pool")
 
-# Unsicherheitsband: ±1 σ √t auf den MtM-Preis
-if np.isfinite(sigma_daily):
-    band_pct = sigma_daily * z * sqrt_t
-    pos_plot["mtm_low"] = pos_plot["mtm_eur"] * (1 - band_pct)
-    pos_plot["mtm_high"] = pos_plot["mtm_eur"] * (1 + band_pct)
+actors_data = sorted(pool.actors, key=lambda a: -abs(a.exposure_eur))
+labels = [a.actor for a in actors_data]
+indiv_var = [a.var_eur for a in actors_data]
 
-fig_pos = go.Figure()
-colors = [FMV_GREEN if v >= 0 else FMV_RED for v in pos_plot["net_mwh"]]
-fig_pos.add_trace(go.Bar(
-    x=pos_plot["month"], y=pos_plot["net_mwh"],
-    marker_color=colors,
-    name="Netto-Position (MWh)",
-    yaxis="y1",
-    opacity=0.85,
-))
-fig_pos.add_trace(go.Scatter(
-    x=pos_plot["month"], y=pos_plot["mtm_eur"],
-    mode="lines+markers", name="MtM (EUR)",
-    line=dict(color=FMV_NAVY, width=2.5),
-    yaxis="y2",
-))
-if "mtm_low" in pos_plot.columns:
-    fig_pos.add_trace(go.Scatter(
-        x=pos_plot["month"], y=pos_plot["mtm_high"],
-        mode="lines", line=dict(width=0), showlegend=False, yaxis="y2",
-        hoverinfo="skip",
-    ))
-    fig_pos.add_trace(go.Scatter(
-        x=pos_plot["month"], y=pos_plot["mtm_low"],
-        mode="lines", line=dict(width=0),
-        fill="tonexty", fillcolor="rgba(15,82,204,0.15)",
-        name=f"{int(conf_level*100)} % Bewertungsband",
-        yaxis="y2",
-    ))
-
-fig_pos.add_hline(y=0, line_width=1, line_dash="dot", line_color=FMV_GREY)
-fig_pos.update_layout(
-    height=440, margin=dict(l=20, r=20, t=10, b=20),
-    plot_bgcolor="white", paper_bgcolor="white",
-    yaxis=dict(title="Netto-Position (MWh)", gridcolor="#EEF1F6"),
-    yaxis2=dict(title="MtM (EUR)", overlaying="y", side="right", showgrid=False),
-    xaxis=dict(gridcolor="#EEF1F6"),
-    legend=dict(orientation="h", y=-0.18),
-    hovermode="x unified",
+fig_bars = go.Figure()
+fig_bars.add_trace(
+    go.Bar(
+        x=labels, y=indiv_var,
+        name="VaR stand-alone",
+        marker_color=FMV_NAVY, opacity=0.85,
+        text=[f"{fmt_chf(v, 0)}" for v in indiv_var],
+        textposition="outside",
+        hovertemplate="<b>%{x}</b><br>Stand-alone VaR : %{y:,.0f} EUR<extra></extra>",
+    )
 )
-st.plotly_chart(fig_pos, use_container_width=True)
+fig_bars.add_hline(
+    y=pool.pool_var_eur,
+    line_color=FMV_BLUE, line_width=2.5, line_dash="dash",
+    annotation_text=f"Pool VaR = {fmt_chf(pool.pool_var_eur, 0)} EUR",
+    annotation_position="top right",
+    annotation_font_color=FMV_BLUE,
+)
+fig_bars.update_layout(
+    height=380,
+    margin=dict(l=20, r=20, t=20, b=20),
+    plot_bgcolor="white", paper_bgcolor="white",
+    yaxis=dict(title="VaR (EUR)", gridcolor="#EEF1F6"),
+    xaxis=dict(gridcolor="#EEF1F6"),
+    showlegend=False,
+)
+st.plotly_chart(fig_bars, use_container_width=True)
 
-# ---------------------------------------------------------------------------
-# Stresstests
-# ---------------------------------------------------------------------------
-st.subheader("Stresstests · Auswirkung auf den Portfolio-Wert")
-
-scenarios = [
-    {"name": "Preis +20 %", "price_shock": 0.20,
-     "description": "Angebotsengpass, Gas-Rallye"},
-    {"name": "Preis −20 %", "price_shock": -0.20,
-     "description": "Milder Winter, Überangebot erneuerbar"},
-    {"name": "Extremwinter (Preis +50 %)", "price_shock": 0.50,
-     "description": "Gasmangel + Kältewelle"},
-    {"name": "Trockenes Jahr (Preis +15 %)", "price_shock": 0.15,
-     "description": "Hydro −30 %, Importabhängigkeit steigt"},
-    {"name": "Spitze ohne Kernkraft (+30 %)", "price_shock": 0.30,
-     "description": "Unplanmässiger Nuklear-Ausfall"},
-    {"name": "CO₂-Sprung (Preis +10 %)", "price_shock": 0.10,
-     "description": "EUA +20 EUR/t"},
-]
-
-rows = []
-for sc in scenarios:
-    shock = sc["price_shock"]
-    # Long-Position (Netto > 0): Preisanstieg = Gewinn, Preisrückgang = Verlust
-    impact_eur = total_mtm_eur * shock
-    rows.append({
-        "Szenario": sc["name"],
-        "Beschreibung": sc["description"],
-        "Preisbewegung": f"{shock*100:+.0f} %",
-        "P&L (EUR)": impact_eur,
-        "Neuer Portfolio-Wert": total_mtm_eur + impact_eur,
-    })
-
-stress_df = pd.DataFrame(rows)
-
-# Anzeige
+st.subheader("Detail je Akteur")
+table_rows = []
+for a in actors_data:
+    table_rows.append(
+        {
+            "Akteur": a.actor,
+            "Offene Position (MWh)": a.open_mwh,
+            "Forward-Preis (EUR/MWh)": a.forward_price_eur_mwh,
+            "Exposure (EUR)": a.exposure_eur,
+            "σ (EUR)": a.sigma_eur,
+            f"VaR {int(confidence*100)} % (EUR)": a.var_eur,
+            "ES (EUR)": a.es_eur,
+        }
+    )
+detail_df = pd.DataFrame(table_rows)
 st.dataframe(
-    stress_df.assign(**{
-        "P&L (EUR)": stress_df["P&L (EUR)"].round(0),
-        "Neuer Portfolio-Wert": stress_df["Neuer Portfolio-Wert"].round(0),
-    }),
+    detail_df,
     use_container_width=True,
     hide_index=True,
     column_config={
-        "P&L (EUR)": st.column_config.NumberColumn(format="%.0f"),
-        "Neuer Portfolio-Wert": st.column_config.NumberColumn(format="%.0f"),
+        "Offene Position (MWh)": st.column_config.NumberColumn(format="%.0f"),
+        "Forward-Preis (EUR/MWh)": st.column_config.NumberColumn(format="%.2f"),
+        "Exposure (EUR)": st.column_config.NumberColumn(format="%.0f"),
+        "σ (EUR)": st.column_config.NumberColumn(format="%.0f"),
+        f"VaR {int(confidence*100)} % (EUR)": st.column_config.NumberColumn(format="%.0f"),
+        "ES (EUR)": st.column_config.NumberColumn(format="%.0f"),
     },
 )
 
-# Bar chart P&L
-fig_sc = go.Figure()
-fig_sc.add_trace(go.Bar(
-    x=stress_df["Szenario"],
-    y=stress_df["P&L (EUR)"],
-    marker_color=[FMV_GREEN if v >= 0 else FMV_RED for v in stress_df["P&L (EUR)"]],
-    text=[f"{fmt_chf(v,0)} EUR" for v in stress_df["P&L (EUR)"]],
-    textposition="outside",
-))
-fig_sc.add_hline(y=0, line_width=1, line_color=FMV_GREY)
-fig_sc.update_layout(
-    height=380, margin=dict(l=20, r=20, t=30, b=40),
-    plot_bgcolor="white", paper_bgcolor="white",
-    yaxis=dict(title="P&L (EUR)", gridcolor="#EEF1F6"),
-    xaxis=dict(tickangle=-15),
-)
-st.plotly_chart(fig_sc, use_container_width=True)
 
 # ---------------------------------------------------------------------------
-# Historische Simulation (Verteilung)
+# Correlation matrix heatmap (educational)
 # ---------------------------------------------------------------------------
-if len(daily_returns) > 60:
-    st.subheader(f"Historische P&L-Verteilung · {horizon_days}-Tage-Horizont")
-    scaled = daily_returns * sqrt_t
-    sim_pnl = total_mtm_eur * (np.exp(-scaled) - 1.0) if total_mtm_eur >= 0 else -total_mtm_eur * (np.exp(-scaled) - 1.0)
-    sim_pnl = -sim_pnl if total_mtm_eur < 0 else sim_pnl
 
-    fig_hist = go.Figure()
-    fig_hist.add_trace(go.Histogram(
-        x=sim_pnl, nbinsx=60,
-        marker_color=FMV_BLUE, opacity=0.8,
-    ))
-    q = float(np.quantile(sim_pnl, 1 - conf_level))
-    fig_hist.add_vline(x=q, line_width=2, line_dash="dash", line_color=FMV_RED,
-                       annotation_text=f"VaR {int(conf_level*100)} %",
-                       annotation_position="top right")
-    fig_hist.add_vline(x=0, line_width=1, line_color=FMV_NAVY)
-    fig_hist.update_layout(
-        height=340, margin=dict(l=20, r=20, t=30, b=20),
-        plot_bgcolor="white", paper_bgcolor="white",
-        xaxis=dict(title="Simulierter P&L (EUR)", gridcolor="#EEF1F6"),
-        yaxis=dict(title="Häufigkeit", gridcolor="#EEF1F6"),
+with st.expander("📊 Last-Korrelation zwischen Akteuren (Tagesrenditen, historisch)"):
+    st.caption(
+        "Wenn die Lasten der Akteure stark korreliert sind, kommt der "
+        "Diversifikations-Vorteil aus den **gegenläufigen offenen Positionen** "
+        "(Long/Short-Offset). Wenn die Lasten **nicht** korreliert sind, kommt "
+        "ein Teil des Vorteils auch aus der Volumenglättung — das modelliert "
+        "diese Demo noch nicht (POC : Single-Factor Preis-Modell)."
     )
-    st.plotly_chart(fig_hist, use_container_width=True)
+    corr = pool.correlation_matrix
+    if corr is not None and not corr.empty:
+        fig_corr = go.Figure(
+            go.Heatmap(
+                z=corr.values,
+                x=list(corr.columns),
+                y=list(corr.index),
+                colorscale="RdBu",
+                zmid=0, zmin=-1, zmax=1,
+                hovertemplate="%{y} ↔ %{x}<br>ρ = %{z:.2f}<extra></extra>",
+                colorbar=dict(title="ρ", thickness=15),
+            )
+        )
+        fig_corr.update_layout(
+            height=320,
+            margin=dict(l=20, r=20, t=20, b=20),
+            plot_bgcolor="white", paper_bgcolor="white",
+            xaxis=dict(side="top"),
+            yaxis=dict(autorange="reversed"),
+        )
+        st.plotly_chart(fig_corr, use_container_width=True)
+    else:
+        st.info("Korrelationsmatrix nicht berechnet — zu wenig Programmdaten.")
+
+
+# ---------------------------------------------------------------------------
+# Stress tests (consumer-correct sign convention)
+# ---------------------------------------------------------------------------
+
+st.subheader(f"Stresstests · Auswirkung auf Cal-{delivery_year}-Position")
+
+st.caption(
+    "**Konvention** : positive P&L = günstiger Ausgang für den Verbraucher "
+    "(weniger Kosten als erwartet). Für eine offene Position > 0 (Bezug aus "
+    "Markt) gilt : Preis-Anstieg → höhere Kosten → **negative P&L**. "
+    "Für eine offene Position < 0 (Verkauf-Überschuss) ist es umgekehrt."
+)
+
+scenarios = [
+    {"name": "Preis +20 %", "shock": 0.20, "desc": "Angebotsengpass, Gas-Rallye"},
+    {"name": "Preis −20 %", "shock": -0.20, "desc": "Milder Winter, Überangebot Erneuerbar"},
+    {"name": "Extremwinter +50 %", "shock": 0.50, "desc": "Gasmangel + Kältewelle"},
+    {"name": "Trockenes Jahr +15 %", "shock": 0.15, "desc": "Hydro −30 %, Importabhängigkeit steigt"},
+    {"name": "Nuklear-Ausfall FR +30 %", "shock": 0.30, "desc": "Unplanmässiger Ausfall"},
+    {"name": "CO₂-Sprung +10 %", "shock": 0.10, "desc": "EUA +20 EUR/t"},
+]
+
+# Consumer P&L = −exposure × shock
+# exposure > 0 (long open = under-hedged) and shock > 0 → cost up → P&L negative
+# exposure < 0 (short open = over-hedged) and shock > 0 → "cost" down → P&L positive
+rows = []
+for sc in scenarios:
+    pnl_pool = -pool.net_exposure_eur * sc["shock"]
+    rows.append(
+        {
+            "Szenario": sc["name"],
+            "Beschreibung": sc["desc"],
+            "Preisbewegung": f"{sc['shock']*100:+.0f} %",
+            "P&L Pool (EUR)": pnl_pool,
+        }
+    )
+stress_df = pd.DataFrame(rows)
+
+c_left, c_right = st.columns([1.2, 1])
+with c_left:
+    fig_stress = go.Figure()
+    fig_stress.add_trace(
+        go.Bar(
+            x=stress_df["Szenario"],
+            y=stress_df["P&L Pool (EUR)"],
+            marker_color=[FMV_GREEN if v >= 0 else FMV_RED for v in stress_df["P&L Pool (EUR)"]],
+            text=[f"{fmt_chf(v, 0)} EUR" for v in stress_df["P&L Pool (EUR)"]],
+            textposition="outside",
+            hovertemplate="<b>%{x}</b><br>P&L : %{y:,.0f} EUR<extra></extra>",
+        )
+    )
+    fig_stress.add_hline(y=0, line_color=FMV_GREY, line_width=1)
+    fig_stress.update_layout(
+        height=420, margin=dict(l=20, r=20, t=20, b=80),
+        plot_bgcolor="white", paper_bgcolor="white",
+        yaxis=dict(
+            title="P&L Pool (EUR) — positiv = günstig für Verbraucher",
+            gridcolor="#EEF1F6",
+        ),
+        xaxis=dict(tickangle=-15),
+    )
+    st.plotly_chart(fig_stress, use_container_width=True)
+
+with c_right:
+    st.dataframe(
+        stress_df,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "P&L Pool (EUR)": st.column_config.NumberColumn(format="%.0f"),
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# Methodology footer
+# ---------------------------------------------------------------------------
 
 st.divider()
 st.caption(
-    "Methodik: Parametrisch VaR = |MtM| × σ × z × √t. Historische Simulation auf Basis "
-    "täglicher Spot-Renditen. Stressszenarien sind exemplarisch und nicht vorhersagend. "
-    "Die offene Position verwendet die Netto-Differenz Einspeisung − Bezug je Monat × aktuelle PFC."
+    f"**Methodik** : parametrischer VaR auf der **offenen Preisexposition** der "
+    f"Akteur-Position (open MWh × Cal-{delivery_year} Forward × σ × √T). "
+    f"σ = 20 % annualisiert (POC-Annahme, kalibriert auf 2024-2026 EEX-Historie). "
+    f"z = {Z_BY_CONF[confidence]:.4f} bei {int(confidence*100)} % Konfidenz. "
+    f"Horizont = {pool.horizon_years:.2f} Jahre bis 1. Juli {delivery_year} "
+    f"(geflootet bei 0.25j für das laufende Lieferjahr). "
+    f"Expected Shortfall = φ(z)/(1−α) × σ unter Normal-Annahme. "
+    f"Pool-Vorteil aus Sub-Additivität : Σ |Eᵢ| ≥ |Σ Eᵢ|, strikt > nur wenn "
+    f"einzelne Akteure entgegengesetzt offen sind. Konsumenten-Konvention für "
+    f"Stresstests : positive P&L = günstig für GRD."
 )

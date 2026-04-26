@@ -1012,49 +1012,133 @@ def render_hedge_ladder(
     delivery_year: int,
     actor: "str | None",
 ):
-    """Cumulative hedge build-up by trade date, with Cal-Y forward overlay.
+    """Cumulative hedge build-up by trade date, with three decomposed curves.
 
-    Two y-axes :
-      - Left  : cumulative hedged MWh (signed, line)
-      - Right : Cal-Y forward price history (line, shaded markers at trade days)
+    For an actor that mixes Intake (buys) and Withdrawal (sells) deals on
+    the same delivery year — e.g. EDSH 2027 bought 2 500 MWh in 07/2024
+    then sold 1 163 MWh in 04/2026 — the **net** cumulative line dips
+    when a sale lands. To make this readable to a non-trader audience,
+    we decompose into three curves :
+
+      - **Cumulated Buys** (green) : monotonic, sums of Intake volumes only.
+      - **Cumulated Sales** (red, plotted as positive magnitude with a "−"
+        in the legend) : monotonic, sums of Withdrawal volumes only.
+      - **Net Hedge** (blue) : Buys − Sales = the truly hedged volume.
+
+    The user can then see at a glance "the blue dipped because of the
+    grey sales line, not because hedge volume was lost".
+
+    Right axis : Cal-Y forward price history (Cal contract when liquid,
+    falls back to Q01..Q04 quarterlies for the current delivery year).
     """
     import plotly.graph_objects as go
     from plotly.subplots import make_subplots
 
-    # Use the canonical helper for the cumulative hedge curve
-    from portfolio_yearly import compute_hedge_ladder
-
-    ladder = compute_hedge_ladder(deals, delivery_year, actor=actor)
     fig = make_subplots(specs=[[{"secondary_y": True}]])
 
-    if ladder.empty:
+    deals_f = deals if actor is None else deals[deals.get("actor") == actor]
+    if deals_f.empty:
         fig.add_annotation(text=f"Keine Deals für Cal-{delivery_year}.", showarrow=False)
         fig.update_layout(height=380, plot_bgcolor="white", paper_bgcolor="white")
         return fig
 
-    # Cumulative hedge (left axis)
+    d = deals_f.copy()
+    d["_year"] = pd.to_datetime(d["month"], errors="coerce").dt.year
+    d = d[d["_year"] == delivery_year]
+    if d.empty or "trade_date" not in d.columns:
+        fig.add_annotation(text=f"Keine Deals für Cal-{delivery_year}.", showarrow=False)
+        fig.update_layout(height=380, plot_bgcolor="white", paper_bgcolor="white")
+        return fig
+
+    d["_trade"] = pd.to_datetime(d["trade_date"], errors="coerce")
+    d = d.dropna(subset=["_trade"]).sort_values("_trade")
+    if d.empty:
+        fig.add_annotation(text=f"Keine Deals für Cal-{delivery_year}.", showarrow=False)
+        fig.update_layout(height=380, plot_bgcolor="white", paper_bgcolor="white")
+        return fig
+
+    # Decompose by scope
+    vol = pd.to_numeric(d["volume_sum"], errors="coerce").fillna(0.0).abs()
+    notional_abs = pd.to_numeric(d.get("notional_sum"), errors="coerce").fillna(0.0).abs()
+    scope_lower = d["scope"].astype(str).str.lower()
+
+    d["_buy_vol"] = vol.where(scope_lower.str.contains("intake", na=False), 0.0)
+    d["_sell_vol"] = vol.where(scope_lower.str.contains("withdrawal", na=False), 0.0)
+    d["_buy_notional"] = notional_abs.where(scope_lower.str.contains("intake", na=False), 0.0)
+    d["_sell_notional"] = notional_abs.where(scope_lower.str.contains("withdrawal", na=False), 0.0)
+
+    daily = d.groupby("_trade").agg(
+        buy_vol=("_buy_vol", "sum"),
+        sell_vol=("_sell_vol", "sum"),
+        buy_notional=("_buy_notional", "sum"),
+        sell_notional=("_sell_notional", "sum"),
+    ).sort_index()
+
+    daily["cum_buy"] = daily["buy_vol"].cumsum()
+    daily["cum_sell"] = daily["sell_vol"].cumsum()
+    daily["cum_net"] = daily["cum_buy"] - daily["cum_sell"]
+
+    # Volume-weighted average price of NET position (buys − sells)
+    daily["cum_buy_notional"] = daily["buy_notional"].cumsum()
+    daily["cum_sell_notional"] = daily["sell_notional"].cumsum()
+    cum_net_notional = daily["cum_buy_notional"] - daily["cum_sell_notional"]
+    with np.errstate(divide="ignore", invalid="ignore"):
+        daily["cum_avg_price"] = np.where(
+            daily["cum_net"] > 0,
+            cum_net_notional / daily["cum_net"].replace(0, np.nan),
+            np.nan,
+        )
+
+    # ── Net hedge (blue, the "truth" line) ──────────────────────────────────
     fig.add_trace(
         go.Scatter(
-            x=ladder["trade_date"], y=ladder["cum_hedge_mwh"],
-            mode="lines+markers", name="Kumulierte Hedge (MWh)",
+            x=daily.index, y=daily["cum_net"],
+            mode="lines+markers", name="Netto-Hedge",
             line=dict(color=FMV_BLUE, width=3),
             marker=dict(size=10),
-            hovertemplate="%{x|%d.%m.%Y}<br>Kum. Hedge: %{y:.0f} MWh<extra></extra>",
+            hovertemplate="%{x|%d.%m.%Y}<br>Netto-Hedge: %{y:,.0f} MWh<extra></extra>",
         ),
         secondary_y=False,
     )
 
-    # Cumulative volume-weighted average price (markers on right axis)
-    fig.add_trace(
-        go.Scatter(
-            x=ladder["trade_date"], y=ladder["cum_avg_price"],
-            mode="lines+markers", name="Ø Hedge-Preis kumuliert",
-            line=dict(color=FMV_NAVY, width=2, dash="dash"),
-            marker=dict(size=8, symbol="diamond"),
-            hovertemplate="%{x|%d.%m.%Y}<br>Ø Preis: %{y:.2f} EUR/MWh<extra></extra>",
-        ),
-        secondary_y=True,
-    )
+    # ── Cumulative buys (green, monotonic up) ───────────────────────────────
+    if (daily["cum_buy"] > 0).any():
+        fig.add_trace(
+            go.Scatter(
+                x=daily.index, y=daily["cum_buy"],
+                mode="lines+markers", name="Käufe kumuliert",
+                line=dict(color=FMV_GREEN, width=1.8, dash="dot"),
+                marker=dict(size=7, symbol="triangle-up"),
+                hovertemplate="%{x|%d.%m.%Y}<br>Käufe kum.: %{y:,.0f} MWh<extra></extra>",
+            ),
+            secondary_y=False,
+        )
+
+    # ── Cumulative sales (red, monotonic up, plotted on positive axis) ──────
+    if (daily["cum_sell"] > 0).any():
+        fig.add_trace(
+            go.Scatter(
+                x=daily.index, y=daily["cum_sell"],
+                mode="lines+markers", name="Verkäufe kumuliert",
+                line=dict(color=FMV_RED, width=1.8, dash="dot"),
+                marker=dict(size=7, symbol="triangle-down"),
+                hovertemplate="%{x|%d.%m.%Y}<br>Verkäufe kum.: %{y:,.0f} MWh<extra></extra>",
+            ),
+            secondary_y=False,
+        )
+
+    # ── Cumulative volume-weighted average price (right axis) ───────────────
+    if daily["cum_avg_price"].notna().any():
+        fig.add_trace(
+            go.Scatter(
+                x=daily.index, y=daily["cum_avg_price"],
+                mode="lines+markers", name="Ø Netto-Hedge-Preis",
+                line=dict(color=FMV_NAVY, width=2, dash="dash"),
+                marker=dict(size=8, symbol="diamond"),
+                hovertemplate="%{x|%d.%m.%Y}<br>Ø Preis: %{y:.2f} EUR/MWh<extra></extra>",
+            ),
+            secondary_y=True,
+        )
 
     # Forward history overlay : Cal-Y when liquid (future year), or the
     # available quarterlies (Q01..Q04) when the calendar contract has retired
