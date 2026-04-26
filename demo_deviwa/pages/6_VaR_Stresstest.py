@@ -412,40 +412,38 @@ for sc in scenarios:
     )
 stress_df = pd.DataFrame(rows)
 
-c_left, c_right = st.columns([1.2, 1])
-with c_left:
-    fig_stress = go.Figure()
-    fig_stress.add_trace(
-        go.Bar(
-            x=stress_df["Szenario"],
-            y=stress_df["P&L Pool (EUR)"],
-            marker_color=[FMV_GREEN if v >= 0 else FMV_RED for v in stress_df["P&L Pool (EUR)"]],
-            text=[f"{fmt_chf(v, 0)} EUR" for v in stress_df["P&L Pool (EUR)"]],
-            textposition="outside",
-            hovertemplate="<b>%{x}</b><br>P&L : %{y:,.0f} EUR<extra></extra>",
-        )
+fig_stress = go.Figure()
+fig_stress.add_trace(
+    go.Bar(
+        x=stress_df["Szenario"],
+        y=stress_df["P&L Pool (EUR)"],
+        marker_color=[FMV_GREEN if v >= 0 else FMV_RED for v in stress_df["P&L Pool (EUR)"]],
+        text=[f"{fmt_chf(v, 0)} EUR" for v in stress_df["P&L Pool (EUR)"]],
+        textposition="outside",
+        hovertemplate="<b>%{x}</b><br>P&L : %{y:,.0f} EUR<extra></extra>",
     )
-    fig_stress.add_hline(y=0, line_color=FMV_GREY, line_width=1)
-    fig_stress.update_layout(
-        height=420, margin=dict(l=20, r=20, t=20, b=80),
-        plot_bgcolor="white", paper_bgcolor="white",
-        yaxis=dict(
-            title="P&L Pool (EUR) — positiv = günstig für Verbraucher",
-            gridcolor="#EEF1F6",
-        ),
-        xaxis=dict(tickangle=-15),
-    )
-    st.plotly_chart(fig_stress, use_container_width=True)
+)
+fig_stress.add_hline(y=0, line_color=FMV_GREY, line_width=1)
+fig_stress.update_layout(
+    height=420, margin=dict(l=20, r=20, t=20, b=80),
+    plot_bgcolor="white", paper_bgcolor="white",
+    yaxis=dict(
+        title="P&L Pool (EUR) — positiv = günstig für Verbraucher",
+        gridcolor="#EEF1F6",
+    ),
+    xaxis=dict(tickangle=-15),
+)
+st.plotly_chart(fig_stress, use_container_width=True)
 
-with c_right:
-    st.dataframe(
-        stress_df,
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-            "P&L Pool (EUR)": st.column_config.NumberColumn(format="%.0f"),
-        },
-    )
+# Table full-width underneath (no narrow side column that crops Szenario header)
+st.dataframe(
+    stress_df,
+    use_container_width=True,
+    hide_index=True,
+    column_config={
+        "P&L Pool (EUR)": st.column_config.NumberColumn(format="%.0f"),
+    },
+)
 
 
 # ---------------------------------------------------------------------------
