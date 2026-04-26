@@ -39,6 +39,7 @@ from utils import (
     load_eex_forwards,
     load_pfc,
     render_actor_selector,
+    render_cache_status,
     render_header,
 )
 
@@ -57,6 +58,8 @@ with st.sidebar:
         "FMV · Deviwa Energiepool</div>", unsafe_allow_html=True,
     )
     st.caption("Demo · alle Daten lokal")
+    st.divider()
+    render_cache_status()
     st.divider()
     st.markdown("**Navigation**")
     st.markdown(
