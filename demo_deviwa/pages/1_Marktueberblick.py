@@ -449,7 +449,17 @@ st.divider()
 st.subheader("Spot CH · letzte 14 Tage + LEAR-Prognose 10 Tage")
 
 if not spot.empty:
-    hist_cutoff = spot.index.max() - pd.Timedelta(days=14)
+    spot_last = spot.index.max()
+    today_ch = pd.Timestamp.now(tz="Europe/Zurich")
+    lag_days = (today_ch - spot_last).days
+    if lag_days > 3:
+        st.warning(
+            f"⚠️ Spot-Daten sind {lag_days} Tage alt — letzte beobachtete Stunde "
+            f"**{spot_last.strftime('%d.%m.%Y %H:%M')}**. Die Grafik zeigt die "
+            f"14 Tage **vor** dem letzten Datenpunkt (nicht vor heute) und 10 Tage "
+            f"LEAR-Prognose ab dort. Cache aktualisieren über die Seitenleiste."
+        )
+    hist_cutoff = spot_last - pd.Timedelta(days=14)
     spot_recent = spot.loc[spot.index >= hist_cutoff, "price"].resample("h").mean()
 
     fig_spot = go.Figure()
