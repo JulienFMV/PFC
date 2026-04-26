@@ -50,3 +50,14 @@ pfc_shaping/output/*.parquet
 *.token
 AutogluonModels/
 _h_cache/
+
+# Deviwa client data — STRICTLY CONFIDENTIAL, never commit
+data/Deviwa.xlsx
+data/Deviwa.csv
+data/deviwa.xlsx
+data/deviwa.csv
+data/Deviwa_Deals.xlsx
+data/Price_Report_EEX_Yearly.xlsx
+data/PFC_OMPEX.xlsx
+data/_h_cache/
+data/_cache/
