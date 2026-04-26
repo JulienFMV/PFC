@@ -1,4 +1,17 @@
-"""Seite 1 – Marktüberblick (Spot, Prognose, Forwards, Commodities)."""
+"""Seite 1 — Marktüberblick.
+
+Phase 5 redesign : style "FMV settlement price" screen — top filter bar,
+Settlement Price chart with SMA 20 / 50 / 200 + Bollinger Bands, side panel
+with High / Low / Range / Position-%, Range-Zone interpretation table.
+
+The dashboard adds a portfolio-aware overlay : when the user selects an
+actor, this page exposes that actor's volume-weighted average hedge price
+for the chosen product as a horizontal line on the forward chart, so the
+GRD can see *where they hedged* relative to the historical market.
+
+Spot + LEAR forecast block stays underneath for the daily view ; commodity
+ribbon (TTF Gas, CO₂ EUA, Brent) keeps the macro context.
+"""
 
 from __future__ import annotations
 
@@ -12,284 +25,512 @@ import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from utils import (
+from portfolio_yearly import compute_hedge_by_year  # noqa: E402
+from utils import (  # noqa: E402
     FMV_ACCENT,
     FMV_BLUE,
     FMV_GREEN,
     FMV_GREY,
     FMV_NAVY,
     FMV_RED,
-    fmt_delta,
-    fmt_eur_mwh,
-    freshness_badge,
-    kpi_card,
     load_commodities,
+    load_deviwa_deals_cached,
+    load_deviwa_programme_cached,
     load_eex_forwards,
     load_epex_ch,
     load_lear_forecast,
+    render_cache_status,
     render_header,
 )
 
+
+# ---------------------------------------------------------------------------
+# Page configuration
+# ---------------------------------------------------------------------------
+
 st.set_page_config(
-    page_title="FMV Deviwa Demo · Marktüberblick",
-    page_icon="⚡",
+    page_title="FMV Deviwa · Marktüberblick",
+    page_icon="📊",
     layout="wide",
-    initial_sidebar_state="expanded",
 )
 
-render_header("Marktüberblick heute")
+render_header("Marktüberblick — EEX Forwards & Spot")
 
 with st.sidebar:
-    st.markdown(f"<div style='color:{FMV_NAVY}; font-weight:600; font-size:1rem;'>"
-                "FMV · Deviwa Energiepool</div>", unsafe_allow_html=True)
-    st.caption("Interne Demo. Daten lokal geladen.")
-    st.divider()
-    st.markdown("**Inhalt**")
-    st.markdown(
-        "- Marktüberblick\n"
-        "- Kurzfristprognose (LEAR)\n"
-        "- Lastprofil-Pricing\n"
-        "- Ihre Transaktionen\n"
-        "- Marktdaten CH/DE"
-    )
+    render_cache_status()
+
 
 # ---------------------------------------------------------------------------
-# Daten laden
+# Data loading
 # ---------------------------------------------------------------------------
-epex = load_epex_ch()
-forecast = load_lear_forecast()
+
 forwards = load_eex_forwards()
+spot = load_epex_ch()
+forecast = load_lear_forecast()
 commodities = load_commodities()
+deals = load_deviwa_deals_cached()
+programme = load_deviwa_programme_cached()
 
-if epex.empty:
-    st.error("Spot-Daten nicht verfügbar. Bitte Datencache aktualisieren.")
+if forwards.empty:
+    st.error("Keine EEX-Forward-Daten verfügbar. Bitte Cache aktualisieren.")
     st.stop()
 
-# ---------------------------------------------------------------------------
-# KPI-Zeile
-# ---------------------------------------------------------------------------
-last_hour_price = float(epex["price"].dropna().iloc[-1])
-last_ts = epex.dropna().index[-1]
-prev_day_price = float(epex["price"].dropna().iloc[-25]) if len(epex) > 25 else np.nan
-delta_vs_yesterday = last_hour_price - prev_day_price
 
-# Forecast D+1 (Durchschnitt 1. Tag)
-forecast_d1 = np.nan
-if not forecast.empty and "days_ahead" in forecast.columns:
-    f_d1 = forecast[forecast["days_ahead"] == 1]
-    if not f_d1.empty:
-        forecast_d1 = float(f_d1["price_lear"].mean())
+# ---------------------------------------------------------------------------
+# Top filter bar (style screenshot FMV)
+# ---------------------------------------------------------------------------
 
-# CH Base Cal-27
-cal27_price = np.nan
-cal27_delta = np.nan
-if not forwards.empty:
-    ch_base = forwards[
-        (forwards["market"].str.upper() == "CH")
-        & (forwards["load_type"].str.lower() == "base")
-        & (forwards["product"].astype(str).str.contains("2027"))
+st.subheader("EEX Forward · Settlement Price")
+
+c_market, c_profile, c_product, c_lookback, c_actor = st.columns([0.9, 0.9, 1.2, 1.0, 1.2])
+
+with c_market:
+    market_options = sorted(
+        forwards["market"].dropna().astype(str).str.upper().unique().tolist()
+    )
+    market_default = "CH" if "CH" in market_options else market_options[0]
+    market = st.selectbox(
+        "Markt",
+        options=market_options,
+        index=market_options.index(market_default),
+        key="mu_market",
+    )
+
+with c_profile:
+    profile = st.selectbox(
+        "Profil",
+        options=["base", "peak"],
+        format_func=lambda p: p.upper(),
+        key="mu_profile",
+    )
+
+with c_product:
+    candidates = forwards[
+        (forwards["market"].astype(str).str.upper() == market)
+        & (forwards["load_type"].astype(str).str.lower() == profile)
+        & (forwards["product"].astype(str).str.contains("Y01_", na=False, regex=False))
     ].copy()
-    if not ch_base.empty:
-        ch_base = ch_base.sort_values("date")
-        cal27_price = float(ch_base["price"].iloc[-1])
-        recent = ch_base.tail(8)
-        if len(recent) >= 2:
-            cal27_delta = cal27_price - float(recent["price"].iloc[0])
 
-# Gas / CO2
-ttf_price = np.nan
-ttf_delta = np.nan
-eua_price = np.nan
-eua_delta = np.nan
-if not commodities.empty:
-    if "TTF Gas" in commodities.columns:
-        s = commodities["TTF Gas"].dropna()
-        if len(s) >= 8:
-            ttf_price = float(s.iloc[-1])
-            ttf_delta = ttf_price - float(s.iloc[-8])
-    if "CO2 EUA (KRBN)" in commodities.columns:
-        s = commodities["CO2 EUA (KRBN)"].dropna()
-        if len(s) >= 8:
-            eua_price = float(s.iloc[-1])
-            eua_delta = eua_price - float(s.iloc[-8])
+    def _year_from_product(p: str) -> int:
+        digits = "".join(c for c in str(p) if c.isdigit())
+        return int(digits[-4:]) if len(digits) >= 4 else 0
 
-c1, c2, c3, c4, c5 = st.columns(5)
-c1.markdown(
-    kpi_card(
-        "CH Spot letzte Stunde",
-        fmt_eur_mwh(last_hour_price),
-        delta=f"{fmt_delta(delta_vs_yesterday, ' EUR/MWh')} ggü. Vortag",
-        delta_color=FMV_GREEN if delta_vs_yesterday < 0 else FMV_RED,
-        help_text=str(last_ts),
-    ),
-    unsafe_allow_html=True,
-)
-c2.markdown(
-    kpi_card(
-        "Prognose D+1 (Ø)",
-        fmt_eur_mwh(forecast_d1) if np.isfinite(forecast_d1) else "—",
-        delta="LEAR-Modell FMV",
-        delta_color=FMV_BLUE,
-    ),
-    unsafe_allow_html=True,
-)
-c3.markdown(
-    kpi_card(
-        "EEX CH Base Cal-27",
-        fmt_eur_mwh(cal27_price) if np.isfinite(cal27_price) else "—",
-        delta=f"{fmt_delta(cal27_delta, ' EUR/MWh')} 7-Tage" if np.isfinite(cal27_delta) else None,
-        delta_color=FMV_GREEN if (cal27_delta or 0) < 0 else FMV_RED,
-    ),
-    unsafe_allow_html=True,
-)
-c4.markdown(
-    kpi_card(
-        "TTF Gas (Front)",
-        f"{fmt_eur_mwh(ttf_price)}" if np.isfinite(ttf_price) else "—",
-        delta=f"{fmt_delta(ttf_delta, ' EUR/MWh')} 7-Tage" if np.isfinite(ttf_delta) else None,
-        delta_color=FMV_GREEN if (ttf_delta or 0) < 0 else FMV_RED,
-    ),
-    unsafe_allow_html=True,
-)
-c5.markdown(
-    kpi_card(
-        "CO₂ EUA",
-        f"{fmt_eur_mwh(eua_price).replace('EUR/MWh','EUR/t')}" if np.isfinite(eua_price) else "—",
-        delta=f"{fmt_delta(eua_delta, ' EUR/t')} 7-Tage" if np.isfinite(eua_delta) else None,
-        delta_color=FMV_GREEN if (eua_delta or 0) < 0 else FMV_RED,
-    ),
-    unsafe_allow_html=True,
-)
+    products = sorted(
+        candidates["product"].dropna().astype(str).unique().tolist(),
+        key=_year_from_product,
+    )
+    if not products:
+        st.warning(f"Keine Cal-Produkte für {market} {profile.upper()}.")
+        st.stop()
 
-st.markdown("")
+    default_year = pd.Timestamp.now().year + 1
+    default_idx = next(
+        (i for i, p in enumerate(products) if str(default_year) in p),
+        len(products) - 1,
+    )
+    product = st.selectbox(
+        "Produkt",
+        options=products,
+        index=default_idx,
+        format_func=lambda p: p.replace("_BASE", "").replace("_PEAK", "").split(" ", 1)[-1],
+        key="mu_product",
+    )
+    delivery_year = _year_from_product(product) or default_year
+
+with c_lookback:
+    lookback = st.selectbox(
+        "Lookback",
+        options=["6M", "1J", "2J", "5J", "Alle"],
+        index=2,
+        key="mu_lookback",
+    )
+
+with c_actor:
+    actors_in_data = sorted(deals["actor"].dropna().unique().tolist()) if not deals.empty else []
+    actor_options = ["—"] + actors_in_data
+    actor_choice = st.selectbox(
+        "Akteur (Hedge-Overlay)",
+        options=actor_options,
+        index=0,
+        key="mu_actor",
+        help=(
+            "Wenn ein Akteur gewählt ist, wird sein Ø Hedge-Preis "
+            "als horizontale Linie eingeblendet."
+        ),
+    )
+    selected_actor: str | None = None if actor_choice == "—" else actor_choice
+
 
 # ---------------------------------------------------------------------------
-# Chart: Spot 14 Tage + Forecast 10 Tage
+# Filter forwards series + apply lookback
 # ---------------------------------------------------------------------------
-st.subheader("Spotpreis CH · letzte 14 Tage + Prognose 10 Tage")
 
-hist_cutoff = epex.index.max() - pd.Timedelta(days=14)
-spot_recent = epex.loc[epex.index >= hist_cutoff, "price"].resample("h").mean()
+ser = forwards[
+    (forwards["market"].astype(str).str.upper() == market)
+    & (forwards["load_type"].astype(str).str.lower() == profile)
+    & (forwards["product"] == product)
+].copy()
+ser = ser.dropna(subset=["price", "date"]).sort_values("date").reset_index(drop=True)
 
-fig = go.Figure()
-fig.add_trace(go.Scatter(
-    x=spot_recent.index, y=spot_recent.values,
-    mode="lines", name="Spot realisiert",
-    line=dict(color=FMV_NAVY, width=2),
-))
+if ser.empty:
+    st.info("Keine Daten für die aktuelle Auswahl.")
+    st.stop()
 
-if not forecast.empty:
-    fcst = forecast.copy()
-    fcst = fcst.sort_values("timestamp")
+last_date = ser["date"].max()
+lookback_days = {"6M": 183, "1J": 365, "2J": 730, "5J": 1825, "Alle": None}.get(lookback)
+if lookback_days is not None:
+    cutoff = last_date - pd.Timedelta(days=lookback_days)
+    ser = ser[ser["date"] >= cutoff].reset_index(drop=True)
+
+if len(ser) < 5:
+    st.warning("Zu wenig Datenpunkte im gewählten Zeitraum.")
+    st.stop()
+
+
+# ---------------------------------------------------------------------------
+# Technical overlays
+# ---------------------------------------------------------------------------
+
+ser["sma_20"] = ser["price"].rolling(window=20, min_periods=1).mean()
+ser["sma_50"] = ser["price"].rolling(window=50, min_periods=1).mean()
+ser["sma_200"] = ser["price"].rolling(window=200, min_periods=1).mean()
+sma20_std = ser["price"].rolling(window=20, min_periods=1).std(ddof=0)
+ser["bb_upper"] = ser["sma_20"] + 2.0 * sma20_std
+ser["bb_lower"] = ser["sma_20"] - 2.0 * sma20_std
+
+
+# ---------------------------------------------------------------------------
+# Side-panel statistics
+# ---------------------------------------------------------------------------
+
+last_price = float(ser["price"].iloc[-1])
+prev_price = float(ser["price"].iloc[-2]) if len(ser) > 1 else last_price
+delta_1d = last_price - prev_price
+delta_pct = 100.0 * delta_1d / prev_price if prev_price else 0.0
+
+high_price = float(ser["price"].max())
+low_price = float(ser["price"].min())
+high_date = ser.loc[ser["price"].idxmax(), "date"]
+low_date = ser.loc[ser["price"].idxmin(), "date"]
+price_range = high_price - low_price
+position_in_range = (
+    (last_price - low_price) / price_range * 100.0 if price_range > 0 else 50.0
+)
+
+if position_in_range >= 80:
+    range_zone = "Upper range — close to recent highs"
+    zone_color = FMV_RED
+elif position_in_range >= 60:
+    range_zone = "Upper part of the range"
+    zone_color = FMV_ACCENT
+elif position_in_range >= 40:
+    range_zone = "Mid-range — neutral market"
+    zone_color = FMV_GREY
+elif position_in_range >= 20:
+    range_zone = "Lower part of the range"
+    zone_color = FMV_GREEN
+else:
+    range_zone = "Lower range — potential buying opportunity"
+    zone_color = FMV_GREEN
+
+
+# ---------------------------------------------------------------------------
+# Portfolio overlay : actor's avg hedge price for delivery_year
+# ---------------------------------------------------------------------------
+
+avg_hedge_price: float | None = None
+hedged_volume_mwh: float = 0.0
+if selected_actor is not None and not deals.empty:
+    hm = compute_hedge_by_year(
+        deals, programme, actor=selected_actor,
+        today=pd.Timestamp.now(tz="Europe/Zurich"),
+    )
+    yhm = hm.get(delivery_year)
+    if yhm is not None and np.isfinite(yhm.avg_hedge_price_eur_mwh):
+        avg_hedge_price = float(yhm.avg_hedge_price_eur_mwh)
+        hedged_volume_mwh = float(abs(yhm.hedged_mwh))
+
+
+# ---------------------------------------------------------------------------
+# Main chart + side panel layout
+# ---------------------------------------------------------------------------
+
+c_chart, c_side = st.columns([2.6, 1.0], gap="medium")
+
+with c_chart:
+    fig = go.Figure()
+
+    # Bollinger band fill
     fig.add_trace(go.Scatter(
-        x=fcst["timestamp"], y=fcst["price_p90"],
-        mode="lines", line=dict(width=0), showlegend=False,
-        hoverinfo="skip",
+        x=ser["date"], y=ser["bb_upper"],
+        mode="lines", name="Bollinger Upper",
+        line=dict(width=0.6, dash="dot", color="#A0A8B5"),
+        hovertemplate="%{x|%d.%m.%Y}<br>BB Upper : %{y:.2f}<extra></extra>",
     ))
     fig.add_trace(go.Scatter(
-        x=fcst["timestamp"], y=fcst["price_p10"],
-        mode="lines", line=dict(width=0),
-        fill="tonexty", fillcolor="rgba(15,82,204,0.15)",
-        name="P10–P90 Band",
+        x=ser["date"], y=ser["bb_lower"],
+        mode="lines", name="Bollinger Lower",
+        line=dict(width=0.6, dash="dot", color="#A0A8B5"),
+        fill="tonexty", fillcolor="rgba(160, 168, 181, 0.12)",
+        hovertemplate="%{x|%d.%m.%Y}<br>BB Lower : %{y:.2f}<extra></extra>",
+    ))
+
+    # Moving averages (long → short)
+    fig.add_trace(go.Scatter(
+        x=ser["date"], y=ser["sma_200"],
+        mode="lines", name="SMA 200",
+        line=dict(width=1.4, color="#2B2F3A"),
+        hovertemplate="%{x|%d.%m.%Y}<br>SMA 200 : %{y:.2f}<extra></extra>",
     ))
     fig.add_trace(go.Scatter(
-        x=fcst["timestamp"], y=fcst["price_lear"],
-        mode="lines", name="LEAR Prognose",
-        line=dict(color=FMV_BLUE, width=2.5, dash="solid"),
+        x=ser["date"], y=ser["sma_50"],
+        mode="lines", name="SMA 50",
+        line=dict(width=1.4, color=FMV_ACCENT),
+        hovertemplate="%{x|%d.%m.%Y}<br>SMA 50 : %{y:.2f}<extra></extra>",
+    ))
+    fig.add_trace(go.Scatter(
+        x=ser["date"], y=ser["sma_20"],
+        mode="lines", name="SMA 20",
+        line=dict(width=1.4, color=FMV_RED),
+        hovertemplate="%{x|%d.%m.%Y}<br>SMA 20 : %{y:.2f}<extra></extra>",
     ))
 
-fig.update_layout(
-    height=420,
-    margin=dict(l=20, r=20, t=10, b=20),
-    hovermode="x unified",
-    plot_bgcolor="white",
-    paper_bgcolor="white",
-    yaxis=dict(title="EUR/MWh", gridcolor="#EEF1F6"),
-    xaxis=dict(gridcolor="#EEF1F6"),
-    legend=dict(orientation="h", y=-0.15),
-)
-st.plotly_chart(fig, use_container_width=True)
+    # Settlement price (bold blue, on top)
+    fig.add_trace(go.Scatter(
+        x=ser["date"], y=ser["price"],
+        mode="lines", name="Settlement Price",
+        line=dict(color=FMV_BLUE, width=2.5),
+        hovertemplate="%{x|%d.%m.%Y}<br>Settle : %{y:.2f} EUR/MWh<extra></extra>",
+    ))
 
-# ---------------------------------------------------------------------------
-# Zweite Reihe: Forward Kurve + CO2/Gas
-# ---------------------------------------------------------------------------
-col_left, col_right = st.columns([1.1, 1])
-
-with col_left:
-    st.subheader("EEX Forward Kurve · CH Base")
-    if not forwards.empty:
-        last_date = forwards["date"].max()
-        snap = forwards[
-            (forwards["date"] == last_date)
-            & (forwards["market"].str.upper() == "CH")
-            & (forwards["load_type"].str.lower() == "base")
-        ].copy()
-        if not snap.empty:
-            snap = snap.sort_values("product")
-            fig_fwd = go.Figure()
-            fig_fwd.add_trace(go.Bar(
-                x=snap["product"], y=snap["price"],
-                marker_color=FMV_BLUE,
-                name=f"Schlusskurs {pd.Timestamp(last_date).strftime('%d.%m.%Y')}",
-            ))
-            fig_fwd.update_layout(
-                height=320, margin=dict(l=20, r=20, t=10, b=20),
-                plot_bgcolor="white", paper_bgcolor="white",
-                yaxis=dict(title="EUR/MWh", gridcolor="#EEF1F6"),
-                xaxis=dict(tickangle=-45),
-            )
-            st.plotly_chart(fig_fwd, use_container_width=True)
-        else:
-            st.info("Keine EEX CH Base Daten verfügbar.")
-    else:
-        st.info("Forward-Daten nicht geladen.")
-
-with col_right:
-    st.subheader("Commodities · letzte 90 Tage")
-    if not commodities.empty:
-        recent_com = commodities.tail(90)
-        fig_com = go.Figure()
-        for col, color in [("TTF Gas", FMV_BLUE),
-                           ("CO2 EUA (KRBN)", FMV_ACCENT),
-                           ("Brent", FMV_GREY)]:
-            if col in recent_com.columns:
-                series = recent_com[col].dropna()
-                if not series.empty:
-                    # Normalisieren auf 100 am ersten Punkt
-                    normalized = series / series.iloc[0] * 100
-                    fig_com.add_trace(go.Scatter(
-                        x=normalized.index, y=normalized.values,
-                        mode="lines", name=col,
-                        line=dict(color=color, width=2),
-                    ))
-        fig_com.update_layout(
-            height=320, margin=dict(l=20, r=20, t=10, b=20),
-            plot_bgcolor="white", paper_bgcolor="white",
-            yaxis=dict(title="Index (Start = 100)", gridcolor="#EEF1F6"),
-            xaxis=dict(gridcolor="#EEF1F6"),
-            legend=dict(orientation="h", y=-0.2),
+    # Portfolio overlay
+    if avg_hedge_price is not None:
+        fig.add_hline(
+            y=avg_hedge_price,
+            line_color=FMV_GREEN, line_width=2, line_dash="dash",
+            annotation_text=(
+                f"Ihr Ø Hedge-Preis ({selected_actor}) : "
+                f"{avg_hedge_price:.2f} EUR/MWh"
+            ),
+            annotation_position="top right",
+            annotation_font_color=FMV_GREEN,
         )
-        st.plotly_chart(fig_com, use_container_width=True)
-    else:
-        st.info("Commodities nicht verfügbar.")
+
+    # High / Low markers
+    fig.add_trace(go.Scatter(
+        x=[high_date, low_date], y=[high_price, low_price],
+        mode="markers+text",
+        marker=dict(size=10, color=[FMV_RED, FMV_GREEN], symbol="diamond"),
+        text=[f" High {high_price:.1f}", f" Low {low_price:.1f}"],
+        textposition="middle right",
+        showlegend=False, hoverinfo="skip",
+    ))
+
+    fig.update_layout(
+        height=520,
+        margin=dict(l=20, r=20, t=20, b=20),
+        plot_bgcolor="white", paper_bgcolor="white",
+        legend=dict(orientation="h", y=-0.12),
+        hovermode="x unified",
+        yaxis=dict(title="EUR/MWh", gridcolor="#EEF1F6"),
+        xaxis=dict(gridcolor="#EEF1F6"),
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+
+with c_side:
+    delta_color = FMV_GREEN if delta_1d < 0 else FMV_RED
+    sign = "+" if delta_1d > 0 else ""
+    st.markdown(
+        (
+            f"<div style='background:#FFFFFF; border:1px solid #E5EBF4;"
+            f" border-radius:10px; padding:0.9rem 1.1rem;"
+            f" box-shadow: 0 1px 2px rgba(14,31,61,0.04);'>"
+            f"<div style='font-size:0.78rem; color:{FMV_GREY};"
+            f" text-transform:uppercase; letter-spacing:0.08em;'>Last price</div>"
+            f"<div style='font-size:1.8rem; font-weight:700; color:{FMV_NAVY};"
+            f" margin-top:0.25rem;'>{last_price:.2f}"
+            f" <span style='font-size:0.8rem; color:{FMV_GREY};'>EUR/MWh</span></div>"
+            f"<div style='font-size:0.95rem; color:{delta_color};"
+            f" margin-top:0.25rem;'>{sign}{delta_1d:.2f}"
+            f" ({sign}{delta_pct:.2f}%) ggü. Vortag</div>"
+            f"<div style='font-size:0.75rem; color:{FMV_GREY};"
+            f" margin-top:0.45rem;'>Stand : "
+            f"{pd.Timestamp(last_date).strftime('%d.%m.%Y')}</div>"
+            f"</div>"
+        ),
+        unsafe_allow_html=True,
+    )
+
+    st.markdown("")
+
+    stats_df = pd.DataFrame(
+        [
+            {"Label": "High", "Date": pd.Timestamp(high_date).strftime("%d.%m.%Y"),
+             "Wert": f"{high_price:.2f}"},
+            {"Label": "Low", "Date": pd.Timestamp(low_date).strftime("%d.%m.%Y"),
+             "Wert": f"{low_price:.2f}"},
+            {"Label": "Range", "Date": "—", "Wert": f"{price_range:.2f}"},
+            {"Label": "% in Range", "Date": "—", "Wert": f"{position_in_range:.0f}%"},
+            {"Label": "Last", "Date": pd.Timestamp(last_date).strftime("%d.%m.%Y"),
+             "Wert": f"{last_price:.2f}"},
+        ]
+    )
+    st.dataframe(stats_df, use_container_width=True, hide_index=True, height=220)
+
+    st.markdown(
+        (
+            f"<div style='background:#F7FAFF; border:1px solid #D8E5FF;"
+            f" border-left:6px solid {zone_color}; border-radius:8px;"
+            f" padding:0.7rem 0.9rem; margin-top:0.6rem;'>"
+            f"<div style='font-size:0.78rem; color:{FMV_GREY};"
+            f" text-transform:uppercase; letter-spacing:0.08em;'>Range Zone</div>"
+            f"<div style='font-size:1.0rem; font-weight:600; color:{zone_color};"
+            f" margin-top:0.2rem;'>{range_zone}</div>"
+            f"</div>"
+        ),
+        unsafe_allow_html=True,
+    )
+
+    st.markdown("")
+
+    interp_df = pd.DataFrame(
+        [
+            {"Range Zone": "0-20 %", "Interpretation": "Lower range — potential buying opportunity"},
+            {"Range Zone": "20-40 %", "Interpretation": "Lower part of the range"},
+            {"Range Zone": "40-60 %", "Interpretation": "Mid-range — neutral market"},
+            {"Range Zone": "60-80 %", "Interpretation": "Upper part of the range"},
+            {"Range Zone": ">80 %", "Interpretation": "Upper range — close to recent highs"},
+        ]
+    )
+    st.caption("Interpretation der Range-Zone")
+    st.dataframe(interp_df, use_container_width=True, hide_index=True, height=212)
+
+
+# ---------------------------------------------------------------------------
+# Hedge overlay summary
+# ---------------------------------------------------------------------------
+
+if avg_hedge_price is not None:
+    delta_vs_market = avg_hedge_price - last_price
+    is_below_market = delta_vs_market < 0
+    delta_color = FMV_GREEN if is_below_market else FMV_RED
+    delta_label = "günstiger als Markt" if is_below_market else "teurer als Markt"
+    border_color = FMV_GREEN if is_below_market else FMV_ACCENT
+
+    st.markdown(
+        (
+            f"<div style='background:#F7FAFF; border:1px solid #D8E5FF;"
+            f" border-left:6px solid {border_color};"
+            f" border-radius:10px; padding:0.9rem 1.15rem;"
+            f" margin-top:0.8rem; line-height:1.6;'>"
+            f"<strong style='color:{FMV_NAVY};'>Ihre Hedge-Position "
+            f"{selected_actor} · Cal-{delivery_year}</strong><br/>"
+            f"<span style='color:{FMV_GREY};'>Ø Preis Ihrer Deals : </span>"
+            f"<strong style='color:{FMV_NAVY};'>{avg_hedge_price:.2f} EUR/MWh</strong>"
+            f"<span style='color:{FMV_GREY};'> · Markt : </span>"
+            f"<strong style='color:{FMV_NAVY};'>{last_price:.2f} EUR/MWh</strong>"
+            f"<span style='color:{FMV_GREY};'> · Differenz : </span>"
+            f"<strong style='color:{delta_color};'>{delta_vs_market:+.2f} EUR/MWh</strong>"
+            f"<span style='color:{FMV_GREY};'> ({delta_label})</span>"
+            f"<div style='color:{FMV_GREY}; font-size:0.85rem; margin-top:0.3rem;'>"
+            f"Hedged Volumen : {hedged_volume_mwh:,.0f} MWh".replace(",", "'") +
+            f"</div></div>"
+        ),
+        unsafe_allow_html=True,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Spot + LEAR forecast block
+# ---------------------------------------------------------------------------
+
+st.divider()
+st.subheader("Spot CH · letzte 14 Tage + LEAR-Prognose 10 Tage")
+
+if not spot.empty:
+    hist_cutoff = spot.index.max() - pd.Timedelta(days=14)
+    spot_recent = spot.loc[spot.index >= hist_cutoff, "price"].resample("h").mean()
+
+    fig_spot = go.Figure()
+    fig_spot.add_trace(go.Scatter(
+        x=spot_recent.index, y=spot_recent.values,
+        mode="lines", name="Spot realisiert",
+        line=dict(color=FMV_NAVY, width=2),
+    ))
+
+    if not forecast.empty:
+        fcst = forecast.sort_values("timestamp").copy()
+        if {"price_p10", "price_p90"}.issubset(fcst.columns):
+            fig_spot.add_trace(go.Scatter(
+                x=fcst["timestamp"], y=fcst["price_p90"],
+                mode="lines", line=dict(width=0), showlegend=False, hoverinfo="skip",
+            ))
+            fig_spot.add_trace(go.Scatter(
+                x=fcst["timestamp"], y=fcst["price_p10"],
+                mode="lines", line=dict(width=0),
+                fill="tonexty", fillcolor="rgba(15,82,204,0.15)",
+                name="P10–P90 Band",
+            ))
+        if "price_lear" in fcst.columns:
+            fig_spot.add_trace(go.Scatter(
+                x=fcst["timestamp"], y=fcst["price_lear"],
+                mode="lines", name="LEAR Prognose",
+                line=dict(color=FMV_BLUE, width=2.5),
+            ))
+
+    fig_spot.update_layout(
+        height=380,
+        margin=dict(l=20, r=20, t=10, b=20),
+        plot_bgcolor="white", paper_bgcolor="white",
+        hovermode="x unified",
+        yaxis=dict(title="EUR/MWh", gridcolor="#EEF1F6"),
+        xaxis=dict(gridcolor="#EEF1F6"),
+        legend=dict(orientation="h", y=-0.12),
+    )
+    st.plotly_chart(fig_spot, use_container_width=True)
+else:
+    st.info("Keine Spot-Daten verfügbar.")
+
+
+# ---------------------------------------------------------------------------
+# Commodities ribbon
+# ---------------------------------------------------------------------------
+
+if not commodities.empty:
+    st.subheader("Commodities · letzte 90 Tage (Index, Start = 100)")
+    recent = commodities.tail(90)
+    fig_com = go.Figure()
+    palette = {"TTF Gas": FMV_BLUE, "CO2 EUA (KRBN)": FMV_ACCENT, "Brent": FMV_GREY}
+    for col, color in palette.items():
+        if col in recent.columns:
+            s = recent[col].dropna()
+            if not s.empty:
+                normalized = s / s.iloc[0] * 100
+                fig_com.add_trace(go.Scatter(
+                    x=normalized.index, y=normalized.values,
+                    mode="lines", name=col,
+                    line=dict(color=color, width=2),
+                ))
+    fig_com.update_layout(
+        height=280, margin=dict(l=20, r=20, t=10, b=20),
+        plot_bgcolor="white", paper_bgcolor="white",
+        yaxis=dict(title="Index", gridcolor="#EEF1F6"),
+        xaxis=dict(gridcolor="#EEF1F6"),
+        legend=dict(orientation="h", y=-0.18),
+    )
+    st.plotly_chart(fig_com, use_container_width=True)
+
 
 # ---------------------------------------------------------------------------
 # Footer
 # ---------------------------------------------------------------------------
-st.divider()
-cols = st.columns(4)
-cols[0].markdown(freshness_badge(epex, "Spot CH"), unsafe_allow_html=True)
-cols[1].markdown(freshness_badge(forecast.set_index("timestamp") if not forecast.empty else forecast, "Prognose"),
-                 unsafe_allow_html=True)
-cols[2].markdown(
-    freshness_badge(
-        forwards.set_index("date") if not forwards.empty else forwards, "EEX Forwards"
-    ),
-    unsafe_allow_html=True,
-)
-cols[3].markdown(freshness_badge(commodities, "Commodities"), unsafe_allow_html=True)
 
+st.divider()
 st.caption(
-    "© FMV – Forces Motrices Valaisannes · Demo-Version für den Deviwa-Energiepool. "
-    "Alle Preise in EUR/MWh sofern nicht anders angegeben."
+    "Methodik : SMA 20 / 50 / 200 = einfache gleitende Mittelwerte. "
+    "Bollinger Bands = SMA 20 ± 2 × σ rollend (20 Tage). "
+    "Range-Zone = Position des aktuellen Preises im (High − Low)-Intervall des "
+    "gewählten Lookback-Fensters. Ø Hedge-Preis = volumen-gewichteter Durchschnitt "
+    "der Deals des gewählten Akteurs für das Lieferjahr des gewählten Cal-Produkts."
 )
