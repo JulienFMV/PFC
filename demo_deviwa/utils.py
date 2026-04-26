@@ -1139,10 +1139,16 @@ def render_hedge_ladder(
     # Replaces the previous "Ø Netto-Hedge-Preis" which was mathematically
     # correct (= net notional / net volume) but counter-intuitive when
     # sales happened at a different price than buys.
-    if daily["cum_buy_avg_price"].notna().any():
+    #
+    # Filter out rows where the series is NaN BEFORE adding to the chart.
+    # Plotly with mode="lines+markers" + shape="hv" otherwise renders NaN
+    # rows at y=0 (the bottom of the axis), which falsely suggests "Ø price
+    # was zero before the first trade" — visually identical to a real zero.
+    buy_price_series = daily["cum_buy_avg_price"].dropna()
+    if not buy_price_series.empty:
         fig.add_trace(
             go.Scatter(
-                x=daily.index, y=daily["cum_buy_avg_price"],
+                x=buy_price_series.index, y=buy_price_series.values,
                 mode="lines+markers", name="Ø Käufe-Preis",
                 line=dict(color=FMV_GREEN, width=1.5, dash="dash", shape="hv"),
                 marker=dict(size=7, symbol="diamond"),
@@ -1152,10 +1158,11 @@ def render_hedge_ladder(
         )
 
     # ── Ø Verkäufe-Preis (right axis, step) ─────────────────────────────────
-    if daily["cum_sell_avg_price"].notna().any():
+    sell_price_series = daily["cum_sell_avg_price"].dropna()
+    if not sell_price_series.empty:
         fig.add_trace(
             go.Scatter(
-                x=daily.index, y=daily["cum_sell_avg_price"],
+                x=sell_price_series.index, y=sell_price_series.values,
                 mode="lines+markers", name="Ø Verkäufe-Preis",
                 line=dict(color=FMV_RED, width=1.5, dash="dash", shape="hv"),
                 marker=dict(size=7, symbol="diamond"),
