@@ -148,29 +148,40 @@ flows = [c for c in ["scheduled_net_export_ch_de_mw", "scheduled_net_export_ch_f
 
 if flows:
     flow_df = entso_sl[flows].resample("h").mean()
-    fig_flow = go.Figure()
-    for col, name, color in [
-        ("scheduled_net_export_ch_de_mw", "CH→DE", FMV_BLUE),
-        ("scheduled_net_export_ch_fr_mw", "CH→FR", FMV_ACCENT),
-        ("scheduled_net_export_ch_at_mw", "CH→AT", FMV_GREEN),
-        ("scheduled_net_export_ch_it_mw", "CH→IT", "#8E44AD"),
-    ]:
-        if col in flow_df.columns:
-            fig_flow.add_trace(go.Scatter(
-                x=flow_df.index, y=flow_df[col],
-                mode="lines", name=name,
-                line=dict(color=color, width=1.8),
-            ))
-    fig_flow.add_hline(y=0, line_width=1, line_dash="dash", line_color=FMV_GREY)
-    fig_flow.update_layout(
-        height=340, margin=dict(l=20, r=20, t=10, b=20),
-        plot_bgcolor="white", paper_bgcolor="white",
-        yaxis=dict(title="MW", gridcolor="#EEF1F6"),
-        xaxis=dict(gridcolor="#EEF1F6"),
-        legend=dict(orientation="h", y=-0.2),
-        hovermode="x unified",
-    )
-    st.plotly_chart(fig_flow, use_container_width=True)
+    # Skip the chart when every flow column is empty for the visible window —
+    # otherwise Plotly auto-scales the y-axis to a fake [-1, +1] MW range and
+    # the chart looks like CH has no cross-border activity, which is wrong.
+    if flow_df.dropna(how="all").empty:
+        st.info(
+            "ℹ️ Keine ENTSO-E Grenzfluss-Daten im gewählten Zeitfenster verfügbar. "
+            "Die Spalten `scheduled_net_export_ch_*` sind im Cache leer — "
+            "vermutlich Pipeline-Lücke beim Schedule-Endpoint. "
+            "Cache aktualisieren oder Zeitfenster erweitern."
+        )
+    else:
+        fig_flow = go.Figure()
+        for col, name, color in [
+            ("scheduled_net_export_ch_de_mw", "CH→DE", FMV_BLUE),
+            ("scheduled_net_export_ch_fr_mw", "CH→FR", FMV_ACCENT),
+            ("scheduled_net_export_ch_at_mw", "CH→AT", FMV_GREEN),
+            ("scheduled_net_export_ch_it_mw", "CH→IT", "#8E44AD"),
+        ]:
+            if col in flow_df.columns:
+                fig_flow.add_trace(go.Scatter(
+                    x=flow_df.index, y=flow_df[col],
+                    mode="lines", name=name,
+                    line=dict(color=color, width=1.8),
+                ))
+        fig_flow.add_hline(y=0, line_width=1, line_dash="dash", line_color=FMV_GREY)
+        fig_flow.update_layout(
+            height=340, margin=dict(l=20, r=20, t=10, b=20),
+            plot_bgcolor="white", paper_bgcolor="white",
+            yaxis=dict(title="MW", gridcolor="#EEF1F6"),
+            xaxis=dict(gridcolor="#EEF1F6"),
+            legend=dict(orientation="h", y=-0.2),
+            hovermode="x unified",
+        )
+        st.plotly_chart(fig_flow, use_container_width=True)
 
 # ---------------------------------------------------------------------------
 # Hydrospeicher
