@@ -415,18 +415,26 @@ def compute_hedge_by_year(
         all_years = sorted(base_years)
 
     # ── Optional carry-forward extrapolation of programme ───────────────────
-    # For each year missing programme data (programme_mwh == 0), substitute
-    # the most recent prior year's programme. The flag is propagated to the
-    # output dataclass so the UI can render a "Hochrechnung" badge.
+    # Carry-forward is applied ONLY to years where the actor has at least
+    # one deal — those are the years with explicit commitment, where a
+    # programme baseline is needed to evaluate the open exposure.
+    #
+    # For years with no deals AND no programme, we deliberately do NOT
+    # invent a programme : extrapolating RELL's 62 240 MWh 2026 forecast
+    # to 2027-2029 would inject ~190 GWh of phantom long exposure into
+    # the pool risk and inflate VaR by ~15× without any underlying
+    # commercial truth (RELL hasn't told us they need that energy).
     extrapolated_years: set[int] = set()
     if extrapolate_missing_programme:
         years_with_real_prog = sorted(
             y for y, v in prog_yearly.items() if v and v > 0
         )
+        years_with_deals = set(deal_yearly.keys())
         for y in all_years:
             if prog_yearly.get(y, 0.0) > 0:
                 continue  # actual data, no extrapolation needed
-            # Find the most recent prior year with actual data
+            if y not in years_with_deals:
+                continue  # no commitment from the actor → don't invent a programme
             sources = [s for s in years_with_real_prog if s < y]
             if sources:
                 src_year = max(sources)
