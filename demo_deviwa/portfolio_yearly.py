@@ -159,14 +159,22 @@ class BudgetProjection:
         - open_mwh       = residual exposure (= programme − hedged)
         - at_risk_eur    = open_mwh × current Cal-Y forward price
         - central_eur    = locked + at_risk (point estimate)
-        - p10_eur, p90_eur = central ± Z₁₀₋₉₀ × σ_open with σ scaled by
-                             √(years_to_delivery) under the 20 %-annualized
-                             vol assumption.
+        - p10_eur, p90_eur = the 10th and 90th percentile of the **cost
+          distribution**. Under a log-normal price assumption with annualized
+          volatility ``VOL_ANNUAL_PCT`` :
+            σ_cost  = |open_mwh| × forward × VOL × √(years_to_delivery)
+            p10_eur = central − Z × σ_cost   (= best-case cost outcome)
+            p90_eur = central + Z × σ_cost   (= worst-case cost outcome)
 
-    For an over-hedged year (open_mwh < 0), at_risk_eur is negative — the
-    client is short, and a price *rise* now becomes a *gain*. The σ band is
-    symmetric around central, with sign tracked by open_mwh's sign in the
-    σ computation.
+    The labels are interpreted as *cost percentiles* — ``p10_eur`` is the
+    best 10 % of cost outcomes (lowest cost) and ``p90_eur`` the worst 10 %
+    (highest cost). For an under-hedged year (open_mwh > 0) the best cost
+    is achieved when forward prices fall ; for an over-hedged year
+    (open_mwh < 0, client has surplus to resell) the best cost is achieved
+    when forward prices rise. The σ band is symmetric around central in
+    EUR magnitude — the direction of correlation cost↔forward flips with
+    the sign of open_mwh, but the cost CDF passes through (p10, p90) at
+    the 10/90 percentile points regardless.
     """
     year: int
     locked_eur: float
@@ -224,7 +232,10 @@ def classify_hedge_status(
 
 def _filter_actor(df: pd.DataFrame, actor: str | None, actor_col: str = "actor") -> pd.DataFrame:
     """If ``actor`` is None, return ``df`` unchanged (= pool aggregate view).
-    Otherwise return only rows matching ``actor`` exactly.
+    Otherwise return a defensive **copy** of rows matching ``actor`` exactly.
+
+    The copy avoids ``SettingWithCopyWarning`` if the caller mutates the
+    returned frame (negligible perf cost on a 240-row deals frame).
     """
     if df is None or df.empty:
         return df
@@ -232,7 +243,7 @@ def _filter_actor(df: pd.DataFrame, actor: str | None, actor_col: str = "actor")
         return df
     if actor_col not in df.columns:
         return df.iloc[0:0]
-    return df[df[actor_col] == actor]
+    return df[df[actor_col] == actor].copy()
 
 
 def _scope_signed_volume(deals: pd.DataFrame) -> pd.Series:
@@ -426,12 +437,21 @@ def compute_hedge_ladder(
     Returns:
         DataFrame with columns :
             trade_date          : day a deal was traded (Timestamp)
-            hedge_volume_mwh    : signed daily hedge (+ withdrawal, − intake)
+            hedge_volume_mwh    : signed daily hedge (+ intake, − withdrawal)
             cum_hedge_mwh       : running cumulative net hedge
             deal_price_eur_mwh  : volume-weighted price of that day's deals
             cum_avg_price       : running volume-weighted average price
 
         Empty DataFrame (with same columns) if no deals match.
+
+    Note on monotonicity :
+        ``cum_hedge_mwh`` is monotonically increasing only when all deals
+        for the (actor × year) selection have the same scope (typically
+        ``Intake`` only for a load-following GRD). In the pool view, or
+        for an actor mixing Intake and Withdrawal, the cumulative curve
+        can dip — this is real and meaningful (it shows the days when
+        positions were unwound). The chart should treat dips as valid
+        events, not interpolate over them.
     """
     columns = [
         "trade_date",
@@ -508,13 +528,27 @@ def get_forward_cal_price(
     market: str = "CH",
     load_type: str = "base",
 ) -> float:
-    """Latest Cal-Y forward price for the given delivery year.
+    """Latest **calendar-year** forward price for the given delivery year.
 
-    Looks for product strings containing the year (e.g. "Cal-27" / "2027"),
-    filtered by ``market`` (default CH) and ``load_type`` (base / peak).
+    EEX product codes used by FMV's `Price_Report_EEX_Yearly.xlsx` follow
+    the pattern ``Y01_{YYYY}_{BASE|PEAK}`` for the calendar year contract,
+    next to ``Q01..Q04_{YYYY}`` quarters and ``M01..M12_{YYYY}`` months.
+    A naive substring match on the year would silently return whichever
+    tenor happens to sort last (e.g. Q01 = 120 EUR vs Cal = 90 EUR — the
+    budget projection would be off by 30 % for no visible reason).
+
+    This function filters explicitly on the ``Y01_{year}`` pattern, which
+    is unique to the calendar-year contract.
+
+    Args:
+        forwards: long-format frame with columns
+            ``date, market, product, load_type, price``.
+        delivery_year: e.g. 2027.
+        market: filter (default "CH").
+        load_type: "base" or "peak" (case-insensitive, default "base").
 
     Returns:
-        The most recent settlement price as a float, or NaN if no match.
+        Most recent settlement price as a float, or NaN if no Cal-Y row found.
     """
     if forwards is None or forwards.empty:
         return float("nan")
@@ -527,7 +561,9 @@ def get_forward_cal_price(
     if df.empty or "product" not in df.columns or "price" not in df.columns:
         return float("nan")
 
-    df = df[df["product"].astype(str).str.contains(str(delivery_year), na=False)]
+    # Explicit Cal-Y pattern: Y01_{YEAR} appears in the EEX product code.
+    cal_pattern = f"Y01_{delivery_year}"
+    df = df[df["product"].astype(str).str.contains(cal_pattern, na=False, regex=False)]
     df = df.dropna(subset=["price"])
     if df.empty:
         return float("nan")
