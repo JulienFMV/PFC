@@ -341,6 +341,63 @@ with col_dist:
     st.plotly_chart(fig_h, use_container_width=True)
 
 # ---------------------------------------------------------------------------
+# Heatmap Stunde × Monat (Bias) — surfaces solar / seasonal patterns
+# ---------------------------------------------------------------------------
+# For actors with solar production, the forecast error is concentrated at
+# midday in summer (variable PV output). For heating-driven loads, the
+# error sits in winter mornings. A daily / weekday heatmap hides both
+# patterns ; the hour × month view makes them obvious in one glance.
+
+st.subheader("Bias-Heatmap · Stunde × Monat")
+
+df["err"] = df["actual_mw"] - df["programme_mw"]
+df["month_num"] = df["timestamp"].dt.month
+hm_pivot = (
+    df.pivot_table(index="month_num", columns="hour", values="err", aggfunc="mean")
+    .reindex(index=range(1, 13))
+)
+hm_count = (
+    df.pivot_table(index="month_num", columns="hour", values="err", aggfunc="count")
+    .reindex(index=range(1, 13))
+)
+
+month_labels_de = ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"]
+abs_max_hm = float(hm_pivot.abs().max().max() or 1.0)
+
+custom_count = hm_count.fillna(0).astype(int).values
+
+fig_hm = go.Figure(
+    go.Heatmap(
+        z=hm_pivot.values,
+        x=[f"{h:02d}h" for h in hm_pivot.columns],
+        y=[month_labels_de[m - 1] for m in hm_pivot.index],
+        colorscale=[
+            [0.0, "#0F52CC"], [0.5, "#FFFFFF"], [1.0, "#C0392B"],
+        ],
+        zmid=0,
+        zmin=-abs_max_hm, zmax=abs_max_hm,
+        customdata=custom_count,
+        hovertemplate=(
+            "%{y} %{x}<br>Bias: %{z:.3f} MW<br>"
+            "n Stunden: %{customdata}<extra></extra>"
+        ),
+        colorbar=dict(title="Bias<br>(MW)", thickness=15),
+    )
+)
+fig_hm.update_layout(
+    height=420, margin=dict(l=20, r=20, t=10, b=20),
+    plot_bgcolor="white", paper_bgcolor="white",
+    xaxis=dict(title="Stunde des Tages", tickfont=dict(size=9)),
+    yaxis=dict(title="Monat", autorange="reversed"),
+)
+st.plotly_chart(fig_hm, use_container_width=True)
+st.caption(
+    "Lesart : **Rot** = systematisch zu wenig geplant (Programm unter Real, "
+    "z.B. Mittagsspitzen ohne PV-Berücksichtigung). **Blau** = systematisch "
+    "zu viel geplant (z.B. Sommermorgens kühler als erwartet)."
+)
+
+# ---------------------------------------------------------------------------
 # Triple-Time-Series: Programme vs Real vs Budget
 # ---------------------------------------------------------------------------
 st.subheader("Zeitreihe · Programm, Real und Budget")

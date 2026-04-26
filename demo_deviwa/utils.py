@@ -1248,3 +1248,136 @@ def render_hedge_ladder(
     fig.update_yaxes(title_text="MWh", gridcolor="#EEF1F6", secondary_y=False)
     fig.update_yaxes(title_text="EUR/MWh", showgrid=False, secondary_y=True)
     return fig
+
+
+# ---------------------------------------------------------------------------
+# Phase 9 : weather strip helper for the Cockpit
+# ---------------------------------------------------------------------------
+# Lightweight Open-Meteo fetcher for the Cockpit's "local context" strip.
+# Designed to fail gracefully — if the network is unavailable, the strip is
+# silently skipped so the rest of the dashboard still renders.
+
+WEATHER_LOCATIONS_HV = {
+    "Brig-Glis": {"lat": 46.3167, "lon": 7.9833, "elevation_m": 678},
+    "Visp": {"lat": 46.2932, "lon": 7.8819, "elevation_m": 658},
+    "Zermatt": {"lat": 46.0207, "lon": 7.7491, "elevation_m": 1608},
+}
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_weather_strip(timeout_s: float = 4.0) -> pd.DataFrame:
+    """Fetch current weather snapshot for the Haut-Valais sites.
+
+    Returns a DataFrame with one row per site (location, temp, wind_kmh,
+    precipitation_mm, alert_msg) or an empty DataFrame if the network call
+    fails. Cached 1 h to avoid hammering Open-Meteo.
+    """
+    import json
+    from urllib.parse import urlencode
+    from urllib.request import urlopen
+
+    rows: list[dict] = []
+    for name, meta in WEATHER_LOCATIONS_HV.items():
+        params = {
+            "latitude": meta["lat"], "longitude": meta["lon"],
+            "current": "temperature_2m,wind_speed_10m,wind_gusts_10m,precipitation",
+            "daily": "temperature_2m_min,temperature_2m_max,precipitation_sum,wind_speed_10m_max",
+            "timezone": "Europe/Zurich",
+            "forecast_days": 3,
+        }
+        try:
+            url = f"https://api.open-meteo.com/v1/forecast?{urlencode(params)}"
+            with urlopen(url, timeout=timeout_s) as resp:
+                payload = json.loads(resp.read().decode("utf-8"))
+        except Exception:
+            continue
+
+        cur = payload.get("current", {})
+        daily = payload.get("daily", {})
+        # 3-day forecast aggregates
+        wind_max_3d = max(daily.get("wind_speed_10m_max") or [0]) if daily else 0
+        precip_sum_3d = sum(daily.get("precipitation_sum") or [0]) if daily else 0
+        tmin_3d = min(daily.get("temperature_2m_min") or [99]) if daily else None
+
+        # Alert keywords (light heuristics — not a forecast service)
+        alerts = []
+        if isinstance(tmin_3d, (int, float)) and tmin_3d <= -5:
+            alerts.append(f"Kälte {tmin_3d:.0f}°C in 3 Tagen")
+        if wind_max_3d >= 60:
+            alerts.append(f"Wind {wind_max_3d:.0f} km/h erwartet")
+        if precip_sum_3d >= 30:
+            alerts.append(f"{precip_sum_3d:.0f} mm Regen in 3 Tagen")
+
+        rows.append({
+            "location": name,
+            "temp_c": float(cur.get("temperature_2m", float("nan"))),
+            "wind_kmh": float(cur.get("wind_speed_10m", float("nan"))),
+            "precipitation_mm": float(cur.get("precipitation", 0) or 0),
+            "alert": " · ".join(alerts) if alerts else "",
+        })
+
+    return pd.DataFrame(rows)
+
+
+def render_weather_strip() -> None:
+    """Render a 3-tile weather strip + alert banner at the top of a page.
+
+    Silently no-op if the fetch failed or returned no data. The strip is
+    intentionally compact (one row, 3 sites, ~60 px tall) so it doesn't
+    distract from the portfolio numbers below.
+    """
+    try:
+        wx = load_weather_strip()
+    except Exception:
+        return
+    if wx is None or wx.empty:
+        return
+
+    cols = st.columns(len(wx))
+    for i, (_, row) in enumerate(wx.iterrows()):
+        temp = row["temp_c"]
+        wind = row["wind_kmh"]
+        precip = row["precipitation_mm"]
+        location = row["location"]
+        # Color by temperature : blue when cold, neutral mid, amber when warm
+        color = (
+            FMV_BLUE if (np.isfinite(temp) and temp <= 5)
+            else FMV_ACCENT if (np.isfinite(temp) and temp >= 25)
+            else FMV_NAVY
+        )
+        rain_html = (
+            f" · ☔ {precip:.1f} mm" if precip and precip > 0 else ""
+        )
+        cols[i].markdown(
+            (
+                f"<div style='background:#FFFFFF; border:1px solid #E5EBF4;"
+                f" border-radius:8px; padding:0.55rem 0.85rem;'>"
+                f"<div style='font-size:0.72rem; color:{FMV_GREY};"
+                f" text-transform:uppercase; letter-spacing:0.05em;'>"
+                f"📍 {location}</div>"
+                f"<div style='font-size:1.1rem; color:{color}; font-weight:700;"
+                f" margin-top:0.15rem;'>{temp:.1f} °C</div>"
+                f"<div style='font-size:0.78rem; color:{FMV_GREY};"
+                f" margin-top:0.1rem;'>💨 {wind:.0f} km/h{rain_html}</div>"
+                f"</div>"
+            ),
+            unsafe_allow_html=True,
+        )
+
+    # Alert banner if any site has alerts
+    alerts = [
+        f"**{row['location']}** : {row['alert']}"
+        for _, row in wx.iterrows() if row["alert"]
+    ]
+    if alerts:
+        st.markdown(
+            (
+                f"<div style='background:#FFF8E6; border:1px solid #F5B700;"
+                f" border-left:4px solid {FMV_ACCENT}; border-radius:8px;"
+                f" padding:0.45rem 0.85rem; margin-top:0.4rem;"
+                f" font-size:0.85rem; color:{FMV_NAVY};'>"
+                f"⚠️ {' · '.join(alerts)}"
+                f"</div>"
+            ),
+            unsafe_allow_html=True,
+        )

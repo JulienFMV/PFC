@@ -50,6 +50,7 @@ from utils import (  # noqa: E402
     render_header,
     render_hedge_ladder,
     render_load_hedge_chart,
+    render_weather_strip,
     render_year_card,
 )
 
@@ -141,6 +142,15 @@ data_dict: dict[str, pd.DataFrame] = {
 
 choice, _ = render_actor_selector(data_dict, key="cockpit_actor")
 selected_actor: str | None = None if choice == "Gesamter Pool" else choice
+
+
+# ---------------------------------------------------------------------------
+# Weather strip (Haut-Valais context — 3 sites + alert banner)
+# ---------------------------------------------------------------------------
+# Lightweight at the top of the cockpit so the GRD audience sees that the
+# dashboard knows the local terrain ("FMV connaît les Stauseen du Wallis").
+# Silently skipped if Open-Meteo is unreachable.
+render_weather_strip()
 
 
 # ---------------------------------------------------------------------------
