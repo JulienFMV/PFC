@@ -88,6 +88,17 @@ else:
     df["_actor"] = choice
     title_suffix = choice
 
+# Programmqualität evaluates plan against realised consumption ; only past
+# hours have a meaningful "actual". Some demo sheets fill future hours with
+# actual_mw == programme_mw (= trivially 100 % accuracy), which would inflate
+# the pool accuracy and stretch the calendar heatmap into 2029 weeks. We
+# clip to today's timestamp so the metrics stay commercially honest.
+today_ch = pd.Timestamp.now(tz="Europe/Zurich")
+df = df[df["timestamp"] <= today_ch].copy()
+if df.empty:
+    st.info("Keine vergangenen Datenpunkte für die Programmqualität.")
+    st.stop()
+
 max_ts = df["timestamp"].max()
 min_ts = df["timestamp"].min()
 period = st.radio(
@@ -189,7 +200,9 @@ if choice == "Gesamter Pool" and len(actors) > 1:
     cmp_rows = []
     for actor in actors:
         sub = prog_data[actor]
-        sub = sub[sub["timestamp"] >= start].dropna(subset=["programme_mw", "actual_mw"])
+        sub = sub[(sub["timestamp"] >= start) & (sub["timestamp"] <= today_ch)].dropna(
+            subset=["programme_mw", "actual_mw"]
+        )
         if sub.empty:
             continue
         e = sub["actual_mw"] - sub["programme_mw"]
