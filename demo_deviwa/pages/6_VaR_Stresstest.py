@@ -215,37 +215,95 @@ st.markdown("")
 # Per-actor breakdown : bar chart + table
 # ---------------------------------------------------------------------------
 
-st.subheader("Akteur-Beitrag zum Pool")
+st.subheader("Σ individuell vs. Pool — visueller Vergleich")
+
+# Two stacked bars side by side :
+#   Bar 1 = "Wenn jeder allein wäre" — stack of all 4 individual VaRs
+#   Bar 2 = "Im Pool"                — single consolidated Pool VaR
+# The HEIGHT DIFFERENCE between bar 1 and bar 2 is the diversification benefit,
+# made visually obvious without needing the user to do mental arithmetic.
 
 actors_data = sorted(pool.actors, key=lambda a: -abs(a.exposure_eur))
-labels = [a.actor for a in actors_data]
-indiv_var = [a.var_eur for a in actors_data]
+n_actors = len(actors_data)
+# Distinct shades of navy/blue for each actor stack segment
+palette = ["#0E1F3D", "#1F3A6E", "#3A5BA0", "#5C7AC8"]
 
 fig_bars = go.Figure()
+
+# Left bar : stacked individuals
+for i, a in enumerate(actors_data):
+    fig_bars.add_trace(
+        go.Bar(
+            x=["Wenn jeder allein wäre"],
+            y=[a.var_eur],
+            name=f"{a.actor}",
+            marker_color=palette[i % len(palette)],
+            text=[f"{a.actor}: {fmt_chf(a.var_eur, 0)}"],
+            textposition="inside",
+            insidetextanchor="middle",
+            insidetextfont=dict(color="white", size=11),
+            hovertemplate=f"<b>{a.actor}</b><br>Stand-alone VaR : %{{y:,.0f}} EUR<extra></extra>",
+        )
+    )
+
+# Right bar : Pool VaR (single segment, distinct color)
 fig_bars.add_trace(
     go.Bar(
-        x=labels, y=indiv_var,
-        name="VaR stand-alone",
-        marker_color=FMV_NAVY, opacity=0.85,
-        text=[f"{fmt_chf(v, 0)}" for v in indiv_var],
-        textposition="outside",
-        hovertemplate="<b>%{x}</b><br>Stand-alone VaR : %{y:,.0f} EUR<extra></extra>",
+        x=["Im Pool"],
+        y=[pool.pool_var_eur],
+        name="Pool",
+        marker_color=FMV_BLUE,
+        text=[f"Pool: {fmt_chf(pool.pool_var_eur, 0)}"],
+        textposition="inside",
+        insidetextanchor="middle",
+        insidetextfont=dict(color="white", size=12),
+        hovertemplate="<b>Pool VaR</b><br>%{y:,.0f} EUR<extra></extra>",
     )
 )
-fig_bars.add_hline(
-    y=pool.pool_var_eur,
-    line_color=FMV_BLUE, line_width=2.5, line_dash="dash",
-    annotation_text=f"Pool VaR = {fmt_chf(pool.pool_var_eur, 0)} EUR",
-    annotation_position="top right",
-    annotation_font_color=FMV_BLUE,
+
+# Total annotation above each bar
+fig_bars.add_annotation(
+    x="Wenn jeder allein wäre",
+    y=pool.sum_individual_var_eur,
+    text=f"<b>Σ {fmt_chf(pool.sum_individual_var_eur, 0)} EUR</b>",
+    showarrow=False, yshift=18,
+    font=dict(color=FMV_NAVY, size=14),
 )
+fig_bars.add_annotation(
+    x="Im Pool",
+    y=pool.pool_var_eur,
+    text=f"<b>{fmt_chf(pool.pool_var_eur, 0)} EUR</b>",
+    showarrow=False, yshift=18,
+    font=dict(color=FMV_BLUE, size=14),
+)
+
+# Visual benefit indicator (only when benefit > 0)
+if benefit_eur > 0:
+    benefit_y = (pool.sum_individual_var_eur + pool.pool_var_eur) / 2
+    fig_bars.add_annotation(
+        x=0.5, xref="paper",
+        y=benefit_y, yref="y",
+        text=(
+            f"<b style='color:{FMV_GREEN};'>− {fmt_chf(benefit_eur, 0)} EUR "
+            f"({benefit_pct:.0f} %)</b><br>"
+            f"<span style='color:{FMV_GREY}; font-size:11px;'>"
+            f"Diversifikations-Vorteil</span>"
+        ),
+        showarrow=False,
+        bgcolor="rgba(255,255,255,0.95)",
+        bordercolor=FMV_GREEN,
+        borderwidth=1, borderpad=8,
+        font=dict(size=13),
+    )
+
 fig_bars.update_layout(
-    height=380,
-    margin=dict(l=20, r=20, t=20, b=20),
+    height=440,
+    margin=dict(l=20, r=20, t=40, b=20),
     plot_bgcolor="white", paper_bgcolor="white",
     yaxis=dict(title="VaR (EUR)", gridcolor="#EEF1F6"),
-    xaxis=dict(gridcolor="#EEF1F6"),
-    showlegend=False,
+    xaxis=dict(gridcolor="#EEF1F6", tickfont=dict(size=13)),
+    barmode="stack",
+    legend=dict(orientation="h", y=-0.12),
 )
 st.plotly_chart(fig_bars, use_container_width=True)
 
