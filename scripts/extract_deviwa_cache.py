@@ -175,27 +175,77 @@ def resolve_deviwa() -> SourceCandidate | None:
 
 
 # ---------------------------------------------------------------------------
-# Fingerprint (mtime + size + sha256_head) : anti mtime-fragile
+# Fingerprint : path + (mtime_ns, size) fast-path + SHA-256 full slow-path
 # ---------------------------------------------------------------------------
+#
+# Stratégie deux niveaux :
+#   1. Fast path (no I/O au-delà de stat) : si (path, mtime_ns, size) match
+#      le précédent fingerprint, on assume que le fichier n'a pas changé.
+#      Couvre le cas le plus fréquent (la source n'a pas bougé) à coût ~0.
+#   2. Slow path (lecture I/O complète) : si mtime_ns ou size change,
+#      on calcule un SHA-256 du fichier ENTIER pour décider si re-extraire.
+#      Coût : ~10ms pour un xlsx 4 MB. Évite de re-extraire après un simple
+#      "touch" qui n'a pas vraiment changé le contenu.
+#
+# Refus du sha256 partiel (head 64KB) parce que pour un xlsx (zip),
+# une édition au-delà des 64 premiers KB sans changement de taille passerait
+# inaperçue et servirait du parquet stale.
 
-def fingerprint(path: Path, head_bytes: int = 65536) -> dict:
-    st = path.stat()
+CHUNK_SIZE = 1024 * 1024  # 1 MB
+
+
+def _sha256_full(path: Path) -> str:
     h = hashlib.sha256()
     with path.open("rb") as f:
-        h.update(f.read(head_bytes))
-    return {
+        for chunk in iter(lambda: f.read(CHUNK_SIZE), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def fingerprint(path: Path, *, full_hash: bool = True) -> dict:
+    """Compute fingerprint. full_hash=False skips SHA-256 (used for fast probe)."""
+    st = path.stat()
+    fp = {
         "path": str(path),
-        "mtime": float(st.st_mtime),
+        "mtime_ns": int(st.st_mtime_ns),
         "size": int(st.st_size),
-        "sha256_head": h.hexdigest(),
     }
+    if full_hash:
+        fp["sha256_full"] = _sha256_full(path)
+    return fp
 
 
-def fingerprints_match(a: dict | None, b: dict | None) -> bool:
-    if not a or not b:
+def fingerprints_match(prior: dict | None, current_path: Path) -> bool:
+    """Decide if cache is still valid for `current_path` given prior fingerprint.
+
+    Two-level check :
+    - Fast : path + mtime_ns + size — if all match, accept (no hash I/O).
+    - Slow : if mtime_ns OR size differs, fall back to SHA-256 full check.
+      If hash matches → still accept (just an mtime touch, no real change).
+    """
+    if not prior:
         return False
-    keys = ("size", "sha256_head")
-    return all(a.get(k) == b.get(k) for k in keys)
+    try:
+        st = current_path.stat()
+    except OSError:
+        return False
+
+    if prior.get("path") != str(current_path):
+        return False
+
+    fast_match = (
+        prior.get("mtime_ns") == int(st.st_mtime_ns)
+        and prior.get("size") == int(st.st_size)
+    )
+    if fast_match:
+        return True
+
+    # Size or mtime changed — recompute hash to detect false positives
+    prior_hash = prior.get("sha256_full")
+    if not prior_hash:
+        return False  # legacy fingerprint without full hash → re-extract
+    current_hash = _sha256_full(current_path)
+    return current_hash == prior_hash
 
 
 # ---------------------------------------------------------------------------
@@ -773,7 +823,6 @@ def run_extract_step(
         log.warning("source_unresolved", extra={"file_kind": file_kind})
         return ExtractResult(file_kind=file_kind, action="no_source")
 
-    fp = fingerprint(src.path)
     prior_meta = meta.get(file_kind, {})
     prior = prior_meta.get("source_fingerprint")
     cache_paths_exist = all((CACHE_DIR / fname).exists() for _, fname in output_specs)
@@ -784,7 +833,10 @@ def run_extract_step(
         and prior_meta.get("source_empty_sentinel") is True
     )
 
-    if not force and fingerprints_match(prior, fp) and (cache_paths_exist or prior_was_empty):
+    # Two-level fingerprint check (no I/O if mtime/size match prior)
+    is_match = fingerprints_match(prior, src.path)
+
+    if not force and is_match and (cache_paths_exist or prior_was_empty):
         elapsed = (time.perf_counter() - t0) * 1000
         log.info("cache_hit", extra={
             "file_kind": file_kind, "source_kind": src.kind,
@@ -859,6 +911,9 @@ def run_extract_step(
     # re-extraire à chaque run quand le source xlsx est vide localement).
     primary_frame = frames.get(output_specs[0][0], pd.DataFrame())
     source_empty_sentinel = primary_frame is None or primary_frame.empty
+
+    # Compute full-hash fingerprint to record (1 MB chunked SHA-256, ~10ms for xlsx)
+    fp = fingerprint(src.path, full_hash=True)
 
     meta[file_kind] = {
         "source_path": str(src.path),

@@ -5,11 +5,14 @@ Alles bleibt lokal und dateibasiert, damit die Demo offline läuft.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import streamlit as st
+
+logger = logging.getLogger("demo_deviwa")
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = ROOT / "data"
@@ -286,6 +289,13 @@ def load_pfc() -> pd.DataFrame:
     if canonical.exists():
         try:
             df = pd.read_parquet(canonical)
+        except (FileNotFoundError, OSError, ValueError) as exc:
+            # Cache parquet présent mais corrompu — log et fallback explicite
+            logger.warning(
+                "PFC cache parquet illisible (%s) — fallback H:\\/legacy. Détail: %s",
+                canonical, exc,
+            )
+        else:
             if not df.empty:
                 if df.index.tz is None:
                     df.index = df.index.tz_localize(
@@ -294,8 +304,6 @@ def load_pfc() -> pd.DataFrame:
                 else:
                     df.index = df.index.tz_convert("Europe/Zurich")
                 return df
-        except Exception:
-            pass
 
     # 2) Legacy : write-through H:\
     if HFC_OMPEX_DIR.exists():
@@ -444,18 +452,42 @@ def load_cache_meta() -> dict:
 
 
 def load_deviwa_auto() -> dict[str, pd.DataFrame]:
-    """Lädt Deviwa-Daten automatisch.
+    """Returns ``{actor_name: deals_DataFrame}`` for the Deviwa pool.
 
-    Reihenfolge:
-    1) Parquet cache (data/_cache/deviwa_deals.parquet) — schnell
-    2) Direktes Excel-Read (legacy) — langsam, fallback wenn Cache fehlt
+    **Contract (post-Phase 1 refactor)** : the per-actor DataFrames contain
+    **deal rows ONLY**, with the standardized columns from
+    ``deviwa_parser`` (deal, scope, volume_sum, notional_sum, ...) plus
+    canonical metadata columns ``actor``, ``source_sheet``.
+
+    For backward compatibility with callers that grepped on the legacy
+    ``_actor`` / ``_sheet`` columns, those names are added as aliases.
+
+    **This is intentionally NOT** the same shape as the legacy
+    ``deviwa_parser.load_deviwa_file()`` which mixed deal rows together
+    with raw programme rows under each actor key (~35k rows per actor
+    instead of just 24-120 deal rows). The mixed shape was confusing and
+    error-prone (it contributed to the bugged hedge_ratio_pct calculation
+    in the original portfolio_analytics).
+
+    For programme/real time-series, use ``load_deviwa_programme_cached()``.
+    For EDSH supplier breakdown, use ``load_deviwa_edsh_suppliers_cached()``.
+
+    Resolution order :
+    1. Parquet cache (data/_cache/deviwa_deals.parquet) — fast
+    2. Direct Excel read (legacy fallback) — slow, only if cache absent
     """
     # 1) Cache parquet
     deals = load_deviwa_deals_cached()
     if not deals.empty and "actor" in deals.columns:
         result: dict[str, pd.DataFrame] = {}
         for actor, sub in deals.groupby("actor"):
-            result[str(actor)] = sub.reset_index(drop=True).copy()
+            df = sub.reset_index(drop=True).copy()
+            # Backward-compat aliases for callers that grepped on legacy names
+            if "_actor" not in df.columns:
+                df["_actor"] = df["actor"]
+            if "_sheet" not in df.columns and "source_sheet" in df.columns:
+                df["_sheet"] = df["source_sheet"]
+            result[str(actor)] = df
         return result
 
     # 2) Fallback Excel direct
