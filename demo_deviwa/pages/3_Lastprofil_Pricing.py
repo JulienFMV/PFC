@@ -1,19 +1,38 @@
-"""Seite 3 — Lastprofil-Pricing gegen PFC.
+"""Seite 3 — Profil & Hedge : Pricing und Hedge-Strategie.
 
-Phase 10 redesign : state-of-the-art utility-pricing view aligned with
-Axpo / Volue / KYOS load-pricing tooling.
+Single-page hub for two GRD use cases :
 
-Workflow :
-  1. GRD lädt eine Lastkurve hoch (CSV / XLSX, viertel-stündlich oder stündlich)
-     OR uses the synthetic example profile.
-  2. Auto-detect timestamp + load columns, normalize to hourly MWh.
-  3. Price against the current PFC.
-  4. Show breakdown at three granularities : Jahr / Quartal / Monat.
-  5. Hourly heatmap (24 h × 12 Monate) — the canonical "load shape" view.
-  6. Cal-Y baseload comparison : "if you bought a flat baseload at Cal-Y
-     forward instead of profile-pricing, you'd pay X EUR more / less".
-  7. Sensitivity : ±10 % PFC shift impact on total cost.
-  8. CSV export of the priced curve.
+  - **Profil hochladen** : a prospect or a new client uploads a CSV /
+    XLSX load profile, the page prices it against the FMV PFC and
+    suggests a hedge plan over the next 3-4 delivery years.
+  - **Akteur (offene Position)** : an existing pool member (EDSH /
+    EVTL / EW Binn / RELL) picks a delivery year ; the page derives
+    the actor's hourly open position from
+    ``programme_mw − hedged_flat_per_hour`` and runs the same
+    pricing + hedge engine on it.
+
+Both modes feed the same downstream blocks :
+
+  1. KPI hero (volume, profile price, premium vs baseload, peak share).
+  2. Granular breakdown (year / quarter / month).
+  3. Load-shape heatmap (24 h × 12 months).
+  4. Cal-Y baseload comparison (profile-premium vs flat strip).
+  5. Hedge corridor recommendation (4 year cards, FMV-to-GRD rule).
+  6. Concrete trade blotter (Cal-Base + optional Q-Peak winter strip).
+  7. ±15 % forward sensitivity.
+  8. CSV export of the priced hourly curve.
+
+Hedge rule (FMV-to-GRD oriented, conservative on Swiss liquidity) :
+
+  - Cal-Base is the primary instrument — only liquid Swiss tenor for
+    GRD-sized tickets.
+  - Corridor mid-points from ``INDUSTRY_HEDGE_TARGETS`` (Y+1 ≈ 90 %,
+    Y+2 ≈ 65 %, Y+3 ≈ 35 %, Y+4 ≈ 15 %).
+  - If the profile is peak-heavy (peak share > 40 %), 70 % via
+    Cal-Base + 30 % via Q1 + Q4 PEAK winter strip.
+  - M-contracts are deliberately excluded (CH liquidity too thin).
+  - Current delivery year is *not* recommended here — that horizon
+    belongs to FMV's intraday desk, not the GRD's hedge plan.
 """
 
 from __future__ import annotations
@@ -29,6 +48,10 @@ import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from hedge_strategy import (  # noqa: E402
+    derive_open_position_per_year,
+    recommend_hedge_blotter,
+)
 from portfolio_yearly import get_forward_year_proxy  # noqa: E402
 from pricing import parse_load_file, price_load_against_pfc  # noqa: E402
 from utils import (  # noqa: E402
@@ -42,6 +65,8 @@ from utils import (  # noqa: E402
     fmt_eur_mwh,
     fmt_mwh,
     kpi_card,
+    load_deviwa_deals_cached,
+    load_deviwa_programme_cached,
     load_eex_forwards,
     load_pfc,
     render_cache_status,
@@ -54,47 +79,20 @@ from utils import (  # noqa: E402
 # ---------------------------------------------------------------------------
 
 st.set_page_config(
-    page_title="FMV · Lastprofil-Pricing",
+    page_title="FMV · Profil & Hedge",
     page_icon="💡",
     layout="wide",
 )
 
-render_header("Lastprofil-Pricing — Profil gegen PFC bewerten")
+render_header("Profil & Hedge — Pricing und Hedge-Strategie")
 
 with st.sidebar:
     render_cache_status()
 
 
-st.markdown(
-    "Laden Sie eine Lastkurve hoch (CSV / XLSX, viertel-stündlich oder stündlich, "
-    "Spalten *Datum* + *Last in MW oder MWh*) und wir bepreisen sie gegen die aktuelle "
-    "**FMV Price Forward Curve**. Drei Granularitäten verfügbar : Jahr, Quartal, Monat."
-)
-
-
-# ---------------------------------------------------------------------------
-# Upload + example profile
-# ---------------------------------------------------------------------------
-
-c_upload, c_example = st.columns([2.0, 1.0])
-
-with c_upload:
-    uploaded = st.file_uploader(
-        "Lastprofil hochladen (.csv / .xlsx)",
-        type=["csv", "xlsx", "xls"],
-        key="load_upload",
-    )
-
-with c_example:
-    use_example = st.checkbox(
-        "Beispielprofil verwenden",
-        value=uploaded is None,
-        help="Synthetisches Profil 20 GWh/Jahr — typischer Industrie-GRD Haut-Valais.",
-    )
-
-
 pfc = load_pfc()
 forwards = load_eex_forwards()
+today_ch = pd.Timestamp.now(tz="Europe/Zurich")
 
 if pfc.empty:
     st.error("PFC nicht verfügbar. Bitte PFC-Lauf ausführen oder Cache aktualisieren.")
@@ -102,55 +100,169 @@ if pfc.empty:
 
 
 # ---------------------------------------------------------------------------
-# Profile preparation
+# Source selector
 # ---------------------------------------------------------------------------
+
+source = st.radio(
+    "Quelle",
+    options=["Profil hochladen", "Akteur (offene Position)"],
+    horizontal=True,
+    key="profil_source",
+    help=(
+        "**Profil hochladen** : CSV / XLSX einer Lastkurve — typisch für "
+        "Onboarding eines neuen GRD oder Bewertung einer Erweiterung.\n\n"
+        "**Akteur (offene Position)** : lädt programme − hedged für einen "
+        "bestehenden Pool-Akteur und bewertet die residuale Exposition."
+    ),
+)
+
 
 load_hourly: pd.Series | None = None
 meta: dict = {}
+position_label: str = ""
+selected_year: int | None = None  # only set in actor mode for the hedge cards
 
-if uploaded is not None:
-    try:
-        load_hourly, meta = parse_load_file(uploaded)
-        st.success(
-            f"📁 **{uploaded.name}** · {meta['rows']:,} Zeilen · "
-            f"{meta['start'].strftime('%d.%m.%Y')} → "
-            f"{meta['end'].strftime('%d.%m.%Y')} · "
-            f"erkannte Frequenz : **{meta.get('inferred_freq', '?')}**".replace(",", "'")
+
+if source == "Profil hochladen":
+    st.markdown(
+        "Laden Sie eine Lastkurve hoch (CSV / XLSX, viertel-stündlich oder stündlich, "
+        "Spalten *Datum* + *Last in MW oder MWh*) und wir bepreisen sie gegen die "
+        "aktuelle **FMV Price Forward Curve**. Drei Granularitäten verfügbar : "
+        "Jahr, Quartal, Monat."
+    )
+
+    c_upload, c_example = st.columns([2.0, 1.0])
+    with c_upload:
+        uploaded = st.file_uploader(
+            "Lastprofil hochladen (.csv / .xlsx)",
+            type=["csv", "xlsx", "xls"],
+            key="load_upload",
         )
-    except Exception as exc:
-        st.error(f"Fehler beim Parsen : {exc}")
+    with c_example:
+        use_example = st.checkbox(
+            "Beispielprofil verwenden",
+            value=uploaded is None,
+            help="Synthetisches Profil 20 GWh/Jahr — typischer Industrie-GRD Haut-Valais.",
+        )
+
+    if uploaded is not None:
+        try:
+            load_hourly, meta = parse_load_file(uploaded)
+            st.success(
+                f"📁 **{uploaded.name}** · {meta['rows']:,} Zeilen · "
+                f"{meta['start'].strftime('%d.%m.%Y')} → "
+                f"{meta['end'].strftime('%d.%m.%Y')} · "
+                f"erkannte Frequenz : **{meta.get('inferred_freq', '?')}**".replace(",", "'")
+            )
+            position_label = uploaded.name
+        except Exception as exc:
+            st.error(f"Fehler beim Parsen : {exc}")
+            st.stop()
+    elif use_example:
+        pfc_start = pfc.index.min()
+        idx = pd.date_range(start=pfc_start, periods=8760, freq="h", tz="Europe/Zurich")
+        base_mw = 2.0
+        hour_shape = np.array([
+            0.65, 0.60, 0.58, 0.58, 0.60, 0.75, 0.95, 1.15, 1.25, 1.30,
+            1.30, 1.28, 1.25, 1.22, 1.22, 1.22, 1.25, 1.20, 1.10, 1.00,
+            0.90, 0.80, 0.72, 0.68,
+        ])
+        values = np.array([
+            base_mw * hour_shape[t.hour] * (0.75 if t.dayofweek >= 5 else 1.0)
+            for t in idx
+        ])
+        seasonal = 1.0 + 0.18 * np.cos(2 * np.pi * (idx.dayofyear - 15) / 365)
+        values = values * seasonal
+        load_hourly = pd.Series(values, index=idx, name="load_mwh")
+        meta = {
+            "rows": len(load_hourly),
+            "start": load_hourly.index.min(),
+            "end": load_hourly.index.max(),
+            "annual_mwh": float(load_hourly.sum()),
+            "unit": "MWh (synthetisch)",
+            "inferred_freq": "h",
+        }
+        position_label = "Beispielprofil 20 GWh/a"
+        st.info(
+            "📊 Beispielprofil aktiv (20 GWh / Jahr · Tagesgang Industrie · "
+            "Wochenende −25 % · Saisonalität ±18 %)."
+        )
+    else:
+        st.info("Bitte laden Sie ein Lastprofil hoch oder nutzen Sie das Beispielprofil.")
         st.stop()
-elif use_example:
-    pfc_start = pfc.index.min()
-    idx = pd.date_range(start=pfc_start, periods=8760, freq="h", tz="Europe/Zurich")
-    base_mw = 2.0
-    hour_shape = np.array([
-        0.65, 0.60, 0.58, 0.58, 0.60, 0.75, 0.95, 1.15, 1.25, 1.30,
-        1.30, 1.28, 1.25, 1.22, 1.22, 1.22, 1.25, 1.20, 1.10, 1.00,
-        0.90, 0.80, 0.72, 0.68,
-    ])
-    values = np.array([
-        base_mw * hour_shape[t.hour] * (0.75 if t.dayofweek >= 5 else 1.0)
-        for t in idx
-    ])
-    seasonal = 1.0 + 0.18 * np.cos(2 * np.pi * (idx.dayofyear - 15) / 365)
-    values = values * seasonal
-    load_hourly = pd.Series(values, index=idx, name="load_mwh")
+
+else:
+    # ── Akteur mode : derive open-position curves from Deviwa cache ────────
+    st.markdown(
+        "Wählen Sie einen Pool-Akteur und ein Lieferjahr. Die Seite leitet "
+        "die **stündliche offene Position** aus ``programme − Σ Deals`` ab "
+        "(Cal/Q/M-Base liefern flach über den Lieferzeitraum) und führt "
+        "dieselbe Pricing- und Hedge-Engine wie beim Upload-Modus."
+    )
+
+    deals_df = load_deviwa_deals_cached()
+    programme_df = load_deviwa_programme_cached()
+    if deals_df.empty or programme_df.empty:
+        st.warning("Deviwa-Cache leer — bitte erst Cache befüllen.")
+        st.stop()
+
+    actors = sorted(programme_df["actor"].dropna().unique().tolist())
+    if not actors:
+        st.warning("Keine Akteure im Programme-Cache gefunden.")
+        st.stop()
+
+    target_years = list(range(today_ch.year, today_ch.year + 4))
+
+    c_actor, c_year = st.columns([1.2, 1.0])
+    with c_actor:
+        actor_choice = st.selectbox(
+            "Akteur",
+            options=actors,
+            index=0,
+            key="profil_actor",
+        )
+    with c_year:
+        year_choice = st.radio(
+            "Lieferjahr",
+            options=target_years,
+            horizontal=True,
+            index=1 if len(target_years) > 1 else 0,
+            format_func=lambda y: f"Cal-{y}",
+            key="profil_year",
+        )
+
+    open_curves = derive_open_position_per_year(
+        programme_df, deals_df, actor=actor_choice, today=today_ch,
+        horizon_years=4,
+    )
+    if year_choice not in open_curves or open_curves[year_choice].empty:
+        st.warning(
+            f"Keine Programme-Daten für {actor_choice} im Jahr {year_choice} "
+            f"— bitte ein anderes Jahr wählen."
+        )
+        st.stop()
+
+    load_hourly = open_curves[year_choice].rename("open_mwh").copy()
+    annual_open = float(load_hourly.sum())
+    annual_abs = float(load_hourly.abs().sum())
     meta = {
         "rows": len(load_hourly),
         "start": load_hourly.index.min(),
         "end": load_hourly.index.max(),
-        "annual_mwh": float(load_hourly.sum()),
-        "unit": "MWh (synthetisch)",
+        "annual_mwh": annual_open,
+        "unit": "MWh (offene Position)",
         "inferred_freq": "h",
     }
-    st.info(
-        "📊 Beispielprofil aktiv (20 GWh / Jahr · Tagesgang Industrie · "
-        "Wochenende −25 % · Saisonalität ±18 %)."
+    position_label = f"{actor_choice} · Cal-{year_choice} offene Position"
+    selected_year = int(year_choice)
+
+    sign = "+" if annual_open >= 0 else ""
+    st.success(
+        f"📁 **{actor_choice}** · Cal-{year_choice} · "
+        f"netto offen {sign}{annual_open:,.0f} MWh "
+        f"(absolutes Volumen {annual_abs:,.0f} MWh) — "
+        f"negativ = bereits über-hedged.".replace(",", "'")
     )
-else:
-    st.info("Bitte laden Sie ein Lastprofil hoch oder nutzen Sie das Beispielprofil.")
-    st.stop()
 
 
 # ---------------------------------------------------------------------------
@@ -458,6 +570,180 @@ else:
     st.info(
         f"Cal-{load_year} Forward nicht verfügbar (Cal retired oder zu weit in der Zukunft)."
     )
+
+
+# ---------------------------------------------------------------------------
+# Hedge strategy recommendation
+# ---------------------------------------------------------------------------
+
+st.markdown("")
+st.subheader("Empfohlene Hedge-Strategie")
+st.caption(
+    "FMV-Empfehlung für einen GRD über die nächsten 4 Lieferjahre, "
+    "abgeleitet aus dem Profil. Korridor-Mittelpunkte aus dem Industrie-"
+    "Standard (Eurelectric / EFET) : **Y+1 ≈ 90 %**, **Y+2 ≈ 65 %**, "
+    "**Y+3 ≈ 35 %**, **Y+4 ≈ 15 %**. Cal-Base ist primär (liquidstes "
+    "Schweizer Tenor) ; bei spitzenlastigen Profilen (> 40 % Peak-Anteil) "
+    "wird ein Q1+Q4 PEAK-Strip aufgeschichtet."
+)
+
+# Anchor : current calendar year (so Y+1 is always the "next year" relative
+# to today, regardless of which year the profile or open-position spans).
+# For actor mode we offer the 4-year horizon starting from today.year + 1.
+hedge_horizon = list(range(today_ch.year + 1, today_ch.year + 5))
+
+# The recommendation needs an annual MWh figure : for upload mode use the
+# uploaded annual volume directly ; for actor mode reuse the same value
+# (open MWh of the selected year, abs() so negative-net actors still get
+# a sensible recommendation against future years).
+annual_for_reco = abs(float(load_hourly.sum()))
+profile_for_reco = load_hourly.abs() if (load_hourly < 0).any() else load_hourly
+
+hedge_cards = st.columns(4)
+for i, year_y in enumerate(hedge_horizon):
+    blotter_actions, blotter_meta = recommend_hedge_blotter(
+        profile_for_reco, year_y, today_ch, forwards
+    )
+    corridor = blotter_meta.get("corridor")
+    target_pct = blotter_meta.get("target_ratio_pct")
+    is_active = bool(blotter_actions)
+
+    if is_active:
+        target_volume = sum(a.volume_mwh for a in blotter_actions)
+        target_cost = sum(a.notional_eur for a in blotter_actions)
+        avg_px = target_cost / max(target_volume, 1e-9)
+        delta_text = (
+            f"Korridor {corridor[0]}-{corridor[1]} % · "
+            f"Ziel ≈ {target_pct:.0f} %"
+        )
+    else:
+        target_volume = 0.0
+        target_cost = 0.0
+        avg_px = float("nan")
+        delta_text = "Lieferung läuft — intraday Bereich"
+
+    color = FMV_BLUE if is_active else FMV_GREY
+    hedge_cards[i].markdown(
+        kpi_card(
+            f"Cal-{year_y}",
+            (
+                f"{fmt_mwh(target_volume, 0)}"
+                if is_active else "—"
+            ),
+            delta=delta_text,
+            delta_color=color,
+        ),
+        unsafe_allow_html=True,
+    )
+    hedge_cards[i].markdown(
+        f"<div style='font-size:0.78rem; color:{FMV_NAVY};"
+        f" margin-top:-0.5rem;'>"
+        f"Ø {fmt_eur_mwh(avg_px) if is_active else '—'}"
+        f" · Budget {fmt_chf(target_cost, 0) if is_active else '—'} EUR"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Trade blotter (concrete recommendation per year)
+# ---------------------------------------------------------------------------
+
+st.markdown("")
+st.subheader("Konkrete Trade-Vorschläge")
+st.caption(
+    "Vorgeschlagene Tickets pro Lieferjahr, basierend auf den letzten "
+    "verfügbaren EEX-Settlements. Cal-Base wird zuerst aufgebaut ; "
+    "Q-Strips ergänzen die Spitzenlast-Abdeckung. M-Contracts werden "
+    "absichtlich ausgeschlossen (CH-Liquidität für GRD-Tickets zu dünn). "
+    "Liste als CSV exportierbar oder per E-Mail an FMV Trading."
+)
+
+blotter_rows: list[dict] = []
+for year_y in hedge_horizon:
+    actions, _ = recommend_hedge_blotter(
+        profile_for_reco, year_y, today_ch, forwards
+    )
+    for a in actions:
+        blotter_rows.append({
+            "Lieferjahr": a.delivery_year,
+            "Instrument": a.instrument,
+            "Volumen (MWh)": a.volume_mwh,
+            "Ref.-Preis (EUR/MWh)": a.reference_price_eur_mwh,
+            "Notional (EUR)": a.notional_eur,
+            "Begründung": a.rationale,
+        })
+
+if not blotter_rows:
+    st.info(
+        "Keine Trade-Vorschläge — möglicherweise fehlen Forward-Settlements "
+        "im Cache oder das Profil deckt nur das laufende Lieferjahr ab."
+    )
+else:
+    blotter_df = pd.DataFrame(blotter_rows)
+    total_volume = blotter_df["Volumen (MWh)"].sum()
+    total_notional = blotter_df["Notional (EUR)"].sum()
+    weighted_px = total_notional / max(total_volume, 1e-9)
+    total_row = pd.DataFrame([{
+        "Lieferjahr": "─ TOTAL",
+        "Instrument": f"{len(blotter_df)} Tickets · {len(set(blotter_df['Lieferjahr']))} Jahre",
+        "Volumen (MWh)": total_volume,
+        "Ref.-Preis (EUR/MWh)": weighted_px,
+        "Notional (EUR)": total_notional,
+        "Begründung": "",
+    }])
+    show_df = pd.concat([blotter_df, total_row], ignore_index=True)
+
+    st.dataframe(
+        show_df,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Volumen (MWh)": st.column_config.NumberColumn(format="%.0f"),
+            "Ref.-Preis (EUR/MWh)": st.column_config.NumberColumn(format="%.2f"),
+            "Notional (EUR)": st.column_config.NumberColumn(format="%.0f"),
+        },
+    )
+
+    cb_csv, cb_mail = st.columns([1.0, 1.4])
+    with cb_csv:
+        csv_buf = io.StringIO()
+        blotter_df.to_csv(csv_buf, sep=";", index=False)
+        st.download_button(
+            "📥 Trade-Vorschläge als CSV",
+            csv_buf.getvalue(),
+            file_name=f"trade_blotter_{position_label.replace(' ', '_')}.csv",
+            mime="text/csv",
+        )
+    with cb_mail:
+        mail_subject = f"Hedge-Anfrage — {position_label}"
+        mail_body_lines = [
+            f"Position : {position_label}",
+            f"Erstellt am : {today_ch.strftime('%d.%m.%Y %H:%M')}",
+            "",
+            "Vorgeschlagene Tickets :",
+        ]
+        for r in blotter_rows:
+            mail_body_lines.append(
+                f"  - Cal-{r['Lieferjahr']} · {r['Instrument']} · "
+                f"{r['Volumen (MWh)']:.0f} MWh @ {r['Ref.-Preis (EUR/MWh)']:.2f} EUR/MWh "
+                f"= {r['Notional (EUR)']:.0f} EUR"
+            )
+        mail_body_lines.append("")
+        mail_body_lines.append(
+            f"Total : {total_volume:.0f} MWh @ Ø {weighted_px:.2f} EUR/MWh "
+            f"= {total_notional:.0f} EUR"
+        )
+        from urllib.parse import quote
+        mail_body = quote("\n".join(mail_body_lines))
+        st.markdown(
+            f"<a href='mailto:trading@fmv.ch?subject={quote(mail_subject)}"
+            f"&body={mail_body}' style='display:inline-block;"
+            f" background:{FMV_BLUE}; color:white; padding:0.5rem 1rem;"
+            f" border-radius:6px; text-decoration:none; font-weight:500;'>"
+            f"📧 Als E-Mail an FMV Trading senden</a>",
+            unsafe_allow_html=True,
+        )
 
 
 # ---------------------------------------------------------------------------
