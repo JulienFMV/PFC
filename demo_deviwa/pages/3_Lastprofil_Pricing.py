@@ -810,41 +810,138 @@ else:
 
 
 # ---------------------------------------------------------------------------
-# Forward sensitivity (±10%)
+# Forward sensitivity — PV01 per tenor (Axpo / Volue convention)
 # ---------------------------------------------------------------------------
+# Rationale : the previous block scaled ``cost_total_eur`` by ±15 % and
+# called it a "Forward-Bewegung". That is mathematically a multiplicative
+# stress on the aggregated cost, not a delta on the forward curve, and it
+# hides where the risk concentrates by tenor. Cal-27 (largest target volume)
+# typically dominates the total, but a flat ±X % bar tells the GRD nothing
+# about it.
+#
+# The trader-grade replacement is a **PV01 per delivery year** : for each
+# Cal-Y we expose Δcost / ΔF (EUR per +1 EUR/MWh shift on the year forward).
+# Since we just built ``blotter_rows`` (volume × instrument × year), the
+# PV01 is simply the sum of volumes per year — a number an Axpo / BKW
+# trader recognises immediately. The chart then plots one line per Cal-Y
+# plus a dashed "parallel shift" reference covering all years simultaneously.
+# Numbers stay finite (≠ NaN) even when only one year has trades.
 
 st.markdown("")
-st.subheader("Sensitivität · was bei einer Forward-Bewegung passiert")
-
-shift_pcts = [-15, -10, -5, 0, 5, 10, 15]
-sens_rows = []
-for s in shift_pcts:
-    new_cost = result["cost_total_eur"] * (1.0 + s / 100.0)
-    delta = new_cost - result["cost_total_eur"]
-    sens_rows.append({
-        "Forward-Shift": f"{s:+d} %",
-        "Gesamtkosten (EUR)": new_cost,
-        "Differenz vs. heute (EUR)": delta,
-    })
-sens_df = pd.DataFrame(sens_rows)
-
-fig_sens = go.Figure()
-fig_sens.add_trace(go.Bar(
-    x=sens_df["Forward-Shift"],
-    y=sens_df["Differenz vs. heute (EUR)"],
-    marker_color=[FMV_GREEN if v <= 0 else FMV_RED for v in sens_df["Differenz vs. heute (EUR)"]],
-    text=[f"{fmt_chf(v, 0)} EUR" for v in sens_df["Differenz vs. heute (EUR)"]],
-    textposition="outside",
-    hovertemplate="%{x}<br>Δ Kosten : %{y:,.0f} EUR<extra></extra>",
-))
-fig_sens.add_hline(y=0, line_color=FMV_GREY, line_width=1)
-fig_sens.update_layout(
-    height=300, margin=dict(l=20, r=20, t=10, b=20),
-    plot_bgcolor="white", paper_bgcolor="white",
-    yaxis=dict(title="Δ Gesamtkosten (EUR)", gridcolor="#EEF1F6"),
-    xaxis=dict(gridcolor="#EEF1F6"),
+st.subheader("Sensitivität · PV01 pro Lieferjahr")
+st.caption(
+    "**PV01** = Veränderung der Gesamtkosten bei einer Forward-Bewegung von "
+    "+1 EUR/MWh auf das jeweilige Cal-Jahr. Auf den vorgeschlagenen Trade-"
+    "Volumen aufgebaut : ein Mass für **wo Ihr Risiko konzentriert ist**, "
+    "nicht für das Restrisiko nach Hedge. Der parallele Strich (gestrichelt) "
+    "zeigt das Worst-Case-Szenario, in dem alle Cal-Jahre gleichzeitig "
+    "bewegen — nützlich, aber statistisch unwahrscheinlich."
 )
-st.plotly_chart(fig_sens, use_container_width=True)
+
+if not blotter_rows:
+    st.info(
+        "PV01-Bild verfügbar, sobald Trade-Vorschläge generiert sind."
+    )
+else:
+    # Aggregate volume per delivery year ; PV01 = volume (EUR per EUR/MWh).
+    pv01_by_year: dict[int, float] = {}
+    for r in blotter_rows:
+        y = int(r["Lieferjahr"])
+        pv01_by_year[y] = pv01_by_year.get(y, 0.0) + float(r["Volumen (MWh)"])
+    years_sorted = sorted(pv01_by_year.keys())
+    pv01_total = float(sum(pv01_by_year.values()))
+
+    # KPI strip : one card per year + total parallel.
+    n_years = len(years_sorted)
+    pv_cols = st.columns(n_years + 1)
+    palette = ["#0E1F3D", "#1F3A6E", "#3A5BA0", "#5C7AC8"]
+    for i, y in enumerate(years_sorted):
+        pv = pv01_by_year[y]
+        share = 100.0 * pv / pv01_total if pv01_total > 0 else 0.0
+        # Concentration alert : a single tenor > 50 % of the total PV01 is
+        # a red flag — the GRD's procurement risk is dominated by one year.
+        delta_color = FMV_RED if share >= 50 else (FMV_ACCENT if share >= 30 else FMV_BLUE)
+        pv_cols[i].markdown(
+            kpi_card(
+                f"PV01 Cal-{y}",
+                f"{fmt_chf(pv, 0)} EUR",
+                delta=f"{share:.0f} % der Risiko-Konzentration",
+                delta_color=delta_color,
+            ),
+            unsafe_allow_html=True,
+        )
+    pv_cols[-1].markdown(
+        kpi_card(
+            "PV01 parallel (alle)",
+            f"{fmt_chf(pv01_total, 0)} EUR",
+            delta="pro +1 EUR/MWh über alle Cal-Jahre",
+            delta_color=FMV_NAVY,
+        ),
+        unsafe_allow_html=True,
+    )
+
+    # Per-tenor sensitivity chart : one line per Cal-Y from −15 to +15 EUR/MWh
+    # plus a dashed "parallel shift" line that sums across all tenors.
+    shifts_eur_mwh = list(range(-15, 16))
+    fig_sens = go.Figure()
+    for i, y in enumerate(years_sorted):
+        deltas = [pv01_by_year[y] * s for s in shifts_eur_mwh]
+        fig_sens.add_trace(go.Scatter(
+            x=shifts_eur_mwh, y=deltas,
+            name=f"Cal-{y}",
+            mode="lines+markers",
+            line=dict(color=palette[i % len(palette)], width=2.2),
+            marker=dict(size=4),
+            hovertemplate=(
+                f"Cal-{y}<br>Forward Shift : %{{x:+d}} EUR/MWh"
+                f"<br>Δ Kosten : %{{y:,.0f}} EUR<extra></extra>"
+            ),
+        ))
+    parallel_deltas = [pv01_total * s for s in shifts_eur_mwh]
+    fig_sens.add_trace(go.Scatter(
+        x=shifts_eur_mwh, y=parallel_deltas,
+        name="Parallel Shift (alle Jahre)",
+        mode="lines",
+        line=dict(color=FMV_RED, width=3.5, dash="dash"),
+        hovertemplate=(
+            "Parallel<br>Shift : %{x:+d} EUR/MWh"
+            "<br>Δ Total : %{y:,.0f} EUR<extra></extra>"
+        ),
+    ))
+    fig_sens.add_hline(y=0, line_color=FMV_GREY, line_width=1)
+    fig_sens.add_vline(x=0, line_color=FMV_GREY, line_width=1)
+    fig_sens.update_layout(
+        height=360, margin=dict(l=20, r=20, t=10, b=20),
+        plot_bgcolor="white", paper_bgcolor="white",
+        xaxis=dict(
+            title="Forward Shift (EUR/MWh)", gridcolor="#EEF1F6",
+            zeroline=True, dtick=5,
+        ),
+        yaxis=dict(title="Δ Gesamtkosten (EUR)", gridcolor="#EEF1F6"),
+        legend=dict(orientation="h", y=-0.20),
+        hovermode="x unified",
+    )
+    st.plotly_chart(fig_sens, use_container_width=True)
+
+    # Concentration breakdown : top tenor share, drives the sales pitch
+    # ("hedge Cal-X first because it's where 60 % of the risk sits").
+    if pv01_total > 0:
+        top_year = max(pv01_by_year, key=pv01_by_year.get)
+        top_share = 100.0 * pv01_by_year[top_year] / pv01_total
+        if top_share >= 50:
+            st.warning(
+                f"⚠️  **Risiko-Konzentration auf Cal-{top_year}** : "
+                f"{top_share:.0f} % der Gesamt-Sensitivität liegen auf einem "
+                f"einzigen Tenor. Empfehlung : zuerst Cal-{top_year} absichern "
+                f"— jede Forward-Bewegung dort dominiert Ihr Restrisiko."
+            )
+        else:
+            st.info(
+                f"ℹ️  **Diversifizierte Sensitivität** : kein einzelnes Cal-Jahr "
+                f"trägt mehr als {top_share:.0f} % des PV01. "
+                f"Eine Bewegung auf einem Tenor allein bewegt nur einen "
+                f"begrenzten Anteil Ihrer Gesamtkosten."
+            )
 
 
 # ---------------------------------------------------------------------------
