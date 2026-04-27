@@ -48,7 +48,30 @@ st.markdown(
 )
 
 WEEKDAY_LABELS = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"]
-ASSUMED_IMBALANCE_PRICE = 150.0  # EUR/MWh (Mittelwert CH 2024-2025)
+# Default = Swissgrid weighted mean 2024-25, ~120 EUR/MWh on the positive-
+# direction side. The legacy 150 was a worst-case figure that systematically
+# over-states Ausgleichskosten ; the slider lets the user calibrate against
+# their own actual settlements without touching code.
+DEFAULT_IMBALANCE_PRICE = 120.0  # EUR/MWh
+
+with st.sidebar:
+    st.markdown("**Annahme · Ausgleichsenergie-Preis**")
+    ASSUMED_IMBALANCE_PRICE = st.slider(
+        "EUR/MWh",
+        min_value=50.0, max_value=300.0,
+        value=DEFAULT_IMBALANCE_PRICE, step=10.0,
+        help=(
+            "Durchschnittspreis Swissgrid Ausgleichsenergie. "
+            "Realität variiert stundenweise (50-500 EUR/MWh). "
+            "Standardwert 120 EUR/MWh = volumengewichteter Mittelwert 2024-25."
+        ),
+        key="prog_imbalance_price",
+    )
+    st.caption(
+        "🛈 Vorzeichen wird hier nicht modelliert : alle Abweichungen werden "
+        "als Kosten gerechnet. In Realität kann eine Über-Lieferung in einer "
+        "Defizit-Stunde sogar Erlös bringen."
+    )
 
 # ---------------------------------------------------------------------------
 # Daten laden — primary path: canonical parquet cache. Fallback: direct xlsx.
@@ -190,8 +213,17 @@ abs_err = err.abs()
 mae = float(abs_err.mean())
 rmse = float(np.sqrt((err ** 2).mean()))
 bias = float(err.mean())
-ape = abs_err / df["programme_mw"].abs().clip(lower=1e-3) * 100
-accuracy = float(max(0.0, 100.0 - ape.mean()))
+# Volumen-gewichteter Fehler (WAPE) statt MAPE. MAPE = Σ|err|/|target| pro
+# Stunde dann Mittel ist instabil bei kleinen Volumen (z.B. EW Binn 0.05 MW
+# Programm → APE 100 % bei 0.05 MW Fehler), und ein Outlier kippt den
+# Durchschnitt. WAPE = Σ|err| / Σ|target| ist die Konvention von Volue,
+# Axpo und allen seriösen Forecast-Boards : volumengewichtet, robust,
+# bounded in [0, 100 %].
+total_target = float(df["programme_mw"].abs().sum())
+wape = (
+    100.0 * float(abs_err.sum()) / total_target if total_target > 0 else float("nan")
+)
+accuracy = max(0.0, 100.0 - wape) if np.isfinite(wape) else float("nan")
 total_imbalance_mwh = float(abs_err.sum())  # |MW| × 1h = MWh
 imbalance_cost = total_imbalance_mwh * ASSUMED_IMBALANCE_PRICE
 
@@ -269,10 +301,12 @@ if choice == "Gesamter Pool" and len(actors) > 1:
         if sub.empty:
             continue
         e = sub["actual_mw"] - sub["programme_mw"]
-        ape_a = e.abs() / sub["programme_mw"].abs().clip(lower=1e-3) * 100
+        # WAPE pro Akteur (gleiche Konvention wie Headline-KPI)
+        a_target = float(sub["programme_mw"].abs().sum())
+        wape_a = (100.0 * float(e.abs().sum()) / a_target) if a_target > 0 else float("nan")
         cmp_rows.append({
             "Akteur": actor,
-            "Genauigkeit (%)": max(0.0, 100.0 - float(ape_a.mean())),
+            "Genauigkeit (%)": max(0.0, 100.0 - wape_a) if np.isfinite(wape_a) else float("nan"),
             "MAE (MW)": float(e.abs().mean()),
             "Bias (MW)": float(e.mean()),
             "Stunden": int(len(sub)),
@@ -573,13 +607,20 @@ st.subheader("Monatliche Genauigkeit · Ziel 90 %")
 
 g_mon = df.copy()
 g_mon["abs_err"] = (g_mon["actual_mw"] - g_mon["programme_mw"]).abs()
-g_mon["ape"] = g_mon["abs_err"] / g_mon["programme_mw"].abs().clip(lower=1e-3) * 100
+g_mon["target"] = g_mon["programme_mw"].abs()
 monthly_acc = g_mon.groupby("month").agg(
     mae=("abs_err", "mean"),
-    ape_pct=("ape", "mean"),
+    abs_err_sum=("abs_err", "sum"),
+    target_sum=("target", "sum"),
     n=("abs_err", "count"),
 ).reset_index()
-monthly_acc["accuracy_pct"] = (100.0 - monthly_acc["ape_pct"]).clip(lower=0, upper=100)
+# WAPE par mois — bornée [0, 100 %], pondérée par volume.
+monthly_acc["wape_pct"] = np.where(
+    monthly_acc["target_sum"] > 0,
+    100.0 * monthly_acc["abs_err_sum"] / monthly_acc["target_sum"],
+    np.nan,
+)
+monthly_acc["accuracy_pct"] = (100.0 - monthly_acc["wape_pct"]).clip(lower=0, upper=100)
 
 bar_colors = [
     FMV_GREEN if v >= 90 else (FMV_ACCENT if v >= 80 else FMV_RED)
