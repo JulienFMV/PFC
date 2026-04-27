@@ -30,6 +30,7 @@ from utils import (
     fmt_chf,
     fmt_mwh,
     kpi_card,
+    load_deviwa_programme_cached,
     render_header,
 )
 
@@ -50,27 +51,65 @@ WEEKDAY_LABELS = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"]
 ASSUMED_IMBALANCE_PRICE = 150.0  # EUR/MWh (Mittelwert CH 2024-2025)
 
 # ---------------------------------------------------------------------------
-# Daten laden
+# Daten laden — primary path: canonical parquet cache. Fallback: direct xlsx.
 # ---------------------------------------------------------------------------
-path = find_deviwa_file()
-if path is None:
-    st.warning("Keine Deviwa-Datei in `/data` gefunden.")
+# The canonical parquet cache is what the rest of the dashboard reads (cockpit,
+# transactions, VaR, etc.). Reading directly from xlsx through
+# ``extract_programme_data`` here would diverge from the rest of the app after
+# a cache refresh and silently keep showing stale demo data when the user has
+# already refreshed the parquet via the sidebar action.
+prog_long = load_deviwa_programme_cached()
+if prog_long.empty:
+    # Fallback : the cache hasn't been built yet — read straight from the
+    # source xlsx so the page still renders on a fresh checkout.
+    path = find_deviwa_file()
+    if path is None:
+        st.warning(
+            "Keine Deviwa-Datei in `/data` gefunden und Parquet-Cache leer. "
+            "Bitte `scripts/extract_deviwa_cache.py` laufen lassen."
+        )
+        st.stop()
+    legacy = extract_programme_data(path)
+    legacy = {
+        k: v for k, v in legacy.items()
+        if v is not None and not v.empty
+        and "programme_mw" in v.columns and "actual_mw" in v.columns
+        and v["programme_mw"].notna().any() and v["actual_mw"].notna().any()
+    }
+    if not legacy:
+        st.info(
+            "Keine ProgrammeReal-Sheets gefunden. Erwartet werden Spalten "
+            "`<Akteur>_Programm`, `<Akteur>_Real` und optional `<Akteur>_Budget`."
+        )
+        st.stop()
+    frames = [v.assign(actor=k) for k, v in legacy.items()]
+    prog_long = pd.concat(frames, ignore_index=True)
+
+# Keep only actors with both programme and actual signal — same filter as
+# before, but applied on the long-format frame instead of the per-actor dict.
+prog_long = prog_long.dropna(subset=["timestamp"])
+required_cols = {"actor", "timestamp", "programme_mw", "actual_mw"}
+if not required_cols.issubset(prog_long.columns):
+    st.warning(f"Cache-Schema unvollständig — fehlende Spalten: {required_cols - set(prog_long.columns)}")
     st.stop()
 
-prog_data = extract_programme_data(path)
-prog_data = {
-    k: v for k, v in prog_data.items()
-    if v is not None and not v.empty
-    and "programme_mw" in v.columns and "actual_mw" in v.columns
-    and v["programme_mw"].notna().any() and v["actual_mw"].notna().any()
-}
+usable_actors = []
+for actor_name, sub in prog_long.groupby("actor"):
+    if sub["programme_mw"].notna().any() and sub["actual_mw"].notna().any():
+        usable_actors.append(str(actor_name))
 
-if not prog_data:
+if not usable_actors:
     st.info(
-        "Keine ProgrammeReal-Sheets gefunden. Erwartet werden Spalten "
-        "`<Akteur>_Programm`, `<Akteur>_Real` und optional `<Akteur>_Budget`."
+        "Keine Akteure mit Programme- UND Real-Signal verfügbar. "
+        "Cache aktualisieren oder Quelldatei prüfen."
     )
     st.stop()
+
+# Materialize the per-actor dict only where the rest of the page needs it
+# (the per-actor comparison block at the bottom of the page).
+prog_data: dict[str, pd.DataFrame] = {
+    a: prog_long[prog_long["actor"] == a].copy() for a in usable_actors
+}
 
 # ---------------------------------------------------------------------------
 # Akteur-Auswahl + Zeitraum
@@ -80,12 +119,10 @@ options = (["Gesamter Pool"] if len(actors) > 1 else []) + actors
 choice = st.radio("Akteur auswählen", options=options, horizontal=True, key="prog_actor")
 
 if choice == "Gesamter Pool":
-    frames = [v.assign(_actor=k) for k, v in prog_data.items()]
-    df = pd.concat(frames, ignore_index=True).sort_values("timestamp")
+    df = prog_long[prog_long["actor"].isin(usable_actors)].copy().sort_values("timestamp")
     title_suffix = "Gesamter Pool"
 else:
     df = prog_data[choice].copy()
-    df["_actor"] = choice
     title_suffix = choice
 
 # Programmqualität evaluates plan against realised consumption ; only past
