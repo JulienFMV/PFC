@@ -97,6 +97,28 @@ if not required_cols.issubset(prog_long.columns):
 # before, but applied on the long-format frame instead of the per-actor dict.
 prog_long = prog_long.dropna(subset=["timestamp"])
 
+# Derive the calendar enrichments the legacy ``extract_programme_data``
+# used to emit on each per-actor frame (date, month, hour, dow, year,
+# month_num, delta_mw). Several downstream blocks groupby / pivot on
+# these — without them we get ``KeyError`` after the parquet-cache
+# switch. Adding once on the long frame is cheaper than re-deriving
+# inside each block.
+ts_dt = pd.to_datetime(prog_long["timestamp"])
+if "date" not in prog_long.columns:
+    prog_long["date"] = ts_dt.dt.date
+if "month" not in prog_long.columns:
+    prog_long["month"] = ts_dt.dt.to_period("M").dt.to_timestamp()
+if "month_num" not in prog_long.columns:
+    prog_long["month_num"] = ts_dt.dt.month
+if "hour" not in prog_long.columns:
+    prog_long["hour"] = ts_dt.dt.hour
+if "dow" not in prog_long.columns:
+    prog_long["dow"] = ts_dt.dt.dayofweek
+if "year" not in prog_long.columns:
+    prog_long["year"] = ts_dt.dt.year
+if "delta_mw" not in prog_long.columns:
+    prog_long["delta_mw"] = prog_long["actual_mw"] - prog_long["programme_mw"]
+
 usable_actors = []
 for actor_name, sub in prog_long.groupby("actor"):
     if sub["programme_mw"].notna().any() and sub["actual_mw"].notna().any():
