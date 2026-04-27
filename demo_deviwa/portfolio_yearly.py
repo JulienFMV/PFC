@@ -164,11 +164,31 @@ class YearlyHedgeMetrics:
 class BudgetProjection:
     """Total expected energy cost for a delivery year × actor.
 
-    Decomposition :
+    Decomposition for **future delivery years** (``year > today.year``) :
         - locked_eur     = notional already committed via deals (paid forward)
         - open_mwh       = residual exposure (= programme − hedged)
         - at_risk_eur    = open_mwh × current Cal-Y forward price
         - central_eur    = locked + at_risk (point estimate)
+
+    Decomposition for the **current delivery year** (``year == today.year``) :
+        the Cal-Y contract has retired and only the remaining quarterlies
+        (``Q0x_{year}`` for x past today's month) trade. Pricing the
+        full-year ``open_mwh`` at the residual Q-strip would mix annual
+        volume with a residual-period price — the audit flag this as a
+        budget that is "neither full-year nor residual-from-today". So
+        for the current year we explicitly split :
+
+            residual_open_mwh = (programme − hedged) restricted to hours
+                                strictly after ``today``
+            at_risk_eur       = residual_open_mwh × residual_fwd_proxy
+
+        ``locked_eur`` stays the full-year deal notional (a deal that
+        delivers Jan-Dec is already obligated for the whole year). The
+        already-elapsed YTD imbalance (open volume in past hours × spot)
+        is **not** added here — it is by definition realized P&L, not a
+        forward budget at-risk. The cockpit can surface it separately
+        if needed.
+
         - p10_eur, p90_eur = the 10th and 90th percentile of the **cost
           distribution**. Under a log-normal price assumption with annualized
           volatility ``VOL_ANNUAL_PCT`` :
@@ -185,6 +205,11 @@ class BudgetProjection:
     EUR magnitude — the direction of correlation cost↔forward flips with
     the sign of open_mwh, but the cost CDF passes through (p10, p90) at
     the 10/90 percentile points regardless.
+
+    ``open_mwh`` always reflects the value used for pricing : full-year
+    for future years, residual-only for the current year. The full-year
+    open volume (consistent with the Cockpit "Offen" KPI) stays
+    available on :class:`YearlyHedgeMetrics`.
     """
     year: int
     locked_eur: float
@@ -194,6 +219,7 @@ class BudgetProjection:
     p10_eur: float
     p90_eur: float
     sigma_assumed_pct: float
+    is_current_year_residual: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -803,6 +829,75 @@ def get_forward_cal_price(
 # Budget projection
 # ---------------------------------------------------------------------------
 
+def _residual_year_split(
+    deals: pd.DataFrame,
+    programme: pd.DataFrame,
+    year: int,
+    today: pd.Timestamp,
+    actor: str | None,
+) -> tuple[float, float]:
+    """Programme + hedged volumes restricted to hours strictly after ``today``.
+
+    Used by :func:`compute_budget_projection` for the current delivery
+    year, where the Cal-Y contract has retired and only the residual
+    Q-strip can price the open exposure. Pricing the full-year ``open_mwh``
+    at the residual proxy mixes year-volume with residual-period-price ;
+    this helper isolates the residual-period volume so the at-risk EUR
+    figure stays internally consistent.
+
+    Programme is filtered on ``timestamp > today`` (programme is hourly,
+    so the filter is exact). Deals are filtered on the *delivery month* :
+    a deal entry whose ``month`` lies in a calendar month already fully
+    elapsed is dropped ; an entry whose month is the current calendar
+    month is **kept** (a deal delivering for May 2026 is still mostly
+    in the future on April 27, so we treat the entire May volume as
+    residual to stay conservative on the at-risk side).
+
+    Returns ``(residual_programme_mwh, residual_hedged_mwh)``. Either
+    component is 0.0 when no rows match.
+    """
+    prog_f = _filter_actor(programme, actor, "actor")
+    res_prog = 0.0
+    if (
+        prog_f is not None
+        and not prog_f.empty
+        and "timestamp" in prog_f.columns
+        and "programme_mw" in prog_f.columns
+    ):
+        ts = prog_f["timestamp"]
+        # Match the same year window so extrapolation logic isn't shadowed
+        in_year = ts.dt.year == year
+        in_future = ts > today
+        slice_ = prog_f.loc[in_year & in_future]
+        if not slice_.empty:
+            res_prog = float(
+                pd.to_numeric(slice_["programme_mw"], errors="coerce").sum()
+            )
+
+    deals_f = _filter_actor(deals, actor, "actor")
+    res_hedged = 0.0
+    if deals_f is not None and not deals_f.empty and "month" in deals_f.columns:
+        d = deals_f.copy()
+        d["_month"] = pd.to_datetime(d["month"], errors="coerce")
+        d = d.dropna(subset=["_month"])
+        # Drop deal-months whose end-of-month is on or before today.
+        # ``MonthEnd(0)`` snaps to the last day of the same month, so a deal
+        # delivering in April 2026 is dropped on April 27 (April already
+        # 90 % elapsed) but kept for any month strictly after April.
+        if not d.empty:
+            month_end = d["_month"] + pd.offsets.MonthEnd(0)
+            today_naive = today.tz_localize(None) if today.tzinfo else today
+            if d["_month"].dt.tz is not None:
+                month_end = month_end.dt.tz_localize(None)
+            in_year = d["_month"].dt.year == year
+            in_future = month_end > today_naive
+            slice_ = d.loc[in_year & in_future]
+            if not slice_.empty:
+                res_hedged = float(_scope_signed_volume(slice_).sum())
+
+    return res_prog, res_hedged
+
+
 def compute_budget_projection(
     deals: pd.DataFrame,
     programme: pd.DataFrame,
@@ -815,21 +910,27 @@ def compute_budget_projection(
 ) -> dict[int, BudgetProjection]:
     """Per delivery year : locked-in cost + at-risk band on residual exposure.
 
-    The decomposition is :
+    Future years (``y > today.year``) :
 
         locked_eur     = Σ |notional_sum| of deals delivering in year Y
-        open_mwh       = programme_mwh − hedged_mwh
-        at_risk_eur    = open_mwh × current Cal-Y forward
+        open_mwh       = programme_mwh − hedged_mwh         (full year)
+        at_risk_eur    = open_mwh × Y01_{y} forward
         central_eur    = locked + at_risk
-        σ_eur          = |open_mwh| × forward × VOL_ANNUAL × √(years_to_delivery)
-        p10/p90_eur    = central ∓ Z × σ_eur
 
-    Where Z = 1.2816 (one-tailed 80 % CI cutoff). Years-to-delivery is computed
-    against the year midpoint (1 July) and floored at 0.25y to avoid σ → 0
-    for the current delivery year (still has time variance until last day).
+    Current year (``y == today.year``) — Cal-Y has retired, only the
+    residual Q-strip prices the residual exposure :
 
-    NaN forward price → all dependent fields are NaN; ``locked_eur`` and
-    ``open_mwh`` remain valid since they don't depend on the forward.
+        locked_eur     = Σ |notional_sum| of deals delivering in year Y
+        open_mwh       = (programme − hedged) for hours **after today**
+        at_risk_eur    = residual open_mwh × Q-strip-weighted forward
+        central_eur    = locked + at_risk
+
+    The σ band, p10/p90 derivation and ``years_to_delivery`` floor are
+    unchanged. NaN forward price → all dependent fields are NaN ;
+    ``locked_eur`` and ``open_mwh`` remain valid.
+
+    See :class:`BudgetProjection` for the rationale on why already-
+    elapsed YTD imbalance is excluded from the *forward* budget figure.
     """
     if today is None:
         today = pd.Timestamp.now(tz="Europe/Zurich")
@@ -842,9 +943,23 @@ def compute_budget_projection(
     out: dict[int, BudgetProjection] = {}
 
     for y, m in metrics.items():
+        is_current = (y == today.year)
+
         # Year price proxy : Cal-Y for future years, quarterly-weighted average
         # for the current year (Cal-Y already in delivery, no longer tradeable).
         fwd_price = get_forward_year_proxy(forwards, y)
+
+        # Volume that the at-risk leg actually prices. For future years
+        # we use the full-year open volume from `metrics` ; for the
+        # current year we recompute on the residual hours so the volume
+        # and the price horizon line up.
+        if is_current:
+            res_prog, res_hedged = _residual_year_split(
+                deals, programme, y, today, actor
+            )
+            open_for_pricing = res_prog - res_hedged
+        else:
+            open_for_pricing = m.open_mwh
 
         # Mid-year delivery anchor (1 July of year Y in the same tz as today)
         delivery_mid = pd.Timestamp(year=y, month=7, day=1, tz=today.tz)
@@ -857,21 +972,22 @@ def compute_budget_projection(
             out[y] = BudgetProjection(
                 year=y,
                 locked_eur=m.notional_eur,
-                open_mwh=m.open_mwh,
+                open_mwh=open_for_pricing,
                 forward_price_eur_mwh=float("nan"),
                 central_eur=float("nan"),
                 p10_eur=float("nan"),
                 p90_eur=float("nan"),
                 sigma_assumed_pct=VOLATILITY_ANNUAL_PCT,
+                is_current_year_residual=is_current,
             )
             continue
 
-        at_risk_central = m.open_mwh * fwd_price
+        at_risk_central = open_for_pricing * fwd_price
         central = m.notional_eur + at_risk_central
 
         # σ scales with √T under the standard log-normal assumption.
         sigma_eur = (
-            abs(m.open_mwh)
+            abs(open_for_pricing)
             * fwd_price
             * (VOLATILITY_ANNUAL_PCT / 100.0)
             * float(np.sqrt(years_to_delivery))
@@ -882,12 +998,13 @@ def compute_budget_projection(
         out[y] = BudgetProjection(
             year=y,
             locked_eur=m.notional_eur,
-            open_mwh=m.open_mwh,
+            open_mwh=open_for_pricing,
             forward_price_eur_mwh=fwd_price,
             central_eur=central,
             p10_eur=p10,
             p90_eur=p90,
             sigma_assumed_pct=VOLATILITY_ANNUAL_PCT,
+            is_current_year_residual=is_current,
         )
 
     return out

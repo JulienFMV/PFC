@@ -791,11 +791,21 @@ def render_year_card(
     budget_html = ""
     if budget is not None and np.isfinite(budget.central_eur):
         band = abs(budget.p90_eur - budget.central_eur)
+        # For the current delivery year, the at-risk leg prices the
+        # *residual* open volume against the residual Q-strip — explicit
+        # so the user doesn't reconcile against the full-year "Offen MWh".
+        residual_hint = ""
+        if getattr(budget, "is_current_year_residual", False):
+            residual_hint = (
+                f" <span style='color:{FMV_GREY}; font-size:0.72rem;'"
+                f" title='Locked-in Notional + verbleibende offene Position × Q-Strip-Forward.'"
+                f">· Restjahr</span>"
+            )
         budget_html = (
             f"<div style='font-size:0.85rem; color:{FMV_NAVY};"
             f" margin-top:0.35rem;'>Budget {fmt_chf(budget.central_eur, 0)} EUR"
             f" <span style='color:{FMV_GREY};'>± {fmt_chf(band, 0)}</span>"
-            f"</div>"
+            f"{residual_hint}</div>"
         )
 
     open_html = (

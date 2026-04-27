@@ -201,6 +201,93 @@ def test_compute_budget_projection_current_year_has_value(deals_minimal, forward
     assert bp.p10_eur < bp.central_eur < bp.p90_eur
 
 
+def test_compute_budget_projection_current_year_uses_residual_volume(
+    deals_minimal, forwards_mixed
+):
+    """For the current delivery year, the at-risk leg must price the
+    residual open volume (hours strictly after today) — not the full
+    year. Mixing full-year volume with the residual-period Q-strip is
+    the audit's HIGH 1 finding ; this test pins the fix.
+
+    Setup (today = 2026-04-26) :
+      - programme : 0.2 MW flat for 2026 → 1752 MWh full year
+      - deals     : 12 × 100 MWh Intake for 2026 → 1200 MWh hedged full year
+      - full-year open  = 1752 − 1200 = 552 MWh
+      - residual open   = (programme May-Dec) − (hedged May-Dec)
+                        = (0.2 × hours(May→Dec)) − (8 × 100)
+                        = 0.2 × 5880 − 800       (approx, depends on DST)
+                        ≈ 1176 − 800 = 376 MWh
+
+    The full-year open and the residual open differ by ~30 % ; the test
+    asserts the budget uses the smaller residual figure.
+    """
+    deals_2026 = deals_minimal.copy()
+    deals_2026["month"] = deals_2026["month"].apply(lambda t: t.replace(year=2026))
+    deals_2026["deal"] = deals_2026["deal"].str.replace("2027", "2026")
+
+    ts_2026 = pd.date_range(
+        "2026-01-01 00:00", "2026-12-31 23:00", freq="h", tz="Europe/Zurich"
+    )
+    prog_2026 = pd.DataFrame(
+        {
+            "actor": "TEST",
+            "timestamp": ts_2026,
+            "programme_mw": np.full(len(ts_2026), 0.2),
+            "actual_mw": np.nan,
+            "delta_mw": np.nan,
+        }
+    )
+
+    today = pd.Timestamp("2026-04-26", tz="Europe/Zurich")
+    out = compute_budget_projection(
+        deals_2026, prog_2026, forwards_mixed, actor="TEST", today=today
+    )
+    bp = out[2026]
+
+    # Residual semantics flag is set
+    assert bp.is_current_year_residual is True
+
+    # Residual programme: hours strictly > today, in 2026 → May-Dec ≈ 5880 hours
+    # (8 months × ~735 hours/month). At 0.2 MW that's ~1176 MWh ; minus 800 MWh
+    # of residual hedge (May-Dec deals) ≈ 376 MWh residual open. Should be
+    # well below the full-year 552 MWh and well above zero.
+    full_year_open = 1752.0 - 1200.0
+    assert 250.0 < bp.open_mwh < full_year_open - 100.0, (
+        f"open_mwh on current year must reflect residual hours only ; "
+        f"got {bp.open_mwh:.1f}"
+    )
+
+    # at_risk leg = open × Q-strip-weighted price ; central = locked + at_risk
+    # locked ≈ 12 × 8000 = 96000 EUR ; at_risk ≈ 376 × 102.45 ≈ 38500 EUR
+    expected_locked = 12 * 8000.0
+    assert bp.locked_eur == pytest.approx(expected_locked, rel=1e-6)
+    expected_central = expected_locked + bp.open_mwh * bp.forward_price_eur_mwh
+    assert bp.central_eur == pytest.approx(expected_central, rel=1e-6)
+
+
+def test_compute_budget_projection_future_year_uses_full_year_volume(
+    deals_minimal, programme_minimal, forwards_mixed
+):
+    """For a *future* delivery year the at-risk leg must keep using the
+    full-year open volume — the residual semantics only kick in for the
+    current year. Pins the regression boundary.
+    """
+    today = pd.Timestamp("2026-04-26", tz="Europe/Zurich")
+    out = compute_budget_projection(
+        deals_minimal, programme_minimal, forwards_mixed, actor="TEST", today=today
+    )
+    bp = out[2027]
+
+    assert bp.is_current_year_residual is False
+    full_year_open = 1752.0 - 1200.0
+    assert bp.open_mwh == pytest.approx(full_year_open)
+    # Future year uses Y01_2027_BASE = 90.79
+    assert bp.forward_price_eur_mwh == pytest.approx(90.79)
+    assert bp.central_eur == pytest.approx(
+        12 * 8000.0 + full_year_open * 90.79, rel=1e-6
+    )
+
+
 # ---------------------------------------------------------------------------
 # Sanity checks on hedge ratio core formula
 # ---------------------------------------------------------------------------
