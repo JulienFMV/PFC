@@ -306,672 +306,690 @@ else:
 result = price_load_against_pfc(load_hourly, pfc)
 
 
-# ---------------------------------------------------------------------------
-# KPI hero (5 cards)
-# ---------------------------------------------------------------------------
-
-c1, c2, c3, c4, c5 = st.columns(5)
-c1.markdown(
-    kpi_card(
-        "Jahresvolumen",
-        fmt_mwh(result["total_mwh"], decimals=0),
-        delta=f"{result['coverage_hours']:,} Stunden".replace(",", "'"),
-        delta_color=FMV_GREY,
-    ),
-    unsafe_allow_html=True,
-)
-c2.markdown(
-    kpi_card(
-        "Profilpreis",
-        fmt_eur_mwh(result["profile_price_eur_mwh"]),
-        delta=f"Baseload Ø : {fmt_eur_mwh(result['baseload_price_eur_mwh'])}",
-        delta_color=FMV_BLUE,
-    ),
-    unsafe_allow_html=True,
-)
-c3.markdown(
-    kpi_card(
-        "Profilaufschlag",
-        fmt_eur_mwh(result["profile_vs_baseload_eur_mwh"]),
-        delta="ggü. Baseload",
-        delta_color=FMV_RED if result["profile_vs_baseload_eur_mwh"] > 0 else FMV_GREEN,
-    ),
-    unsafe_allow_html=True,
-)
-c4.markdown(
-    kpi_card(
-        "Gesamtkosten",
-        f"{fmt_chf(result['cost_total_eur'], decimals=0)} EUR",
-        delta=f"Ø {fmt_eur_mwh(result['profile_price_eur_mwh'])}",
-        delta_color=FMV_NAVY,
-    ),
-    unsafe_allow_html=True,
-)
-c5.markdown(
-    kpi_card(
-        "Peak-Anteil",
-        f"{result['peak_share_pct']:.1f} %",
-        delta=(
-            f"Peak {fmt_eur_mwh(result['peak_price_eur_mwh'])}"
-            f" / Off {fmt_eur_mwh(result['offpeak_price_eur_mwh'])}"
-        ),
-        delta_color=FMV_GREY,
-    ),
-    unsafe_allow_html=True,
-)
-
-if result.get("projection_used"):
-    st.warning(
-        "ℹ️ Das Lastprofil liegt nicht im PFC-Zeitraum. Das typische Wochenprofil "
-        "wurde auf das erste PFC-Jahr projiziert und auf das geschätzte Jahresvolumen "
-        "skaliert. Verwenden Sie ein zukünftiges Profil für eine direkte Bepreisung."
-    )
-
 
 # ---------------------------------------------------------------------------
-# Granularité selector + breakdown
+# Drei Tabs : Diagnostik, Strategie, Risiko
 # ---------------------------------------------------------------------------
+# Wrap des restants pour l'audience GRD : trois écrans courts au lieu d'une
+# page-fleuve. Aucune logique métier modifiée — seulement la présentation.
 
-st.markdown("")
-st.subheader("Aufschlüsselung nach Periode")
+tab_profil, tab_strategie, tab_risiko = st.tabs([
+    "📊 Profil & Preis",
+    "🎯 Hedge-Strategie",
+    "⚡ Sensitivität & Export",
+])
 
-granularity = st.radio(
-    "Granularität",
-    options=["Jahr", "Quartal", "Monat"],
-    horizontal=True,
-    index=2,
-    key="lastprofil_gran",
-)
+with tab_profil:
+    # ---------------------------------------------------------------------------
+    # KPI hero (5 cards)
+    # ---------------------------------------------------------------------------
 
-# Build a priced hourly DataFrame from scratch (not just monthly aggregate),
-# so we can re-aggregate at any level.
-pfc_h_full = pfc["price_shape"].resample("h").mean()
-pfc_h_full.index = pfc_h_full.index.tz_convert("Europe/Zurich")
-
-# Use the projection if necessary by aligning to the price_load_against_pfc convention
-common_idx = load_hourly.index.intersection(pfc_h_full.index)
-if len(common_idx) < 24:
-    st.info("Profil und PFC haben keine direkte Zeitüberlappung — Aggregation nutzt das projizierte Profil.")
-    # The result["monthly"] frame already used projection — re-derive the full hourly
-    # series from it would require reproducing the projection here. We keep the simpler
-    # path : aggregate at month level only when projection_used.
-    if granularity != "Monat":
-        st.warning("Für projizierte Profile zeigen wir nur Monats-Granularität.")
-        granularity = "Monat"
-
-if not common_idx.empty:
-    priced = pd.DataFrame({
-        "load_mwh": load_hourly.reindex(common_idx).fillna(0.0),
-        "pfc_eur_mwh": pfc_h_full.reindex(common_idx),
-    })
-    priced["cost_eur"] = priced["load_mwh"] * priced["pfc_eur_mwh"]
-
-    if granularity == "Jahr":
-        period = priced.index.to_series().dt.year
-        period_label = "Jahr"
-    elif granularity == "Quartal":
-        period = priced.index.to_series().dt.to_period("Q").astype(str)
-        period_label = "Quartal"
-    else:
-        period = priced.index.to_series().dt.to_period("M").dt.to_timestamp()
-        period_label = "Monat"
-
-    agg = priced.groupby(period).agg(
-        load_mwh=("load_mwh", "sum"),
-        cost_eur=("cost_eur", "sum"),
-        avg_pfc=("pfc_eur_mwh", "mean"),
-    )
-    agg["profile_price"] = agg["cost_eur"] / agg["load_mwh"].replace(0, np.nan)
-    agg["premium_eur_mwh"] = agg["profile_price"] - agg["avg_pfc"]
-
-    col_chart, col_table = st.columns([1.4, 1.0])
-
-    with col_chart:
-        # X labels
-        if granularity == "Monat":
-            x_labels = pd.to_datetime(agg.index).strftime("%b %Y")
-        else:
-            x_labels = [str(x) for x in agg.index]
-
-        fig_p = go.Figure()
-        fig_p.add_trace(go.Bar(
-            x=x_labels, y=agg["load_mwh"],
-            name="Volumen (MWh)", marker_color=FMV_BLUE, opacity=0.85,
-            yaxis="y1",
-            hovertemplate="%{x}<br>Volumen : %{y:,.0f} MWh<extra></extra>",
-        ))
-        fig_p.add_trace(go.Scatter(
-            x=x_labels, y=agg["profile_price"],
-            name="Profilpreis (EUR/MWh)",
-            mode="lines+markers",
-            line=dict(color=FMV_ACCENT, width=2.5),
-            marker=dict(size=7, symbol="diamond"),
-            yaxis="y2",
-            hovertemplate="%{x}<br>Ø Preis : %{y:.2f} EUR/MWh<extra></extra>",
-        ))
-        fig_p.add_trace(go.Scatter(
-            x=x_labels, y=agg["avg_pfc"],
-            name="Baseload Ø PFC (EUR/MWh)",
-            mode="lines",
-            line=dict(color=FMV_NAVY, width=1.8, dash="dash"),
-            yaxis="y2",
-            hovertemplate="%{x}<br>Ø PFC : %{y:.2f} EUR/MWh<extra></extra>",
-        ))
-        fig_p.update_layout(
-            height=420, margin=dict(l=20, r=20, t=10, b=20),
-            plot_bgcolor="white", paper_bgcolor="white",
-            xaxis=dict(gridcolor="#EEF1F6", title=period_label),
-            yaxis=dict(title="Volumen (MWh)", gridcolor="#EEF1F6", side="left"),
-            yaxis2=dict(title="Preis (EUR/MWh)", overlaying="y", side="right", showgrid=False),
-            legend=dict(orientation="h", y=-0.2),
-            hovermode="x unified",
-        )
-        st.plotly_chart(fig_p, use_container_width=True)
-
-    with col_table:
-        if granularity == "Monat":
-            agg["_idx"] = pd.to_datetime(agg.index).strftime("%b %Y")
-        else:
-            agg["_idx"] = [str(x) for x in agg.index]
-        show_df = agg.reset_index(drop=True)[
-            ["_idx", "load_mwh", "profile_price", "avg_pfc", "premium_eur_mwh", "cost_eur"]
-        ].rename(columns={
-            "_idx": period_label,
-            "load_mwh": "Volumen (MWh)",
-            "profile_price": "Profilpreis (EUR/MWh)",
-            "avg_pfc": "Baseload Ø (EUR/MWh)",
-            "premium_eur_mwh": "Aufschlag (EUR/MWh)",
-            "cost_eur": "Kosten (EUR)",
-        })
-        st.dataframe(
-            show_df, use_container_width=True, hide_index=True,
-            height=420,
-            column_config={
-                "Volumen (MWh)": st.column_config.NumberColumn(format="%.0f"),
-                "Profilpreis (EUR/MWh)": st.column_config.NumberColumn(format="%.2f"),
-                "Baseload Ø (EUR/MWh)": st.column_config.NumberColumn(format="%.2f"),
-                "Aufschlag (EUR/MWh)": st.column_config.NumberColumn(format="%.2f"),
-                "Kosten (EUR)": st.column_config.NumberColumn(format="%.0f"),
-            },
-        )
-
-
-# ---------------------------------------------------------------------------
-# Hourly heatmap : 12 months × 24 hours (Axpo / Volue canonical view)
-# ---------------------------------------------------------------------------
-
-st.markdown("")
-st.subheader("Lastform · Stunde × Monat (durchschnittliche Leistung)")
-st.caption(
-    "Die kanonische **Load-Shape**-Sicht (Axpo / Volue) : durchschnittliche Leistung "
-    "in MW pro Stunde des Tages und Monat des Jahres. Hot zones zeigen wo das Profil "
-    "Spitze macht, kalte Zonen wo Bedarf niedrig ist."
-)
-
-hm = pd.DataFrame({"load_mw": load_hourly.values, "ts": load_hourly.index})
-hm["month"] = pd.to_datetime(hm["ts"]).dt.month
-hm["hour"] = pd.to_datetime(hm["ts"]).dt.hour
-hm_pivot = hm.pivot_table(index="month", columns="hour", values="load_mw", aggfunc="mean")
-hm_pivot = hm_pivot.reindex(index=range(1, 13), columns=range(0, 24))
-
-month_labels = ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"]
-
-fig_hm = go.Figure(go.Heatmap(
-    z=hm_pivot.values,
-    x=[f"{h:02d}h" for h in hm_pivot.columns],
-    y=[month_labels[m - 1] for m in hm_pivot.index],
-    colorscale="YlOrRd",
-    hovertemplate="%{y} · %{x}<br>Ø Leistung : %{z:.2f} MW<extra></extra>",
-    colorbar=dict(title="MW"),
-))
-fig_hm.update_layout(
-    height=420, margin=dict(l=20, r=20, t=10, b=20),
-    plot_bgcolor="white", paper_bgcolor="white",
-    xaxis=dict(title="Stunde des Tages", tickfont=dict(size=10)),
-    yaxis=dict(title="Monat", autorange="reversed"),
-)
-st.plotly_chart(fig_hm, use_container_width=True)
-
-
-# ---------------------------------------------------------------------------
-# Cal-Y baseload comparison : "if you bought flat at Cal-Y forward"
-# ---------------------------------------------------------------------------
-
-st.markdown("")
-st.subheader("Vergleich gegen Cal-Y Baseload-Strip")
-st.caption(
-    "Was wäre der Preis, wenn Sie statt einer Profil-Bepreisung einfach eine "
-    "**flache Baseload-Tranche** zum aktuellen Cal-Y-Forward kaufen würden ? "
-    "Die Differenz ist Ihre **Profile-Premium** — der Aufpreis, den Sie zahlen "
-    "um Ihre stündliche Last 1:1 zu decken."
-)
-
-# Identify the principal year of the load
-load_year = int(pd.Timestamp(load_hourly.index.min()).year)
-fwd_y_price = get_forward_year_proxy(forwards, load_year)
-
-if np.isfinite(fwd_y_price):
-    flat_baseload_cost = result["total_mwh"] * fwd_y_price
-    profile_cost = result["cost_total_eur"]
-    delta_eur = profile_cost - flat_baseload_cost
-    premium_pct = (delta_eur / flat_baseload_cost * 100.0) if flat_baseload_cost > 0 else 0.0
-
-    delta_color = FMV_RED if delta_eur > 0 else FMV_GREEN
-    sign = "+" if delta_eur >= 0 else ""
-
-    cb1, cb2, cb3 = st.columns(3)
-    cb1.markdown(
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.markdown(
         kpi_card(
-            f"Profile-Pricing (Cal-{load_year})",
-            f"{fmt_chf(profile_cost, 0)} EUR",
-            delta=f"@ {fmt_eur_mwh(result['profile_price_eur_mwh'])}",
-            delta_color=FMV_NAVY,
+            "Jahresvolumen",
+            fmt_mwh(result["total_mwh"], decimals=0),
+            delta=f"{result['coverage_hours']:,} Stunden".replace(",", "'"),
+            delta_color=FMV_GREY,
         ),
         unsafe_allow_html=True,
     )
-    cb2.markdown(
+    c2.markdown(
         kpi_card(
-            f"Flat Baseload (Cal-{load_year} Fwd)",
-            f"{fmt_chf(flat_baseload_cost, 0)} EUR",
-            delta=f"@ {fwd_y_price:.2f} EUR/MWh × {fmt_mwh(result['total_mwh'], 0)}",
+            "Profilpreis",
+            fmt_eur_mwh(result["profile_price_eur_mwh"]),
+            delta=f"Baseload Ø : {fmt_eur_mwh(result['baseload_price_eur_mwh'])}",
             delta_color=FMV_BLUE,
         ),
         unsafe_allow_html=True,
     )
-    cb3.markdown(
+    c3.markdown(
         kpi_card(
-            "Profile-Premium",
-            f"{sign}{fmt_chf(delta_eur, 0)} EUR",
-            delta=f"{sign}{premium_pct:.2f} %",
-            delta_color=delta_color,
+            "Profilaufschlag",
+            fmt_eur_mwh(result["profile_vs_baseload_eur_mwh"]),
+            delta="ggü. Baseload",
+            delta_color=FMV_RED if result["profile_vs_baseload_eur_mwh"] > 0 else FMV_GREEN,
         ),
         unsafe_allow_html=True,
     )
-
-    if delta_eur > 0:
-        st.info(
-            f"💡 **Lecture commerciale** : Ihr Profil ist {premium_pct:.1f} % teurer "
-            f"als ein flacher Baseload-Strip — typisch für Industrie- / Heizlasten. "
-            f"Wenn Sie ein flacheres Profil hätten (z. B. mit PV-Eigenverbrauch), "
-            f"könnten Sie sich diesem Baseload-Preis nähern."
-        )
-    else:
-        st.success(
-            f"✅ Ihr Profil ist günstiger als ein flacher Baseload-Strip — Ihre Last "
-            f"liegt überdurchschnittlich in günstigen Stunden (z. B. PV-Mittag)."
-        )
-else:
-    st.info(
-        f"Cal-{load_year} Forward nicht verfügbar (Cal retired oder zu weit in der Zukunft)."
-    )
-
-
-# ---------------------------------------------------------------------------
-# Hedge strategy recommendation
-# ---------------------------------------------------------------------------
-
-st.markdown("")
-st.subheader("Empfohlene Hedge-Strategie")
-st.caption(
-    "FMV-Empfehlung für einen GRD über die nächsten 4 Lieferjahre, "
-    "abgeleitet aus dem Profil. Korridor-Mittelpunkte aus dem Industrie-"
-    "Standard (Eurelectric / EFET) : **Y+1 ≈ 90 %**, **Y+2 ≈ 65 %**, "
-    "**Y+3 ≈ 35 %**, **Y+4 ≈ 15 %**. Cal-Base ist primär (liquidstes "
-    "Schweizer Tenor) ; bei spitzenlastigen Profilen (> 40 % Peak-Anteil) "
-    "wird ein Q1+Q4 PEAK-Strip aufgeschichtet."
-)
-
-# Anchor : current calendar year (so Y+1 is always the "next year" relative
-# to today, regardless of which year the profile or open-position spans).
-hedge_horizon = list(range(today_ch.year + 1, today_ch.year + 5))
-
-
-def _profile_for_year(year: int) -> pd.Series:
-    """Return the right hourly profile for the requested delivery year.
-
-    Upload mode treats the uploaded curve as a stable yearly load and
-    reuses it across the cockpit horizon (the standard GRD assumption :
-    consumption changes < 2 %/year). Actor mode pulls the open-position
-    curve for that specific year out of ``open_curves_by_year`` so the
-    Y+1..Y+4 cards each price their own residual exposure, not the
-    selected year's exposure projected forward.
-    """
-    if open_curves_by_year:
-        return open_curves_by_year.get(year, pd.Series(dtype=float))
-    return load_hourly  # type: ignore[return-value]
-
-
-# Helper for the card's delta line — turns the engine ``meta["status"]``
-# into a one-liner the GRD can act on.
-def _card_status_text(status: str | None, meta: dict) -> tuple[str, str]:
-    corridor = meta.get("corridor")
-    target_pct = meta.get("target_ratio_pct")
-    if status == "buy" and corridor is not None and target_pct is not None:
-        return (
-            f"Korridor {corridor[0]}-{corridor[1]} % · Ziel ≈ {target_pct:.0f} %",
-            FMV_BLUE,
-        )
-    if status == "over_hedged":
-        signed = meta.get("annual_volume_mwh", 0.0) or 0.0
-        return (
-            f"Bereits über-hedged ({fmt_mwh(abs(signed), 0)}) — Unwind via FMV",
-            FMV_ACCENT,
-        )
-    if status == "balanced":
-        return ("Position ausgeglichen — keine Aktion", FMV_GREEN)
-    if status == "no_corridor":
-        return ("Lieferung läuft — intraday Bereich", FMV_GREY)
-    if status == "no_forward":
-        return ("Forward-Settlement fehlt im Cache", FMV_GREY)
-    return ("Keine Daten", FMV_GREY)
-
-
-hedge_cards = st.columns(4)
-for i, year_y in enumerate(hedge_horizon):
-    profile_y = _profile_for_year(year_y)
-    if profile_y is None or profile_y.empty:
-        actions, meta_y = [], {"status": "no_data"}
-    else:
-        actions, meta_y = recommend_hedge_blotter(
-            profile_y, year_y, today_ch, forwards
-        )
-    delta_text, delta_color = _card_status_text(meta_y.get("status"), meta_y)
-
-    if actions:
-        target_volume = sum(a.volume_mwh for a in actions)
-        target_cost = sum(a.notional_eur for a in actions)
-        avg_px = target_cost / max(target_volume, 1e-9)
-        value_str = fmt_mwh(target_volume, 0)
-    else:
-        target_volume = 0.0
-        target_cost = 0.0
-        avg_px = float("nan")
-        value_str = "—"
-
-    hedge_cards[i].markdown(
+    c4.markdown(
         kpi_card(
-            f"Cal-{year_y}",
-            value_str,
-            delta=delta_text,
-            delta_color=delta_color,
-        ),
-        unsafe_allow_html=True,
-    )
-    hedge_cards[i].markdown(
-        f"<div style='font-size:0.78rem; color:{FMV_NAVY};"
-        f" margin-top:-0.5rem;'>"
-        f"Ø {fmt_eur_mwh(avg_px) if actions else '—'}"
-        f" · Budget {fmt_chf(target_cost, 0) if actions else '—'} EUR"
-        f"</div>",
-        unsafe_allow_html=True,
-    )
-
-
-# ---------------------------------------------------------------------------
-# Trade blotter (concrete recommendation per year)
-# ---------------------------------------------------------------------------
-
-st.markdown("")
-st.subheader("Konkrete Trade-Vorschläge")
-st.caption(
-    "Vorgeschlagene Tickets pro Lieferjahr, basierend auf den letzten "
-    "verfügbaren EEX-Settlements. Cal-Base wird zuerst aufgebaut ; "
-    "Q-Strips ergänzen die Spitzenlast-Abdeckung. M-Contracts werden "
-    "absichtlich ausgeschlossen (CH-Liquidität für GRD-Tickets zu dünn). "
-    "Liste als CSV exportierbar oder per E-Mail an FMV Trading."
-)
-
-blotter_rows: list[dict] = []
-for year_y in hedge_horizon:
-    profile_y = _profile_for_year(year_y)
-    if profile_y is None or profile_y.empty:
-        continue
-    actions, _ = recommend_hedge_blotter(profile_y, year_y, today_ch, forwards)
-    for a in actions:
-        blotter_rows.append({
-            "Lieferjahr": a.delivery_year,
-            "Instrument": a.instrument,
-            "Volumen (MWh)": a.volume_mwh,
-            "Ref.-Preis (EUR/MWh)": a.reference_price_eur_mwh,
-            "Notional (EUR)": a.notional_eur,
-            "Begründung": a.rationale,
-        })
-
-if not blotter_rows:
-    st.info(
-        "Keine Trade-Vorschläge — möglicherweise fehlen Forward-Settlements "
-        "im Cache oder das Profil deckt nur das laufende Lieferjahr ab."
-    )
-else:
-    blotter_df = pd.DataFrame(blotter_rows)
-    total_volume = blotter_df["Volumen (MWh)"].sum()
-    total_notional = blotter_df["Notional (EUR)"].sum()
-    weighted_px = total_notional / max(total_volume, 1e-9)
-    total_row = pd.DataFrame([{
-        "Lieferjahr": "─ TOTAL",
-        "Instrument": f"{len(blotter_df)} Tickets · {len(set(blotter_df['Lieferjahr']))} Jahre",
-        "Volumen (MWh)": total_volume,
-        "Ref.-Preis (EUR/MWh)": weighted_px,
-        "Notional (EUR)": total_notional,
-        "Begründung": "",
-    }])
-    show_df = pd.concat([blotter_df, total_row], ignore_index=True)
-
-    st.dataframe(
-        show_df,
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-            "Volumen (MWh)": st.column_config.NumberColumn(format="%.0f"),
-            "Ref.-Preis (EUR/MWh)": st.column_config.NumberColumn(format="%.2f"),
-            "Notional (EUR)": st.column_config.NumberColumn(format="%.0f"),
-        },
-    )
-
-    cb_csv, cb_mail = st.columns([1.0, 1.4])
-    with cb_csv:
-        csv_buf = io.StringIO()
-        blotter_df.to_csv(csv_buf, sep=";", index=False)
-        st.download_button(
-            "📥 Trade-Vorschläge als CSV",
-            csv_buf.getvalue(),
-            file_name=f"trade_blotter_{position_label.replace(' ', '_')}.csv",
-            mime="text/csv",
-        )
-    with cb_mail:
-        mail_subject = f"Hedge-Anfrage — {position_label}"
-        mail_body_lines = [
-            f"Position : {position_label}",
-            f"Erstellt am : {today_ch.strftime('%d.%m.%Y %H:%M')}",
-            "",
-            "Vorgeschlagene Tickets :",
-        ]
-        for r in blotter_rows:
-            mail_body_lines.append(
-                f"  - Cal-{r['Lieferjahr']} · {r['Instrument']} · "
-                f"{r['Volumen (MWh)']:.0f} MWh @ {r['Ref.-Preis (EUR/MWh)']:.2f} EUR/MWh "
-                f"= {r['Notional (EUR)']:.0f} EUR"
-            )
-        mail_body_lines.append("")
-        mail_body_lines.append(
-            f"Total : {total_volume:.0f} MWh @ Ø {weighted_px:.2f} EUR/MWh "
-            f"= {total_notional:.0f} EUR"
-        )
-        from urllib.parse import quote
-        mail_body = quote("\n".join(mail_body_lines))
-        st.markdown(
-            f"<a href='mailto:trading@fmv.ch?subject={quote(mail_subject)}"
-            f"&body={mail_body}' style='display:inline-block;"
-            f" background:{FMV_BLUE}; color:white; padding:0.5rem 1rem;"
-            f" border-radius:6px; text-decoration:none; font-weight:500;'>"
-            f"📧 Als E-Mail an FMV Trading senden</a>",
-            unsafe_allow_html=True,
-        )
-
-
-# ---------------------------------------------------------------------------
-# Forward sensitivity — PV01 per tenor (Axpo / Volue convention)
-# ---------------------------------------------------------------------------
-# Rationale : the previous block scaled ``cost_total_eur`` by ±15 % and
-# called it a "Forward-Bewegung". That is mathematically a multiplicative
-# stress on the aggregated cost, not a delta on the forward curve, and it
-# hides where the risk concentrates by tenor. Cal-27 (largest target volume)
-# typically dominates the total, but a flat ±X % bar tells the GRD nothing
-# about it.
-#
-# The trader-grade replacement is a **PV01 per delivery year** : for each
-# Cal-Y we expose Δcost / ΔF (EUR per +1 EUR/MWh shift on the year forward).
-# Since we just built ``blotter_rows`` (volume × instrument × year), the
-# PV01 is simply the sum of volumes per year — a number an Axpo / BKW
-# trader recognises immediately. The chart then plots one line per Cal-Y
-# plus a dashed "parallel shift" reference covering all years simultaneously.
-# Numbers stay finite (≠ NaN) even when only one year has trades.
-
-st.markdown("")
-st.subheader("Sensitivität · PV01 pro Lieferjahr")
-st.caption(
-    "**PV01** = Veränderung der Gesamtkosten bei einer Forward-Bewegung von "
-    "+1 EUR/MWh auf das jeweilige Cal-Jahr. Auf den vorgeschlagenen Trade-"
-    "Volumen aufgebaut : ein Mass für **wo Ihr Risiko konzentriert ist**, "
-    "nicht für das Restrisiko nach Hedge. Der parallele Strich (gestrichelt) "
-    "zeigt das Worst-Case-Szenario, in dem alle Cal-Jahre gleichzeitig "
-    "bewegen — nützlich, aber statistisch unwahrscheinlich."
-)
-
-if not blotter_rows:
-    st.info(
-        "PV01-Bild verfügbar, sobald Trade-Vorschläge generiert sind."
-    )
-else:
-    # Aggregate volume per delivery year ; PV01 = volume (EUR per EUR/MWh).
-    pv01_by_year: dict[int, float] = {}
-    for r in blotter_rows:
-        y = int(r["Lieferjahr"])
-        pv01_by_year[y] = pv01_by_year.get(y, 0.0) + float(r["Volumen (MWh)"])
-    years_sorted = sorted(pv01_by_year.keys())
-    pv01_total = float(sum(pv01_by_year.values()))
-
-    # KPI strip : one card per year + total parallel.
-    n_years = len(years_sorted)
-    pv_cols = st.columns(n_years + 1)
-    palette = ["#0E1F3D", "#1F3A6E", "#3A5BA0", "#5C7AC8"]
-    for i, y in enumerate(years_sorted):
-        pv = pv01_by_year[y]
-        share = 100.0 * pv / pv01_total if pv01_total > 0 else 0.0
-        # Concentration alert : a single tenor > 50 % of the total PV01 is
-        # a red flag — the GRD's procurement risk is dominated by one year.
-        delta_color = FMV_RED if share >= 50 else (FMV_ACCENT if share >= 30 else FMV_BLUE)
-        pv_cols[i].markdown(
-            kpi_card(
-                f"PV01 Cal-{y}",
-                f"{fmt_chf(pv, 0)} EUR",
-                delta=f"{share:.0f} % der Risiko-Konzentration",
-                delta_color=delta_color,
-            ),
-            unsafe_allow_html=True,
-        )
-    pv_cols[-1].markdown(
-        kpi_card(
-            "PV01 parallel (alle)",
-            f"{fmt_chf(pv01_total, 0)} EUR",
-            delta="pro +1 EUR/MWh über alle Cal-Jahre",
+            "Gesamtkosten",
+            f"{fmt_chf(result['cost_total_eur'], decimals=0)} EUR",
+            delta=f"Ø {fmt_eur_mwh(result['profile_price_eur_mwh'])}",
             delta_color=FMV_NAVY,
         ),
         unsafe_allow_html=True,
     )
-
-    # Per-tenor sensitivity chart : one line per Cal-Y from −15 to +15 EUR/MWh
-    # plus a dashed "parallel shift" line that sums across all tenors.
-    shifts_eur_mwh = list(range(-15, 16))
-    fig_sens = go.Figure()
-    for i, y in enumerate(years_sorted):
-        deltas = [pv01_by_year[y] * s for s in shifts_eur_mwh]
-        fig_sens.add_trace(go.Scatter(
-            x=shifts_eur_mwh, y=deltas,
-            name=f"Cal-{y}",
-            mode="lines+markers",
-            line=dict(color=palette[i % len(palette)], width=2.2),
-            marker=dict(size=4),
-            hovertemplate=(
-                f"Cal-{y}<br>Forward Shift : %{{x:+d}} EUR/MWh"
-                f"<br>Δ Kosten : %{{y:,.0f}} EUR<extra></extra>"
+    c5.markdown(
+        kpi_card(
+            "Peak-Anteil",
+            f"{result['peak_share_pct']:.1f} %",
+            delta=(
+                f"Peak {fmt_eur_mwh(result['peak_price_eur_mwh'])}"
+                f" / Off {fmt_eur_mwh(result['offpeak_price_eur_mwh'])}"
             ),
-        ))
-    parallel_deltas = [pv01_total * s for s in shifts_eur_mwh]
-    fig_sens.add_trace(go.Scatter(
-        x=shifts_eur_mwh, y=parallel_deltas,
-        name="Parallel Shift (alle Jahre)",
-        mode="lines",
-        line=dict(color=FMV_RED, width=3.5, dash="dash"),
-        hovertemplate=(
-            "Parallel<br>Shift : %{x:+d} EUR/MWh"
-            "<br>Δ Total : %{y:,.0f} EUR<extra></extra>"
+            delta_color=FMV_GREY,
         ),
-    ))
-    fig_sens.add_hline(y=0, line_color=FMV_GREY, line_width=1)
-    fig_sens.add_vline(x=0, line_color=FMV_GREY, line_width=1)
-    fig_sens.update_layout(
-        height=360, margin=dict(l=20, r=20, t=10, b=20),
-        plot_bgcolor="white", paper_bgcolor="white",
-        xaxis=dict(
-            title="Forward Shift (EUR/MWh)", gridcolor="#EEF1F6",
-            zeroline=True, dtick=5,
-        ),
-        yaxis=dict(title="Δ Gesamtkosten (EUR)", gridcolor="#EEF1F6"),
-        legend=dict(orientation="h", y=-0.20),
-        hovermode="x unified",
+        unsafe_allow_html=True,
     )
-    st.plotly_chart(fig_sens, use_container_width=True)
 
-    # Concentration breakdown : top tenor share, drives the sales pitch
-    # ("hedge Cal-X first because it's where 60 % of the risk sits").
-    if pv01_total > 0:
-        top_year = max(pv01_by_year, key=pv01_by_year.get)
-        top_share = 100.0 * pv01_by_year[top_year] / pv01_total
-        if top_share >= 50:
-            st.warning(
-                f"⚠️  **Risiko-Konzentration auf Cal-{top_year}** : "
-                f"{top_share:.0f} % der Gesamt-Sensitivität liegen auf einem "
-                f"einzigen Tenor. Empfehlung : zuerst Cal-{top_year} absichern "
-                f"— jede Forward-Bewegung dort dominiert Ihr Restrisiko."
+    if result.get("projection_used"):
+        st.warning(
+            "ℹ️ Das Lastprofil liegt nicht im PFC-Zeitraum. Das typische Wochenprofil "
+            "wurde auf das erste PFC-Jahr projiziert und auf das geschätzte Jahresvolumen "
+            "skaliert. Verwenden Sie ein zukünftiges Profil für eine direkte Bepreisung."
+        )
+
+
+    # ---------------------------------------------------------------------------
+    # Granularité selector + breakdown
+    # ---------------------------------------------------------------------------
+
+    st.markdown("")
+    st.subheader("Aufschlüsselung nach Periode")
+
+    granularity = st.radio(
+        "Granularität",
+        options=["Jahr", "Quartal", "Monat"],
+        horizontal=True,
+        index=2,
+        key="lastprofil_gran",
+    )
+
+    # Build a priced hourly DataFrame from scratch (not just monthly aggregate),
+    # so we can re-aggregate at any level.
+    pfc_h_full = pfc["price_shape"].resample("h").mean()
+    pfc_h_full.index = pfc_h_full.index.tz_convert("Europe/Zurich")
+
+    # Use the projection if necessary by aligning to the price_load_against_pfc convention
+    common_idx = load_hourly.index.intersection(pfc_h_full.index)
+    if len(common_idx) < 24:
+        st.info("Profil und PFC haben keine direkte Zeitüberlappung — Aggregation nutzt das projizierte Profil.")
+        # The result["monthly"] frame already used projection — re-derive the full hourly
+        # series from it would require reproducing the projection here. We keep the simpler
+        # path : aggregate at month level only when projection_used.
+        if granularity != "Monat":
+            st.warning("Für projizierte Profile zeigen wir nur Monats-Granularität.")
+            granularity = "Monat"
+
+    if not common_idx.empty:
+        priced = pd.DataFrame({
+            "load_mwh": load_hourly.reindex(common_idx).fillna(0.0),
+            "pfc_eur_mwh": pfc_h_full.reindex(common_idx),
+        })
+        priced["cost_eur"] = priced["load_mwh"] * priced["pfc_eur_mwh"]
+
+        if granularity == "Jahr":
+            period = priced.index.to_series().dt.year
+            period_label = "Jahr"
+        elif granularity == "Quartal":
+            period = priced.index.to_series().dt.to_period("Q").astype(str)
+            period_label = "Quartal"
+        else:
+            period = priced.index.to_series().dt.to_period("M").dt.to_timestamp()
+            period_label = "Monat"
+
+        agg = priced.groupby(period).agg(
+            load_mwh=("load_mwh", "sum"),
+            cost_eur=("cost_eur", "sum"),
+            avg_pfc=("pfc_eur_mwh", "mean"),
+        )
+        agg["profile_price"] = agg["cost_eur"] / agg["load_mwh"].replace(0, np.nan)
+        agg["premium_eur_mwh"] = agg["profile_price"] - agg["avg_pfc"]
+
+        col_chart, col_table = st.columns([1.4, 1.0])
+
+        with col_chart:
+            # X labels
+            if granularity == "Monat":
+                x_labels = pd.to_datetime(agg.index).strftime("%b %Y")
+            else:
+                x_labels = [str(x) for x in agg.index]
+
+            fig_p = go.Figure()
+            fig_p.add_trace(go.Bar(
+                x=x_labels, y=agg["load_mwh"],
+                name="Volumen (MWh)", marker_color=FMV_BLUE, opacity=0.85,
+                yaxis="y1",
+                hovertemplate="%{x}<br>Volumen : %{y:,.0f} MWh<extra></extra>",
+            ))
+            fig_p.add_trace(go.Scatter(
+                x=x_labels, y=agg["profile_price"],
+                name="Profilpreis (EUR/MWh)",
+                mode="lines+markers",
+                line=dict(color=FMV_ACCENT, width=2.5),
+                marker=dict(size=7, symbol="diamond"),
+                yaxis="y2",
+                hovertemplate="%{x}<br>Ø Preis : %{y:.2f} EUR/MWh<extra></extra>",
+            ))
+            fig_p.add_trace(go.Scatter(
+                x=x_labels, y=agg["avg_pfc"],
+                name="Baseload Ø PFC (EUR/MWh)",
+                mode="lines",
+                line=dict(color=FMV_NAVY, width=1.8, dash="dash"),
+                yaxis="y2",
+                hovertemplate="%{x}<br>Ø PFC : %{y:.2f} EUR/MWh<extra></extra>",
+            ))
+            fig_p.update_layout(
+                height=420, margin=dict(l=20, r=20, t=10, b=20),
+                plot_bgcolor="white", paper_bgcolor="white",
+                xaxis=dict(gridcolor="#EEF1F6", title=period_label),
+                yaxis=dict(title="Volumen (MWh)", gridcolor="#EEF1F6", side="left"),
+                yaxis2=dict(title="Preis (EUR/MWh)", overlaying="y", side="right", showgrid=False),
+                legend=dict(orientation="h", y=-0.2),
+                hovermode="x unified",
+            )
+            st.plotly_chart(fig_p, use_container_width=True)
+
+        with col_table:
+            if granularity == "Monat":
+                agg["_idx"] = pd.to_datetime(agg.index).strftime("%b %Y")
+            else:
+                agg["_idx"] = [str(x) for x in agg.index]
+            show_df = agg.reset_index(drop=True)[
+                ["_idx", "load_mwh", "profile_price", "avg_pfc", "premium_eur_mwh", "cost_eur"]
+            ].rename(columns={
+                "_idx": period_label,
+                "load_mwh": "Volumen (MWh)",
+                "profile_price": "Profilpreis (EUR/MWh)",
+                "avg_pfc": "Baseload Ø (EUR/MWh)",
+                "premium_eur_mwh": "Aufschlag (EUR/MWh)",
+                "cost_eur": "Kosten (EUR)",
+            })
+            st.dataframe(
+                show_df, use_container_width=True, hide_index=True,
+                height=420,
+                column_config={
+                    "Volumen (MWh)": st.column_config.NumberColumn(format="%.0f"),
+                    "Profilpreis (EUR/MWh)": st.column_config.NumberColumn(format="%.2f"),
+                    "Baseload Ø (EUR/MWh)": st.column_config.NumberColumn(format="%.2f"),
+                    "Aufschlag (EUR/MWh)": st.column_config.NumberColumn(format="%.2f"),
+                    "Kosten (EUR)": st.column_config.NumberColumn(format="%.0f"),
+                },
+            )
+
+
+    # ---------------------------------------------------------------------------
+    # Hourly heatmap : 12 months × 24 hours (Axpo / Volue canonical view)
+    # ---------------------------------------------------------------------------
+
+    st.markdown("")
+    st.subheader("Lastform · Stunde × Monat (durchschnittliche Leistung)")
+    st.caption(
+        "Die kanonische **Load-Shape**-Sicht (Axpo / Volue) : durchschnittliche Leistung "
+        "in MW pro Stunde des Tages und Monat des Jahres. Hot zones zeigen wo das Profil "
+        "Spitze macht, kalte Zonen wo Bedarf niedrig ist."
+    )
+
+    hm = pd.DataFrame({"load_mw": load_hourly.values, "ts": load_hourly.index})
+    hm["month"] = pd.to_datetime(hm["ts"]).dt.month
+    hm["hour"] = pd.to_datetime(hm["ts"]).dt.hour
+    hm_pivot = hm.pivot_table(index="month", columns="hour", values="load_mw", aggfunc="mean")
+    hm_pivot = hm_pivot.reindex(index=range(1, 13), columns=range(0, 24))
+
+    month_labels = ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"]
+
+    fig_hm = go.Figure(go.Heatmap(
+        z=hm_pivot.values,
+        x=[f"{h:02d}h" for h in hm_pivot.columns],
+        y=[month_labels[m - 1] for m in hm_pivot.index],
+        colorscale="YlOrRd",
+        hovertemplate="%{y} · %{x}<br>Ø Leistung : %{z:.2f} MW<extra></extra>",
+        colorbar=dict(title="MW"),
+    ))
+    fig_hm.update_layout(
+        height=420, margin=dict(l=20, r=20, t=10, b=20),
+        plot_bgcolor="white", paper_bgcolor="white",
+        xaxis=dict(title="Stunde des Tages", tickfont=dict(size=10)),
+        yaxis=dict(title="Monat", autorange="reversed"),
+    )
+    st.plotly_chart(fig_hm, use_container_width=True)
+
+
+    # ---------------------------------------------------------------------------
+    # Cal-Y baseload comparison : "if you bought flat at Cal-Y forward"
+    # ---------------------------------------------------------------------------
+
+    st.markdown("")
+    st.subheader("Vergleich gegen Cal-Y Baseload-Strip")
+    st.caption(
+        "Was wäre der Preis, wenn Sie statt einer Profil-Bepreisung einfach eine "
+        "**flache Baseload-Tranche** zum aktuellen Cal-Y-Forward kaufen würden ? "
+        "Die Differenz ist Ihre **Profile-Premium** — der Aufpreis, den Sie zahlen "
+        "um Ihre stündliche Last 1:1 zu decken."
+    )
+
+    # Identify the principal year of the load
+    load_year = int(pd.Timestamp(load_hourly.index.min()).year)
+    fwd_y_price = get_forward_year_proxy(forwards, load_year)
+
+    if np.isfinite(fwd_y_price):
+        flat_baseload_cost = result["total_mwh"] * fwd_y_price
+        profile_cost = result["cost_total_eur"]
+        delta_eur = profile_cost - flat_baseload_cost
+        premium_pct = (delta_eur / flat_baseload_cost * 100.0) if flat_baseload_cost > 0 else 0.0
+
+        delta_color = FMV_RED if delta_eur > 0 else FMV_GREEN
+        sign = "+" if delta_eur >= 0 else ""
+
+        cb1, cb2, cb3 = st.columns(3)
+        cb1.markdown(
+            kpi_card(
+                f"Profile-Pricing (Cal-{load_year})",
+                f"{fmt_chf(profile_cost, 0)} EUR",
+                delta=f"@ {fmt_eur_mwh(result['profile_price_eur_mwh'])}",
+                delta_color=FMV_NAVY,
+            ),
+            unsafe_allow_html=True,
+        )
+        cb2.markdown(
+            kpi_card(
+                f"Flat Baseload (Cal-{load_year} Fwd)",
+                f"{fmt_chf(flat_baseload_cost, 0)} EUR",
+                delta=f"@ {fwd_y_price:.2f} EUR/MWh × {fmt_mwh(result['total_mwh'], 0)}",
+                delta_color=FMV_BLUE,
+            ),
+            unsafe_allow_html=True,
+        )
+        cb3.markdown(
+            kpi_card(
+                "Profile-Premium",
+                f"{sign}{fmt_chf(delta_eur, 0)} EUR",
+                delta=f"{sign}{premium_pct:.2f} %",
+                delta_color=delta_color,
+            ),
+            unsafe_allow_html=True,
+        )
+
+        if delta_eur > 0:
+            st.info(
+                f"💡 **Lecture commerciale** : Ihr Profil ist {premium_pct:.1f} % teurer "
+                f"als ein flacher Baseload-Strip — typisch für Industrie- / Heizlasten. "
+                f"Wenn Sie ein flacheres Profil hätten (z. B. mit PV-Eigenverbrauch), "
+                f"könnten Sie sich diesem Baseload-Preis nähern."
             )
         else:
-            st.info(
-                f"ℹ️  **Diversifizierte Sensitivität** : kein einzelnes Cal-Jahr "
-                f"trägt mehr als {top_share:.0f} % des PV01. "
-                f"Eine Bewegung auf einem Tenor allein bewegt nur einen "
-                f"begrenzten Anteil Ihrer Gesamtkosten."
+            st.success(
+                f"✅ Ihr Profil ist günstiger als ein flacher Baseload-Strip — Ihre Last "
+                f"liegt überdurchschnittlich in günstigen Stunden (z. B. PV-Mittag)."
+            )
+    else:
+        st.info(
+            f"Cal-{load_year} Forward nicht verfügbar (Cal retired oder zu weit in der Zukunft)."
+        )
+
+
+with tab_strategie:
+
+    # ---------------------------------------------------------------------------
+    # Hedge strategy recommendation
+    # ---------------------------------------------------------------------------
+
+    st.markdown("")
+    st.subheader("Empfohlene Hedge-Strategie")
+    st.caption(
+        "FMV-Empfehlung für einen GRD über die nächsten 4 Lieferjahre, "
+        "abgeleitet aus dem Profil. Korridor-Mittelpunkte aus dem Industrie-"
+        "Standard (Eurelectric / EFET) : **Y+1 ≈ 90 %**, **Y+2 ≈ 65 %**, "
+        "**Y+3 ≈ 35 %**, **Y+4 ≈ 15 %**. Cal-Base ist primär (liquidstes "
+        "Schweizer Tenor) ; bei spitzenlastigen Profilen (> 40 % Peak-Anteil) "
+        "wird ein Q1+Q4 PEAK-Strip aufgeschichtet."
+    )
+
+    # Anchor : current calendar year (so Y+1 is always the "next year" relative
+    # to today, regardless of which year the profile or open-position spans).
+    hedge_horizon = list(range(today_ch.year + 1, today_ch.year + 5))
+
+
+    def _profile_for_year(year: int) -> pd.Series:
+        """Return the right hourly profile for the requested delivery year.
+
+        Upload mode treats the uploaded curve as a stable yearly load and
+        reuses it across the cockpit horizon (the standard GRD assumption :
+        consumption changes < 2 %/year). Actor mode pulls the open-position
+        curve for that specific year out of ``open_curves_by_year`` so the
+        Y+1..Y+4 cards each price their own residual exposure, not the
+        selected year's exposure projected forward.
+        """
+        if open_curves_by_year:
+            return open_curves_by_year.get(year, pd.Series(dtype=float))
+        return load_hourly  # type: ignore[return-value]
+
+
+    # Helper for the card's delta line — turns the engine ``meta["status"]``
+    # into a one-liner the GRD can act on.
+    def _card_status_text(status: str | None, meta: dict) -> tuple[str, str]:
+        corridor = meta.get("corridor")
+        target_pct = meta.get("target_ratio_pct")
+        if status == "buy" and corridor is not None and target_pct is not None:
+            return (
+                f"Korridor {corridor[0]}-{corridor[1]} % · Ziel ≈ {target_pct:.0f} %",
+                FMV_BLUE,
+            )
+        if status == "over_hedged":
+            signed = meta.get("annual_volume_mwh", 0.0) or 0.0
+            return (
+                f"Bereits über-hedged ({fmt_mwh(abs(signed), 0)}) — Unwind via FMV",
+                FMV_ACCENT,
+            )
+        if status == "balanced":
+            return ("Position ausgeglichen — keine Aktion", FMV_GREEN)
+        if status == "no_corridor":
+            return ("Lieferung läuft — intraday Bereich", FMV_GREY)
+        if status == "no_forward":
+            return ("Forward-Settlement fehlt im Cache", FMV_GREY)
+        return ("Keine Daten", FMV_GREY)
+
+
+    hedge_cards = st.columns(4)
+    for i, year_y in enumerate(hedge_horizon):
+        profile_y = _profile_for_year(year_y)
+        if profile_y is None or profile_y.empty:
+            actions, meta_y = [], {"status": "no_data"}
+        else:
+            actions, meta_y = recommend_hedge_blotter(
+                profile_y, year_y, today_ch, forwards
+            )
+        delta_text, delta_color = _card_status_text(meta_y.get("status"), meta_y)
+
+        if actions:
+            target_volume = sum(a.volume_mwh for a in actions)
+            target_cost = sum(a.notional_eur for a in actions)
+            avg_px = target_cost / max(target_volume, 1e-9)
+            value_str = fmt_mwh(target_volume, 0)
+        else:
+            target_volume = 0.0
+            target_cost = 0.0
+            avg_px = float("nan")
+            value_str = "—"
+
+        hedge_cards[i].markdown(
+            kpi_card(
+                f"Cal-{year_y}",
+                value_str,
+                delta=delta_text,
+                delta_color=delta_color,
+            ),
+            unsafe_allow_html=True,
+        )
+        hedge_cards[i].markdown(
+            f"<div style='font-size:0.78rem; color:{FMV_NAVY};"
+            f" margin-top:-0.5rem;'>"
+            f"Ø {fmt_eur_mwh(avg_px) if actions else '—'}"
+            f" · Budget {fmt_chf(target_cost, 0) if actions else '—'} EUR"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
+
+    # ---------------------------------------------------------------------------
+    # Trade blotter (concrete recommendation per year)
+    # ---------------------------------------------------------------------------
+
+    st.markdown("")
+    st.subheader("Konkrete Trade-Vorschläge")
+    st.caption(
+        "Vorgeschlagene Tickets pro Lieferjahr, basierend auf den letzten "
+        "verfügbaren EEX-Settlements. Cal-Base wird zuerst aufgebaut ; "
+        "Q-Strips ergänzen die Spitzenlast-Abdeckung. M-Contracts werden "
+        "absichtlich ausgeschlossen (CH-Liquidität für GRD-Tickets zu dünn). "
+        "Liste als CSV exportierbar oder per E-Mail an FMV Trading."
+    )
+
+    blotter_rows: list[dict] = []
+    for year_y in hedge_horizon:
+        profile_y = _profile_for_year(year_y)
+        if profile_y is None or profile_y.empty:
+            continue
+        actions, _ = recommend_hedge_blotter(profile_y, year_y, today_ch, forwards)
+        for a in actions:
+            blotter_rows.append({
+                "Lieferjahr": a.delivery_year,
+                "Instrument": a.instrument,
+                "Volumen (MWh)": a.volume_mwh,
+                "Ref.-Preis (EUR/MWh)": a.reference_price_eur_mwh,
+                "Notional (EUR)": a.notional_eur,
+                "Begründung": a.rationale,
+            })
+
+    if not blotter_rows:
+        st.info(
+            "Keine Trade-Vorschläge — möglicherweise fehlen Forward-Settlements "
+            "im Cache oder das Profil deckt nur das laufende Lieferjahr ab."
+        )
+    else:
+        blotter_df = pd.DataFrame(blotter_rows)
+        total_volume = blotter_df["Volumen (MWh)"].sum()
+        total_notional = blotter_df["Notional (EUR)"].sum()
+        weighted_px = total_notional / max(total_volume, 1e-9)
+        total_row = pd.DataFrame([{
+            "Lieferjahr": "─ TOTAL",
+            "Instrument": f"{len(blotter_df)} Tickets · {len(set(blotter_df['Lieferjahr']))} Jahre",
+            "Volumen (MWh)": total_volume,
+            "Ref.-Preis (EUR/MWh)": weighted_px,
+            "Notional (EUR)": total_notional,
+            "Begründung": "",
+        }])
+        show_df = pd.concat([blotter_df, total_row], ignore_index=True)
+
+        st.dataframe(
+            show_df,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Volumen (MWh)": st.column_config.NumberColumn(format="%.0f"),
+                "Ref.-Preis (EUR/MWh)": st.column_config.NumberColumn(format="%.2f"),
+                "Notional (EUR)": st.column_config.NumberColumn(format="%.0f"),
+            },
+        )
+
+        cb_csv, cb_mail = st.columns([1.0, 1.4])
+        with cb_csv:
+            csv_buf = io.StringIO()
+            blotter_df.to_csv(csv_buf, sep=";", index=False)
+            st.download_button(
+                "📥 Trade-Vorschläge als CSV",
+                csv_buf.getvalue(),
+                file_name=f"trade_blotter_{position_label.replace(' ', '_')}.csv",
+                mime="text/csv",
+            )
+        with cb_mail:
+            mail_subject = f"Hedge-Anfrage — {position_label}"
+            mail_body_lines = [
+                f"Position : {position_label}",
+                f"Erstellt am : {today_ch.strftime('%d.%m.%Y %H:%M')}",
+                "",
+                "Vorgeschlagene Tickets :",
+            ]
+            for r in blotter_rows:
+                mail_body_lines.append(
+                    f"  - Cal-{r['Lieferjahr']} · {r['Instrument']} · "
+                    f"{r['Volumen (MWh)']:.0f} MWh @ {r['Ref.-Preis (EUR/MWh)']:.2f} EUR/MWh "
+                    f"= {r['Notional (EUR)']:.0f} EUR"
+                )
+            mail_body_lines.append("")
+            mail_body_lines.append(
+                f"Total : {total_volume:.0f} MWh @ Ø {weighted_px:.2f} EUR/MWh "
+                f"= {total_notional:.0f} EUR"
+            )
+            from urllib.parse import quote
+            mail_body = quote("\n".join(mail_body_lines))
+            st.markdown(
+                f"<a href='mailto:trading@fmv.ch?subject={quote(mail_subject)}"
+                f"&body={mail_body}' style='display:inline-block;"
+                f" background:{FMV_BLUE}; color:white; padding:0.5rem 1rem;"
+                f" border-radius:6px; text-decoration:none; font-weight:500;'>"
+                f"📧 Als E-Mail an FMV Trading senden</a>",
+                unsafe_allow_html=True,
             )
 
 
-# ---------------------------------------------------------------------------
-# Export priced hourly curve
-# ---------------------------------------------------------------------------
+with tab_risiko:
 
-st.markdown("")
-if not common_idx.empty:
-    st.subheader("Export")
-    export_df = priced.reset_index()
-    export_df.columns = ["timestamp"] + list(export_df.columns[1:])
-    export_df["timestamp"] = pd.to_datetime(export_df["timestamp"]).dt.strftime("%Y-%m-%d %H:%M:%S%z")
-    csv_buf = io.StringIO()
-    export_df.to_csv(csv_buf, sep=";", index=False)
-    st.download_button(
-        "📥 Bepreiste Lastkurve als CSV exportieren",
-        csv_buf.getvalue(),
-        file_name=f"lastprofil_priced_{load_year}.csv",
-        mime="text/csv",
+    # ---------------------------------------------------------------------------
+    # Forward sensitivity — PV01 per tenor (Axpo / Volue convention)
+    # ---------------------------------------------------------------------------
+    # Rationale : the previous block scaled ``cost_total_eur`` by ±15 % and
+    # called it a "Forward-Bewegung". That is mathematically a multiplicative
+    # stress on the aggregated cost, not a delta on the forward curve, and it
+    # hides where the risk concentrates by tenor. Cal-27 (largest target volume)
+    # typically dominates the total, but a flat ±X % bar tells the GRD nothing
+    # about it.
+    #
+    # The trader-grade replacement is a **PV01 per delivery year** : for each
+    # Cal-Y we expose Δcost / ΔF (EUR per +1 EUR/MWh shift on the year forward).
+    # Since we just built ``blotter_rows`` (volume × instrument × year), the
+    # PV01 is simply the sum of volumes per year — a number an Axpo / BKW
+    # trader recognises immediately. The chart then plots one line per Cal-Y
+    # plus a dashed "parallel shift" reference covering all years simultaneously.
+    # Numbers stay finite (≠ NaN) even when only one year has trades.
+
+    st.markdown("")
+    st.subheader("Sensitivität · PV01 pro Lieferjahr")
+    st.caption(
+        "**PV01** = Veränderung der Gesamtkosten bei einer Forward-Bewegung von "
+        "+1 EUR/MWh auf das jeweilige Cal-Jahr. Auf den vorgeschlagenen Trade-"
+        "Volumen aufgebaut : ein Mass für **wo Ihr Risiko konzentriert ist**, "
+        "nicht für das Restrisiko nach Hedge. Der parallele Strich (gestrichelt) "
+        "zeigt das Worst-Case-Szenario, in dem alle Cal-Jahre gleichzeitig "
+        "bewegen — nützlich, aber statistisch unwahrscheinlich."
     )
 
-st.divider()
-st.caption(
-    "Methodik : jede Stunde der Last wird mit dem entsprechenden PFC-Stundenpreis "
-    "multipliziert. Peak = 08:00–20:00 Mo–Fr (Schweizer Konvention). "
-    "**Profilaufschlag** (KPI-Karte) = profil-gewichteter PFC-Preis − einfacher PFC-"
-    "Stundendurchschnitt (reine Profilform). **Profile-Premium** (Cal-Y-Vergleich) "
-    "= Profil-Pricing − flacher Cal-Y-Forward-Strip ; enthält damit zusätzlich die "
-    "Differenz zwischen PFC-Mittel und Forward-Settlement und ist daher meist grösser "
-    "als der reine Profilaufschlag. "
-    "Cal-Y Forward = Y01_{Y}_BASE Settlement vom letzten Handelstag (oder Q-Strip-"
-    "Average für das laufende Lieferjahr)."
-)
+    if not blotter_rows:
+        st.info(
+            "PV01-Bild verfügbar, sobald Trade-Vorschläge generiert sind."
+        )
+    else:
+        # Aggregate volume per delivery year ; PV01 = volume (EUR per EUR/MWh).
+        pv01_by_year: dict[int, float] = {}
+        for r in blotter_rows:
+            y = int(r["Lieferjahr"])
+            pv01_by_year[y] = pv01_by_year.get(y, 0.0) + float(r["Volumen (MWh)"])
+        years_sorted = sorted(pv01_by_year.keys())
+        pv01_total = float(sum(pv01_by_year.values()))
+
+        # KPI strip : one card per year + total parallel.
+        n_years = len(years_sorted)
+        pv_cols = st.columns(n_years + 1)
+        palette = ["#0E1F3D", "#1F3A6E", "#3A5BA0", "#5C7AC8"]
+        for i, y in enumerate(years_sorted):
+            pv = pv01_by_year[y]
+            share = 100.0 * pv / pv01_total if pv01_total > 0 else 0.0
+            # Concentration alert : a single tenor > 50 % of the total PV01 is
+            # a red flag — the GRD's procurement risk is dominated by one year.
+            delta_color = FMV_RED if share >= 50 else (FMV_ACCENT if share >= 30 else FMV_BLUE)
+            pv_cols[i].markdown(
+                kpi_card(
+                    f"PV01 Cal-{y}",
+                    f"{fmt_chf(pv, 0)} EUR",
+                    delta=f"{share:.0f} % der Risiko-Konzentration",
+                    delta_color=delta_color,
+                ),
+                unsafe_allow_html=True,
+            )
+        pv_cols[-1].markdown(
+            kpi_card(
+                "PV01 parallel (alle)",
+                f"{fmt_chf(pv01_total, 0)} EUR",
+                delta="pro +1 EUR/MWh über alle Cal-Jahre",
+                delta_color=FMV_NAVY,
+            ),
+            unsafe_allow_html=True,
+        )
+
+        # Per-tenor sensitivity chart : one line per Cal-Y from −15 to +15 EUR/MWh
+        # plus a dashed "parallel shift" line that sums across all tenors.
+        shifts_eur_mwh = list(range(-15, 16))
+        fig_sens = go.Figure()
+        for i, y in enumerate(years_sorted):
+            deltas = [pv01_by_year[y] * s for s in shifts_eur_mwh]
+            fig_sens.add_trace(go.Scatter(
+                x=shifts_eur_mwh, y=deltas,
+                name=f"Cal-{y}",
+                mode="lines+markers",
+                line=dict(color=palette[i % len(palette)], width=2.2),
+                marker=dict(size=4),
+                hovertemplate=(
+                    f"Cal-{y}<br>Forward Shift : %{{x:+d}} EUR/MWh"
+                    f"<br>Δ Kosten : %{{y:,.0f}} EUR<extra></extra>"
+                ),
+            ))
+        parallel_deltas = [pv01_total * s for s in shifts_eur_mwh]
+        fig_sens.add_trace(go.Scatter(
+            x=shifts_eur_mwh, y=parallel_deltas,
+            name="Parallel Shift (alle Jahre)",
+            mode="lines",
+            line=dict(color=FMV_RED, width=3.5, dash="dash"),
+            hovertemplate=(
+                "Parallel<br>Shift : %{x:+d} EUR/MWh"
+                "<br>Δ Total : %{y:,.0f} EUR<extra></extra>"
+            ),
+        ))
+        fig_sens.add_hline(y=0, line_color=FMV_GREY, line_width=1)
+        fig_sens.add_vline(x=0, line_color=FMV_GREY, line_width=1)
+        fig_sens.update_layout(
+            height=360, margin=dict(l=20, r=20, t=10, b=20),
+            plot_bgcolor="white", paper_bgcolor="white",
+            xaxis=dict(
+                title="Forward Shift (EUR/MWh)", gridcolor="#EEF1F6",
+                zeroline=True, dtick=5,
+            ),
+            yaxis=dict(title="Δ Gesamtkosten (EUR)", gridcolor="#EEF1F6"),
+            legend=dict(orientation="h", y=-0.20),
+            hovermode="x unified",
+        )
+        st.plotly_chart(fig_sens, use_container_width=True)
+
+        # Concentration breakdown : top tenor share, drives the sales pitch
+        # ("hedge Cal-X first because it's where 60 % of the risk sits").
+        if pv01_total > 0:
+            top_year = max(pv01_by_year, key=pv01_by_year.get)
+            top_share = 100.0 * pv01_by_year[top_year] / pv01_total
+            if top_share >= 50:
+                st.warning(
+                    f"⚠️  **Risiko-Konzentration auf Cal-{top_year}** : "
+                    f"{top_share:.0f} % der Gesamt-Sensitivität liegen auf einem "
+                    f"einzigen Tenor. Empfehlung : zuerst Cal-{top_year} absichern "
+                    f"— jede Forward-Bewegung dort dominiert Ihr Restrisiko."
+                )
+            else:
+                st.info(
+                    f"ℹ️  **Diversifizierte Sensitivität** : kein einzelnes Cal-Jahr "
+                    f"trägt mehr als {top_share:.0f} % des PV01. "
+                    f"Eine Bewegung auf einem Tenor allein bewegt nur einen "
+                    f"begrenzten Anteil Ihrer Gesamtkosten."
+                )
+
+
+    # ---------------------------------------------------------------------------
+    # Export priced hourly curve
+    # ---------------------------------------------------------------------------
+
+    st.markdown("")
+    if not common_idx.empty:
+        st.subheader("Export")
+        export_df = priced.reset_index()
+        export_df.columns = ["timestamp"] + list(export_df.columns[1:])
+        export_df["timestamp"] = pd.to_datetime(export_df["timestamp"]).dt.strftime("%Y-%m-%d %H:%M:%S%z")
+        csv_buf = io.StringIO()
+        export_df.to_csv(csv_buf, sep=";", index=False)
+        st.download_button(
+            "📥 Bepreiste Lastkurve als CSV exportieren",
+            csv_buf.getvalue(),
+            file_name=f"lastprofil_priced_{load_year}.csv",
+            mime="text/csv",
+        )
+
+    st.divider()
+    st.caption(
+        "Methodik : jede Stunde der Last wird mit dem entsprechenden PFC-Stundenpreis "
+        "multipliziert. Peak = 08:00–20:00 Mo–Fr (Schweizer Konvention). "
+        "**Profilaufschlag** (KPI-Karte) = profil-gewichteter PFC-Preis − einfacher PFC-"
+        "Stundendurchschnitt (reine Profilform). **Profile-Premium** (Cal-Y-Vergleich) "
+        "= Profil-Pricing − flacher Cal-Y-Forward-Strip ; enthält damit zusätzlich die "
+        "Differenz zwischen PFC-Mittel und Forward-Settlement und ist daher meist grösser "
+        "als der reine Profilaufschlag. "
+        "Cal-Y Forward = Y01_{Y}_BASE Settlement vom letzten Handelstag (oder Q-Strip-"
+        "Average für das laufende Lieferjahr)."
+    )
