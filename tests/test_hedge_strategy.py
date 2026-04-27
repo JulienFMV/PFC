@@ -286,3 +286,97 @@ def test_blotter_corridor_ramps_down_with_horizon(
 
     # Strictly decreasing : Y+1 > Y+2 > Y+3 > Y+4
     assert vols[0] > vols[1] > vols[2] > vols[3] > 0
+
+
+def test_blotter_net_long_position_does_not_recommend_buy(
+    programme_flat_2027, forwards_with_peak
+):
+    """Net-long (over-hedged) open position must NOT receive a buy
+    recommendation. This is a regression guard : an earlier version of
+    the page absoluted the curve before passing it to the engine, so
+    a -892 MWh net-long actor was getting a "buy 1880 MWh Cal-2027
+    BASE" — the directional opposite of what they need.
+    """
+    # Negate the flat 2027 programme so the profile is uniformly net long
+    profile = -1.0 * pd.Series(
+        programme_flat_2027["programme_mw"].values,
+        index=pd.DatetimeIndex(programme_flat_2027["timestamp"]),
+    )
+    assert float(profile.sum()) < 0  # fixture sanity
+    today = pd.Timestamp("2026-04-27", tz="Europe/Zurich")
+    actions, meta = recommend_hedge_blotter(profile, 2027, today, forwards_with_peak)
+    assert actions == []
+    assert meta["status"] == "over_hedged"
+    assert meta["annual_volume_mwh"] < 0  # signed sum preserved
+    assert meta["annual_volume_abs_mwh"] > 0
+
+
+def test_blotter_balanced_position_returns_no_action(forwards_with_peak):
+    """A profile with offsetting positive and negative hours but a near-
+    zero net falls into the ``balanced`` branch — no action ticket.
+    """
+    ts = pd.date_range(
+        "2027-01-01 00:00", periods=24, freq="h", tz="Europe/Zurich"
+    )
+    # 12 hours of +1 MW, 12 hours of -1 MW → net 0 over the day.
+    values = np.array([1.0 if i < 12 else -1.0 for i in range(24)])
+    profile = pd.Series(values, index=ts)
+    today = pd.Timestamp("2026-04-27", tz="Europe/Zurich")
+    actions, meta = recommend_hedge_blotter(profile, 2027, today, forwards_with_peak)
+    assert actions == []
+    assert meta["status"] == "balanced"
+
+
+def test_blotter_q1q4_peak_price_uses_winter_average_not_caly_peak(
+    programme_peak_heavy_2027, forwards_with_peak
+):
+    """The peak-heavy branch must price the ``Q1+Q4 PEAK`` ticket with
+    a true Q01+Q04 weighted average, not whatever ``Y01_{year}_PEAK``
+    settles at. The fixture has Y01_PEAK=110 vs Q01_PEAK=130, Q04_PEAK
+    =125 — picking the Cal-Y proxy would under-price the winter strip.
+    """
+    profile = pd.Series(
+        programme_peak_heavy_2027["programme_mw"].values,
+        index=pd.DatetimeIndex(programme_peak_heavy_2027["timestamp"]),
+    )
+    today = pd.Timestamp("2026-04-27", tz="Europe/Zurich")
+    actions, _ = recommend_hedge_blotter(profile, 2027, today, forwards_with_peak)
+    # Two actions : Cal-Base + Q1+Q4 PEAK
+    q_action = next(a for a in actions if a.instrument.startswith("Q1+Q4"))
+
+    # Closed-form expectation : peak hours per quarter × price, averaged.
+    from hedge_strategy import _quarter_peak_hours
+    h1 = _quarter_peak_hours(2027, 1)
+    h4 = _quarter_peak_hours(2027, 4)
+    expected = (130.0 * h1 + 125.0 * h4) / (h1 + h4)
+    assert q_action.reference_price_eur_mwh == pytest.approx(expected, rel=1e-9)
+    # And it is decisively NOT the Y01_2027_PEAK fixture price (= 110.0)
+    assert abs(q_action.reference_price_eur_mwh - 110.0) > 5.0
+
+
+def test_blotter_q1q4_peak_falls_back_to_cal_base_when_strip_missing(
+    programme_peak_heavy_2027,
+):
+    """If Q01 or Q04 PEAK is missing from the cache, the engine must
+    NOT silently price the winter ticket with Cal-Y PEAK. Instead it
+    falls back to all-Cal-Base for the full target volume, with a
+    rationale that names the missing input.
+    """
+    # Forwards with Cal-Base + Cal-Peak only (no Q-PEAK)
+    fwd = pd.DataFrame([
+        {"date": pd.Timestamp("2026-04-23"), "market": "CH",
+         "product": "Y01_2027_BASE", "load_type": "base", "price": 90.0},
+        {"date": pd.Timestamp("2026-04-23"), "market": "CH",
+         "product": "Y01_2027_PEAK", "load_type": "peak", "price": 110.0},
+    ])
+    profile = pd.Series(
+        programme_peak_heavy_2027["programme_mw"].values,
+        index=pd.DatetimeIndex(programme_peak_heavy_2027["timestamp"]),
+    )
+    today = pd.Timestamp("2026-04-27", tz="Europe/Zurich")
+    actions, meta = recommend_hedge_blotter(profile, 2027, today, fwd)
+    assert len(actions) == 1
+    assert actions[0].instrument == "Cal-2027 BASE"
+    # Full target volume on Cal-Base since the winter strip couldn't price
+    target = float(profile.sum()) * 0.90
+    assert actions[0].volume_mwh == pytest.approx(target, rel=1e-9)

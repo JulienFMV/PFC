@@ -121,6 +121,10 @@ load_hourly: pd.Series | None = None
 meta: dict = {}
 position_label: str = ""
 selected_year: int | None = None  # only set in actor mode for the hedge cards
+# In actor mode this map carries one open-position curve per delivery year so
+# the multi-year cards/blotter can recommend each Y+n on its OWN curve, not
+# on the curve of the year the user is currently displaying.
+open_curves_by_year: dict[int, pd.Series] = {}
 
 
 if source == "Profil hochladen":
@@ -231,18 +235,22 @@ else:
             key="profil_year",
         )
 
-    open_curves = derive_open_position_per_year(
+    # Compute open-position curves for the **whole** 4-year horizon so the
+    # cards/blotter can recommend each Y+n on its own curve (HIGH 1 of the
+    # last audit). The selected year's curve is what the rest of the page
+    # displays (KPIs, heatmap, valuation, sensitivity).
+    open_curves_by_year = derive_open_position_per_year(
         programme_df, deals_df, actor=actor_choice, today=today_ch,
         horizon_years=4,
     )
-    if year_choice not in open_curves or open_curves[year_choice].empty:
+    if year_choice not in open_curves_by_year or open_curves_by_year[year_choice].empty:
         st.warning(
             f"Keine Programme-Daten für {actor_choice} im Jahr {year_choice} "
             f"— bitte ein anderes Jahr wählen."
         )
         st.stop()
 
-    load_hourly = open_curves[year_choice].rename("open_mwh").copy()
+    load_hourly = open_curves_by_year[year_choice].rename("open_mwh").copy()
     annual_open = float(load_hourly.sum())
     annual_abs = float(load_hourly.abs().sum())
     meta = {
@@ -589,57 +597,85 @@ st.caption(
 
 # Anchor : current calendar year (so Y+1 is always the "next year" relative
 # to today, regardless of which year the profile or open-position spans).
-# For actor mode we offer the 4-year horizon starting from today.year + 1.
 hedge_horizon = list(range(today_ch.year + 1, today_ch.year + 5))
 
-# The recommendation needs an annual MWh figure : for upload mode use the
-# uploaded annual volume directly ; for actor mode reuse the same value
-# (open MWh of the selected year, abs() so negative-net actors still get
-# a sensible recommendation against future years).
-annual_for_reco = abs(float(load_hourly.sum()))
-profile_for_reco = load_hourly.abs() if (load_hourly < 0).any() else load_hourly
+
+def _profile_for_year(year: int) -> pd.Series:
+    """Return the right hourly profile for the requested delivery year.
+
+    Upload mode treats the uploaded curve as a stable yearly load and
+    reuses it across the cockpit horizon (the standard GRD assumption :
+    consumption changes < 2 %/year). Actor mode pulls the open-position
+    curve for that specific year out of ``open_curves_by_year`` so the
+    Y+1..Y+4 cards each price their own residual exposure, not the
+    selected year's exposure projected forward.
+    """
+    if open_curves_by_year:
+        return open_curves_by_year.get(year, pd.Series(dtype=float))
+    return load_hourly  # type: ignore[return-value]
+
+
+# Helper for the card's delta line — turns the engine ``meta["status"]``
+# into a one-liner the GRD can act on.
+def _card_status_text(status: str | None, meta: dict) -> tuple[str, str]:
+    corridor = meta.get("corridor")
+    target_pct = meta.get("target_ratio_pct")
+    if status == "buy" and corridor is not None and target_pct is not None:
+        return (
+            f"Korridor {corridor[0]}-{corridor[1]} % · Ziel ≈ {target_pct:.0f} %",
+            FMV_BLUE,
+        )
+    if status == "over_hedged":
+        signed = meta.get("annual_volume_mwh", 0.0) or 0.0
+        return (
+            f"Bereits über-hedged ({fmt_mwh(abs(signed), 0)}) — Unwind via FMV",
+            FMV_ACCENT,
+        )
+    if status == "balanced":
+        return ("Position ausgeglichen — keine Aktion", FMV_GREEN)
+    if status == "no_corridor":
+        return ("Lieferung läuft — intraday Bereich", FMV_GREY)
+    if status == "no_forward":
+        return ("Forward-Settlement fehlt im Cache", FMV_GREY)
+    return ("Keine Daten", FMV_GREY)
+
 
 hedge_cards = st.columns(4)
 for i, year_y in enumerate(hedge_horizon):
-    blotter_actions, blotter_meta = recommend_hedge_blotter(
-        profile_for_reco, year_y, today_ch, forwards
-    )
-    corridor = blotter_meta.get("corridor")
-    target_pct = blotter_meta.get("target_ratio_pct")
-    is_active = bool(blotter_actions)
-
-    if is_active:
-        target_volume = sum(a.volume_mwh for a in blotter_actions)
-        target_cost = sum(a.notional_eur for a in blotter_actions)
-        avg_px = target_cost / max(target_volume, 1e-9)
-        delta_text = (
-            f"Korridor {corridor[0]}-{corridor[1]} % · "
-            f"Ziel ≈ {target_pct:.0f} %"
+    profile_y = _profile_for_year(year_y)
+    if profile_y is None or profile_y.empty:
+        actions, meta_y = [], {"status": "no_data"}
+    else:
+        actions, meta_y = recommend_hedge_blotter(
+            profile_y, year_y, today_ch, forwards
         )
+    delta_text, delta_color = _card_status_text(meta_y.get("status"), meta_y)
+
+    if actions:
+        target_volume = sum(a.volume_mwh for a in actions)
+        target_cost = sum(a.notional_eur for a in actions)
+        avg_px = target_cost / max(target_volume, 1e-9)
+        value_str = fmt_mwh(target_volume, 0)
     else:
         target_volume = 0.0
         target_cost = 0.0
         avg_px = float("nan")
-        delta_text = "Lieferung läuft — intraday Bereich"
+        value_str = "—"
 
-    color = FMV_BLUE if is_active else FMV_GREY
     hedge_cards[i].markdown(
         kpi_card(
             f"Cal-{year_y}",
-            (
-                f"{fmt_mwh(target_volume, 0)}"
-                if is_active else "—"
-            ),
+            value_str,
             delta=delta_text,
-            delta_color=color,
+            delta_color=delta_color,
         ),
         unsafe_allow_html=True,
     )
     hedge_cards[i].markdown(
         f"<div style='font-size:0.78rem; color:{FMV_NAVY};"
         f" margin-top:-0.5rem;'>"
-        f"Ø {fmt_eur_mwh(avg_px) if is_active else '—'}"
-        f" · Budget {fmt_chf(target_cost, 0) if is_active else '—'} EUR"
+        f"Ø {fmt_eur_mwh(avg_px) if actions else '—'}"
+        f" · Budget {fmt_chf(target_cost, 0) if actions else '—'} EUR"
         f"</div>",
         unsafe_allow_html=True,
     )
@@ -661,9 +697,10 @@ st.caption(
 
 blotter_rows: list[dict] = []
 for year_y in hedge_horizon:
-    actions, _ = recommend_hedge_blotter(
-        profile_for_reco, year_y, today_ch, forwards
-    )
+    profile_y = _profile_for_year(year_y)
+    if profile_y is None or profile_y.empty:
+        continue
+    actions, _ = recommend_hedge_blotter(profile_y, year_y, today_ch, forwards)
     for a in actions:
         blotter_rows.append({
             "Lieferjahr": a.delivery_year,

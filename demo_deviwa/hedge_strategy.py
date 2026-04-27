@@ -34,7 +34,9 @@ try:
     from .portfolio_yearly import (
         INDUSTRY_HEDGE_TARGETS,
         _filter_actor,
+        _latest_tenor_price,
         _quarter_hours,
+        _quarter_peak_hours,
         _scope_signed_volume,
         get_forward_year_proxy,
     )
@@ -42,7 +44,9 @@ except ImportError:
     from portfolio_yearly import (  # type: ignore[no-redef]
         INDUSTRY_HEDGE_TARGETS,
         _filter_actor,
+        _latest_tenor_price,
         _quarter_hours,
+        _quarter_peak_hours,
         _scope_signed_volume,
         get_forward_year_proxy,
     )
@@ -169,6 +173,41 @@ def _peak_hours_in_year(year: int) -> int:
     return int(((idx.dayofweek < 5) & (idx.hour >= 8) & (idx.hour < 20)).sum())
 
 
+def _q1_q4_peak_price(
+    forwards: pd.DataFrame,
+    year: int,
+    market: str = "CH",
+) -> float:
+    """Volume-weighted average of ``Q01_{year}`` and ``Q04_{year}`` PEAK
+    settlements, weighted by EEX peak hours in each quarter.
+
+    Used by the blotter when the recommended ticket is the **winter
+    PEAK strip** : the displayed instrument is "Q1+Q4 {year} PEAK", so
+    the reference price must reflect the actual two-quarter average,
+    not whatever ``Y01_{year}_PEAK`` happens to settle at. Returns
+    NaN if either quarter is missing — the caller falls back to the
+    full-year peak proxy in that case.
+    """
+    if forwards is None or forwards.empty:
+        return float("nan")
+    df = forwards
+    if "market" in df.columns:
+        df = df[df["market"].astype(str).str.upper() == market.upper()]
+    if "load_type" in df.columns:
+        df = df[df["load_type"].astype(str).str.lower() == "peak"]
+    if df.empty or "product" not in df.columns or "price" not in df.columns:
+        return float("nan")
+    q1 = _latest_tenor_price(df, f"Q01_{year}")
+    q4 = _latest_tenor_price(df, f"Q04_{year}")
+    if not (np.isfinite(q1) and np.isfinite(q4)):
+        return float("nan")
+    h1 = _quarter_peak_hours(year, 1)
+    h4 = _quarter_peak_hours(year, 4)
+    if h1 + h4 <= 0:
+        return float("nan")
+    return (q1 * h1 + q4 * h4) / (h1 + h4)
+
+
 def _peak_share_pct(profile_mwh: pd.Series) -> float:
     """Volume share of EEX-peak hours in the profile (0–100 %).
 
@@ -199,83 +238,113 @@ def recommend_hedge_blotter(
 
     Returns a small list of concrete trade rows ("buy X MWh Cal-2027
     BASE @ 90.79 EUR/MWh") plus a metadata dict with the inputs that
-    drove the decision (corridor, target ratio, peak share, etc.) so
-    the UI can render an explainer alongside the table.
+    drove the decision (corridor, target ratio, peak share, status,
+    etc.) so the UI can render an explainer alongside the table.
+
+    The function is **sign-aware** : the input profile carries the
+    delivery direction the GRD needs to hedge.
+
+      - **Net positive** (``Σ profile > +ε``) — load to procure or
+        net-short open position. The function recommends a *buy*
+        plan : Cal-Base + optional Q1+Q4 PEAK winter strip if the
+        profile is peak-heavy.
+      - **Net negative** (``Σ profile < -ε``) — net-long open
+        position (the actor has sold/locked more than its load).
+        No buy ticket is recommended ; ``meta["status"] =
+        "over_hedged"`` and the UI surfaces an "unwind via FMV
+        Trading" hint instead. Recommending an additional buy here
+        would be directionally wrong and is an old bug worth pinning.
+      - **Near zero** (``|Σ profile| ≤ ε``) — already balanced ;
+        ``meta["status"] = "balanced"``.
+
+    ``ε`` is set to 0.5 % of ``|Σ profile|`` so a tiny shape
+    imbalance with a near-zero net doesn't trigger a buy.
 
     Strategy (FMV / Swiss-DSO oriented) :
 
-      1. Pick the corridor mid-point from
-         :data:`INDUSTRY_HEDGE_TARGETS` for the year offset
-         ``y - today.year`` (Y+1 → 90 %, Y+2 → 65 %, Y+3 → 35 %,
-         Y+4 → 15 %). The current delivery year is *not* recommended
-         here — at that horizon the action belongs to FMV's intraday
+      1. Corridor mid-point from :data:`INDUSTRY_HEDGE_TARGETS` for
+         the year offset ``y - today.year`` (Y+1 → 90 %, Y+2 → 65 %,
+         Y+3 → 35 %, Y+4 → 15 %). Current delivery year is not
+         recommended here — that horizon belongs to FMV's intraday
          desk, not the GRD's hedge plan.
-
-      2. Cal-Base is the primary instrument (the only liquid Swiss
-         tenor for a GRD-sized ticket).
-
+      2. Cal-Base is the primary instrument — only liquid Swiss
+         tenor for a GRD-sized ticket.
       3. If the profile is **peak-heavy** (peak share > 40 %), layer
-         a Q-strip on top : 70 % of the recommended volume on Cal-Base,
-         30 % on the **winter** quarters (Q1 + Q4) where the peak
-         premium is largest. The Q-strip uses the latest available
-         peak forward, weighted by peak hours per quarter.
-
+         a Q-strip on top : 70 % via Cal-Base, 30 % via Q1 + Q4 PEAK
+         where the winter peak premium is largest. The PEAK price is
+         the **weighted average of Q01 and Q04 settlements** (peak-
+         hour weights), not the full-year Cal-Y PEAK proxy.
       4. M-contracts are deliberately excluded — Swiss M liquidity
          is too thin to absorb GRD volumes without spread cost.
 
     Args:
-        profile_mwh: hourly load curve (MWh per hour, one calendar year).
+        profile_mwh: hourly load curve (MWh per hour, signed) for one
+            calendar year.
         delivery_year: Y for which to recommend the hedge.
         today: reference date.
-        forwards: long-format forward frame with ``date, market,
-            product, load_type, price``.
+        forwards: long-format with ``date, market, product, load_type,
+            price``.
 
     Returns:
         ``(actions, meta)`` where ``actions`` is the list of
-        :class:`HedgeAction` rows (possibly empty if no forward is
-        available) and ``meta`` carries the explanatory variables :
-        ``corridor``, ``target_ratio_pct``, ``peak_share_pct``,
-        ``annual_volume_mwh``, ``q_strip_active``.
+        :class:`HedgeAction` rows (empty for net-long, balanced, or
+        unpriceable horizons) and ``meta`` carries :
+        ``annual_volume_mwh`` (signed), ``annual_volume_abs_mwh``,
+        ``peak_share_pct``, ``year_offset``, ``corridor``,
+        ``target_ratio_pct``, ``q_strip_active``, ``status``
+        ('buy' / 'over_hedged' / 'balanced' / 'no_corridor' /
+        'no_forward').
     """
-    annual_volume = float(profile_mwh.sum())
+    annual_signed = float(profile_mwh.sum())
+    annual_abs = float(profile_mwh.abs().sum())
     peak_share = _peak_share_pct(profile_mwh)
     offset = delivery_year - today.year
     corridor = INDUSTRY_HEDGE_TARGETS.get(offset)
     meta: dict = {
-        "annual_volume_mwh": annual_volume,
+        "annual_volume_mwh": annual_signed,
+        "annual_volume_abs_mwh": annual_abs,
         "peak_share_pct": peak_share,
         "year_offset": offset,
         "corridor": corridor,
         "target_ratio_pct": None,
         "q_strip_active": False,
+        "status": None,
     }
 
     # No corridor (offset 0 = current year, or > 4) → no recommendation.
     if corridor is None or offset <= 0:
+        meta["status"] = "no_corridor"
         return [], meta
 
+    # Direction guard. ``ε`` = 0.5 % of |Σ| keeps tiny shape imbalances
+    # with near-zero net from triggering a buy ticket.
+    epsilon = max(0.005 * annual_abs, 1.0)
+    if annual_signed < -epsilon:
+        meta["status"] = "over_hedged"
+        return [], meta
+    if annual_signed <= epsilon:
+        meta["status"] = "balanced"
+        return [], meta
+
+    # From here on : the profile is meaningfully positive → buy plan.
     target_ratio = 0.5 * (corridor[0] + corridor[1]) / 100.0
     meta["target_ratio_pct"] = target_ratio * 100.0
-    target_volume = annual_volume * target_ratio
-    if target_volume <= 0:
-        return [], meta
+    target_volume = annual_signed * target_ratio  # use signed sum, now > 0
 
-    # Cal-Base price for the year (or Q-strip-weighted proxy if Cal-Y
-    # has retired — covered by get_forward_year_proxy).
     cal_base_price = get_forward_year_proxy(
         forwards, delivery_year, market="CH", load_type="base"
     )
     if not np.isfinite(cal_base_price):
+        meta["status"] = "no_forward"
         return [], meta
 
     actions: list[HedgeAction] = []
-
-    # Decide Cal-Base vs Cal-Base + Q-Peak split.
     is_peak_heavy = np.isfinite(peak_share) and peak_share > 40.0
     meta["q_strip_active"] = is_peak_heavy
+    meta["status"] = "buy"
 
     if is_peak_heavy:
-        # 70 % via Cal-Base, 30 % via Q-Peak winter (Q1 + Q4)
+        # 70 % via Cal-Base, 30 % via Q1+Q4 PEAK winter strip
         cal_volume = target_volume * 0.70
         q_volume = target_volume * 0.30
 
@@ -291,26 +360,25 @@ def recommend_hedge_blotter(
             ),
         ))
 
-        # Q-Peak winter strip : Q1 and Q4 of the same year, peak load
-        peak_proxy = get_forward_year_proxy(
-            forwards, delivery_year, market="CH", load_type="peak"
-        )
-        if np.isfinite(peak_proxy):
+        # Winter strip price : true Q01+Q04 average (peak-hour-weighted),
+        # NOT the full-year Cal-Y PEAK proxy — those products differ.
+        winter_price = _q1_q4_peak_price(forwards, delivery_year, market="CH")
+        if np.isfinite(winter_price):
             actions.append(HedgeAction(
                 instrument=f"Q1+Q4 {delivery_year} PEAK",
                 delivery_year=delivery_year,
                 volume_mwh=q_volume,
-                reference_price_eur_mwh=peak_proxy,
-                notional_eur=q_volume * peak_proxy,
+                reference_price_eur_mwh=winter_price,
+                notional_eur=q_volume * winter_price,
                 rationale=(
                     f"Spitzenlast-Anteil ({peak_share:.0f} % > 40 %) — "
-                    f"Q1 + Q4 PEAK fängt die Winter-Spitzen ab."
+                    f"Q1 + Q4 PEAK fängt die Winter-Spitzen ab "
+                    f"(Volumen-gewichteter Durchschnitt der beiden Quartale)."
                 ),
             ))
         else:
-            # Peak forward not available → fall back to all Cal-Base
-            actions = []
-            actions.append(HedgeAction(
+            # No Q1 or Q4 PEAK available → fall back to all-Cal-Base.
+            actions = [HedgeAction(
                 instrument=f"Cal-{delivery_year} BASE",
                 delivery_year=delivery_year,
                 volume_mwh=target_volume,
@@ -318,10 +386,10 @@ def recommend_hedge_blotter(
                 notional_eur=target_volume * cal_base_price,
                 rationale=(
                     f"Profil ist spitzenlastig ({peak_share:.0f} %) aber "
-                    f"PEAK-Forward nicht verfügbar — komplette Volume auf "
-                    f"Cal-Base."
+                    f"Q1/Q4 PEAK-Settlements unvollständig — komplette "
+                    f"Volume auf Cal-Base."
                 ),
-            ))
+            )]
     else:
         actions.append(HedgeAction(
             instrument=f"Cal-{delivery_year} BASE",
