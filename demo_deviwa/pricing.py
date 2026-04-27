@@ -8,7 +8,14 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-from utils import _localize_zurich_safe
+# Both import styles must work : Streamlit pages run this file with
+# ``demo_deviwa`` on ``sys.path`` (top-level ``utils`` resolvable),
+# whereas a package-style ``import demo_deviwa.pricing`` from a test
+# or another script needs the relative form.
+try:
+    from .utils import _localize_zurich_safe
+except ImportError:
+    from utils import _localize_zurich_safe  # type: ignore[no-redef]
 
 PEAK_HOURS = set(range(8, 20))  # CH Peak Definition: 08:00 – 20:00 Mo–Fr
 
