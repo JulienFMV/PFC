@@ -100,19 +100,46 @@ if year_choice != "Alle":
 # KPI row
 # ---------------------------------------------------------------------------
 
-vol_total = float(pd.to_numeric(df["volume_sum"], errors="coerce").fillna(0.0).abs().sum())
-notional_total = float(pd.to_numeric(df.get("notional_sum"), errors="coerce").fillna(0.0).abs().sum())
+# Audit fix : the previous "Ø Preis volumen-gewichtet" mixed Intake (buy)
+# and Withdrawal (sell) notionals, producing a number that has no commercial
+# meaning for a GRD ("you bought at 80, sold at 90, average is 83.3" — but
+# you never paid 83.3 EUR for anything). Replaced by two separate weighted
+# averages, computed only from their own scope, with conditional rendering :
+# pure-consumer GRDs (only Intake) see one card and a clean Net-Cashflow,
+# rather than an artificial blend.
+
+scope_lower = df["scope"].astype(str).str.lower()
+intake_mask = scope_lower.str.contains("intake", na=False)
+withdraw_mask = scope_lower.str.contains("withdrawal", na=False)
+
+vol_intake_series = pd.to_numeric(df.loc[intake_mask, "volume_sum"], errors="coerce").fillna(0.0).abs()
+vol_withdraw_series = pd.to_numeric(df.loc[withdraw_mask, "volume_sum"], errors="coerce").fillna(0.0).abs()
+notional_intake_series = pd.to_numeric(df.loc[intake_mask, "notional_sum"], errors="coerce").fillna(0.0).abs()
+notional_withdraw_series = pd.to_numeric(df.loc[withdraw_mask, "notional_sum"], errors="coerce").fillna(0.0).abs()
+
+intake_vol = float(vol_intake_series.sum())
+withdraw_vol = float(vol_withdraw_series.sum())
+intake_notional = float(notional_intake_series.sum())
+withdraw_notional = float(notional_withdraw_series.sum())
+
+vol_total = intake_vol + withdraw_vol
+net_position = intake_vol - withdraw_vol
+# Net-Cashflow signed : Einkauf = Geld raus (negativ), Verkauf = Geld rein.
+net_cashflow = withdraw_notional - intake_notional
 pnl_total = float(pd.to_numeric(df.get("pnl_sum"), errors="coerce").fillna(0.0).sum())
 n_deals = int(df["deal"].nunique()) if "deal" in df.columns else len(df)
 
-scope_lower = df["scope"].astype(str).str.lower()
-intake_vol = float(pd.to_numeric(df.loc[scope_lower.str.contains("intake", na=False), "volume_sum"], errors="coerce").fillna(0.0).abs().sum())
-withdraw_vol = float(pd.to_numeric(df.loc[scope_lower.str.contains("withdrawal", na=False), "volume_sum"], errors="coerce").fillna(0.0).abs().sum())
-net_position = intake_vol - withdraw_vol
-avg_price = (notional_total / vol_total) if vol_total > 0 else float("nan")
+avg_intake_price = intake_notional / intake_vol if intake_vol > 0 else float("nan")
+avg_withdraw_price = withdraw_notional / withdraw_vol if withdraw_vol > 0 else float("nan")
 
-c1, c2, c3, c4 = st.columns(4)
-c1.markdown(
+# Conditional layout : a pure consumer (only Intake) gets 4 cards focused
+# on buy-side only ; an actor mixing both directions gets 5 cards including
+# the sell-side average price.
+has_both_directions = intake_vol > 0 and withdraw_vol > 0
+n_cols = 5 if has_both_directions else 4
+cols = st.columns(n_cols)
+
+cols[0].markdown(
     kpi_card(
         "Anzahl Deals",
         f"{n_deals}",
@@ -121,7 +148,7 @@ c1.markdown(
     ),
     unsafe_allow_html=True,
 )
-c2.markdown(
+cols[1].markdown(
     kpi_card(
         "Volumen gesamt",
         fmt_mwh(vol_total, 0),
@@ -130,20 +157,34 @@ c2.markdown(
     ),
     unsafe_allow_html=True,
 )
-c3.markdown(
+cols[2].markdown(
     kpi_card(
-        "Ø Preis (volumen-gewichtet)",
-        f"{avg_price:.2f} EUR/MWh" if np.isfinite(avg_price) else "—",
-        delta=f"Notional gesamt: {fmt_chf(notional_total, 0)} EUR",
+        "Ø Einkaufspreis",
+        f"{avg_intake_price:.2f} EUR/MWh" if np.isfinite(avg_intake_price) else "—",
+        delta=f"Einkauf-Notional: {fmt_chf(intake_notional, 0)} EUR",
         delta_color=FMV_BLUE,
     ),
     unsafe_allow_html=True,
 )
-c4.markdown(
+if has_both_directions:
+    cols[3].markdown(
+        kpi_card(
+            "Ø Verkaufspreis",
+            f"{avg_withdraw_price:.2f} EUR/MWh" if np.isfinite(avg_withdraw_price) else "—",
+            delta=f"Verkauf-Notional: {fmt_chf(withdraw_notional, 0)} EUR",
+            delta_color=FMV_GREEN,
+        ),
+        unsafe_allow_html=True,
+    )
+cols[-1].markdown(
     kpi_card(
         "P&L gesamt",
         f"{fmt_chf(pnl_total, 0)} EUR",
-        delta=f"Netto-Position: {fmt_mwh(net_position, 0)}",
+        delta=(
+            f"Netto-Cashflow: {fmt_chf(net_cashflow, 0)} EUR"
+            if has_both_directions
+            else f"Netto-Position: {fmt_mwh(net_position, 0)}"
+        ),
         delta_color=FMV_GREEN if pnl_total >= 0 else FMV_RED,
     ),
     unsafe_allow_html=True,
