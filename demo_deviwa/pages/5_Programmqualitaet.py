@@ -85,13 +85,17 @@ if prog_long.empty:
     frames = [v.assign(actor=k) for k, v in legacy.items()]
     prog_long = pd.concat(frames, ignore_index=True)
 
-# Keep only actors with both programme and actual signal — same filter as
-# before, but applied on the long-format frame instead of the per-actor dict.
-prog_long = prog_long.dropna(subset=["timestamp"])
+# Schema check first : ``dropna(subset=["timestamp"])`` raises ``KeyError``
+# if the column is missing, hiding the friendlier warning behind a stack
+# trace. Verify the contract before touching any column.
 required_cols = {"actor", "timestamp", "programme_mw", "actual_mw"}
 if not required_cols.issubset(prog_long.columns):
     st.warning(f"Cache-Schema unvollständig — fehlende Spalten: {required_cols - set(prog_long.columns)}")
     st.stop()
+
+# Keep only actors with both programme and actual signal — same filter as
+# before, but applied on the long-format frame instead of the per-actor dict.
+prog_long = prog_long.dropna(subset=["timestamp"])
 
 usable_actors = []
 for actor_name, sub in prog_long.groupby("actor"):
