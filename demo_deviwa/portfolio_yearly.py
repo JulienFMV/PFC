@@ -774,6 +774,83 @@ def get_forward_year_proxy(
     return float("nan")
 
 
+def build_qstrip_year_series(
+    forwards: pd.DataFrame,
+    delivery_year: int,
+    market: str = "CH",
+    load_type: str = "base",
+) -> pd.DataFrame:
+    """Synthetic Cal-Y price series rebuilt from the ``Q0x_{year}`` strip.
+
+    Once a Cal-Y contract enters delivery the EEX retires it and only the
+    remaining quarterly contracts (and shorter tenors) keep trading, so
+    Marktüberblick has no Y01_{current_year} time series to plot. This
+    helper rebuilds a daily synthetic Cal-Y settlement by taking the
+    weighted average of every Q0x_{year} contract that has a settlement
+    on that date, weighted by calendar hours per quarter (Q1 + Q2 ≈ 4344h
+    in a non-leap year, Q3 + Q4 ≈ 4416h, leap year +24h on Q1).
+
+    Quarters that haven't traded yet on a given date are excluded for
+    that date — so early in the year the synthetic series is mostly the
+    average of Q1..Q4, and later in the year it converges to the
+    remaining-quarters strip.
+
+    Args:
+        forwards: long-format with ``date, market, product, load_type, price``.
+        delivery_year: e.g. 2026 (current year, no Y01 available).
+        market: filter (default "CH").
+        load_type: "base" or "peak" (case-insensitive).
+
+    Returns:
+        DataFrame with columns ``date, market, product, load_type, price``
+        following the same schema as the source ``forwards`` frame ;
+        ``product`` is set to ``Q-Strip {YYYY} ({BASE|PEAK})`` so the
+        synthetic series is unambiguous in any UI dropdown. Empty frame
+        when no quarterly settlements exist for the requested year.
+    """
+    if forwards is None or forwards.empty:
+        return pd.DataFrame()
+
+    df = forwards
+    if "market" in df.columns:
+        df = df[df["market"].astype(str).str.upper() == market.upper()]
+    if "load_type" in df.columns:
+        df = df[df["load_type"].astype(str).str.lower() == load_type.lower()]
+    if df.empty or "product" not in df.columns or "price" not in df.columns:
+        return pd.DataFrame()
+
+    q_pattern = "|".join(f"Q0{q}_{delivery_year}" for q in (1, 2, 3, 4))
+    df = df[df["product"].astype(str).str.contains(q_pattern, na=False, regex=True)]
+    df = df.dropna(subset=["price", "date"]).copy()
+    if df.empty:
+        return pd.DataFrame()
+
+    # Tag each row with its quarter and the corresponding hour weight.
+    def _quarter_of(p: str) -> int:
+        for q in (1, 2, 3, 4):
+            if f"Q0{q}_{delivery_year}" in str(p):
+                return q
+        return 0
+
+    df["_q"] = df["product"].map(_quarter_of)
+    df = df[df["_q"].between(1, 4)]
+    df["_w"] = df["_q"].map(lambda q: _quarter_hours(delivery_year, int(q)))
+
+    # Weighted average per settlement date
+    df["_wp"] = df["price"] * df["_w"]
+    grouped = df.groupby("date").agg(_wp=("_wp", "sum"), _w=("_w", "sum"))
+    grouped = grouped[grouped["_w"] > 0].copy()
+    if grouped.empty:
+        return pd.DataFrame()
+    grouped["price"] = grouped["_wp"] / grouped["_w"]
+    grouped = grouped.reset_index()
+
+    grouped["market"] = market.upper()
+    grouped["load_type"] = load_type.lower()
+    grouped["product"] = f"Q-Strip {delivery_year} ({load_type.upper()})"
+    return grouped[["date", "market", "product", "load_type", "price"]].sort_values("date")
+
+
 def get_forward_cal_price(
     forwards: pd.DataFrame,
     delivery_year: int,

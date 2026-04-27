@@ -25,7 +25,7 @@ import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from portfolio_yearly import compute_hedge_by_year  # noqa: E402
+from portfolio_yearly import build_qstrip_year_series, compute_hedge_by_year  # noqa: E402
 from utils import (  # noqa: E402
     FMV_ACCENT,
     FMV_BLUE,
@@ -119,11 +119,27 @@ with c_product:
         candidates["product"].dropna().astype(str).unique().tolist(),
         key=_year_from_product,
     )
+
+    # Inject a synthetic Q-Strip pseudo-product for the current year if its
+    # Y01 contract has retired but quarterlies are still trading. Without
+    # this fallback the current delivery year vanishes from the dropdown
+    # — the user can't see the live price the budget projection is using.
+    current_year = pd.Timestamp.now().year
+    qstrip_label = f"Q-Strip {current_year} ({profile.upper()})"
+    has_y01_current = any(_year_from_product(p) == current_year for p in products)
+    qstrip_series = pd.DataFrame()
+    if not has_y01_current:
+        qstrip_series = build_qstrip_year_series(
+            forwards, current_year, market=market, load_type=profile
+        )
+        if not qstrip_series.empty:
+            products = [qstrip_label] + products
+
     if not products:
         st.warning(f"Keine Cal-Produkte für {market} {profile.upper()}.")
         st.stop()
 
-    default_year = pd.Timestamp.now().year + 1
+    default_year = current_year + 1
     default_idx = next(
         (i for i, p in enumerate(products) if str(default_year) in p),
         len(products) - 1,
@@ -132,10 +148,16 @@ with c_product:
         "Produkt",
         options=products,
         index=default_idx,
-        format_func=lambda p: p.replace("_BASE", "").replace("_PEAK", "").split(" ", 1)[-1],
+        format_func=lambda p: (
+            p if p.startswith("Q-Strip ")
+            else p.replace("_BASE", "").replace("_PEAK", "").split(" ", 1)[-1]
+        ),
         key="mu_product",
     )
-    delivery_year = _year_from_product(product) or default_year
+    delivery_year = (
+        current_year if product.startswith("Q-Strip ")
+        else (_year_from_product(product) or default_year)
+    )
 
 with c_lookback:
     lookback = st.selectbox(
@@ -165,11 +187,21 @@ with c_actor:
 # Filter forwards series + apply lookback
 # ---------------------------------------------------------------------------
 
-ser = forwards[
-    (forwards["market"].astype(str).str.upper() == market)
-    & (forwards["load_type"].astype(str).str.lower() == profile)
-    & (forwards["product"] == product)
-].copy()
+if product.startswith("Q-Strip ") and not qstrip_series.empty:
+    ser = qstrip_series.copy()
+    st.caption(
+        f"ℹ️ **{product}** ist ein synthetisches Cal-{current_year}-Pendant : "
+        f"tagesweise Volumen-gewichteter Mittelwert der verfügbaren "
+        f"``Q0x_{current_year}_{profile.upper()}``-Settlements (gewichtet mit "
+        f"Quartalsstunden). Wird verwendet, weil das ``Y01_{current_year}_"
+        f"{profile.upper()}`` bereits in Lieferung ist und nicht mehr handelbar."
+    )
+else:
+    ser = forwards[
+        (forwards["market"].astype(str).str.upper() == market)
+        & (forwards["load_type"].astype(str).str.lower() == profile)
+        & (forwards["product"] == product)
+    ].copy()
 ser = ser.dropna(subset=["price", "date"]).sort_values("date").reset_index(drop=True)
 
 if ser.empty:

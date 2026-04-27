@@ -27,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "demo_deviwa"))
 from portfolio_yearly import (  # noqa: E402
     INDUSTRY_HEDGE_TARGETS,
     Z_P10_P90,
+    build_qstrip_year_series,
     classify_hedge_status,
     compute_budget_projection,
     compute_hedge_by_year,
@@ -158,6 +159,63 @@ def test_get_forward_year_proxy_returns_nan_when_nothing(forwards_mixed):
     """No tenor for 2030 → NaN (no fallback can save this)."""
     p = get_forward_year_proxy(forwards_mixed, 2030)
     assert np.isnan(p)
+
+
+# ---------------------------------------------------------------------------
+# Behaviour 2b : synthetic Q-strip series for the current delivery year
+# ---------------------------------------------------------------------------
+
+def test_build_qstrip_series_yields_one_row_per_settlement_date():
+    """The Q-strip series is one weighted-average row per settlement date,
+    not one row per quarter-day. Pinned because the Marktüberblick page
+    plots ``date → price`` directly and would render a stair-step if the
+    weighting was applied per-row instead of per-day.
+    """
+    rows = []
+    # Two settlement dates, all four quarters present on each
+    for d in (pd.Timestamp("2026-04-22"), pd.Timestamp("2026-04-23")):
+        for q, price in zip(range(1, 5), [120.0, 60.0, 80.0, 100.0]):
+            rows.append({
+                "date": d, "market": "CH",
+                "product": f"Q0{q}_2026_BASE",
+                "load_type": "base", "price": price,
+            })
+    forwards = pd.DataFrame(rows)
+    series = build_qstrip_year_series(forwards, 2026, market="CH", load_type="base")
+    assert len(series) == 2
+    # 2026 is non-leap. Q1=2160h, Q2=2184h, Q3=2208h, Q4=2208h → 8760h total.
+    expected = (120.0 * 2160 + 60.0 * 2184 + 80.0 * 2208 + 100.0 * 2208) / 8760
+    assert (series["price"].round(4) == round(expected, 4)).all()
+    assert (series["product"] == "Q-Strip 2026 (BASE)").all()
+
+
+def test_build_qstrip_series_drops_dates_with_no_quarters():
+    """When the source frame has no Q* contracts for the year, return an
+    empty frame — no synthetic row should be invented from thin air."""
+    rows = [
+        {"date": pd.Timestamp("2026-04-23"), "market": "CH",
+         "product": "Y01_2027_BASE", "load_type": "base", "price": 90.0},
+    ]
+    forwards = pd.DataFrame(rows)
+    series = build_qstrip_year_series(forwards, 2026, market="CH", load_type="base")
+    assert series.empty
+
+
+def test_build_qstrip_series_handles_partial_quarter_coverage():
+    """Half-way through 2026 the tail of the strip is Q3 + Q4 only — must
+    average those two and ignore the missing Q1/Q2 rather than returning
+    NaN. Mirrors the real EEX cache state in spring of the current year."""
+    rows = [
+        {"date": pd.Timestamp("2026-07-01"), "market": "CH",
+         "product": "Q03_2026_BASE", "load_type": "base", "price": 84.0},
+        {"date": pd.Timestamp("2026-07-01"), "market": "CH",
+         "product": "Q04_2026_BASE", "load_type": "base", "price": 120.0},
+    ]
+    forwards = pd.DataFrame(rows)
+    series = build_qstrip_year_series(forwards, 2026, market="CH", load_type="base")
+    assert len(series) == 1
+    expected = (84.0 * 2208 + 120.0 * 2208) / (2208 + 2208)
+    assert series["price"].iloc[0] == pytest.approx(expected, rel=1e-9)
 
 
 # ---------------------------------------------------------------------------
