@@ -48,29 +48,32 @@ st.markdown(
 )
 
 WEEKDAY_LABELS = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"]
-# Default = Swissgrid weighted mean 2024-25, ~120 EUR/MWh on the positive-
-# direction side. The legacy 150 was a worst-case figure that systematically
-# over-states Ausgleichskosten ; the slider lets the user calibrate against
-# their own actual settlements without touching code.
-DEFAULT_IMBALANCE_PRICE = 120.0  # EUR/MWh
+# Pénalité Swissgrid uniquement (= différence entre prix d'ajustement et
+# prix spot de référence) — ce que le GRD paye RÉELLEMENT en plus à cause
+# de son écart de programme. Plage typique CH 2024-25 : 10-50 EUR/MWh selon
+# l'heure et la direction. La valeur 150 utilisée auparavant représentait
+# le prix d'ajustement TOTAL (énergie + pénalité), ce qui surestime le
+# coût d'environ un facteur 5.
+DEFAULT_IMBALANCE_PRICE = 25.0  # EUR/MWh penalty only
 
 with st.sidebar:
-    st.markdown("**Annahme · Ausgleichsenergie-Preis**")
+    st.markdown("**Annahme · Ausgleichsenergie-Aufschlag**")
     ASSUMED_IMBALANCE_PRICE = st.slider(
-        "EUR/MWh",
-        min_value=50.0, max_value=300.0,
-        value=DEFAULT_IMBALANCE_PRICE, step=10.0,
+        "EUR/MWh (Aufschlag, nicht Vollpreis)",
+        min_value=10.0, max_value=50.0,
+        value=DEFAULT_IMBALANCE_PRICE, step=5.0,
         help=(
-            "Durchschnittspreis Swissgrid Ausgleichsenergie. "
-            "Realität variiert stundenweise (50-500 EUR/MWh). "
-            "Standardwert 120 EUR/MWh = volumengewichteter Mittelwert 2024-25."
+            "Aufschlag = Differenz zwischen Swissgrid-Ausgleichsenergie "
+            "und Spot-Referenz. Das ist die *zusätzliche* Strafe pro MWh "
+            "Abweichung, die der GRD zahlt — nicht der Vollpreis der "
+            "Ausgleichsenergie. Schweizer Erfahrung 2024-25 : 10-50 EUR/MWh."
         ),
         key="prog_imbalance_price",
     )
     st.caption(
         "🛈 Vorzeichen wird hier nicht modelliert : alle Abweichungen werden "
-        "als Kosten gerechnet. In Realität kann eine Über-Lieferung in einer "
-        "Defizit-Stunde sogar Erlös bringen."
+        "als Aufschlagskosten gerechnet. In Realität kann eine Über-Lieferung "
+        "in einer Defizit-Stunde sogar Erlös bringen."
     )
 
 # ---------------------------------------------------------------------------
