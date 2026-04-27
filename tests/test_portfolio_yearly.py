@@ -218,6 +218,74 @@ def test_build_qstrip_series_handles_partial_quarter_coverage():
     assert series["price"].iloc[0] == pytest.approx(expected, rel=1e-9)
 
 
+def test_build_qstrip_series_peak_weights_by_peak_hours_not_calendar():
+    """PEAK strip valuation must weight quarters by EEX peak hours
+    (Mon-Fri 08:00-20:00), not calendar hours.
+
+    Pinned because the original implementation reused ``_quarter_hours``
+    for both BASE and PEAK, biasing the synthetic Cal-Peak series. In
+    practice the two weight sets are numerically close on any single
+    calendar year (peak fraction ≈ 36 % of every quarter), so this test
+    locks the *formula* rather than chasing a magnitude gap : the
+    helper output must match the closed-form peak-hour weighted mean
+    to numerical precision.
+    """
+    from portfolio_yearly import _quarter_peak_hours
+    q_peak = {q: _quarter_peak_hours(2026, q) for q in (1, 2, 3, 4)}
+
+    rows = []
+    prices = [180.0, 90.0, 110.0, 160.0]
+    for q, price in zip(range(1, 5), prices):
+        rows.append({
+            "date": pd.Timestamp("2026-04-23"), "market": "CH",
+            "product": f"Q0{q}_2026_PEAK",
+            "load_type": "peak", "price": price,
+        })
+    forwards = pd.DataFrame(rows)
+    series = build_qstrip_year_series(forwards, 2026, market="CH", load_type="peak")
+    assert len(series) == 1
+    expected_peak = (
+        sum(p * q_peak[q] for q, p in zip(range(1, 5), prices))
+        / sum(q_peak.values())
+    )
+    assert series["price"].iloc[0] == pytest.approx(expected_peak, rel=1e-12)
+    assert (series["product"] == "Q-Strip 2026 (PEAK)").all()
+
+
+def test_quarter_peak_hours_matches_explicit_count():
+    """Sanity check the peak-hour helper against an independent count.
+
+    Q1 2026 peak hours = 12 hours/day × number of weekdays in Jan-Mar
+    2026. Computed twice : once via the production helper, once via
+    a direct ``date_range`` filtered on weekday + hour-of-day.
+    """
+    from portfolio_yearly import _quarter_peak_hours
+    naive = pd.date_range(
+        "2026-01-01 00:00", "2026-03-31 23:00", freq="h"
+    )
+    explicit = ((naive.dayofweek < 5) & (naive.hour >= 8) & (naive.hour < 20)).sum()
+    assert _quarter_peak_hours(2026, 1) == int(explicit)
+
+
+def test_get_forward_year_proxy_peak_uses_peak_hours():
+    """Same fix mirrored on the latest-tenor proxy used by the budget
+    projection. A PEAK current-year proxy must weight available
+    quarters by peak hours, not calendar hours."""
+    from portfolio_yearly import _quarter_peak_hours
+    rows = []
+    for q, price in zip(range(1, 5), [180.0, 90.0, 110.0, 160.0]):
+        rows.append({
+            "date": pd.Timestamp("2026-04-23"), "market": "CH",
+            "product": f"Q0{q}_2026_PEAK",
+            "load_type": "peak", "price": price,
+        })
+    fwd = pd.DataFrame(rows)
+    p = get_forward_year_proxy(fwd, 2026, market="CH", load_type="peak")
+    q_peak = {q: _quarter_peak_hours(2026, q) for q in (1, 2, 3, 4)}
+    expected = sum(pr * q_peak[q] for q, pr in zip(range(1, 5), [180.0, 90.0, 110.0, 160.0])) / sum(q_peak.values())
+    assert p == pytest.approx(expected, rel=1e-9)
+
+
 # ---------------------------------------------------------------------------
 # Behaviour 3 : current-year budget must NOT be all-NaN
 # ---------------------------------------------------------------------------
@@ -263,21 +331,17 @@ def test_compute_budget_projection_current_year_uses_residual_volume(
     deals_minimal, forwards_mixed
 ):
     """For the current delivery year, the at-risk leg must price the
-    residual open volume (hours strictly after today) — not the full
-    year. Mixing full-year volume with the residual-period Q-strip is
-    the audit's HIGH 1 finding ; this test pins the fix.
+    residual open volume — not the full year — and the programme and
+    hedged horizons must be aligned at the same calendar boundary.
 
-    Setup (today = 2026-04-26) :
-      - programme : 0.2 MW flat for 2026 → 1752 MWh full year
-      - deals     : 12 × 100 MWh Intake for 2026 → 1200 MWh hedged full year
-      - full-year open  = 1752 − 1200 = 552 MWh
-      - residual open   = (programme May-Dec) − (hedged May-Dec)
-                        = (0.2 × hours(May→Dec)) − (8 × 100)
-                        = 0.2 × 5880 − 800       (approx, depends on DST)
-                        ≈ 1176 − 800 = 376 MWh
-
-    The full-year open and the residual open differ by ~30 % ; the test
-    asserts the budget uses the smaller residual figure.
+    Setup (today = 2026-04-26, cutoff = 2026-05-01) :
+      - programme : 0.2 MW flat for 2026
+      - deals     : 12 × 100 MWh Intake for 2026 (Jan-Dec)
+      - residual programme = 0.2 × hours(2026-05-01 → 2026-12-31 23:00)
+                           = 0.2 × 5881         (DST autumn adds 1h)
+                           = 1176.2 MWh
+      - residual hedged    = 8 × 100 = 800 MWh   (May-Dec only)
+      - residual open      = 1176.2 − 800 = 376.2 MWh
     """
     deals_2026 = deals_minimal.copy()
     deals_2026["month"] = deals_2026["month"].apply(lambda t: t.replace(year=2026))
@@ -305,22 +369,74 @@ def test_compute_budget_projection_current_year_uses_residual_volume(
     # Residual semantics flag is set
     assert bp.is_current_year_residual is True
 
-    # Residual programme: hours strictly > today, in 2026 → May-Dec ≈ 5880 hours
-    # (8 months × ~735 hours/month). At 0.2 MW that's ~1176 MWh ; minus 800 MWh
-    # of residual hedge (May-Dec deals) ≈ 376 MWh residual open. Should be
-    # well below the full-year 552 MWh and well above zero.
-    full_year_open = 1752.0 - 1200.0
-    assert 250.0 < bp.open_mwh < full_year_open - 100.0, (
-        f"open_mwh on current year must reflect residual hours only ; "
-        f"got {bp.open_mwh:.1f}"
+    # Residual hours from 2026-05-01 00:00 to 2026-12-31 23:00 inclusive,
+    # accounting for the autumn DST repeat of the 02:00 hour on Oct 25.
+    cutoff = pd.Timestamp("2026-05-01 00:00", tz="Europe/Zurich")
+    residual_hours = ((ts_2026 >= cutoff) & (ts_2026.year == 2026)).sum()
+    expected_open = 0.2 * residual_hours - 8 * 100.0
+    assert bp.open_mwh == pytest.approx(expected_open, rel=1e-6), (
+        f"open_mwh must reflect the residual May-Dec window exactly ; "
+        f"got {bp.open_mwh:.3f}, expected {expected_open:.3f}"
     )
 
-    # at_risk leg = open × Q-strip-weighted price ; central = locked + at_risk
-    # locked ≈ 12 × 8000 = 96000 EUR ; at_risk ≈ 376 × 102.45 ≈ 38500 EUR
+    # locked + at_risk decomposition unchanged
     expected_locked = 12 * 8000.0
     assert bp.locked_eur == pytest.approx(expected_locked, rel=1e-6)
     expected_central = expected_locked + bp.open_mwh * bp.forward_price_eur_mwh
     assert bp.central_eur == pytest.approx(expected_central, rel=1e-6)
+
+
+def test_compute_budget_projection_aligns_horizons_at_month_boundary(
+    forwards_mixed,
+):
+    """Pins the audit follow-up : programme and hedge horizons must be
+    aligned at the same calendar boundary.
+
+    A naive split would keep April deals (``month_end > today``) while
+    only keeping ~3 days of April programme (``timestamp > today``),
+    pricing the residual ~3-day April programme against the **full**
+    April hedge volume — under-stating open exposure by the elapsed
+    share of the current month.
+
+    Construct the worst-case fixture : April + May deals only, no
+    other months. With today = 2026-04-27, the residual must be **May
+    only** for both programme and hedge, not "tail of April + May
+    programme vs April + May hedge".
+    """
+    rows = []
+    for month, hedge_mwh in [(4, 200.0), (5, 200.0)]:
+        rows.append({
+            "actor": "TEST", "deal": f"D_{month:02d}",
+            "month": pd.Timestamp(year=2026, month=month, day=1),
+            "scope": "Intake", "volume_sum": hedge_mwh,
+            "notional_sum": -hedge_mwh * 80.0, "pnl_sum": 0.0,
+            "trade_date": pd.Timestamp("2026-03-15"),
+        })
+    deals = pd.DataFrame(rows)
+
+    ts_2026 = pd.date_range(
+        "2026-04-01 00:00", "2026-05-31 23:00", freq="h", tz="Europe/Zurich"
+    )
+    prog = pd.DataFrame({
+        "actor": "TEST", "timestamp": ts_2026,
+        "programme_mw": np.full(len(ts_2026), 1.0),  # 1 MW flat
+        "actual_mw": np.nan, "delta_mw": np.nan,
+    })
+
+    today = pd.Timestamp("2026-04-27", tz="Europe/Zurich")
+    bp = compute_budget_projection(
+        deals, prog, forwards_mixed, actor="TEST", today=today
+    )[2026]
+
+    # Cutoff = 2026-05-01. Both programme and hedge restricted to May.
+    cutoff = pd.Timestamp("2026-05-01 00:00", tz="Europe/Zurich")
+    may_hours = ((ts_2026 >= cutoff) & (ts_2026.year == 2026)).sum()
+    expected_open = 1.0 * may_hours - 200.0  # 1 MW × May hours − May hedge
+
+    assert bp.open_mwh == pytest.approx(expected_open, rel=1e-6), (
+        f"Misaligned horizons : got open_mwh={bp.open_mwh:.3f}, "
+        f"expected {expected_open:.3f} (May programme only vs May hedge only)"
+    )
 
 
 def test_compute_budget_projection_future_year_uses_full_year_volume(

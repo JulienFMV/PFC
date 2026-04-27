@@ -691,6 +691,39 @@ def _quarter_hours(year: int, quarter: int) -> int:
     return int((end - start).total_seconds() // 3600)
 
 
+def _quarter_peak_hours(year: int, quarter: int) -> int:
+    """Number of EEX Peak hours in a calendar quarter.
+
+    EEX Peak (CH/DE) = Mon-Fri 08:00–20:00, public holidays included
+    (the EEX Peak product itself does not exclude holidays — only the
+    French/Austrian "Peakload-Off" variants do). Hours-only granularity
+    matches the BASE counter so weighted averages stay comparable.
+    """
+    if quarter not in (1, 2, 3, 4):
+        raise ValueError(f"quarter must be 1..4, got {quarter}")
+    start_month = {1: 1, 2: 4, 3: 7, 4: 10}[quarter]
+    end_month = start_month + 3
+    end_year = year if end_month <= 12 else year + 1
+    end_month = end_month if end_month <= 12 else end_month - 12
+    start = pd.Timestamp(year=year, month=start_month, day=1)
+    end = pd.Timestamp(year=end_year, month=end_month, day=1)
+    # Hourly grid (naive — no DST involved in a peak-hour count, both
+    # CEST and CET map weekday hour 8..19 to peak identically).
+    idx = pd.date_range(start, end - pd.Timedelta(hours=1), freq="h")
+    is_weekday = idx.dayofweek < 5
+    is_peak_hour = (idx.hour >= 8) & (idx.hour < 20)
+    return int((is_weekday & is_peak_hour).sum())
+
+
+def _quarter_weight(year: int, quarter: int, load_type: str) -> int:
+    """Calendar or peak hours per quarter, depending on the load type."""
+    return (
+        _quarter_peak_hours(year, quarter)
+        if load_type.lower() == "peak"
+        else _quarter_hours(year, quarter)
+    )
+
+
 def _latest_tenor_price(
     forwards: pd.DataFrame,
     pattern: str,
@@ -757,14 +790,15 @@ def get_forward_year_proxy(
     if np.isfinite(cal):
         return cal
 
-    # 2. Weighted average of remaining quarterlies
+    # 2. Weighted average of remaining quarterlies. Weighting follows the
+    # load type : calendar hours for BASE, EEX-peak hours for PEAK.
     weighted_sum = 0.0
     total_hours = 0
     for q in (1, 2, 3, 4):
         q_price = _latest_tenor_price(df, f"Q0{q}_{delivery_year}")
         if not np.isfinite(q_price):
             continue
-        h = _quarter_hours(delivery_year, q)
+        h = _quarter_weight(delivery_year, q, load_type)
         weighted_sum += q_price * h
         total_hours += h
     if total_hours > 0:
@@ -787,8 +821,15 @@ def build_qstrip_year_series(
     Marktüberblick has no Y01_{current_year} time series to plot. This
     helper rebuilds a daily synthetic Cal-Y settlement by taking the
     weighted average of every Q0x_{year} contract that has a settlement
-    on that date, weighted by calendar hours per quarter (Q1 + Q2 ≈ 4344h
-    in a non-leap year, Q3 + Q4 ≈ 4416h, leap year +24h on Q1).
+    on that date. The weights follow the load type :
+
+      - ``BASE`` : calendar hours per quarter (Q1 + Q2 ≈ 4344 h in a
+        non-leap year, Q3 + Q4 ≈ 4416 h ; leap-year adds 24 h to Q1).
+      - ``PEAK`` : EEX-peak hours per quarter (Mon-Fri 08:00-20:00).
+        Cannot reuse calendar hours for PEAK : a Cal-Peak strip values
+        only the trading-day daytime hours, so the implied Q-mix is
+        materially different (e.g. a high winter peak Q1 weighs less
+        in the PEAK strip than its calendar size suggests).
 
     Quarters that haven't traded yet on a given date are excluded for
     that date — so early in the year the synthetic series is mostly the
@@ -834,7 +875,9 @@ def build_qstrip_year_series(
 
     df["_q"] = df["product"].map(_quarter_of)
     df = df[df["_q"].between(1, 4)]
-    df["_w"] = df["_q"].map(lambda q: _quarter_hours(delivery_year, int(q)))
+    df["_w"] = df["_q"].map(
+        lambda q: _quarter_weight(delivery_year, int(q), load_type)
+    )
 
     # Weighted average per settlement date
     df["_wp"] = df["price"] * df["_w"]
@@ -913,26 +956,45 @@ def _residual_year_split(
     today: pd.Timestamp,
     actor: str | None,
 ) -> tuple[float, float]:
-    """Programme + hedged volumes restricted to hours strictly after ``today``.
+    """Programme + hedged volumes restricted to the next-month boundary.
 
     Used by :func:`compute_budget_projection` for the current delivery
     year, where the Cal-Y contract has retired and only the residual
-    Q-strip can price the open exposure. Pricing the full-year ``open_mwh``
-    at the residual proxy mixes year-volume with residual-period-price ;
-    this helper isolates the residual-period volume so the at-risk EUR
-    figure stays internally consistent.
+    Q-strip can price the open exposure. Pricing the full-year
+    ``open_mwh`` at the residual proxy mixes year-volume with residual-
+    period-price ; this helper isolates the residual-period volume so
+    the at-risk EUR figure stays internally consistent.
 
-    Programme is filtered on ``timestamp > today`` (programme is hourly,
-    so the filter is exact). Deals are filtered on the *delivery month* :
-    a deal entry whose ``month`` lies in a calendar month already fully
-    elapsed is dropped ; an entry whose month is the current calendar
-    month is **kept** (a deal delivering for May 2026 is still mostly
-    in the future on April 27, so we treat the entire May volume as
-    residual to stay conservative on the at-risk side).
+    The cut-off is **the first day of the month after** ``today`` :
+
+      - Programme rows : kept iff ``timestamp >= cutoff``
+      - Deal rows      : kept iff ``month >= cutoff`` (the deal frame
+        already aggregates each deal × delivery-month into one row)
+
+    Anchoring both sides at the same calendar boundary avoids the
+    asymmetric trap an earlier version had : programme was filtered
+    hour-by-hour (only the tail of the current month survived) while
+    deals were kept whenever ``month_end > today`` (the *whole*
+    current month was counted, including the days already elapsed).
+    On April 27 that meant pricing the residual ~3 days of April
+    programme against the full April hedge volume — under-stating
+    open exposure by the elapsed share of the current month.
+
+    The current-month residual exposure (the few remaining days of
+    April in the example) is conservatively dropped here ; it will
+    realize as YTD imbalance once the month closes, and is anyway
+    too short-dated for a Q-strip valuation to be meaningful.
 
     Returns ``(residual_programme_mwh, residual_hedged_mwh)``. Either
     component is 0.0 when no rows match.
     """
+    # First day of the month strictly after ``today``. Same tz as today
+    # so the comparison against tz-aware programme/deal columns works.
+    if today.month == 12:
+        cutoff = pd.Timestamp(year=today.year + 1, month=1, day=1, tz=today.tz)
+    else:
+        cutoff = pd.Timestamp(year=today.year, month=today.month + 1, day=1, tz=today.tz)
+
     prog_f = _filter_actor(programme, actor, "actor")
     res_prog = 0.0
     if (
@@ -942,9 +1004,8 @@ def _residual_year_split(
         and "programme_mw" in prog_f.columns
     ):
         ts = prog_f["timestamp"]
-        # Match the same year window so extrapolation logic isn't shadowed
         in_year = ts.dt.year == year
-        in_future = ts > today
+        in_future = ts >= cutoff
         slice_ = prog_f.loc[in_year & in_future]
         if not slice_.empty:
             res_prog = float(
@@ -957,17 +1018,13 @@ def _residual_year_split(
         d = deals_f.copy()
         d["_month"] = pd.to_datetime(d["month"], errors="coerce")
         d = d.dropna(subset=["_month"])
-        # Drop deal-months whose end-of-month is on or before today.
-        # ``MonthEnd(0)`` snaps to the last day of the same month, so a deal
-        # delivering in April 2026 is dropped on April 27 (April already
-        # 90 % elapsed) but kept for any month strictly after April.
         if not d.empty:
-            month_end = d["_month"] + pd.offsets.MonthEnd(0)
-            today_naive = today.tz_localize(None) if today.tzinfo else today
-            if d["_month"].dt.tz is not None:
-                month_end = month_end.dt.tz_localize(None)
-            in_year = d["_month"].dt.year == year
-            in_future = month_end > today_naive
+            month_naive = d["_month"]
+            cutoff_naive = cutoff.tz_localize(None) if cutoff.tzinfo else cutoff
+            if month_naive.dt.tz is not None:
+                month_naive = month_naive.dt.tz_localize(None)
+            in_year = month_naive.dt.year == year
+            in_future = month_naive >= cutoff_naive
             slice_ = d.loc[in_year & in_future]
             if not slice_.empty:
                 res_hedged = float(_scope_signed_volume(slice_).sum())
