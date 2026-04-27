@@ -163,34 +163,60 @@ if source == "Profil hochladen":
             st.error(f"Fehler beim Parsen : {exc}")
             st.stop()
     elif use_example:
-        pfc_start = pfc.index.min()
-        idx = pd.date_range(start=pfc_start, periods=8760, freq="h", tz="Europe/Zurich")
-        base_mw = 2.0
-        hour_shape = np.array([
-            0.65, 0.60, 0.58, 0.58, 0.60, 0.75, 0.95, 1.15, 1.25, 1.30,
-            1.30, 1.28, 1.25, 1.22, 1.22, 1.22, 1.25, 1.20, 1.10, 1.00,
-            0.90, 0.80, 0.72, 0.68,
-        ])
-        values = np.array([
-            base_mw * hour_shape[t.hour] * (0.75 if t.dayofweek >= 5 else 1.0)
-            for t in idx
-        ])
-        seasonal = 1.0 + 0.18 * np.cos(2 * np.pi * (idx.dayofyear - 15) / 365)
-        values = values * seasonal
-        load_hourly = pd.Series(values, index=idx, name="load_mwh")
-        meta = {
-            "rows": len(load_hourly),
-            "start": load_hourly.index.min(),
-            "end": load_hourly.index.max(),
-            "annual_mwh": float(load_hourly.sum()),
-            "unit": "MWh (synthetisch)",
-            "inferred_freq": "h",
-        }
-        position_label = "Beispielprofil 20 GWh/a"
-        st.info(
-            "📊 Beispielprofil aktiv (20 GWh / Jahr · Tagesgang Industrie · "
-            "Wochenende −25 % · Saisonalität ±18 %)."
-        )
+        # Prefer a real shipped 2027 profile (data/samples/sample_load_2027_industrial.csv)
+        # over the legacy synthetic generator that was anchored to the PFC
+        # start date and produced a 2025 profile in the user's setup —
+        # pricing a *past* year makes no commercial sense for a procurement
+        # demo. Fall back to the synthetic generator if the file is absent.
+        sample_path = Path(__file__).resolve().parent.parent.parent / "data" / "samples" / "sample_load_2027_industrial.csv"
+        loaded_from_file = False
+        if sample_path.exists():
+            try:
+                with sample_path.open("rb") as fh:
+                    load_hourly, meta = parse_load_file(
+                        type("F", (), {"name": sample_path.name, "read": fh.read})()
+                    )
+                position_label = "Beispielprofil 2027 — Industrie 22 GWh/a"
+                st.info(
+                    "📊 Beispielprofil **2027 Industrie** geladen aus "
+                    f"`{sample_path.name}` · "
+                    f"{meta.get('annual_mwh', 0)/1000:.1f} GWh/Jahr · "
+                    "Tagesgang Werktag, Wochenend-Reduktion 35 %, "
+                    "Sommer-Stillstand August, Winter +20 %."
+                )
+                loaded_from_file = True
+            except Exception as exc:
+                st.warning(f"Konnte `{sample_path.name}` nicht laden : {exc}")
+
+        if not loaded_from_file:
+            pfc_start = pfc.index.min()
+            idx = pd.date_range(start=pfc_start, periods=8760, freq="h", tz="Europe/Zurich")
+            base_mw = 2.0
+            hour_shape = np.array([
+                0.65, 0.60, 0.58, 0.58, 0.60, 0.75, 0.95, 1.15, 1.25, 1.30,
+                1.30, 1.28, 1.25, 1.22, 1.22, 1.22, 1.25, 1.20, 1.10, 1.00,
+                0.90, 0.80, 0.72, 0.68,
+            ])
+            values = np.array([
+                base_mw * hour_shape[t.hour] * (0.75 if t.dayofweek >= 5 else 1.0)
+                for t in idx
+            ])
+            seasonal = 1.0 + 0.18 * np.cos(2 * np.pi * (idx.dayofyear - 15) / 365)
+            values = values * seasonal
+            load_hourly = pd.Series(values, index=idx, name="load_mwh")
+            meta = {
+                "rows": len(load_hourly),
+                "start": load_hourly.index.min(),
+                "end": load_hourly.index.max(),
+                "annual_mwh": float(load_hourly.sum()),
+                "unit": "MWh (synthetisch)",
+                "inferred_freq": "h",
+            }
+            position_label = "Beispielprofil 20 GWh/a"
+            st.info(
+                "📊 Beispielprofil aktiv (20 GWh / Jahr · Tagesgang Industrie · "
+                "Wochenende −25 % · Saisonalität ±18 %)."
+            )
     else:
         st.info("Bitte laden Sie ein Lastprofil hoch oder nutzen Sie das Beispielprofil.")
         st.stop()
