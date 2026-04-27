@@ -8,6 +8,8 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
+from utils import _localize_zurich_safe
+
 PEAK_HOURS = set(range(8, 20))  # CH Peak Definition: 08:00 – 20:00 Mo–Fr
 
 
@@ -84,12 +86,8 @@ def parse_load_file(file_obj) -> tuple[pd.Series, dict]:
         raise ValueError(f"Zu wenige gültige Datenpunkte: {int(mask.sum())}.")
 
     s = pd.Series(load[mask].values, index=ts[mask], name="load_mwh").sort_index()
-    # Tz-Handhabung
-    if s.index.tz is None:
-        s.index = s.index.tz_localize("Europe/Zurich", nonexistent="shift_forward", ambiguous="NaT")
-        s = s[s.index.notna()]
-    else:
-        s.index = s.index.tz_convert("Europe/Zurich")
+    # Tz-Handhabung — DST-safe (autumn DST hour preserved)
+    s.index = _localize_zurich_safe(pd.DatetimeIndex(s.index))
 
     # Einheit raten
     median_val = float(np.nanmedian(s.values))

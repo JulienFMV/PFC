@@ -42,6 +42,58 @@ FMV_GREY = "#6B7A99"
 
 
 # ---------------------------------------------------------------------------
+# DST-safe localization
+# ---------------------------------------------------------------------------
+
+def _localize_zurich_safe(ts):
+    """Localize naive Zurich timestamps without dropping the autumn DST hour.
+
+    ``tz_localize(..., ambiguous="NaT")`` silently sets the duplicated
+    autumn DST quarter-hours to NaT, removing them from the curve.
+    For the PFC 15-min curve this means losing 4 quarter-hours every
+    autumn, biasing any consumer that integrates over a DST day.
+
+    This helper detects duplicate naive timestamps (= the physically
+    repeated DST hour written twice by the source) and resolves them
+    explicitly : 1st occurrence ⇒ CEST (pre-transition), 2nd ⇒ CET
+    (post-transition). Non-duplicated hours default to CEST — pandas
+    only consults the array for ambiguous moments anyway.
+
+    Accepts a :class:`pandas.Series` or :class:`pandas.DatetimeIndex`
+    and returns the same shape, tz-aware ``Europe/Zurich``.
+    """
+    is_index = isinstance(ts, pd.DatetimeIndex)
+    if is_index:
+        if ts.tz is not None:
+            return ts.tz_convert("Europe/Zurich")
+        s = pd.Series(ts)
+    else:
+        if getattr(ts.dt, "tz", None) is not None:
+            return ts.dt.tz_convert("Europe/Zurich")
+        s = ts
+
+    counts = s.value_counts()
+    dup_set = set(counts[counts >= 2].index)
+    amb_arr = np.ones(len(s), dtype=bool)
+    if dup_set:
+        seen: dict[pd.Timestamp, int] = {}
+        for i, t in enumerate(s):
+            if pd.isna(t):
+                continue
+            if t in dup_set:
+                c = seen.get(t, 0)
+                seen[t] = c + 1
+                amb_arr[i] = (c == 0)
+
+    localized = s.dt.tz_localize(
+        "Europe/Zurich",
+        nonexistent="shift_forward",
+        ambiguous=amb_arr,
+    )
+    return pd.DatetimeIndex(localized) if is_index else localized
+
+
+# ---------------------------------------------------------------------------
 # Formatierung (Schweizer Konvention)
 # ---------------------------------------------------------------------------
 
@@ -267,13 +319,7 @@ def _read_hfc_xlsx(path: Path) -> pd.DataFrame:
     if out.empty:
         return pd.DataFrame()
     out.index = pd.DatetimeIndex(out.index)
-    if out.index.tz is None:
-        out.index = out.index.tz_localize(
-            "Europe/Zurich", nonexistent="shift_forward", ambiguous="NaT"
-        )
-        out = out[out.index.notna()]
-    else:
-        out.index = out.index.tz_convert("Europe/Zurich")
+    out.index = _localize_zurich_safe(out.index)
     out["source_file"] = path.name
     return out
 
@@ -297,12 +343,7 @@ def load_pfc() -> pd.DataFrame:
             )
         else:
             if not df.empty:
-                if df.index.tz is None:
-                    df.index = df.index.tz_localize(
-                        "Europe/Zurich", nonexistent="shift_forward", ambiguous="NaT"
-                    )
-                else:
-                    df.index = df.index.tz_convert("Europe/Zurich")
+                df.index = _localize_zurich_safe(pd.DatetimeIndex(df.index))
                 return df
 
     # 2) Legacy : write-through H:\
@@ -425,7 +466,7 @@ def load_deviwa_programme_cached() -> pd.DataFrame:
         return pd.DataFrame()
     df = pd.read_parquet(p)
     if "timestamp" in df.columns and df["timestamp"].dt.tz is None:
-        df["timestamp"] = df["timestamp"].dt.tz_localize("Europe/Zurich", ambiguous="NaT")
+        df["timestamp"] = _localize_zurich_safe(df["timestamp"])
     return df
 
 

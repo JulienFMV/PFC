@@ -552,6 +552,67 @@ def _detect_date_column(df: pd.DataFrame) -> str | None:
     return None
 
 
+def _resolve_dst_ambiguous(s: pd.Series) -> np.ndarray:
+    """Return the ``ambiguous=`` array for a naive Zurich-local timestamp series.
+
+    Strategy : detect duplicate naive timestamps (= the autumn DST hour
+    written twice). For each duplicate, the **first** occurrence is the
+    pre-transition (CEST, ``True``) reading, the **second** is the post-
+    transition (CET, ``False``) reading. For non-duplicated timestamps the
+    default is CEST (``True``) — pandas only reads the array on ambiguous
+    moments anyway, so the value at non-DST hours is irrelevant.
+
+    Using this array with ``tz_localize(..., ambiguous=arr)`` preserves
+    the 25 physical hours of the autumn DST day instead of silently
+    dropping the duplicates with ``ambiguous="NaT"``.
+    """
+    counts = s.value_counts()
+    dup_set = set(counts[counts >= 2].index)
+    amb_arr = np.ones(len(s), dtype=bool)
+    if not dup_set:
+        return amb_arr
+    seen: dict[pd.Timestamp, int] = {}
+    for i, t in enumerate(s):
+        if pd.isna(t):
+            continue
+        if t in dup_set:
+            c = seen.get(t, 0)
+            seen[t] = c + 1
+            amb_arr[i] = (c == 0)
+    return amb_arr
+
+
+def _localize_zurich_no_shift(ts):
+    """Localize naive Zurich timestamps without the end-of-interval shift.
+
+    Same DST-safe logic as :func:`_localize_zurich` (resolves the autumn
+    DST duplicate via per-element ``ambiguous`` array, no ``NaT`` data
+    loss) but does **not** subtract one hour. Use this for sources that
+    already publish ``timestamp = start of interval`` — typically PFC /
+    HFC OMPEX 15-min curves and EEX settlements.
+
+    Accepts a :class:`pandas.Series` or :class:`pandas.DatetimeIndex` and
+    returns the same shape, tz-aware ``Europe/Zurich``.
+    """
+    is_index = isinstance(ts, pd.DatetimeIndex)
+    if is_index:
+        if ts.tz is not None:
+            return ts.tz_convert("Europe/Zurich")
+        s = pd.Series(ts)
+    else:
+        if getattr(ts.dt, "tz", None) is not None:
+            return ts.dt.tz_convert("Europe/Zurich")
+        s = ts
+
+    amb_arr = _resolve_dst_ambiguous(s)
+    localized = s.dt.tz_localize(
+        "Europe/Zurich",
+        nonexistent="shift_forward",
+        ambiguous=amb_arr,
+    )
+    return pd.DatetimeIndex(localized) if is_index else localized
+
+
 def _localize_zurich(ts: pd.Series) -> pd.Series:
     """Localize naive Deviwa timestamps to Europe/Zurich without DST data loss.
 
@@ -576,25 +637,7 @@ def _localize_zurich(ts: pd.Series) -> pd.Series:
 
     # Conversion fin-d'intervalle → début-d'intervalle
     ts_start = ts - pd.Timedelta(hours=1)
-
-    # Construire l'array ``ambiguous`` : True pour la 1ère occurrence d'un
-    # timestamp dupliqué (= CEST), False pour la 2nde (= CET). Pour les
-    # heures ambiguës non dupliquées (rare), on choisit CEST par défaut
-    # (= interprétation "avant la transition").
-    counts = ts_start.value_counts()
-    dup_set = set(counts[counts >= 2].index)
-
-    amb_arr = np.ones(len(ts_start), dtype=bool)  # défaut CEST
-    if dup_set:
-        seen: dict[pd.Timestamp, int] = {}
-        for i, t in enumerate(ts_start):
-            if pd.isna(t):
-                continue
-            if t in dup_set:
-                c = seen.get(t, 0)
-                seen[t] = c + 1
-                amb_arr[i] = (c == 0)  # 1ère = CEST (True), 2nde+ = CET (False)
-
+    amb_arr = _resolve_dst_ambiguous(ts_start)
     return ts_start.dt.tz_localize(
         "Europe/Zurich",
         nonexistent="shift_forward",
@@ -771,13 +814,7 @@ def _read_pfc_ompex_xlsx(path: Path) -> pd.DataFrame:
     if out.empty:
         return out
     out.index = pd.DatetimeIndex(out.index)
-    if out.index.tz is None:
-        out.index = out.index.tz_localize(
-            "Europe/Zurich", nonexistent="shift_forward", ambiguous="NaT"
-        )
-        out = out[out.index.notna()]
-    else:
-        out.index = out.index.tz_convert("Europe/Zurich")
+    out.index = _localize_zurich_no_shift(out.index)
     return out
 
 
