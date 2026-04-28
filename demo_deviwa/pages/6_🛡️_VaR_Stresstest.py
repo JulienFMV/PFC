@@ -129,6 +129,38 @@ if not np.isfinite(pool.pool_var_eur) or pool.pool_var_eur == 0:
     )
     st.stop()
 
+active_actor_names = [a.actor for a in pool.actors if abs(a.open_mwh) > 1.0]
+active_count = len(active_actor_names)
+actor_list = ", ".join(active_actor_names) if active_actor_names else "—"
+if active_count >= 3:
+    coverage_color = FMV_GREEN
+    coverage_msg = (
+        f"Cal-{delivery_year}: **{active_count} von 4 Akteuren** mit offener "
+        f"Position ({actor_list}) — belastbares Pool-Bild."
+    )
+elif active_count == 2:
+    coverage_color = FMV_BLUE
+    coverage_msg = (
+        f"Cal-{delivery_year}: **2 von 4 Akteuren** mit offener Position "
+        f"({actor_list}) — Diversifikation sichtbar, aber begrenzt."
+    )
+else:
+    coverage_color = FMV_RED
+    coverage_msg = (
+        f"Cal-{delivery_year}: **nur {active_count} Akteur** mit offener Position "
+        f"({actor_list}) — kein echter Pool-Effekt. Empfehlung: Laufzeit / "
+        f"Teilnahme der Akteure ausweiten."
+    )
+
+st.markdown(
+    f"""
+<div style='background:#FFFFFF; border:1px solid #E4EAF3; border-left:6px solid {coverage_color}; border-radius:12px; padding:0.8rem 1rem; margin:0.2rem 0 1.0rem 0;'>
+{coverage_msg}
+</div>
+    """,
+    unsafe_allow_html=True,
+)
+
 
 # ---------------------------------------------------------------------------
 # Headline narrative
