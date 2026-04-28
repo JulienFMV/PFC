@@ -345,9 +345,9 @@ with tab_profil:
     )
     c3.markdown(
         kpi_card(
-            "Profilaufschlag",
+            "Profilform-Aufschlag",
             fmt_eur_mwh(result["profile_vs_baseload_eur_mwh"]),
-            delta="ggü. Baseload",
+            delta="PFC-Shape ggü. PFC-Ø",
             delta_color=FMV_RED if result["profile_vs_baseload_eur_mwh"] > 0 else FMV_GREEN,
         ),
         unsafe_allow_html=True,
@@ -556,8 +556,8 @@ with tab_profil:
     st.caption(
         "Was wäre der Preis, wenn Sie statt einer Profil-Bepreisung einfach eine "
         "**flache Baseload-Tranche** zum aktuellen Cal-Y-Forward kaufen würden ? "
-        "Die Differenz ist Ihre **Profile-Premium** — der Aufpreis, den Sie zahlen "
-        "um Ihre stündliche Last 1:1 zu decken."
+        "Die Differenz ist die **Cal-Forward-Abweichung** : sie mischt Profilform "
+        "und die Differenz zwischen PFC-Mittelwert und handelbarem Cal-Forward."
     )
 
     # Identify the principal year of the load
@@ -594,7 +594,7 @@ with tab_profil:
         )
         cb3.markdown(
             kpi_card(
-                "Profile-Premium",
+                "Cal-Forward-Abweichung",
                 f"{sign}{fmt_chf(delta_eur, 0)} EUR",
                 delta=f"{sign}{premium_pct:.2f} %",
                 delta_color=delta_color,
@@ -993,11 +993,11 @@ with tab_risiko:
     st.caption(
         "Methodik : jede Stunde der Last wird mit dem entsprechenden PFC-Stundenpreis "
         "multipliziert. Peak = 08:00–20:00 Mo–Fr (Schweizer Konvention). "
-        "**Profilaufschlag** (KPI-Karte) = profil-gewichteter PFC-Preis − einfacher PFC-"
-        "Stundendurchschnitt (reine Profilform). **Profile-Premium** (Cal-Y-Vergleich) "
-        "= Profil-Pricing − flacher Cal-Y-Forward-Strip ; enthält damit zusätzlich die "
-        "Differenz zwischen PFC-Mittel und Forward-Settlement und ist daher meist grösser "
-        "als der reine Profilaufschlag. "
+        "**Profilform-Aufschlag** (KPI-Karte) = profil-gewichteter PFC-Preis minus "
+        "einfacher PFC-Stundendurchschnitt. **Cal-Forward-Abweichung** "
+        "(Cal-Y-Vergleich) = Profil-Pricing minus flacher Cal-Y-Forward-Strip ; "
+        "sie enthält zusätzlich die Differenz zwischen PFC-Mittel und Forward-"
+        "Settlement. "
         "Cal-Y Forward = Y01_{Y}_BASE Settlement vom letzten Handelstag (oder Q-Strip-"
         "Average für das laufende Lieferjahr)."
     )

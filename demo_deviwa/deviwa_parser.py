@@ -23,6 +23,7 @@ ACTOR_SHEET_MAPPING = {
 }
 
 HPFC_SHEET_KEYS = ["hpfc"]
+PROGRAMME_SHEET_KEYS = ["programme", "program", "pro_real", "pro real", "real"]
 
 
 CANONICAL_COLUMNS = {
@@ -173,6 +174,12 @@ def load_deviwa_file(path: str | Path) -> dict[str, pd.DataFrame]:
             if any(k in sn for k in HPFC_SHEET_KEYS):
                 df_h = pd.read_excel(xls, sheet_name=sheet)
                 out["_HPFC"] = df_h
+                continue
+            # Keep ProgrammeReal / PRO_REAL sheets out of the deals loader.
+            # Actor names such as "RELL" also appear in programme sheets; if
+            # we let the broad actor matcher below catch them, the dashboard
+            # receives tens of thousands of zero-volume pseudo-deal rows.
+            if any(k in sn for k in PROGRAMME_SHEET_KEYS) and "deal" not in sn:
                 continue
             actor = _assign_actor(sn)
             if actor is None:

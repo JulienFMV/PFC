@@ -395,63 +395,35 @@ fig_cal.update_layout(
 st.plotly_chart(fig_cal, use_container_width=True)
 
 # ---------------------------------------------------------------------------
-# Heatmap Stunde × Wochentag (Bias) + Verteilung
+# Error distribution. The former hour × weekday heatmap was removed because
+# hour × month below gives the stronger operational signal for a 15 min demo.
 # ---------------------------------------------------------------------------
-col_hw, col_dist = st.columns([1.3, 1])
+df["abs_err"] = (df["actual_mw"] - df["programme_mw"]).abs()
+df["err"] = df["actual_mw"] - df["programme_mw"]
 
-with col_hw:
-    st.subheader("Bias-Heatmap · Stunde × Wochentag")
-    df["abs_err"] = (df["actual_mw"] - df["programme_mw"]).abs()
-    df["err"] = df["actual_mw"] - df["programme_mw"]
-    hw_pivot = df.pivot_table(index="dow", columns="hour", values="err", aggfunc="mean").reindex(range(7))
-    hw_count = df.pivot_table(index="dow", columns="hour", values="err", aggfunc="count").reindex(range(7))
-
-    abs_max = float(hw_pivot.abs().max().max() or 1.0)
-    fig_hw = go.Figure(go.Heatmap(
-        z=hw_pivot.values,
-        x=[f"{h:02d}h" for h in hw_pivot.columns],
-        y=[WEEKDAY_LABELS[i] for i in hw_pivot.index],
-        colorscale=[
-            [0.0, "#0F52CC"], [0.5, "#FFFFFF"], [1.0, "#C0392B"],
-        ],
-        zmid=0,
-        zmin=-abs_max, zmax=abs_max,
-        hovertemplate="%{y} %{x}<br>Bias: %{z:.3f} MW<extra></extra>",
-        colorbar=dict(title="Bias<br>(MW)", thickness=15),
-    ))
-    fig_hw.update_layout(
-        height=340, margin=dict(l=20, r=20, t=10, b=20),
-        plot_bgcolor="white", paper_bgcolor="white",
-        xaxis=dict(title="Stunde", tickfont=dict(size=9)),
-        yaxis=dict(autorange="reversed"),
-    )
-    st.plotly_chart(fig_hw, use_container_width=True)
-    st.caption("Blau = systematisch zu viel geplant · Rot = systematisch zu wenig geplant.")
-
-with col_dist:
-    st.subheader("Abweichungsverteilung")
-    err_arr = (df["actual_mw"] - df["programme_mw"]).values
-    fig_h = go.Figure()
-    fig_h.add_trace(go.Histogram(
-        x=err_arr, nbinsx=50,
-        marker_color=FMV_BLUE, opacity=0.8,
-        name="Verteilung",
-    ))
-    fig_h.add_vline(x=0, line_width=2, line_color=FMV_NAVY)
-    fig_h.add_vline(
-        x=float(np.mean(err_arr)),
-        line_width=2, line_dash="dash", line_color=FMV_RED,
-        annotation_text=f"Bias {np.mean(err_arr):+.3f} MW",
-        annotation_position="top right",
-    )
-    fig_h.update_layout(
-        height=340, margin=dict(l=20, r=20, t=10, b=20),
-        plot_bgcolor="white", paper_bgcolor="white",
-        xaxis=dict(title="Real − Programm (MW)", gridcolor="#EEF1F6"),
-        yaxis=dict(title="Häufigkeit", gridcolor="#EEF1F6"),
-        showlegend=False,
-    )
-    st.plotly_chart(fig_h, use_container_width=True)
+st.subheader("Abweichungsverteilung")
+err_arr = df["err"].values
+fig_h = go.Figure()
+fig_h.add_trace(go.Histogram(
+    x=err_arr, nbinsx=55,
+    marker_color=FMV_BLUE, opacity=0.82,
+    name="Verteilung",
+))
+fig_h.add_vline(x=0, line_width=2, line_color=FMV_NAVY)
+fig_h.add_vline(
+    x=float(np.mean(err_arr)),
+    line_width=2, line_dash="dash", line_color=FMV_RED,
+    annotation_text=f"Bias {np.mean(err_arr):+.3f} MW",
+    annotation_position="top right",
+)
+fig_h.update_layout(
+    height=300, margin=dict(l=20, r=20, t=10, b=20),
+    plot_bgcolor="white", paper_bgcolor="white",
+    xaxis=dict(title="Real - Programm (MW)", gridcolor="#EEF1F6"),
+    yaxis=dict(title="Häufigkeit", gridcolor="#EEF1F6"),
+    showlegend=False,
+)
+st.plotly_chart(fig_h, use_container_width=True)
 
 # ---------------------------------------------------------------------------
 # Heatmap Stunde × Monat (Bias) — surfaces solar / seasonal patterns
