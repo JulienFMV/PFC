@@ -763,9 +763,17 @@ with tab_strategie:
         total_volume = blotter_df["Volumen (MWh)"].sum()
         total_notional = blotter_df["Notional (EUR)"].sum()
         weighted_px = total_notional / max(total_volume, 1e-9)
+        # ``Lieferjahr`` est int dans ``blotter_df`` ; pour pouvoir y ajouter
+        # une ligne TOTAL avec une string décorative, on cast en str AVANT
+        # le concat. Sinon Streamlit affiche le tableau mais log un
+        # ``pyarrow.lib.ArrowInvalid: Could not convert '─ TOTAL' with type
+        # str: tried to convert to int64`` à chaque rendu — bruit dans les
+        # logs et risque de crash sur certaines combinaisons pyarrow/Streamlit.
+        blotter_df = blotter_df.copy()
+        blotter_df["Lieferjahr"] = blotter_df["Lieferjahr"].astype(str)
         total_row = pd.DataFrame([{
             "Lieferjahr": "─ TOTAL",
-            "Instrument": f"{len(blotter_df)} Tickets · {len(set(blotter_df['Lieferjahr']))} Jahre",
+            "Instrument": f"{len(blotter_df)} Tickets · {blotter_df['Lieferjahr'].nunique()} Jahre",
             "Volumen (MWh)": total_volume,
             "Ref.-Preis (EUR/MWh)": weighted_px,
             "Notional (EUR)": total_notional,

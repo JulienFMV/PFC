@@ -7,7 +7,7 @@ POC client pour présentation Deviwa (mardi). Tourne en local uniquement.
 ```bash
 # depuis la racine du repo
 pip install -r dashboard/requirements.txt  # si pas déjà fait
-streamlit run demo_deviwa/app.py
+streamlit run demo_deviwa/Cockpit.py
 ```
 
 Ouvre http://localhost:8501.

@@ -145,17 +145,12 @@ selected_actor: str | None = None if choice == "Gesamter Pool" else choice
 
 
 # ---------------------------------------------------------------------------
-# Weather strip (Haut-Valais context — 3 sites + alert banner)
-# ---------------------------------------------------------------------------
-# Lightweight at the top of the cockpit so the GRD audience sees that the
-# dashboard knows the local terrain ("FMV connaît les Stauseen du Wallis").
-# Silently skipped if Open-Meteo is unreachable.
-render_weather_strip()
-
-
-# ---------------------------------------------------------------------------
 # Personal narrative banner
 # ---------------------------------------------------------------------------
+# Weather strip moved to the footer so the headline KPI (Σ-VaR / hedge ratio
+# / diversification benefit) takes the prime visual slot. Local-terrain
+# weather is "nice to have" context, not the first thing a GRD audience
+# should see when the dashboard opens.
 
 today = pd.Timestamp.now(tz="Europe/Zurich")
 display_years = list(range(today.year, today.year + 4))
@@ -174,54 +169,78 @@ headline_year = today.year + 1
 headline_metrics = hedge_metrics.get(headline_year)
 
 actor_label = selected_actor if selected_actor else "Pool Deviwa"
-banner_lines: list[str] = []
-banner_lines.append(
-    f"<span style='font-weight:700; color:{FMV_NAVY}; font-size:1.15rem;'>Guten Tag {actor_label}</span> "
-    f"<span style='color:{FMV_GREY};'>· Stand {today.strftime('%d.%m.%Y %H:%M')} · Sicht: Kunde</span>"
-)
-if headline_metrics is not None and np.isfinite(headline_metrics.hedge_ratio_pct):
-    ratio = headline_metrics.hedge_ratio_pct
-    color = "#1E8A4C" if headline_metrics.target_status == "in_corridor" else (
-        "#F5B700" if headline_metrics.target_status in ("below", "above") else FMV_GREY
-    )
-    banner_lines.append(
-        f"<span style='color:{FMV_GREY};'>Cal-{headline_year} : Sie sind zu </span>"
-        f"<strong style='color:{color}; font-size:1.05rem;'>{ratio:.0f} %</strong>"
-        f"<span style='color:{FMV_GREY};'> abgesichert "
-        f"(Industrie-Korridor {headline_metrics.target_low_pct}-{headline_metrics.target_high_pct} %)</span>"
-    )
-elif headline_metrics is not None and headline_metrics.programme_mwh == 0:
-    banner_lines.append(
-        f"<span style='color:{FMV_GREY};'>Cal-{headline_year} : Programm noch nicht erfasst.</span>"
-    )
 
-# Pool-level diversification benefit — only show in pool view to avoid the
-# leak where the same EUR figure reappears under each actor card. When an
-# actor is selected, the line is suppressed (the dedicated pool page shows it).
+# Headline number : when the pool is selected, the diversification benefit
+# is THE selling number — the entire commercial argument of the platform
+# in a single percentage. Keeping it in a dense banner buries the lede :
+# now we lift it into a hero card on the right of the greeting block, so
+# the eye lands on it in the first second of the demo (Bloomberg / Volue
+# convention). When an actor is selected the slot is reused for that
+# actor's hedge ratio, which is the equivalent personal headline number.
+pool_div = None
 if selected_actor is None:
     pool_div = compute_pool_diversification(
         headline_year, deals, programme, forwards, today=today,
         extrapolate_missing_programme=extrapolate_programme,
     )
-    if (
-        np.isfinite(pool_div.diversification_benefit_eur)
-        and pool_div.diversification_benefit_eur > 0
-    ):
-        banner_lines.append(
-            f"<span style='color:{FMV_GREY};'>Pool-Diversifikations-Vorteil "
-            f"{headline_year} : </span>"
-            f"<strong style='color:{FMV_BLUE}; font-size:1.05rem;'>"
-            f"{fmt_chf(pool_div.diversification_benefit_eur, 0)} EUR "
-            f"({pool_div.diversification_pct:.0f} %)</strong>"
-        )
+
+hero_html = ""
+if (
+    selected_actor is None
+    and pool_div is not None
+    and np.isfinite(pool_div.diversification_benefit_eur)
+    and pool_div.diversification_benefit_eur > 0
+):
+    hero_html = (
+        f"<div style='background:linear-gradient(135deg,{FMV_BLUE},{FMV_NAVY}); "
+        f"color:white; border-radius:12px; padding:0.9rem 1.2rem; "
+        f"min-width:240px; text-align:right;'>"
+        f"<div style='font-size:0.72rem; letter-spacing:0.10em; "
+        f"text-transform:uppercase; opacity:0.85;'>"
+        f"Pool-Diversifikations-Vorteil {headline_year}</div>"
+        f"<div style='font-size:2.0rem; font-weight:700; line-height:1.1;'>"
+        f"{pool_div.diversification_pct:.0f} %</div>"
+        f"<div style='font-size:0.85rem; opacity:0.92;'>"
+        f"≈ {fmt_chf(pool_div.diversification_benefit_eur, 0)} EUR weniger Risiko "
+        f"als allein</div></div>"
+    )
+elif headline_metrics is not None and np.isfinite(headline_metrics.hedge_ratio_pct):
+    ratio = headline_metrics.hedge_ratio_pct
+    in_corridor = headline_metrics.target_status == "in_corridor"
+    bg = (
+        f"linear-gradient(135deg,{FMV_GREEN},#0F6B3B)" if in_corridor
+        else f"linear-gradient(135deg,{FMV_ACCENT},#C28A00)"
+    )
+    hero_html = (
+        f"<div style='background:{bg}; color:white; border-radius:12px; "
+        f"padding:0.9rem 1.2rem; min-width:240px; text-align:right;'>"
+        f"<div style='font-size:0.72rem; letter-spacing:0.10em; "
+        f"text-transform:uppercase; opacity:0.85;'>"
+        f"Hedge-Quote Cal-{headline_year}</div>"
+        f"<div style='font-size:2.0rem; font-weight:700; line-height:1.1;'>"
+        f"{ratio:.0f} %</div>"
+        f"<div style='font-size:0.85rem; opacity:0.92;'>"
+        f"Korridor {headline_metrics.target_low_pct}–"
+        f"{headline_metrics.target_high_pct} %</div></div>"
+    )
+
+greeting_html = (
+    f"<div style='flex:1;'>"
+    f"<div style='font-weight:700; color:{FMV_NAVY}; font-size:1.15rem;'>"
+    f"Guten Tag {actor_label}</div>"
+    f"<div style='color:{FMV_GREY}; font-size:0.85rem;'>"
+    f"Stand {today.strftime('%d.%m.%Y %H:%M')} · Sicht: Kunde</div>"
+    f"</div>"
+)
 
 st.markdown(
     f"""
-    <div style='background:#F7FAFF; border:1px solid #D8E5FF;
+    <div style='display:flex; align-items:stretch; gap:1.1rem;
+                background:#F7FAFF; border:1px solid #D8E5FF;
                 border-left:6px solid {FMV_BLUE}; border-radius:12px;
-                padding:1.0rem 1.25rem; margin:0.6rem 0 1.4rem 0;
-                line-height:1.7;'>
-        {"<br/>".join(banner_lines)}
+                padding:1.0rem 1.25rem; margin:0.6rem 0 1.4rem 0;'>
+        {greeting_html}
+        {hero_html}
     </div>
     """,
     unsafe_allow_html=True,
@@ -332,6 +351,12 @@ cols[2].markdown(
     unsafe_allow_html=True,
 )
 cols[3].caption(f"Sicht: **Kunde** · Stand {today.strftime('%d.%m.%Y %H:%M')}")
+
+# Haut-Valais weather context — local terrain colour for the audience.
+# Lives in the footer so it doesn't compete with the headline KPI for
+# attention at the top of the page. Silently skipped if Open-Meteo is
+# unreachable.
+render_weather_strip()
 
 st.caption(
     "Hinweis : Die Hedge-Quote zeigt den FMV-Anteil der Absicherung. "

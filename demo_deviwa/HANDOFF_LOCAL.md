@@ -28,7 +28,7 @@ SaaS dans 6-8 semaines.
 
 ```
 demo_deviwa/
-├── app.py                          → Portfolio-Cockpit (home)
+├── Cockpit.py                      → Portfolio-Cockpit (Home) (home)
 ├── pages/
 │   ├── 1_Marktueberblick.py        → spot/forecast/forwards/commodities
 │   ├── 2_Kurzfristprognose.py      → LEAR 10j + bandes P10/P90
@@ -137,7 +137,7 @@ Possible bonus: comparer HPFC du pool avec la PFC FMV.
 
 3. **Lancer la démo**:
    ```bash
-   streamlit run demo_deviwa/app.py
+   streamlit run demo_deviwa/Cockpit.py
    ```
    Ouvre http://localhost:8501
 

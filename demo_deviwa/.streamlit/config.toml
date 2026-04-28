@@ -12,3 +12,11 @@ maxUploadSize = 50
 
 [browser]
 gatherUsageStats = false
+
+# Hide the dev-mode chrome (Deploy button + 3-dot menu top-right) for the
+# client demo. ``viewer`` keeps the Settings menu (full-width, theme) but
+# removes Deploy / Manage / Rerun controls. Use ``minimal`` for a fully
+# locked-down read-only client view if needed.
+[client]
+toolbarMode = "viewer"
+showErrorDetails = false

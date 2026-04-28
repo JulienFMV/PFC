@@ -33,6 +33,9 @@ H_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 CACHE_DIR = DATA_DIR / "_cache"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
+# Static assets shipped with the demo (logo SVG/PNG, marketing icons, …).
+ASSETS_DIR = Path(__file__).resolve().parent / "assets"
+
 FMV_BLUE = "#0F52CC"
 FMV_NAVY = "#0E1F3D"
 FMV_ACCENT = "#F5B700"
@@ -381,16 +384,57 @@ def load_pfc() -> pd.DataFrame:
 # Gemeinsame UI-Bausteine
 # ---------------------------------------------------------------------------
 
+_LOGO_SVG_CACHE: str | None = None
+
+
+def _fmv_logo_svg_inline() -> str:
+    """Renvoie le SVG de la marque FMV (mountain + lettrage), inliné en HTML.
+
+    Source : ``demo_deviwa/assets/fmv_logo.svg`` (extrait du header officiel
+    de fmv.ch, 77×35). On force le ``fill`` à FMV navy pour matcher la
+    palette du dashboard sur fond blanc et on retire le ``width/height``
+    natifs pour laisser CSS contrôler la taille via une classe parente.
+    """
+    global _LOGO_SVG_CACHE
+    if _LOGO_SVG_CACHE is not None:
+        return _LOGO_SVG_CACHE
+    path = ASSETS_DIR / "fmv_logo.svg"
+    if not path.exists():
+        _LOGO_SVG_CACHE = ""
+        return ""
+    raw = path.read_text(encoding="utf-8")
+    # Recolorer les <path fill="black"> avec la teinte navy + retirer
+    # width/height pour que la taille soit pilotée par le conteneur.
+    import re as _re
+    raw = _re.sub(r'\sfill="black"', f' fill="{FMV_NAVY}"', raw)
+    raw = _re.sub(r'\swidth="\d+"', "", raw, count=1)
+    raw = _re.sub(r'\sheight="\d+"', "", raw, count=1)
+    _LOGO_SVG_CACHE = raw
+    return raw
+
+
 def render_header(page_title: str) -> None:
+    """Header banner : logo FMV à gauche, titre de page, infos de session à droite."""
+    logo_html = _fmv_logo_svg_inline()
+    if logo_html:
+        logo_block = (
+            f"<div style='width:64px; height:30px; flex-shrink:0; margin-right:0.9rem;'>"
+            f"{logo_html}</div>"
+        )
+    else:
+        logo_block = ""
     st.markdown(
         f"""
         <div style='display:flex; align-items:center; justify-content:space-between;
                     border-bottom: 3px solid {FMV_BLUE}; padding-bottom: 0.6rem;
                     margin-bottom: 1.2rem;'>
-            <div>
-                <div style='font-size:0.85rem; letter-spacing:0.12em; color:{FMV_GREY};
-                            text-transform:uppercase;'>FMV – Forces Motrices Valaisannes</div>
-                <div style='font-size:1.8rem; font-weight:700; color:{FMV_NAVY};'>{page_title}</div>
+            <div style='display:flex; align-items:center;'>
+                {logo_block}
+                <div>
+                    <div style='font-size:0.85rem; letter-spacing:0.12em; color:{FMV_GREY};
+                                text-transform:uppercase;'>FMV – Forces Motrices Valaisannes</div>
+                    <div style='font-size:1.8rem; font-weight:700; color:{FMV_NAVY};'>{page_title}</div>
+                </div>
             </div>
             <div style='text-align:right; font-size:0.8rem; color:{FMV_GREY};'>
                 Deviwa Energiepool · Demo<br/>
@@ -540,9 +584,22 @@ def load_deviwa_auto() -> dict[str, pd.DataFrame]:
 
 
 def refresh_cache(force: bool = False) -> tuple[bool, str]:
-    """Re-execute le pipeline d'extraction parquet et clear les caches Streamlit.
+    """Re-execute le pipeline d'extraction parquet et invalide *uniquement*
+    les caches Streamlit dont les fichiers sources ont vraiment changé.
 
-    Retourne (success, message). À appeler depuis un bouton sidebar.
+    Avant : ``st.cache_data.clear()`` global après chaque clic du bouton.
+    Conséquence : à la prochaine navigation toutes les pages re-lisaient
+    PFC (140k lignes 15-min), EEX, EPEX, ENTSO, LEAR, commodities, etc.
+    depuis disque — soit 5 à 15 secondes par page de pénalité visible.
+
+    Maintenant : on regarde le résultat de ``run_all`` (chaque source a
+    une ``action`` parmi ``extracted`` / ``skipped_up_to_date`` / ``failed``)
+    et on n'invalide que les loaders dont le parquet a *réellement* été
+    réécrit. Les données qui n'ont pas changé restent en cache mémoire.
+
+    Si tout était déjà à jour (cas typique d'un double-clic ou d'un cache
+    chaud) on ne touche aucun cache : la barre revient en < 1 s, les pages
+    suivantes naviguent à la vitesse du cache.
     """
     try:
         # Import retardé pour éviter le coût au cold start si le bouton n'est pas cliqué
@@ -555,9 +612,45 @@ def refresh_cache(force: bool = False) -> tuple[bool, str]:
         n_extracted = sum(1 for r in results if r.action == "extracted")
         n_skipped = sum(1 for r in results if r.action == "skipped_up_to_date")
         n_failed = sum(1 for r in results if r.action == "failed")
-        # Vide les caches Streamlit pour que les nouvelles données soient relues
-        st.cache_data.clear()
+
+        # Mapping ``file_kind`` (côté extracteur) → loaders à invalider.
+        # Tout loader qui ne lit pas l'un des parquets gérés par
+        # ``extract_deviwa_cache`` (epex, entso, hydro, lear, commodities…)
+        # est volontairement absent : ce bouton ne touche pas à leur cache.
+        loaders_by_kind: dict[str, list] = {
+            "deviwa_deals": [
+                load_deviwa_deals_cached,
+                load_deviwa_programme_cached,
+                load_deviwa_edsh_suppliers_cached,
+                _load_deviwa_cached,
+            ],
+            "eex_yearly_ch": [load_eex_forwards],
+            "pfc_ompex": [load_pfc],
+        }
+        cleared: set = set()
+        for r in results:
+            if r.action != "extracted":
+                continue
+            for fn in loaders_by_kind.get(r.file_kind, []):
+                try:
+                    fn.clear()  # type: ignore[attr-defined]
+                    cleared.add(fn.__name__)
+                except Exception:
+                    pass
+        # ``load_cache_meta`` lit ``_meta.json`` qu'on vient de réécrire
+        # même quand toutes les extractions étaient ``skipped_up_to_date``
+        # (les ``quality_issues`` post-check sont recalculées). On
+        # l'invalide systématiquement — c'est < 1 ms à recharger.
+        try:
+            load_cache_meta.clear()  # type: ignore[attr-defined]
+        except Exception:
+            pass
+
         msg = f"Cache aktualisiert · {n_extracted} extrahiert, {n_skipped} aktuell"
+        if cleared:
+            msg += f" · {len(cleared)} Loader-Cache geleert"
+        elif n_extracted == 0:
+            msg += " · Speicher-Cache unverändert"
         if n_failed > 0:
             msg += f" · {n_failed} fehlgeschlagen"
         return (n_failed == 0, msg)
