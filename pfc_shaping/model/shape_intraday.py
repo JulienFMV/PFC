@@ -370,43 +370,76 @@ class ShapeIntraday:
         Couche 1 : profil de base par régression robuste Huber.
 
         Pour chaque quart q ∈ {1,2,3,4} :
-            ratio(q) = price(q) / mean_hour_price
-        Puis normalisation : ratio / mean(ratio).
+            multiplicative regime : ratio(q) = price(q) / mean_hour_price
+            additive regime       : delta(q) = price(q) - mean_hour_price,
+                                    factor(q) = 1 + delta(q) / scale,
+                                    avec scale = median(|hour_mean|).
 
-        Huber est préféré à la moyenne simple car il downweighte les spikes
-        extrêmes (prix négatifs profonds, pointes de réglage secondaire).
+        Le régime additif est activé automatiquement sur une cellule lorsqu'une
+        part significative des heures a un prix moyen proche de zéro (≥3 % avec
+        |mean| < 5 €/MWh, ou n'importe quelle heure avec |mean| < 1 €/MWh). Cela évite l'explosion du ratio price/hour_mean
+        documentée pendant les régimes de prix négatifs PV (28 % des heures
+        DE 2024-2025, ref. pv-magazine; Latini-Piccirilli-Vargiolu 2019).
 
-        Uses sample_weight from temporal decay + hydro analogue if available.
+        Huber downweighte les spikes extrêmes. Sample_weight = decay temporel
+        × analogue hydro si disponible.
         """
         has_weights = "_weight" in hour_data.columns
+
+        # Hour means computed once
+        hour_means_series = (
+            hour_data.groupby(hour_data.index.floor("h"))["price_eur_mwh"].mean()
+        )
+        if len(hour_means_series) == 0:
+            return None
+        hm_abs = np.abs(hour_means_series.values)
+        scale = float(max(np.median(hm_abs), 1.0))  # floor at 1 €/MWh
+        low_price_share = float(np.mean(hm_abs < 5.0)) if len(hm_abs) else 0.0
+        any_subscale = bool(np.any(hm_abs < 1.0))
+        use_additive = (low_price_share >= 0.03) or any_subscale
+
         ratios = []
         for q in range(1, 5):
             q_data = hour_data[hour_data["quart"] == q].copy()
-
-            # Indice temporel sans le quart → clé de l'heure parente
             q_data["hour_key"] = q_data.index.floor("h")
-            hour_means = hour_data.groupby(hour_data.index.floor("h"))["price_eur_mwh"].mean()
-            q_data["hour_mean"] = q_data["hour_key"].map(hour_means)
-            q_data = q_data[q_data["hour_mean"].abs() > 0.1]  # évite div/0 autour de 0
+            q_data["hour_mean"] = q_data["hour_key"].map(hour_means_series)
+            q_data = q_data.dropna(subset=["hour_mean"])
 
-            if len(q_data) < MIN_OBS_COUCHE1:
-                return None
-
-            q_data["ratio"] = q_data["price_eur_mwh"] / q_data["hour_mean"]
-
-            # Régression Huber : ratio ~ 1 (intercept only)
-            X = np.ones((len(q_data), 1))
-            y = q_data["ratio"].values
-            w = q_data["_weight"].values if has_weights else None
-            try:
-                hub = HuberRegressor(epsilon=1.35, max_iter=200, fit_intercept=False)
-                hub.fit(X, y, sample_weight=w)
-                ratios.append(hub.coef_[0])
-            except Exception:
-                if w is not None:
-                    ratios.append(float(np.average(y, weights=w)))
-                else:
-                    ratios.append(float(np.median(y)))
+            if use_additive:
+                if len(q_data) < MIN_OBS_COUCHE1:
+                    return None
+                delta = (q_data["price_eur_mwh"] - q_data["hour_mean"]).values
+                w = q_data["_weight"].values if has_weights else None
+                X = np.ones((len(delta), 1))
+                try:
+                    hub = HuberRegressor(epsilon=1.35, max_iter=200, fit_intercept=False)
+                    hub.fit(X, delta, sample_weight=w)
+                    d_q = float(hub.coef_[0])
+                except Exception:
+                    d_q = (
+                        float(np.average(delta, weights=w))
+                        if w is not None else float(np.median(delta))
+                    )
+                ratios.append(1.0 + d_q / scale)
+            else:
+                # Multiplicative regime (legacy): filter near-zero hour_mean
+                q_data2 = q_data[q_data["hour_mean"].abs() > 0.1]
+                if len(q_data2) < MIN_OBS_COUCHE1:
+                    return None
+                q_data2 = q_data2.copy()
+                q_data2["ratio"] = q_data2["price_eur_mwh"] / q_data2["hour_mean"]
+                X = np.ones((len(q_data2), 1))
+                y = q_data2["ratio"].values
+                w = q_data2["_weight"].values if has_weights else None
+                try:
+                    hub = HuberRegressor(epsilon=1.35, max_iter=200, fit_intercept=False)
+                    hub.fit(X, y, sample_weight=w)
+                    ratios.append(float(hub.coef_[0]))
+                except Exception:
+                    if w is not None:
+                        ratios.append(float(np.average(y, weights=w)))
+                    else:
+                        ratios.append(float(np.median(y)))
 
         arr = np.array(ratios)
         if arr.mean() == 0:
