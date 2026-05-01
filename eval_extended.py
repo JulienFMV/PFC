@@ -126,6 +126,8 @@ def _build_pfc(
     epex: pd.DataFrame,
     window: Window,
     with_lear: bool = False,
+    blend_start_day: int = 8,
+    blend_end_day: int = 11,
 ):
     """Fit shape models on data < cutoff and build a PFC over the window.
 
@@ -278,7 +280,11 @@ def _build_pfc(
             )
             lear_horizon = min(10, window.horizon_days)
             lear_forecast = lear.predict(horizon_days=lear_horizon)
-            pfc = lear.blend_with_pfc(pfc, lear_forecast)
+            pfc = lear.blend_with_pfc(
+                pfc, lear_forecast,
+                blend_start_day=blend_start_day,
+                blend_end_day=blend_end_day,
+            )
             print(
                 f"[lear] {window.name}: fitted + blended over {lear_horizon}d "
                 f"(forecast mean={lear_forecast['price_lear'].mean():.1f} EUR/MWh)",
@@ -296,8 +302,15 @@ def _evaluate_window(
     epex: pd.DataFrame,
     window: Window,
     with_lear: bool = False,
+    blend_start_day: int = 8,
+    blend_end_day: int = 11,
 ) -> StratifiedMetrics | None:
-    pfc = _build_pfc(epex, window, with_lear=with_lear)
+    pfc = _build_pfc(
+        epex, window,
+        with_lear=with_lear,
+        blend_start_day=blend_start_day,
+        blend_end_day=blend_end_day,
+    )
     test = epex[epex.index >= window.cutoff]
     common = pfc.index.intersection(test.index)
     if len(common) < 96 * 7:
@@ -425,6 +438,15 @@ def main():
         help="Restrict evaluation to the first N days of each test window "
              "(useful with --with-lear to focus on the LEAR-blended segment).",
     )
+    parser.add_argument(
+        "--blend-start", type=int, default=5, metavar="DAY",
+        help="Day at which LEAR-PFC blend begins (default: 5, post CT.1 sweep). "
+             "LEAR pure before, linear blend in [start, end), PFC pure from end.",
+    )
+    parser.add_argument(
+        "--blend-end", type=int, default=10, metavar="DAY",
+        help="Day at which LEAR-PFC blend ends (default: 10, post CT.1 sweep).",
+    )
     args = parser.parse_args()
 
     from dashboard.utils import load_epex
@@ -445,9 +467,15 @@ def main():
                 description=w.description,
             )
         print(f"[run] {w.name} cutoff={w.cutoff.date()} h={w.horizon_days}d "
-              f"lear={args.with_lear}", file=sys.stderr)
+              f"lear={args.with_lear} blend=[{args.blend_start},{args.blend_end})",
+              file=sys.stderr)
         try:
-            r = _evaluate_window(epex, w, with_lear=args.with_lear)
+            r = _evaluate_window(
+                epex, w,
+                with_lear=args.with_lear,
+                blend_start_day=args.blend_start,
+                blend_end_day=args.blend_end,
+            )
         except Exception as exc:
             print(f"[fail] {w.name}: {exc}", file=sys.stderr)
             import traceback

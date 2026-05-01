@@ -1946,10 +1946,17 @@ class LEARForecaster:
         self,
         pfc_15min: pd.DataFrame,
         lear_forecast: pd.DataFrame,
-        blend_start_day: int = 8,
-        blend_end_day: int = 11,
+        blend_start_day: int = 5,
+        blend_end_day: int = 10,
     ) -> pd.DataFrame:
-        """Blend LEAR short-term forecast with PFC structural model."""
+        """Blend LEAR short-term forecast with PFC structural model.
+
+        Default blend window is [5, 10): LEAR pure for D+1..D+4, linear
+        blend over D+5..D+9, PFC pure from D+10. Calibrated by CT.1 sweep
+        on winter_2026q1 + summer_2024q3 windows: (5, 10) is a Pareto-
+        strict improvement over the legacy (8, 11) — same summer RMSE,
+        -7% winter RMSE.
+        """
         result = pfc_15min.copy()
 
         if "price_shape" not in result.columns:

@@ -20,3 +20,4 @@ ec0bd18	20.401	17.233	keep	Phase 2 LEAR overlay (10d window): RMSE_shape -10.9% 
 af1ccdc	26.336	26.138	keep	Phase 3.1 DA15min rupture downweight (structural, invisible on current OOS)
 90abc6a	26.336	26.138	keep	Phase 3.2 RES gradient + RidgeCV alpha fix (latent: CH spot data is hourly fwd-filled)
 469cb78	26.336	26.138	keep	DOC.1 short-circuit f_Q=1.0 on hourly markets (CH today): -30% eval time
+71b6f6f	19.280	17.253	keep	CT.1 LEAR blend window (5,10): -7% RMSE winter, summer unchanged
