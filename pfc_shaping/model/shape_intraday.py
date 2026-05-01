@@ -60,10 +60,18 @@ MIN_OBS_COUCHE2 = 50  # pour la régression Ridge sur features exogènes (augmen
 # Seuil R² OOS minimal pour retenir une correction Layer 2
 # Avec peu de données (< 1 an), R² > 0 passe souvent par chance.
 # 0.02 = la correction doit expliquer au moins 2% de la variance OOS.
-MIN_R2_OOS = 0.02
+# Phase 3.2 fix: ratios price/hour_mean cluster around 1±0.05 so the legacy
+# 0.02 R²_oos gate combined with RidgeCV's high-alpha grid silently rejected
+# 100% of cells (Layer 2 was inactive on the entire data set).  Lower the
+# threshold to a level that still rejects noise but lets weak signal through.
+MIN_R2_OOS = 0.005
 
 # Amplitude maximale des coefficients Layer 2 (borne les corrections extrêmes)
 MAX_COEF_ABS = 0.05
+
+# Lower alpha range for RidgeCV: with ratio std ≈ 0.05 and feature std ≈ 0.7-1.0
+# the legacy [0.01..100] grid forces coefs to ~0.  Probe sub-unit alphas.
+RIDGE_ALPHAS = (1e-4, 1e-3, 1e-2, 1e-1, 1.0)
 
 
 class ShapeIntraday:
@@ -86,6 +94,17 @@ class ShapeIntraday:
     DA15MIN_RUPTURE_DATE = pd.Timestamp("2025-10-01", tz="UTC")
     PRE_RUPTURE_WEIGHT_FACTOR = 0.25  # extra weight applied to pre-rupture obs
 
+    # Phase 3.2: Feature → short-code mapping for Layer 2 corrections.
+    # Order matters (deterministic across fit/apply). Short codes appear in
+    # coefficient keys b_<short>_q{q}.
+    LAYER2_FEATURES: tuple[tuple[str, str], ...] = (
+        ("solar_regime", "solar"),
+        ("load_deviation", "load"),
+        ("flow_deviation", "flow"),
+        ("dpv_dt_z", "dpv"),     # PV ramp rate z-score (CH+DE)
+        ("dload_dt_z", "dload"), # Load ramp rate z-score (CH)
+    )
+
     def __init__(
         self,
         halflife_days: float = 180.0,
@@ -99,6 +118,40 @@ class ShapeIntraday:
         self.corrections_: dict[tuple, dict] = {}
         self.n_obs_: dict[tuple, int] = {}
         self._climatological_fill: pd.Series | None = None  # mean fill per week-of-year
+
+    @staticmethod
+    def _build_res_gradient_features(entso_df: pd.DataFrame | None) -> pd.DataFrame | None:
+        """
+        Phase 3.2: derive rate-of-change features from raw ENTSO-E columns.
+
+        Returns a DataFrame indexed like ``entso_df`` with columns
+        ``dpv_dt_z`` and ``dload_dt_z`` (z-scored gradients). Returns
+        ``None`` when no usable input is available.
+
+        Hirsch-Ziel (2024) show that PV ramp rate (dPV/dt) is the dominant
+        driver of intra-hour spreads; load ramp adds orthogonal signal.
+        """
+        if entso_df is None or entso_df.empty:
+            return None
+        out = pd.DataFrame(index=entso_df.index)
+
+        # Combined CH+DE solar (CH alone is too small to drive the price)
+        solar_cols = [c for c in ("solar_mw", "solar_de_mw") if c in entso_df.columns]
+        if solar_cols:
+            solar_total = sum(
+                entso_df[c].fillna(0.0) for c in solar_cols
+            )
+            dpv = solar_total.diff() / 0.25  # MW per hour
+            sd = float(dpv.std()) if dpv.std() > 1e-6 else 1.0
+            out["dpv_dt_z"] = (dpv / sd).clip(-5.0, 5.0)
+        if "load_mw" in entso_df.columns:
+            dload = entso_df["load_mw"].diff() / 0.25
+            sd = float(dload.std()) if dload.std() > 1e-6 else 1.0
+            out["dload_dt_z"] = (dload / sd).clip(-5.0, 5.0)
+
+        if out.empty or len(out.columns) == 0:
+            return None
+        return out
 
     @staticmethod
     def _flatten_strength(years_ahead: np.ndarray) -> np.ndarray:
@@ -137,6 +190,14 @@ class ShapeIntraday:
 
         if "flow_deviation" not in df.columns:
             df["flow_deviation"] = np.nan
+
+        # Phase 3.2: RES-gradient features (dPV/dt, dLoad/dt z-scored)
+        res_grad = self._build_res_gradient_features(entso_df)
+        if res_grad is not None:
+            df = df.join(res_grad.reindex(df.index))
+        for short_col in ("dpv_dt_z", "dload_dt_z"):
+            if short_col not in df.columns:
+                df[short_col] = np.nan
 
         df = df.dropna(subset=["saison", "type_jour", "heure_hce", "quart", "price_eur_mwh"])
 
@@ -282,6 +343,15 @@ class ShapeIntraday:
             df_cal["flow_deviation"] = 0.0
         df_cal["flow_deviation"] = df_cal["flow_deviation"].fillna(0.0)
 
+        # Phase 3.2: derive RES-gradient features from the forecast and align
+        # to the target index. Neutral default 0.0 when missing.
+        res_grad = self._build_res_gradient_features(entso_df)
+        for short_col in ("dpv_dt_z", "dload_dt_z"):
+            if res_grad is not None and short_col in res_grad.columns:
+                df_cal[short_col] = res_grad[short_col].reindex(timestamps).fillna(0.0)
+            else:
+                df_cal[short_col] = 0.0
+
         n = len(timestamps)
         f_q_values = np.ones(n)
         if reference_date is None:
@@ -320,22 +390,28 @@ class ShapeIntraday:
                 factors = factors / factors.mean(axis=1, keepdims=True)
                 f_q_values[idx_arr] = factors[np.arange(len(idx_arr)), q_vals]
             else:
-                # Vectorised correction for ramp hours
+                # Vectorised correction for ramp hours.
+                # Phase 3.2: iterate over the feature mapping stored at fit-time
+                # (corr["_features"]) so we stay in sync with whatever Layer-2
+                # features the model was trained on.
                 corr = self.corrections_[actual_key]
-                solar_vals = df_cal["solar_regime"].values[idx_arr]
-                load_vals = df_cal["load_deviation"].values[idx_arr]
-                flow_vals = df_cal["flow_deviation"].values[idx_arr]
+                feat_map = corr.get("_features") or list(self.LAYER2_FEATURES)
                 n_grp = len(idx_arr)
+
+                feature_vals = []
+                for col, _short in feat_map:
+                    if col in df_cal.columns:
+                        feature_vals.append(df_cal[col].values[idx_arr])
+                    else:
+                        feature_vals.append(np.zeros(n_grp))
 
                 # Compute all 4 corrected factors per row: (n_grp, 4)
                 factors = np.tile(base, (n_grp, 1))
                 for q_idx in range(4):
-                    factors[:, q_idx] += (
-                        corr.get(f"b_solar_q{q_idx+1}", 0.0) * solar_vals
-                        + corr.get(f"b_load_q{q_idx+1}", 0.0) * load_vals
-                        + corr.get(f"b_flow_q{q_idx+1}", 0.0) * flow_vals
-                        + corr.get(f"intercept_q{q_idx+1}", 0.0)
-                    )
+                    delta = corr.get(f"intercept_q{q_idx+1}", 0.0)
+                    for (_col, short), vals in zip(feat_map, feature_vals):
+                        delta = delta + corr.get(f"b_{short}_q{q_idx+1}", 0.0) * vals
+                    factors[:, q_idx] += delta
                 # Re-normalize each row (mean of 4 quarters = 1)
                 row_means = factors.mean(axis=1, keepdims=True)
                 row_means[row_means == 0] = 1.0
@@ -491,15 +567,17 @@ class ShapeIntraday:
 
         Uses sample_weight from temporal decay + hydro analogue if available.
         """
-        cols = ["solar_regime", "load_deviation", "flow_deviation"]
-        available = [c for c in cols if c in hour_data.columns]
+        # Phase 3.2: use the explicit feature map so fit/apply stay in sync.
+        feat_map = list(self.LAYER2_FEATURES)  # [(col, short), ...]
+        available = [(c, s) for c, s in feat_map if c in hour_data.columns]
         if not available:
             return None
+        available_cols = [c for c, _ in available]
 
         has_weights = "_weight" in hour_data.columns
-        result = {}
+        result: dict = {}
         for q in range(1, 5):
-            q_data = hour_data[hour_data["quart"] == q].dropna(subset=available).copy()
+            q_data = hour_data[hour_data["quart"] == q].dropna(subset=available_cols).copy()
             if len(q_data) < MIN_OBS_COUCHE2:
                 continue
 
@@ -509,7 +587,7 @@ class ShapeIntraday:
             q_data = q_data[q_data["hour_mean"].abs() > 0.1]
             q_data["ratio_obs"] = q_data["price_eur_mwh"] / q_data["hour_mean"]
 
-            X = q_data[available].values
+            X = q_data[available_cols].values
             y = q_data["ratio_obs"].values
             w = q_data["_weight"].values if has_weights else None
 
@@ -523,7 +601,7 @@ class ShapeIntraday:
                 y_train, y_test = y[:split], y[split:]
                 w_train = w[:split] if w is not None else None
 
-                ridge = RidgeCV(alphas=[0.01, 0.1, 1.0, 10.0, 100.0])
+                ridge = RidgeCV(alphas=list(RIDGE_ALPHAS))
                 ridge.fit(X_train, y_train, sample_weight=w_train)
 
                 # R² out-of-sample : n'accepter que si > 0 (mieux que la moyenne)
@@ -541,19 +619,16 @@ class ShapeIntraday:
                 # Clip coefficients to prevent extreme corrections
                 intercept = float(np.clip(ridge.intercept_, -MAX_COEF_ABS, MAX_COEF_ABS))
                 result[f"intercept_q{q}"] = intercept
-                for i, col in enumerate(available):
-                    if "solar" in col:
-                        short = "solar"
-                    elif "flow" in col:
-                        short = "flow"
-                    else:
-                        short = "load"
+                for i, (_, short) in enumerate(available):
                     coef = float(np.clip(ridge.coef_[i], -MAX_COEF_ABS, MAX_COEF_ABS))
                     result[f"b_{short}_q{q}"] = coef
             except Exception:
                 pass
 
-        return result if result else None
+        if not result:
+            return None
+        result["_features"] = available  # remember mapping for apply()
+        return result
 
     # ---------------------------------------------------------------------------
     # Hydro analogue weighting
