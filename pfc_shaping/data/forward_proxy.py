@@ -134,7 +134,10 @@ def _fit_fundamental_anchor(
     )
     cm_monthly = cm.resample("MS").mean()
     df = spot_monthly.to_frame().join(cm_monthly, how="inner").dropna()
-    if len(df) < 12:
+    # 9 months minimum: tight enough to keep OLS reasonable, loose enough to
+    # activate on backtests where commodities history is shallow (Y+1 cutoff
+    # in early 2025 for example).
+    if len(df) < 9:
         return None
 
     X = df[["gas", "eua"]].values
