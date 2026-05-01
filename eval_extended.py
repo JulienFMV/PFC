@@ -91,6 +91,16 @@ def _horizon_bucket(days_ahead: float) -> str:
     return "Y+1+"
 
 
+def _fine_horizon_bucket(d: float) -> str:
+    if d <= 1: return "D+0_1"
+    if d <= 3: return "D+2_3"
+    if d <= 5: return "D+4_5"
+    if d <= 10: return "D+6_10"
+    if d <= 30: return "D+11_30"
+    if d <= 90: return "D+31_90"
+    return "D+91+"
+
+
 def _build_strata(idx: pd.DatetimeIndex, cutoff: pd.Timestamp,
                   spot: np.ndarray) -> dict[str, np.ndarray]:
     idx_zh = idx.tz_convert("Europe/Zurich")
@@ -101,6 +111,7 @@ def _build_strata(idx: pd.DatetimeIndex, cutoff: pd.Timestamp,
         "peak_offpeak": np.where(is_weekday & is_peak_hour, "peak", "offpeak"),
         "season": np.array([SEASONS_BY_MONTH[m] for m in idx_zh.month]),
         "horizon": np.array([_horizon_bucket(d) for d in days_ahead]),
+        "horizon_fine": np.array([_fine_horizon_bucket(d) for d in days_ahead]),
         "hour_bucket": np.array([_hour_bucket(h) for h in idx_zh.hour]),
         "low_price": np.where(np.abs(spot) < 5.0, "low_abs_lt_5", "normal"),
     }
@@ -197,11 +208,15 @@ def _build_pfc(
             commodities_df = cm[cm.index < window.cutoff]
             break
 
+    fundamental_blend = float(getattr(window, "_fundamental_blend", 0.4) or 0.4)
+    anchor_months = int(getattr(window, "_anchor_months", 6) or 6)
     base_prices = derive_base_prices(
         train,
         start_year=window.cutoff.year,
         n_years=max(1, window.horizon_days // 365 + 1),
+        anchor_months=anchor_months,
         commodities=commodities_df,
+        fundamental_blend=fundamental_blend,
     )
 
     cascader = ContractCascader()
@@ -314,7 +329,7 @@ def _evaluate_window(
     )
     test = epex[epex.index >= window.cutoff]
     common = pfc.index.intersection(test.index)
-    if len(common) < 96 * 7:
+    if len(common) < 96 * 3:
         print(f"[skip] {window.name}: insufficient overlap ({len(common)} pts)", file=sys.stderr)
         return None
 
@@ -505,6 +520,16 @@ def main():
              "intervals so empirical IC80 hits the nominal 80%%; evaluate on "
              "the remainder. 0 (default) disables recalibration.",
     )
+    parser.add_argument(
+        "--fundamental-blend", type=float, default=0.4, metavar="W",
+        help="Weight of the gas+EUA fundamental anchor in derive_base_prices "
+             "(0.0 = pure trailing spot, 1.0 = pure fundamentals). Default 0.4.",
+    )
+    parser.add_argument(
+        "--anchor-months", type=int, default=6, metavar="M",
+        help="Trailing months for the spot anchor in derive_base_prices "
+             "(shorter = more responsive to recent regime; longer = smoother).",
+    )
     args = parser.parse_args()
 
     from dashboard.utils import load_epex
@@ -524,6 +549,9 @@ def main():
                 horizon_days=args.lear_only_window,
                 description=w.description,
             )
+        # Pass tuneables through the Window dataclass via dynamic attrs
+        object.__setattr__(w, "_fundamental_blend", args.fundamental_blend)
+        object.__setattr__(w, "_anchor_months", args.anchor_months)
         print(f"[run] {w.name} cutoff={w.cutoff.date()} h={w.horizon_days}d "
               f"lear={args.with_lear} blend=[{args.blend_start},{args.blend_end})",
               file=sys.stderr)
