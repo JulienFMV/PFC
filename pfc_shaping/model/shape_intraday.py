@@ -201,6 +201,32 @@ class ShapeIntraday:
 
         df = df.dropna(subset=["saison", "type_jour", "heure_hce", "quart", "price_eur_mwh"])
 
+        # ─── Market-reality short-circuit ──────────────────────────────────
+        # As of 2026-05, the Swiss DA auction is hourly: SDAC went 15-min on
+        # 2025-09-30 but the implementation excluded CH and GB ("not before
+        # end-2025, in alignment with Swissgrid"). Our EPEX CH parquet
+        # therefore has *zero* intra-hour variation by market design.
+        # When we detect that situation, skip Layer 1/2 entirely and let
+        # the apply() path return a flat profile [1,1,1,1] per cell — the
+        # only mathematically correct answer in an hourly market.
+        intra_hour_std = (
+            df.groupby(df.index.floor("h"))["price_eur_mwh"].std().fillna(0.0)
+        )
+        n_hours = int(len(intra_hour_std))
+        n_with_var = int((intra_hour_std > 1e-3).sum())
+        self._market_is_hourly = (
+            n_hours > 0 and n_with_var / max(n_hours, 1) < 0.001
+        )
+        if self._market_is_hourly:
+            logger.info(
+                "ShapeIntraday: source price series has no intra-hour variation "
+                "(%d/%d hours have std > 1e-3) → market is hourly, f_Q ≡ 1.0 "
+                "by construction. Layers 1 and 2 are skipped.",
+                n_with_var, n_hours,
+            )
+            self._fill_missing_cells()  # populate flat [1,1,1,1] for all cells
+            return self
+
         # ── Temporal decay + hydro analogue weighting ─────────────────
         t_max = df.index.max()
         days_ago = (t_max - df.index).total_seconds() / 86400.0
