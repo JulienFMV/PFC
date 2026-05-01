@@ -587,14 +587,59 @@ class PFCAssembler:
 
         return B
 
-    # Historical seasonal ratios for CH/DE electricity (monthly / annual mean).
-    # Derived from 10+ years of EPEX Swiss spot data.  Normalised so that
-    # the 12-month equal-weighted mean = 1.0.  Used as fallback for Y+2/Y+3
-    # when no monthly or quarterly forwards are available.
+    # Historical seasonal ratios for CH electricity (monthly / annual mean).
+    # Static fallback only — used when EPEX history is unavailable.  Phase 1.4
+    # of the 2026 roadmap replaces this with a rolling 3-year regression
+    # (compute_monthly_seasonal_ratios) computed lazily from the EPEX parquet.
     _SEASONAL_RATIOS_CH = {
         1: 1.18, 2: 1.12, 3: 1.02, 4: 0.90, 5: 0.85, 6: 0.88,
         7: 0.90, 8: 0.92, 9: 0.95, 10: 1.02, 11: 1.10, 12: 1.16,
     }
+
+    def _get_seasonal_ratios_ch(self) -> dict[int, float]:
+        """
+        Return the monthly seasonal ratios used as fallback for Y+2/Y+3
+        when only annual forwards exist.
+
+        Cached on the instance. Order of preference:
+          1. Explicit override on `self.seasonal_ratios_ch_override` (if any)
+          2. Rolling 3-year regression from EPEX parquet, weekend_pv_dummy=True
+          3. Static `_SEASONAL_RATIOS_CH` table (fallback)
+        """
+        cached = getattr(self, "_seasonal_ratios_cache_", None)
+        if cached is not None:
+            return cached
+
+        override = getattr(self, "seasonal_ratios_ch_override", None)
+        if isinstance(override, dict) and len(override) == 12:
+            self._seasonal_ratios_cache_ = {int(k): float(v) for k, v in override.items()}
+            return self._seasonal_ratios_cache_
+
+        try:
+            from pathlib import Path
+            from pfc_shaping.data.forward_proxy import compute_monthly_seasonal_ratios
+
+            epex_path = Path("pfc_shaping/data/epex_15min.parquet")
+            if not epex_path.exists():
+                self._seasonal_ratios_cache_ = dict(self._SEASONAL_RATIOS_CH)
+                return self._seasonal_ratios_cache_
+            epex = (
+                pd.read_parquet(epex_path)
+                .sort_index()
+                .dropna(subset=["price_eur_mwh"])
+            )
+            ratios = compute_monthly_seasonal_ratios(epex, n_years=3, weekend_pv_dummy=True)
+            self._seasonal_ratios_cache_ = ratios
+            logger.info(
+                "Seasonal CH (rolling 3y): winter=%.2f summer=%.2f",
+                np.mean([ratios[m] for m in (12, 1, 2)]),
+                np.mean([ratios[m] for m in (6, 7, 8)]),
+            )
+            return self._seasonal_ratios_cache_
+        except Exception as exc:
+            logger.warning("Rolling seasonal ratios failed (%s) — using static table", exc)
+            self._seasonal_ratios_cache_ = dict(self._SEASONAL_RATIOS_CH)
+            return self._seasonal_ratios_cache_
 
     def _compute_f_S(self, idx: pd.DatetimeIndex, base_prices: dict) -> pd.Series:
         """
@@ -627,8 +672,8 @@ class PFCAssembler:
         annual_only = ~has_monthly & ~has_quarterly
 
         if annual_only.any():
-            # Apply historical seasonal ratios as fallback
-            seasonal_values = months[annual_only].map(self._SEASONAL_RATIOS_CH)
+            # Apply historical seasonal ratios as fallback (rolling 3y if data available)
+            seasonal_values = months[annual_only].map(self._get_seasonal_ratios_ch())
             f_S.iloc[annual_only] = np.asarray(seasonal_values, dtype=float)
             n_affected = int(annual_only.sum())
             logger.info(

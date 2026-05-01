@@ -27,6 +27,65 @@ import pandas as pd
 logger = logging.getLogger(__name__)
 
 
+def compute_monthly_seasonal_ratios(
+    epex: pd.DataFrame,
+    n_years: int = 3,
+    weekend_pv_dummy: bool = True,
+) -> dict[int, float]:
+    """Rolling N-year monthly seasonality ratios from EPEX history.
+
+    Returns a dict {month -> ratio} normalised to mean 1.0 over the 12
+    months. Falls back gracefully on insufficient data.
+
+    With ``weekend_pv_dummy=True`` (default), the regression is run separately
+    on weekday and weekend observations and the two patterns are equal-weighted
+    before normalisation. This dampens the peak/off-peak inversion seen on
+    sunny CH weekends in 2024+ that distorts a naive monthly mean.
+    """
+    if "price_eur_mwh" not in epex.columns or len(epex) == 0:
+        return dict(_FALLBACK_SEASONAL_RATIOS)
+
+    cutoff = epex.index.max() - pd.DateOffset(years=n_years)
+    recent = epex[epex.index >= cutoff]
+    if len(recent) < 96 * 180:
+        recent = epex
+
+    idx_zh = recent.index.tz_convert("Europe/Zurich")
+    is_weekend = idx_zh.dayofweek >= 5
+
+    if weekend_pv_dummy:
+        weekday_avg = recent[~is_weekend].groupby(idx_zh[~is_weekend].month)["price_eur_mwh"].mean()
+        weekend_avg = recent[is_weekend].groupby(idx_zh[is_weekend].month)["price_eur_mwh"].mean()
+        wd_ratio = weekday_avg / weekday_avg.mean() if weekday_avg.mean() > 0 else None
+        we_ratio = weekend_avg / weekend_avg.mean() if weekend_avg.mean() > 0 else None
+        if wd_ratio is None or we_ratio is None:
+            monthly = recent.groupby(idx_zh.month)["price_eur_mwh"].mean()
+            ratios = monthly / monthly.mean() if monthly.mean() > 0 else None
+        else:
+            combined = (wd_ratio.add(we_ratio, fill_value=wd_ratio.mean())) / 2.0
+            ratios = combined / combined.mean()
+    else:
+        monthly = recent.groupby(idx_zh.month)["price_eur_mwh"].mean()
+        ratios = monthly / monthly.mean() if monthly.mean() > 0 else None
+
+    if ratios is None:
+        return dict(_FALLBACK_SEASONAL_RATIOS)
+
+    out = {int(m): float(v) for m, v in ratios.items()}
+    # Sanity-clip and fill gaps from fallback table.
+    for m in range(1, 13):
+        v = out.get(m)
+        if v is None or not (0.3 <= v <= 3.0):
+            out[m] = _FALLBACK_SEASONAL_RATIOS[m]
+    return out
+
+
+_FALLBACK_SEASONAL_RATIOS = {
+    1: 1.18, 2: 1.12, 3: 1.02, 4: 0.90, 5: 0.85, 6: 0.88,
+    7: 0.90, 8: 0.92, 9: 0.95, 10: 1.02, 11: 1.10, 12: 1.16,
+}
+
+
 def derive_base_prices(
     epex: pd.DataFrame,
     start_year: int | None = None,
