@@ -9,3 +9,5 @@ bc410a1	39.284937	31.742073	keep	median decay + allow flat + default -3%
 b988a99	39.283641	31.808269	keep	gaussian_sigma 1.17->1.5
 a313746	39.283641	31.808269	keep	RidgeCV auto alpha (no change, but cleaner)
 bc80a7d	38.726491	31.710908	keep	f_W seasonal + f_Q all hours + exp decay + ENTSO-E
+669783d	44.581708	36.732381	keep	baseline 2026-05 (post stop-hook env install)
+590b75d	44.215966	36.448986	keep	Phase 1.2 renorm post-damping E[f_*]=1 per bucket

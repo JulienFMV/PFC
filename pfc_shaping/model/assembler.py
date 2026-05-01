@@ -250,6 +250,25 @@ class PFCAssembler:
         f_Q = 1.0 + (f_Q - 1.0) * shape_freedom["f_Q"]
         f_WV = 1.0 + (f_WV - 1.0) * shape_freedom["f_WV"]
 
+        # Phase 1.2 (roadmap 2026): renormalise each factor to mean=1 over its
+        # native bucket AFTER damping. Without this, shape_freedom < 1 silently
+        # shrinks E[f_*] below 1 → biases the level by 1-3% on Y+2/Y+3, masked
+        # only because arbitrage-free calibration absorbs the drift downstream.
+        # See Latini-Piccirilli-Vargiolu (2019), Energy Economics.
+        idx_zh_local = idx.tz_convert("Europe/Zurich")
+        f_S = self._renorm_to_mean1(f_S, idx_zh_local.strftime("%Y-%m"))
+        f_W = self._renorm_to_mean1(
+            f_W,
+            [f"{t.isocalendar()[0]}-W{t.isocalendar()[1]:02d}" for t in idx_zh_local],
+        )
+        f_H = self._renorm_to_mean1(f_H, idx_zh_local.strftime("%Y-%m-%d"))
+        f_Q = self._renorm_to_mean1(
+            f_Q,
+            [f"{t.strftime('%Y-%m-%d')}-h{t.hour:02d}" for t in idx_zh_local],
+        )
+        # f_WV native bucket = month: hydro effects are seasonal-monthly.
+        f_WV = self._renorm_to_mean1(f_WV, idx_zh_local.strftime("%Y-%m"))
+
         # Ã¢â€â‚¬Ã¢â€â‚¬ Niveau de base B par timestamp Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         B = self._resolve_base(idx, base_prices)
 
@@ -673,6 +692,20 @@ class PFCAssembler:
         score[months_ahead > 12] = ct.get("24m", 0.65)
         score[months_ahead > 24] = ct.get("36m", 0.45)
         return score
+
+    @staticmethod
+    def _renorm_to_mean1(factor: pd.Series, bucket_keys) -> pd.Series:
+        """
+        Renormalise a factor so that its arithmetic mean equals 1 within
+        each bucket defined by ``bucket_keys`` (same length as factor).
+
+        Used after horizon-dependent damping to preserve E[f_*] = 1 — without
+        this, multiplying by ``shape_freedom < 1`` shrinks the factor mean
+        below 1 and biases the reconstructed level on far horizons.
+        """
+        bucket = pd.Index(bucket_keys, name="bucket")
+        bucket_mean = factor.groupby(bucket).transform("mean").replace(0.0, 1.0)
+        return factor / bucket_mean
 
     def _shape_freedom(self, months_ahead: pd.Series) -> dict[str, pd.Series]:
         """
