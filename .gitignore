@@ -38,6 +38,7 @@ pfc_shaping/logs/*.log
 Thumbs.db
 
 # Eval / autoresearch logs
+eval.log
 eval_lear.log
 eval_stderr.log
 prod_stderr.log
