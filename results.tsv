@@ -15,3 +15,4 @@ cccd99b	44.215966	36.448986	keep	Phase 1.3 additive mode neg-price hours (108/36
 23ace93	44.215966	36.448986	keep	Phase 1.4 rolling 3y CH seasonal ratios (winter +13%, summer -19%)
 8265047	29.823359	30.177135	keep	Phase 0.3 derive_base_prices fix: anchor seasonal window on epex.index.max() (RMSE -14.4)
 ec0bd18	20.401	17.233	keep	Phase 2 LEAR overlay (10d window): RMSE_shape -10.9% vs PFC-only
+0ef3c2c	26.336	26.138	keep	Phase 4.1 fundamental anchor (gas+EUA, blend=0.4): bias |3.07|->|1.40|, RMSE +0.37

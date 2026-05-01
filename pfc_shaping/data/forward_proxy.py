@@ -86,11 +86,93 @@ _FALLBACK_SEASONAL_RATIOS = {
 }
 
 
+def _fit_fundamental_anchor(
+    epex: pd.DataFrame,
+    commodities: pd.DataFrame,
+) -> tuple[float, dict] | None:
+    """
+    Phase 4.1: regress monthly spot mean on monthly TTF gas + EUA means and
+    return the model's prediction for the most recent commodities snapshot.
+
+    This produces an anchor level driven by **fundamentals** (gas + carbon)
+    rather than by the rolling spot trail, which matters when:
+      * spot is in a transient deviation from fuel-cost equilibrium;
+      * the forecast horizon enters a regime (e.g. winter) different from
+        the trailing window.
+
+    Returns ``(anchor_level, info)`` or ``None`` if data is insufficient.
+
+    References:
+      * Hirsch & Ziel (2024), Energy Journal — gas/CO2 drivers explain >60%
+        of the level variance on EU power 2022-2024.
+      * Maciejowska, Nitka, Weron (2025), RSER.
+    """
+    if commodities is None or commodities.empty:
+        return None
+
+    cmap = {}
+    for col in commodities.columns:
+        c = col.lower()
+        if "ttf" in c or "gas" in c:
+            cmap["gas"] = col
+        elif "eua" in c or "co2" in c or "carbon" in c:
+            cmap["eua"] = col
+    if "gas" not in cmap or "eua" not in cmap:
+        return None
+
+    cm = commodities[[cmap["gas"], cmap["eua"]]].rename(
+        columns={cmap["gas"]: "gas", cmap["eua"]: "eua"}
+    ).dropna()
+    if len(cm) < 90:
+        return None
+    if cm.index.tz is None:
+        cm.index = cm.index.tz_localize("UTC")
+
+    # Monthly means: align spot and commodities on YYYY-MM
+    spot_monthly = (
+        epex["price_eur_mwh"].resample("MS").mean().rename("spot")
+    )
+    cm_monthly = cm.resample("MS").mean()
+    df = spot_monthly.to_frame().join(cm_monthly, how="inner").dropna()
+    if len(df) < 12:
+        return None
+
+    X = df[["gas", "eua"]].values
+    y = df["spot"].values
+    # Solve OLS with intercept via lstsq (no sklearn dep required).
+    Xa = np.column_stack([np.ones(len(X)), X])
+    coef, *_ = np.linalg.lstsq(Xa, y, rcond=None)
+    a, b_gas, b_eua = float(coef[0]), float(coef[1]), float(coef[2])
+    y_hat = a + b_gas * X[:, 0] + b_eua * X[:, 1]
+    ss_res = float(np.sum((y - y_hat) ** 2))
+    ss_tot = float(np.sum((y - y.mean()) ** 2))
+    r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else 0.0
+
+    # Predict using most recent gas + EUA snapshot (last available month).
+    gas_now = float(cm_monthly["gas"].iloc[-1])
+    eua_now = float(cm_monthly["eua"].iloc[-1])
+    anchor = a + b_gas * gas_now + b_eua * eua_now
+
+    info = {
+        "intercept": a, "b_gas": b_gas, "b_eua": b_eua,
+        "r2": r2, "n_months": int(len(df)),
+        "gas_snapshot": gas_now, "eua_snapshot": eua_now,
+    }
+    logger.info(
+        "Fundamental anchor: spot ~ %.2f + %.3f*gas + %.3f*EUA (R2=%.3f, "
+        "n=%d months) → %.1f EUR/MWh",
+        a, b_gas, b_eua, r2, info["n_months"], anchor,
+    )
+    return float(anchor), info
+
+
 def derive_base_prices(
     epex: pd.DataFrame,
     start_year: int | None = None,
     n_years: int = 4,
     anchor_months: int = 6,
+    commodities: pd.DataFrame | None = None,
+    fundamental_blend: float = 0.4,
 ) -> dict[str, float]:
     """Derive base prices from EPEX spot history.
 
@@ -99,6 +181,11 @@ def derive_base_prices(
         start_year: First delivery year. Default: current year.
         n_years: Number of forward years to generate.
         anchor_months: Months of trailing spot to anchor level.
+        commodities: Optional daily commodities frame with TTF gas + EUA
+            columns (auto-detected by name). When provided and the
+            regression is well-behaved (R^2 >= 0.4), the anchor level is
+            blended with the fundamental prediction.
+        fundamental_blend: Weight on the fundamental anchor when blending.
 
     Returns:
         Dict with keys like '2026', '2026-Q1', '2026-01' etc.
@@ -110,8 +197,29 @@ def derive_base_prices(
 
     # ── 1. Trailing anchor level ──────────────────────────────────────
     n_rows = min(96 * 30 * anchor_months, len(epex))
-    anchor = epex["price_eur_mwh"].iloc[-n_rows:].mean()
-    logger.info("Forward proxy anchor (trailing %dm): %.1f EUR/MWh", anchor_months, anchor)
+    trailing_anchor = float(epex["price_eur_mwh"].iloc[-n_rows:].mean())
+
+    # ── 1b. Optional fundamental anchor (Phase 4.1) ───────────────────
+    fundamental = _fit_fundamental_anchor(epex, commodities) if commodities is not None else None
+    if fundamental is not None and fundamental[1]["r2"] >= 0.40:
+        f_anchor, info = fundamental
+        w = float(np.clip(fundamental_blend, 0.0, 1.0))
+        anchor = w * f_anchor + (1.0 - w) * trailing_anchor
+        logger.info(
+            "Forward proxy anchor: trailing=%.1f, fundamental=%.1f (R2=%.2f), "
+            "blended (w=%.2f)=%.1f EUR/MWh",
+            trailing_anchor, f_anchor, info["r2"], w, anchor,
+        )
+    else:
+        anchor = trailing_anchor
+        if fundamental is not None:
+            logger.info(
+                "Forward proxy anchor: trailing=%.1f (fundamental R2=%.2f below threshold)",
+                trailing_anchor, fundamental[1]["r2"],
+            )
+        else:
+            logger.info("Forward proxy anchor (trailing %dm): %.1f EUR/MWh",
+                        anchor_months, trailing_anchor)
 
     # ── 2. Seasonal shape from last 2+ years ─────────────────────────
     # Anchor on epex.index.max() rather than pd.Timestamp.now() so that

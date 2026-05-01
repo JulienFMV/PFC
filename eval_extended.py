@@ -182,8 +182,26 @@ def _build_pfc(
     unc = Uncertainty()
     unc.fit(train_lb, cal)
 
+    # Phase 4.1: load commodities (TTF gas + EUA) and pass them to
+    # derive_base_prices so the anchor level is blended with a
+    # fundamental regression instead of pure trailing-spot mean.
+    commodities_df = None
+    for cpath in (
+        ROOT / "data" / "commodities_cache.parquet",
+        ROOT / "pfc_shaping" / "data" / "commodities_cache.parquet",
+    ):
+        if cpath.exists():
+            cm = pd.read_parquet(cpath)
+            if cm.index.tz is None:
+                cm.index = cm.index.tz_localize("UTC")
+            commodities_df = cm[cm.index < window.cutoff]
+            break
+
     base_prices = derive_base_prices(
-        train, start_year=window.cutoff.year, n_years=max(1, window.horizon_days // 365 + 1)
+        train,
+        start_year=window.cutoff.year,
+        n_years=max(1, window.horizon_days // 365 + 1),
+        commodities=commodities_df,
     )
 
     cascader = ContractCascader()
