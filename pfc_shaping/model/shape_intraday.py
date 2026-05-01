@@ -77,9 +77,24 @@ class ShapeIntraday:
         n_obs_         : dict[(saison, type_jour, heure)] -> int
     """
 
-    def __init__(self, halflife_days: float = 180.0, hydro_weight_sigma: float = 0.25) -> None:
+    # Phase 3.1: Structural break — DA 15-min go-live on EPEX (FfE 2025
+    # documented a sawtooth pattern emerging on quarter-hourly DA prices
+    # post-Oct-2025). The 180-day exponential decay alone is too gradual
+    # to isolate the rupture; pre-rupture observations get an additional
+    # multiplicative downweight so the post-rupture regime dominates the
+    # f_Q profile estimation.
+    DA15MIN_RUPTURE_DATE = pd.Timestamp("2025-10-01", tz="UTC")
+    PRE_RUPTURE_WEIGHT_FACTOR = 0.25  # extra weight applied to pre-rupture obs
+
+    def __init__(
+        self,
+        halflife_days: float = 180.0,
+        hydro_weight_sigma: float = 0.25,
+        apply_da15min_rupture: bool = True,
+    ) -> None:
         self.halflife_days = halflife_days
         self.hydro_weight_sigma = hydro_weight_sigma
+        self.apply_da15min_rupture = apply_da15min_rupture
         self.base_factors_: dict[tuple, np.ndarray] = {}
         self.corrections_: dict[tuple, dict] = {}
         self.n_obs_: dict[tuple, int] = {}
@@ -130,6 +145,24 @@ class ShapeIntraday:
         days_ago = (t_max - df.index).total_seconds() / 86400.0
         decay_rate = np.log(2) / self.halflife_days
         df["_weight"] = np.exp(-decay_rate * days_ago)
+
+        # Phase 3.1: Structural break Oct-2025 (DA 15-min go-live, FfE 2025).
+        # Apply only when training data straddles the rupture date and we have
+        # at least 30 days of post-rupture observations — otherwise the
+        # downweighting would simply throw away most of the data.
+        if self.apply_da15min_rupture and df.index.min() < self.DA15MIN_RUPTURE_DATE:
+            post_mask = df.index >= self.DA15MIN_RUPTURE_DATE
+            n_post = int(post_mask.sum())
+            if n_post >= 96 * 30:
+                pre_mask = ~post_mask
+                df.loc[pre_mask, "_weight"] = (
+                    df.loc[pre_mask, "_weight"] * self.PRE_RUPTURE_WEIGHT_FACTOR
+                )
+                logger.info(
+                    "DA15min rupture: downweighted %d pre-2025-10-01 obs by %.2fx "
+                    "(%d post-rupture obs kept at full weight)",
+                    int(pre_mask.sum()), self.PRE_RUPTURE_WEIGHT_FACTOR, n_post,
+                )
 
         if hydro_df is not None and "fill_pct" in hydro_df.columns:
             self._apply_hydro_weights(df, hydro_df)
