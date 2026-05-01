@@ -114,19 +114,25 @@ def derive_base_prices(
     logger.info("Forward proxy anchor (trailing %dm): %.1f EUR/MWh", anchor_months, anchor)
 
     # ── 2. Seasonal shape from last 2+ years ─────────────────────────
-    cutoff = pd.Timestamp.now(tz="UTC") - pd.DateOffset(years=2)
+    # Anchor on epex.index.max() rather than pd.Timestamp.now() so that
+    # historical backtests (cutoff far in the past) still pick up a
+    # meaningful 2-year window aligned with the train data.
+    anchor_end = epex.index.max()
+    cutoff = anchor_end - pd.DateOffset(years=2)
     recent = epex[epex.index >= cutoff]
     if len(recent) < 96 * 180:  # less than 6 months
         recent = epex  # fallback to full history
 
     recent_zh = recent.index.tz_convert("Europe/Zurich")
     monthly_avg = recent.groupby(recent_zh.month)["price_eur_mwh"].mean()
-    global_mean = monthly_avg.mean()
+    # Reindex to all 12 months so downstream code can safely index by month.
+    monthly_avg = monthly_avg.reindex(range(1, 13))
+    global_mean = float(monthly_avg.dropna().mean()) if monthly_avg.notna().any() else 0.0
 
     if abs(global_mean) < 1.0:
         seasonal_ratio = pd.Series(1.0, index=range(1, 13))
     else:
-        seasonal_ratio = monthly_avg / global_mean
+        seasonal_ratio = (monthly_avg / global_mean).fillna(1.0)
 
     # ── 2b. Peak/Base ratio from history ───────────────────────────
     # Peak = weekday 08:00-20:00 Zurich time
