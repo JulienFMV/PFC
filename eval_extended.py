@@ -122,8 +122,17 @@ def _agg(errors: np.ndarray, mask: np.ndarray) -> dict[str, float]:
 # Pipeline (mirrors autoresearch_eval.py minus the metric block)
 # --------------------------------------------------------------------------
 
-def _build_pfc(epex: pd.DataFrame, window: Window):
-    """Fit shape models on data < cutoff and build a PFC over the window."""
+def _build_pfc(
+    epex: pd.DataFrame,
+    window: Window,
+    with_lear: bool = False,
+):
+    """Fit shape models on data < cutoff and build a PFC over the window.
+
+    If ``with_lear=True``, additionally fit ``LEARForecaster`` on the same
+    train window and overlay its D+1..D+10 forecast onto the PFC via
+    ``LEARForecaster.blend_with_pfc``.
+    """
     import yaml
     from pfc_shaping.calibration.arbitrage_free import ArbitrageFreeCalibrator
     from pfc_shaping.calibration.cascading import ContractCascader
@@ -232,11 +241,47 @@ def _build_pfc(epex: pd.DataFrame, window: Window):
         entso_forecast=entso_forecast,
         reference_date=window.cutoff,
     )
+
+    if with_lear:
+        try:
+            from pfc_shaping.model.lear_forecaster import LEARForecaster
+
+            epex_de_path = ROOT / "pfc_shaping" / "data" / "epex_de_15min.parquet"
+            epex_de = (
+                pd.read_parquet(epex_de_path).sort_index() if epex_de_path.exists() else None
+            )
+            if epex_de is not None:
+                epex_de = epex_de[epex_de.index < window.cutoff]
+
+            lear = LEARForecaster(tz="Europe/Zurich", use_foundation_model=False)
+            lear.fit(
+                epex_15min=train,
+                entso_15min=entso_full[entso_full.index < window.cutoff] if entso_full is not None else None,
+                hydro=hydro_df,
+                epex_de_15min=epex_de,
+            )
+            lear_horizon = min(10, window.horizon_days)
+            lear_forecast = lear.predict(horizon_days=lear_horizon)
+            pfc = lear.blend_with_pfc(pfc, lear_forecast)
+            print(
+                f"[lear] {window.name}: fitted + blended over {lear_horizon}d "
+                f"(forecast mean={lear_forecast['price_lear'].mean():.1f} EUR/MWh)",
+                file=sys.stderr,
+            )
+        except Exception as exc:
+            print(f"[lear] {window.name}: failed ({exc}) — PFC-only", file=sys.stderr)
+            import traceback
+            traceback.print_exc(file=sys.stderr)
+
     return pfc
 
 
-def _evaluate_window(epex: pd.DataFrame, window: Window) -> StratifiedMetrics | None:
-    pfc = _build_pfc(epex, window)
+def _evaluate_window(
+    epex: pd.DataFrame,
+    window: Window,
+    with_lear: bool = False,
+) -> StratifiedMetrics | None:
+    pfc = _build_pfc(epex, window, with_lear=with_lear)
     test = epex[epex.index >= window.cutoff]
     common = pfc.index.intersection(test.index)
     if len(common) < 96 * 7:
@@ -355,6 +400,15 @@ def main():
         "--json", action="store_true",
         help="Emit JSON only on stdout (default: also write markdown summary to stderr)",
     )
+    parser.add_argument(
+        "--with-lear", action="store_true",
+        help="Overlay LEAR D+1..D+10 forecast onto the PFC (Phase 2)",
+    )
+    parser.add_argument(
+        "--lear-only-window", type=int, default=None, metavar="DAYS",
+        help="Restrict evaluation to the first N days of each test window "
+             "(useful with --with-lear to focus on the LEAR-blended segment).",
+    )
     args = parser.parse_args()
 
     from dashboard.utils import load_epex
@@ -367,9 +421,17 @@ def main():
     windows = _windows(epex, args.window)
     results: list[StratifiedMetrics] = []
     for w in windows:
-        print(f"[run] {w.name} cutoff={w.cutoff.date()} h={w.horizon_days}d", file=sys.stderr)
+        if args.lear_only_window:
+            w = Window(
+                name=f"{w.name}_first{args.lear_only_window}d",
+                cutoff=w.cutoff,
+                horizon_days=args.lear_only_window,
+                description=w.description,
+            )
+        print(f"[run] {w.name} cutoff={w.cutoff.date()} h={w.horizon_days}d "
+              f"lear={args.with_lear}", file=sys.stderr)
         try:
-            r = _evaluate_window(epex, w)
+            r = _evaluate_window(epex, w, with_lear=args.with_lear)
         except Exception as exc:
             print(f"[fail] {w.name}: {exc}", file=sys.stderr)
             import traceback
