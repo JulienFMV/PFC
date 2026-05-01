@@ -138,9 +138,7 @@ def _build_pfc(
     from pfc_shaping.calibration.cascading import ContractCascader
     from pfc_shaping.data.calendar_ch import enrich_15min_index
     from pfc_shaping.data.forward_proxy import derive_base_prices
-    from pfc_shaping.model.assembler import PFCAssembler
-    from pfc_shaping.model.shape_intraday import ShapeIntraday
-    from pfc_shaping.model.uncertainty import Uncertainty
+    from pfc_shaping.shaping import PFCAssembler, ShapeIntraday, Uncertainty
 
     cfg_path = ROOT / "pfc_shaping" / "config.yaml"
     with cfg_path.open() as f:
@@ -169,10 +167,10 @@ def _build_pfc(
     hydro_df = pd.read_parquet(hydro_path) if hydro_path.exists() else None
 
     if sh_mode == "mlp":
-        from pfc_shaping.model.shape_hourly_mlp import ShapeHourlyMLP
+        from pfc_shaping.shaping.shape_hourly_mlp import ShapeHourlyMLP
         sh = ShapeHourlyMLP()
     else:
-        from pfc_shaping.model.shape_hourly import ShapeHourly
+        from pfc_shaping.shaping import ShapeHourly
         sh = ShapeHourly(sigma=sigma)
     sh.fit(train_lb, cal, hydro_df=hydro_df)
 
@@ -262,7 +260,7 @@ def _build_pfc(
 
     if with_lear:
         try:
-            from pfc_shaping.model.lear_forecaster import LEARForecaster
+            from pfc_shaping.forecasting import LEARForecaster
 
             epex_de_path = ROOT / "pfc_shaping" / "data" / "epex_de_15min.parquet"
             epex_de = (
