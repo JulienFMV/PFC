@@ -62,6 +62,10 @@ class Uncertainty:
         self.n_boot = n_boot
         self.seed = seed
         self.boot_stats_: dict[tuple, dict] = {}
+        # Phase 5.1: conformal post-hoc multiplier applied on the half-width
+        # of each interval so that the empirical IC80 coverage matches the
+        # nominal 80%. Defaults to 1.0 (no recalibration). Set by recalibrate().
+        self._conformal_scale: float = 1.0
 
     def fit(self, epex_df: pd.DataFrame, calendar_df: pd.DataFrame) -> "Uncertainty":
         """
@@ -188,10 +192,78 @@ class Uncertainty:
         half_lo = np.abs(prices - prices * stat_p10 / safe_p50)
         half_hi = np.abs(prices * stat_p90 / safe_p50 - prices)
 
-        p10_out = prices - half_lo * widen_arr
-        p90_out = prices + half_hi * widen_arr
+        # Phase 5.1: conformal post-hoc rescale (default 1.0 = no-op).
+        scale = float(self._conformal_scale) * widen_arr
+        p10_out = prices - half_lo * scale
+        p90_out = prices + half_hi * scale
 
         return pd.DataFrame({"p10": p10_out, "p90": p90_out}, index=pfc_df.index)
+
+    def recalibrate(
+        self,
+        realized: np.ndarray | pd.Series,
+        prices: np.ndarray | pd.Series,
+        p10: np.ndarray | pd.Series,
+        p90: np.ndarray | pd.Series,
+        target_coverage: float = 0.80,
+        min_scale: float = 0.20,
+        max_scale: float = 5.0,
+    ) -> dict:
+        """
+        Phase 5.1 — fit a single conformal scalar so that the IC80
+        coverage on a calibration set matches ``target_coverage``.
+
+        The intervals are widened/narrowed about the central price by
+        searching for a scalar ``s`` minimising:
+
+            |coverage(prices ± s × half_width) − target_coverage|
+
+        where half_width = max(prices − p10, p90 − prices). This is the
+        split-conformal recalibration step used by Lipiecki, Uniejewski,
+        Weron (2024) — it gives a distribution-free guarantee on the
+        marginal coverage when the calibration data is exchangeable with
+        the test data, without re-fitting the bootstrap layer.
+
+        Args:
+            realized: realized prices on the calibration set.
+            prices: PFC point predictions on the calibration set.
+            p10, p90: bootstrap intervals on the calibration set.
+            target_coverage: nominal coverage to match (default 0.80).
+            min_scale, max_scale: hard bounds on the search.
+
+        Returns:
+            dict with keys ``before``, ``after``, ``scale``.
+        """
+        realized = np.asarray(realized, dtype=float)
+        prices = np.asarray(prices, dtype=float)
+        p10 = np.asarray(p10, dtype=float)
+        p90 = np.asarray(p90, dtype=float)
+        if not (len(realized) == len(prices) == len(p10) == len(p90)):
+            raise ValueError("recalibrate inputs must have matching lengths")
+
+        # Half-width about the central price (asymmetric; take max for safety).
+        half = np.maximum(np.abs(prices - p10), np.abs(p90 - prices))
+        half = np.where(half > 1e-6, half, 1.0)
+        # Distance of each realized point from the prediction in half-widths.
+        # If |realized − price| ≤ s × half, the point is in the band.
+        dist = np.abs(realized - prices) / half
+
+        # Coverage at scale=1
+        cov_before = float((dist <= 1.0).mean())
+
+        # The (target_coverage)-quantile of dist is exactly the smallest s
+        # such that coverage ≥ target — split-conformal closed form.
+        s = float(np.quantile(dist, target_coverage, method="higher"))
+        s = float(np.clip(s, min_scale, max_scale))
+        cov_after = float((dist <= s).mean())
+
+        self._conformal_scale = s
+        logger.info(
+            "Conformal recalibration: target=%.2f, before=%.3f, "
+            "after=%.3f, scale=%.3f",
+            target_coverage, cov_before, cov_after, s,
+        )
+        return {"before": cov_before, "after": cov_after, "scale": s}
 
     def save(self, path: str | Path) -> None:
         records = []

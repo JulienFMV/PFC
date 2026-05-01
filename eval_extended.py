@@ -304,6 +304,7 @@ def _evaluate_window(
     with_lear: bool = False,
     blend_start_day: int = 8,
     blend_end_day: int = 11,
+    conformal_calib_days: int = 0,
 ) -> StratifiedMetrics | None:
     pfc = _build_pfc(
         epex, window,
@@ -316,6 +317,56 @@ def _evaluate_window(
     if len(common) < 96 * 7:
         print(f"[skip] {window.name}: insufficient overlap ({len(common)} pts)", file=sys.stderr)
         return None
+
+    # Phase 5.1: split-conformal recalibration of the bootstrap intervals.
+    # Use the first ``conformal_calib_days`` days of the test window to fit a
+    # scalar correction so IC80 coverage hits the nominal 80% on that
+    # holdout set; then drop those days and evaluate the metrics on the
+    # remainder. ``conformal_calib_days=0`` skips recalibration entirely.
+    #
+    # Practical guardrails:
+    #   * The calibration set must keep ≥ 30 days of test for evaluation
+    #     (otherwise the metrics have too much variance).
+    #   * If the calibration window is too short (<14 days) split-conformal
+    #     fails because exchangeability breaks (early-window volatility
+    #     not representative of the full test). For winter_2026q1 (60d test)
+    #     this means recalibration is skipped; for longhorizon_2025 (365d
+    #     test) the recommended setting is calib_days=60 which lands IC80
+    #     close to the 0.80 nominal target.
+    if conformal_calib_days > 0 and "p10" in pfc.columns and "p90" in pfc.columns:
+        from pfc_shaping.shaping import Uncertainty
+        calib_end = window.cutoff + pd.Timedelta(days=conformal_calib_days)
+        calib_mask = (common < calib_end)
+        test_mask = (common >= calib_end)
+        n_calib = int(calib_mask.sum())
+        n_test_remainder = int(test_mask.sum())
+        if n_calib >= 96 * 14 and n_test_remainder >= 96 * 30:
+            calib_idx = common[calib_mask]
+            unc_local = Uncertainty()
+            stats = unc_local.recalibrate(
+                realized=test.loc[calib_idx, "price_eur_mwh"].values,
+                prices=pfc.loc[calib_idx, "price_shape"].values,
+                p10=pfc.loc[calib_idx, "p10"].values,
+                p90=pfc.loc[calib_idx, "p90"].values,
+            )
+            half_lo = pfc.loc[common, "price_shape"].values - pfc.loc[common, "p10"].values
+            half_hi = pfc.loc[common, "p90"].values - pfc.loc[common, "price_shape"].values
+            scale = stats["scale"]
+            pfc.loc[common, "p10"] = pfc.loc[common, "price_shape"].values - half_lo * scale
+            pfc.loc[common, "p90"] = pfc.loc[common, "price_shape"].values + half_hi * scale
+            common = common[test_mask]
+            print(
+                f"[conformal] {window.name}: calib_days={conformal_calib_days}, "
+                f"scale={scale:.3f}, calib_cov={stats['after']:.3f}",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                f"[conformal] {window.name}: SKIPPED (calib={n_calib}, "
+                f"remainder={n_test_remainder}). Need calib >= 1344 (14d) "
+                f"AND remainder >= 2880 (30d).",
+                file=sys.stderr,
+            )
 
     pfc_p = pfc.loc[common, "price_shape"].values
     spot_p = test.loc[common, "price_eur_mwh"].values
@@ -447,6 +498,13 @@ def main():
         "--blend-end", type=int, default=10, metavar="DAY",
         help="Day at which LEAR-PFC blend ends (default: 10, post CT.1 sweep).",
     )
+    parser.add_argument(
+        "--conformal-calib-days", type=int, default=0, metavar="DAYS",
+        help="Phase 5.1: split-conformal recalibration. Use the first N days "
+             "of the test window to fit a scalar correction on bootstrap "
+             "intervals so empirical IC80 hits the nominal 80%%; evaluate on "
+             "the remainder. 0 (default) disables recalibration.",
+    )
     args = parser.parse_args()
 
     from dashboard.utils import load_epex
@@ -475,6 +533,7 @@ def main():
                 with_lear=args.with_lear,
                 blend_start_day=args.blend_start,
                 blend_end_day=args.blend_end,
+                conformal_calib_days=args.conformal_calib_days,
             )
         except Exception as exc:
             print(f"[fail] {w.name}: {exc}", file=sys.stderr)
