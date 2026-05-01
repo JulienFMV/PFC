@@ -278,13 +278,12 @@ class PFCAssembler:
             )
         else:
             price_shape = price_raw
-        price_shape = self._rebalance_near_term_bridge(
-            price_shape,
-            idx,
-            months_ahead,
-            days_ahead,
-            country=country,
-        )
+        # Phase 1.1 (roadmap 2026): _rebalance_near_term_bridge removed.
+        # Re-injecting a peak premium AFTER arbitrage-free calibration silently
+        # re-introduces a static arbitrage on quoted Peak D+10..M+3 contracts
+        # (Caldana-Fusai-Roncoroni 2017; Fleten-Lemming 2003). The prompt peak
+        # premium is now applied only via _near_term_bridge_factor BEFORE
+        # calibration, so the calibrator can absorb it consistently.
 
         # Ã¢â€â‚¬Ã¢â€â‚¬ Assemblage DataFrame Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         df = pd.DataFrame(
