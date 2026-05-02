@@ -250,7 +250,7 @@ def _build_pfc(
             clim = hist_c.groupby(["_month", "_hour", "_quarter"])[numeric_cols].median()
             fwd_idx = pd.date_range(
                 window.cutoff,
-                window.cutoff + pd.Timedelta(days=window.horizon_days),
+                window.cutoff + pd.Timedelta(days=max(int(window.horizon_days), 31)),
                 freq="15min", tz="UTC", inclusive="left",
             )
             fwd_zh = fwd_idx.tz_convert("Europe/Zurich")
@@ -267,13 +267,24 @@ def _build_pfc(
             else:
                 entso_forecast = None
 
+    # Energy-consistency fix: monthly Peak forwards (e.g. 2026-01-Peak)
+    # require a full-month PFC to be averageable at the right level. For
+    # short evaluation windows (e.g. lear_only_window=5), build the PFC
+    # over at least 31 days, then restrict the test mask to the requested
+    # horizon. Without this, peak hours are over-predicted by 10-15 EUR
+    # because the calibrator cannot reconcile a 5-day mean with a monthly
+    # forward target.
+    build_horizon = max(int(window.horizon_days), 31)
     pfc = assembler.build(
         base_prices=base_prices,
         start_date=window.cutoff.strftime("%Y-%m-%d"),
-        horizon_days=window.horizon_days,
+        horizon_days=build_horizon,
         entso_forecast=entso_forecast,
         reference_date=window.cutoff,
     )
+    if build_horizon > window.horizon_days:
+        eval_end = window.cutoff + pd.Timedelta(days=window.horizon_days)
+        pfc = pfc[pfc.index < eval_end]
 
     if with_lear:
         try:
@@ -293,7 +304,7 @@ def _build_pfc(
                 hydro=hydro_df,
                 epex_de_15min=epex_de,
             )
-            lear_horizon = min(10, window.horizon_days)
+            lear_horizon = min(14, window.horizon_days)
             lear_forecast = lear.predict(horizon_days=lear_horizon)
             pfc = lear.blend_with_pfc(
                 pfc, lear_forecast,
@@ -313,6 +324,54 @@ def _build_pfc(
     return pfc
 
 
+def _apply_persistence_overlay(
+    pfc: pd.DataFrame,
+    epex: pd.DataFrame,
+    cutoff: pd.Timestamp,
+    days: int = 2,
+    weight_d1: float = 0.55,
+) -> pd.DataFrame:
+    """Blend a persistence (last observed day's hourly pattern) into the PFC
+    on D+1..D+`days`, with weight decaying linearly from ``weight_d1`` to 0
+    at day ``days+1``. This compensates for the structural PFC's lack of
+    lag-1 awareness: realized day D-1 mean is the strongest single
+    predictor of D+1 in EPF literature (Lago 2021)."""
+    if days <= 0 or weight_d1 <= 0:
+        return pfc
+
+    # Last observed day's hourly pattern (Zurich-time hour-of-day → price)
+    last_end = cutoff.tz_convert(epex.index.tz)
+    last_start = last_end - pd.Timedelta(days=1)
+    last_day = epex[(epex.index >= last_start) & (epex.index < last_end)][
+        "price_eur_mwh"
+    ].copy()
+    if len(last_day) < 80:  # need ~24h
+        return pfc
+    idx_zh = last_day.index.tz_convert("Europe/Zurich")
+    pattern_by_hour = last_day.groupby(idx_zh.hour).mean()
+    last_day_mean = float(pattern_by_hour.mean())
+
+    out = pfc.copy()
+    pfc_zh = pfc.index.tz_convert("Europe/Zurich")
+    days_ahead = (pfc.index - cutoff).total_seconds() / 86400.0
+    hours_zh = pfc_zh.hour
+    pred = pfc["price_shape"].values.copy()
+
+    for i in range(len(pfc)):
+        d = days_ahead[i]
+        if d < 0 or d > days:
+            continue
+        # weight decays linearly: d=0 → weight_d1, d=days → 0
+        w = float(np.clip(weight_d1 * (1.0 - d / float(days)), 0.0, 1.0))
+        if w <= 0:
+            continue
+        pattern_value = float(pattern_by_hour.get(hours_zh[i], last_day_mean))
+        pred[i] = (1.0 - w) * pred[i] + w * pattern_value
+
+    out["price_shape"] = pred
+    return out
+
+
 def _evaluate_window(
     epex: pd.DataFrame,
     window: Window,
@@ -320,6 +379,8 @@ def _evaluate_window(
     blend_start_day: int = 8,
     blend_end_day: int = 11,
     conformal_calib_days: int = 0,
+    persistence_days: int = 2,
+    persistence_weight: float = 0.55,
 ) -> StratifiedMetrics | None:
     pfc = _build_pfc(
         epex, window,
@@ -327,6 +388,11 @@ def _evaluate_window(
         blend_start_day=blend_start_day,
         blend_end_day=blend_end_day,
     )
+    if persistence_days > 0:
+        pfc = _apply_persistence_overlay(
+            pfc, epex, window.cutoff,
+            days=persistence_days, weight_d1=persistence_weight,
+        )
     test = epex[epex.index >= window.cutoff]
     common = pfc.index.intersection(test.index)
     if len(common) < 96 * 3:
@@ -530,6 +596,17 @@ def main():
         help="Trailing months for the spot anchor in derive_base_prices "
              "(shorter = more responsive to recent regime; longer = smoother).",
     )
+    parser.add_argument(
+        "--persistence-days", type=int, default=2, metavar="D",
+        help="Apply a persistence-overlay on the first D test days (default 2). "
+             "Anchors near-term predictions on the last observed day's hourly "
+             "pattern. Set 0 to disable.",
+    )
+    parser.add_argument(
+        "--persistence-weight", type=float, default=0.55, metavar="W",
+        help="Weight of the persistence overlay at D+1 (decays linearly to 0 "
+             "at D+persistence_days+1). Default 0.55.",
+    )
     args = parser.parse_args()
 
     from dashboard.utils import load_epex
@@ -562,6 +639,8 @@ def main():
                 blend_start_day=args.blend_start,
                 blend_end_day=args.blend_end,
                 conformal_calib_days=args.conformal_calib_days,
+                persistence_days=args.persistence_days,
+                persistence_weight=args.persistence_weight,
             )
         except Exception as exc:
             print(f"[fail] {w.name}: {exc}", file=sys.stderr)
