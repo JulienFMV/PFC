@@ -132,12 +132,14 @@ class LEARForecaster:
         random_state: int = 42,
         use_foundation_model: bool = True,
         use_extended_physical_ch_features: bool = False,
+        use_weather_features: bool = False,
     ):
         self.tz = tz
         self.max_iter = max_iter
         self.random_state = random_state
         self.use_foundation_model = use_foundation_model
         self.use_extended_physical_ch_features = use_extended_physical_ch_features
+        self.use_weather_features = use_weather_features
         self._fitted = False
         self._fm = FoundationForecaster() if use_foundation_model else None
         self._lgbm_device_type = "gpu"
@@ -151,6 +153,7 @@ class LEARForecaster:
         hydro: pd.DataFrame | None = None,
         epex_de_15min: pd.DataFrame | None = None,
         de_renewable_forecast: pd.DataFrame | None = None,
+        weather_hourly: pd.DataFrame | None = None,
     ) -> "LEARForecaster":
         """Prepare hourly data matrices for LEAR training."""
         # Aggregate EPEX CH to hourly
@@ -218,6 +221,22 @@ class LEARForecaster:
                     fill.index = fill.index.tz_localize("UTC")
                 exog["hydro_fill"] = fill.resample("h").ffill()
 
+        # Weather history + forecast (Open-Meteo aggregate, auto-loaded if available)
+        if weather_hourly is None and self.use_weather_features:
+            _weather_path = Path(__file__).resolve().parent.parent / "data" / "weather_open_meteo_hourly.parquet"
+            if _weather_path.exists():
+                weather_hourly = pd.read_parquet(_weather_path)
+                logger.info("Weather features auto-loaded: %d rows", len(weather_hourly))
+        self._weather_cols: list[str] = []
+        if weather_hourly is not None and not weather_hourly.empty:
+            weather = weather_hourly.copy()
+            if weather.index.tz is None:
+                weather.index = pd.to_datetime(weather.index, utc=True)
+            numeric_cols = [c for c in weather.columns if pd.api.types.is_numeric_dtype(weather[c])]
+            for col in numeric_cols:
+                exog[col] = weather[col].resample("h").mean()
+            self._weather_cols = numeric_cols
+
         # DE renewable forecasts (wind + solar day-ahead from ENTSO-E)
         if de_renewable_forecast is None:
             # Auto-load from parquet if available
@@ -244,6 +263,7 @@ class LEARForecaster:
                         exog.get("forecast_solar_de_mw", pd.Series([0])).mean())
 
         # Align
+        self._exog_full = exog.sort_index()
         common_idx = self.prices_h_.index
         self.exog_ = exog.reindex(common_idx)
         self._idx_local = self.prices_h_.index.tz_convert(self.tz)
@@ -296,6 +316,50 @@ class LEARForecaster:
                 if len(vals) > 10:
                     calib[h] = (float(vals.mean()), float(vals.std()))
         return calib
+
+    def _lookup_future_hourly_exog(
+        self,
+        base_col: str,
+        forecast_date,
+        hour: int,
+        day_offset: int = 0,
+    ) -> float:
+        if not hasattr(self, "_exog_full") or base_col not in self._exog_full.columns:
+            return float("nan")
+        ts_local = pd.Timestamp(forecast_date) + pd.Timedelta(days=day_offset, hours=hour)
+        ts_utc = ts_local.tz_localize(
+            self.tz,
+            nonexistent="shift_forward",
+            ambiguous=False,
+        ).tz_convert("UTC")
+        series = self._exog_full[base_col].sort_index()
+        looked_up = series.reindex([ts_utc], method="nearest", tolerance=pd.Timedelta(minutes=90))
+        if looked_up.empty or pd.isna(looked_up.iloc[0]):
+            return float("nan")
+        return float(looked_up.iloc[0])
+
+    def _lookup_future_daily_exog_mean(
+        self,
+        base_col: str,
+        forecast_date,
+        day_offset: int = 0,
+    ) -> float:
+        if not hasattr(self, "_exog_full") or base_col not in self._exog_full.columns:
+            return float("nan")
+        ts_local = pd.Timestamp(forecast_date) + pd.Timedelta(days=day_offset)
+        start_utc = ts_local.tz_localize(
+            self.tz,
+            nonexistent="shift_forward",
+            ambiguous=False,
+        ).tz_convert("UTC")
+        end_utc = start_utc + pd.Timedelta(days=1)
+        window = self._exog_full.loc[
+            (self._exog_full.index >= start_utc) & (self._exog_full.index < end_utc),
+            base_col,
+        ]
+        if window.empty:
+            return float("nan")
+        return float(window.mean())
 
     def _build_features(
         self,
@@ -451,6 +515,33 @@ class LEARForecaster:
                     if target_hour in re_pivot.columns:
                         features_list.append(re_pivot.shift(1)[target_hour].values)
                         feature_names.append(f"{re_col}_d-1_h{target_hour:02d}")
+
+        # ── 3b. Weather features (historical realized + future forecast) ──
+        for col in [c for c in getattr(self, "_weather_cols", []) if c in exog.columns]:
+            weather_series = exog[col].dropna()
+            if weather_series.empty:
+                continue
+            weather_local = weather_series.index.tz_convert(self.tz)
+            weather_df = pd.DataFrame({
+                "date": weather_local.date,
+                "hour": weather_local.hour,
+                "value": weather_series.values,
+            })
+            weather_pivot = weather_df.pivot_table(
+                index="date", columns="hour", values="value", aggfunc="mean"
+            ).reindex(complete.index)
+
+            if target_hour in weather_pivot.columns:
+                features_list.append(weather_pivot[target_hour].values)
+                feature_names.append(f"{col}_d0_h{target_hour:02d}")
+                features_list.append(weather_pivot.shift(1)[target_hour].values)
+                feature_names.append(f"{col}_d-1_h{target_hour:02d}")
+
+            daily_mean = weather_pivot.mean(axis=1)
+            features_list.append(daily_mean.values)
+            feature_names.append(f"{col}_daily_mean_d0")
+            features_list.append(daily_mean.shift(1).values)
+            feature_names.append(f"{col}_daily_mean_d-1")
 
         # ── 4. Exogenous features (CH) ──
         exog_cols = [c for c in exog.columns
@@ -1645,6 +1736,22 @@ class LEARForecaster:
                     x[i] = 1.0 if forecast_date in fr_hols else 0.0
 
             # ── Exogenous ──
+            elif "_d0_h" in col_name:
+                base_col = col_name.split("_d0_h")[0]
+                x[i] = self._lookup_future_hourly_exog(base_col, forecast_date, hour)
+
+            elif "_daily_mean_d0" in col_name:
+                base_col = col_name.replace("_daily_mean_d0", "")
+                x[i] = self._lookup_future_daily_exog_mean(base_col, forecast_date)
+
+            elif "_d-1_h" in col_name and col_name.split("_d-1_h")[0] in getattr(self, "_weather_cols", []):
+                base_col = col_name.split("_d-1_h")[0]
+                x[i] = self._lookup_future_hourly_exog(base_col, forecast_date, hour, day_offset=-1)
+
+            elif "_daily_mean_d-1" in col_name and col_name.replace("_daily_mean_d-1", "") in getattr(self, "_weather_cols", []):
+                base_col = col_name.replace("_daily_mean_d-1", "")
+                x[i] = self._lookup_future_daily_exog_mean(base_col, forecast_date, day_offset=-1)
+
             elif "_d0_" in col_name:
                 vals = X_full[col_name].dropna().tail(28)
                 x[i] = vals.mean() if not vals.empty else 0

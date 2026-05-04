@@ -394,7 +394,10 @@ try:
     if os.path.exists(commodities_path):
         commodities_df = pd.read_parquet(commodities_path)
 
-    lear = LEARForecaster(tz="Europe/Zurich")
+    lear = LEARForecaster(
+        tz="Europe/Zurich",
+        use_weather_features=os.getenv("PFC_ENABLE_WEATHER_FEATURES", "0") == "1",
+    )
     lear.fit(
         epex_15min=epex_ch,
         entso_15min=entso,

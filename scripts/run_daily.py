@@ -136,6 +136,21 @@ def ingest_data(days_back: int = 7) -> dict:
         status["hydro"] = f"FAILED: {e}"
         logger.warning("  Hydro ingestion failed (non-critical): %s", e)
 
+    # â”€â”€ 1e. Weather history + forecast (Open-Meteo) â”€â”€
+    logger.info("=" * 60)
+    logger.info("INGEST: Weather history + forecast")
+    logger.info("=" * 60)
+    try:
+        from pfc_shaping.data.ingest_weather import fetch_and_cache as fetch_weather
+        weather_start = "2023-01-01"
+        weather_end = (today + timedelta(days=10)).isoformat()
+        weather_df = fetch_weather(weather_start, weather_end)
+        status["weather"] = f"OK ({len(weather_df)} rows)"
+        logger.info("  Weather: %s", status["weather"])
+    except Exception as e:
+        status["weather"] = f"FAILED: {e}"
+        logger.warning("  Weather ingestion failed (non-critical): %s", e)
+
     return status
 
 
