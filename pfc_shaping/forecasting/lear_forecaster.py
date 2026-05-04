@@ -133,6 +133,7 @@ class LEARForecaster:
         use_foundation_model: bool = True,
         use_extended_physical_ch_features: bool = False,
         use_weather_features: bool = False,
+        use_causal_target_norm: bool = False,
     ):
         self.tz = tz
         self.max_iter = max_iter
@@ -140,6 +141,7 @@ class LEARForecaster:
         self.use_foundation_model = use_foundation_model
         self.use_extended_physical_ch_features = use_extended_physical_ch_features
         self.use_weather_features = use_weather_features
+        self.use_causal_target_norm = use_causal_target_norm
         self._fitted = False
         self._fm = FoundationForecaster() if use_foundation_model else None
         self._lgbm_device_type = "gpu"
@@ -1254,10 +1256,13 @@ class LEARForecaster:
             y_w = y_full.iloc[-n:]
 
             y_arr = y_w.values.astype(float)
-            # Fixed asinh transform for all windows (consistent forward/inverse)
-            # Causal variant was removed: inverse transform was inconsistent
-            # (per-timestep mu/sigma at training, global mu/sigma at prediction)
-            y_t, mu, sigma = _asinh_transform(y_arr)
+            # Causal normalization makes the transformed target adapt to level
+            # shifts within each calibration window while still keeping a
+            # stable global inverse through the returned final mu/sigma.
+            if self.use_causal_target_norm:
+                y_t, mu, sigma = _causal_asinh_transform(y_arr)
+            else:
+                y_t, mu, sigma = _asinh_transform(y_arr)
 
             try:
                 X_arr = np.nan_to_num(X_w.values.astype(float), nan=0.0)

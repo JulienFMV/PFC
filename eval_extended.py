@@ -155,6 +155,7 @@ def _build_pfc(
     blend_end_day: int = 11,
     use_foundation_model: bool = False,
     use_weather_features: bool = False,
+    use_causal_target_norm: bool = False,
 ):
     """Fit shape models on data < cutoff and build a PFC over the window.
 
@@ -317,6 +318,7 @@ def _build_pfc(
                 tz="Europe/Zurich",
                 use_foundation_model=use_foundation_model,
                 use_weather_features=use_weather_features,
+                use_causal_target_norm=use_causal_target_norm,
             )
             lear.fit(
                 epex_15min=train,
@@ -400,6 +402,7 @@ def _evaluate_window(
     blend_end_day: int = 11,
     use_foundation_model: bool = False,
     use_weather_features: bool = False,
+    use_causal_target_norm: bool = False,
     conformal_calib_days: int = 0,
     persistence_days: int = 2,
     persistence_weight: float = 0.55,
@@ -411,6 +414,7 @@ def _evaluate_window(
         blend_end_day=blend_end_day,
         use_foundation_model=use_foundation_model,
         use_weather_features=use_weather_features,
+        use_causal_target_norm=use_causal_target_norm,
     )
     if persistence_days > 0:
         pfc = _apply_persistence_overlay(
@@ -604,6 +608,11 @@ def main():
              "Default remains off so the reference benchmark stays unchanged.",
     )
     parser.add_argument(
+        "--with-causal-target-norm", action="store_true",
+        help="Enable causal target normalization inside LEAR. "
+             "Kept opt-in so the reference benchmark stays unchanged.",
+    )
+    parser.add_argument(
         "--lear-only-window", type=int, default=None, metavar="DAYS",
         help="Restrict evaluation to the first N days of each test window "
              "(useful with --with-lear to focus on the LEAR-blended segment).",
@@ -678,6 +687,7 @@ def main():
                 blend_end_day=args.blend_end,
                 use_foundation_model=args.with_foundation_model,
                 use_weather_features=args.with_weather_features,
+                use_causal_target_norm=args.with_causal_target_norm,
                 conformal_calib_days=args.conformal_calib_days,
                 persistence_days=args.persistence_days,
                 persistence_weight=args.persistence_weight,
