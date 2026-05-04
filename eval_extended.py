@@ -58,6 +58,7 @@ class StratifiedMetrics:
     n_points: int
     rmse: float
     mae: float
+    mape: float
     bias: float
     rmse_shape: float
     ic80_coverage: float | None
@@ -120,13 +121,26 @@ def _build_strata(idx: pd.DatetimeIndex, cutoff: pd.Timestamp,
 def _agg(errors: np.ndarray, mask: np.ndarray) -> dict[str, float]:
     sel = errors[mask]
     if len(sel) == 0:
-        return {"n": 0, "rmse": float("nan"), "mae": float("nan"), "bias": float("nan")}
+        return {
+            "n": 0,
+            "rmse": float("nan"),
+            "mae": float("nan"),
+            "mape": float("nan"),
+            "bias": float("nan"),
+        }
     return {
         "n": int(len(sel)),
         "rmse": float(np.sqrt(np.mean(sel ** 2))),
         "mae": float(np.mean(np.abs(sel))),
+        "mape": float("nan"),
         "bias": float(np.mean(sel)),
     }
+
+
+def _mape(actual: np.ndarray, forecast: np.ndarray) -> float:
+    denom = np.clip(np.abs(actual.astype(float)), 1.0, None)
+    ape = np.abs(forecast.astype(float) - actual.astype(float)) / denom * 100.0
+    return float(np.mean(ape))
 
 
 # --------------------------------------------------------------------------
@@ -461,6 +475,7 @@ def _evaluate_window(
 
     rmse = float(np.sqrt(np.mean(err ** 2)))
     mae = float(np.mean(np.abs(err)))
+    mape = _mape(spot_p, pfc_p)
     bias = float(np.mean(err))
     scale = float(spot_p.mean() / pfc_p.mean()) if pfc_p.mean() != 0 else 1.0
     rmse_shape = float(np.sqrt(np.mean((pfc_p * scale - spot_p) ** 2)))
@@ -477,12 +492,15 @@ def _evaluate_window(
         per_label: dict[str, dict[str, float]] = {}
         for label in sorted(set(labels.tolist())):
             mask = labels == label
-            per_label[str(label)] = _agg(err, mask)
+            stats = _agg(err, mask)
+            if stats["n"] > 0:
+                stats["mape"] = _mape(spot_p[mask], pfc_p[mask])
+            per_label[str(label)] = stats
         by_stratum[strat_name] = per_label
 
     return StratifiedMetrics(
         window=window.name, n_points=len(common),
-        rmse=rmse, mae=mae, bias=bias, rmse_shape=rmse_shape,
+        rmse=rmse, mae=mae, mape=mape, bias=bias, rmse_shape=rmse_shape,
         ic80_coverage=ic80, by_stratum=by_stratum,
     )
 
@@ -530,12 +548,12 @@ def _windows(epex: pd.DataFrame, selection: str) -> list[Window]:
 
 def _md_table(results: list[StratifiedMetrics]) -> str:
     lines = []
-    lines.append("| window | n_pts | RMSE | MAE | bias | RMSE_shape | IC80 |")
-    lines.append("|---|---:|---:|---:|---:|---:|---:|")
+    lines.append("| window | n_pts | RMSE | MAE | MAPE | bias | RMSE_shape | IC80 |")
+    lines.append("|---|---:|---:|---:|---:|---:|---:|---:|")
     for r in results:
         ic = f"{r.ic80_coverage:.3f}" if r.ic80_coverage is not None else "n/a"
         lines.append(
-            f"| {r.window} | {r.n_points} | {r.rmse:.3f} | {r.mae:.3f} | "
+            f"| {r.window} | {r.n_points} | {r.rmse:.3f} | {r.mae:.3f} | {r.mape:.3f}% | "
             f"{r.bias:+.3f} | {r.rmse_shape:.3f} | {ic} |"
         )
     return "\n".join(lines)
@@ -545,13 +563,13 @@ def _md_strata(r: StratifiedMetrics) -> str:
     out = [f"\n### {r.window} — by stratum"]
     for strat, per_label in r.by_stratum.items():
         out.append(f"\n**{strat}**")
-        out.append("| label | n | RMSE | MAE | bias |")
-        out.append("|---|---:|---:|---:|---:|")
+        out.append("| label | n | RMSE | MAE | MAPE | bias |")
+        out.append("|---|---:|---:|---:|---:|---:|")
         for label, m in per_label.items():
             if m["n"] == 0:
                 continue
             out.append(
-                f"| {label} | {m['n']} | {m['rmse']:.3f} | {m['mae']:.3f} | {m['bias']:+.3f} |"
+                f"| {label} | {m['n']} | {m['rmse']:.3f} | {m['mae']:.3f} | {m['mape']:.3f}% | {m['bias']:+.3f} |"
             )
     return "\n".join(out)
 
@@ -669,7 +687,7 @@ def main():
         "results": [
             {
                 "window": r.window, "n_points": r.n_points,
-                "rmse": r.rmse, "mae": r.mae, "bias": r.bias,
+                "rmse": r.rmse, "mae": r.mae, "mape": r.mape, "bias": r.bias,
                 "rmse_shape": r.rmse_shape, "ic80_coverage": r.ic80_coverage,
                 "by_stratum": r.by_stratum,
             }
