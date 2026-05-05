@@ -2120,6 +2120,9 @@ class LEARForecaster:
 
         pfc_prices = result.loc[has_lear, "price_shape"].values
         hourly_means = hourly_pfc_mean.values
+        pfc_hours_local = pfc_hours[has_lear].tz_convert(self.tz)
+        local_hours = pfc_hours_local.hour.to_numpy()
+        local_weekdays = pfc_hours_local.dayofweek.to_numpy()
 
         new_prices = pfc_prices.copy()
         for i in range(len(new_prices)):
@@ -2140,6 +2143,19 @@ class LEARForecaster:
                 else:
                     lear_scaled = lear_p
                 new_prices[i] = w_lear * lear_scaled + (1 - w_lear) * pfc_p
+
+            # D+4..D+5 weekday daytime spike guardrail:
+            # when the structural curve already carries a materially higher
+            # level than LEAR, keep that upside instead of letting the short-
+            # term model underprice the regime shift.
+            if (
+                day > 3
+                and day <= 5
+                and local_weekdays[i] < 5
+                and 6 <= local_hours[i] < 22
+                and (pfc_p - new_prices[i]) > 5.0
+            ):
+                new_prices[i] = pfc_p
 
         result.loc[has_lear, "price_shape"] = new_prices
         result.drop(columns=["_hour"], inplace=True)
