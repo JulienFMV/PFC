@@ -221,12 +221,22 @@ class LEARForecaster:
                     fill.index = fill.index.tz_localize("UTC")
                 exog["hydro_fill"] = fill.resample("h").ffill()
 
-        # Weather history + forecast (Open-Meteo aggregate, auto-loaded if available)
+        # Weather history + forecast, auto-loaded from the best available local provider.
         if weather_hourly is None and self.use_weather_features:
-            _weather_path = Path(__file__).resolve().parent.parent / "data" / "weather_open_meteo_hourly.parquet"
-            if _weather_path.exists():
-                weather_hourly = pd.read_parquet(_weather_path)
-                logger.info("Weather features auto-loaded: %d rows", len(weather_hourly))
+            _data_dir = Path(__file__).resolve().parent.parent / "data"
+            _weather_candidates = [
+                _data_dir / "weather_dwd_hourly.parquet",
+                _data_dir / "weather_open_meteo_hourly.parquet",
+            ]
+            for _weather_path in _weather_candidates:
+                if _weather_path.exists():
+                    weather_hourly = pd.read_parquet(_weather_path)
+                    logger.info(
+                        "Weather features auto-loaded from %s: %d rows",
+                        _weather_path.name,
+                        len(weather_hourly),
+                    )
+                    break
         self._weather_cols: list[str] = []
         if weather_hourly is not None and not weather_hourly.empty:
             weather = weather_hourly.copy()
