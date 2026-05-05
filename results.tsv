@@ -23,3 +23,4 @@ af1ccdc	26.336	26.138	keep	Phase 3.1 DA15min rupture downweight (structural, inv
 71b6f6f	19.280	17.253	keep	CT.1 LEAR blend window (5,10): -7% RMSE winter, summer unchanged
 e777450	29.096	29.034	keep	Phase 5.1 conformal recal Y+1 IC80 0.940->0.798
 60f14f8	26.18	19.58	keep	Persistence overlay D+0..D+3: winter DA J+1 MAE 6.87 (was 18)
+4311249	26.18	26.05	keep	Fix 2d2c76e regression: weather elif gating; D+2_3 8.86 -> 3.41

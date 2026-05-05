@@ -1772,11 +1772,11 @@ class LEARForecaster:
                     x[i] = 1.0 if forecast_date in fr_hols else 0.0
 
             # ── Exogenous ──
-            elif "_d0_h" in col_name:
+            elif "_d0_h" in col_name and col_name.split("_d0_h")[0] in getattr(self, "_weather_cols", []):
                 base_col = col_name.split("_d0_h")[0]
                 x[i] = self._lookup_future_hourly_exog(base_col, forecast_date, hour)
 
-            elif "_daily_mean_d0" in col_name:
+            elif "_daily_mean_d0" in col_name and col_name.replace("_daily_mean_d0", "") in getattr(self, "_weather_cols", []):
                 base_col = col_name.replace("_daily_mean_d0", "")
                 x[i] = self._lookup_future_daily_exog_mean(base_col, forecast_date)
 
