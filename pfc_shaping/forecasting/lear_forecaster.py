@@ -1143,7 +1143,7 @@ class LEARForecaster:
 
         if self._is_chronos2_finetuned():
             if horizon <= 1:
-                w_fm = 0.26
+                w_fm = 0.18
             elif horizon == 2:
                 w_fm = 0.35
             elif horizon == 3:
@@ -1483,6 +1483,12 @@ class LEARForecaster:
         all_forecasts = []
         n_mlp_used = 0
 
+        logger.info(
+            "LEAR flags: foundation=%s weather=%s",
+            bool(self.use_foundation_model),
+            bool(self.use_weather_features),
+        )
+
         for hour in range(24):
             X_full, y_full = self._build_features(
                 self.prices_h_, self.exog_, target_hour=hour
@@ -1508,7 +1514,6 @@ class LEARForecaster:
             recent_bias, weekday_bias, weekend_bias = self._recent_bias_by_regime(
                 X_full, y_full, lasso_models, recent_n=14
             )
-
             # Conformal residuals
             conf_residuals = self._compute_conformal_residuals(
                 hour, X_full, y_full, lasso_models
