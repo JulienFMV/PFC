@@ -28,3 +28,4 @@ e777450	29.096	29.034	keep	Phase 5.1 conformal recal Y+1 IC80 0.940->0.798
 b4e4d0e	25.97	19.35	keep	D+4..D+5 upside guardrail in LEAR/PFC blend: winter first5d MAE 6.34 -> 4.98, D+4_5 10.11 -> 6.67 on clean snapshot
 d22014e	26.01	19.48	hold	Switch Open-Meteo weather ingestion to historical-forecast API (no leakage); weather-only ablation degrades clean snapshot winter first5d MAE 4.98 -> 7.47, D+4_5 6.67 -> 8.82
 6c173cf	26.01	19.48	keep	Add DWD ICON live weather provider (ICON-D2 0..48h + ICON-EU 49..120h), LEAR auto-load priority, and run_daily provider switch; validated local GRIB2 decode to weather_dwd_hourly.parquet (118 rows, 19 cols)
+pending	26.01	19.48	hold	Weather autopsy on clean snapshot: coverage OK, strong radiation<->solar multicollinearity (~0.96). Best ablation with weather kept but CH solar/wind dropped still degrades winter first5d MAE 4.98 -> 6.90 (D+0_1 3.70, D+2_3 5.40, D+4_5 10.04)
