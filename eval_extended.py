@@ -635,15 +635,17 @@ def main():
              "(shorter = more responsive to recent regime; longer = smoother).",
     )
     parser.add_argument(
-        "--persistence-days", type=int, default=2, metavar="D",
-        help="Apply a persistence-overlay on the first D test days (default 2). "
-             "Anchors near-term predictions on the last observed day's hourly "
-             "pattern. Set 0 to disable.",
+        "--persistence-days", type=int, default=3, metavar="D",
+        help="Apply a persistence-overlay on the first D test days (default 3, "
+             "post-tuning sweep on winter J+1..J+3). Anchors near-term "
+             "predictions on the last observed day's hourly pattern. "
+             "Set 0 to disable.",
     )
     parser.add_argument(
-        "--persistence-weight", type=float, default=0.55, metavar="W",
+        "--persistence-weight", type=float, default=1.00, metavar="W",
         help="Weight of the persistence overlay at D+1 (decays linearly to 0 "
-             "at D+persistence_days+1). Default 0.55.",
+             "at D+persistence_days+1). Default 1.00 (full persistence on D+1, "
+             "post-tuning sweep optimum for J+1..J+3 MAE).",
     )
     args = parser.parse_args()
 
