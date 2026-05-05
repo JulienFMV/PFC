@@ -397,7 +397,6 @@ try:
     lear = LEARForecaster(
         tz="Europe/Zurich",
         use_weather_features=os.getenv("PFC_ENABLE_WEATHER_FEATURES", "0") == "1",
-        use_causal_target_norm=os.getenv("PFC_ENABLE_CAUSAL_TARGET_NORM", "0") == "1",
     )
     lear.fit(
         epex_15min=epex_ch,
