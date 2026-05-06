@@ -119,53 +119,96 @@ class CalibrationResult:
 def _build_peak_mask(
     index: pd.DatetimeIndex,
     peak_hours: tuple[int, int],
-    ch_holiday_dates: set,
+    holiday_dates: set,
+    tz: str = "Europe/Zurich",
 ) -> np.ndarray:
     """Return a boolean array indicating peak timestamps.
 
     Peak is defined as hours ``[peak_hours[0], peak_hours[1])`` on Monday
-    through Friday in the Europe/Zurich timezone, excluding Swiss public
-    holidays.
+    through Friday in the supplied local timezone, excluding the supplied
+    set of national public holidays.
 
     Args:
         index: UTC ``DatetimeIndex`` at 15-min frequency.
-        peak_hours: ``(start_hour, end_hour)`` in local Zurich time. The
+        peak_hours: ``(start_hour, end_hour)`` in the local timezone. The
             interval is ``[start_hour, end_hour)`` — e.g. ``(8, 20)`` means
             08:00-19:45 inclusive.
-        ch_holiday_dates: Set of ``datetime.date`` objects for Swiss public
-            holidays over the relevant years.
+        holiday_dates: Set of ``datetime.date`` objects for the relevant
+            country's public holidays over the years spanned by ``index``.
+        tz: IANA timezone for the local-time peak window. Defaults to
+            ``Europe/Zurich`` (CH/AT) — pass ``Europe/Berlin`` for DE,
+            ``Europe/Paris`` for FR, ``Europe/Rome`` for IT.
 
     Returns:
         Boolean numpy array of shape ``(len(index),)``.
     """
-    idx_zurich = index.tz_convert("Europe/Zurich")
-    hour = idx_zurich.hour
-    dow = idx_zurich.dayofweek  # 0=Mon .. 6=Sun
-    dates = idx_zurich.date
+    idx_local = index.tz_convert(tz)
+    hour = idx_local.hour
+    dow = idx_local.dayofweek  # 0=Mon .. 6=Sun
+    dates = idx_local.date
 
     is_weekday = dow < 5
     is_peak_hour = (hour >= peak_hours[0]) & (hour < peak_hours[1])
-    is_not_holiday = np.array([d not in ch_holiday_dates for d in dates])
+    is_not_holiday = np.array([d not in holiday_dates for d in dates])
 
     return is_weekday & is_peak_hour & is_not_holiday
 
 
-def _get_ch_holidays(years: Sequence[int]) -> set:
-    """Collect Swiss public holidays for the given years.
+# Map ISO-2 market code → (IANA tz, ``holidays`` constructor). Adding a
+# new market only requires extending this table. CH and AT share
+# Europe/Zurich (CET/CEST) but their holiday calendars differ; FR uses
+# Paris, IT uses Rome, DE uses Berlin. Order matters only for logging.
+_COUNTRY_TZ: dict[str, str] = {
+    "CH": "Europe/Zurich",
+    "DE": "Europe/Berlin",
+    "AT": "Europe/Vienna",
+    "FR": "Europe/Paris",
+    "IT": "Europe/Rome",
+}
 
-    Uses the ``holidays`` library with all cantons aggregated (national
-    holidays). This is consistent with EEX Peak definitions.
+
+def _get_country_holidays(years: Sequence[int], country: str = "CH") -> set:
+    """Collect public holidays for the requested country and years.
+
+    Used by the arbitrage-free calibrator to build the EEX-style Peak
+    mask. EEX Peak excludes national-level public holidays of the
+    delivery zone, so the country argument matters: a DE Peak forward
+    must NOT exclude Bundesfeier (1 August, CH-only) and a CH Peak
+    forward must NOT exclude Tag der Deutschen Einheit (3 October,
+    DE-only).
 
     Args:
         years: Calendar years to cover.
+        country: ISO-2 market code (CH / DE / AT / FR / IT).
 
     Returns:
         Set of ``datetime.date`` objects.
     """
+    code = country.upper()
+    constructors: dict[str, callable] = {
+        "CH": holidays.Switzerland,
+        "DE": holidays.Germany,
+        "AT": holidays.Austria,
+        "FR": holidays.France,
+        "IT": holidays.Italy,
+    }
+    if code not in constructors:
+        raise ValueError(
+            f"Unsupported country {country!r} for arbitrage-free calibration; "
+            f"expected one of {sorted(constructors)}"
+        )
+    ctor = constructors[code]
     result: set = set()
     for y in years:
-        result |= set(holidays.Switzerland(years=y).keys())
+        result |= set(ctor(years=y).keys())
     return result
+
+
+# Backward-compat shim: legacy callers (and tests) still import
+# _get_ch_holidays. Keep it as a thin alias around the country-aware
+# helper so old call sites keep working unchanged.
+def _get_ch_holidays(years: Sequence[int]) -> set:
+    return _get_country_holidays(years, country="CH")
 
 
 # ---------------------------------------------------------------------------
@@ -333,6 +376,7 @@ class ArbitrageFreeCalibrator:
         self,
         raw_curve: pd.Series,
         contracts: list[FuturesContract],
+        country: str = "CH",
     ) -> CalibrationResult:
         """Calibrate a raw shape curve to match futures prices.
 
@@ -343,15 +387,32 @@ class ArbitrageFreeCalibrator:
             contracts: List of futures contracts to reprice.  Contracts
                 whose delivery period falls outside the curve's date range
                 are silently skipped.
+            country: ISO-2 market code (CH / DE / AT / FR / IT). Drives
+                the local timezone of the EEX Peak window and the set of
+                national public holidays excluded from Peak. Calibrating
+                a DE forward with the default ``"CH"`` would silently
+                use Bundesfeier as a non-peak day (CH-only) and treat
+                3 October as a Peak day (DE-only) — both wrong by
+                EEX PHELIX-Peak convention. The pipeline routes the
+                spec's country code through the assembler.
 
         Returns:
             A ``CalibrationResult`` containing the calibrated curve,
             correction term, per-contract residuals, and diagnostics.
 
         Raises:
-            ValueError: If ``raw_curve`` is empty or has no timezone.
+            ValueError: If ``raw_curve`` is empty or has no timezone, or
+                if ``country`` is unknown.
         """
         # ── Input validation ──────────────────────────────────────────
+        # Validate ``country`` BEFORE the empty-contracts shortcut so a
+        # typo never silently falls back to CH.
+        local_tz = _COUNTRY_TZ.get(country.upper())
+        if local_tz is None:
+            raise ValueError(
+                f"Unsupported country {country!r}; expected one of {sorted(_COUNTRY_TZ)}"
+            )
+
         if raw_curve.empty:
             raise ValueError("raw_curve is empty.")
         if raw_curve.index.tz is None:
@@ -366,17 +427,19 @@ class ArbitrageFreeCalibrator:
         S = raw_curve.values.astype(np.float64)
 
         logger.info(
-            "Calibration (%s): %d timestamps (%.1f days), %d contracts.",
+            "Calibration (%s, country=%s, tz=%s): %d timestamps (%.1f days), %d contracts.",
             self.mode,
+            country.upper(),
+            local_tz,
             n,
             n / 96,
             len(contracts),
         )
 
         # ── Peak mask ─────────────────────────────────────────────────
-        years = sorted(set(index.tz_convert("Europe/Zurich").year))
-        ch_hols = _get_ch_holidays(years)
-        peak_mask = _build_peak_mask(index, self.peak_hours, ch_hols)
+        years = sorted(set(index.tz_convert(local_tz).year))
+        country_hols = _get_country_holidays(years, country=country)
+        peak_mask = _build_peak_mask(index, self.peak_hours, country_hols, tz=local_tz)
 
         logger.debug(
             "Peak timestamps: %d / %d (%.1f%%)",

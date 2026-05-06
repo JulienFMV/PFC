@@ -192,10 +192,19 @@ class WalkForwardBacktest:
         # PrÃ©diction sur pÃ©riode de test
         assembler = PFCAssembler(sh, si, unc)
         base_prices = {period_str[:4]: self.base_price}
+        # Pin reference_date to the start of the test window so all
+        # horizon-dependent logic in the assembler (months_ahead,
+        # _shape_freedom interp, _stabilize_raw_curve clamp, near-term
+        # bridge factor) uses the as-of date of the backtest rather
+        # than ``pd.Timestamp.now()``. Without this, a period in 2022
+        # is treated as ``months_ahead < 0`` and the assembler returns
+        # an over-optimistic curve, inflating reported skill scores.
+        period_start = test_epex.index.min()
         pfc_pred = assembler.build(
             base_prices=base_prices,
-            start_date=test_epex.index.min().strftime("%Y-%m-%d"),
+            start_date=period_start.strftime("%Y-%m-%d"),
             horizon_days=35,
+            reference_date=period_start,
         )
 
         # Alignement avec donnÃ©es rÃ©elles

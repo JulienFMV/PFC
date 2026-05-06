@@ -54,6 +54,54 @@ logger = logging.getLogger(__name__)
 # Horizon standard N+3 ans en jours
 HORIZON_DAYS = 3 * 365
 
+# ── Country → IANA timezone + holidays constructor ──────────────────────
+# Single source of truth for the 5 markets the LT pipeline supports.
+# Adding a new market means extending these two tables and (optionally)
+# the seasonal-fallback ratios at the bottom of this module.
+_COUNTRY_LOCAL_TZ: dict[str, str] = {
+    "CH": "Europe/Zurich",
+    "DE": "Europe/Berlin",
+    "AT": "Europe/Vienna",
+    "FR": "Europe/Paris",
+    "IT": "Europe/Rome",
+}
+
+_COUNTRY_HOLIDAYS_CTOR: dict[str, callable] = {
+    "CH": holidays.Switzerland,
+    "DE": holidays.Germany,
+    "AT": holidays.Austria,
+    "FR": holidays.France,
+    "IT": holidays.Italy,
+}
+
+
+def _country_local_tz(country: str) -> str:
+    """Return the IANA timezone for a market code.
+
+    Falls back to ``Europe/Zurich`` for unknown codes (legacy CH-only
+    callers) but logs a warning so the caller knows it is silently
+    treated as CH.
+    """
+    code = str(country).upper()
+    tz = _COUNTRY_LOCAL_TZ.get(code)
+    if tz is None:
+        logger.warning(
+            "Unknown country %r in assembler — falling back to Europe/Zurich",
+            country,
+        )
+        return "Europe/Zurich"
+    return tz
+
+
+def _country_holidays(years, country: str) -> set:
+    """Collect public holidays for the requested country and years."""
+    code = str(country).upper()
+    ctor = _COUNTRY_HOLIDAYS_CTOR.get(code, holidays.Switzerland)
+    result: set = set()
+    for y in years:
+        result |= set(ctor(years=int(y)).keys())
+    return result
+
 
 class PFCAssembler:
     """
@@ -129,18 +177,24 @@ class PFCAssembler:
 
     @staticmethod
     def _is_peak_timestamp(idx_local: pd.DatetimeIndex, country: str = "CH") -> np.ndarray:
-        """Return EEX-style peak mask on a local timezone index (15-min granularity)."""
-        years = set(int(y) for y in idx_local.year.unique())
-        holiday_set: set = set()
-        for y in years:
-            if str(country).upper() == "DE":
-                holiday_set |= set(holidays.Germany(years=y).keys())
-            else:
-                holiday_set |= set(holidays.Switzerland(years=y).keys())
+        """Return EEX-style peak mask on a local timezone index (15-min granularity).
+
+        Uses ``np.isin`` rather than ``pd.Series(..., index=idx_local).isin(...)``
+        so the function survives autumnal DST transitions where ``idx_local``
+        contains duplicated timestamps (Europe/Zurich on the last Sunday of
+        October has 02:00→02:00 repeated, which makes the Series-with-index
+        path raise on some pandas versions). The country-aware holidays
+        table covers CH / DE / AT / FR / IT.
+        """
+        years = sorted(set(int(y) for y in idx_local.year.unique()))
+        holiday_set = _country_holidays(years, country)
 
         is_weekday = idx_local.weekday < 5
         is_peak_hour = (idx_local.hour >= 8) & (idx_local.hour < 20)
-        is_holiday = pd.Series(idx_local.date, index=idx_local).isin(holiday_set).to_numpy()
+        # np.isin is duplicate-safe; sorted holiday_set as numpy array.
+        dates_arr = np.asarray(idx_local.date, dtype=object)
+        holidays_arr = np.fromiter(holiday_set, dtype=object, count=len(holiday_set))
+        is_holiday = np.isin(dates_arr, holidays_arr)
         return (is_weekday & is_peak_hour & ~is_holiday).astype(bool)
 
     def build(
@@ -217,7 +271,7 @@ class PFCAssembler:
         )
 
         # Ã¢â€â‚¬Ã¢â€â‚¬ Facteur saisonnier mensuel f_S Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
-        f_S = self._compute_f_S(idx, base_prices)
+        f_S = self._compute_f_S(idx, base_prices, country=country)
 
         # Ã¢â€â‚¬Ã¢â€â‚¬ Facteur jour de semaine f_W Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         f_W = self._compute_f_W(cal)
@@ -251,7 +305,7 @@ class PFCAssembler:
         f_WV = 1.0 + (f_WV - 1.0) * shape_freedom["f_WV"]
 
         # Ã¢â€â‚¬Ã¢â€â‚¬ Niveau de base B par timestamp Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
-        B = self._resolve_base(idx, base_prices)
+        B = self._resolve_base(idx, base_prices, country=country)
 
         # ── MSFC smoothing: spline lisse B(t) across period boundaries ──
         try:
@@ -361,9 +415,27 @@ class PFCAssembler:
             return price_raw, False
 
         logger.info(
-            "Calibration arbitrage-free : %d contrats non-overlap", len(contracts)
+            "Calibration arbitrage-free : %d contrats non-overlap (country=%s)",
+            len(contracts), country,
         )
-        result = self.calibrator.calibrate(price_raw, contracts)
+        # Route the market country to the calibrator so the EEX Peak
+        # mask uses the right timezone and national-holiday calendar
+        # (e.g. Bundesfeier excluded only for CH, Tag der Deutschen
+        # Einheit excluded only for DE).
+        try:
+            result = self.calibrator.calibrate(price_raw, contracts, country=country)
+        except TypeError:
+            # Calibrator predates the country argument — fall back to
+            # the legacy CH-only signature so old saved instances still
+            # work. Log a warning so the operator knows the calibrator
+            # is silently CH-biased on non-CH markets.
+            if country.upper() != "CH":
+                logger.warning(
+                    "Calibrator does not accept country=%s; falling back to CH "
+                    "holidays — peak/offpeak split may be biased on this market.",
+                    country,
+                )
+            result = self.calibrator.calibrate(price_raw, contracts)
 
         if result.converged:
             logger.info(
@@ -525,16 +597,30 @@ class PFCAssembler:
     # Calcul des composantes
     # ---------------------------------------------------------------------------
 
-    def _resolve_base(self, idx: pd.DatetimeIndex, base_prices: dict) -> pd.Series:
+    def _resolve_base(
+        self,
+        idx: pd.DatetimeIndex,
+        base_prices: dict,
+        country: str = "CH",
+    ) -> pd.Series:
         """
         Resolve base level B for each timestamp (vectorized).
         Priority: monthly > quarterly > annual.
+
+        Year and month are resolved in the *delivery zone's* local
+        timezone — using ``Europe/Zurich`` for a DE / FR / IT / AT
+        delivery would misclassify the boundary timestamps (a UTC
+        timestamp at 23:00 is the previous day in Zurich but already
+        the next day in Bucharest, etc.). For CH / DE / AT the
+        difference is nil (same CET/CEST family), but for FR / IT
+        cross-zone alignment matters.
         """
-        idx_zurich = idx.tz_convert("Europe/Zurich")
+        local_tz = _country_local_tz(country)
+        idx_local = idx.tz_convert(local_tz)
 
         # Build vectorized keys
-        years = idx_zurich.year
-        months = idx_zurich.month
+        years = idx_local.year
+        months = idx_local.month
         keys_m = pd.Index([f"{y}-{m:02d}" for y, m in zip(years, months)])
         keys_q = pd.Index([f"{y}-Q{(m - 1) // 3 + 1}" for y, m in zip(years, months)])
         keys_y = years.astype(str)
@@ -578,7 +664,12 @@ class PFCAssembler:
         7: 0.90, 8: 0.92, 9: 0.95, 10: 1.02, 11: 1.10, 12: 1.16,
     }
 
-    def _compute_f_S(self, idx: pd.DatetimeIndex, base_prices: dict) -> pd.Series:
+    def _compute_f_S(
+        self,
+        idx: pd.DatetimeIndex,
+        base_prices: dict,
+        country: str = "CH",
+    ) -> pd.Series:
         """
         Seasonal monthly factor f_S.
 
@@ -593,10 +684,14 @@ class PFCAssembler:
 
         For months with monthly or quarterly forwards, f_S = 1.0 (seasonality
         is already captured in B).
+
+        Year/month are resolved in the delivery zone's local timezone so the
+        country-aware fallback ratios apply on the right boundaries.
         """
-        idx_zh = idx.tz_convert("Europe/Zurich")
-        months = idx_zh.month
-        years = idx_zh.year
+        local_tz = _country_local_tz(country)
+        idx_local = idx.tz_convert(local_tz)
+        months = idx_local.month
+        years = idx_local.year
 
         f_S = pd.Series(1.0, index=idx, name="f_S")
 
@@ -840,11 +935,17 @@ class PFCAssembler:
         """
         Verify price_shape average matches base prices at annual, quarterly,
         and monthly levels. Alerts if deviation exceeds threshold.
+
+        Year / month boundaries and Peak hours are evaluated in the
+        delivery zone's local timezone (CH=Zurich, DE=Berlin, FR=Paris,
+        AT=Vienna, IT=Rome) — using Zurich for every market would skew
+        cross-zone month boundaries on FR/IT (no shared CET shift).
         """
         threshold = 0.005 if df["calibrated"].any() else 0.05
-        idx_zurich = df.index.tz_convert("Europe/Zurich")
+        local_tz = _country_local_tz(country)
+        idx_local = df.index.tz_convert(local_tz)
 
-        idx_peak_mask = self._is_peak_timestamp(idx_zurich, country=country)
+        idx_peak_mask = self._is_peak_timestamp(idx_local, country=country)
         idx_offpeak_mask = ~idx_peak_mask
 
         for key, base in base_prices.items():
@@ -863,7 +964,7 @@ class PFCAssembler:
             # Determine mask based on key type
             if len(key_core) == 4 and key_core.isdigit():
                 # Annual key
-                mask_period = idx_zurich.year == int(key_core)
+                mask_period = idx_local.year == int(key_core)
                 year_int = int(key_core)
                 expected = (366 if pd.Timestamp(year=year_int, month=12, day=31).is_leap_year else 365) * 96
                 min_coverage = 0.95
@@ -872,7 +973,7 @@ class PFCAssembler:
                 year_int = int(key_core[:4])
                 q = int(key_core[6])
                 q_months = {1: [1, 2, 3], 2: [4, 5, 6], 3: [7, 8, 9], 4: [10, 11, 12]}[q]
-                mask_period = (idx_zurich.year == year_int) & (idx_zurich.month.isin(q_months))
+                mask_period = (idx_local.year == year_int) & (idx_local.month.isin(q_months))
                 expected = sum(
                     (28 + (m in (1, 3, 5, 7, 8, 10, 12)) * 3 + (m in (4, 6, 9, 11)) * 2) for m in q_months
                 ) * 96
@@ -881,7 +982,7 @@ class PFCAssembler:
                 # Monthly key e.g. '2026-03'
                 year_int = int(key_core[:4])
                 month_int = int(key_core[5:])
-                mask_period = (idx_zurich.year == year_int) & (idx_zurich.month == month_int)
+                mask_period = (idx_local.year == year_int) & (idx_local.month == month_int)
                 import calendar as cal_mod
                 expected = cal_mod.monthrange(year_int, month_int)[1] * 96
                 min_coverage = 0.90

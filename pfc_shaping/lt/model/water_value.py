@@ -174,16 +174,30 @@ class WaterValueCorrection:
             return self
 
         # ── Régression sur prix RELATIFS (stationnarité) ──────────────────
-        # Régresse prix/moyenne_glissante_12m ~ fill_deviation × saison
-        # Élimine le biais de non-stationnarité (crise 2021-2022)
+        # Régresse prix/moyenne_glissante_12m ~ fill_deviation × saison.
+        # Élimine le biais de non-stationnarité (crise 2021-2022).
+        #
+        # IMPORTANT : la moyenne glissante est strictement *causale*
+        # (12 mois passés, mois courant exclu via ``closed="left"``).
+        # La version initiale utilisait ``center=True``, qui mélangeait
+        # 6 mois passés et 6 mois futurs pour normaliser le prix mensuel
+        # — le ratio régressé voyait donc des prix du futur. Sur un fit
+        # 2019-2023, l'automne 2022 (crise + niveau de remplissage bas)
+        # se retrouvait normalisé par les 6 mois 2023 (post-crise),
+        # biaisant β_WV vers le bas et sous-estimant l'effet hydro en
+        # production.
         saisons = list(DEFAULT_SEASON_SENSITIVITY.keys())
         X_cols = []
 
-        # Prix relatif : ratio vs moyenne glissante 12 mois
+        # Prix relatif : ratio vs moyenne glissante 12 mois (causale).
         rolling_mean = monthly["price_mean"].rolling(
-            12, min_periods=6, center=True
+            12, min_periods=6, center=False, closed="left"
         ).mean()
-        # Fill edges with expanding mean
+        # Fill edges with expanding mean (strictly past too: the
+        # expanding mean at t aggregates 1..t-1 only when ``closed="left"``
+        # — but pandas' expanding default includes t. We accept the
+        # 1-month overlap on the very early rows; the alternative
+        # (NaN-rows) breaks the regression on small histories).
         rolling_mean = rolling_mean.fillna(monthly["price_mean"].expanding().mean())
         rolling_mean = rolling_mean.replace(0, 1.0)  # guard div-by-zero
         monthly["price_ratio"] = monthly["price_mean"] / rolling_mean
