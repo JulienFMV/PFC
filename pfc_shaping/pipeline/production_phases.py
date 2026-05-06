@@ -20,6 +20,7 @@ from pfc_shaping.pipeline.swiss_short_term import (
 class LoadedInputs:
     epex_ch: pd.DataFrame
     epex_de: pd.DataFrame
+    neighbor_prices_15min: dict[str, pd.DataFrame]
     entso: pd.DataFrame
     hydro: pd.DataFrame
     cal_ch: pd.DataFrame
@@ -101,6 +102,13 @@ def load_inputs(project_root: str, logger: logging.Logger) -> LoadedInputs:
     data_dir = os.path.join(project_root, "pfc_shaping", "data")
     epex_ch = _read_required_parquet(os.path.join(data_dir, "epex_15min.parquet"), "EPEX CH", logger)
     epex_de = _read_required_parquet(os.path.join(data_dir, "epex_de_15min.parquet"), "EPEX DE", logger)
+    neighbor_prices_15min = {
+        "de": epex_de,
+    }
+    for code in ["at", "fr", "it"]:
+        path = os.path.join(data_dir, f"epex_{code}_15min.parquet")
+        if os.path.exists(path):
+            neighbor_prices_15min[code] = pd.read_parquet(path)
     entso = _read_required_parquet(os.path.join(data_dir, "entso_15min.parquet"), "ENTSO-E", logger)
     hydro = _read_required_parquet(os.path.join(data_dir, "hydro_reservoir.parquet"), "Hydro reservoir", logger)
 
@@ -153,6 +161,7 @@ def load_inputs(project_root: str, logger: logging.Logger) -> LoadedInputs:
     return LoadedInputs(
         epex_ch=epex_ch,
         epex_de=epex_de,
+        neighbor_prices_15min=neighbor_prices_15min,
         entso=entso,
         hydro=hydro,
         cal_ch=cal_ch,
@@ -394,12 +403,14 @@ def run_short_term_phase(
     st_inputs = SwissShortTermInputs(
         epex_ch=inputs.epex_ch,
         epex_de=inputs.epex_de,
+        neighbor_prices_15min=inputs.neighbor_prices_15min,
         entso=inputs.entso,
         hydro=inputs.hydro,
         commodities=inputs.commodities,
         outages_all=inputs.outages_all,
         base_pfc_ch=long_term.swiss.pfc,
         require_de_exogenous=os.getenv("PFC_CT_REQUIRE_DE_EXOGENOUS", "1") == "1",
+        required_neighbor_codes=("de",),
     )
     return run_swiss_short_term_overlay(project_root=project_root, inputs=st_inputs, logger=logger)
 

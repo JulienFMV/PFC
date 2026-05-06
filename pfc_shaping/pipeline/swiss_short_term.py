@@ -22,12 +22,14 @@ DEFAULT_PRICEFM_PYTHON = r"C:\Users\jbattaglia\.conda\pricefm_tf\python.exe"
 class SwissShortTermInputs:
     epex_ch: pd.DataFrame
     epex_de: pd.DataFrame
+    neighbor_prices_15min: dict[str, pd.DataFrame] | None
     entso: pd.DataFrame
     hydro: pd.DataFrame
     commodities: pd.DataFrame | None
     outages_all: pd.DataFrame | None
     base_pfc_ch: pd.DataFrame
     require_de_exogenous: bool = True
+    required_neighbor_codes: tuple[str, ...] = ("de",)
 
 
 @dataclass
@@ -41,6 +43,8 @@ class SwissShortTermInputHealth:
     ch_de_overlap_hours: int
     entso_ch_overlap_hours: int
     has_de_price_support: bool
+    neighbor_overlap_hours: dict[str, int]
+    has_required_neighbor_support: bool
 
 
 @dataclass
@@ -71,6 +75,7 @@ def run_swiss_short_term_overlay(
         commodities=inputs.commodities,
         hydro=inputs.hydro,
         epex_de_15min=inputs.epex_de,
+        neighbor_price_15min=inputs.neighbor_prices_15min,
     )
 
     lear_forecast = lear.predict(horizon_days=10)
@@ -113,9 +118,23 @@ def _validate_swiss_short_term_inputs(
     ch_de_overlap_hours = len(ch_hourly_idx.intersection(de_hourly_idx))
     entso_ch_overlap_hours = len(ch_hourly_idx.intersection(entso_hourly_idx))
     has_de_price_support = ch_de_overlap_hours > 0
+    neighbor_overlap_hours: dict[str, int] = {}
+    for code, df in (inputs.neighbor_prices_15min or {}).items():
+        if df is None or df.empty:
+            neighbor_overlap_hours[code] = 0
+            continue
+        nb_hourly_idx = df.index.to_series().resample("h").mean().dropna().index
+        neighbor_overlap_hours[code] = len(ch_hourly_idx.intersection(nb_hourly_idx))
 
-    if inputs.require_de_exogenous and not has_de_price_support:
-        raise ValueError("Swiss CT is configured to require DE exogenous prices, but no CH/DE hourly overlap was found.")
+    has_required_neighbor_support = all(
+        neighbor_overlap_hours.get(code, 0) > 0 for code in inputs.required_neighbor_codes
+    )
+
+    if inputs.require_de_exogenous and not has_required_neighbor_support:
+        raise ValueError(
+            f"Swiss CT is configured to require neighbor exogenous prices {inputs.required_neighbor_codes}, "
+            f"but overlap was insufficient: {neighbor_overlap_hours}"
+        )
 
     health = SwissShortTermInputHealth(
         epex_ch_rows=len(inputs.epex_ch),
@@ -127,18 +146,21 @@ def _validate_swiss_short_term_inputs(
         ch_de_overlap_hours=ch_de_overlap_hours,
         entso_ch_overlap_hours=entso_ch_overlap_hours,
         has_de_price_support=has_de_price_support,
+        neighbor_overlap_hours=neighbor_overlap_hours,
+        has_required_neighbor_support=has_required_neighbor_support,
     )
     logger.info(
-        "  Swiss CT input health: CH=%d rows, DE=%d rows, ENTSO=%d rows, hydro=%d rows, CH/DE overlap=%d h, CH/ENTSO overlap=%d h",
+        "  Swiss CT input health: CH=%d rows, DE=%d rows, ENTSO=%d rows, hydro=%d rows, CH/DE overlap=%d h, CH/ENTSO overlap=%d h, neighbors=%s",
         health.epex_ch_rows,
         health.epex_de_rows,
         health.entso_rows,
         health.hydro_rows,
         health.ch_de_overlap_hours,
         health.entso_ch_overlap_hours,
+        health.neighbor_overlap_hours,
     )
-    if not has_de_price_support:
-        logger.warning("  Swiss CT running without effective DE price overlap support.")
+    if not has_required_neighbor_support:
+        logger.warning("  Swiss CT running without full required neighbor price overlap support.")
     return health
 
 
