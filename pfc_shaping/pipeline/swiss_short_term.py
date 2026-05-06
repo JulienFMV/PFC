@@ -12,7 +12,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from pfc_shaping.model.lear_forecaster import LEARForecaster
+from pfc_shaping.ct.model.lear_forecaster import LEARForecaster
 from pfc_shaping.storage.local_duckdb import init_db, upsert_lear_backtest, upsert_lear_forecast
 
 DEFAULT_PRICEFM_PYTHON = r"C:\Users\jbattaglia\.conda\pricefm_tf\python.exe"
@@ -183,11 +183,11 @@ def _maybe_apply_experimental_pricefm(
         return lear_forecast
 
     try:
-        from pfc_shaping.model.futureboost_experimental import (
+        from pfc_shaping.ct.model.futureboost_experimental import (
             DEFAULT_FUTUREBOOST_EXPERIMENT,
             apply_futureboost_experimental,
         )
-        from pfc_shaping.model.pricefm_experimental import (
+        from pfc_shaping.ct.model.pricefm_experimental import (
             BEST_PRICEFM_EXPERIMENT,
             blend_lear_with_pricefm,
             load_pricefm_forecast,

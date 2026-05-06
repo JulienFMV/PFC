@@ -46,8 +46,8 @@ import numpy as np
 import pandas as pd
 
 from pfc_shaping.data.calendar_ch import enrich_15min_index
-from pfc_shaping.model.shape_hourly import ShapeHourly
-from pfc_shaping.model.shape_intraday import ShapeIntraday
+from pfc_shaping.lt.model.shape_hourly import ShapeHourly
+from pfc_shaping.lt.model.shape_intraday import ShapeIntraday
 
 logger = logging.getLogger(__name__)
 
@@ -255,7 +255,7 @@ class PFCAssembler:
 
         # ── MSFC smoothing: spline lisse B(t) across period boundaries ──
         try:
-            from pfc_shaping.model.msfc_spline import smooth_base_prices
+            from pfc_shaping.lt.model.msfc_spline import smooth_base_prices
             B = smooth_base_prices(idx, base_prices, B)
         except Exception as exc:
             logger.warning("MSFC smoothing failed, using flat B: %s", exc)

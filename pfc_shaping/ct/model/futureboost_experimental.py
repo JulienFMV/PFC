@@ -18,7 +18,7 @@ from sklearn.linear_model import QuantileRegressor, RidgeCV
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
-from pfc_shaping.model.pricefm_experimental import compute_pricefm_regime_weight, load_pricefm_forecast
+from pfc_shaping.ct.model.pricefm_experimental import compute_pricefm_regime_weight, load_pricefm_forecast
 
 
 @dataclass(frozen=True)

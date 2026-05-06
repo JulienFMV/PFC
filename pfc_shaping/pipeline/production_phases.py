@@ -186,11 +186,11 @@ def run_long_term_phase(
     t2 = time.time()
 
     if inputs.sh_mode == "mlp":
-        from pfc_shaping.model.shape_hourly_mlp import ShapeHourlyMLP
+        from pfc_shaping.lt.model.shape_hourly_mlp import ShapeHourlyMLP
         sh = ShapeHourlyMLP()
         logger.info("  Using ShapeHourlyMLP (neural)")
     else:
-        from pfc_shaping.model.shape_hourly import ShapeHourly
+        from pfc_shaping.lt.model.shape_hourly import ShapeHourly
         sh = ShapeHourly()
         logger.info("  Using ShapeHourly (table)")
 
@@ -208,7 +208,7 @@ def run_long_term_phase(
     logger.info("STEP 5: Fitting ShapeIntraday on DE-LU post Oct 2025")
     logger.info("=" * 70)
     t3 = time.time()
-    from pfc_shaping.model.shape_intraday import ShapeIntraday
+    from pfc_shaping.lt.model.shape_intraday import ShapeIntraday
 
     cutoff_de = pd.Timestamp("2025-10-01", tz="UTC")
     epex_de_post = inputs.epex_de[inputs.epex_de.index >= cutoff_de]
@@ -228,7 +228,7 @@ def run_long_term_phase(
     logger.info("STEP 6: Fitting WaterValue correction")
     logger.info("=" * 70)
     t4 = time.time()
-    from pfc_shaping.model.water_value import WaterValueCorrection
+    from pfc_shaping.lt.model.water_value import WaterValueCorrection
 
     wv = WaterValueCorrection()
     wv.fit(inputs.epex_ch, inputs.hydro, inputs.cal_ch)
@@ -242,7 +242,7 @@ def run_long_term_phase(
     logger.info("STEP 7: Fitting Uncertainty (n_boot=500, production quality)")
     logger.info("=" * 70)
     t5 = time.time()
-    from pfc_shaping.model.uncertainty import Uncertainty
+    from pfc_shaping.lt.model.uncertainty import Uncertainty
 
     unc = Uncertainty(n_boot=500, seed=42)
     unc.fit(epex_de_post, cal_de_post)
@@ -463,7 +463,7 @@ def _build_swiss_long_term_branch(
     logger.info("=" * 70)
     t0 = time.time()
 
-    from pfc_shaping.model.assembler import PFCAssembler
+    from pfc_shaping.lt.model.assembler import PFCAssembler
 
     assembler_ch = PFCAssembler(
         shape_hourly=sh,
@@ -511,13 +511,13 @@ def _build_german_long_term_branch(
 
     from pfc_shaping.calibration.cascading import ContractCascader
     from pfc_shaping.data.forward_proxy import load_base_prices as load_fwd_prices
-    from pfc_shaping.model.assembler import PFCAssembler
+    from pfc_shaping.lt.model.assembler import PFCAssembler
 
     if inputs.sh_mode == "mlp":
-        from pfc_shaping.model.shape_hourly_mlp import ShapeHourlyMLP
+        from pfc_shaping.lt.model.shape_hourly_mlp import ShapeHourlyMLP
         sh_de = ShapeHourlyMLP()
     else:
-        from pfc_shaping.model.shape_hourly import ShapeHourly
+        from pfc_shaping.lt.model.shape_hourly import ShapeHourly
         sh_de = ShapeHourly()
     sh_de.fit(inputs.epex_de, inputs.cal_de)
     logger.info("  DE ShapeHourly fitted (%s mode)", inputs.sh_mode)

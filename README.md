@@ -110,10 +110,10 @@ dashboard/                         Streamlit app
 docs/                              project notes and supporting docs
 models/                            local model checkpoints (e.g. Chronos-2)
 pfc_shaping/
-  calibration/
+  calibration/                     LT — forward calibration
     arbitrage_free.py              arbitrage-free calibration
     cascading.py                   forward cascading Cal/Q/M
-  data/
+  data/                            shared — ingestion + calendar
     ingest_epex.py                 Swiss and neighboring spot ingestion
     ingest_entso.py                ENTSO-E features, borders, system data
     ingest_energy_charts.py        Energy Charts prices and power data
@@ -121,19 +121,24 @@ pfc_shaping/
     ingest_hydro.py                hydro data and water value inputs
     ingest_outages.py              outages and availability
     ingest_smard.py                SMARD fallback/system data
-  model/
+  lt/model/                        LT — long-term modelling
     assembler.py                   structural PFC assembly
-    foundation_forecaster.py       Chronos-based forecasting integration
-    futureboost_experimental.py    experimental meta-layer
-    lear_forecaster.py             core short-term LEAR forecaster
     msfc_spline.py                 smooth base curve
-    pricefm_experimental.py        experimental PriceFM blend logic
-    shape_hourly.py                hourly shape factor
+    pfc_flavors.py                 mid_market / client / production variants
+    shape_hourly.py                hourly shape factor (table)
     shape_hourly_mlp.py            neural hourly shape alternative
     shape_intraday.py              15-minute shaping
     uncertainty.py                 uncertainty estimation
     water_value.py                 hydro water value correction
+  ct/model/                        CT — short-term modelling
+    foundation_forecaster.py       Chronos-based forecasting integration
+    futureboost_experimental.py    experimental meta-layer
+    lear_forecaster.py             core short-term LEAR forecaster
+    pricefm_experimental.py        experimental PriceFM blend logic
+  model/                           compat shim (deprecated, emits warnings)
   pipeline/
+    production_phases.py           LT orchestration (CH + DE branches)
+    swiss_short_term.py            CT overlay LEAR + experimental blends
     autoresearch.py                automated search/evolution loop
 scripts/
   finetune_chronos2.py             Chronos-2 LoRA fine-tuning
@@ -142,6 +147,11 @@ scripts/
 run_pfc_production.py              end-to-end production run
 autoresearch_eval_lear.py          fixed evaluation harness for CT model work
 ```
+
+> **Migration** : the `pfc_shaping.model.<X>` paths are now compatibility
+> aliases that emit `DeprecationWarning`. New code must import from
+> `pfc_shaping.lt.model.X` (long-term) or `pfc_shaping.ct.model.X`
+> (short-term). See `AGENTS.md` for the full mapping.
 
 ## Modeling Philosophy
 

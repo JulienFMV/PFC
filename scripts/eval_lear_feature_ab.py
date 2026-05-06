@@ -26,7 +26,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from pfc_shaping.model.lear_forecaster import LEARForecaster  # noqa: E402
+from pfc_shaping.ct.model.lear_forecaster import LEARForecaster  # noqa: E402
 
 
 DATA_FILES = {

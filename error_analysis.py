@@ -33,10 +33,10 @@ def main() -> None:
     import yaml
     from pfc_shaping.data.calendar_ch import enrich_15min_index
     from pfc_shaping.data.forward_proxy import derive_base_prices
-    from pfc_shaping.model.assembler import PFCAssembler
-    from pfc_shaping.model.shape_hourly import ShapeHourly
-    from pfc_shaping.model.shape_intraday import ShapeIntraday
-    from pfc_shaping.model.uncertainty import Uncertainty
+    from pfc_shaping.lt.model.assembler import PFCAssembler
+    from pfc_shaping.lt.model.shape_hourly import ShapeHourly
+    from pfc_shaping.lt.model.shape_intraday import ShapeIntraday
+    from pfc_shaping.lt.model.uncertainty import Uncertainty
 
     epex = load_epex()
     if epex is None or len(epex) < 96 * 365:

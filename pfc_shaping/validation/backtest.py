@@ -36,10 +36,10 @@ import numpy as np
 import pandas as pd
 
 from pfc_shaping.data.calendar_ch import enrich_15min_index
-from pfc_shaping.model.shape_hourly import ShapeHourly
-from pfc_shaping.model.shape_intraday import ShapeIntraday
-from pfc_shaping.model.uncertainty import Uncertainty
-from pfc_shaping.model.assembler import PFCAssembler
+from pfc_shaping.lt.model.shape_hourly import ShapeHourly
+from pfc_shaping.lt.model.shape_intraday import ShapeIntraday
+from pfc_shaping.lt.model.uncertainty import Uncertainty
+from pfc_shaping.lt.model.assembler import PFCAssembler
 
 logger = logging.getLogger(__name__)
 

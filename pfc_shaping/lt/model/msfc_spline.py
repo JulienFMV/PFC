@@ -21,7 +21,7 @@ Methodology:
     3. Cubic-interpolate from monthly midpoints to daily, then to 15-min
 
 Usage:
-    from pfc_shaping.model.msfc_spline import smooth_base_prices
+    from pfc_shaping.lt.model.msfc_spline import smooth_base_prices
     B_smooth = smooth_base_prices(idx_15min, base_prices, B_flat)
 """
 

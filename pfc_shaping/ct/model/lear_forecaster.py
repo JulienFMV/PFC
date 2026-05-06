@@ -19,7 +19,7 @@ Architecture:
     - Conformal prediction for calibrated forecast intervals
 
 Usage:
-    from pfc_shaping.model.lear_forecaster import LEARForecaster
+    from pfc_shaping.ct.model.lear_forecaster import LEARForecaster
     lear = LEARForecaster()
     lear.fit(epex_ch, entso, outages, commodities, hydro, epex_de_15min=epex_de)
     forecast = lear.predict(horizon_days=10)
@@ -39,7 +39,7 @@ from sklearn.neural_network import MLPRegressor
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import TimeSeriesSplit
 
-from pfc_shaping.model.foundation_forecaster import FoundationForecaster
+from pfc_shaping.ct.model.foundation_forecaster import FoundationForecaster
 
 logger = logging.getLogger(__name__)
 

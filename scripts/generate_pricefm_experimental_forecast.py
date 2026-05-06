@@ -25,7 +25,7 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from pfc_shaping.model.pricefm_experimental import BEST_PRICEFM_EXPERIMENT
+from pfc_shaping.ct.model.pricefm_experimental import BEST_PRICEFM_EXPERIMENT
 from scripts.export_pricefm_ch_dataset import COUNTRY_SPECS, build_dataset
 
 

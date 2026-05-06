@@ -202,10 +202,10 @@ def _run_backtest(
     Returns:
         BacktestResult with RMSE, MAE, bias, and per-agent contributions.
     """
-    from pfc_shaping.model.shape_hourly import ShapeHourly
-    from pfc_shaping.model.shape_intraday import ShapeIntraday
-    from pfc_shaping.model.assembler import PFCAssembler
-    from pfc_shaping.model.uncertainty import Uncertainty
+    from pfc_shaping.lt.model.shape_hourly import ShapeHourly
+    from pfc_shaping.lt.model.shape_intraday import ShapeIntraday
+    from pfc_shaping.lt.model.assembler import PFCAssembler
+    from pfc_shaping.lt.model.uncertainty import Uncertainty
     from pfc_shaping.data.forward_proxy import derive_base_prices
 
     # Split data: train on history, test on recent

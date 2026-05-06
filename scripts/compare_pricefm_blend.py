@@ -249,7 +249,7 @@ def main() -> None:
         return
 
     sys.path.insert(0, str(ROOT))
-    from pfc_shaping.model.lear_forecaster import LEARForecaster
+    from pfc_shaping.ct.model.lear_forecaster import LEARForecaster
 
     epex_ch = pd.read_parquet(ROOT / "pfc_shaping" / "data" / "epex_15min.parquet")
     epex_de = pd.read_parquet(ROOT / "pfc_shaping" / "data" / "epex_de_15min.parquet")

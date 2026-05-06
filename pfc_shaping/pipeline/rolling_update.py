@@ -199,11 +199,11 @@ def run_update(config: dict | None = None) -> Path:
     from pfc_shaping.data.ingest_hydro import fetch_and_cache as fetch_hydro
     from pfc_shaping.data.ingest_hydro import load_parquet as load_hydro
     from pfc_shaping.data.ingest_smard import fetch_and_cache as fetch_epex_smard
-    from pfc_shaping.model.assembler import PFCAssembler
-    from pfc_shaping.model.shape_hourly import ShapeHourly
-    from pfc_shaping.model.shape_intraday import ShapeIntraday
-    from pfc_shaping.model.uncertainty import Uncertainty
-    from pfc_shaping.model.water_value import WaterValueCorrection
+    from pfc_shaping.lt.model.assembler import PFCAssembler
+    from pfc_shaping.lt.model.shape_hourly import ShapeHourly
+    from pfc_shaping.lt.model.shape_intraday import ShapeIntraday
+    from pfc_shaping.lt.model.uncertainty import Uncertainty
+    from pfc_shaping.lt.model.water_value import WaterValueCorrection
     from pfc_shaping.pipeline.export_euler import export_both
     from pfc_shaping.pipeline.quality_gate import (
         QualityGateError,

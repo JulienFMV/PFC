@@ -17,11 +17,11 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from pfc_shaping.model.futureboost_experimental import (  # noqa: E402
+from pfc_shaping.ct.model.futureboost_experimental import (  # noqa: E402
     DEFAULT_FUTUREBOOST_EXPERIMENT,
     FutureBoostExperimentalRegressor,
 )
-from pfc_shaping.model.pricefm_experimental import (  # noqa: E402
+from pfc_shaping.ct.model.pricefm_experimental import (  # noqa: E402
     blend_lear_with_pricefm,
 )
 
@@ -73,7 +73,7 @@ def _build_overlap(pricefm_hourly: Path, n_days: int, lear_backtest: Path | None
     if lear_backtest is not None and lear_backtest.exists() and not recompute_backtest:
         merged = _load_saved_backtest(lear_backtest)
     else:
-        from pfc_shaping.model.lear_forecaster import LEARForecaster  # noqa: WPS433
+        from pfc_shaping.ct.model.lear_forecaster import LEARForecaster  # noqa: WPS433
 
         epex_ch = pd.read_parquet(ROOT / "pfc_shaping" / "data" / "epex_15min.parquet")
         epex_de = pd.read_parquet(ROOT / "pfc_shaping" / "data" / "epex_de_15min.parquet")

@@ -61,9 +61,9 @@ def main() -> None:
 
         from pfc_shaping.data.calendar_ch import enrich_15min_index
         from pfc_shaping.data.forward_proxy import derive_base_prices
-        from pfc_shaping.model.assembler import PFCAssembler
-        from pfc_shaping.model.shape_intraday import ShapeIntraday
-        from pfc_shaping.model.uncertainty import Uncertainty
+        from pfc_shaping.lt.model.assembler import PFCAssembler
+        from pfc_shaping.lt.model.shape_intraday import ShapeIntraday
+        from pfc_shaping.lt.model.uncertainty import Uncertainty
 
         # Load config
         cfg_path = ROOT / "pfc_shaping" / "config.yaml"
@@ -97,11 +97,11 @@ def main() -> None:
 
         # Fit shape models (with hydro analogue weighting)
         if sh_mode == "mlp":
-            from pfc_shaping.model.shape_hourly_mlp import ShapeHourlyMLP
+            from pfc_shaping.lt.model.shape_hourly_mlp import ShapeHourlyMLP
             sh = ShapeHourlyMLP()
             print("Using ShapeHourlyMLP (neural)", file=sys.stderr)
         else:
-            from pfc_shaping.model.shape_hourly import ShapeHourly
+            from pfc_shaping.lt.model.shape_hourly import ShapeHourly
             sh = ShapeHourly(sigma=sigma)
             print("Using ShapeHourly (table)", file=sys.stderr)
         sh.fit(train_lb, cal, hydro_df=hydro_df)
