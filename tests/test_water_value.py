@@ -10,7 +10,6 @@ Vérifie que :
     6. Save/load cycle
 """
 
-import sys
 import tempfile
 from pathlib import Path
 
@@ -18,10 +17,14 @@ import numpy as np
 import pandas as pd
 import pytest
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "pfc_shaping"))
-
-from model.water_value import WaterValueCorrection, DEFAULT_SEASON_SENSITIVITY
-from data.calendar_ch import enrich_15min_index
+# Use the modern package path (LT split). The legacy sys.path hack into
+# pfc_shaping/ + 'from model.water_value' was retired with the LT/CT
+# refactor (water_value moved under pfc_shaping/lt/model/).
+from pfc_shaping.lt.model.water_value import (
+    WaterValueCorrection,
+    DEFAULT_SEASON_SENSITIVITY,
+)
+from pfc_shaping.data.calendar_ch import enrich_15min_index
 
 
 # ---------------------------------------------------------------------------

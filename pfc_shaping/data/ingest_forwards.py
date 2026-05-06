@@ -38,6 +38,17 @@ logger = logging.getLogger(__name__)
 
 _EEX_BASE_PATTERN = re.compile(r"^(Y01|Q\d{2}|M\d{2})_(\d{4})_BASE$")
 _EEX_PRODUCT_PATTERN = re.compile(r"^(Y01|Q\d{2}|M\d{2})_(\d{4})_(BASE|PEAK)$")
+# Week products: 3-digit prefix not starting with 0 (e.g. 205_2026_PEAK,
+# 307_2018_BASE, 504_2018_BASE). The leading digit/sub-digits encode the
+# week index in EEX desk codes. The PFC long-term curve does not consume
+# weekly products — they are recognised here only to be filtered out
+# explicitly instead of falling silently into the "other / unknown" bucket.
+_EEX_WEEK_PATTERN = re.compile(r"^([1-9]\d{2})_(\d{4})_(BASE|PEAK)$")
+
+# Workbook tabs that are *not* market sheets in the EEX daily / yearly
+# reports: FX rates, internal product catalogue, HFC benchmark. They must
+# never be parsed as forward markets.
+_NON_MARKET_SHEETS: frozenset[str] = frozenset({"FX", "PRODUITS", "HFC"})
 
 
 def _normalize_delivery_period(eex_code: str) -> str | None:
@@ -74,46 +85,65 @@ def _normalize_delivery_period(eex_code: str) -> str | None:
     return None
 
 
-def _normalize_product(eex_code: str) -> tuple[str, str] | None:
-    """Parse EEX code into (delivery_key, load_type).
+def _normalize_product(eex_code: str) -> tuple[str, str, str] | None:
+    """Parse an EEX desk code into (delivery_key, load_type, product_type).
+
+    Returns ``None`` for codes that do not match any recognised template.
 
     Examples:
-        Y01_2027_BASE -> ('2027', 'BASE')
-        Q03_2026_PEAK -> ('2026-Q3', 'PEAK')
-        M04_2026_BASE -> ('2026-04', 'BASE')
-        303_2026_PEAK -> None  (weekly products ignored)
+        Y01_2027_BASE -> ('2027', 'BASE', 'Cal')
+        Q03_2026_PEAK -> ('2026-Q3', 'PEAK', 'Quarter')
+        M04_2026_BASE -> ('2026-04', 'BASE', 'Month')
+        205_2026_PEAK -> ('Wk205_2026', 'PEAK', 'Week')
+        307_2018_BASE -> ('Wk307_2018', 'BASE', 'Week')
+        FX_EUR_CHF    -> None
     """
-    m = _EEX_PRODUCT_PATTERN.match(eex_code.strip().upper())
-    if not m:
+    code = eex_code.strip().upper()
+
+    m = _EEX_PRODUCT_PATTERN.match(code)
+    if m is not None:
+        prefix, year_str, load_type = m.groups()
+        year = int(year_str)
+        if prefix == "Y01":
+            return (f"{year}", load_type, "Cal")
+        if prefix.startswith("Q"):
+            quarter = int(prefix[1:])
+            if 1 <= quarter <= 4:
+                return (f"{year}-Q{quarter}", load_type, "Quarter")
+            return None
+        if prefix.startswith("M"):
+            month = int(prefix[1:])
+            if 1 <= month <= 12:
+                return (f"{year}-{month:02d}", load_type, "Month")
+            return None
         return None
 
-    prefix, year_str, load_type = m.groups()
-    year = int(year_str)
+    m_wk = _EEX_WEEK_PATTERN.match(code)
+    if m_wk is not None:
+        prefix, year_str, load_type = m_wk.groups()
+        return (f"Wk{prefix}_{year_str}", load_type, "Week")
 
-    if prefix == "Y01":
-        return f"{year}", load_type
-    if prefix.startswith("Q"):
-        quarter = int(prefix[1:])
-        if 1 <= quarter <= 4:
-            return f"{year}-Q{quarter}", load_type
-    if prefix.startswith("M"):
-        month = int(prefix[1:])
-        if 1 <= month <= 12:
-            return f"{year}-{month:02d}", load_type
     return None
 
 
 def load_forwards_timeseries(
     report_path: str | Path,
     market: str = "CH",
+    include_week: bool = False,
 ) -> pd.DataFrame:
     """Extract full timeseries from EEX report (all dates, BASE + PEAK).
 
+    Args:
+        report_path: Absolute or relative path to the EEX report XLSX.
+        market: Sheet name to load (case-insensitive against workbook tabs).
+        include_week: If False (default), Week products are dropped silently
+            and only Cal/Quarter/Month rows are returned. The PFC long-term
+            curve does not consume weekly products.
+
     Returns:
-        DataFrame with columns: date, product, load_type, product_type, price
-        - product: '2027', '2026-Q3', '2026-04', etc.
-        - load_type: 'BASE' or 'PEAK'
-        - product_type: 'Cal', 'Quarter', 'Month'
+        DataFrame with columns: date, product, load_type, product_type, price.
+        product_type ∈ {'Cal', 'Quarter', 'Month'} when ``include_week=False``,
+        plus 'Week' when ``include_week=True``.
     """
     report_path = Path(report_path)
     if not report_path.exists():
@@ -129,20 +159,24 @@ def load_forwards_timeseries(
 
     # Parse all valid product columns (BASE + PEAK)
     col_info: dict[int, tuple[str, str, str]] = {}  # col_idx -> (product, load_type, product_type)
+    n_week_skipped = 0
     for idx, code in enumerate(product_codes):
         if pd.isna(code):
             continue
         parsed = _normalize_product(str(code))
         if parsed is None:
             continue
-        delivery_key, load_type = parsed
-        if len(delivery_key) == 4:
-            ptype = "Cal"
-        elif "-Q" in delivery_key:
-            ptype = "Quarter"
-        else:
-            ptype = "Month"
+        delivery_key, load_type, ptype = parsed
+        if ptype == "Week" and not include_week:
+            n_week_skipped += 1
+            continue
         col_info[idx] = (delivery_key, load_type, ptype)
+
+    if n_week_skipped:
+        logger.debug(
+            "Sheet %s: skipped %d Week product columns (include_week=False)",
+            market, n_week_skipped,
+        )
 
     if not col_info:
         raise ValueError(f"No valid products found in EEX sheet {market}")
@@ -182,19 +216,47 @@ def update_forwards_parquet(
     report_path: str | Path,
     parquet_path: str | Path = "data/eex_forwards_history.parquet",
     markets: list[str] | None = None,
+    include_week: bool = False,
 ) -> pd.DataFrame:
     """Ingest EEX report and append to historical Parquet (dedup on date+product+load_type+market).
+
+    Args:
+        report_path: EEX XLSX (Yearly snapshot or Historique).
+        parquet_path: Destination Parquet for the appended history.
+        markets: Sheet names to ingest. ``None`` defaults to the full panel
+            ``["CH", "DE", "FR", "AT", "IT"]``. Any sheet name in
+            :data:`_NON_MARKET_SHEETS` (FX / Produits / HFC) is filtered
+            out automatically and logged.
+        include_week: Forward Week products to the Parquet too (default
+            False — skipped because the LT PFC does not use them).
 
     Returns the updated full DataFrame.
     """
     if markets is None:
-        markets = ["CH", "DE"]
+        markets = ["CH", "DE", "FR", "AT", "IT"]
+
+    requested = list(markets)
+    filtered: list[str] = []
+    for mkt in requested:
+        if str(mkt).strip().upper() in _NON_MARKET_SHEETS:
+            logger.info(
+                "Skipping non-market sheet %r (FX / Produits / HFC are never parsed as forwards)",
+                mkt,
+            )
+            continue
+        filtered.append(mkt)
+    markets = filtered
+
+    if not markets:
+        raise ValueError(
+            f"No market sheets remain after filtering non-market tabs from {requested}"
+        )
 
     parquet_path = Path(parquet_path)
     dfs = []
     for mkt in markets:
         try:
-            ts = load_forwards_timeseries(report_path, market=mkt)
+            ts = load_forwards_timeseries(report_path, market=mkt, include_week=include_week)
             ts["market"] = mkt
             dfs.append(ts)
         except Exception as exc:
@@ -234,6 +296,9 @@ def load_base_prices_from_eex_report(
         - Row 1 contains product codes (Y01_YYYY_BASE/PEAK, QNN_YYYY_BASE/PEAK, MNN_YYYY_BASE/PEAK)
         - Row 4+ contains daily marks with a date in column A
 
+    Week products (3-digit prefix codes such as ``205_2026_PEAK``) are
+    detected and **skipped** — the long-term PFC curve does not consume them.
+
     Args:
         report_path: Absolute or relative path to the EEX report XLSX.
         market: Sheet name to load (default: CH).
@@ -259,17 +324,27 @@ def load_base_prices_from_eex_report(
 
     selected_cols: list[int] = []
     delivery_keys: dict[int, str] = {}
+    n_week_skipped = 0
     for idx, code in enumerate(product_codes):
         if pd.isna(code):
             continue
         parsed = _normalize_product(str(code))
         if parsed is None:
             continue
-        delivery_key, load_type = parsed
+        delivery_key, load_type, ptype = parsed
+        if ptype == "Week":
+            n_week_skipped += 1
+            continue
         if load_type == "PEAK":
             delivery_key = f"{delivery_key}-Peak"
         selected_cols.append(idx)
         delivery_keys[idx] = delivery_key
+
+    if n_week_skipped:
+        logger.debug(
+            "Sheet %s: skipped %d Week products from base_prices",
+            market, n_week_skipped,
+        )
 
     if not selected_cols:
         raise ValueError(f"No Cal/Quarter/Month contracts found in EEX sheet {market}")

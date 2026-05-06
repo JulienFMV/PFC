@@ -117,9 +117,23 @@ def test_new_lt_model_path_is_importable(module_name: str) -> None:
     assert new.__name__ == f"pfc_shaping.lt.model.{module_name}"
 
 
+# Some CT modules pull heavy optional ML deps that may be absent in lean
+# CI / dev environments. Map each module to its hardest extra dep so we
+# can skip cleanly instead of failing.
+_CT_HEAVY_DEPS: dict[str, str] = {
+    "lear_forecaster": "lightgbm",
+    "foundation_forecaster": "torch",
+    "futureboost_experimental": "lightgbm",
+    "pricefm_experimental": "tensorflow",
+}
+
+
 @pytest.mark.parametrize("module_name", CT_MODULES)
 def test_new_ct_model_path_is_importable(module_name: str) -> None:
     pytest.importorskip("pandas")
+    extra = _CT_HEAVY_DEPS.get(module_name)
+    if extra is not None:
+        pytest.importorskip(extra)
     new = importlib.import_module(f"pfc_shaping.ct.model.{module_name}")
     assert new.__name__ == f"pfc_shaping.ct.model.{module_name}"
 
