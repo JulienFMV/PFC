@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
 import subprocess
 import sys
 import time
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from typing import Any
 
 import numpy as np
@@ -26,6 +27,20 @@ class SwissShortTermInputs:
     commodities: pd.DataFrame | None
     outages_all: pd.DataFrame | None
     base_pfc_ch: pd.DataFrame
+    require_de_exogenous: bool = True
+
+
+@dataclass
+class SwissShortTermInputHealth:
+    epex_ch_rows: int
+    epex_de_rows: int
+    entso_rows: int
+    hydro_rows: int
+    outages_rows: int
+    commodities_rows: int
+    ch_de_overlap_hours: int
+    entso_ch_overlap_hours: int
+    has_de_price_support: bool
 
 
 @dataclass
@@ -44,6 +59,9 @@ def run_swiss_short_term_overlay(
     logger.info("STEP 10: LEAR short-term forecast (Swiss CT branch)")
     logger.info("=" * 70)
     t_lear = time.time()
+
+    input_health = _validate_swiss_short_term_inputs(inputs, logger)
+    _save_input_health(input_health, logger)
 
     lear = LEARForecaster(tz="Europe/Zurich")
     lear.fit(
@@ -73,6 +91,65 @@ def run_swiss_short_term_overlay(
 
     logger.info("  LEAR completed in %.1fs", time.time() - t_lear)
     return SwissShortTermArtifacts(pfc_ch=pfc_ch, lear_forecast=lear_forecast, lear_run_id=lear_run_id)
+
+
+def _validate_swiss_short_term_inputs(
+    inputs: SwissShortTermInputs,
+    logger: logging.Logger,
+) -> SwissShortTermInputHealth:
+    if inputs.epex_ch.empty:
+        raise ValueError("Swiss CT requires non-empty CH EPEX input.")
+    if inputs.entso.empty:
+        raise ValueError("Swiss CT requires non-empty ENTSO input.")
+    if inputs.hydro.empty:
+        raise ValueError("Swiss CT requires non-empty hydro input.")
+    if inputs.base_pfc_ch.empty:
+        raise ValueError("Swiss CT requires non-empty Swiss LT base PFC.")
+
+    ch_hourly_idx = inputs.epex_ch.index.to_series().resample("h").mean().dropna().index
+    de_hourly_idx = inputs.epex_de.index.to_series().resample("h").mean().dropna().index if not inputs.epex_de.empty else pd.DatetimeIndex([])
+    entso_hourly_idx = inputs.entso.index.to_series().resample("h").mean().dropna().index
+
+    ch_de_overlap_hours = len(ch_hourly_idx.intersection(de_hourly_idx))
+    entso_ch_overlap_hours = len(ch_hourly_idx.intersection(entso_hourly_idx))
+    has_de_price_support = ch_de_overlap_hours > 0
+
+    if inputs.require_de_exogenous and not has_de_price_support:
+        raise ValueError("Swiss CT is configured to require DE exogenous prices, but no CH/DE hourly overlap was found.")
+
+    health = SwissShortTermInputHealth(
+        epex_ch_rows=len(inputs.epex_ch),
+        epex_de_rows=len(inputs.epex_de),
+        entso_rows=len(inputs.entso),
+        hydro_rows=len(inputs.hydro),
+        outages_rows=0 if inputs.outages_all is None else len(inputs.outages_all),
+        commodities_rows=0 if inputs.commodities is None else len(inputs.commodities),
+        ch_de_overlap_hours=ch_de_overlap_hours,
+        entso_ch_overlap_hours=entso_ch_overlap_hours,
+        has_de_price_support=has_de_price_support,
+    )
+    logger.info(
+        "  Swiss CT input health: CH=%d rows, DE=%d rows, ENTSO=%d rows, hydro=%d rows, CH/DE overlap=%d h, CH/ENTSO overlap=%d h",
+        health.epex_ch_rows,
+        health.epex_de_rows,
+        health.entso_rows,
+        health.hydro_rows,
+        health.ch_de_overlap_hours,
+        health.entso_ch_overlap_hours,
+    )
+    if not has_de_price_support:
+        logger.warning("  Swiss CT running without effective DE price overlap support.")
+    return health
+
+
+def _save_input_health(health: SwissShortTermInputHealth, logger: logging.Logger) -> None:
+    path = os.path.join("pfc_shaping", "output", "swiss_ct_input_health_latest.json")
+    try:
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(asdict(health), handle, indent=2)
+        logger.info("  Swiss CT input health saved: %s", path)
+    except Exception as exc:
+        logger.warning("  Failed to persist Swiss CT input health: %s", exc)
 
 
 def _maybe_apply_experimental_pricefm(

@@ -399,6 +399,7 @@ def run_short_term_phase(
         commodities=inputs.commodities,
         outages_all=inputs.outages_all,
         base_pfc_ch=long_term.swiss.pfc,
+        require_de_exogenous=os.getenv("PFC_CT_REQUIRE_DE_EXOGENOUS", "1") == "1",
     )
     return run_swiss_short_term_overlay(project_root=project_root, inputs=st_inputs, logger=logger)
 
