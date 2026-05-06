@@ -4,16 +4,21 @@ import logging
 import os
 import time
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
 import yaml
 
-from pfc_shaping.pipeline.swiss_short_term import (
-    SwissShortTermArtifacts,
-    SwissShortTermInputs,
-    run_swiss_short_term_overlay,
-)
+# CT pipeline is imported lazily inside ``run_short_term_phase`` so that
+# importing this module (LT-only) does not pull heavy CT dependencies
+# (lightgbm, torch, …) into the interpreter. The names are still exposed
+# to type checkers via the TYPE_CHECKING guard below.
+if TYPE_CHECKING:
+    from pfc_shaping.pipeline.swiss_short_term import (  # noqa: F401
+        SwissShortTermArtifacts,
+        SwissShortTermInputs,
+    )
 
 
 @dataclass
@@ -43,34 +48,105 @@ class SharedStructuralArtifacts:
 
 
 @dataclass
-class SwissLongTermArtifacts:
-    pfc: pd.DataFrame
-    sh: object
-    wv: object
-    base_prices_ch: dict
-    cascaded_prices_ch: dict
-    hydro_forecast: pd.DataFrame
-    outages_forecast: pd.DataFrame | None
-    out_base: str
+class MarketSpec:
+    """Per-market description used to drive ``_build_long_term_branch``.
+
+    Captures everything that distinguishes one country's PFC build from
+    another. Adding a new market (FR / AT / IT) means assembling one
+    ``MarketSpec``; the rest of the pipeline is market-agnostic.
+    """
+
+    code: str                          # ISO-2 market code: 'CH', 'DE', 'AT', 'FR', 'IT'
+    sheet: str                         # EEX workbook sheet name (today: same as code)
+    tz: str                            # IANA timezone (e.g. 'Europe/Zurich')
+    country: str                       # holidays / EEX peak country code
+    epex_df: pd.DataFrame              # market-specific EPEX spot history
+    cal_df: pd.DataFrame               # market-specific calendar enrichment
+    pre_fitted_sh: object | None = None        # pre-fitted ShapeHourly (CH); None → fit inside branch
+    water_value: object | None = None          # only for hydro markets (CH today)
+    hydro_forecast: pd.DataFrame | None = None  # only for hydro markets
+    outages_forecast: pd.DataFrame | None = None  # only when REMIT outages are wired
+    out_base: str = ""                 # destination prefix for the {.parquet, .csv} pair
 
 
 @dataclass
-class GermanLongTermArtifacts:
+class MarketBranchArtifacts:
+    """Output of ``_build_long_term_branch`` for one market.
+
+    Every field is per-market; the LongTermArtifacts container keeps
+    a dict keyed by market code plus convenience aliases ``swiss`` /
+    ``german`` for backward compatibility.
+    """
+
+    code: str
     pfc: pd.DataFrame
     sh: object
-    base_prices_de: dict
-    cascaded_prices_de: dict
+    base_prices: dict
+    cascaded_prices: dict
+    fwd_source: str
     out_base: str
+    wv: object | None = None
+    hydro_forecast: pd.DataFrame | None = None
+    outages_forecast: pd.DataFrame | None = None
+
+
+# ── Backward-compat aliases ──────────────────────────────────────────────
+# Older external code refers to ``SwissLongTermArtifacts`` /
+# ``GermanLongTermArtifacts``. They are now the same object as
+# ``MarketBranchArtifacts``; the per-country attribute names
+# (``base_prices_ch``, ``cascaded_prices_ch`` etc.) are preserved as
+# read-only properties on top of the generic dataclass for any caller
+# that depends on the old shape.
+SwissLongTermArtifacts = MarketBranchArtifacts
+GermanLongTermArtifacts = MarketBranchArtifacts
+
+
+def _legacy_alias(self: MarketBranchArtifacts, attr: str) -> object:
+    """Return self.attr (used by legacy *_ch / *_de property aliases)."""
+    return getattr(self, attr)
+
+
+# Attach legacy attribute aliases on the dataclass so ``art.base_prices_ch``
+# keeps returning ``art.base_prices`` on a CH branch (and similarly _de on
+# a DE branch). This lets the dashboard pages and any leftover scripts
+# read the old field names without modification.
+for _legacy_name, _modern_name in [
+    ("base_prices_ch", "base_prices"),
+    ("cascaded_prices_ch", "cascaded_prices"),
+    ("base_prices_de", "base_prices"),
+    ("cascaded_prices_de", "cascaded_prices"),
+]:
+    setattr(
+        MarketBranchArtifacts,
+        _legacy_name,
+        property(lambda self, _m=_modern_name: _legacy_alias(self, _m)),
+    )
 
 
 @dataclass
 class LongTermArtifacts:
+    """Top-level LT artifacts container.
+
+    ``markets`` is the source of truth: one entry per active market, keyed
+    by ISO-2 code. ``swiss`` and ``german`` properties are convenience
+    accessors for the two markets currently wired in production.
+    Activating FR / AT / IT only requires adding entries to ``markets`` —
+    no field added on this dataclass.
+    """
+
     shared: SharedStructuralArtifacts
-    swiss: SwissLongTermArtifacts
-    german: GermanLongTermArtifacts
+    markets: dict[str, MarketBranchArtifacts]
     out_dir: str
     artifacts_dir: str
     today: str
+
+    @property
+    def swiss(self) -> MarketBranchArtifacts:
+        return self.markets["CH"]
+
+    @property
+    def german(self) -> MarketBranchArtifacts:
+        return self.markets["DE"]
 
 
 def _first_existing_path(*paths: str | None) -> str | None:
@@ -363,31 +439,62 @@ def run_long_term_phase(
         horizon_days=horizon_days,
         logger=logger,
     )
-    swiss = _build_swiss_long_term_branch(
-        sh=sh,
-        wv=wv,
-        shared=shared,
-        base_prices_ch=base_prices_ch,
-        cascaded_prices_ch=cascaded_prices_ch,
+
+    # Generic per-market builds. Adding FR / AT / IT later only requires
+    # appending one more MarketSpec to this list (Phase 3).
+    swiss_spec = MarketSpec(
+        code="CH",
+        sheet="CH",
+        tz="Europe/Zurich",
+        country="CH",
+        epex_df=inputs.epex_ch,
+        cal_df=inputs.cal_ch,
+        pre_fitted_sh=sh,
+        water_value=wv,
         hydro_forecast=hydro_forecast,
         outages_forecast=outages_forecast,
-        cascader_ch=cascader_ch,
-        peak_source_policy=peak_source_policy,
         out_base=out_base_ch,
-        logger=logger,
     )
-    german = _build_german_long_term_branch(
+    swiss = _build_long_term_branch(
+        spec=swiss_spec,
         inputs=inputs,
         shared=shared,
         peak_source_policy=peak_source_policy,
+        logger=logger,
+        # CH reuses the up-front computed forwards / cascader to avoid
+        # parsing the EEX XLSX twice on the same run.
+        pre_loaded_base_prices=base_prices_ch,
+        pre_loaded_fwd_source=fwd_source_ch,
+        pre_loaded_cascaded_prices=cascaded_prices_ch,
+        pre_loaded_cascader=cascader_ch,
+    )
+
+    german_spec = MarketSpec(
+        code="DE",
+        sheet="DE",
+        tz="Europe/Berlin",
+        country="DE",
+        epex_df=inputs.epex_de,
+        cal_df=inputs.cal_de,
+        pre_fitted_sh=None,        # German ShapeHourly is fit inside the branch
+        water_value=None,
+        hydro_forecast=None,
+        outages_forecast=None,
         out_base=out_base_de,
+    )
+    german = _build_long_term_branch(
+        spec=german_spec,
+        inputs=inputs,
+        shared=shared,
+        peak_source_policy=peak_source_policy,
         logger=logger,
     )
 
+    markets: dict[str, MarketBranchArtifacts] = {"CH": swiss, "DE": german}
+
     return LongTermArtifacts(
         shared=shared,
-        swiss=swiss,
-        german=german,
+        markets=markets,
         out_dir=out_dir,
         artifacts_dir=artifacts_dir,
         today=today,
@@ -399,7 +506,17 @@ def run_short_term_phase(
     inputs: LoadedInputs,
     long_term: LongTermArtifacts,
     logger: logging.Logger,
-) -> SwissShortTermArtifacts:
+):
+    """Run the Swiss CT overlay on top of the LT PFC.
+
+    The CT pipeline is imported lazily so the LT module remains
+    importable in environments without CT dependencies.
+    """
+    from pfc_shaping.pipeline.swiss_short_term import (
+        SwissShortTermInputs,
+        run_swiss_short_term_overlay,
+    )
+
     st_inputs = SwissShortTermInputs(
         epex_ch=inputs.epex_ch,
         epex_de=inputs.epex_de,
@@ -445,67 +562,44 @@ def _build_shared_long_term_artifacts(
     )
 
 
-def _build_swiss_long_term_branch(
-    sh: object,
-    wv: object,
-    shared: SharedStructuralArtifacts,
-    base_prices_ch: dict,
-    cascaded_prices_ch: dict,
-    hydro_forecast: pd.DataFrame,
-    outages_forecast: pd.DataFrame | None,
-    cascader_ch: object,
-    peak_source_policy: str,
-    out_base: str,
-    logger: logging.Logger,
-) -> SwissLongTermArtifacts:
-    logger.info("=" * 70)
-    logger.info("STEP 9b: Building CH PFC (Swiss LT branch)")
-    logger.info("=" * 70)
-    t0 = time.time()
-
-    from pfc_shaping.lt.model.assembler import PFCAssembler
-
-    assembler_ch = PFCAssembler(
-        shape_hourly=sh,
-        shape_intraday=shared.si,
-        uncertainty=shared.unc,
-        water_value=wv,
-        cascader=cascader_ch,
-        calibrator=shared.calibrator,
-        peak_source_policy=peak_source_policy,
-    )
-    pfc_ch = assembler_ch.build(
-        base_prices=cascaded_prices_ch,
-        quoted_keys=set(base_prices_ch.keys()),
-        start_date=shared.start_date,
-        horizon_days=shared.horizon_days,
-        entso_forecast=shared.entso_forecast,
-        hydro_forecast=hydro_forecast,
-        outages_forecast=outages_forecast,
-    )
-    logger.info("  CH PFC assembled: %d rows in %.1fs", len(pfc_ch), time.time() - t0)
-
-    return SwissLongTermArtifacts(
-        pfc=pfc_ch,
-        sh=sh,
-        wv=wv,
-        base_prices_ch=base_prices_ch,
-        cascaded_prices_ch=cascaded_prices_ch,
-        hydro_forecast=hydro_forecast,
-        outages_forecast=outages_forecast,
-        out_base=out_base,
-    )
-
-
-def _build_german_long_term_branch(
+def _build_long_term_branch(
+    spec: MarketSpec,
     inputs: LoadedInputs,
     shared: SharedStructuralArtifacts,
     peak_source_policy: str,
-    out_base: str,
     logger: logging.Logger,
-) -> GermanLongTermArtifacts:
+    *,
+    pre_loaded_base_prices: dict | None = None,
+    pre_loaded_fwd_source: str | None = None,
+    pre_loaded_cascaded_prices: dict | None = None,
+    pre_loaded_cascader: object | None = None,
+) -> MarketBranchArtifacts:
+    """Build one market's PFC from a MarketSpec.
+
+    Centralises the previous Swiss / German branch logic so each new
+    market only requires a MarketSpec and the up-front data wiring
+    (EPEX history, calendar). The Swiss branch is the only one that
+    reuses pre-fitted ShapeHourly / cascader / forward dict from
+    ``run_long_term_phase`` to avoid recomputing them; other markets
+    fit inside this function.
+
+    Args:
+        spec: per-market description.
+        inputs: shared LoadedInputs (config, eex_report_path, etc.).
+        shared: shared structural artifacts (ShapeIntraday, Uncertainty,
+            ENTSO forecast, calibrator, horizon).
+        peak_source_policy: see PFCAssembler.
+        logger: pipeline logger.
+        pre_loaded_*: optional precomputed forward dict / cascader /
+            ShapeHourly. Used by the CH branch which builds them once
+            in ``run_long_term_phase`` and reuses them; for other
+            markets these are ``None`` and the function fits internally.
+
+    Returns:
+        MarketBranchArtifacts with the assembled 15-min PFC.
+    """
     logger.info("=" * 70)
-    logger.info("STEP 9c: Building DE PFC (German LT branch)")
+    logger.info("STEP 9.%s: Building %s PFC (LT branch, tz=%s)", spec.code, spec.code, spec.tz)
     logger.info("=" * 70)
     t0 = time.time()
 
@@ -513,60 +607,125 @@ def _build_german_long_term_branch(
     from pfc_shaping.data.forward_proxy import load_base_prices as load_fwd_prices
     from pfc_shaping.lt.model.assembler import PFCAssembler
 
-    if inputs.sh_mode == "mlp":
-        from pfc_shaping.lt.model.shape_hourly_mlp import ShapeHourlyMLP
-        sh_de = ShapeHourlyMLP()
+    # ── 1. ShapeHourly: reuse pre-fit if provided, else fit on the spot ──
+    if spec.pre_fitted_sh is not None:
+        sh = spec.pre_fitted_sh
+        logger.info("  %s ShapeHourly: reusing pre-fitted instance", spec.code)
     else:
-        from pfc_shaping.lt.model.shape_hourly import ShapeHourly
-        sh_de = ShapeHourly()
-    sh_de.fit(inputs.epex_de, inputs.cal_de)
-    logger.info("  DE ShapeHourly fitted (%s mode)", inputs.sh_mode)
+        if inputs.sh_mode == "mlp":
+            from pfc_shaping.lt.model.shape_hourly_mlp import ShapeHourlyMLP
+            sh = ShapeHourlyMLP()
+        else:
+            from pfc_shaping.lt.model.shape_hourly import ShapeHourly
+            sh = ShapeHourly()
+        sh.fit(spec.epex_df, spec.cal_df)
+        logger.info("  %s ShapeHourly fitted (%s mode)", spec.code, inputs.sh_mode)
 
-    base_prices_de, fwd_source_de = load_fwd_prices(
-        inputs.epex_de,
-        eex_report_path=inputs.eex_report_path,
-        config=inputs.config,
-        market="DE",
-    )
-    logger.info("  DE forward source: %s", fwd_source_de)
+    # ── 2. Forwards (base_prices) ────────────────────────────────────────
+    if pre_loaded_base_prices is not None:
+        base_prices = pre_loaded_base_prices
+        fwd_source = pre_loaded_fwd_source or "pre-loaded"
+    else:
+        base_prices, fwd_source = load_fwd_prices(
+            spec.epex_df,
+            eex_report_path=inputs.eex_report_path,
+            config=inputs.config,
+            market=spec.sheet,
+        )
+    logger.info("  %s forward source: %s", spec.code, fwd_source)
 
-    cascader_de = ContractCascader(tz="Europe/Berlin")
-    cascader_de.fit_seasonal_ratios(inputs.epex_de)
-    cascader_de.fit_peak_ratios(inputs.epex_de)
-    cascaded_prices_de = cascader_de.cascade(base_prices_de)
-    cascaded_prices_de = cascader_de.synthesize_peak_prices(cascaded_prices_de)
+    # ── 3. Cascading ────────────────────────────────────────────────────
+    if pre_loaded_cascader is not None and pre_loaded_cascaded_prices is not None:
+        cascader = pre_loaded_cascader
+        cascaded_prices = pre_loaded_cascaded_prices
+    else:
+        cascader = ContractCascader(tz=spec.tz)
+        cascader.fit_seasonal_ratios(spec.epex_df)
+        cascader.fit_peak_ratios(spec.epex_df)
+        cascaded_prices = cascader.cascade(base_prices)
+        cascaded_prices = cascader.synthesize_peak_prices(cascaded_prices)
 
-    logger.info("  DE cascaded keys: %d", len(cascaded_prices_de))
-    for key in sorted(cascaded_prices_de.keys()):
-        logger.info("    DE %s: %.2f EUR/MWh", key, cascaded_prices_de[key])
+    logger.info("  %s cascaded keys: %d", spec.code, len(cascaded_prices))
+    for key in sorted(cascaded_prices.keys()):
+        logger.info("    %s %s: %.2f EUR/MWh", spec.code, key, cascaded_prices[key])
 
-    assembler_de = PFCAssembler(
-        shape_hourly=sh_de,
+    # ── 4. Assemble ─────────────────────────────────────────────────────
+    assembler = PFCAssembler(
+        shape_hourly=sh,
         shape_intraday=shared.si,
         uncertainty=shared.unc,
-        water_value=None,
-        cascader=cascader_de,
+        water_value=spec.water_value,
+        cascader=cascader,
         calibrator=shared.calibrator,
         peak_source_policy=peak_source_policy,
     )
-    pfc_de = assembler_de.build(
-        base_prices=cascaded_prices_de,
-        quoted_keys=set(base_prices_de.keys()),
+    build_kwargs = dict(
+        base_prices=cascaded_prices,
+        quoted_keys=set(base_prices.keys()),
         start_date=shared.start_date,
         horizon_days=shared.horizon_days,
         entso_forecast=shared.entso_forecast,
-        hydro_forecast=None,
-        country="DE",
+        hydro_forecast=spec.hydro_forecast,
     )
-    logger.info("  DE PFC assembled: %d rows in %.1fs", len(pfc_de), time.time() - t0)
+    # Only the Swiss branch (with country='CH' default) consumes outages today.
+    # Other markets pass country=spec.country explicitly so the assembler
+    # picks the right tz / holidays.
+    if spec.outages_forecast is not None:
+        build_kwargs["outages_forecast"] = spec.outages_forecast
+    if spec.country != "CH":
+        build_kwargs["country"] = spec.country
 
-    return GermanLongTermArtifacts(
-        pfc=pfc_de,
-        sh=sh_de,
-        base_prices_de=base_prices_de,
-        cascaded_prices_de=cascaded_prices_de,
-        out_base=out_base,
+    pfc = assembler.build(**build_kwargs)
+    logger.info("  %s PFC assembled: %d rows in %.1fs", spec.code, len(pfc), time.time() - t0)
+
+    return MarketBranchArtifacts(
+        code=spec.code,
+        pfc=pfc,
+        sh=sh,
+        base_prices=base_prices,
+        cascaded_prices=cascaded_prices,
+        fwd_source=fwd_source,
+        out_base=spec.out_base,
+        wv=spec.water_value,
+        hydro_forecast=spec.hydro_forecast,
+        outages_forecast=spec.outages_forecast,
     )
+
+
+# Per-market suffix used when writing artifacts. CH keeps the legacy
+# unsuffixed names ("shape_hourly.parquet", "water_value.parquet") so
+# the dashboard and any external loader keeps reading the historical
+# paths. Other markets get an explicit lower-case suffix.
+_ARTIFACT_SUFFIX: dict[str, str] = {
+    "CH": "",
+    "DE": "_de",
+    "AT": "_at",
+    "FR": "_fr",
+    "IT": "_it",
+}
+
+
+def _save_market_artifacts(
+    art: MarketBranchArtifacts,
+    artifacts_dir: str,
+    logger: logging.Logger,
+) -> None:
+    """Persist PFC + per-market shape / water value artifacts."""
+    art.pfc.to_parquet(f"{art.out_base}.parquet")
+    logger.info("  Saved: %s.parquet (%d rows)", art.out_base, len(art.pfc))
+    art.pfc.to_csv(f"{art.out_base}.csv", sep=";", index_label="timestamp_local")
+    logger.info("  Saved: %s.csv", art.out_base)
+
+    suffix = _ARTIFACT_SUFFIX.get(art.code, f"_{art.code.lower()}")
+
+    if hasattr(art.sh, "save"):
+        if art.sh.__class__.__name__ == "ShapeHourlyMLP":
+            art.sh.save(os.path.join(artifacts_dir, f"shape_hourly{suffix}_mlp.pkl"))
+        else:
+            art.sh.save(os.path.join(artifacts_dir, f"shape_hourly{suffix}.parquet"))
+
+    if art.wv is not None and hasattr(art.wv, "save"):
+        art.wv.save(os.path.join(artifacts_dir, f"water_value{suffix}.parquet"))
 
 
 def save_long_term_outputs(long_term: LongTermArtifacts, logger: logging.Logger) -> None:
@@ -577,30 +736,12 @@ def save_long_term_outputs(long_term: LongTermArtifacts, logger: logging.Logger)
     os.makedirs(long_term.out_dir, exist_ok=True)
     os.makedirs(long_term.artifacts_dir, exist_ok=True)
 
-    long_term.swiss.pfc.to_parquet(f"{long_term.swiss.out_base}.parquet")
-    logger.info("  Saved: %s.parquet (%d rows)", long_term.swiss.out_base, len(long_term.swiss.pfc))
-    long_term.swiss.pfc.to_csv(f"{long_term.swiss.out_base}.csv", sep=";", index_label="timestamp_local")
-    logger.info("  Saved: %s.csv", long_term.swiss.out_base)
+    for art in long_term.markets.values():
+        _save_market_artifacts(art, long_term.artifacts_dir, logger)
 
-    long_term.german.pfc.to_parquet(f"{long_term.german.out_base}.parquet")
-    logger.info("  Saved: %s.parquet (%d rows)", long_term.german.out_base, len(long_term.german.pfc))
-    long_term.german.pfc.to_csv(f"{long_term.german.out_base}.csv", sep=";", index_label="timestamp_local")
-    logger.info("  Saved: %s.csv", long_term.german.out_base)
-
-    if hasattr(long_term.swiss.sh, "save"):
-        if long_term.swiss.sh.__class__.__name__ == "ShapeHourlyMLP":
-            long_term.swiss.sh.save(os.path.join(long_term.artifacts_dir, "shape_hourly_mlp.pkl"))
-        else:
-            long_term.swiss.sh.save(os.path.join(long_term.artifacts_dir, "shape_hourly.parquet"))
+    # Shared (cross-market) artifacts written once.
     long_term.shared.si.save(os.path.join(long_term.artifacts_dir, "shape_intraday.parquet"))
-    long_term.swiss.wv.save(os.path.join(long_term.artifacts_dir, "water_value.parquet"))
     long_term.shared.unc.save(os.path.join(long_term.artifacts_dir, "uncertainty.parquet"))
-
-    if hasattr(long_term.german.sh, "save"):
-        if long_term.german.sh.__class__.__name__ == "ShapeHourlyMLP":
-            long_term.german.sh.save(os.path.join(long_term.artifacts_dir, "shape_hourly_de_mlp.pkl"))
-        else:
-            long_term.german.sh.save(os.path.join(long_term.artifacts_dir, "shape_hourly_de.parquet"))
 
 
 def print_pipeline_summary(long_term: LongTermArtifacts, total_time: float) -> None:
