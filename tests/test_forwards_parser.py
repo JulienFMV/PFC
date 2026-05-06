@@ -27,6 +27,9 @@ import pytest
 from pfc_shaping.data.ingest_forwards import (
     _EEX_WEEK_PATTERN,
     _NON_MARKET_SHEETS,
+    _PRICE_CEILING_EUR_MWH,
+    _PRICE_FLOOR_EUR_MWH,
+    _coerce_price,
     _normalize_product,
     load_base_prices_from_eex_report,
     load_forwards_timeseries,
@@ -80,6 +83,130 @@ def test_non_market_sheets_constant_is_frozen() -> None:
     assert "PRODUITS" in _NON_MARKET_SHEETS
     assert "HFC" in _NON_MARKET_SHEETS
     assert isinstance(_NON_MARKET_SHEETS, frozenset)
+
+
+# ---------------------------------------------------------------------------
+# Price coercion : negative prices, "0 = non-quoted" convention, sanity range
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "raw, expected",
+    [
+        # Empty / NaN cells
+        (None, None),
+        (float("nan"), None),
+        ("", None),
+        ("not a number", None),
+        # Desk convention: literal 0 = non-quoted
+        (0, None),
+        (0.0, None),
+        (-0.0, None),
+        ("0", None),
+        # Standard positive marks
+        (75.5, 75.5),
+        (82, 82.0),
+        # Negative prices preserved (real market phenomenon)
+        (-12.3, -12.3),
+        (-1.0, -1.0),
+        # French decimal comma tolerated
+        ("75,5", 75.5),
+        ("-12,3", -12.3),
+        # Sanity range: outside → None
+        (_PRICE_FLOOR_EUR_MWH - 1, None),
+        (_PRICE_CEILING_EUR_MWH + 1, None),
+        (-1_000_000.0, None),
+        (1e9, None),
+        # Sanity range: inclusive at the boundaries
+        (_PRICE_FLOOR_EUR_MWH, _PRICE_FLOOR_EUR_MWH),
+        (_PRICE_CEILING_EUR_MWH, _PRICE_CEILING_EUR_MWH),
+    ],
+)
+def test_coerce_price(raw, expected) -> None:
+    assert _coerce_price(raw) == expected
+
+
+def test_load_forwards_timeseries_preserves_negative_prices(tmp_path: Path) -> None:
+    """A negative settlement on a Cal/Q/M product (rare today but
+    structurally possible in the future) must flow through to the
+    timeseries, not be silently dropped like in the legacy ``> 0``
+    filter."""
+    # Build a minimal sheet where one product has a negative mark on
+    # one day, a literal 0 (non-quoted) on another, and a regular
+    # positive mark elsewhere.
+    dates = pd.date_range("2024-05-01", "2024-05-05", freq="D")
+    # 1 product column, 5 dates
+    rows: list[list] = []
+    rows.append([None, "Y01_2027_BASE"])
+    rows.append([None, "ISIN_dummy"])
+    rows.append(["Date", None])
+    marks = [50.0, -10.5, 0.0, 0.0, 60.0]
+    for d, m in zip(dates, marks):
+        rows.append([d.strftime("%d.%m.%Y"), m])
+    df = pd.DataFrame(rows, columns=range(2))
+    path = tmp_path / "negative_test.xlsx"
+    with pd.ExcelWriter(path, engine="openpyxl") as writer:
+        df.to_excel(writer, sheet_name="DE", index=False, header=False)
+
+    out = load_forwards_timeseries(path, market="DE")
+    # 3 valid rows: 50.0, -10.5, 60.0 (the two zeros are non-quoted)
+    assert len(out) == 3, f"expected 3 rows, got {len(out)}"
+    assert sorted(out["price"].tolist()) == [-10.5, 50.0, 60.0]
+    # Negative price must keep its sign and product type.
+    neg_row = out[out["price"] == -10.5].iloc[0]
+    assert neg_row["product_type"] == "Cal"
+    assert neg_row["load_type"] == "BASE"
+
+
+def test_load_base_prices_from_eex_report_treats_zero_as_non_quoted(
+    tmp_path: Path,
+) -> None:
+    """When the latest row has 0s (non-quoted) on some products, those
+    must NOT appear in base_prices, while real quotes (incl. negatives)
+    do appear."""
+    dates = pd.date_range("2024-05-01", "2024-05-03", freq="D")
+    rows: list[list] = []
+    rows.append([None, "Y01_2027_BASE", "Y01_2027_PEAK", "Q03_2026_BASE"])
+    rows.append([None, "ISIN_a", "ISIN_b", "ISIN_c"])
+    rows.append(["Date", None, None, None])
+    # Last row has Cal BASE quoted (-3.5, valid negative), Cal PEAK at
+    # 0 (non-quoted), Quarter BASE at 0 (non-quoted).
+    rows.append([dates[0].strftime("%d.%m.%Y"), 50.0, 60.0, 55.0])
+    rows.append([dates[1].strftime("%d.%m.%Y"), 51.0, 61.0, 56.0])
+    rows.append([dates[2].strftime("%d.%m.%Y"), -3.5, 0.0, 0.0])
+    df = pd.DataFrame(rows, columns=range(4))
+    path = tmp_path / "zero_test.xlsx"
+    with pd.ExcelWriter(path, engine="openpyxl") as writer:
+        df.to_excel(writer, sheet_name="DE", index=False, header=False)
+
+    prices = load_base_prices_from_eex_report(path, market="DE")
+    # Only the negative Cal BASE survives the as-of selection of the
+    # last row.
+    assert prices == {"2027": -3.5}
+
+
+def test_load_base_prices_from_eex_report_rejects_out_of_sanity_range(
+    tmp_path: Path,
+) -> None:
+    """A typo of 9_999_999 in a price cell must NOT pollute base_prices;
+    the as-of selection picks an earlier valid row instead."""
+    dates = pd.date_range("2024-05-01", "2024-05-03", freq="D")
+    rows: list[list] = []
+    rows.append([None, "Y01_2027_BASE"])
+    rows.append([None, "ISIN_x"])
+    rows.append(["Date", None])
+    # Latest row is a typo outside the sanity range; previous row is OK.
+    rows.append([dates[0].strftime("%d.%m.%Y"), 50.0])
+    rows.append([dates[1].strftime("%d.%m.%Y"), 75.0])
+    rows.append([dates[2].strftime("%d.%m.%Y"), 9_999_999.0])
+    df = pd.DataFrame(rows, columns=range(2))
+    path = tmp_path / "typo_test.xlsx"
+    with pd.ExcelWriter(path, engine="openpyxl") as writer:
+        df.to_excel(writer, sheet_name="DE", index=False, header=False)
+
+    prices = load_base_prices_from_eex_report(path, market="DE")
+    # Typo row rejected; falls back to the latest in-range row (75.0).
+    assert prices == {"2027": 75.0}
 
 
 # ---------------------------------------------------------------------------

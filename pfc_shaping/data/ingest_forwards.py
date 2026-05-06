@@ -50,6 +50,50 @@ _EEX_WEEK_PATTERN = re.compile(r"^([1-9]\d{2})_(\d{4})_(BASE|PEAK)$")
 # never be parsed as forward markets.
 _NON_MARKET_SHEETS: frozenset[str] = frozenset({"FX", "PRODUITS", "HFC"})
 
+# Sanity bounds on EEX forward marks (EUR/MWh).
+#   - Lower bound: power forwards have never settled below ~−100 EUR/MWh on
+#     a Cal/Q/M product, but Day/Week products did dip lower in stressed
+#     2022/2024 conditions. We pick a permissive [-500, +10_000] window:
+#     anything outside is almost certainly a data error (cell typo, unit
+#     mismatch).
+#   - The desk convention is to fill non-quoted cells with literal ``0``,
+#     so 0.0 is treated as "not quoted today" and dropped, NOT as a valid
+#     zero settlement. This matches the Phase 0 snapshot where every
+#     market sheet had thousands of literal zeros.
+_PRICE_FLOOR_EUR_MWH: float = -500.0
+_PRICE_CEILING_EUR_MWH: float = 10_000.0
+
+
+def _coerce_price(raw: object) -> float | None:
+    """Convert a raw cell value into a numeric price, applying the desk
+    convention (``0`` = non-quoted) and the sanity range.
+
+    Returns ``None`` if the cell is empty / NaN / non-numeric / equals
+    zero (non-quoted), or falls outside ``[_PRICE_FLOOR_EUR_MWH,
+    _PRICE_CEILING_EUR_MWH]``. Otherwise returns the float price.
+
+    A negative price (e.g. ``-12.4``) is preserved — power markets do
+    settle negative on shorter products and may eventually do so on
+    Cal/Q/M as renewable penetration increases.
+    """
+    if raw is None:
+        return None
+    if isinstance(raw, float) and (raw != raw):  # NaN
+        return None
+    try:
+        # Tolerate French decimal comma in legacy XLSX cells.
+        price = float(str(raw).replace(",", ".").strip())
+    except (TypeError, ValueError):
+        return None
+    # Desk convention: literal 0 = non-quoted. We deliberately do NOT
+    # widen this to include exactly +0.0 or -0.0 differently — both map
+    # to "blank cell".
+    if price == 0.0:
+        return None
+    if price < _PRICE_FLOOR_EUR_MWH or price > _PRICE_CEILING_EUR_MWH:
+        return None
+    return price
+
 
 def _normalize_delivery_period(eex_code: str) -> str | None:
     """
@@ -188,14 +232,14 @@ def load_forwards_timeseries(
             continue
         for col_idx, (product, load_type, ptype) in col_info.items():
             val = values.iloc[row_idx - values.index[0], col_idx]
-            price = pd.to_numeric(str(val).replace(",", "."), errors="coerce") if not pd.isna(val) else None
-            if price is not None and price > 0:
+            price = _coerce_price(val)
+            if price is not None:
                 rows.append({
                     "date": dt.normalize(),
                     "product": product,
                     "load_type": load_type,
                     "product_type": ptype,
-                    "price": float(price),
+                    "price": price,
                 })
 
     df = pd.DataFrame(rows)
@@ -356,12 +400,23 @@ def load_base_prices_from_eex_report(
             errors="coerce",
         )
 
+    # Build a "row has at least one quoted product" mask using the desk
+    # convention: 0 / NaN = non-quoted, anything else (negative or
+    # positive) = a quote. We check membership against the sanity range
+    # so a stray ``9999999`` typo doesn't pass the as-of selection.
+    quoted_mask_per_row = (
+        selected.fillna(0.0).map(
+            lambda v: v != 0.0
+            and _PRICE_FLOOR_EUR_MWH <= float(v) <= _PRICE_CEILING_EUR_MWH
+        )
+    ).any(axis=1)
+
     valid_mask = date_series.notna()
     if as_of_date is not None:
         target = pd.Timestamp(as_of_date).normalize()
         valid_mask &= date_series.dt.normalize() == target
     else:
-        valid_mask &= (selected.fillna(0) > 0).any(axis=1)
+        valid_mask &= quoted_mask_per_row
 
     if not valid_mask.any():
         d = f" date={as_of_date}" if as_of_date else ""
@@ -373,18 +428,19 @@ def load_base_prices_from_eex_report(
 
     base_prices: dict[str, float] = {}
     for local_col, val in row_values.items():
-        if pd.isna(val) or float(val) <= 0:
+        price = _coerce_price(val)
+        if price is None:
             continue
         # local_col is absolute column index in original sheet minus 1 offset from product row,
         # while delivery_keys uses positional index over product_codes.
         product_idx = int(local_col) - 1
         key = delivery_keys.get(product_idx)
         if key is not None:
-            base_prices[key] = float(val)
+            base_prices[key] = price
 
     if not base_prices:
         raise ValueError(
-            f"EEX row has no positive prices (sheet={market}, date={row_date.date()})"
+            f"EEX row has no quoted prices (sheet={market}, date={row_date.date()})"
         )
 
     n_base = sum(1 for k in base_prices if not k.endswith("-Peak"))
