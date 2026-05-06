@@ -404,11 +404,15 @@ def load_base_prices_from_eex_report(
     # convention: 0 / NaN = non-quoted, anything else (negative or
     # positive) = a quote. We check membership against the sanity range
     # so a stray ``9999999`` typo doesn't pass the as-of selection.
+    #
+    # Vectorised expression: NaN comparisons return False so NaN rows
+    # never pass either bound, and ``selected != 0.0`` is False on NaN
+    # — both effects collaborate. Stays compatible with pandas 1.x / 2.0
+    # (no ``DataFrame.map`` dependency, no per-cell Python lambda).
     quoted_mask_per_row = (
-        selected.fillna(0.0).map(
-            lambda v: v != 0.0
-            and _PRICE_FLOOR_EUR_MWH <= float(v) <= _PRICE_CEILING_EUR_MWH
-        )
+        (selected != 0.0)
+        & (selected >= _PRICE_FLOOR_EUR_MWH)
+        & (selected <= _PRICE_CEILING_EUR_MWH)
     ).any(axis=1)
 
     valid_mask = date_series.notna()
