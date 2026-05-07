@@ -132,12 +132,14 @@ class LEARForecaster:
         random_state: int = 42,
         use_foundation_model: bool = False,
         use_extended_physical_ch_features: bool = False,
+        use_gbm_blend: bool = True,
     ):
         self.tz = tz
         self.max_iter = max_iter
         self.random_state = random_state
         self.use_foundation_model = use_foundation_model
         self.use_extended_physical_ch_features = use_extended_physical_ch_features
+        self.use_gbm_blend = use_gbm_blend
         self._fitted = False
         self._fm = FoundationForecaster() if use_foundation_model else None
         self._lgbm_device_type = "gpu"
@@ -1737,45 +1739,48 @@ class LEARForecaster:
                     self._fm.backend,
                 )
 
-        # Pre-train GBM once per hour (avoids repeated re-training in loop).
-        # Use data up to first test date; compute OOS weight from held-out split.
-        gbm_cache: dict[int, tuple] = {}  # hour -> (gbm_model, w_gbm)
-        first_test_date = test_dates[0]
-        prices_pretrain = self.prices_h_[:pd.Timestamp(first_test_date, tz=self.tz).tz_convert("UTC")]
-        exog_pretrain = self.exog_.loc[:prices_pretrain.index[-1]]
-        for hour in range(24):
-            X_pre, y_pre = self._build_features(
-                prices_pretrain, exog_pretrain, target_hour=hour
-            )
-            if len(y_pre) < 60:
-                continue
-            gbm_model = self._fit_gbm_for_hour(hour, X_pre, y_pre)
-            if gbm_model is None:
-                continue
-            # OOS weight: evaluate on last 14 days (not used for GBM training)
-            n_eval = min(14, len(y_pre) // 4)
-            if n_eval < 5:
-                continue
-            X_ev = np.nan_to_num(X_pre.iloc[-n_eval:].values.astype(float), nan=0.0)
-            y_ev = y_pre.iloc[-n_eval:].values.astype(float)
-            gbm_mae = self._safe_mae(y_ev, gbm_model.predict(X_ev))
-            # LASSO baseline for weight computation
-            lasso_pre = self._fit_lasso_for_hour(X_pre, y_pre, hour)
-            if lasso_pre:
-                lasso_eval_preds = []
-                for mdl, mu, sigma, scl, _, _, _ in lasso_pre:
-                    pred_t = mdl.predict(scl.transform(X_ev))
-                    lasso_eval_preds.append(_asinh_inverse(pred_t, mu, sigma))
-                lasso_mae_ev = self._safe_mae(y_ev, np.mean(lasso_eval_preds, axis=0))
-                inv_gbm = 1.0 / max(1e-6, gbm_mae)
-                inv_lasso = 1.0 / max(1e-6, lasso_mae_ev)
-                w_gbm = inv_gbm / (inv_gbm + inv_lasso)
-                w_gbm = max(0.15, min(0.40, w_gbm))
-            else:
-                w_gbm = 0.20  # conservative default
-            gbm_cache[hour] = (gbm_model, w_gbm)
-        if gbm_cache:
-            logger.info("Pre-trained GBM for %d hours (device=%s)", len(gbm_cache), self._lgbm_device_type)
+        gbm_cache: dict[int, tuple] = {}  # hour -> (gbm_model, w_gbm, feature_names)
+        if self.use_gbm_blend:
+            # Pre-train GBM once per hour (avoids repeated re-training in loop).
+            # Use data up to first test date; compute OOS weight from held-out split.
+            first_test_date = test_dates[0]
+            prices_pretrain = self.prices_h_[:pd.Timestamp(first_test_date, tz=self.tz).tz_convert("UTC")]
+            exog_pretrain = self.exog_.loc[:prices_pretrain.index[-1]]
+            for hour in range(24):
+                X_pre, y_pre = self._build_features(
+                    prices_pretrain, exog_pretrain, target_hour=hour
+                )
+                if len(y_pre) < 60:
+                    continue
+                gbm_model = self._fit_gbm_for_hour(hour, X_pre, y_pre)
+                if gbm_model is None:
+                    continue
+                # OOS weight: evaluate on last 14 days (not used for GBM training)
+                n_eval = min(14, len(y_pre) // 4)
+                if n_eval < 5:
+                    continue
+                X_ev = X_pre.iloc[-n_eval:].copy()
+                X_ev_arr = np.nan_to_num(X_ev.values.astype(float), nan=0.0)
+                X_ev_for_gbm = pd.DataFrame(X_ev_arr, columns=X_pre.columns, index=X_ev.index)
+                y_ev = y_pre.iloc[-n_eval:].values.astype(float)
+                gbm_mae = self._safe_mae(y_ev, gbm_model.predict(X_ev_for_gbm))
+                # LASSO baseline for weight computation
+                lasso_pre = self._fit_lasso_for_hour(X_pre, y_pre, hour)
+                if lasso_pre:
+                    lasso_eval_preds = []
+                    for mdl, mu, sigma, scl, _, _, _ in lasso_pre:
+                        pred_t = mdl.predict(scl.transform(X_ev_arr))
+                        lasso_eval_preds.append(_asinh_inverse(pred_t, mu, sigma))
+                    lasso_mae_ev = self._safe_mae(y_ev, np.mean(lasso_eval_preds, axis=0))
+                    inv_gbm = 1.0 / max(1e-6, gbm_mae)
+                    inv_lasso = 1.0 / max(1e-6, lasso_mae_ev)
+                    w_gbm = inv_gbm / (inv_gbm + inv_lasso)
+                    w_gbm = max(0.15, min(0.40, w_gbm))
+                else:
+                    w_gbm = 0.20  # conservative default
+                gbm_cache[hour] = (gbm_model, w_gbm, list(X_pre.columns))
+            if gbm_cache:
+                logger.info("Pre-trained GBM for %d hours (device=%s)", len(gbm_cache), self._lgbm_device_type)
 
         # Track previous day's errors for AR correction (lag-1, lag-2, lag-7)
         prev_day_errors: dict[int, float] = {}  # hour -> error (lag-1)
@@ -1853,9 +1858,10 @@ class LEARForecaster:
 
                 # GBM ensemble for peak hours (reuse pre-trained model)
                 if hour in gbm_cache and x_pred is not None:
-                    gbm_model, w_gbm = gbm_cache[hour]
+                    gbm_model, w_gbm, gbm_feature_names = gbm_cache[hour]
                     x_gbm = np.nan_to_num(x_pred.reshape(1, -1), nan=0.0)
-                    gbm_pred = float(gbm_model.predict(x_gbm)[0])
+                    x_gbm_df = pd.DataFrame(x_gbm, columns=gbm_feature_names)
+                    gbm_pred = float(gbm_model.predict(x_gbm_df)[0])
                     forecast = (1.0 - w_gbm) * forecast + w_gbm * gbm_pred
 
                 forecast = self._apply_spike_uplift(forecast, y_full, horizon)
