@@ -180,6 +180,13 @@ The repository supports Chronos-2 through [`pfc_shaping/model/foundation_forecas
 
 Chronos is used as a modern temporal foundation model, not as a replacement for market structure.
 
+Current Swiss CT policy:
+
+- production baseline is `LEAR + DE`
+- foundation usage is opt-in, not default
+- enable it explicitly with `PFC_CT_ENABLE_FOUNDATION=1`
+- see [`docs/research/ct_foundation_status_2026-05.md`](docs/research/ct_foundation_status_2026-05.md)
+
 ### PriceFM
 
 PriceFM is integrated experimentally as a graph-aware model specialized for interconnected power systems.

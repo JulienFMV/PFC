@@ -130,7 +130,7 @@ class LEARForecaster:
         tz: str = "Europe/Zurich",
         max_iter: int = 2500,
         random_state: int = 42,
-        use_foundation_model: bool = True,
+        use_foundation_model: bool = False,
         use_extended_physical_ch_features: bool = False,
     ):
         self.tz = tz

@@ -18,6 +18,10 @@ from pfc_shaping.storage.local_duckdb import init_db, upsert_lear_backtest, upse
 DEFAULT_PRICEFM_PYTHON = r"C:\Users\jbattaglia\.conda\pricefm_tf\python.exe"
 
 
+def _foundation_enabled() -> bool:
+    return os.getenv("PFC_CT_ENABLE_FOUNDATION", "0").strip() == "1"
+
+
 @dataclass
 class SwissShortTermInputs:
     epex_ch: pd.DataFrame
@@ -67,7 +71,17 @@ def run_swiss_short_term_overlay(
     input_health = _validate_swiss_short_term_inputs(inputs, logger)
     _save_input_health(input_health, logger)
 
-    lear = LEARForecaster(tz="Europe/Zurich")
+    use_foundation_model = _foundation_enabled()
+    logger.info(
+        "  Swiss CT model policy: LEAR CH+DE baseline, foundation=%s, required_neighbors=%s",
+        "enabled" if use_foundation_model else "disabled",
+        inputs.required_neighbor_codes,
+    )
+
+    lear = LEARForecaster(
+        tz="Europe/Zurich",
+        use_foundation_model=use_foundation_model,
+    )
     lear.fit(
         epex_15min=inputs.epex_ch,
         entso_15min=inputs.entso,
