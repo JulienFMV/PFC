@@ -149,6 +149,7 @@ class LEARForecaster:
         use_gbm_blend: bool = True,
         use_mlp_blend: bool = False,
         gbm_blend_max_horizon_days: int = 1,
+        use_regime_short_window_weighting: bool = True,
     ):
         self.tz = tz
         self.max_iter = max_iter
@@ -158,6 +159,7 @@ class LEARForecaster:
         self.use_gbm_blend = use_gbm_blend
         self.use_mlp_blend = use_mlp_blend
         self.gbm_blend_max_horizon_days = max(0, int(gbm_blend_max_horizon_days))
+        self.use_regime_short_window_weighting = use_regime_short_window_weighting
         self._fitted = False
         self._fm = FoundationForecaster() if use_foundation_model else None
         self._lgbm_device_type = "gpu"
@@ -860,6 +862,8 @@ class LEARForecaster:
         self,
         preds: list[float],
         val_maes: list[float],
+        window_lengths: list[int] | None = None,
+        prefer_short_windows: bool = False,
     ) -> float:
         """Weighted mean of model predictions via inverse-MAE weighting.
 
@@ -873,6 +877,11 @@ class LEARForecaster:
 
         maes = np.array([m if np.isfinite(m) and m > 1e-6 else 1e-6 for m in val_maes], dtype=float)
         weights = 1.0 / maes
+        if prefer_short_windows and window_lengths is not None and len(window_lengths) == len(preds):
+            lengths = np.array([max(1, int(w)) for w in window_lengths], dtype=float)
+            lengths = lengths / lengths.min()
+            short_bonus = 1.0 / np.sqrt(lengths)
+            weights = weights * short_bonus
         weights = weights / weights.sum()
         return float(np.dot(np.array(preds, dtype=float), weights))
 
@@ -1482,8 +1491,9 @@ class LEARForecaster:
                 # LASSO predictions
                 window_preds = []
                 window_maes = []
+                window_lengths = []
                 x_pred = None
-                for model, mu, sigma, scaler, _, _, val_mae in lasso_models:
+                for model, mu, sigma, scaler, X_w, _, val_mae in lasso_models:
                     x_pred = self._build_prediction_row(
                         X_full, y_full, forecast_date, hour, d,
                     )
@@ -1493,11 +1503,17 @@ class LEARForecaster:
                         pred_t = model.predict(x_scaled)[0]
                         window_preds.append(_asinh_inverse(pred_t, mu, sigma))
                         window_maes.append(val_mae)
+                        window_lengths.append(len(X_w))
 
                 if not window_preds:
                     continue
 
-                lasso_mean = self._weighted_model_average(window_preds, window_maes)
+                lasso_mean = self._weighted_model_average(
+                    window_preds,
+                    window_maes,
+                    window_lengths=window_lengths,
+                    prefer_short_windows=self.use_regime_short_window_weighting and rp.get("prefer_short_windows", False),
+                )
 
                 # Variance recalibration
                 recalibrated = self._recalibrate_variance(
@@ -1876,8 +1892,9 @@ class LEARForecaster:
                 # LASSO predictions
                 preds = []
                 pred_maes = []
+                pred_window_lengths = []
                 x_pred = None
-                for model, mu, sigma, scaler, _, _, val_mae in lasso_models:
+                for model, mu, sigma, scaler, X_w, _, val_mae in lasso_models:
                     x_pred = self._build_prediction_row(
                         X_full, y_full, target_date, hour, horizon,
                     )
@@ -1887,11 +1904,17 @@ class LEARForecaster:
                         pred_t = model.predict(x_scaled)[0]
                         preds.append(_asinh_inverse(pred_t, mu, sigma))
                         pred_maes.append(val_mae)
+                        pred_window_lengths.append(len(X_w))
 
                 if not preds:
                     continue
 
-                raw_forecast = self._weighted_model_average(preds, pred_maes)
+                raw_forecast = self._weighted_model_average(
+                    preds,
+                    pred_maes,
+                    window_lengths=pred_window_lengths,
+                    prefer_short_windows=self.use_regime_short_window_weighting and rp.get("prefer_short_windows", False),
+                )
                 forecast = self._recalibrate_variance(
                     raw_forecast,
                     hour,
