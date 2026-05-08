@@ -49,3 +49,13 @@ pfc_shaping/output/*.parquet
 .env
 *.token
 AutogluonModels/
+
+# CT benchmark outputs (local only)
+pfc_shaping/output/ct_*.json
+pfc_shaping/output/lear_*.json
+pfc_shaping/output/pricefm_forecast_latest_meta.json
+
+# Local neighbor copies for CT research only
+pfc_shaping/data/epex_at_15min.parquet
+pfc_shaping/data/epex_fr_15min.parquet
+pfc_shaping/data/epex_it_15min.parquet

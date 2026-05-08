@@ -147,6 +147,7 @@ class LEARForecaster:
         use_foundation_model: bool = False,
         use_extended_physical_ch_features: bool = False,
         use_gbm_blend: bool = True,
+        use_mlp_blend: bool = False,
         gbm_blend_max_horizon_days: int = 1,
     ):
         self.tz = tz
@@ -155,6 +156,7 @@ class LEARForecaster:
         self.use_foundation_model = use_foundation_model
         self.use_extended_physical_ch_features = use_extended_physical_ch_features
         self.use_gbm_blend = use_gbm_blend
+        self.use_mlp_blend = use_mlp_blend
         self.gbm_blend_max_horizon_days = max(0, int(gbm_blend_max_horizon_days))
         self._fitted = False
         self._fm = FoundationForecaster() if use_foundation_model else None
@@ -1452,14 +1454,13 @@ class LEARForecaster:
             if not lasso_models:
                 continue
 
-            # MLP ensemble
-            mlp_result = self._fit_mlp_ensemble(hour, X_full, y_full)
-            if mlp_result is not None:
-                mlp_model, mlp_scaler = mlp_result
-                self._mlp_models[hour] = (mlp_model, mlp_scaler)
-                n_mlp_used += 1
-            else:
-                mlp_model, mlp_scaler = None, None
+            mlp_model, mlp_scaler = None, None
+            if self.use_mlp_blend:
+                mlp_result = self._fit_mlp_ensemble(hour, X_full, y_full)
+                if mlp_result is not None:
+                    mlp_model, mlp_scaler = mlp_result
+                    self._mlp_models[hour] = (mlp_model, mlp_scaler)
+                    n_mlp_used += 1
 
             recent_bias, weekday_bias, weekend_bias = self._recent_bias_by_regime(
                 X_full, y_full, lasso_models, recent_n=14
