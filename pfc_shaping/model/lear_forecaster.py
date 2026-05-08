@@ -145,6 +145,7 @@ class LEARForecaster:
         max_iter: int = 2500,
         random_state: int = 42,
         use_foundation_model: bool = False,
+        foundation_blend_max_horizon_days: int = 1,
         use_extended_physical_ch_features: bool = False,
         use_gbm_blend: bool = True,
         use_mlp_blend: bool = False,
@@ -156,6 +157,7 @@ class LEARForecaster:
         self.max_iter = max_iter
         self.random_state = random_state
         self.use_foundation_model = use_foundation_model
+        self.foundation_blend_max_horizon_days = max(0, int(foundation_blend_max_horizon_days))
         self.use_extended_physical_ch_features = use_extended_physical_ch_features
         self.use_gbm_blend = use_gbm_blend
         self.use_mlp_blend = use_mlp_blend
@@ -1066,6 +1068,43 @@ class LEARForecaster:
                 "prefer_short_windows": False,
             }
 
+    def _is_chronos2_finetuned(self) -> bool:
+        if self._fm is None:
+            return False
+        fm_model_name = getattr(self._fm, "CHRONOS2_MODEL", "")
+        return "chronos2_finetuned" in str(fm_model_name).lower()
+
+    def _foundation_blend_weight(
+        self,
+        horizon: int,
+        hour: int,
+        regime_params: dict | None = None,
+    ) -> float:
+        if self._fm is None or horizon > self.foundation_blend_max_horizon_days:
+            return 0.0
+
+        regime_boost = 0.0
+        if regime_params is not None:
+            regime_boost = float(regime_params.get("fm_weight_boost", 0.0))
+
+        if self._is_chronos2_finetuned():
+            if horizon <= 1:
+                w_fm = 0.18
+            elif horizon == 2:
+                w_fm = 0.35
+            elif horizon == 3:
+                w_fm = 0.38
+            else:
+                w_fm = max(0.14, 0.38 - 0.03 * float(horizon - 3))
+            if hour in PEAK_HOURS:
+                w_fm += 0.03
+            w_fm += min(0.04, regime_boost)
+            return float(min(0.48, max(0.12, w_fm)))
+
+        w_fm = max(0.05, 0.20 - 0.02 * float(horizon - 1))
+        w_fm += min(0.03, regime_boost)
+        return float(min(0.28, max(0.05, w_fm)))
+
     def _apply_spike_uplift(
         self,
         pred: float,
@@ -1579,18 +1618,9 @@ class LEARForecaster:
                     if fm_idx < len(fm_preds["median"]):
                         fm_raw = float(fm_preds["median"][fm_idx])
                         if np.isfinite(fm_raw):
-                            # Give more room to a local fine-tuned Chronos adapter.
-                            fm_model_name = getattr(self._fm, "CHRONOS2_MODEL", "") if self._fm is not None else ""
-                            if "chronos2_finetuned" in str(fm_model_name).lower():
-                                w_fm = max(0.14, 0.40 - 0.03 * (d - 1))
-                                if hour in PEAK_HOURS:
-                                    w_fm += 0.04
-                                if d <= 3:
-                                    w_fm += 0.03
-                                w_fm = min(0.52, w_fm)
-                            else:
-                                w_fm = max(0.05, 0.20 - 0.02 * (d - 1))
-                            final_pred = (1.0 - w_fm) * final_pred + w_fm * fm_raw
+                            w_fm = self._foundation_blend_weight(d, hour)
+                            if w_fm > 0.0:
+                                final_pred = (1.0 - w_fm) * final_pred + w_fm * fm_raw
 
                 # Prediction intervals: QRA (preferred) or conformal (fallback)
                 if qra_models is not None and len(window_preds) == len(lasso_models):
@@ -1982,22 +2012,9 @@ class LEARForecaster:
                     if fm_idx < len(fm_data["median"]):
                         fm_price = float(fm_data["median"][fm_idx])
                         if np.isfinite(fm_price):
-                            # Regime-adaptive FM weight
-                            fm_model_name = getattr(self._fm, "CHRONOS2_MODEL", "") if self._fm is not None else ""
-                            if "chronos2_finetuned" in str(fm_model_name).lower():
-                                base_fm = 0.40
-                                min_fm = 0.14
-                            else:
-                                base_fm = 0.20
-                                min_fm = 0.05
-                            w_fm = max(min_fm, base_fm + rp["fm_weight_boost"] - 0.03 * (horizon - 1))
-                            if "chronos2_finetuned" in str(fm_model_name).lower():
-                                if hour in PEAK_HOURS:
-                                    w_fm += 0.04
-                                if horizon <= 3:
-                                    w_fm += 0.03
-                                w_fm = min(0.52, w_fm)
-                            forecast = (1.0 - w_fm) * forecast + w_fm * fm_price
+                            w_fm = self._foundation_blend_weight(horizon, hour, rp)
+                            if w_fm > 0.0:
+                                forecast = (1.0 - w_fm) * forecast + w_fm * fm_price
 
                 actual = complete.loc[target_date, hour] if hour in complete.columns else np.nan
 

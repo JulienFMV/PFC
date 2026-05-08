@@ -182,9 +182,9 @@ Chronos is used as a modern temporal foundation model, not as a replacement for 
 
 Current Swiss CT policy:
 
-- production baseline is `LEAR + DE`
-- foundation usage is opt-in, not default
-- enable it explicitly with `PFC_CT_ENABLE_FOUNDATION=1`
+- production baseline is `LEAR + DE + Chronos-2 blend on J+1`
+- foundation usage is enabled by default for `J+1` only
+- disable it explicitly with `PFC_CT_ENABLE_FOUNDATION=0`
 - see [`docs/research/ct_foundation_status_2026-05.md`](docs/research/ct_foundation_status_2026-05.md)
 
 ### PriceFM

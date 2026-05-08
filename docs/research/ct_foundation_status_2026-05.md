@@ -10,20 +10,22 @@ being confused with the production baseline.
 
 ## Decision
 
-The Swiss CT production path is:
+The Swiss CT production path is now:
 
 - `LEAR` as the core forecaster
 - `DE` price exogenous input as required
 - `FR / AT / IT` as optional exogenous inputs
-- no foundation-model dependency by default
+- `Chronos-2 finetuned` blend enabled by default on `J+1` only
 - no FutureBoost dependency by default
 
-In code, the production pipeline now treats the foundation path as opt-in via:
+In code, the Swiss CT branch now enables the foundation path by default and
+allows opt-out via:
 
-- `PFC_CT_ENABLE_FOUNDATION=1`
+- `PFC_CT_ENABLE_FOUNDATION=0`
 
-If the variable is unset, the Swiss CT branch runs the LEAR baseline without
-Chronos.
+The foundation blend is capped to `J+1` through
+`foundation_blend_max_horizon_days=1`, so longer horizons keep the standard
+LEAR path.
 
 ## Why
 
@@ -33,9 +35,13 @@ Recent internal CT benchmarks on the Swiss worktree showed:
 - adding `FR / AT / IT` did not improve the benchmark materially
 - `FutureBoost` underperformed both the LEAR baseline and the simple
   PriceFM blends on the tested overlap
+- `Chronos-2 finetuned` improves the Swiss `J+1` baseline materially when
+  blended after LEAR post-processing, while a `J+1`-only cap prevents
+  unnecessary degradation on longer horizons
 
-So the current evidence does not justify a production dependency on the
-foundation path.
+The current evidence therefore justifies a production dependency on the local
+Chronos path for `J+1`, but not a broader promotion of the foundation path
+across all horizons.
 
 ## Current status of the foundation path
 
@@ -49,34 +55,35 @@ These remain valid as R&D tooling.
 
 ### What is not assumed anymore
 
-- Chronos is not assumed to be the best Swiss CT model
-- Chronos is not assumed to be required for production
+- Chronos is not assumed to be the best Swiss CT model on every horizon
+- Chronos is not assumed to replace LEAR as the core Swiss CT forecaster
 - FutureBoost is not assumed to be a viable promotion path into production
 
 ## R&D role
 
-The foundation path is now a challenger track.
+The foundation path is no longer pure R&D. It is a promoted production
+component on `J+1`, while still remaining a challenger track outside that
+scope.
 
-It can still be useful for:
+It remains useful for:
 
-- controlled benchmark campaigns against `LEAR CH+DE`
+- controlled benchmark campaigns beyond `J+1`
 - testing covariate-aware zero-shot / light-adaptation workflows
 - future work on inference-time adaptation or causal normalization
 
-But any promotion back toward production requires:
+Any broader promotion beyond `J+1` still requires:
 
 1. a rolling Swiss CT benchmark against `LEAR CH+DE`
-2. a stable gain on `J+1..J+3`
+2. a stable gain on the target horizon
 3. no degradation in stressed regimes
 4. a reproducible runtime and dependency story
 
 ## Recommended next CT priorities
 
-1. push `LEAR CH+DE` further
+1. push `LEAR CH+DE + Chronos(J+1)` further
 2. improve stressed regimes:
    - negative prices
    - solar surplus
    - congestion / cross-border stress
    - atypical calendars
-3. benchmark a tabular challenger before re-promoting foundation work
-
+3. benchmark a tabular challenger before widening foundation usage beyond `J+1`

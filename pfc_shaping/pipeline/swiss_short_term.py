@@ -19,7 +19,7 @@ DEFAULT_PRICEFM_PYTHON = r"C:\Users\jbattaglia\.conda\pricefm_tf\python.exe"
 
 
 def _foundation_enabled() -> bool:
-    return os.getenv("PFC_CT_ENABLE_FOUNDATION", "0").strip() == "1"
+    return os.getenv("PFC_CT_ENABLE_FOUNDATION", "1").strip() == "1"
 
 
 @dataclass
