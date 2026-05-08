@@ -150,6 +150,7 @@ class LEARForecaster:
         use_mlp_blend: bool = False,
         gbm_blend_max_horizon_days: int = 1,
         use_regime_short_window_weighting: bool = True,
+        gbm_weight_cap_peak_block: float = 0.55,
     ):
         self.tz = tz
         self.max_iter = max_iter
@@ -160,6 +161,7 @@ class LEARForecaster:
         self.use_mlp_blend = use_mlp_blend
         self.gbm_blend_max_horizon_days = max(0, int(gbm_blend_max_horizon_days))
         self.use_regime_short_window_weighting = use_regime_short_window_weighting
+        self.gbm_weight_cap_peak_block = float(gbm_weight_cap_peak_block)
         self._fitted = False
         self._fm = FoundationForecaster() if use_foundation_model else None
         self._lgbm_device_type = "gpu"
@@ -1143,6 +1145,12 @@ class LEARForecaster:
             logger.debug("  GBM h=%d failed: %s", hour, exc)
             return None
 
+    def _gbm_weight_cap_for_hour(self, hour: int) -> float:
+        """Return the maximum allowed GBM blend weight for a delivery hour."""
+        if 7 <= int(hour) <= 20:
+            return max(0.15, self.gbm_weight_cap_peak_block)
+        return 0.40
+
     def _fit_lasso_for_hour(
         self,
         X_full: pd.DataFrame,
@@ -1286,7 +1294,7 @@ class LEARForecaster:
                 inv_gbm = 1.0 / max(1e-6, gbm_mae)
                 inv_lasso = 1.0 / max(1e-6, lasso_mae_ev)
                 w_gbm = inv_gbm / (inv_gbm + inv_lasso)
-                w_gbm = max(0.15, min(0.40, w_gbm))
+                w_gbm = max(0.15, min(self._gbm_weight_cap_for_hour(hour), w_gbm))
             else:
                 w_gbm = 0.20
             gbm_cache[hour] = (gbm_model, w_gbm, list(X_pre.columns))
