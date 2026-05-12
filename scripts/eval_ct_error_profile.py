@@ -99,6 +99,7 @@ def main() -> None:
     parser.add_argument("--n-days", type=int, default=30)
     parser.add_argument("--horizon", type=int, default=1)
     parser.add_argument("--top-k", type=int, default=12)
+    parser.add_argument("--use-foundation-model", action="store_true")
     parser.add_argument("--output-dir", type=Path, default=ROOT / "pfc_shaping" / "output")
     args = parser.parse_args()
 
@@ -109,7 +110,7 @@ def main() -> None:
     entso = pd.read_parquet(ROOT / "pfc_shaping" / "data" / "entso_15min.parquet")
 
     model = LEARForecaster(
-        use_foundation_model=False,
+        use_foundation_model=args.use_foundation_model,
         use_extended_physical_ch_features=False,
         use_gbm_blend=True,
         use_mlp_blend=False,
@@ -123,6 +124,7 @@ def main() -> None:
         "created_utc": datetime.now(timezone.utc).isoformat(),
         "n_days": args.n_days,
         "horizon": args.horizon,
+        "use_foundation_model": bool(args.use_foundation_model),
         "overall": _score(prof),
         "segment_rank": _rank_table(prof, ["segment"])[: args.top_k],
         "hour_rank": _rank_table(prof, ["hour"])[: args.top_k],
