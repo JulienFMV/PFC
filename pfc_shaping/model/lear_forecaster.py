@@ -1522,6 +1522,9 @@ class LEARForecaster:
                 X_full, y_full, lasso_models, recent_n=14
             )
 
+            regime = self._detect_regime(y_full)
+            rp = self._regime_adjusted_params(regime)
+
             # Conformal residuals
             conf_residuals = self._compute_conformal_residuals(
                 hour, X_full, y_full, lasso_models
