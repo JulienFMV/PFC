@@ -99,6 +99,8 @@ The operational consequence is narrow:
 - keep foundation bounded to `J+1`
 - do not widen it to longer horizons
 - give the finetuned Chronos blend more weight on `8h-17h` for `J+1`
+- add explicit `neighbor_holiday_mismatch` features so the LEAR path can learn
+  spring regimes where `DE/FR` are closed while `CH` is not uniformly closed
 
 This is a targeted response to the current live midday stress regime, not a
 general change in the long-horizon CT architecture.

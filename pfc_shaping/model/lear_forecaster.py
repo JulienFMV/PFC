@@ -818,6 +818,12 @@ class LEARForecaster:
         feature_names.append("is_holiday_de")
         features_list.append(is_holiday_fr)
         feature_names.append("is_holiday_fr")
+        neighbor_holiday_mismatch = (((is_holiday_de + is_holiday_fr) > 0.0) & (is_holiday_ch < 0.5)).astype(float)
+        features_list.append(neighbor_holiday_mismatch)
+        feature_names.append("neighbor_holiday_mismatch")
+        if 8 <= int(target_hour) <= 17:
+            features_list.append(neighbor_holiday_mismatch)
+            feature_names.append("neighbor_holiday_mismatch_daytime")
 
         # ── 8. Fuel stack proxy (marginal cost of gas plants) ──
         # gas_price * heat_rate + co2_price * emission_factor
@@ -1805,6 +1811,22 @@ class LEARForecaster:
                 if isinstance(forecast_date, datetime.date):
                     _, _, fr_hols = _get_holidays(forecast_date.year)
                     x[i] = 1.0 if forecast_date in fr_hols else 0.0
+
+            elif col_name == "neighbor_holiday_mismatch":
+                if isinstance(forecast_date, datetime.date):
+                    ch_hols, de_hols, fr_hols = _get_holidays(forecast_date.year)
+                    x[i] = 1.0 if (
+                        (forecast_date not in ch_hols)
+                        and ((forecast_date in de_hols) or (forecast_date in fr_hols))
+                    ) else 0.0
+
+            elif col_name == "neighbor_holiday_mismatch_daytime":
+                if isinstance(forecast_date, datetime.date):
+                    ch_hols, de_hols, fr_hols = _get_holidays(forecast_date.year)
+                    x[i] = 1.0 if (
+                        (forecast_date not in ch_hols)
+                        and ((forecast_date in de_hols) or (forecast_date in fr_hols))
+                    ) else 0.0
 
             # ── Exogenous ──
             elif "_d0_" in col_name:
