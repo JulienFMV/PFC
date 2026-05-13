@@ -87,3 +87,18 @@ Any broader promotion beyond `J+1` still requires:
    - congestion / cross-border stress
    - atypical calendars
 3. benchmark a tabular challenger before widening foundation usage beyond `J+1`
+
+## 2026-05-13 snapshot refresh
+
+After refreshing the live Swiss CT snapshot through `2026-05-12`, the main
+failures shifted toward spring daytime low-price regimes, with the most severe
+errors concentrated on `8h-17h` during `1-2 May 2026`.
+
+The operational consequence is narrow:
+
+- keep foundation bounded to `J+1`
+- do not widen it to longer horizons
+- give the finetuned Chronos blend more weight on `8h-17h` for `J+1`
+
+This is a targeted response to the current live midday stress regime, not a
+general change in the long-horizon CT architecture.

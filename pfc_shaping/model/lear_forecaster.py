@@ -1098,6 +1098,12 @@ class LEARForecaster:
                 w_fm = max(0.14, 0.38 - 0.03 * float(horizon - 3))
             if hour in PEAK_HOURS:
                 w_fm += 0.03
+            # Current Swiss CT failures are dominated by daytime solar-collapse regimes
+            # (spring holidays/weekends with deep midday price crashes). Give the
+            # finetuned Chronos path more authority on J+1 daylight hours, where it
+            # consistently improves recent OOS backtests on the live snapshot.
+            if horizon <= 1 and 8 <= int(hour) <= 17:
+                w_fm += 0.16
             w_fm += min(0.04, regime_boost)
             return float(min(0.48, max(0.12, w_fm)))
 
