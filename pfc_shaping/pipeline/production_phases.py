@@ -73,6 +73,11 @@ class LongTermArtifacts:
     today: str
 
 
+def _market_start_timestamp(start_date: str, country: str = "CH") -> pd.Timestamp:
+    local_tz = "Europe/Berlin" if str(country).upper() == "DE" else "Europe/Zurich"
+    return pd.Timestamp(start_date).tz_localize(local_tz).tz_convert("UTC")
+
+
 def _first_existing_path(*paths: str | None) -> str | None:
     for path in paths:
         if path and os.path.exists(path):
@@ -277,11 +282,11 @@ def run_long_term_phase(
     latest_fill_dev = inputs.hydro["fill_deviation"].iloc[-1]
     logger.info("  Latest hydro fill_deviation: %.3f (as of %s)", latest_fill_dev, inputs.hydro.index[-1].date())
 
-    start_date = (pd.Timestamp.utcnow() + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+    start_date = (pd.Timestamp.now("Europe/Zurich") + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
     max_fwd_year = max(int(k[:4]) for k in cascaded_prices_ch.keys() if k[:4].isdigit() and len(k) >= 4)
-    end_of_last_year = pd.Timestamp(f"{max_fwd_year}-12-31", tz="UTC")
-    future_start_ts = pd.Timestamp(start_date, tz="UTC")
-    horizon_days = (end_of_last_year - future_start_ts).days + 1
+    end_of_last_year_local = pd.Timestamp(f"{max_fwd_year}-12-31")
+    future_start_ts = _market_start_timestamp(start_date, country="CH")
+    horizon_days = (end_of_last_year_local - pd.Timestamp(start_date)).days + 1
     logger.info(
         "  Horizon: %s -> 31/12/%d = %d days (%.1f years)",
         start_date,
@@ -289,7 +294,7 @@ def run_long_term_phase(
         horizon_days,
         horizon_days / 365,
     )
-    future_start = pd.Timestamp(start_date, tz="UTC")
+    future_start = future_start_ts
     future_end = future_start + pd.Timedelta(days=horizon_days)
     hydro_idx = pd.date_range(future_start, future_end, freq="W-MON", tz="UTC")
     decay = np.linspace(latest_fill_dev, 0.0, len(hydro_idx))
@@ -351,7 +356,7 @@ def run_long_term_phase(
 
     out_dir = os.path.join("pfc_shaping", "output")
     artifacts_dir = os.path.join("pfc_shaping", "model", "artifacts")
-    today = pd.Timestamp.now().strftime("%Y-%m-%d")
+    today = pd.Timestamp.now(tz="Europe/Zurich").strftime("%Y-%m-%d")
     out_base_ch = os.path.join(out_dir, f"pfc_15min_{today}")
     out_base_de = os.path.join(out_dir, f"pfc_de_15min_{today}")
 

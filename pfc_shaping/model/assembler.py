@@ -55,6 +55,13 @@ logger = logging.getLogger(__name__)
 HORIZON_DAYS = 3 * 365
 
 
+def _market_start_timestamp(start_date: str, country: str) -> pd.Timestamp:
+    """Interpret YYYY-MM-DD as local market midnight, then convert to UTC."""
+    local_tz = "Europe/Berlin" if str(country).upper() == "DE" else "Europe/Zurich"
+    local_midnight = pd.Timestamp(start_date).tz_localize(local_tz)
+    return local_midnight.tz_convert("UTC")
+
+
 class PFCAssembler:
     """
     Assembleur de la PFC 15min N+3 ans.
@@ -179,9 +186,9 @@ class PFCAssembler:
             index : DatetimeIndex UTC freq='15min'
         """
         if start_date is None:
-            start_date = (pd.Timestamp.now("UTC") + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+            start_date = (pd.Timestamp.now("Europe/Zurich") + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
 
-        ts_start = pd.Timestamp(start_date, tz="UTC")
+        ts_start = _market_start_timestamp(start_date, country)
         ts_end = ts_start + pd.Timedelta(days=horizon_days)
 
         logger.info("Assemblage PFC 15min : %s Ã¢â€ â€™ %s", ts_start.date(), ts_end.date())
