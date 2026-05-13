@@ -33,6 +33,9 @@ from dotenv import load_dotenv
 logger = logging.getLogger(__name__)
 
 DEFAULT_PARQUET = Path(__file__).resolve().parent.parent / "data" / "entso_15min.parquet"
+DEFAULT_DE_RENEWABLE_FORECAST_PARQUET = (
+    Path(__file__).resolve().parent.parent / "data" / "de_renewable_forecast.parquet"
+)
 
 # Charger .env depuis la racine du repo
 _ENV_PATH = Path(__file__).resolve().parent.parent.parent / ".env"
@@ -219,6 +222,36 @@ def _extract_generation_column(df_gen: pd.DataFrame, fuel_type: str) -> pd.Serie
     return df_gen[matching[0]].fillna(0.0)
 
 
+def _extract_forecast_column(df_forecast: pd.DataFrame, fuel_type: str) -> pd.Series:
+    """
+    Extract a wind/solar forecast series from ENTSO-E forecast output.
+
+    The entsoe-py payload shape can vary by zone and endpoint; re-use the
+    generation-column matching logic and fall back to a broad text match.
+    """
+    if df_forecast is None or len(df_forecast) == 0:
+        return pd.Series(dtype=float)
+
+    series = _extract_generation_column(df_forecast, fuel_type)
+    if not series.empty and not series.isna().all():
+        return series.astype(float)
+
+    fuel_norm = str(fuel_type).strip().lower()
+    if isinstance(df_forecast.columns, pd.MultiIndex):
+        matching = [
+            col for col in df_forecast.columns
+            if fuel_norm in " ".join(map(str, col)).strip().lower()
+        ]
+        if matching:
+            return df_forecast[matching[0]].fillna(0.0).astype(float)
+    else:
+        matching = [c for c in df_forecast.columns if fuel_norm in str(c).strip().lower()]
+        if matching:
+            return df_forecast[matching[0]].fillna(0.0).astype(float)
+
+    return pd.Series(0.0, index=df_forecast.index, dtype=float)
+
+
 def _resample_to_15min(df: pd.DataFrame) -> pd.DataFrame:
     """
     Si la fréquence est horaire (ou autre > 15min), forward-fill vers 15min.
@@ -319,6 +352,53 @@ def _load_fr_nuclear_outage_features(
     return outage_ts[["unavailable_nuclear"]].rename(
         columns={"unavailable_nuclear": "fr_nuclear_unavailable_mw"}
     )
+
+
+def load_de_renewable_forecast(
+    start: str,
+    end: str,
+    country_code: str = "DE_LU",
+) -> pd.DataFrame:
+    """
+    Load ENTSO-E day-ahead renewable forecasts for Germany.
+
+    Returns a 15min UTC dataframe with:
+      - forecast_wind_de_mw
+      - forecast_solar_de_mw
+    """
+    client = _get_client()
+
+    ts_start = pd.Timestamp(start, tz="UTC")
+    ts_end = pd.Timestamp(end, tz="UTC")
+
+    logger.info(
+        "ENTSO-E DE renewable forecast: %s -> %s (zone=%s)",
+        start,
+        end,
+        country_code,
+    )
+
+    forecast_raw = _retry(
+        client.query_wind_and_solar_forecast,
+        country_code,
+        start=ts_start,
+        end=ts_end,
+    )
+
+    wind = _extract_forecast_column(forecast_raw, "Wind").rename("forecast_wind_de_mw")
+    solar = _extract_forecast_column(forecast_raw, "Solar").rename("forecast_solar_de_mw")
+
+    forecast_df = pd.concat([wind, solar], axis=1)
+    if forecast_df.index.tz is None:
+        forecast_df.index = forecast_df.index.tz_localize("UTC")
+
+    forecast_df = _resample_to_15min(forecast_df).sort_index()
+    forecast_df = forecast_df[(forecast_df.index >= ts_start) & (forecast_df.index < ts_end)]
+    for col in ["forecast_wind_de_mw", "forecast_solar_de_mw"]:
+        if col in forecast_df.columns:
+            forecast_df[col] = forecast_df[col].astype(float).fillna(0.0)
+
+    return forecast_df
 
 
 def _load_swiss_border_features(
@@ -602,4 +682,37 @@ def fetch_and_cache(
     parquet_path.parent.mkdir(parents=True, exist_ok=True)
     combined.to_parquet(parquet_path, engine="pyarrow", compression="snappy")
     logger.info("Cache ENTSO-E mis à jour : %s (%d lignes)", parquet_path, len(combined))
+    return combined
+
+
+def fetch_and_cache_de_renewable_forecast(
+    start: str,
+    end: str,
+    parquet_path: str | Path = DEFAULT_DE_RENEWABLE_FORECAST_PARQUET,
+    country_code: str = "DE_LU",
+) -> pd.DataFrame:
+    """
+    Refresh the cached DE day-ahead renewable forecast dataset used by Swiss CT.
+
+    Fresh values win on overlapping timestamps; older cached rows are preserved
+    outside the refreshed window.
+    """
+    new = load_de_renewable_forecast(start, end, country_code=country_code)
+
+    parquet_path = Path(parquet_path)
+    if parquet_path.exists():
+        existing = pd.read_parquet(parquet_path)
+        combined = new.combine_first(existing).sort_index()
+        combined = combined[~combined.index.duplicated(keep="last")]
+    else:
+        combined = new
+
+    parquet_path.parent.mkdir(parents=True, exist_ok=True)
+    combined.to_parquet(parquet_path, engine="pyarrow", compression="snappy")
+    logger.info(
+        "Cache DE renewable forecast updated: %s (%d rows, max_ts=%s)",
+        parquet_path,
+        len(combined),
+        combined.index.max() if len(combined) else None,
+    )
     return combined

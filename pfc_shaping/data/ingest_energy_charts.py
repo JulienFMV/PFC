@@ -383,8 +383,10 @@ def fetch_and_cache_power(
     parquet_path = Path(parquet_path)
     if parquet_path.exists():
         existing = load_power_parquet(parquet_path)
-        combined = pd.concat([existing, new])
-        combined = combined[~combined.index.duplicated(keep="last")].sort_index()
+        # Preserve ENTSO-E-enriched columns already present in the cache
+        # while letting fresh energy-charts values win on overlapping core fields.
+        combined = new.combine_first(existing).sort_index()
+        combined = combined[~combined.index.duplicated(keep="last")]
     else:
         combined = new
 

@@ -68,6 +68,8 @@ def ingest_data(days_back: int = 7) -> dict:
     today = date.today()
     start = (today - timedelta(days=days_back)).isoformat()
     end = (today + timedelta(days=1)).isoformat()
+    enrich_start = (today - timedelta(days=max(days_back, 45))).isoformat()
+    forecast_end = (today + timedelta(days=3)).isoformat()
 
     status = {}
 
@@ -107,6 +109,32 @@ def ingest_data(days_back: int = 7) -> dict:
         except Exception as e2:
             status["load_gen"] = f"FAILED: {e2}"
             logger.warning("  Load/gen ingestion failed (non-critical): %s", e2)
+
+    # ── 1b-bis. ENTSO-E enrichment for neighbor/border signals + DE forecasts ──
+    logger.info("=" * 60)
+    logger.info(
+        "INGEST: ENTSO-E enrichment (%s → %s) + DE forecast (%s → %s)",
+        enrich_start,
+        end,
+        enrich_start,
+        forecast_end,
+    )
+    logger.info("=" * 60)
+    try:
+        from pfc_shaping.data.ingest_entso import (
+            fetch_and_cache as fetch_entso_enriched,
+            fetch_and_cache_de_renewable_forecast,
+        )
+
+        fetch_entso_enriched(enrich_start, end, country_code="CH")
+        forecast_df = fetch_and_cache_de_renewable_forecast(enrich_start, forecast_end)
+        status["entso_enrichment"] = (
+            f"OK (neighbor/border refreshed, DE forecast max_ts={forecast_df.index.max()})"
+        )
+        logger.info("  ENTSO-E enrichment: %s", status["entso_enrichment"])
+    except Exception as e:
+        status["entso_enrichment"] = f"FAILED: {e}"
+        logger.warning("  ENTSO-E enrichment failed (non-critical): %s", e)
 
     # ── 1c. ENTSO-E outages (REMIT UMM) ──
     logger.info("=" * 60)
