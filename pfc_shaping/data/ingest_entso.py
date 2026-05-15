@@ -37,9 +37,15 @@ DEFAULT_DE_RENEWABLE_FORECAST_PARQUET = (
     Path(__file__).resolve().parent.parent / "data" / "de_renewable_forecast.parquet"
 )
 
-# Charger .env depuis la racine du repo
-_ENV_PATH = Path(__file__).resolve().parent.parent.parent / ".env"
-load_dotenv(dotenv_path=_ENV_PATH)
+# Charger .env depuis la racine du worktree, puis fallback vers le repo PFC
+_ENV_CANDIDATES = [
+    Path(__file__).resolve().parent.parent.parent / ".env",
+    Path(__file__).resolve().parent.parent.parent.parent / "PFC" / ".env",
+]
+for _env_path in _ENV_CANDIDATES:
+    if _env_path.exists():
+        load_dotenv(dotenv_path=_env_path)
+        break
 
 MAX_RETRIES = 3
 BASE_DELAY = 5
