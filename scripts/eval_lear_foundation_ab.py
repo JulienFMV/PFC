@@ -26,7 +26,17 @@ DATA_FILES = {
     "epex_ch": ROOT / "pfc_shaping" / "data" / "epex_15min.parquet",
     "epex_de": ROOT / "pfc_shaping" / "data" / "epex_de_15min.parquet",
     "entso": ROOT / "pfc_shaping" / "data" / "entso_15min.parquet",
+    "hydro": ROOT / "pfc_shaping" / "data" / "hydro_reservoir.parquet",
+    "outages": ROOT / "pfc_shaping" / "data" / "outages_15min.parquet",
+    "commodities": ROOT / "data" / "commodities_cache.parquet",
 }
+
+
+def _read_optional_parquet(path: Path) -> pd.DataFrame | None:
+    if not path.exists():
+        return None
+    df = pd.read_parquet(path)
+    return None if df.empty else df
 
 
 def _sha256(path: Path) -> str:
@@ -105,6 +115,9 @@ def _run_variant(
     epex_ch: pd.DataFrame,
     epex_de: pd.DataFrame,
     entso: pd.DataFrame,
+    hydro: pd.DataFrame,
+    outages: pd.DataFrame | None,
+    commodities: pd.DataFrame | None,
     n_days: int,
     horizon: int,
 ) -> tuple[pd.DataFrame, dict[str, object]]:
@@ -112,7 +125,14 @@ def _run_variant(
         use_foundation_model=use_foundation_model,
         foundation_blend_max_horizon_days=foundation_blend_max_horizon_days,
     )
-    model.fit(epex_15min=epex_ch, entso_15min=entso, epex_de_15min=epex_de)
+    model.fit(
+        epex_15min=epex_ch,
+        entso_15min=entso,
+        outages_15min=outages,
+        commodities=commodities,
+        hydro=hydro,
+        epex_de_15min=epex_de,
+    )
     bt = model.backtest(n_days=n_days, horizon=horizon).copy()
     bt["variant"] = label
     meta = {
@@ -154,6 +174,9 @@ def main() -> None:
     epex_ch = pd.read_parquet(DATA_FILES["epex_ch"])
     epex_de = pd.read_parquet(DATA_FILES["epex_de"])
     entso = pd.read_parquet(DATA_FILES["entso"])
+    hydro = pd.read_parquet(DATA_FILES["hydro"])
+    outages = _read_optional_parquet(DATA_FILES["outages"])
+    commodities = _read_optional_parquet(DATA_FILES["commodities"])
 
     baseline, baseline_meta = _run_variant(
         "baseline",
@@ -162,6 +185,9 @@ def main() -> None:
         epex_ch,
         epex_de,
         entso,
+        hydro,
+        outages,
+        commodities,
         args.n_days,
         args.horizon,
     )
@@ -172,6 +198,9 @@ def main() -> None:
         epex_ch,
         epex_de,
         entso,
+        hydro,
+        outages,
+        commodities,
         args.n_days,
         args.horizon,
     )

@@ -19,6 +19,13 @@ if str(ROOT) not in sys.path:
 from pfc_shaping.model.lear_forecaster import LEARForecaster  # noqa: E402
 
 
+def _read_optional_parquet(path: Path) -> pd.DataFrame | None:
+    if not path.exists():
+        return None
+    df = pd.read_parquet(path)
+    return None if df.empty else df
+
+
 def _with_timestamp(bt: pd.DataFrame) -> pd.DataFrame:
     out = bt.copy()
     if "forecast_ts" in out.columns:
@@ -108,6 +115,9 @@ def main() -> None:
     epex_ch = pd.read_parquet(ROOT / "pfc_shaping" / "data" / "epex_15min.parquet")
     epex_de = pd.read_parquet(ROOT / "pfc_shaping" / "data" / "epex_de_15min.parquet")
     entso = pd.read_parquet(ROOT / "pfc_shaping" / "data" / "entso_15min.parquet")
+    hydro = pd.read_parquet(ROOT / "pfc_shaping" / "data" / "hydro_reservoir.parquet")
+    outages = _read_optional_parquet(ROOT / "pfc_shaping" / "data" / "outages_15min.parquet")
+    commodities = _read_optional_parquet(ROOT / "data" / "commodities_cache.parquet")
 
     model = LEARForecaster(
         use_foundation_model=args.use_foundation_model,
@@ -116,7 +126,14 @@ def main() -> None:
         use_mlp_blend=False,
         gbm_blend_max_horizon_days=1,
     )
-    model.fit(epex_15min=epex_ch, entso_15min=entso, epex_de_15min=epex_de)
+    model.fit(
+        epex_15min=epex_ch,
+        entso_15min=entso,
+        outages_15min=outages,
+        commodities=commodities,
+        hydro=hydro,
+        epex_de_15min=epex_de,
+    )
     bt = model.backtest(n_days=args.n_days, horizon=args.horizon)
     prof = _label_segments(_with_timestamp(bt))
 
