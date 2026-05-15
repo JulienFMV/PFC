@@ -14,6 +14,29 @@ Use **local parquet only as a developer cache**.
 
 Use **Influx only later if needed for operational serving / dashboards / latest values**, not for the authoritative historical training store.
 
+## Spot Market Granularity Reality
+
+Do not confuse:
+- dataset storage granularity
+- forecast/output granularity
+- actual day-ahead market granularity
+
+For Swiss CT and neighboring markets, the market-design reality is:
+
+| Market | Day-ahead spot market granularity | 2026 state | Modeling implication |
+|---|---|---|---|
+| CH | `1h` | not in SDAC since 2021 | keep CH day-ahead market semantics as hourly |
+| DE-LU | `1h` before 2025-10-01, `15min` after | SDAC quarter-hourly from 2025-10-01 | mixed-history handling required |
+| FR | `1h` before 2025-10-01, `15min` after | same as DE-LU | mixed-history handling required |
+| AT | `1h` before 2025-10-01, `15min` after | same as DE-LU | mixed-history handling required |
+| IT_NORD | `1h` before 2025-10-01, `15min` after | same as DE-LU | mixed-history handling required |
+
+Practical rule:
+- silver storage may still use a normalized `15min` timestamp grid
+- but metadata must preserve whether the source market was truly hourly or truly quarter-hourly
+- CH must never be mislabeled as a native 15min day-ahead market
+- DE/FR/AT/IT require an explicit regime split around `2025-10-01`
+
 ## Build Order
 
 ### Wave 1: Stabilize Current Critical Inputs
@@ -51,7 +74,8 @@ After silver is trustworthy:
 - Target silver table: `market_data.ct_price_15min_ch`
 - Local cache: `pfc_shaping/data/epex_15min.parquet`
 - Source now: `energy-charts`
-- Grain: `15min`
+- Storage grain: `15min normalized`
+- Source market grain: `1h`
 - Time key: `timestamp_utc`
 - Primary columns:
   - `timestamp_utc`
@@ -68,10 +92,12 @@ After silver is trustworthy:
 - Target silver table: `market_data.ct_price_15min_de`
 - Local cache: `pfc_shaping/data/epex_de_15min.parquet`
 - Source now: `energy-charts`
-- Grain: `15min`
+- Storage grain: `15min normalized`
+- Source market grain: `1h before 2025-10-01, 15min after`
 - Time key: `timestamp_utc`
 - Work needed:
   - same governance as CH
+  - preserve a `source_market_grain` flag or equivalent regime metadata
 
 ### 3. FR/AT/IT prices
 - Target silver tables:
@@ -87,6 +113,7 @@ After silver is trustworthy:
 - Work needed:
   - same schema contract as CH/DE
   - explicit freshness monitoring
+  - explicit split `1h before 2025-10-01 / 15min after`
 
 ### 4. ENTSO fundamentals
 - Target silver table: `market_data.ct_entso_fundamentals_15min`

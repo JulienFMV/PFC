@@ -9,6 +9,12 @@ import numpy as np
 import pandas as pd
 import yaml
 
+from pfc_shaping.data.ct_datasets import (
+    load_local_dataset,
+    load_neighbor_price_frames,
+    resolve_local_cache_path,
+    split_entso_views,
+)
 from pfc_shaping.pipeline.swiss_short_term import (
     SwissShortTermArtifacts,
     SwissShortTermInputs,
@@ -22,6 +28,9 @@ class LoadedInputs:
     epex_de: pd.DataFrame
     neighbor_prices_15min: dict[str, pd.DataFrame]
     entso: pd.DataFrame
+    entso_fundamentals: pd.DataFrame
+    entso_border: pd.DataFrame
+    de_renewable_forecast: pd.DataFrame | None
     hydro: pd.DataFrame
     cal_ch: pd.DataFrame
     cal_de: pd.DataFrame
@@ -104,22 +113,19 @@ def load_inputs(project_root: str, logger: logging.Logger) -> LoadedInputs:
     logger.info("=" * 70)
     t0 = time.time()
 
-    data_dir = os.path.join(project_root, "pfc_shaping", "data")
-    epex_ch = _read_required_parquet(os.path.join(data_dir, "epex_15min.parquet"), "EPEX CH", logger)
-    epex_de = _read_required_parquet(os.path.join(data_dir, "epex_de_15min.parquet"), "EPEX DE", logger)
-    neighbor_prices_15min = {
-        "de": epex_de,
-    }
-    for code in ["at", "fr", "it"]:
-        path = os.path.join(data_dir, f"epex_{code}_15min.parquet")
-        if os.path.exists(path):
-            neighbor_prices_15min[code] = pd.read_parquet(path)
-    entso = _read_required_parquet(os.path.join(data_dir, "entso_15min.parquet"), "ENTSO-E", logger)
-    hydro = _read_required_parquet(os.path.join(data_dir, "hydro_reservoir.parquet"), "Hydro reservoir", logger)
+    epex_ch = load_local_dataset(project_root, "ct_price_15min_ch", required=True)
+    epex_de = load_local_dataset(project_root, "ct_price_15min_de", required=True)
+    neighbor_prices_15min = load_neighbor_price_frames(project_root)
+    entso = load_local_dataset(project_root, "ct_entso_fundamentals_15min", required=True)
+    hydro = load_local_dataset(project_root, "ct_hydro_daily", required=True)
+    de_renewable_forecast = load_local_dataset(project_root, "ct_forecast_de_renewables_15min", required=False)
+    entso_fundamentals, entso_border = split_entso_views(entso)
 
     logger.info("  EPEX CH:  %d rows  [%s -> %s]", len(epex_ch), epex_ch.index.min().date(), epex_ch.index.max().date())
     logger.info("  EPEX DE:  %d rows  [%s -> %s]", len(epex_de), epex_de.index.min().date(), epex_de.index.max().date())
     logger.info("  ENTSO-E:  %d rows  [%s -> %s]", len(entso), entso.index.min().date(), entso.index.max().date())
+    logger.info("  ENTSO fundamentals: %d cols", len(entso_fundamentals.columns))
+    logger.info("  ENTSO border:       %d cols", len(entso_border.columns))
     logger.info("  Hydro:    %d rows  [%s -> %s]", len(hydro), hydro.index.min().date(), hydro.index.max().date())
     logger.info("  Data loaded in %.1fs", time.time() - t0)
 
@@ -158,16 +164,17 @@ def load_inputs(project_root: str, logger: logging.Logger) -> LoadedInputs:
             "  No configured EEX report path found on filesystem; fallback loader will use repo-local/proxy source."
         )
 
-    commodities_path = os.path.join(project_root, "data", "commodities_cache.parquet")
-    commodities = pd.read_parquet(commodities_path) if os.path.exists(commodities_path) else None
-    outages_path = os.path.join(project_root, "pfc_shaping", "data", "outages_15min.parquet")
-    outages_all = pd.read_parquet(outages_path) if os.path.exists(outages_path) else None
+    commodities = load_local_dataset(project_root, "ct_commodities_daily", required=False)
+    outages_all = load_local_dataset(project_root, "ct_outages_15min", required=False)
 
     return LoadedInputs(
         epex_ch=epex_ch,
         epex_de=epex_de,
         neighbor_prices_15min=neighbor_prices_15min,
         entso=entso,
+        entso_fundamentals=entso_fundamentals,
+        entso_border=entso_border,
+        de_renewable_forecast=de_renewable_forecast,
         hydro=hydro,
         cal_ch=cal_ch,
         cal_de=cal_de,

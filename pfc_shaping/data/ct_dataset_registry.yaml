@@ -9,11 +9,13 @@ datasets:
     source_system: energy_charts
     local_cache: "pfc_shaping/data/epex_15min.parquet"
     target_table: "market_data.ct_price_15min_ch"
-    grain: "15min"
+    grain: "15min_normalized"
     time_key: "timestamp_utc"
     freshness_sla_days: 2
     required: true
     consumed_by_prod: true
+    source_market_grain: "1h"
+    source_market_zone: "CH"
     columns:
       - timestamp_utc
       - price_eur_mwh
@@ -26,11 +28,19 @@ datasets:
     source_system: energy_charts
     local_cache: "pfc_shaping/data/epex_de_15min.parquet"
     target_table: "market_data.ct_price_15min_de"
-    grain: "15min"
+    grain: "15min_normalized"
     time_key: "timestamp_utc"
     freshness_sla_days: 2
     required: true
     consumed_by_prod: true
+    source_market_zone: "DE_LU"
+    source_market_grain_schedule:
+      - start: null
+        end: "2025-09-30T23:59:59Z"
+        grain: "1h"
+      - start: "2025-10-01T00:00:00Z"
+        end: null
+        grain: "15min"
     columns:
       - timestamp_utc
       - price_eur_mwh
@@ -43,11 +53,19 @@ datasets:
     source_system: local_neighbor_price
     local_cache: "pfc_shaping/data/epex_fr_15min.parquet"
     target_table: "market_data.ct_price_15min_fr"
-    grain: "15min"
+    grain: "15min_normalized"
     time_key: "timestamp_utc"
     freshness_sla_days: 7
     required: false
     consumed_by_prod: true
+    source_market_zone: "FR"
+    source_market_grain_schedule:
+      - start: null
+        end: "2025-09-30T23:59:59Z"
+        grain: "1h"
+      - start: "2025-10-01T00:00:00Z"
+        end: null
+        grain: "15min"
 
   ct_price_15min_at:
     layer: silver
@@ -55,11 +73,19 @@ datasets:
     source_system: local_neighbor_price
     local_cache: "pfc_shaping/data/epex_at_15min.parquet"
     target_table: "market_data.ct_price_15min_at"
-    grain: "15min"
+    grain: "15min_normalized"
     time_key: "timestamp_utc"
     freshness_sla_days: 7
     required: false
     consumed_by_prod: true
+    source_market_zone: "AT"
+    source_market_grain_schedule:
+      - start: null
+        end: "2025-09-30T23:59:59Z"
+        grain: "1h"
+      - start: "2025-10-01T00:00:00Z"
+        end: null
+        grain: "15min"
 
   ct_price_15min_it:
     layer: silver
@@ -67,11 +93,19 @@ datasets:
     source_system: local_neighbor_price
     local_cache: "pfc_shaping/data/epex_it_15min.parquet"
     target_table: "market_data.ct_price_15min_it"
-    grain: "15min"
+    grain: "15min_normalized"
     time_key: "timestamp_utc"
     freshness_sla_days: 7
     required: false
     consumed_by_prod: true
+    source_market_zone: "IT_NORD"
+    source_market_grain_schedule:
+      - start: null
+        end: "2025-09-30T23:59:59Z"
+        grain: "1h"
+      - start: "2025-10-01T00:00:00Z"
+        end: null
+        grain: "15min"
 
   ct_entso_fundamentals_15min:
     layer: silver
