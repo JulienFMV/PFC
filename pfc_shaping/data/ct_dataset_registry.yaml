@@ -1,0 +1,200 @@
+version: 1
+owner: "Swiss CT"
+timezone: "UTC"
+
+datasets:
+  ct_price_15min_ch:
+    layer: silver
+    domain: market_price
+    source_system: energy_charts
+    local_cache: "pfc_shaping/data/epex_15min.parquet"
+    target_table: "market_data.ct_price_15min_ch"
+    grain: "15min"
+    time_key: "timestamp_utc"
+    freshness_sla_days: 2
+    required: true
+    consumed_by_prod: true
+    columns:
+      - timestamp_utc
+      - price_eur_mwh
+      - source_system
+      - ingestion_ts_utc
+
+  ct_price_15min_de:
+    layer: silver
+    domain: market_price
+    source_system: energy_charts
+    local_cache: "pfc_shaping/data/epex_de_15min.parquet"
+    target_table: "market_data.ct_price_15min_de"
+    grain: "15min"
+    time_key: "timestamp_utc"
+    freshness_sla_days: 2
+    required: true
+    consumed_by_prod: true
+    columns:
+      - timestamp_utc
+      - price_eur_mwh
+      - source_system
+      - ingestion_ts_utc
+
+  ct_price_15min_fr:
+    layer: silver
+    domain: market_price
+    source_system: local_neighbor_price
+    local_cache: "pfc_shaping/data/epex_fr_15min.parquet"
+    target_table: "market_data.ct_price_15min_fr"
+    grain: "15min"
+    time_key: "timestamp_utc"
+    freshness_sla_days: 7
+    required: false
+    consumed_by_prod: true
+
+  ct_price_15min_at:
+    layer: silver
+    domain: market_price
+    source_system: local_neighbor_price
+    local_cache: "pfc_shaping/data/epex_at_15min.parquet"
+    target_table: "market_data.ct_price_15min_at"
+    grain: "15min"
+    time_key: "timestamp_utc"
+    freshness_sla_days: 7
+    required: false
+    consumed_by_prod: true
+
+  ct_price_15min_it:
+    layer: silver
+    domain: market_price
+    source_system: local_neighbor_price
+    local_cache: "pfc_shaping/data/epex_it_15min.parquet"
+    target_table: "market_data.ct_price_15min_it"
+    grain: "15min"
+    time_key: "timestamp_utc"
+    freshness_sla_days: 7
+    required: false
+    consumed_by_prod: true
+
+  ct_entso_fundamentals_15min:
+    layer: silver
+    domain: realized_fundamentals
+    source_system: entsoe
+    local_cache: "pfc_shaping/data/entso_15min.parquet"
+    target_table: "market_data.ct_entso_fundamentals_15min"
+    grain: "15min"
+    time_key: "timestamp_utc"
+    freshness_sla_days: 2
+    required: true
+    consumed_by_prod: true
+    major_columns:
+      - load_mw
+      - solar_mw
+      - wind_mw
+      - cross_border_mw
+      - load_de_mw
+      - solar_de_mw
+      - wind_de_mw
+      - residual_load_de_mw
+      - load_fr_mw
+      - solar_fr_mw
+      - wind_fr_mw
+      - load_at_mw
+      - solar_at_mw
+      - wind_at_mw
+      - load_it_mw
+      - solar_it_mw
+      - wind_it_mw
+
+  ct_entso_border_15min:
+    layer: silver
+    domain: cross_border_fundamentals
+    source_system: entsoe
+    local_cache: "pfc_shaping/data/entso_15min.parquet"
+    target_table: "market_data.ct_entso_border_15min"
+    grain: "15min"
+    time_key: "timestamp_utc"
+    freshness_sla_days: 2
+    required: true
+    consumed_by_prod: false
+    major_columns:
+      - scheduled_net_export_ch_de_mw
+      - scheduled_net_export_ch_fr_mw
+      - scheduled_net_export_ch_at_mw
+      - scheduled_net_export_ch_it_mw
+      - ntc_export_ch_de_mw
+      - ntc_import_ch_de_mw
+      - ntc_total_ch_de_mw
+      - ntc_balance_ch_de
+
+  ct_forecast_de_renewables_15min:
+    layer: silver
+    domain: forecast
+    source_system: entsoe
+    local_cache: "pfc_shaping/data/de_renewable_forecast.parquet"
+    target_table: "market_data.ct_forecast_de_renewables_15min"
+    grain: "15min"
+    time_key: "forecast_for_ts_utc"
+    freshness_sla_days: 2
+    required: true
+    consumed_by_prod: true
+    major_columns:
+      - forecast_wind_de_mw
+      - forecast_solar_de_mw
+
+  ct_forecast_multi_country_15min:
+    layer: silver
+    domain: forecast
+    source_system: missing
+    local_cache: null
+    target_table: "market_data.ct_forecast_multi_country_15min"
+    grain: "15min"
+    time_key: "forecast_for_ts_utc"
+    freshness_sla_days: 2
+    required: true
+    consumed_by_prod: false
+
+  ct_weather_forecast_hourly:
+    layer: silver
+    domain: forecast
+    source_system: missing
+    local_cache: null
+    target_table: "market_data.ct_weather_forecast_hourly"
+    grain: "1h"
+    time_key: "forecast_for_ts_utc"
+    freshness_sla_days: 2
+    required: true
+    consumed_by_prod: false
+
+  ct_hydro_daily:
+    layer: silver
+    domain: structural_fundamentals
+    source_system: hydro
+    local_cache: "pfc_shaping/data/hydro_reservoir.parquet"
+    target_table: "market_data.ct_hydro_daily"
+    grain: "1d"
+    time_key: "date_utc"
+    freshness_sla_days: 10
+    required: true
+    consumed_by_prod: true
+
+  ct_outages_15min:
+    layer: silver
+    domain: structural_fundamentals
+    source_system: entsoe_outages
+    local_cache: "pfc_shaping/data/outages_15min.parquet"
+    target_table: "market_data.ct_outages_15min"
+    grain: "15min"
+    time_key: "timestamp_utc"
+    freshness_sla_days: 3
+    required: true
+    consumed_by_prod: true
+
+  ct_commodities_daily:
+    layer: silver
+    domain: structural_fundamentals
+    source_system: local_cache
+    local_cache: "data/commodities_cache.parquet"
+    target_table: "market_data.ct_commodities_daily"
+    grain: "1d"
+    time_key: "date_utc"
+    freshness_sla_days: 14
+    required: false
+    consumed_by_prod: true
