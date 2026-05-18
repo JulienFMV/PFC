@@ -27,6 +27,7 @@ Usage :
 
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 
@@ -38,6 +39,23 @@ logger = logging.getLogger(__name__)
 
 # Paramètre du lissage gaussien en unités d'heures
 GAUSSIAN_SIGMA = 0.5
+
+# Per cross-AI review consensus (Plan 05B-02): use a model-specific stem instead of a
+# generic `_meta.parquet` to avoid sidecar-name collisions when sibling components
+# (e.g. future ShapeIntraday) save into the same directory. The convention is
+# `${stem}.meta.parquet` derived from the main artifact filename.
+_META_SIDECAR_SUFFIX = ".meta.parquet"
+
+
+def _meta_path(main_path) -> Path:
+    """Return the path of the meta sidecar for a given main artifact path.
+
+    Convention: `${stem}.meta.parquet` derived from the main artifact filename.
+    E.g. "shape_hourly.parquet" -> "shape_hourly.meta.parquet".
+    Centralizes the path computation so save and load cannot drift.
+    """
+    p = Path(main_path)
+    return p.with_name(p.stem + _META_SIDECAR_SUFFIX)
 
 SAISONS = ["Hiver", "Printemps", "Ete", "Automne"]
 TYPES_JOUR = ["Ouvrable", "Samedi", "Dimanche", "Ferie_CH", "Ferie_DE"]
@@ -306,7 +324,7 @@ class ShapeHourly:
         return result
 
     def save(self, path: str | Path) -> None:
-        """Sauvegarde les facteurs f_H et f_W en Parquet."""
+        """Sauvegarde les facteurs f_H et f_W en Parquet, plus un sidecar meta."""
         records = []
         for (saison, type_jour), factors in self.factors_.items():
             for h, v in enumerate(factors):
@@ -322,11 +340,91 @@ class ShapeHourly:
         if fw_records:
             pd.DataFrame(fw_records).to_parquet(fw_path, index=False)
 
-        logger.info("ShapeHourly sauvegardé : %s", path)
+        # ── Sidecar ${stem}.meta.parquet — persist all currently-lost trained attributes ──
+        # (Plan 05B-02: fix pre-existing save/load bug — factors_by_year_, trend_per_hour_,
+        # f_W_seasonal_, _climatological_fill, and scalar hyperparams were silently lost.)
+        meta_records: list[dict] = []
+
+        # All values stored as strings in the `value` column to allow heterogeneous types
+        # (floats for numerical attrs, JSON for hyperparams) in a single parquet file.
+        # The load() method casts back to the appropriate Python type per `attr`.
+
+        # factors_by_year_: long format (saison, type_jour, year, heure, value)
+        for (saison, type_jour, year), arr in self.factors_by_year_.items():
+            for h, v in enumerate(arr):
+                meta_records.append({
+                    "attr": "factors_by_year_",
+                    "saison": saison,
+                    "type_jour": type_jour,
+                    "year": int(year),
+                    "heure": int(h),
+                    "value": repr(float(v)),
+                })
+
+        # trend_per_hour_: long format (saison, type_jour, heure, value)
+        for (saison, type_jour), arr in self.trend_per_hour_.items():
+            for h, v in enumerate(arr):
+                meta_records.append({
+                    "attr": "trend_per_hour_",
+                    "saison": saison,
+                    "type_jour": type_jour,
+                    "heure": int(h),
+                    "value": repr(float(v)),
+                })
+
+        # f_W_seasonal_: 1 row per (saison, type_jour)
+        for (saison, type_jour), v in self.f_W_seasonal_.items():
+            meta_records.append({
+                "attr": "f_W_seasonal_",
+                "saison": saison,
+                "type_jour": type_jour,
+                "value": repr(float(v)),
+            })
+
+        # _climatological_fill: week -> value (absent if None — sentinel = absence)
+        if self._climatological_fill is not None:
+            for week, v in self._climatological_fill.items():
+                meta_records.append({
+                    "attr": "_climatological_fill",
+                    "week": int(week),
+                    "value": repr(float(v)),
+                })
+
+        # _hydro_fill_weekly: timestamp (ISO-8601 str) -> value (absent if None)
+        if self._hydro_fill_weekly is not None:
+            for ts, v in self._hydro_fill_weekly.items():
+                meta_records.append({
+                    "attr": "_hydro_fill_weekly",
+                    "timestamp": ts.isoformat() if hasattr(ts, "isoformat") else str(ts),
+                    "value": repr(float(v)),
+                })
+
+        # Scalar hyperparams — always present (JSON-string with sorted keys for determinism)
+        meta_records.append({
+            "attr": "hyperparams",
+            "value": json.dumps(
+                {
+                    "halflife_days": self.halflife_days,
+                    "hydro_weight_sigma": self.hydro_weight_sigma,
+                    "sigma": self.sigma,
+                },
+                sort_keys=True,
+            ),
+        })
+
+        # NOTE: global_factors_ is intentionally NOT written to the meta sidecar.
+        # It is a deterministic function of factors_ (reconstructed via
+        # _compute_global_fallback at load time). Persisting it would duplicate state
+        # and risk drift. See Plan 05B-02 review consensus.
+
+        meta_path = _meta_path(path)
+        pd.DataFrame(meta_records).to_parquet(meta_path, index=False)
+
+        logger.info("ShapeHourly sauvegardé : %s (+ %s sidecar)", path, meta_path.name)
 
     @classmethod
     def load(cls, path: str | Path) -> "ShapeHourly":
-        """Charge depuis un fichier Parquet."""
+        """Charge depuis un fichier Parquet + ${stem}.meta.parquet sidecar (Plan 05B-02)."""
         df = pd.read_parquet(path)
         obj = cls()
         for (saison, type_jour), grp in df.groupby(["saison", "type_jour"]):
@@ -339,6 +437,79 @@ class ShapeHourly:
         if fw_path.exists():
             fw_df = pd.read_parquet(fw_path)
             obj.f_W_ = dict(zip(fw_df["type_jour"], fw_df["f_W"]))
+
+        # ── Restore from ${stem}.meta.parquet sidecar ──
+        meta_path = _meta_path(path)
+        if meta_path.exists():
+            meta_df = pd.read_parquet(meta_path)
+
+            # -- Scalar hyperparams --
+            hp_rows = meta_df[meta_df["attr"] == "hyperparams"]
+            if len(hp_rows) > 0:
+                hp = json.loads(hp_rows["value"].iloc[0])
+                obj.sigma = hp.get("sigma", obj.sigma)
+                obj.halflife_days = hp.get("halflife_days", obj.halflife_days)
+                obj.hydro_weight_sigma = hp.get("hydro_weight_sigma", obj.hydro_weight_sigma)
+
+            # -- factors_by_year_ --
+            # (value column is stored as repr(float) string — cast back to float array)
+            fby_rows = meta_df[meta_df["attr"] == "factors_by_year_"]
+            if len(fby_rows) > 0:
+                for (saison, type_jour, year), grp in fby_rows.groupby(
+                    ["saison", "type_jour", "year"]
+                ):
+                    obj.factors_by_year_[(saison, type_jour, int(year))] = (
+                        grp.sort_values("heure")["value"].apply(float).to_numpy()
+                    )
+
+            # -- trend_per_hour_ --
+            tph_rows = meta_df[meta_df["attr"] == "trend_per_hour_"]
+            if len(tph_rows) > 0:
+                for (saison, type_jour), grp in tph_rows.groupby(["saison", "type_jour"]):
+                    obj.trend_per_hour_[(saison, type_jour)] = (
+                        grp.sort_values("heure")["value"].apply(float).to_numpy()
+                    )
+
+            # -- f_W_seasonal_ --
+            fws_rows = meta_df[meta_df["attr"] == "f_W_seasonal_"]
+            if len(fws_rows) > 0:
+                for _, row in fws_rows.iterrows():
+                    obj.f_W_seasonal_[(row["saison"], row["type_jour"])] = float(row["value"])
+
+            # -- _climatological_fill --
+            cf_rows = meta_df[meta_df["attr"] == "_climatological_fill"]
+            if len(cf_rows) > 0:
+                obj._climatological_fill = pd.Series(
+                    cf_rows["value"].apply(float).to_numpy(),
+                    index=cf_rows["week"].astype(int).to_numpy(),
+                    name="fill_pct",
+                )
+            else:
+                obj._climatological_fill = None
+
+            # -- _hydro_fill_weekly --
+            hfw_rows = meta_df[meta_df["attr"] == "_hydro_fill_weekly"]
+            if len(hfw_rows) > 0:
+                obj._hydro_fill_weekly = pd.Series(
+                    hfw_rows["value"].apply(float).to_numpy(),
+                    index=pd.to_datetime(hfw_rows["timestamp"], utc=True),
+                )
+            else:
+                obj._hydro_fill_weekly = None
+
+        else:
+            # Legacy parquet without meta sidecar — emit one warning, use constructor defaults
+            logger.warning(
+                "Loading legacy %s without %s sidecar — factors_by_year_, trend_per_hour_, "
+                "f_W_seasonal_, _climatological_fill, _hydro_fill_weekly, and scalar hyperparams "
+                "(sigma, halflife_days, hydro_weight_sigma) unavailable; falling back to "
+                "constructor defaults",
+                path,
+                meta_path.name,
+            )
+
+        # global_factors_ is intentionally NOT persisted to the meta sidecar —
+        # reconstructed deterministically from factors_ (see Plan 05B-02 review consensus).
         obj.global_factors_ = obj._compute_global_fallback()
         return obj
 
