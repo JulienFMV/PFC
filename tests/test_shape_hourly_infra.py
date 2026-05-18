@@ -1,15 +1,19 @@
 """
 test_shape_hourly_infra.py
 --------------------------
-Tests for ShapeHourly infrastructure: save/load sidecar roundtrip (Plan 05B-02).
+Tests for ShapeHourly infrastructure: save/load sidecar roundtrip (Plan 05B-02)
+and feature flag PFC_LT_USE_SEASONAL_HOURLY_SHAPE (Plan 05B-03).
 
 TDD RED phase: all tests here should FAIL before implementation.
 
 Tests verify:
 - Task 1: save() writes ${stem}.meta.parquet sidecar with correct schema and content
 - Task 2: load() restores all attributes from sidecar; legacy compat warning on missing sidecar
+- Plan 05B-03 Task 1: feature flag constructor arg + env-default + freeze-at-init
+- Plan 05B-03 Task 2: flag persisted in meta sidecar and restored on load (parquet wins over env)
 """
 
+import inspect
 import json
 import logging
 import os
@@ -411,3 +415,281 @@ class TestDoubleRoundtrip:
             for key, arr in sh1.trend_per_hour_.items():
                 np.testing.assert_allclose(sh3.trend_per_hour_[key], arr, atol=1e-12, rtol=0)
             assert sh3.f_W_seasonal_ == sh1.f_W_seasonal_
+
+
+# ===========================================================================
+# Plan 05B-03 Task 1: Feature flag constructor arg + env-default + freeze-at-init
+# ===========================================================================
+
+class TestFlagEnvVarConstant:
+    """_FLAG_ENV_VAR constant is exported and has the expected value."""
+
+    def test_flag_env_var_constant_value(self):
+        from pfc_shaping.lt.model.shape_hourly import _FLAG_ENV_VAR
+        assert _FLAG_ENV_VAR == "PFC_LT_USE_SEASONAL_HOURLY_SHAPE"
+
+
+class TestFlagSignature:
+    """use_seasonal_hourly kwarg is in ShapeHourly.__init__ with default None (additive)."""
+
+    def test_kwarg_present_in_signature(self):
+        sig = inspect.signature(ShapeHourly.__init__)
+        assert "use_seasonal_hourly" in sig.parameters, (
+            "use_seasonal_hourly must be a kwarg of ShapeHourly.__init__"
+        )
+
+    def test_kwarg_default_is_none(self):
+        sig = inspect.signature(ShapeHourly.__init__)
+        param = sig.parameters["use_seasonal_hourly"]
+        assert param.default is None, (
+            f"use_seasonal_hourly default must be None, got {param.default!r}"
+        )
+
+
+class TestFlagEnvDefault:
+    """Flag reads env var when constructor arg is None."""
+
+    def test_env_unset_flag_is_false(self, monkeypatch):
+        monkeypatch.delenv("PFC_LT_USE_SEASONAL_HOURLY_SHAPE", raising=False)
+        sh = ShapeHourly()
+        assert sh._use_seasonal_hourly is False
+
+    def test_env_one_flag_is_true(self, monkeypatch):
+        monkeypatch.setenv("PFC_LT_USE_SEASONAL_HOURLY_SHAPE", "1")
+        sh = ShapeHourly()
+        assert sh._use_seasonal_hourly is True
+
+    def test_env_zero_flag_is_false(self, monkeypatch):
+        monkeypatch.setenv("PFC_LT_USE_SEASONAL_HOURLY_SHAPE", "0")
+        sh = ShapeHourly()
+        assert sh._use_seasonal_hourly is False
+
+    def test_env_invalid_flag_is_false_with_warning(self, monkeypatch, caplog):
+        monkeypatch.setenv("PFC_LT_USE_SEASONAL_HOURLY_SHAPE", "yes")
+        with caplog.at_level(logging.WARNING):
+            sh = ShapeHourly()
+        assert sh._use_seasonal_hourly is False
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING
+                    and "PFC_LT_USE_SEASONAL_HOURLY_SHAPE" in r.message]
+        assert len(warnings) >= 1, "Expected a warning for invalid env var value"
+
+
+class TestFlagConstructorWins:
+    """Constructor kwarg wins over env var (D-06)."""
+
+    def test_constructor_true_wins_over_env_zero(self, monkeypatch):
+        """Constructor True beats env='0'."""
+        monkeypatch.setenv("PFC_LT_USE_SEASONAL_HOURLY_SHAPE", "0")
+        sh = ShapeHourly(use_seasonal_hourly=True)
+        assert sh._use_seasonal_hourly is True
+
+    def test_constructor_false_wins_over_env_one(self, monkeypatch):
+        """Constructor False beats env='1'."""
+        monkeypatch.setenv("PFC_LT_USE_SEASONAL_HOURLY_SHAPE", "1")
+        sh = ShapeHourly(use_seasonal_hourly=False)
+        assert sh._use_seasonal_hourly is False
+
+    def test_constructor_true_without_env(self, monkeypatch):
+        monkeypatch.delenv("PFC_LT_USE_SEASONAL_HOURLY_SHAPE", raising=False)
+        sh = ShapeHourly(use_seasonal_hourly=True)
+        assert sh._use_seasonal_hourly is True
+
+    def test_constructor_false_without_env(self, monkeypatch):
+        monkeypatch.delenv("PFC_LT_USE_SEASONAL_HOURLY_SHAPE", raising=False)
+        sh = ShapeHourly(use_seasonal_hourly=False)
+        assert sh._use_seasonal_hourly is False
+
+
+class TestFlagFreezeAtInit:
+    """Mutating os.environ after construction does NOT change _use_seasonal_hourly (D-06)."""
+
+    def test_env_mutation_after_init_has_no_effect_true_to_false(self, monkeypatch):
+        monkeypatch.setenv("PFC_LT_USE_SEASONAL_HOURLY_SHAPE", "1")
+        sh = ShapeHourly()
+        assert sh._use_seasonal_hourly is True
+        # Mutate env AFTER construction
+        monkeypatch.setenv("PFC_LT_USE_SEASONAL_HOURLY_SHAPE", "0")
+        # Flag must NOT change
+        assert sh._use_seasonal_hourly is True
+
+    def test_env_mutation_after_init_has_no_effect_false_to_true(self, monkeypatch):
+        monkeypatch.setenv("PFC_LT_USE_SEASONAL_HOURLY_SHAPE", "0")
+        sh = ShapeHourly()
+        assert sh._use_seasonal_hourly is False
+        # Mutate env AFTER construction
+        monkeypatch.setenv("PFC_LT_USE_SEASONAL_HOURLY_SHAPE", "1")
+        # Flag must NOT change
+        assert sh._use_seasonal_hourly is False
+
+    def test_env_delete_after_init_has_no_effect(self, monkeypatch):
+        monkeypatch.setenv("PFC_LT_USE_SEASONAL_HOURLY_SHAPE", "1")
+        sh = ShapeHourly()
+        assert sh._use_seasonal_hourly is True
+        monkeypatch.delenv("PFC_LT_USE_SEASONAL_HOURLY_SHAPE", raising=False)
+        assert sh._use_seasonal_hourly is True
+
+    def test_new_instance_reads_updated_env(self, monkeypatch):
+        """A new ShapeHourly() call DOES read updated env — only the old instance is frozen."""
+        monkeypatch.setenv("PFC_LT_USE_SEASONAL_HOURLY_SHAPE", "1")
+        sh1 = ShapeHourly()
+        assert sh1._use_seasonal_hourly is True
+        monkeypatch.setenv("PFC_LT_USE_SEASONAL_HOURLY_SHAPE", "0")
+        sh2 = ShapeHourly()
+        assert sh2._use_seasonal_hourly is False
+        # sh1 still frozen
+        assert sh1._use_seasonal_hourly is True
+
+
+class TestFlagAttributeIsBool:
+    """_use_seasonal_hourly attribute must be a bool (not a str, int, or None)."""
+
+    def test_attribute_is_bool_true(self, monkeypatch):
+        monkeypatch.delenv("PFC_LT_USE_SEASONAL_HOURLY_SHAPE", raising=False)
+        sh = ShapeHourly(use_seasonal_hourly=True)
+        assert type(sh._use_seasonal_hourly) is bool
+        assert sh._use_seasonal_hourly is True
+
+    def test_attribute_is_bool_false(self, monkeypatch):
+        monkeypatch.delenv("PFC_LT_USE_SEASONAL_HOURLY_SHAPE", raising=False)
+        sh = ShapeHourly(use_seasonal_hourly=False)
+        assert type(sh._use_seasonal_hourly) is bool
+        assert sh._use_seasonal_hourly is False
+
+    def test_attribute_is_bool_from_env(self, monkeypatch):
+        monkeypatch.setenv("PFC_LT_USE_SEASONAL_HOURLY_SHAPE", "1")
+        sh = ShapeHourly()
+        assert type(sh._use_seasonal_hourly) is bool
+
+
+# ===========================================================================
+# Plan 05B-03 Task 2: Flag persisted in meta sidecar, restored on load (parquet wins)
+# ===========================================================================
+
+class TestFlagPersistenceInSidecar:
+    """Flag is written to meta sidecar hyperparams JSON cell."""
+
+    def test_flag_true_persisted(self, monkeypatch):
+        monkeypatch.delenv("PFC_LT_USE_SEASONAL_HOURLY_SHAPE", raising=False)
+        sh = ShapeHourly(use_seasonal_hourly=True)
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "shape_hourly.parquet")
+            sh.save(p)
+            meta = pd.read_parquet(os.path.join(d, "shape_hourly.meta.parquet"))
+            hp_row = meta[meta["attr"] == "hyperparams"].iloc[0]
+            hp = json.loads(hp_row["value"])
+            assert "use_seasonal_hourly" in hp, f"Expected 'use_seasonal_hourly' in hyperparams, got {hp}"
+            assert hp["use_seasonal_hourly"] is True
+
+    def test_flag_false_persisted(self, monkeypatch):
+        monkeypatch.delenv("PFC_LT_USE_SEASONAL_HOURLY_SHAPE", raising=False)
+        sh = ShapeHourly(use_seasonal_hourly=False)
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "shape_hourly.parquet")
+            sh.save(p)
+            meta = pd.read_parquet(os.path.join(d, "shape_hourly.meta.parquet"))
+            hp_row = meta[meta["attr"] == "hyperparams"].iloc[0]
+            hp = json.loads(hp_row["value"])
+            assert "use_seasonal_hourly" in hp
+            assert hp["use_seasonal_hourly"] is False
+
+    def test_hyperparams_json_has_all_keys(self, monkeypatch):
+        """After 05B-03, hyperparams must include sigma, halflife_days, hydro_weight_sigma, use_seasonal_hourly."""
+        monkeypatch.delenv("PFC_LT_USE_SEASONAL_HOURLY_SHAPE", raising=False)
+        sh = ShapeHourly(sigma=0.3, halflife_days=90.0, hydro_weight_sigma=0.7, use_seasonal_hourly=True)
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "shape_hourly.parquet")
+            sh.save(p)
+            meta = pd.read_parquet(os.path.join(d, "shape_hourly.meta.parquet"))
+            hp = json.loads(meta[meta["attr"] == "hyperparams"].iloc[0]["value"])
+            assert set(hp.keys()) == {"sigma", "halflife_days", "hydro_weight_sigma", "use_seasonal_hourly"}
+
+
+class TestFlagRestoredOnLoad:
+    """load() restores _use_seasonal_hourly from sidecar; parquet wins over env (D-07)."""
+
+    def test_parquet_wins_over_env_true_over_zero(self, monkeypatch):
+        """Saved flag=True restored even when env='0'."""
+        monkeypatch.delenv("PFC_LT_USE_SEASONAL_HOURLY_SHAPE", raising=False)
+        sh = ShapeHourly(use_seasonal_hourly=True)
+        sh.factors_[("Hiver", "Ouvrable")] = np.ones(24)
+        sh.n_obs_[("Hiver", "Ouvrable")] = 100
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "shape_hourly.parquet")
+            sh.save(p)
+            # Env says flag=False, but parquet says flag=True
+            monkeypatch.setenv("PFC_LT_USE_SEASONAL_HOURLY_SHAPE", "0")
+            sh2 = ShapeHourly.load(p)
+            assert sh2._use_seasonal_hourly is True, (
+                f"Parquet value (True) must win over env '0', got {sh2._use_seasonal_hourly}"
+            )
+
+    def test_parquet_wins_over_env_false_over_one(self, monkeypatch):
+        """Saved flag=False restored even when env='1'."""
+        monkeypatch.delenv("PFC_LT_USE_SEASONAL_HOURLY_SHAPE", raising=False)
+        sh = ShapeHourly(use_seasonal_hourly=False)
+        sh.factors_[("Hiver", "Ouvrable")] = np.ones(24)
+        sh.n_obs_[("Hiver", "Ouvrable")] = 100
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "shape_hourly.parquet")
+            sh.save(p)
+            # Env says flag=True, but parquet says flag=False
+            monkeypatch.setenv("PFC_LT_USE_SEASONAL_HOURLY_SHAPE", "1")
+            sh2 = ShapeHourly.load(p)
+            assert sh2._use_seasonal_hourly is False, (
+                f"Parquet value (False) must win over env '1', got {sh2._use_seasonal_hourly}"
+            )
+
+    def test_load_without_flag_in_hyperparams_uses_env(self, monkeypatch):
+        """If meta sidecar exists but hyperparams has no use_seasonal_hourly key
+        (legacy 05B-02 sidecar), fall back to _resolve_flag(None) — no crash."""
+        monkeypatch.setenv("PFC_LT_USE_SEASONAL_HOURLY_SHAPE", "0")
+        sh = ShapeHourly(use_seasonal_hourly=False)
+        sh.factors_[("Hiver", "Ouvrable")] = np.ones(24)
+        sh.n_obs_[("Hiver", "Ouvrable")] = 100
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "shape_hourly.parquet")
+            sh.save(p)
+            # Patch sidecar to remove use_seasonal_hourly from hyperparams
+            meta_p = os.path.join(d, "shape_hourly.meta.parquet")
+            meta_df = pd.read_parquet(meta_p)
+            hp_mask = meta_df["attr"] == "hyperparams"
+            hp = json.loads(meta_df.loc[hp_mask, "value"].iloc[0])
+            hp.pop("use_seasonal_hourly", None)
+            meta_df.loc[hp_mask, "value"] = json.dumps(hp, sort_keys=True)
+            meta_df.to_parquet(meta_p, index=False)
+            # Load must not crash
+            sh2 = ShapeHourly.load(p)
+            # Must use _resolve_flag(None) = env '0' → False
+            assert sh2._use_seasonal_hourly is False
+
+    def test_load_without_sidecar_uses_env(self, monkeypatch):
+        """Legacy parquet (no sidecar at all) falls back to env/default for _use_seasonal_hourly."""
+        monkeypatch.setenv("PFC_LT_USE_SEASONAL_HOURLY_SHAPE", "1")
+        sh = ShapeHourly(use_seasonal_hourly=False)
+        sh.factors_[("Hiver", "Ouvrable")] = np.ones(24)
+        sh.n_obs_[("Hiver", "Ouvrable")] = 100
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "shape_hourly.parquet")
+            sh.save(p)
+            # Delete sidecar to simulate legacy
+            os.remove(os.path.join(d, "shape_hourly.meta.parquet"))
+            sh2 = ShapeHourly.load(p)
+            # No sidecar → cls() called → env='1' → True
+            assert sh2._use_seasonal_hourly is True
+
+
+class TestFlagNoOpContract:
+    """In Phase 5bis-A, flag ON ≡ flag OFF numerically (no behavior gated)."""
+
+    def test_flag_on_off_same_attribute_set(self, monkeypatch):
+        """ShapeHourly with flag=True and flag=False have the same attribute structure."""
+        monkeypatch.delenv("PFC_LT_USE_SEASONAL_HOURLY_SHAPE", raising=False)
+        sh_on = ShapeHourly(use_seasonal_hourly=True)
+        sh_off = ShapeHourly(use_seasonal_hourly=False)
+        # Both should have _use_seasonal_hourly as a bool
+        assert type(sh_on._use_seasonal_hourly) is bool
+        assert type(sh_off._use_seasonal_hourly) is bool
+        # Attribute sets (excluding _use_seasonal_hourly) must be identical
+        attrs_on = {k: v for k, v in vars(sh_on).items() if k != "_use_seasonal_hourly"}
+        attrs_off = {k: v for k, v in vars(sh_off).items() if k != "_use_seasonal_hourly"}
+        assert set(attrs_on.keys()) == set(attrs_off.keys())
