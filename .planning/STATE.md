@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Plan 05B-02 complete. save/load sidecar `shape_hourly.meta.parquet` opérationnel @ `3598646`. 175 tests verts. Prêt pour 05B-03 (feature flag).
-last_updated: "2026-05-18T20:16:41.756Z"
+stopped_at: Plan 05B-04 complete. `factors_3d_` view (SHP-01 literal) + assembler capability check (D-13) @ `43e5eb7`. 239 tests verts. Prêt pour 05B-05 (baseline regression).
+last_updated: "2026-05-18T20:26:28.644Z"
 last_activity: 2026-05-18
 progress:
   total_phases: 4
@@ -28,7 +28,7 @@ avec ≥ 1.5 €/MWh de MAE-bloc en moins que HFC OMPEX.
 ## Current Position
 
 Phase: 05B (shape-hourly-infrastructure-flag-no-op-refactor) — EXECUTING
-Plan: 4 of 5
+Plan: 5 of 5
 Status: Ready to execute
 Last activity: 2026-05-18
 
@@ -40,7 +40,7 @@ Progress: [░░░░░░░░░░] 0%
 
 - Phases livrées : 7 (Phase 0, Refactor B, 1ter, 1bis, 2, Audit, Bloc A+C1+C2)
 - Durée moyenne par phase : ~½ journée
-- Tests : 201 passing, 3 skipped (32 tests infra 05B-02 + 26 tests flag 05B-03 + 8 tests mises à jour)
+- Tests : 239 passing, 3 skipped (32 tests infra 05B-02 + 26 tests flag 05B-03 + 38 tests view+capability-check 05B-04 + 8 tests mises à jour)
 
 **By Phase:**
 
@@ -54,6 +54,7 @@ Progress: [░░░░░░░░░░] 0%
 | Bloc A+C1+C2 | 28dfd65 | 5 | 17 |
 | Phase 05B P02 | 18m | 2 tasks | 2 files |
 | Phase 05B P03 | 12m | 2 tasks | 2 files |
+| Phase 05B P04 | 18m | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -67,6 +68,9 @@ Décisions récentes affectant la phase courante :
 - **2026-05-18 (05B-02)** : Meta sidecar `shape_hourly.meta.parquet` — toutes les valeurs stockées en string (`repr(float)` / JSON) pour éviter `pyarrow.ArrowInvalid` sur colonnes à types mixtes. Parsées à la lecture via `.apply(float)` / `json.loads()`.
 - **2026-05-18 (05B-02)** : `global_factors_` non persisté dans le sidecar — reconstruit déterministiquement depuis `factors_` via `_compute_global_fallback()` à la lecture. Élimine le risque de drift state dupliqué.
 - **2026-05-18 (05B-03)** : `_FLAG_ENV_VAR` exporté au niveau module (importable dans les tests sans hardcoder la chaîne). `_resolve_flag()` private helper centralise la logique de précédence — seul callsite `os.getenv`.
+- **2026-05-18 (05B-04)** : `_Factors3DView(Mapping)` facade stocke une référence (pas une copie) à `factors_` — vue live, zéro arithmétique. `factors_3d_` property construite à la demande (thin wrapper, pas de cache sur l'instance).
+- **2026-05-18 (05B-04)** : `inspect.signature(type(self.sh).apply)` à `PFCAssembler.__init__` remplace `try/except TypeError` (D-13). TypeError de bugs internes à `sh.apply()` propagent maintenant correctement. Cache `_sh_accepts_outages` une seule fois à l'init.
+- **2026-05-18 (05B-04)** : One-shot `logger.info("Detected sh=... — outages_forecast passed/skipped")` à `PFCAssembler.__init__` — audit opérateur, pas de spam par `build()` call.
 - **2026-05-18 (05B-03)** : `use_seasonal_hourly` ajouté aux hyperparams JSON du sidecar (sort_keys=True) — schema étendu depuis 05B-02. Tests 05B-02 mis à jour pour inclure la nouvelle clé.
 
 - **2026-05-18** : Hold Phase 3 (FR/AT/IT) et Phase 4 (basis cross-border)
@@ -109,7 +113,7 @@ Après livraison 5bis-A : `/gsd:discuss-phase 5bis-B` pour le bowl-deepening (hy
 
 ## Session Continuity
 
-Last session: 2026-05-18T20:16:41.750Z
+Last session: 2026-05-18T20:26:28.638Z
 
 Stopped at: Plan 05B-03 complete. Feature flag `PFC_LT_USE_SEASONAL_HOURLY_SHAPE` opérationnel @ `e4ab9ee`. 201 tests verts. SHP-04 satisfait. Prêt pour 05B-04 (conftest autouse env-var hygiene + capability check assembler).
 
