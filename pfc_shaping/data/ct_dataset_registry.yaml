@@ -204,14 +204,24 @@ datasets:
   ct_weather_forecast_hourly:
     layer: silver
     domain: forecast
-    source_system: missing
-    local_cache: null
+    source_system: open_meteo_historical_forecast
+    local_cache: "pfc_shaping/data/weather_forecast_hourly.parquet"
     target_table: "market_data.ct_weather_forecast_hourly"
     grain: "1h"
     time_key: "forecast_for_ts_utc"
     freshness_sla_days: 2
     required: true
     consumed_by_prod: false
+    major_columns:
+      - wx_ch_zurich_temperature_2m
+      - wx_ch_zurich_cloud_cover
+      - wx_ch_zurich_shortwave_radiation
+      - wx_ch_zurich_wind_speed_10m
+      - wx_de_hamburg_wind_speed_10m
+      - wx_de_munich_shortwave_radiation
+      - wx_fr_lyon_cloud_cover
+      - wx_at_vienna_wind_speed_10m
+      - wx_it_milan_shortwave_radiation
 
   ct_hydro_daily:
     layer: silver

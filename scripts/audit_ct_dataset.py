@@ -59,6 +59,7 @@ DATASET_REGISTRY = {
     "entso_border": "ct_entso_border_15min",
     "de_renewable_forecast": "ct_forecast_de_renewables_15min",
     "multi_country_forecast": "ct_forecast_multi_country_15min",
+    "weather_forecast": "ct_weather_forecast_hourly",
     "hydro": "ct_hydro_daily",
     "outages": "ct_outages_15min",
     "commodities": "ct_commodities_daily",
@@ -140,7 +141,7 @@ VARIABLE_GROUPS = [
         "group": "Weather forecasts",
         "priority": "critical",
         "kind": "forecast",
-        "source": "missing_weather_forecasts",
+        "source": "weather_forecast",
         "consumed_by_prod": False,
     },
     {
@@ -289,10 +290,6 @@ def _group_status(
         it = datasets["epex_it"]
         hist = "ok" if all(ds.rows > 0 for ds in [fr, at, it]) else "missing"
         fresh = "ok" if all(ds.freshness_status in {"ok", "partial"} for ds in [fr, at, it]) else "partial"
-    elif source == "missing_weather_forecasts":
-        hist = "missing"
-        fresh = "missing"
-        notes.append("No governed forecast weather layer in the current CT pipeline.")
     else:
         ds = datasets.get(source)
         hist = "ok" if ds and ds.rows > 0 else "missing"
@@ -375,6 +372,39 @@ def _group_status(
                 cov = min(float(recent[c].notna().mean()) for c in present_cols) if not recent.empty else 0.0
                 hist = "ok" if cov > 0.8 and len(present_cols) >= 8 else "partial"
                 fresh = datasets["multi_country_forecast"].freshness_status
+                notes.append(
+                    f"present_cols={len(present_cols)}/{len(required_cols)} recent_30d_coverage={cov:.2%}"
+                )
+    elif group["group"] == "Weather forecasts":
+        weather_df = dataset_frames.get("weather_forecast")
+        if weather_df is None or weather_df.empty:
+            hist = "missing"
+            fresh = "missing"
+            notes.append("No governed weather forecast cache present.")
+        else:
+            recent = weather_df.loc[
+                weather_df.index >= current_ts.tz_convert("UTC") - pd.Timedelta(days=30)
+            ]
+            required_cols = [
+                "wx_ch_zurich_temperature_2m",
+                "wx_ch_zurich_cloud_cover",
+                "wx_ch_zurich_shortwave_radiation",
+                "wx_ch_zurich_wind_speed_10m",
+                "wx_de_hamburg_wind_speed_10m",
+                "wx_de_munich_shortwave_radiation",
+                "wx_fr_lyon_cloud_cover",
+                "wx_at_vienna_wind_speed_10m",
+                "wx_it_milan_shortwave_radiation",
+            ]
+            present_cols = [c for c in required_cols if c in weather_df.columns]
+            if not present_cols:
+                hist = "missing"
+                fresh = "missing"
+                notes.append("Weather cache exists but required governed columns are absent.")
+            else:
+                cov = min(float(recent[c].notna().mean()) for c in present_cols) if not recent.empty else 0.0
+                hist = "ok" if cov > 0.9 else "partial"
+                fresh = datasets["weather_forecast"].freshness_status
                 notes.append(
                     f"present_cols={len(present_cols)}/{len(required_cols)} recent_30d_coverage={cov:.2%}"
                 )

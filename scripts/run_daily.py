@@ -143,6 +143,22 @@ def ingest_data(days_back: int = 7) -> dict:
         status["entso_enrichment"] = f"FAILED: {e}"
         logger.warning("  ENTSO-E enrichment failed (non-critical): %s", e)
 
+    # ── 1b-ter. Weather forecast layer ──
+    logger.info("=" * 60)
+    logger.info("INGEST: Weather forecast layer (%s → %s)", enrich_start, forecast_end)
+    logger.info("=" * 60)
+    try:
+        from pfc_shaping.data.ingest_weather_forecast import fetch_and_cache_weather_forecast
+
+        weather_df = fetch_and_cache_weather_forecast(enrich_start, forecast_end)
+        status["weather_forecast"] = (
+            f"OK (rows={len(weather_df)}, max_ts={weather_df.index.max() if len(weather_df) else None})"
+        )
+        logger.info("  Weather forecast: %s", status["weather_forecast"])
+    except Exception as e:
+        status["weather_forecast"] = f"FAILED: {e}"
+        logger.warning("  Weather forecast ingestion failed (non-critical): %s", e)
+
     # ── 1c. ENTSO-E outages (REMIT UMM) ──
     logger.info("=" * 60)
     logger.info("INGEST: ENTSO-E outages/REMIT (%s → %s)", start, end)

@@ -185,6 +185,7 @@ After silver is trustworthy:
 
 ### 8. Weather forecasts
 - Target silver table: `market_data.ct_weather_forecast_hourly`
+- Local cache: `pfc_shaping/data/weather_forecast_hourly.parquet`
 - Required variables:
   - `temperature`
   - `cloud_cover`
@@ -198,6 +199,7 @@ After silver is trustworthy:
 - Work needed:
   - choose provider
   - define issuance/validity keys cleanly
+  - harden TLS handling for FMV corporate network; current local fallback is opt-in via `PFC_ALLOW_INSECURE_WEATHER_SSL=1` and must not become the long-term default
 
 ### 9. Hydro
 - Target silver table: `market_data.ct_hydro_daily`
