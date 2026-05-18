@@ -38,6 +38,7 @@ GranularitÃƒÂ© de B et f_S selon l'horizon :
 
 from __future__ import annotations
 
+import inspect
 import logging
 from pathlib import Path
 
@@ -103,6 +104,24 @@ def _country_holidays(years, country: str) -> set:
     return result
 
 
+def _sh_apply_accepts_outages(sh_class: type) -> bool:
+    """Return True iff sh_class.apply has an ``outages_forecast`` parameter.
+
+    Replaces the former ``try/except TypeError`` pattern at assembler.py:284
+    (see D-13 in Phase 05B CONTEXT.md): explicit signature inspection avoids
+    masking real TypeErrors raised by bugs inside ShapeHourly.apply().
+
+    Raises TypeError if sh_class.apply does not accept ``reference_date``,
+    which is the minimum contract required by PFCAssembler.build().
+    """
+    sig = inspect.signature(sh_class.apply)
+    if "reference_date" not in sig.parameters:
+        raise TypeError(
+            f"{sh_class.__name__}.apply must accept reference_date; got signature {sig}"
+        )
+    return "outages_forecast" in sig.parameters
+
+
 class PFCAssembler:
     """
     Assembleur de la PFC 15min N+3 ans.
@@ -144,6 +163,15 @@ class PFCAssembler:
         self.confidence_thresholds = confidence_thresholds or {
             "6m": 1.0, "12m": 0.85, "24m": 0.65, "36m": 0.45,
         }
+        # Cache the outages_forecast capability check once at init (D-13).
+        # Explicit signature inspection replaces the former try/except TypeError pattern —
+        # prevents masking real TypeErrors from bugs inside self.sh.apply().
+        self._sh_accepts_outages: bool = _sh_apply_accepts_outages(type(shape_hourly))
+        logger.info(
+            "Detected sh=%s — outages_forecast %s",
+            type(shape_hourly).__name__,
+            "passed" if self._sh_accepts_outages else "skipped",
+        )
 
     def _select_peak_key(
         self,
@@ -277,12 +305,14 @@ class PFCAssembler:
         f_W = self._compute_f_W(cal)
 
         # Ã¢â€â‚¬Ã¢â€â‚¬ Facteur horaire f_H Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
-        # Pass outages_forecast + reference_date to ShapeHourly
-        try:
+        # Capability check (replaces former try/except TypeError — see D-13).
+        # self._sh_accepts_outages was resolved once at __init__ via explicit
+        # signature inspection of type(self.sh).apply, so any TypeError raised
+        # below propagates to the caller instead of being silently swallowed.
+        if self._sh_accepts_outages:
             f_H = self.sh.apply(idx, cal, reference_date=reference_date,
                                 outages_forecast=outages_forecast)
-        except TypeError:
-            # ShapeHourly (table) doesn't accept outages_forecast
+        else:
             f_H = self.sh.apply(idx, cal, reference_date=reference_date)
 
         # Ã¢â€â‚¬Ã¢â€â‚¬ Facteur 15min f_Q Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬

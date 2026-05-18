@@ -30,7 +30,9 @@ from __future__ import annotations
 import json
 import logging
 import os
+from collections.abc import Mapping
 from pathlib import Path
+from typing import Iterator
 
 import numpy as np
 import pandas as pd
@@ -96,6 +98,62 @@ SAISONS = ["Hiver", "Printemps", "Ete", "Automne"]
 TYPES_JOUR = ["Ouvrable", "Samedi", "Dimanche", "Ferie_CH", "Ferie_DE"]
 
 
+class _Factors3DView(Mapping):
+    """Read-only Mapping facade over the nested factors_ dict.
+
+    Keys are 3-tuples (saison: str, type_jour: str, hour: int) where
+    hour ∈ [0, 24).  Values are the underlying float from the array at
+    that hour index.
+
+    The view stores a *reference* to the parent factors_ dict (no copy),
+    so mutations to factors_ (adding cells or mutating arrays in-place)
+    are immediately reflected in the view — intentional liveness behavior
+    (per SHP-01 literal, Plan 05B-04 D-01).
+
+    This class is intentionally NOT part of the public API; access it via
+    the ``ShapeHourly.factors_3d_`` property.
+    """
+
+    __slots__ = ("_factors",)
+
+    def __init__(self, factors: dict) -> None:
+        self._factors = factors  # reference, not copy — live facade
+
+    def __getitem__(self, key) -> float:
+        if not (isinstance(key, tuple) and len(key) == 3):
+            raise KeyError(key)
+        saison, type_jour, hour = key
+        if not (isinstance(hour, int) and 0 <= hour < 24):
+            raise KeyError(key)
+        try:
+            arr = self._factors[(saison, type_jour)]
+        except KeyError:
+            raise KeyError(key)
+        return float(arr[hour])
+
+    def __iter__(self) -> Iterator:
+        for (saison, type_jour) in self._factors:
+            for h in range(24):
+                yield (saison, type_jour, h)
+
+    def __len__(self) -> int:
+        return len(self._factors) * 24
+
+    def __contains__(self, key) -> bool:
+        if not (isinstance(key, tuple) and len(key) == 3):
+            return False
+        saison, type_jour, hour = key
+        if not (isinstance(hour, int) and 0 <= hour < 24):
+            return False
+        return (saison, type_jour) in self._factors
+
+    def __setitem__(self, key, value) -> None:
+        raise TypeError(f"{type(self).__name__} is read-only")
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"_Factors3DView({len(self)} entries across {len(self._factors)} cells)"
+
+
 class ShapeHourly:
     """
     Modèle de facteurs de forme horaire f_H.
@@ -132,6 +190,20 @@ class ShapeHourly:
         # (parquet wins over env — prevents train/serve skew, D-07).
         # In Phase 5bis-A this flag gates NO behavior; reserved for Phase 5bis-B.
         self._use_seasonal_hourly: bool = _resolve_flag(use_seasonal_hourly)
+
+    @property
+    def factors_3d_(self) -> Mapping:
+        """Read-only 3D view on factors_ keyed by (saison, type_jour, hour). SHP-01 literal.
+
+        Returns a live Mapping backed by self.factors_ (no copy).  Accessing an
+        element is equivalent to ``self.factors_[(saison, type_jour)][hour]`` cast to
+        float.  The view reflects any subsequent mutation of self.factors_.
+
+        This property constructs a new _Factors3DView wrapper on every access, but
+        each wrapper shares the same underlying dict reference, so multiple views
+        are always consistent with each other and with the authoritative state.
+        """
+        return _Factors3DView(self.factors_)
 
     def fit(
         self,
