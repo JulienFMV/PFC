@@ -36,6 +36,9 @@ DEFAULT_PARQUET = Path(__file__).resolve().parent.parent / "data" / "entso_15min
 DEFAULT_DE_RENEWABLE_FORECAST_PARQUET = (
     Path(__file__).resolve().parent.parent / "data" / "de_renewable_forecast.parquet"
 )
+DEFAULT_MULTI_COUNTRY_FORECAST_PARQUET = (
+    Path(__file__).resolve().parent.parent / "data" / "multi_country_forecast_15min.parquet"
+)
 
 # Charger .env depuis la racine du worktree, puis fallback vers le repo PFC
 _ENV_CANDIDATES = [
@@ -59,6 +62,13 @@ NEIGHBOR_ZONES = {
     "at": "AT",
     "de": "DE_LU",
     "fr": "FR",
+    "it": "IT_NORD",
+}
+FORECAST_ZONES = {
+    "ch": "CH",
+    "de": "DE_LU",
+    "fr": "FR",
+    "at": "AT",
     "it": "IT_NORD",
 }
 
@@ -298,6 +308,98 @@ def _query_series_or_empty(func, *args, name: str, **kwargs) -> pd.Series:
     except Exception as exc:
         logger.warning("ENTSO-E query failed for %s: %s", name, exc)
         return pd.Series(dtype=float, name=name)
+
+
+def _query_load_forecast_or_empty(
+    client,
+    zone_code: str,
+    ts_start: pd.Timestamp,
+    ts_end: pd.Timestamp,
+    name: str,
+) -> pd.Series:
+    """Run ENTSO-E load forecast query and degrade gracefully if unavailable."""
+    query_func = getattr(client, "query_load_forecast", None)
+    if query_func is None:
+        logger.warning("ENTSO-E client has no query_load_forecast method for %s", name)
+        return pd.Series(dtype=float, name=name)
+    try:
+        raw = _retry(query_func, zone_code, start=ts_start, end=ts_end)
+    except Exception as exc:
+        logger.warning("ENTSO-E load forecast failed for %s: %s", name, exc)
+        return pd.Series(dtype=float, name=name)
+
+    if isinstance(raw, pd.DataFrame):
+        if raw.empty:
+            return pd.Series(dtype=float, name=name)
+        if "Forecasted Load" in raw.columns:
+            series = raw["Forecasted Load"]
+        else:
+            series = raw.iloc[:, -1]
+    else:
+        series = raw
+    return _to_15min_series(series, name)
+
+
+def load_multi_country_forecasts(
+    start: str,
+    end: str,
+    zones: dict[str, str] | None = None,
+) -> pd.DataFrame:
+    """
+    Load J+ forecasts for CH/DE/FR/AT/IT from ENTSO-E.
+
+    Returns a 15min UTC dataframe indexed by forecast_for_ts_utc with columns such as:
+      - forecast_load_ch_mw
+      - forecast_load_de_mw
+      - forecast_solar_de_mw
+      - forecast_wind_de_mw
+      - ...
+    """
+    client = _get_client()
+    ts_start = pd.Timestamp(start, tz="UTC")
+    ts_end = pd.Timestamp(end, tz="UTC")
+    zones = zones or FORECAST_ZONES
+
+    frames: list[pd.Series] = []
+    for key, zone_code in zones.items():
+        load_series = _query_load_forecast_or_empty(
+            client,
+            zone_code,
+            ts_start,
+            ts_end,
+            name=f"forecast_load_{key}_mw",
+        )
+        if not load_series.empty:
+            frames.append(load_series)
+
+        try:
+            forecast_raw = _retry(
+                client.query_wind_and_solar_forecast,
+                zone_code,
+                start=ts_start,
+                end=ts_end,
+            )
+            solar = _extract_forecast_column(forecast_raw, "Solar").rename(f"forecast_solar_{key}_mw")
+            wind = _extract_forecast_column(forecast_raw, "Wind").rename(f"forecast_wind_{key}_mw")
+            forecast_df = pd.concat([solar, wind], axis=1)
+            if not forecast_df.empty:
+                if forecast_df.index.tz is None:
+                    forecast_df.index = forecast_df.index.tz_localize("UTC")
+                forecast_df = _resample_to_15min(forecast_df).sort_index()
+                forecast_df = forecast_df[(forecast_df.index >= ts_start) & (forecast_df.index < ts_end)]
+                for col in forecast_df.columns:
+                    forecast_df[col] = forecast_df[col].astype(float).fillna(0.0)
+                frames.extend(forecast_df[col] for col in forecast_df.columns)
+        except Exception as exc:
+            logger.warning("ENTSO-E wind/solar forecast failed for %s: %s", key, exc)
+
+    if not frames:
+        return pd.DataFrame()
+
+    forecast = pd.concat(frames, axis=1).sort_index()
+    forecast = forecast[~forecast.index.duplicated(keep="last")]
+    forecast.index.name = "forecast_for_ts_utc"
+    return forecast
 
 
 def _load_fr_nuclear_outage_features(
@@ -717,6 +819,38 @@ def fetch_and_cache_de_renewable_forecast(
     combined.to_parquet(parquet_path, engine="pyarrow", compression="snappy")
     logger.info(
         "Cache DE renewable forecast updated: %s (%d rows, max_ts=%s)",
+        parquet_path,
+        len(combined),
+        combined.index.max() if len(combined) else None,
+    )
+    return combined
+
+
+def fetch_and_cache_multi_country_forecasts(
+    start: str,
+    end: str,
+    parquet_path: str | Path = DEFAULT_MULTI_COUNTRY_FORECAST_PARQUET,
+    zones: dict[str, str] | None = None,
+) -> pd.DataFrame:
+    """
+    Refresh the cached multi-country day-ahead forecast dataset for Swiss CT.
+
+    The cache stores forecast-for timestamps on a normalized 15min UTC grid.
+    """
+    new = load_multi_country_forecasts(start, end, zones=zones)
+    parquet_path = Path(parquet_path)
+
+    if parquet_path.exists():
+        existing = pd.read_parquet(parquet_path)
+        combined = new.combine_first(existing).sort_index()
+        combined = combined[~combined.index.duplicated(keep="last")]
+    else:
+        combined = new
+
+    parquet_path.parent.mkdir(parents=True, exist_ok=True)
+    combined.to_parquet(parquet_path, engine="pyarrow", compression="snappy")
+    logger.info(
+        "Cache multi-country forecast updated: %s (%d rows, max_ts=%s)",
         parquet_path,
         len(combined),
         combined.index.max() if len(combined) else None,

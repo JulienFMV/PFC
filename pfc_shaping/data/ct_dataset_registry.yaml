@@ -176,14 +176,30 @@ datasets:
   ct_forecast_multi_country_15min:
     layer: silver
     domain: forecast
-    source_system: missing
-    local_cache: null
+    source_system: entsoe
+    local_cache: "pfc_shaping/data/multi_country_forecast_15min.parquet"
     target_table: "market_data.ct_forecast_multi_country_15min"
     grain: "15min"
     time_key: "forecast_for_ts_utc"
     freshness_sla_days: 2
     required: true
     consumed_by_prod: false
+    major_columns:
+      - forecast_load_ch_mw
+      - forecast_solar_ch_mw
+      - forecast_wind_ch_mw
+      - forecast_load_de_mw
+      - forecast_load_fr_mw
+      - forecast_load_at_mw
+      - forecast_load_it_mw
+      - forecast_solar_de_mw
+      - forecast_wind_de_mw
+      - forecast_solar_fr_mw
+      - forecast_wind_fr_mw
+      - forecast_solar_at_mw
+      - forecast_wind_at_mw
+      - forecast_solar_it_mw
+      - forecast_wind_it_mw
 
   ct_weather_forecast_hourly:
     layer: silver

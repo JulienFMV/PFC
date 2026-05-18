@@ -58,6 +58,7 @@ DATASET_REGISTRY = {
     "entso_fundamentals": "ct_entso_fundamentals_15min",
     "entso_border": "ct_entso_border_15min",
     "de_renewable_forecast": "ct_forecast_de_renewables_15min",
+    "multi_country_forecast": "ct_forecast_multi_country_15min",
     "hydro": "ct_hydro_daily",
     "outages": "ct_outages_15min",
     "commodities": "ct_commodities_daily",
@@ -132,7 +133,7 @@ VARIABLE_GROUPS = [
         "group": "Multi-country load/solar/wind forecasts",
         "priority": "critical",
         "kind": "forecast",
-        "source": "missing_multi_country_forecasts",
+        "source": "multi_country_forecast",
         "consumed_by_prod": False,
     },
     {
@@ -288,10 +289,6 @@ def _group_status(
         it = datasets["epex_it"]
         hist = "ok" if all(ds.rows > 0 for ds in [fr, at, it]) else "missing"
         fresh = "ok" if all(ds.freshness_status in {"ok", "partial"} for ds in [fr, at, it]) else "partial"
-    elif source == "missing_multi_country_forecasts":
-        hist = "missing"
-        fresh = "missing"
-        notes.append("No governed J+1 load/solar/wind forecasts for CH/DE/FR/AT/IT beyond DE renewables.")
     elif source == "missing_weather_forecasts":
         hist = "missing"
         fresh = "missing"
@@ -342,6 +339,45 @@ def _group_status(
         cov = min(float(entso_fundamentals[c].notna().mean()) for c in cols if c in entso_fundamentals.columns)
         hist = "ok" if cov > 0.95 else "partial"
         notes.append(f"full_history_coverage={cov:.2%}")
+    elif group["group"] == "Multi-country load/solar/wind forecasts":
+        forecast_df = dataset_frames.get("multi_country_forecast")
+        if forecast_df is None or forecast_df.empty:
+            hist = "missing"
+            fresh = "missing"
+            notes.append("No governed multi-country forecast cache present.")
+        else:
+            recent = forecast_df.loc[
+                forecast_df.index >= current_ts.tz_convert("UTC") - pd.Timedelta(days=30)
+            ]
+            required_cols = [
+                "forecast_load_ch_mw",
+                "forecast_solar_ch_mw",
+                "forecast_wind_ch_mw",
+                "forecast_load_de_mw",
+                "forecast_load_fr_mw",
+                "forecast_load_at_mw",
+                "forecast_load_it_mw",
+                "forecast_solar_de_mw",
+                "forecast_wind_de_mw",
+                "forecast_solar_fr_mw",
+                "forecast_wind_fr_mw",
+                "forecast_solar_at_mw",
+                "forecast_wind_at_mw",
+                "forecast_solar_it_mw",
+                "forecast_wind_it_mw",
+            ]
+            present_cols = [c for c in required_cols if c in forecast_df.columns]
+            if not present_cols:
+                hist = "missing"
+                fresh = "missing"
+                notes.append("Forecast cache exists but required forecast columns are absent.")
+            else:
+                cov = min(float(recent[c].notna().mean()) for c in present_cols) if not recent.empty else 0.0
+                hist = "ok" if cov > 0.8 and len(present_cols) >= 8 else "partial"
+                fresh = datasets["multi_country_forecast"].freshness_status
+                notes.append(
+                    f"present_cols={len(present_cols)}/{len(required_cols)} recent_30d_coverage={cov:.2%}"
+                )
     elif group["group"] == "Hydro reservoir / water value drivers":
         ds = datasets["hydro"]
         notes.append(f"max_ts={ds.max_ts}")

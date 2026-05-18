@@ -167,6 +167,7 @@ After silver is trustworthy:
 
 ### 7. Multi-country forecasts
 - Target silver table: `market_data.ct_forecast_multi_country_15min`
+- Local cache: `pfc_shaping/data/multi_country_forecast_15min.parquet`
 - Countries:
   - `CH`
   - `DE`
