@@ -30,8 +30,13 @@ P&L par 5 €/MWh d'erreur shape), pas par l'ordre alphabétique des features.
 - [ ] **Phase 5bis-A: Shape Hourly Infrastructure & Flag (no-op refactor)** 🔥
   - Goal: livrer l'infra qui permettra de mesurer et reverter bit-pour-bit tout changement comportemental futur du `ShapeHourly` (factors_3d_ view pour SHP-01 littéral, save/load complet, feature flag persisté en parquet, baseline frozen `tests/fixtures/baseline_pfc_seed42.parquet`).
   - **Aucun changement numérique** — `assert_frame_equal(build(flag=OFF), build(flag=ON), atol=1e-12)`.
-  - Context: `.planning/phases/PFC-LT-05B-shape-seasonal-type-jour-hour/05B-CONTEXT.md`.
-  - Plans: à créer via `/gsd:plan-phase 5bis-A`.
+  - Context: `.planning/phases/05B-shape-hourly-infrastructure-flag-no-op-refactor/05B-CONTEXT.md`.
+  - **Plans:** 5 plans
+    - [ ] 05B-01-PLAN.md — Freeze baseline_pfc_seed42 fixture from main@28dfd65 (separate commit ahead)
+    - [ ] 05B-02-PLAN.md — Complete save/load roundtrip via _meta.parquet sidecar (fix pre-existing bug)
+    - [ ] 05B-03-PLAN.md — Feature flag PFC_LT_USE_SEASONAL_HOURLY_SHAPE: constructor arg + env-default + freeze + persist
+    - [ ] 05B-04-PLAN.md — factors_3d_ read-only 3D view (SHP-01 literal) + replace try/except TypeError at assembler.py:284
+    - [ ] 05B-05-PLAN.md — conftest autouse env hygiene + legacy fixture + 6 tests including parametrized baseline regression
 
 ### Active (P0 — successeurs immédiats)
 
@@ -72,7 +77,7 @@ P&L par 5 €/MWh d'erreur shape), pas par l'ordre alphabétique des features.
 ### Phase 5bis-A: Shape Hourly Infrastructure & Flag (no-op refactor)
 **Goal**: livrer l'infra (view 3D `factors_3d_` pour SHP-01 littéral, save/load complet sur tous attributs entraînés, feature flag `PFC_LT_USE_SEASONAL_HOURLY_SHAPE` persisté en parquet sidecar et gelé à `__init__`, baseline snapshot `tests/fixtures/baseline_pfc_seed42.parquet` committé séparément) qui permettra à 5bis-B et toutes les phases shape ultérieures d'être mesurables et réversibles bit-pour-bit. **Aucun changement numérique** dans cette phase.
 
-**Recadrage** : Phase 5bis initiale du roadmap a été splittée en 5bis-A (infra, ce document) + 5bis-B (bowl-deepening) suite à panel d'experts adversarial (3 reviewers indépendants, verdict unanime "disagree" sur la proposition initiale). Voir `.planning/phases/PFC-LT-05B-shape-seasonal-type-jour-hour/05B-CONTEXT.md` pour le détail.
+**Recadrage** : Phase 5bis initiale du roadmap a été splittée en 5bis-A (infra, ce document) + 5bis-B (bowl-deepening) suite à panel d'experts adversarial (3 reviewers indépendants, verdict unanime "disagree" sur la proposition initiale). Voir `.planning/phases/05B-shape-hourly-infrastructure-flag-no-op-refactor/05B-CONTEXT.md` pour le détail.
 
 **Depends on**: Bloc A (country/tz plumbing) — déjà livré.
 
@@ -92,7 +97,12 @@ P&L par 5 €/MWh d'erreur shape), pas par l'ordre alphabétique des features.
 7. `assembler.py:284` try/except `TypeError` remplacé par capability check explicite (pas de masquage de bug).
 8. Suite 142 passed / 4 skipped reste verte.
 
-**Plans**: TBD (à générer via `/gsd:plan-phase 5bis-A` — estimation 3-5 plans atomiques + 1 PR séparée pour baseline snapshot).
+**Plans**: 5 plans (wave 1→5, sequential because plans 02/03/04 all touch `shape_hourly.py`):
+1. `05B-01-PLAN.md` (wave 1) — Freeze `baseline_pfc_seed42.parquet` from main@28dfd65 (separate commit AHEAD of any logic plan).
+2. `05B-02-PLAN.md` (wave 2) — Complete save/load roundtrip via `_meta.parquet` sidecar (fixes pre-existing silent attribute loss on `factors_by_year_`, `trend_per_hour_`, `f_W_seasonal_`, `_climatological_fill`, `sigma`, `halflife_days`, `hydro_weight_sigma`).
+3. `05B-03-PLAN.md` (wave 3) — Feature flag mechanics: constructor arg + env-default, frozen at `__init__`, persisted in `_meta.parquet`, restored on `load()` (parquet wins over env). [SHP-04]
+4. `05B-04-PLAN.md` (wave 4) — Read-only `factors_3d_` view on `ShapeHourly` [SHP-01 literal] + replace try/except `TypeError` at `assembler.py:284` with explicit signature-based capability check.
+5. `05B-05-PLAN.md` (wave 5) — `tests/conftest.py` autouse env-var hygiene + legacy fixture parquets + six new tests in `tests/test_shape_hourly_infra.py` including parametrized `test_baseline_regression[False|True]` that asserts `assert_frame_equal(build(flag), baseline, atol=1e-10)` for both flag states (the no-op proof). [SHP-01, SHP-04]
 
 ---
 

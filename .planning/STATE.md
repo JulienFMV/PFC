@@ -1,3 +1,19 @@
+---
+gsd_state_version: 1.0
+milestone: v1.0
+milestone_name: milestone
+status: executing
+stopped_at: État frais sur la branche `claude/clean-lt-ct-integration` @ `28dfd65`.
+last_updated: "2026-05-18T19:14:45.560Z"
+last_activity: 2026-05-18 -- Phase 5bis-A planning complete
+progress:
+  total_phases: 4
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
+---
+
 # Project State
 
 ## Project Reference
@@ -13,14 +29,15 @@ avec ≥ 1.5 €/MWh de MAE-bloc en moins que HFC OMPEX.
 
 Phase: 5bis-A of 12 (split de 5bis en 5bis-A infra + 5bis-B bowl, post panel d'experts 2026-05-18)
 Plan: 0 of TBD (à générer via `/gsd:plan-phase 5bis-A`)
-Status: **Context locked** — CONTEXT.md écrit à `.planning/phases/PFC-LT-05B-shape-seasonal-type-jour-hour/05B-CONTEXT.md`. Prêt pour `/gsd:plan-phase 5bis-A`.
-Last activity: 2026-05-18 — discussion 5bis menée avec panel adversarial (3 experts general-purpose), aboutissant au split 5bis-A/5bis-B + recadrage ROADMAP.
+Status: Ready to execute
+Last activity: 2026-05-18 -- Phase 5bis-A planning complete
 
 Progress: [██████░░░░] 60% (7 phases done sur ~11)
 
 ## Performance Metrics
 
 **Velocity:**
+
 - Phases livrées : 7 (Phase 0, Refactor B, 1ter, 1bis, 2, Audit, Bloc A+C1+C2)
 - Durée moyenne par phase : ~½ journée
 - Tests : 142 passing, 4 skipped (CT-only deps)
@@ -46,14 +63,17 @@ Décisions récentes affectant la phase courante :
 - **2026-05-18** : Hold Phase 3 (FR/AT/IT) et Phase 4 (basis cross-border)
   pour prioriser Phase 5bis/5/5ter/10. Justification : business case profile
   deal (>250k€/5€MWh d'erreur) écrase l'urgence multi-marché.
+
 - **2026-05-18** : Cible KPI = Δ MAE bloc ≤ -1.5 €/MWh vs HFC OMPEX sur 2024-2025.
   KPI métier directement parlant au desk FMV.
+
 - **2026-05-18** : Adoption GSD framework pour le workflow LT (alignement avec
   Mint chez FMV). `.claude/` gitignored (machine-specific), `.planning/` versionné.
 
 ### Pending Todos
 
 Discussion 5bis-A close (2026-05-18). Décisions verrouillées dans `.planning/phases/PFC-LT-05B-shape-seasonal-type-jour-hour/05B-CONTEXT.md` D-01..D-20. Résumé :
+
 - Indexation `factors_` : nested dict status quo + view `factors_3d_` lecture-seule pour SHP-01 littéral.
 - Feature flag : constructor arg + env-default, gelé à `__init__`, persisté en parquet sidecar `_meta.parquet`.
 - Backward-compat : roundtrip complet (bug pré-existant `factors_by_year_`, `trend_per_hour_`, etc. lost au load → fixé).
@@ -94,8 +114,12 @@ git checkout claude/clean-lt-ct-integration
 git pull origin claude/clean-lt-ct-integration
 pytest tests/   # sanity, doit être vert
 npx get-shit-done-cc@latest --local --claude --profile=standard
+
 # Puis dans Claude Code :
+
 /gsd:resume-work
+
 # Ou directement :
+
 /gsd:discuss-phase 5bis
 ```
