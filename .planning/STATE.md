@@ -7,14 +7,14 @@ See: .planning/PROJECT.md (updated 2026-05-18)
 **Core value:** Pricing trading-grade des blocs profil client (10-15 / 18-9)
 avec ≥ 1.5 €/MWh de MAE-bloc en moins que HFC OMPEX.
 
-**Current focus:** Phase 5bis — Shape seasonal × type_jour × hour.
+**Current focus:** Phase 5bis-A — Shape Hourly Infrastructure & Flag (no-op refactor).
 
 ## Current Position
 
-Phase: 5bis of 11 (Phase 5bis — Shape seasonal × type_jour × hour)
-Plan: 0 of TBD (à générer via `/gsd:plan-phase 5bis`)
-Status: **Ready to discuss** — appeler `/gsd:discuss-phase 5bis` pour verrouiller les décisions techniques avant planning.
-Last activity: 2026-05-18 — Bloc A+C1+C2 fixes commité (`28dfd65`) ; .planning/ seedée depuis Cloud Desktop.
+Phase: 5bis-A of 12 (split de 5bis en 5bis-A infra + 5bis-B bowl, post panel d'experts 2026-05-18)
+Plan: 0 of TBD (à générer via `/gsd:plan-phase 5bis-A`)
+Status: **Context locked** — CONTEXT.md écrit à `.planning/phases/PFC-LT-05B-shape-seasonal-type-jour-hour/05B-CONTEXT.md`. Prêt pour `/gsd:plan-phase 5bis-A`.
+Last activity: 2026-05-18 — discussion 5bis menée avec panel adversarial (3 experts general-purpose), aboutissant au split 5bis-A/5bis-B + recadrage ROADMAP.
 
 Progress: [██████░░░░] 60% (7 phases done sur ~11)
 
@@ -53,11 +53,15 @@ Décisions récentes affectant la phase courante :
 
 ### Pending Todos
 
-- Décider lors de `/gsd:discuss-phase 5bis` :
-  - Type d'indexation de `factors_` : nested dict `{(saison, type_jour): np.array[24]}` (compatible avec le format actuel + lazy upgrade) vs flat dict `{(saison, type_jour, hour): float}` ?
-  - Feature flag par variable d'environnement ou paramètre constructeur `ShapeHourly(seasonal_hourly=True)` ?
-  - Backward-compat : strict (legacy + nouveau coexistent) ou breaking change ?
-  - Stratégie test : injection synthétique de bowl (déterministe) ou fixture EPEX réelle ?
+Discussion 5bis-A close (2026-05-18). Décisions verrouillées dans `.planning/phases/PFC-LT-05B-shape-seasonal-type-jour-hour/05B-CONTEXT.md` D-01..D-20. Résumé :
+- Indexation `factors_` : nested dict status quo + view `factors_3d_` lecture-seule pour SHP-01 littéral.
+- Feature flag : constructor arg + env-default, gelé à `__init__`, persisté en parquet sidecar `_meta.parquet`.
+- Backward-compat : roundtrip complet (bug pré-existant `factors_by_year_`, `trend_per_hour_`, etc. lost au load → fixé).
+- Stratégie test : synthétique deterministe + baseline frozen `tests/fixtures/baseline_pfc_seed42.parquet` committée AVANT 5bis-A, test param OFF vs ON `numpy.allclose(atol=1e-12)`, conftest autouse env-var hygiene.
+
+Prochaine action : `/gsd:plan-phase 5bis-A` (estimation 3-5 plans atomiques + 1 PR séparée pour baseline snapshot).
+
+Après livraison 5bis-A : `/gsd:discuss-phase 5bis-B` pour le bowl-deepening (hydro_weight bug fix + split f_H level/anomaly + σ paramétrable).
 
 ### Blockers/Concerns
 

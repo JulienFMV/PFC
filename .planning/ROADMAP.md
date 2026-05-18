@@ -27,11 +27,19 @@ P&L par 5 €/MWh d'erreur shape), pas par l'ordre alphabétique des features.
 
 ### Active (P0 — prochaine action)
 
-- [ ] **Phase 5bis: Shape seasonal × type_jour × hour** 🔥
-  - Goal: `ShapeHourly.factors_[(saison, type_jour, hour)]` → bowl midday d'été différencié du plateau hiver.
-  - Plans: voir `.planning/phases/05bis/` à créer via `/gsd:plan-phase 5bis`.
+- [ ] **Phase 5bis-A: Shape Hourly Infrastructure & Flag (no-op refactor)** 🔥
+  - Goal: livrer l'infra qui permettra de mesurer et reverter bit-pour-bit tout changement comportemental futur du `ShapeHourly` (factors_3d_ view pour SHP-01 littéral, save/load complet, feature flag persisté en parquet, baseline frozen `tests/fixtures/baseline_pfc_seed42.parquet`).
+  - **Aucun changement numérique** — `assert_frame_equal(build(flag=OFF), build(flag=ON), atol=1e-12)`.
+  - Context: `.planning/phases/PFC-LT-05B-shape-seasonal-type-jour-hour/05B-CONTEXT.md`.
+  - Plans: à créer via `/gsd:plan-phase 5bis-A`.
 
 ### Active (P0 — successeurs immédiats)
+
+- [ ] **Phase 5bis-B: Shape Hourly Bowl-Deepening (math change)**
+  - Goal: creuser la duck curve via (a) fix bug `_apply_hydro_analogue_weights` (utiliser `_climatological_fill[week_of_year]` au lieu de `current_fill`), (b) split `f_H = level × anomaly` avec `shape_freedom['f_H']` damping sur level only, (c) σ paramétrable (0.5 OFF / 0.25 ON).
+  - SC: `|Δ price_shape Été-h10-15 vs Hiver-h10-15| > 5 €/MWh` sur fixture EPEX-like réaliste, gated par `PFC_LT_USE_SEASONAL_HOURLY_SHAPE=1`.
+  - Depends on: Phase 5bis-A livrée (baseline frozen + flag persisté).
+  - Context: à discuter via `/gsd:discuss-phase 5bis-B` après livraison 5bis-A.
 
 - [ ] **Phase 5: MSFC log-prix + retire silent floors + PFC peut être négative**
   - Goal: la PFC peut descendre à -20 €/MWh aux heures structurelles (été 2027+ midi).
@@ -42,6 +50,7 @@ P&L par 5 €/MWh d'erreur shape), pas par l'ordre alphabétique des features.
 - [ ] **Phase 10 (refondu): Backtest par bloc client vs HFC OMPEX 2024-2025**
   - Goal: démontrer Δ MAE ≤ -1.5 €/MWh sur ≥ 3 blocs.
   - Argument interne décisif vs OMPEX.
+  - Depends on: Phase 5bis-B (sinon backtest mesure un no-op).
 
 ### Deferred (HOLD — pas de valeur sur deal CH actuel)
 
@@ -60,21 +69,51 @@ P&L par 5 €/MWh d'erreur shape), pas par l'ordre alphabétique des features.
 
 ## Phase Details
 
-### Phase 5bis: Shape seasonal × type_jour × hour
-**Goal**: Différencier le facteur horaire `f_H` selon la saison ET le type de jour ET l'heure (table 3D), au lieu d'un f_H global moyenné sur l'année.
+### Phase 5bis-A: Shape Hourly Infrastructure & Flag (no-op refactor)
+**Goal**: livrer l'infra (view 3D `factors_3d_` pour SHP-01 littéral, save/load complet sur tous attributs entraînés, feature flag `PFC_LT_USE_SEASONAL_HOURLY_SHAPE` persisté en parquet sidecar et gelé à `__init__`, baseline snapshot `tests/fixtures/baseline_pfc_seed42.parquet` committé séparément) qui permettra à 5bis-B et toutes les phases shape ultérieures d'être mesurables et réversibles bit-pour-bit. **Aucun changement numérique** dans cette phase.
+
+**Recadrage** : Phase 5bis initiale du roadmap a été splittée en 5bis-A (infra, ce document) + 5bis-B (bowl-deepening) suite à panel d'experts adversarial (3 reviewers indépendants, verdict unanime "disagree" sur la proposition initiale). Voir `.planning/phases/PFC-LT-05B-shape-seasonal-type-jour-hour/05B-CONTEXT.md` pour le détail.
 
 **Depends on**: Bloc A (country/tz plumbing) — déjà livré.
 
-**Requirements**: SHP-01, SHP-02, SHP-03, SHP-04
+**Requirements satisfaits** :
+- SHP-01 — `ShapeHourly.factors_3d_[(saison, type_jour, hour)]` accessible (view sur dict[(s,tj)]→array[24] interne).
+- SHP-02 — Déjà satisfait par Bloc A (`_country_local_tz` dans assembler). Non-régression assurée par baseline.
+- SHP-03 — Invariant `mean_h(f_H | s, tj) ≈ 1.0` ; déjà satisfait par re-normalisation à `shape_hourly.py:150`. Non-régression assurée.
+- SHP-04 — Feature flag `PFC_LT_USE_SEASONAL_HOURLY_SHAPE` opérationnel (constructor arg + env-default, gelé à `__init__`, persisté en parquet).
 
-**Success Criteria** (what must be TRUE):
-  1. `ShapeHourly.factors_` est un dict indexé par `(saison, type_jour, hour)` ; un test unitaire confirme que `factors_[("Ete","Ouvrable",12)]` ≠ `factors_[("Hiver","Ouvrable",12)]` sur des données synthétiques avec bowl injecté.
-  2. `assembler.build` produit une PFC où le profil h10-h15 d'été d'un dimanche est sensiblement plus bas que celui d'un dimanche d'hiver (la différence absolue moyenne >5 €/MWh).
-  3. La feature flag `PFC_LT_USE_SEASONAL_HOURLY_SHAPE=0` permet de revenir au comportement legacy bit-pour-bit.
-  4. La suite tests existante (142 passed, 4 skipped) reste verte.
-  5. Backward-compat : un `factors_` 2D legacy chargé depuis parquet (`ShapeHourly.load`) est promu en 3D lazily, sans crash.
+**Success Criteria** :
+1. `factors_3d_[("Ete","Ouvrable",12)] == factors_[("Ete","Ouvrable")][12]` pour toutes les cellules ; lecture-seule (test).
+2. `numpy.allclose(build(flag=OFF, seed=42), build(flag=ON, seed=42), atol=1e-12)` (5bis-A = no-op).
+3. `assert_frame_equal(build(flag=OFF, seed=42), tests/fixtures/baseline_pfc_seed42.parquet, atol=1e-10)` (rollback bit-pour-bit testable).
+4. `save → load → fit → save → load` roundtrip identique sur tous attributs (`factors_`, `factors_by_year_`, `trend_per_hour_`, `f_W_seasonal_`, `_climatological_fill`, `sigma`, `halflife_days`, `hydro_weight_sigma`, `_use_seasonal_hourly`).
+5. Un parquet legacy fitté avec `main@28dfd65` se recharge sans crash (warning émis), predictions identiques modulo les attributs déjà manquants pre-5bis-A.
+6. `tests/conftest.py` autouse fixture évite la fuite env-var test→test sur `PFC_LT_*`.
+7. `assembler.py:284` try/except `TypeError` remplacé par capability check explicite (pas de masquage de bug).
+8. Suite 142 passed / 4 skipped reste verte.
 
-**Plans**: TBD (à générer via `/gsd:plan-phase 5bis` — estimation 3-5 plans atomiques).
+**Plans**: TBD (à générer via `/gsd:plan-phase 5bis-A` — estimation 3-5 plans atomiques + 1 PR séparée pour baseline snapshot).
+
+---
+
+### Phase 5bis-B: Shape Hourly Bowl-Deepening (math change)
+**Goal**: creuser la duck curve réelle de la PFC pour que les profile deals GRD soient pricés au juste prix (bloc nuit 18-9 + solaire WE OP1/OP2). Trois leviers gated par `PFC_LT_USE_SEASONAL_HOURLY_SHAPE=1` :
+1. **Fix bug** `_apply_hydro_analogue_weights` (shape_hourly.py:584,607) : utiliser `_climatological_fill[week_of_year(t)]` pour le weighting historique au lieu de `current_fill` global. Pour build Y+2/Y+3, idem comme cible.
+2. **Split f_H = level × anomaly** : `level = mean_h(f_H_cell)`, `anomaly = f_H - level`. `shape_freedom['f_H']` damping à `assembler.py:303` damp **uniquement** le level, l'anomaly (signature saisonnière) survit à Y+2/Y+3.
+3. **σ smoothing paramétrable** : default 0.5 quand flag OFF, 0.25 quand flag ON (lever mineur, bonus).
+
+**Depends on**: Phase 5bis-A (baseline frozen + flag persisté + save/load complet).
+
+**Requirements**: SHP-01, SHP-02, SHP-03, SHP-04 (déjà satisfaits par 5bis-A) — 5bis-B livre la VALEUR métier derrière.
+
+**Success Criteria** :
+1. Sur fixture EPEX-like réaliste avec duck curve : `np.ptp(factors_[("Ete","Ouvrable")])` strictement > baseline `main@5bis-A` (le bowl s'amplifie).
+2. `assembler.build` produit une PFC où `|mean(price_shape[Dim, Été, h10-15]) − mean(price_shape[Dim, Hiver, h10-15])| > 5 €/MWh` (SC #2 original).
+3. Tests par stage : assertion sur `df["f_H"]` post-damping à horizon M+30 garde une amplitude `> 0.X` (à calibrer).
+4. Flag OFF reproduit baseline bit-pour-bit (régression assurée).
+5. Suite 142 + nouveaux 5bis-A reste verte.
+
+**Plans**: TBD via `/gsd:discuss-phase 5bis-B` après livraison 5bis-A.
 
 ---
 
