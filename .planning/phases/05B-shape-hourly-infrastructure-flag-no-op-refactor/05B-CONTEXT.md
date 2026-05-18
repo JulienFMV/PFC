@@ -2,6 +2,8 @@
 
 **Gathered:** 2026-05-18
 **Status:** Ready for planning
+**Post-REVIEWS.md addendum (2026-05-18):** Per cross-AI review consensus (REVIEWS.md §1–2), the tolerance contract for this phase is `atol=1e-12, rtol=0` — `atol=1e-10` references in D-11/D-19 below are superseded and read as the documented CI-drift fallback for `test_baseline_regression` only. The phrase "bit-pour-bit" throughout this document reads as "numerically identical (`assert_frame_equal(check_exact=False, atol=1e-12, rtol=0)` + identical columns/dtypes/index/sort order)" — parquet byte equivalence is not guaranteed across pandas/pyarrow/python versions and was never the contract.
+
 **Scope recadrage:** Suite à panel d'experts adversarial (3 reviewers indépendants : energy quant, production safety, test design — verdict unanime "disagree" sur la proposition initiale), la Phase 5bis monolithique est splittée en **5bis-A (infrastructure, ce document)** + **5bis-B (bowl-deepening, phase suivante)**. Rationale : convention quant standard "no-op refactor first, math change second" + dépendances de testing (baseline frozen, save/load complet, flag persisté) qui doivent exister AVANT toute modif comportementale du modèle.
 
 <domain>
@@ -19,7 +21,7 @@ Concrètement :
 **In scope** :
 - `pfc_shaping/lt/model/shape_hourly.py` (ajout `factors_3d_`, save/load complet, flag dans `__init__`)
 - `pfc_shaping/lt/model/assembler.py` (capability check, plumbing du flag pour préparer 5bis-B — mais aucune utilisation comportementale dans 5bis-A)
-- Nouveau sidecar `_meta.parquet` à côté de `f_W.parquet` / `shape_hourly.parquet`
+- Nouveau sidecar `shape_hourly.meta.parquet` à côté de `f_W.parquet` / `shape_hourly.parquet` (convention `${stem}.meta.parquet` — renommé depuis `_meta.parquet` initial post-review cross-AI pour éviter les collisions de nom avec de futurs composants frères type `ShapeIntraday`)
 - Nouveau `tests/fixtures/baseline_pfc_seed42.parquet` (PR séparée AVANT 5bis-A pour figer le baseline depuis `main`)
 - Nouveau `tests/test_shape_hourly_infra.py` (regression bit-pour-bit, save/load roundtrip, flag freeze, view 3D)
 - Nouveau ou modifié `tests/conftest.py` (env var hygiene)
@@ -42,13 +44,13 @@ Concrètement :
 - **D-02** : Optionnellement supporter `factors_[("Ete","Ouvrable",12)]` (clé 3-tuple) via `__getitem__` surchargé qui dispatche : 2-tuple → renvoie l'array natif, 3-tuple → renvoie le float `array[hour]`. À implémenter si ergonomique, sinon `factors_3d_` seule suffit.
 
 ### Save/load complet — fix bug pré-existant
-- **D-03** : `ShapeHourly.save(path)` écrit en plus de `factors_` et `f_W_` un sidecar `_meta.parquet` (ou `*.meta.json` si plus simple) contenant **tous** les attributs entraînés non encore persistés : `factors_by_year_` (long format `saison, type_jour, year, heure, f_H`), `trend_per_hour_` (long format `saison, type_jour, heure, slope`), `f_W_seasonal_` (long format `saison, type_jour, f_W`), `_climatological_fill` (Series week→fill_pct), hyperparams scalaires (`sigma`, `halflife_days`, `hydro_weight_sigma`), et le `use_seasonal_hourly` flag effectif au moment du fit.
-- **D-04** : `ShapeHourly.load(path)` détecte la présence du sidecar et restaure tous les attributs ; si absent (fichier legacy pré-5bis-A), reconstruit avec defaults + warning explicite (`logger.warning("Loading legacy shape_hourly.parquet without _meta sidecar — trend_per_hour_, factors_by_year_, f_W_seasonal_ unavailable")`).
+- **D-03** : `ShapeHourly.save(path)` écrit en plus de `factors_` et `f_W_` un sidecar `shape_hourly.meta.parquet` (convention `${stem}.meta.parquet` — renommé depuis `_meta.parquet` initial post-review pour éviter les collisions avec de futurs composants frères ; ou `*.meta.json` si plus simple) contenant **tous** les attributs entraînés non encore persistés : `factors_by_year_` (long format `saison, type_jour, year, heure, f_H`), `trend_per_hour_` (long format `saison, type_jour, heure, slope`), `f_W_seasonal_` (long format `saison, type_jour, f_W`), `_climatological_fill` (Series week→fill_pct), hyperparams scalaires (`sigma`, `halflife_days`, `hydro_weight_sigma`), et le `use_seasonal_hourly` flag effectif au moment du fit.
+- **D-04** : `ShapeHourly.load(path)` détecte la présence du sidecar `shape_hourly.meta.parquet` et restaure tous les attributs ; si absent (fichier legacy pré-5bis-A), reconstruit avec defaults + warning explicite (`logger.warning("Loading legacy shape_hourly.parquet without shape_hourly.meta.parquet sidecar — trend_per_hour_, factors_by_year_, f_W_seasonal_ unavailable")`).
 - **D-05** : Test de non-régression : un parquet legacy fitté avec `main` actuel se recharge sans crash et produit identique sur `apply()` pour les cas où trend/seasonal_f_W n'étaient de toute façon pas appliqués (parce que vides en mémoire post-load aujourd'hui — c'est précisément le bug).
 
 ### Feature flag — mécanisme propre
 - **D-06** : `ShapeHourly.__init__(self, ..., use_seasonal_hourly: bool | None = None)`. Si `None`, lit `os.getenv("PFC_LT_USE_SEASONAL_HOURLY_SHAPE", "0") == "1"`. Si bool explicite (`True` ou `False`), gagne sur l'env. **L'env est lu une seule fois dans `__init__`** et stocké dans `self._use_seasonal_hourly: bool`. Jamais re-lu dans `fit()`, `apply()`, `save()`.
-- **D-07** : Le flag effectif (`self._use_seasonal_hourly`) est **persisté** dans `_meta.parquet` (D-03) et **restauré** par `load()`. Empêche train/serve skew (modèle fitté avec flag=ON rechargé avec env différent en prod).
+- **D-07** : Le flag effectif (`self._use_seasonal_hourly`) est **persisté** dans `shape_hourly.meta.parquet` (D-03) et **restauré** par `load()`. Empêche train/serve skew (modèle fitté avec flag=ON rechargé avec env différent en prod).
 - **D-08** : Pour 5bis-A, le flag existe mais **ne gate aucun comportement numérique**. Tests assertent `ShapeHourly(use_seasonal_hourly=True).fit(...).apply(...)` ≡ `ShapeHourly(use_seasonal_hourly=False).fit(...).apply(...)` à `numpy.allclose(atol=1e-12)` près. C'est précisément ce qui permettra à 5bis-B d'ajouter des changements gated et de prouver le rollback bit-pour-bit.
 - **D-09** : Le flag est documenté avec une **date de flip prévue** dans `PROJECT.md` (T+1 release cycle max, ~30 jours après le merge de 5bis-B), pour éviter la dette de flag permanente.
 
@@ -102,7 +104,7 @@ Concrètement :
 ## Existing Code Insights
 
 ### Reusable Assets
-- `ShapeHourly.save/load` à `shape_hourly.py:308-343` — pattern parquet long-format déjà en place pour `factors_` et `f_W_`. Le sidecar `_meta.parquet` réutilise la même convention (`Path(path).with_name("_meta.parquet")`).
+- `ShapeHourly.save/load` à `shape_hourly.py:308-343` — pattern parquet long-format déjà en place pour `factors_` et `f_W_`. Le sidecar `shape_hourly.meta.parquet` réutilise la même convention (`Path(path).with_name(Path(path).stem + ".meta.parquet")`, suffixe `.meta.parquet` dérivé du stem principal — renommé depuis `_meta.parquet` initial post-review pour éviter les collisions futures).
 - `f_W_seasonal_` à `shape_hourly.py:67` — déjà calculé dans `_fit_f_W` (ligne 456-489), mais **non sauvegardé** aujourd'hui. 5bis-A le persiste sans changer le calcul.
 - `_climatological_fill` à `shape_hourly.py:579` — déjà calculé dans `_apply_hydro_analogue_weights`, mais (a) jamais utilisé pour le weighting historique (bug 5bis-B), (b) non sauvegardé. 5bis-A le persiste, 5bis-B fixera l'usage.
 - Pattern `try/except` autour de `self.sh.apply()` à `assembler.py:284` — sera remplacé par capability check ; signal qu'il existe un autre implémenteur (`ShapeHourlyMLP`) avec une signature différente. Vérifier `pfc_shaping/lt/model/shape_hourly_mlp.py` pour le contract.
@@ -110,7 +112,7 @@ Concrètement :
 ### Established Patterns
 - **Feature flag via env var** : convention déjà en place dans `pfc_shaping` (e.g., probablement quelque part dans `assembler.py` ou `pfc_flavors.py` — à confirmer en planning). Si oui, suivre la même convention pour cohérence.
 - **Backward-compat shim** : `pfc_shaping.model.*` émet `DeprecationWarning`. 5bis-A doit préserver ce shim.
-- **Long-format parquet** : `factors_` et `f_W_` sont déjà écrits en long format. `_meta.parquet` suit (chaque attribut a son propre groupe de lignes typées).
+- **Long-format parquet** : `factors_` et `f_W_` sont déjà écrits en long format. `shape_hourly.meta.parquet` suit (chaque attribut a son propre groupe de lignes typées).
 - **Tests synthétiques avec calendar_df** : `tests/test_long_term_branch.py` et `tests/test_country_tz_plumbing.py` exhibent le pattern de fabrication d'un `calendar_df` enrichi sans toucher au vrai parquet EPEX. Réutiliser.
 
 ### Integration Points

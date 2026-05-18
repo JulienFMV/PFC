@@ -13,18 +13,18 @@ requirements: []
 must_haves:
   truths:
     - "A reproducible script produces tests/fixtures/baseline_pfc_seed42.parquet from the current code state (== main@28dfd65 for pfc_shaping/* code per `git diff --stat 28dfd65..HEAD -- pfc_shaping/ tests/` = empty)."
-    - "Re-running tests/fixtures/_generate_baseline.py on the same git SHA produces a parquet with `pandas.testing.assert_frame_equal(reread, baseline, atol=0)` (byte-equivalent on numeric columns at default tolerance)."
-    - "The baseline parquet is committed in a SEPARATE commit AHEAD of any 5bis-A logic commits (Plans 02-05)."
+    - "Re-running tests/fixtures/_generate_baseline.py on the same git SHA produces a parquet that is numerically identical to the prior run: `pandas.testing.assert_frame_equal(reread, baseline, check_exact=False, atol=1e-12, rtol=0)` together with identical columns, dtypes, index, and sort order."
+    - "The baseline parquet is committed in a SEPARATE commit AHEAD of any 5bis-A logic commits (Plans 02-05). The commit that introduces `tests/fixtures/baseline_pfc_seed42.parquet` MUST be a (transitive) ancestor of any commit modifying `pfc_shaping/lt/model/shape_hourly.py` or `pfc_shaping/lt/model/assembler.py` within Phase 5bis-A (parent-of-commit invariant, NOT a SHA pin or log-count check)."
     - "The script uses only synthetic fixtures (no dependency on data/*.xlsx, no dependency on H:\\ HFC OMPEX dir)."
   artifacts:
     - path: "tests/fixtures/_generate_baseline.py"
       provides: "Deterministic baseline generator (seed=42, synthetic forwards, Cal'27 1-month horizon)"
       min_lines: 60
     - path: "tests/fixtures/baseline_pfc_seed42.parquet"
-      provides: "Frozen PFC build reference for bit-for-bit regression testing"
+      provides: "Frozen PFC build reference for numerical-equality regression testing (numerically identical, not byte-equivalent)"
       contains: "columns price_shape, f_S, f_W, f_H, f_Q, f_WV"
     - path: "tests/fixtures/README.md"
-      provides: "Reproducibility instructions + git SHA pin"
+      provides: "Reproducibility instructions + git SHA pin + regeneration policy"
       contains: "SHA"
   key_links:
     - from: "tests/fixtures/_generate_baseline.py"
@@ -38,9 +38,9 @@ must_haves:
 ---
 
 <objective>
-Generate and commit the frozen baseline snapshot `tests/fixtures/baseline_pfc_seed42.parquet` that serves as the bit-for-bit regression reference for the entire Phase 5bis-A no-op refactor and all subsequent shape phases (5bis-B, 5, etc.).
+Generate and commit the frozen baseline snapshot `tests/fixtures/baseline_pfc_seed42.parquet` that serves as the numerical-equality regression reference for the entire Phase 5bis-A no-op refactor and all subsequent shape phases (5bis-B, 5, etc.).
 
-Purpose: Without a frozen baseline produced from the CURRENT code state (HEAD ≡ main@28dfd65 for pfc_shaping/* per `git diff --stat 28dfd65..HEAD -- pfc_shaping/ tests/` = empty), the "no-op refactor" claim of Phase 5bis-A is unfalsifiable. This plan is intentionally a SEPARATE commit AHEAD of any logic change so the baseline is unambiguously sourced from pre-refactor code.
+Purpose: Without a frozen baseline produced from the CURRENT code state (HEAD ≡ main@28dfd65 for pfc_shaping/* per `git diff --stat 28dfd65..HEAD -- pfc_shaping/ tests/` = empty), the "no-op refactor" claim of Phase 5bis-A is unfalsifiable. This plan is intentionally a SEPARATE commit AHEAD of any logic change so the baseline is unambiguously sourced from pre-refactor code. The contract is "numerically identical" (not parquet byte-equivalence, which is not guaranteed across pandas/pyarrow/python versions).
 
 Output: `tests/fixtures/_generate_baseline.py` (reproducible generator), `tests/fixtures/baseline_pfc_seed42.parquet` (frozen reference), and `tests/fixtures/README.md` (reproducibility instructions + pinned git SHA).
 </objective>
@@ -118,6 +118,7 @@ Existing synthetic test fabrication pattern: see tests/test_country_tz_plumbing.
     - The git SHA the script is intended to be run against (placeholder `HEAD == 28dfd65 for pfc_shaping/* per `git diff --stat 28dfd65..HEAD -- pfc_shaping/ tests/` = empty`).
     - The exact CLI to regenerate: `python tests/fixtures/_generate_baseline.py`.
     - A warning that this file is INPUT-ONLY for the regression test in plan 05B-05; modifying behavior of pfc_shaping requires explicitly regenerating + committing both files in a single PR with justification.
+    - An explicit note that the contract is "numerically identical" (assert_frame_equal with `check_exact=False, atol=1e-12, rtol=0` + identical columns / dtypes / index / sort order), NOT parquet byte-equivalence (which is not guaranteed across pandas/pyarrow/python versions).
 
     If `PFCAssembler.__init__` requires components that cannot be safely instantiated as stubs (e.g. needs a fitted `ShapeIntraday`), fit minimal versions on the same synthetic EPEX using their default ctor. Document any such workaround in the script's module docstring. NEVER call into real data files. NEVER reach for `H:\` or `data/*.xlsx`.
   </action>
@@ -129,10 +130,10 @@ Existing synthetic test fabrication pattern: see tests/test_country_tz_plumbing.
     - `python tests/fixtures/_generate_baseline.py` exits 0 (no exception).
     - `python tests/fixtures/_generate_baseline.py` printed line contains substring `Wrote baseline: rows=`.
     - `python -c "import pandas as pd; df=pd.read_parquet('tests/fixtures/baseline_pfc_seed42.parquet'); assert {'price_shape','f_S','f_W','f_H','f_Q','f_WV'}.issubset(df.columns), df.columns.tolist()"` exits 0.
-    - Re-running the script twice in a row produces identical parquet contents: `python tests/fixtures/_generate_baseline.py && cp tests/fixtures/baseline_pfc_seed42.parquet /tmp/baseline_a.parquet && python tests/fixtures/_generate_baseline.py && python -c "import pandas as pd; a=pd.read_parquet('/tmp/baseline_a.parquet'); b=pd.read_parquet('tests/fixtures/baseline_pfc_seed42.parquet'); pd.testing.assert_frame_equal(a, b, check_exact=False, atol=1e-12)"` exits 0.
+    - Re-running the script twice in a row produces numerically identical parquet contents (NOT byte-equivalent — the contract is numerical equality with identical schema): `python tests/fixtures/_generate_baseline.py && cp tests/fixtures/baseline_pfc_seed42.parquet /tmp/baseline_a.parquet && python tests/fixtures/_generate_baseline.py && python -c "import pandas as pd; a=pd.read_parquet('/tmp/baseline_a.parquet'); b=pd.read_parquet('tests/fixtures/baseline_pfc_seed42.parquet'); pd.testing.assert_frame_equal(a, b, check_exact=False, atol=1e-12, rtol=0); assert list(a.columns) == list(b.columns); assert a.dtypes.to_dict() == b.dtypes.to_dict(); assert a.index.equals(b.index)"` exits 0.
     - `grep -L "data/.*\\.xlsx\|H:\\\\" tests/fixtures/_generate_baseline.py` exits 0 (no real-data path references).
   </acceptance_criteria>
-  <done>Script committed, runs deterministically, no real-data dependency.</done>
+  <done>Script committed, runs deterministically (numerically identical across re-runs at atol=1e-12, rtol=0 with identical columns/dtypes/index), no real-data dependency.</done>
 </task>
 
 <task type="auto">
@@ -140,48 +141,59 @@ Existing synthetic test fabrication pattern: see tests/test_country_tz_plumbing.
   <files>tests/fixtures/baseline_pfc_seed42.parquet, tests/fixtures/README.md</files>
   <read_first>
     - tests/fixtures/_generate_baseline.py (the script just produced in Task 1)
-    - .planning/phases/05B-shape-hourly-infrastructure-flag-no-op-refactor/05B-CONTEXT.md (D-11 — test contract `assert_frame_equal(build(flag=OFF), baseline, atol=1e-10)`)
+    - .planning/phases/05B-shape-hourly-infrastructure-flag-no-op-refactor/05B-CONTEXT.md (D-11 — test contract specifies numerical-equality regression for the 5bis-A no-op proof)
   </read_first>
   <action>
     Execute `python tests/fixtures/_generate_baseline.py` once to produce `tests/fixtures/baseline_pfc_seed42.parquet`. Then write `tests/fixtures/README.md` documenting:
 
-    1. **Purpose**: frozen reference for `test_baseline_regression` (added in plan 05B-05) — `assert_frame_equal(build(flag=OFF), baseline, atol=1e-10)`.
+    1. **Purpose**: frozen reference for `test_baseline_regression` (added in plan 05B-05). The regression contract is "numerically identical" (`assert_frame_equal(build(flag=OFF), baseline, check_exact=False, atol=1e-12, rtol=0)` + identical columns/dtypes/index/sort order). The test parametrization will try the tighter `atol=1e-12, rtol=0` first; only if pyarrow/pandas patch-version drift makes this unreliable in CI may it fall back to `atol=1e-10`, in which case the fallback MUST be documented inline in the test.
     2. **Source SHA**: the git SHA of HEAD at the time of generation (insert via `git rev-parse HEAD` output — must equal `e8a3012` or descendant on branch `claude/clean-lt-ct-integration`; `git diff --stat 28dfd65..HEAD -- pfc_shaping/ tests/` MUST be empty, confirming code equivalence to `main@28dfd65`).
     3. **Regeneration policy**: this fixture MUST NOT be regenerated lightly. Any PR that modifies its contents must include a justification block in the PR description and bump a corresponding annotation in this README.
     4. **Regeneration command**: `python tests/fixtures/_generate_baseline.py`.
     5. **Schema**: list the parquet columns observed (output of `pd.read_parquet(...).columns.tolist()` and `.dtypes`).
+    6. **Equivalence contract**: explicitly state that the contract is numerical (not byte-level) — parquet byte-equivalence is not guaranteed across pandas/pyarrow/python versions, but numerical content + schema MUST be stable.
 
     Do NOT use the `Bash(cat << EOF)` heredoc pattern — use the Write tool only.
 
-    Stage and commit these THREE files (`_generate_baseline.py`, `baseline_pfc_seed42.parquet`, `README.md`) as a SINGLE commit BEFORE any code changes from plans 05B-02 through 05B-05. Commit message: `test(05B-01): freeze baseline_pfc_seed42 from main@28dfd65 for no-op refactor regression`. This commit must precede all subsequent 5bis-A commits in `git log`.
+    Stage and commit these THREE files (`_generate_baseline.py`, `baseline_pfc_seed42.parquet`, `README.md`) as a SINGLE commit BEFORE any code changes from plans 05B-02 through 05B-05. Commit message: `test(05B-01): freeze baseline_pfc_seed42 from main@28dfd65 for no-op refactor regression`. This commit must be the parent (or a transitive ancestor) of every subsequent 5bis-A commit that touches `pfc_shaping/lt/model/shape_hourly.py` or `pfc_shaping/lt/model/assembler.py`.
   </action>
   <verify>
-    <automated>test -f tests/fixtures/baseline_pfc_seed42.parquet && test -f tests/fixtures/README.md && grep -q "SHA" tests/fixtures/README.md && grep -q "_generate_baseline.py" tests/fixtures/README.md</automated>
+    <automated>test -f tests/fixtures/baseline_pfc_seed42.parquet && test -f tests/fixtures/README.md && grep -q "SHA" tests/fixtures/README.md && grep -q "_generate_baseline.py" tests/fixtures/README.md && grep -q "numerically identical" tests/fixtures/README.md</automated>
   </verify>
   <acceptance_criteria>
-    - `git log --oneline -1 tests/fixtures/baseline_pfc_seed42.parquet | grep -q "05B-01"` exits 0 (file is in a 05B-01 commit).
-    - `git log --oneline tests/fixtures/baseline_pfc_seed42.parquet | wc -l` reports exactly 1 (file is introduced in a single commit, never amended).
+    - The commit that introduces `tests/fixtures/baseline_pfc_seed42.parquet` MUST be an ancestor of any commit modifying `pfc_shaping/lt/model/shape_hourly.py` OR `pfc_shaping/lt/model/assembler.py` within Phase 5bis-A. Concretely, the following must exit 0 once Plans 02-05 have been committed (run this check at end-of-phase, not within Plan 01 itself):
+      ```
+      BASELINE_COMMIT=$(git log --diff-filter=A --format=%H -- tests/fixtures/baseline_pfc_seed42.parquet | head -1)
+      for f in pfc_shaping/lt/model/shape_hourly.py pfc_shaping/lt/model/assembler.py; do
+        for c in $(git log --format=%H -- "$f" | grep -B 100 "$BASELINE_COMMIT" | grep -v "$BASELINE_COMMIT"); do
+          git merge-base --is-ancestor "$BASELINE_COMMIT" "$c" || { echo "BASELINE not ancestor of $c (file $f)"; exit 1; }
+        done
+      done
+      ```
+      (Within Plan 01 itself — before Plans 02-05 land — the equivalent is simply: `git log --diff-filter=A --format=%H -- tests/fixtures/baseline_pfc_seed42.parquet | head -1` exits 0 and prints a non-empty SHA, and the working tree is clean of any pfc_shaping/* modifications relative to that commit.)
+    - Do NOT use brittle assertions such as `git log <file> | wc -l == 1` or a pinned SHA literal — those break under squash-merge, worktrees, and amend flows.
     - `python -c "import pandas as pd; df=pd.read_parquet('tests/fixtures/baseline_pfc_seed42.parquet'); print(df.shape, df.columns.tolist())"` exits 0 and prints a row count > 2000 (≥ 31 days × 96 quarters/day).
     - `grep -q "main@28dfd65\|28dfd65" tests/fixtures/README.md` exits 0.
+    - `grep -q "numerically identical" tests/fixtures/README.md` exits 0.
     - `pytest tests/ -x` exits 0 reporting `142 passed, 4 skipped` (or unchanged from baseline — Plan 01 adds NO test code, only fixtures).
   </acceptance_criteria>
-  <done>Baseline parquet + README committed as a single isolated commit ahead of the rest of 5bis-A.</done>
+  <done>Baseline parquet + README committed as a single isolated commit that becomes the parent-of (transitive ancestor of) all subsequent 5bis-A commits touching `shape_hourly.py` or `assembler.py`.</done>
 </task>
 
 </tasks>
 
 <verification>
 After completion:
-- `git log --oneline tests/fixtures/baseline_pfc_seed42.parquet` shows exactly one entry, before any commit touching `pfc_shaping/lt/model/shape_hourly.py` for plans 05B-02..05B-05.
+- The commit introducing `tests/fixtures/baseline_pfc_seed42.parquet` is an ancestor of every commit touching `pfc_shaping/lt/model/shape_hourly.py` or `pfc_shaping/lt/model/assembler.py` in Phase 5bis-A (parent-of-commit invariant).
 - `pytest tests/ -x` exits 0 with `142 passed, 4 skipped`.
-- The script can be re-run to verify byte-equivalence (idempotency check).
+- The script can be re-run to verify numerical equivalence (numerically identical across re-runs at `atol=1e-12, rtol=0` with identical columns/dtypes/index — NOT parquet byte equivalence).
 </verification>
 
 <success_criteria>
 - `tests/fixtures/_generate_baseline.py` is deterministic, synthetic-only, < 200 lines.
 - `tests/fixtures/baseline_pfc_seed42.parquet` exists with PFC columns (`price_shape`, `f_S`, `f_W`, `f_H`, `f_Q`, `f_WV` at minimum).
-- `tests/fixtures/README.md` documents source SHA + regeneration policy.
-- Three files committed in one atomic commit; subsequent plan commits build ON this commit.
+- `tests/fixtures/README.md` documents source SHA + regeneration policy + numerical-equality contract.
+- Three files committed in one atomic commit; subsequent plan commits build ON this commit (it becomes a transitive ancestor of every Plan 02..05 code commit).
 - Suite remains green (142 passed, 4 skipped — no test code added yet).
 </success_criteria>
 

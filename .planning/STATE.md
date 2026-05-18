@@ -4,8 +4,8 @@ milestone: v1.0
 milestone_name: milestone
 status: executing
 stopped_at: État frais sur la branche `claude/clean-lt-ct-integration` @ `28dfd65`.
-last_updated: "2026-05-18T19:14:45.560Z"
-last_activity: 2026-05-18 -- Phase 5bis-A planning complete
+last_updated: "2026-05-18T19:45:33.664Z"
+last_activity: 2026-05-18 -- Phase 05B planning complete
 progress:
   total_phases: 4
   completed_phases: 0
@@ -30,7 +30,7 @@ avec ≥ 1.5 €/MWh de MAE-bloc en moins que HFC OMPEX.
 Phase: 5bis-A of 12 (split de 5bis en 5bis-A infra + 5bis-B bowl, post panel d'experts 2026-05-18)
 Plan: 0 of TBD (à générer via `/gsd:plan-phase 5bis-A`)
 Status: Ready to execute
-Last activity: 2026-05-18 -- Phase 5bis-A planning complete
+Last activity: 2026-05-18 -- Phase 05B planning complete
 
 Progress: [██████░░░░] 60% (7 phases done sur ~11)
 

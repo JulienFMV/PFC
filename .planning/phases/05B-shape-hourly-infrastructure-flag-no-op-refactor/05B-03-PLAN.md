@@ -15,12 +15,12 @@ must_haves:
     - "`ShapeHourly(use_seasonal_hourly=True)` overrides env var: even when `PFC_LT_USE_SEASONAL_HOURLY_SHAPE=0` is set in `os.environ`, `self._use_seasonal_hourly is True` (constructor argument wins per D-06)."
     - "`ShapeHourly(use_seasonal_hourly=None)` reads `os.getenv('PFC_LT_USE_SEASONAL_HOURLY_SHAPE', '0')` exactly once in `__init__`, then stores the resolved bool in `self._use_seasonal_hourly`. The env var is NEVER re-read in `fit()`, `apply()`, or `save()`."
     - "Mutating `os.environ['PFC_LT_USE_SEASONAL_HOURLY_SHAPE']` AFTER construction does not change `self._use_seasonal_hourly` (freeze-at-init, per D-06)."
-    - "`ShapeHourly.save()` persists `_use_seasonal_hourly` into the `_meta.parquet` `hyperparams` JSON cell."
-    - "`ShapeHourly.load(path)` restores `_use_seasonal_hourly` from `_meta.parquet`; the loaded value WINS over the current env var (parquet wins, per D-07)."
-    - "In Phase 5bis-A, `_use_seasonal_hourly` is set but NEVER read by any code path that would change numerical output. Flag ON and flag OFF must produce numpy.allclose(atol=1e-12) outputs from `assembler.build` (verified by plan 05B-05's parametrized regression test)."
+    - "`ShapeHourly.save()` persists `_use_seasonal_hourly` into the `${stem}.meta.parquet` sidecar (concretely `shape_hourly.meta.parquet`) via the `hyperparams` JSON cell."
+    - "`ShapeHourly.load(path)` restores `_use_seasonal_hourly` from `${stem}.meta.parquet`; the loaded value WINS over the current env var (parquet wins, per D-07)."
+    - "In Phase 5bis-A, `_use_seasonal_hourly` is set but NEVER read by any code path that would change numerical output. Flag ON and flag OFF must produce numerically identical outputs from `assembler.build` — verified by Plan 05's parametrized regression test using `assert_frame_equal(..., check_exact=False, atol=1e-12, rtol=0)`."
   artifacts:
     - path: "pfc_shaping/lt/model/shape_hourly.py"
-      provides: "Feature flag `_use_seasonal_hourly` accepted, frozen, persisted, restored — gates ZERO behavior in 5bis-A"
+      provides: "Feature flag `_use_seasonal_hourly` accepted, frozen, persisted (via `${stem}.meta.parquet`), restored — gates ZERO behavior in 5bis-A"
       contains: "use_seasonal_hourly"
   key_links:
     - from: "pfc_shaping/lt/model/shape_hourly.py::__init__"
@@ -28,7 +28,7 @@ must_haves:
       via: "single read at __init__ time"
       pattern: "PFC_LT_USE_SEASONAL_HOURLY_SHAPE"
     - from: "pfc_shaping/lt/model/shape_hourly.py::save"
-      to: "_meta.parquet hyperparams JSON cell"
+      to: "${stem}.meta.parquet hyperparams JSON cell"
       via: "json.dumps adds 'use_seasonal_hourly' key"
       pattern: "use_seasonal_hourly"
     - from: "pfc_shaping/lt/model/shape_hourly.py::load"
@@ -38,11 +38,11 @@ must_haves:
 ---
 
 <objective>
-Introduce the `PFC_LT_USE_SEASONAL_HOURLY_SHAPE` feature flag with **correct mechanics**: constructor argument + env-var default, frozen at `__init__`, persisted into `_meta.parquet` (extending the sidecar from plan 05B-02), restored on `load()`. In Phase 5bis-A the flag exists in memory and on disk but gates **zero behavior** — flag ON ≡ flag OFF numerically.
+Introduce the `PFC_LT_USE_SEASONAL_HOURLY_SHAPE` feature flag with **correct mechanics**: constructor argument + env-var default, frozen at `__init__`, persisted into the `${stem}.meta.parquet` sidecar (concretely `shape_hourly.meta.parquet`) — extending the sidecar introduced in plan 05B-02 — restored on `load()`. In Phase 5bis-A the flag exists in memory and on disk but gates **zero behavior** — flag ON ≡ flag OFF numerically.
 
 Purpose: SHP-04 requires an env-flag rollback path for the seasonal-hourly shape work. Phase 5bis-B will add the behavioral branches gated by this flag. The non-trivial mechanics (freeze-at-init prevents test-leakage and prod env mutation mid-process; persistence prevents train/serve skew where a model fitted with `flag=ON` reloads in a prod env with `flag=OFF`) MUST exist BEFORE any gated behavior so the rollback contract is testable.
 
-Output: `pfc_shaping/lt/model/shape_hourly.py` with new constructor arg `use_seasonal_hourly`, attribute `self._use_seasonal_hourly`, and parquet persistence/restoration via the existing `_meta.parquet` sidecar.
+Output: `pfc_shaping/lt/model/shape_hourly.py` with new constructor arg `use_seasonal_hourly`, attribute `self._use_seasonal_hourly`, and parquet persistence/restoration via the existing `${stem}.meta.parquet` sidecar.
 </objective>
 
 <execution_context>
@@ -74,7 +74,7 @@ Env-var name (fixed, do not change): `PFC_LT_USE_SEASONAL_HOURLY_SHAPE`
 - `"0"` (or unset) → False (treat unset as default-off — env-default semantics per D-06)
 - Any other value → log warning, treat as False.
 
-`_meta.parquet` hyperparams JSON schema extended (from plan 05B-02 baseline):
+The `${stem}.meta.parquet` hyperparams JSON schema is extended (from plan 05B-02 baseline):
 ```
 {"sigma": float, "halflife_days": float, "hydro_weight_sigma": float, "use_seasonal_hourly": bool}
 ```
@@ -96,7 +96,7 @@ All call sites use kwargs/no-arg → the new optional `use_seasonal_hourly` kwar
   <name>Task 1: Add `use_seasonal_hourly` constructor arg with env-default + freeze-at-init</name>
   <files>pfc_shaping/lt/model/shape_hourly.py</files>
   <read_first>
-    - pfc_shaping/lt/model/shape_hourly.py (UPDATED file from plan 05B-02 — note the meta sidecar wiring and `_META_SIDECAR_FILENAME` constant)
+    - pfc_shaping/lt/model/shape_hourly.py (UPDATED file from plan 05B-02 — note the meta sidecar wiring with `_META_SIDECAR_SUFFIX = ".meta.parquet"` constant and the `_meta_path()` helper)
     - .planning/phases/05B-shape-hourly-infrastructure-flag-no-op-refactor/05B-CONTEXT.md (D-06, D-07, D-08 — exact semantics: constructor wins, freeze-at-init, persist-restore-wins)
     - pfc_shaping/pipeline/autoresearch.py:230-240, pfc_shaping/pipeline/rolling_update.py:360-370, pfc_shaping/pipeline/production_phases.py:265-275 (call-site sanity: confirm new kwarg is additive)
   </read_first>
@@ -114,14 +114,14 @@ All call sites use kwargs/no-arg → the new optional `use_seasonal_hourly` kwar
     In `pfc_shaping/lt/model/shape_hourly.py`:
 
     1. Add `import os` to the module header (alongside `import json` added in plan 05B-02 and existing `import logging`).
-    2. Add a module-level constant near the top, alongside `_META_SIDECAR_FILENAME`:
+    2. Add a module-level constant near the top, alongside `_META_SIDECAR_SUFFIX`:
        - `_FLAG_ENV_VAR = "PFC_LT_USE_SEASONAL_HOURLY_SHAPE"`
     3. Add a module-level helper (private) `def _resolve_flag(explicit: bool | None) -> bool:` that implements the precedence rule:
        - If `explicit is not None`: return `bool(explicit)`.
        - Otherwise read `raw = os.getenv(_FLAG_ENV_VAR, "0")`.
        - If `raw == "1"`: return True. If `raw == "0"`: return False. Else: `logger.warning("Invalid value %r for %s; treating as '0' (default off)", raw, _FLAG_ENV_VAR)` and return False.
     4. Extend `ShapeHourly.__init__` signature to add a new LAST kwarg: `use_seasonal_hourly: bool | None = None`. Inside `__init__`, set `self._use_seasonal_hourly: bool = _resolve_flag(use_seasonal_hourly)` AFTER all existing attribute assignments. This single line is the ONLY place that reads the env var.
-    5. Add a class-level docstring update or inline comment near the new attribute clarifying: "Resolved once at __init__ and frozen. Use the constructor kwarg or set env var BEFORE calling __init__. Persisted into _meta.parquet by save() and overwritten by load() (parquet wins). In Phase 5bis-A this flag gates NO behavior; reserved for Phase 5bis-B."
+    5. Add a class-level docstring update or inline comment near the new attribute clarifying: "Resolved once at __init__ and frozen. Use the constructor kwarg or set env var BEFORE calling __init__. Persisted into the ${stem}.meta.parquet sidecar by save() and overwritten by load() (parquet wins). In Phase 5bis-A this flag gates NO behavior; reserved for Phase 5bis-B."
 
     Do NOT read the env var anywhere else in this file. Do NOT add any branch in `fit()`, `apply()`, `get()`, `get_for_horizon()`, `_fit_trends()`, etc. — the flag is purely declarative in 5bis-A.
 
@@ -165,18 +165,18 @@ print('OK')
 </task>
 
 <task type="auto" tdd="true">
-  <name>Task 2: Persist `_use_seasonal_hourly` in `_meta.parquet` + restore in `load()` (parquet wins over env)</name>
+  <name>Task 2: Persist `_use_seasonal_hourly` in `${stem}.meta.parquet` + restore in `load()` (parquet wins over env)</name>
   <files>pfc_shaping/lt/model/shape_hourly.py</files>
   <read_first>
-    - pfc_shaping/lt/model/shape_hourly.py (UPDATED file from Task 1 — note `_resolve_flag`, `_FLAG_ENV_VAR`, and the existing `_meta.parquet` write/read added in plan 05B-02 at the `hyperparams` JSON row)
+    - pfc_shaping/lt/model/shape_hourly.py (UPDATED file from Task 1 — note `_resolve_flag`, `_FLAG_ENV_VAR`, and the existing `${stem}.meta.parquet` write/read added in plan 05B-02 at the `hyperparams` JSON row, plus the `_meta_path()` helper)
     - .planning/phases/05B-shape-hourly-infrastructure-flag-no-op-refactor/05B-CONTEXT.md (D-07 — train/serve skew prevention: parquet wins over env)
   </read_first>
   <behavior>
-    - Test 1: After `sh = ShapeHourly(use_seasonal_hourly=True); sh.save("/tmp/sh.parquet")`, `pd.read_parquet("/tmp/_meta.parquet")` contains a row `attr == "hyperparams"` whose `value` is a JSON string whose parsed object has `"use_seasonal_hourly": true`.
+    - Test 1: After `sh = ShapeHourly(use_seasonal_hourly=True); sh.save("/tmp/sh.parquet")`, `pd.read_parquet("/tmp/sh.meta.parquet")` contains a row `attr == "hyperparams"` whose `value` is a JSON string whose parsed object has `"use_seasonal_hourly": true`.
     - Test 2: `sh2 = ShapeHourly.load("/tmp/sh.parquet")` with `os.environ['PFC_LT_USE_SEASONAL_HOURLY_SHAPE']="0"` set BEFORE the `load` call yields `sh2._use_seasonal_hourly is True` (parquet wins over env).
     - Test 3: Reverse direction — fit and save with `use_seasonal_hourly=False`, then load with `PFC_LT_USE_SEASONAL_HOURLY_SHAPE="1"` set → `sh2._use_seasonal_hourly is False`.
-    - Test 4: Loading a legacy parquet (no `_meta.parquet` sidecar) falls back to constructor-default behavior (env or False); the per-Task-1 warning is still emitted, AND `sh._use_seasonal_hourly` matches `_resolve_flag(None)` at load time.
-    - Test 5: If `_meta.parquet` exists but its `hyperparams` row is missing the `use_seasonal_hourly` key (e.g. parquet written by plan 05B-02 only, BEFORE plan 05B-03 was merged), `load()` MUST fall back to `_resolve_flag(None)` for `_use_seasonal_hourly` without raising. Other hyperparams in the JSON dict still load normally.
+    - Test 4: Loading a legacy parquet (no `${stem}.meta.parquet` sidecar) falls back to constructor-default behavior (env or False); the per-Task-1 warning is still emitted, AND `sh._use_seasonal_hourly` matches `_resolve_flag(None)` at load time.
+    - Test 5: If the meta sidecar exists but its `hyperparams` row is missing the `use_seasonal_hourly` key (e.g. parquet written by plan 05B-02 only, BEFORE plan 05B-03 was merged), `load()` MUST fall back to `_resolve_flag(None)` for `_use_seasonal_hourly` without raising. Other hyperparams in the JSON dict still load normally.
   </behavior>
   <action>
     In `pfc_shaping/lt/model/shape_hourly.py`:
@@ -203,7 +203,7 @@ sh = ShapeHourly(use_seasonal_hourly=True)
 with tempfile.TemporaryDirectory() as d:
     p = os.path.join(d, 'shape_hourly.parquet')
     sh.save(p)
-    meta = pd.read_parquet(os.path.join(d, '_meta.parquet'))
+    meta = pd.read_parquet(os.path.join(d, 'shape_hourly.meta.parquet'))
     hp_row = meta[meta['attr'] == 'hyperparams'].iloc[0]
     hp = json.loads(hp_row['value'])
     assert hp.get('use_seasonal_hourly') is True, hp
@@ -228,7 +228,7 @@ print('OK')
     - `grep -q "parquet wins over env" pfc_shaping/lt/model/shape_hourly.py` exits 0 (inline comment present per D-07 traceability).
     - `pytest tests/ -x` exits 0 reporting `142 passed, 4 skipped` (no behavior change, no new tests yet — those live in plan 05B-05).
   </acceptance_criteria>
-  <done>Flag persists across save/load; reload from parquet overrides any environment variable.</done>
+  <done>Flag persists across save/load via `shape_hourly.meta.parquet`; reload from parquet overrides any environment variable.</done>
 </task>
 
 </tasks>
@@ -236,11 +236,12 @@ print('OK')
 <verification>
 - `pytest tests/ -x` exits 0 with `142 passed, 4 skipped`.
 - Constructor + env + parquet precedence verified above.
-- No numerical behavior change to `assembler.build` (verified by plan 05B-05 parametrized regression test).
+- Sidecar file is named `shape_hourly.meta.parquet` (the `${stem}.meta.parquet` convention from Plan 05B-02).
+- No numerical behavior change to `assembler.build` (verified by plan 05B-05 parametrized regression test using `assert_frame_equal(..., check_exact=False, atol=1e-12, rtol=0)`).
 </verification>
 
 <success_criteria>
-- SHP-04 satisfied: `PFC_LT_USE_SEASONAL_HOURLY_SHAPE` flag operational, constructor + env-default, frozen at __init__, persisted in parquet.
+- SHP-04 satisfied: `PFC_LT_USE_SEASONAL_HOURLY_SHAPE` flag operational, constructor + env-default, frozen at __init__, persisted in the `${stem}.meta.parquet` sidecar.
 - 142 existing tests remain green.
 - In 5bis-A: flag exists but ZERO numerical behavior gated by it. Reserved for 5bis-B.
 </success_criteria>

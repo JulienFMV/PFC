@@ -19,13 +19,14 @@ must_haves:
     - "Iterating `factors_3d_` yields exactly `len(factors_) * 24` keys, each a 3-tuple."
     - "`assembler.py:284` no longer uses `try/except TypeError` around `self.sh.apply(...)`. The decision of whether to pass `outages_forecast` is made via an explicit signature inspection on `type(self.sh).apply` (per D-13)."
     - "The capability check produces IDENTICAL routing decisions vs the previous `try/except TypeError`: when `self.sh` is a `ShapeHourly`, `outages_forecast` is NOT passed; when `self.sh` is a `ShapeHourlyMLP`, it IS passed."
-    - "This plan changes NO numerical output of `assembler.build` (verified by plan 05B-05 baseline regression)."
+    - "On the first `build()` call (or at `__init__`, depending on implementation), the assembler emits exactly one `logger.info` line naming the detected `self.sh` class and whether `outages_forecast` is being passed — useful for production audits."
+    - "This plan changes NO numerical output of `assembler.build` (verified by plan 05B-05 baseline regression using `assert_frame_equal(..., check_exact=False, atol=1e-12, rtol=0)`)."
   artifacts:
     - path: "pfc_shaping/lt/model/shape_hourly.py"
       provides: "Read-only 3D view `factors_3d_` on top of nested `factors_` dict"
       contains: "factors_3d_"
     - path: "pfc_shaping/lt/model/assembler.py"
-      provides: "Explicit capability check on `self.sh.apply` signature at line ~284 (was try/except TypeError)"
+      provides: "Explicit capability check on `self.sh.apply` signature at line ~284 (was try/except TypeError) + one-shot logger.info naming the detected implementation"
       contains: "inspect.signature"
   key_links:
     - from: "pfc_shaping/lt/model/shape_hourly.py::ShapeHourly.factors_3d_"
@@ -43,11 +44,11 @@ Two surgical changes:
 
 1. **SHP-01 literal satisfaction**: Add a read-only 3D view `factors_3d_` to `ShapeHourly` so the requirement `factors_ indexed by (saison, type_jour, hour)` is satisfied without changing on-disk storage or the smoothing pipeline. Per D-01..D-02, the internal `dict[(saison, type_jour)] → array[24]` representation is preserved (smoothing is intra-cell, normalization is intra-cell — the array IS the natural unit). The 3D view is purely a Mapping facade.
 
-2. **Replace `try/except TypeError` with explicit capability check** at `assembler.py:284` (per D-13). The current code masks a real `TypeError` if it ever leaks from a bug inside `ShapeHourly.apply()` — a brittle pattern. Replace with `inspect.signature(...)` introspection on `type(self.sh).apply` to decide whether to forward `outages_forecast`.
+2. **Replace `try/except TypeError` with explicit capability check** at `assembler.py:284` (per D-13). The current code masks a real `TypeError` if it ever leaks from a bug inside `ShapeHourly.apply()` — a brittle pattern. Replace with `inspect.signature(...)` introspection on `type(self.sh).apply` to decide whether to forward `outages_forecast`. Emit a one-shot `logger.info` naming the detected implementation for production audit visibility.
 
 Purpose: SHP-01 must be literally checkable in tests. The capability check removes a known bug-masking pattern flagged in audit. Both changes are zero-behavior at the numerical level.
 
-Output: `pfc_shaping/lt/model/shape_hourly.py` with a `factors_3d_` property (or Mapping subclass) and `pfc_shaping/lt/model/assembler.py` with the `try/except TypeError` block replaced by an explicit signature inspection.
+Output: `pfc_shaping/lt/model/shape_hourly.py` with a `factors_3d_` property (or Mapping subclass) and `pfc_shaping/lt/model/assembler.py` with the `try/except TypeError` block replaced by an explicit signature inspection + one-shot operator log.
 </objective>
 
 <execution_context>
@@ -191,10 +192,10 @@ print('OK')
 </task>
 
 <task type="auto" tdd="true">
-  <name>Task 2: Replace `try/except TypeError` at assembler.py:280-286 with explicit signature-based capability check</name>
+  <name>Task 2: Replace `try/except TypeError` at assembler.py:280-286 with explicit signature-based capability check + operator log</name>
   <files>pfc_shaping/lt/model/assembler.py</files>
   <read_first>
-    - pfc_shaping/lt/model/assembler.py (lines 1-60 for imports; lines 200-320 for the `build()` method context, focusing on the existing try/except at lines 280-286)
+    - pfc_shaping/lt/model/assembler.py (lines 1-60 for imports; lines 120-150 for `__init__`; lines 200-320 for the `build()` method context, focusing on the existing try/except at lines 280-286)
     - pfc_shaping/lt/model/shape_hourly.py (lines 241-258: `apply()` signature — does NOT have `outages_forecast`)
     - pfc_shaping/lt/model/shape_hourly_mlp.py (lines 207-220: `apply()` signature — DOES have `outages_forecast`)
     - .planning/phases/05B-shape-hourly-infrastructure-flag-no-op-refactor/05B-CONTEXT.md (D-13 — explicit capability check, no bug masking)
@@ -205,6 +206,7 @@ print('OK')
     - Test 3: A `TypeError` raised from INSIDE `self.sh.apply(...)` (e.g. a bug in some helper) is no longer silently swallowed and retried — it propagates to the caller of `assembler.build`. (Test by monkeypatching `self.sh.apply` to raise `TypeError("bug")` and asserting the call site re-raises.)
     - Test 4: The cached signature lookup does NOT recompute on every `build()` call when called repeatedly on the same assembler instance (use `functools.lru_cache` on a module-level helper, or compute in `__init__`, or cache as instance attribute on first build).
     - Test 5: For a third-party `self.sh` whose `apply` signature has neither `reference_date` nor `outages_forecast` (a hypothetical legacy stub), the check raises a clear `TypeError(f"self.sh.apply must accept reference_date; got signature {sig}")` — explicit, not a masked one.
+    - Test 6: A single `logger.info` line is emitted at first dispatch (or `__init__`) naming the detected implementation, e.g. `"Detected sh=ShapeHourly — outages_forecast skipped"` for `ShapeHourly` or `"Detected sh=ShapeHourlyMLP — outages_forecast passed"` for the MLP variant. Repeated `build()` calls on the same assembler do NOT re-emit the log line.
   </behavior>
   <action>
     In `pfc_shaping/lt/model/assembler.py`:
@@ -223,6 +225,9 @@ print('OK')
        ```
     3. In `PFCAssembler.__init__` (line ~124), AFTER the existing assignments, add an instance attribute that caches the decision per assembler instance:
        `self._sh_accepts_outages: bool = _sh_apply_accepts_outages(type(shape_hourly))`.
+       Immediately after caching, emit a one-shot operator log line:
+       `logger.info("Detected sh=%s — outages_forecast %s", type(shape_hourly).__name__, "passed" if self._sh_accepts_outages else "skipped")`.
+       This single emit at __init__ guarantees no per-build spam.
     4. Replace the existing block at `assembler.py:280-286` (the `try: ... except TypeError: ...` around `self.sh.apply(...)`) with:
        ```
        # Capability check (replaces former try/except TypeError — see D-13).
@@ -240,7 +245,7 @@ print('OK')
   </action>
   <verify>
     <automated>python -c "
-import inspect
+import inspect, logging
 from pfc_shaping.lt.model.assembler import _sh_apply_accepts_outages
 from pfc_shaping.lt.model.shape_hourly import ShapeHourly
 from pfc_shaping.lt.model.shape_hourly_mlp import ShapeHourlyMLP
@@ -259,9 +264,10 @@ print('OK')
     - `grep -c "except TypeError" pfc_shaping/lt/model/assembler.py` decreases by ≥ 1 vs `git show HEAD:pfc_shaping/lt/model/assembler.py | grep -c "except TypeError"`. (No silent swallowing of TypeErrors around `self.sh.apply`.)
     - `grep -q "_sh_apply_accepts_outages" pfc_shaping/lt/model/assembler.py` exits 0.
     - `grep -q "_sh_accepts_outages" pfc_shaping/lt/model/assembler.py` exits 0 (cached on instance).
+    - `grep -q "Detected sh=" pfc_shaping/lt/model/assembler.py` exits 0 (one-shot operator log line present).
     - `pytest tests/ -x` exits 0 reporting `142 passed, 4 skipped`.
   </acceptance_criteria>
-  <done>The try/except TypeError at line 284 is replaced by an explicit signature check that produces identical routing decisions and unmasks any real TypeError.</done>
+  <done>The try/except TypeError at line 284 is replaced by an explicit signature check that produces identical routing decisions, emits a one-shot operator log naming the detected implementation, and unmasks any real TypeError.</done>
 </task>
 
 </tasks>
@@ -270,12 +276,14 @@ print('OK')
 - `pytest tests/ -x` exits 0 with `142 passed, 4 skipped`.
 - SHP-01 literal accessible via `factors_3d_`.
 - No `try/except TypeError` left around `self.sh.apply()` in assembler.
-- Numerical output of `assembler.build` is UNCHANGED from baseline (final verification in plan 05B-05).
+- One-shot `logger.info("Detected sh=... — outages_forecast ...")` line present for operator audits.
+- Numerical output of `assembler.build` is UNCHANGED from baseline (final verification in plan 05B-05 via `assert_frame_equal(..., check_exact=False, atol=1e-12, rtol=0)`).
 </verification>
 
 <success_criteria>
 - SHP-01 satisfied literally via `factors_3d_` read-only view.
 - D-13 satisfied: brittle try/except replaced by explicit capability check.
+- Operator-visible logging in place for production audits.
 - 142 existing tests remain green.
 - Zero numerical change vs baseline.
 </success_criteria>
