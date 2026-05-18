@@ -27,7 +27,7 @@ P&L par 5 €/MWh d'erreur shape), pas par l'ordre alphabétique des features.
 
 ### Active (P0 — prochaine action)
 
-- [ ] **Phase 5bis-A: Shape Hourly Infrastructure & Flag (no-op refactor)** 🔥
+- [x] **Phase 5bis-A: Shape Hourly Infrastructure & Flag (no-op refactor)** ✓
   - Goal: livrer l'infra qui permettra de mesurer et reverter bit-pour-bit tout changement comportemental futur du `ShapeHourly` (factors_3d_ view pour SHP-01 littéral, save/load complet, feature flag persisté en parquet, baseline frozen `tests/fixtures/baseline_pfc_seed42.parquet`).
   - **Aucun changement numérique** — `assert_frame_equal(build(flag=OFF), build(flag=ON), atol=1e-12)`.
   - Context: `.planning/phases/05B-shape-hourly-infrastructure-flag-no-op-refactor/05B-CONTEXT.md`.

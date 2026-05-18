@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: verifying
+status: completed
 stopped_at: Plan 05B-03 complete. Feature flag `PFC_LT_USE_SEASONAL_HOURLY_SHAPE` opérationnel @ `e4ab9ee`. 201 tests verts. SHP-04 satisfait. Prêt pour 05B-04 (conftest autouse env-var hygiene + capability check assembler).
-last_updated: "2026-05-18T20:40:21.136Z"
-last_activity: 2026-05-18
+last_updated: "2026-05-18T20:42:58.968Z"
+last_activity: 2026-05-18 -- Phase 05B marked complete
 progress:
   total_phases: 4
   completed_phases: 0
@@ -27,10 +27,10 @@ avec ≥ 1.5 €/MWh de MAE-bloc en moins que HFC OMPEX.
 
 ## Current Position
 
-Phase: 05B (shape-hourly-infrastructure-flag-no-op-refactor) — EXECUTING
+Phase: 05B — COMPLETE
 Plan: 5 of 5
-Status: Phase complete — ready for verification
-Last activity: 2026-05-18
+Status: Phase 05B complete
+Last activity: 2026-05-18 -- Phase 05B marked complete
 
 Progress: [░░░░░░░░░░] 0%
 
