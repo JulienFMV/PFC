@@ -19,7 +19,7 @@ LT "SOTA maison FMV" et démontrer sa supériorité vs OMPEX sur les profile dea
   `_country_local_tz` introduit en Bloc A).
 - [ ] **SHP-03** : `mean(f_H)` calculé sur chaque combinaison `(saison, type_jour)`
   reste ≈ 1.0 ± 1e-3 — l'invariant énergétique mensuel est préservé.
-- [ ] **SHP-04** : Une feature flag `PFC_LT_USE_SEASONAL_HOURLY_SHAPE` (default
+- [x] **SHP-04** : Une feature flag `PFC_LT_USE_SEASONAL_HOURLY_SHAPE` (default
   False) permet de désactiver et revenir au comportement legacy.
 
 ### Negative Prices (priorité 1)
