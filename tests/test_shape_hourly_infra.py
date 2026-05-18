@@ -4,9 +4,12 @@ test_shape_hourly_infra.py
 Tests for ShapeHourly infrastructure: save/load sidecar roundtrip (Plan 05B-02),
 feature flag PFC_LT_USE_SEASONAL_HOURLY_SHAPE (Plan 05B-03),
 read-only 3D view factors_3d_ (Plan 05B-04 Task 1),
-and assembler capability check (Plan 05B-04 Task 2).
+assembler capability check (Plan 05B-04 Task 2), and Phase 5bis-A no-op proof
+(Plan 05B-05 Task 3: seven standalone tests D-14..D-19 + Codex review §8).
 
-TDD RED phase: all tests here should FAIL before implementation.
+Plans covered: 05B-02, 05B-03, 05B-04, 05B-05
+Requirements: SHP-01 (D-01/D-14), SHP-04 (D-07/D-18)
+Context ref: .planning/phases/05B-shape-hourly-infrastructure-flag-no-op-refactor/05B-CONTEXT.md
 
 Tests verify:
 - Task 1: save() writes ${stem}.meta.parquet sidecar with correct schema and content
@@ -15,12 +18,21 @@ Tests verify:
 - Plan 05B-03 Task 2: flag persisted in meta sidecar and restored on load (parquet wins over env)
 - Plan 05B-04 Task 1: factors_3d_ read-only Mapping view on ShapeHourly (SHP-01 literal)
 - Plan 05B-04 Task 2: assembler _sh_apply_accepts_outages helper + _sh_accepts_outages instance cache
+- Plan 05B-05 D-14: test_factors_3d_view_consistency — all cells × 24 hours consistent
+- Plan 05B-05 D-15: test_save_load_full_roundtrip — all 10 attributes roundtrip
+- Plan 05B-05 D-16: test_save_load_legacy_compat — legacy fixture from fixtures dir
+- Plan 05B-05 D-17: test_flag_freeze_at_init — four combinatorial freeze assertions
+- Plan 05B-05 D-18: test_flag_persisted_in_parquet — parquet wins both directions
+- Plan 05B-05 D-19: test_baseline_regression — THE proof of 5bis-A no-op
+- Plan 05B-05 Codex §8: test_no_hidden_behavior_branch — AST guard on _use_seasonal_hourly
 """
 
+import ast
 import inspect
 import json
 import logging
 import os
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -1093,3 +1105,360 @@ class TestAssemblerOperatorLog:
         assert any("ShapeHourlyMLP" in m and "passed" in m for m in matching), (
             f"Expected log containing 'ShapeHourlyMLP' and 'passed', got: {matching}"
         )
+
+
+# ============================================================================
+# Plan 05B-05 Task 3 — Seven standalone tests D-14..D-19 + Codex review §8
+# These are the definitive proof tests for Phase 5bis-A no-op contract.
+# Context: .planning/phases/05B-shape-hourly-infrastructure-flag-no-op-refactor/05B-CONTEXT.md
+# ============================================================================
+
+# ---------------------------------------------------------------------------
+# Fixtures directory path (absolute, via this file's location)
+# ---------------------------------------------------------------------------
+_FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
+
+# ---------------------------------------------------------------------------
+# D-14 — test_factors_3d_view_consistency
+# ---------------------------------------------------------------------------
+
+def test_factors_3d_view_consistency():
+    """D-14 (Plan 05B-05): factors_3d_[(s,tj,h)] == factors_[(s,tj)][h] over all cells x 24h.
+
+    Fits on minimal synthetic data, walks all populated cells x hours and asserts
+    exact float equality between the 3D view and the underlying array.
+    Assignment into the view must raise TypeError (read-only contract).
+    """
+    sh = ShapeHourly()
+    # Populate two cells with distinct arrays
+    for (s, tj), base in [
+        (("Hiver", "Ouvrable"), np.linspace(0.8, 1.2, 24)),
+        (("Ete", "Samedi"), np.linspace(0.9, 1.1, 24)),
+    ]:
+        arr = base / base.mean()
+        sh.factors_[(s, tj)] = arr
+
+    view = sh.factors_3d_
+
+    # Assert equality over ALL populated cells × 24 hours
+    for (s, tj), arr in sh.factors_.items():
+        for h in range(24):
+            expected = float(arr[h])
+            got = view[(s, tj, h)]
+            assert got == expected, (
+                f"Mismatch at ({s},{tj},{h}): view={got} != factors_={expected}"
+            )
+
+    # Assert mutation raises TypeError (read-only)
+    with pytest.raises(TypeError):
+        view[("Hiver", "Ouvrable", 12)] = 99.0
+
+
+# ---------------------------------------------------------------------------
+# D-15 — test_save_load_full_roundtrip
+# ---------------------------------------------------------------------------
+
+def test_save_load_full_roundtrip(tmp_path):
+    """D-15 (Plan 05B-05): all 10 trained attributes roundtrip through save→load.
+
+    Verifies: factors_, factors_by_year_, trend_per_hour_, f_W_seasonal_, f_W_,
+    _climatological_fill, sigma, halflife_days, hydro_weight_sigma,
+    _use_seasonal_hourly, and global_factors_ (reconstructed, not persisted).
+    """
+    sh1 = _minimal_fitted_sh(sigma=0.3, halflife_days=90.0, hydro_weight_sigma=0.7)
+    sh1._use_seasonal_hourly = True  # exercise non-default flag
+    sh1.global_factors_ = sh1._compute_global_fallback()
+
+    p = tmp_path / "shape_hourly.parquet"
+    sh1.save(str(p))
+    sh2 = ShapeHourly.load(str(p))
+
+    # ── factors_ ──
+    assert set(sh2.factors_.keys()) == set(sh1.factors_.keys())
+    for key in sh1.factors_:
+        np.testing.assert_allclose(sh2.factors_[key], sh1.factors_[key], atol=1e-12, rtol=0)
+
+    # ── factors_by_year_ ──
+    assert set(sh2.factors_by_year_.keys()) == set(sh1.factors_by_year_.keys())
+    for key in sh1.factors_by_year_:
+        np.testing.assert_allclose(
+            sh2.factors_by_year_[key], sh1.factors_by_year_[key], atol=1e-12, rtol=0
+        )
+
+    # ── trend_per_hour_ ──
+    assert set(sh2.trend_per_hour_.keys()) == set(sh1.trend_per_hour_.keys())
+    for key in sh1.trend_per_hour_:
+        np.testing.assert_allclose(
+            sh2.trend_per_hour_[key], sh1.trend_per_hour_[key], atol=1e-12, rtol=0
+        )
+
+    # ── f_W_seasonal_ ──
+    assert sh2.f_W_seasonal_ == sh1.f_W_seasonal_
+
+    # ── f_W_ ──
+    assert sh2.f_W_ == sh1.f_W_
+
+    # ── _climatological_fill ──
+    assert sh2._climatological_fill is not None
+    np.testing.assert_allclose(
+        sh2._climatological_fill.sort_index().values,
+        sh1._climatological_fill.sort_index().values,
+        atol=1e-12, rtol=0,
+    )
+    assert list(sh2._climatological_fill.sort_index().index) == list(sh1._climatological_fill.sort_index().index)
+
+    # ── Scalar hyperparams ──
+    assert sh2.sigma == sh1.sigma
+    assert sh2.halflife_days == sh1.halflife_days
+    assert sh2.hydro_weight_sigma == sh1.hydro_weight_sigma
+
+    # ── _use_seasonal_hourly ──
+    assert sh2._use_seasonal_hourly is True  # was set to True above
+
+    # ── global_factors_ (reconstructed via _compute_global_fallback, not persisted) ──
+    assert sh2.global_factors_ is not None
+    np.testing.assert_allclose(sh2.global_factors_, sh1.global_factors_, atol=1e-12, rtol=0)
+
+
+# ---------------------------------------------------------------------------
+# D-16 — test_save_load_legacy_compat
+# ---------------------------------------------------------------------------
+
+def test_save_load_legacy_compat(tmp_path, caplog):
+    """D-16 (Plan 05B-05): loading legacy parquets (no .meta.parquet sidecar) does not crash.
+
+    Uses committed frozen fixtures from tests/fixtures/shape_hourly_legacy.parquet
+    and tests/fixtures/f_W_legacy.parquet (produced by _generate_legacy_fixture.py,
+    which writes NO .meta.parquet sidecar — that is the whole point).
+
+    Asserts:
+    - No exception on load
+    - Exactly one logger.WARNING emitted (containing 'legacy' or 'sidecar')
+    - sh.factors_ is non-empty
+    - sh.factors_by_year_ == {} (legacy: metadata unavailable)
+    - sh.sigma == 0.5 (constructor default, sidecar absent)
+    """
+    # Copy legacy fixtures to a temp dir with the expected filenames
+    shutil.copy(str(_FIXTURES_DIR / "shape_hourly_legacy.parquet"),
+                str(tmp_path / "shape_hourly.parquet"))
+    shutil.copy(str(_FIXTURES_DIR / "f_W_legacy.parquet"),
+                str(tmp_path / "f_W.parquet"))
+
+    # Confirm no sidecar was copied (legacy contract)
+    assert not (tmp_path / "shape_hourly.meta.parquet").exists()
+
+    with caplog.at_level(logging.WARNING):
+        sh = ShapeHourly.load(str(tmp_path / "shape_hourly.parquet"))
+
+    # No exception
+    assert sh is not None
+
+    # Exactly one warning mentioning 'legacy' or 'sidecar'
+    warnings = [
+        r for r in caplog.records
+        if r.levelno == logging.WARNING
+        and ("legacy" in r.message.lower() or "sidecar" in r.message.lower())
+    ]
+    assert len(warnings) == 1, (
+        f"Expected exactly 1 legacy warning, got {len(warnings)}: {[w.message for w in warnings]}"
+    )
+
+    # factors_ is populated from the legacy parquet
+    assert len(sh.factors_) > 0, "factors_ must be non-empty after legacy load"
+
+    # Legacy metadata unavailable — reverts to constructor defaults
+    assert sh.factors_by_year_ == {}, "factors_by_year_ must be empty for legacy loads"
+    assert sh.sigma == 0.5, f"sigma must be constructor default (0.5), got {sh.sigma}"
+
+
+# ---------------------------------------------------------------------------
+# D-17 — test_flag_freeze_at_init
+# ---------------------------------------------------------------------------
+
+def test_flag_freeze_at_init(monkeypatch):
+    """D-17 (Plan 05B-05): post-construction env-var mutations do NOT change _use_seasonal_hourly.
+
+    Four combinatorial sub-assertions (all directions of freeze: True→ try False, False→try True,
+    env=1 then delenv, env=0 then set 1).
+    """
+    env_key = "PFC_LT_USE_SEASONAL_HOURLY_SHAPE"
+
+    # --- Sub-assertion 1: constructor True wins; then env changed to "0" → still True ---
+    monkeypatch.setenv(env_key, "0")
+    sh1 = ShapeHourly(use_seasonal_hourly=True)
+    assert sh1._use_seasonal_hourly is True
+    monkeypatch.setenv(env_key, "1")
+    assert sh1._use_seasonal_hourly is True  # frozen
+
+    # --- Sub-assertion 2: env=None→default False; then env set to "1" → still False ---
+    monkeypatch.delenv(env_key, raising=False)
+    sh2 = ShapeHourly(use_seasonal_hourly=None)
+    assert sh2._use_seasonal_hourly is False
+    monkeypatch.setenv(env_key, "1")
+    assert sh2._use_seasonal_hourly is False  # frozen at first read
+
+    # --- Sub-assertion 3: env="1" at init → True; then delenv → still True ---
+    monkeypatch.setenv(env_key, "1")
+    sh3 = ShapeHourly()
+    assert sh3._use_seasonal_hourly is True
+    monkeypatch.delenv(env_key, raising=False)
+    assert sh3._use_seasonal_hourly is True  # frozen
+
+    # --- Sub-assertion 4: env="0" at init → False; then set env to "1" → still False ---
+    monkeypatch.setenv(env_key, "0")
+    sh4 = ShapeHourly()
+    assert sh4._use_seasonal_hourly is False
+    monkeypatch.setenv(env_key, "1")
+    assert sh4._use_seasonal_hourly is False  # frozen
+
+
+# ---------------------------------------------------------------------------
+# D-18 — test_flag_persisted_in_parquet
+# ---------------------------------------------------------------------------
+
+def test_flag_persisted_in_parquet(tmp_path, monkeypatch):
+    """D-18 (Plan 05B-05): parquet value wins over env at load time, both directions.
+
+    Scenario A: fit with flag=True, save, then load with env='0' → must yield True.
+    Scenario B: fit with flag=False, save, then load with env='1' → must yield False.
+    """
+    env_key = "PFC_LT_USE_SEASONAL_HOURLY_SHAPE"
+
+    def _make_minimal_sh(flag: bool) -> ShapeHourly:
+        sh = ShapeHourly(use_seasonal_hourly=flag)
+        sh.factors_[("Hiver", "Ouvrable")] = np.ones(24)
+        sh.n_obs_[("Hiver", "Ouvrable")] = 100
+        sh.f_W_["Ouvrable"] = 1.0
+        return sh
+
+    # ── Scenario A: flag=True persisted, env='0' at load ──
+    p_a = tmp_path / "sh_a.parquet"
+    monkeypatch.delenv(env_key, raising=False)
+    sh_a = _make_minimal_sh(flag=True)
+    sh_a.save(str(p_a))
+
+    monkeypatch.setenv(env_key, "0")
+    sh_a2 = ShapeHourly.load(str(p_a))
+    assert sh_a2._use_seasonal_hourly is True, (
+        f"Parquet (True) must win over env '0', got {sh_a2._use_seasonal_hourly}"
+    )
+
+    # ── Scenario B: flag=False persisted, env='1' at load ──
+    p_b = tmp_path / "sh_b.parquet"
+    monkeypatch.delenv(env_key, raising=False)
+    sh_b = _make_minimal_sh(flag=False)
+    sh_b.save(str(p_b))
+
+    monkeypatch.setenv(env_key, "1")
+    sh_b2 = ShapeHourly.load(str(p_b))
+    assert sh_b2._use_seasonal_hourly is False, (
+        f"Parquet (False) must win over env '1', got {sh_b2._use_seasonal_hourly}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# D-19 — test_baseline_regression (parametrized: THE no-op proof)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("flag", [False, True])
+def test_baseline_regression(flag):
+    """D-19 (Plan 05B-05): build_pfc(flag=<flag>) equals frozen baseline_pfc_seed42.parquet.
+
+    This is THE proof that Phase 5bis-A is a numerical no-op:
+    - flag=False and flag=True must both equal the pre-5bis-A baseline at atol=1e-12, rtol=0.
+    - Identical columns, dtypes, index (tz, values), sort order.
+
+    Tolerance: atol=1e-12, rtol=0 is the default contract (REVIEWS.md consensus §1).
+    Fallback policy: if cross-version pandas/pyarrow patch-level drift breaks this in CI,
+    the test MAY relax to atol=1e-10 ONLY with an inline comment:
+    # CI-drift fallback: atol relaxed to 1e-10 due to <specific drift annotation>
+    and a corresponding entry in tests/fixtures/README.md. Default is atol=1e-12, rtol=0.
+    """
+    from tests.fixtures._generate_baseline import build_pfc
+
+    df = build_pfc(seed=42, flag=flag)
+    baseline = pd.read_parquet(str(_FIXTURES_DIR / "baseline_pfc_seed42.parquet"))
+
+    # ── Identical schema (columns, dtypes) ──
+    assert list(df.columns) == list(baseline.columns), (
+        f"Column mismatch: {list(df.columns)} != {list(baseline.columns)}"
+    )
+    assert df.dtypes.to_dict() == baseline.dtypes.to_dict(), (
+        f"Dtype mismatch for flag={flag}"
+    )
+
+    # ── Identical index values and tz (NOT freq: parquet drops DatetimeIndex.freq) ──
+    assert len(df.index) == len(baseline.index), "Index length mismatch"
+    assert (df.index == baseline.index).all(), "Index values mismatch"
+    assert str(df.index.tz) == str(baseline.index.tz), "Index tz mismatch"
+
+    # ── Numerical equality: atol=1e-12, rtol=0 (default contract) ──
+    # Parquet does not preserve DatetimeIndex.freq — the fresh DataFrame has
+    # freq=<15 * Minutes> while the loaded baseline has freq=None. Reset to None
+    # on the fresh frame before comparing so assert_frame_equal does not fail on freq.
+    df_cmp = df.copy()
+    df_cmp.index.freq = None
+    pd.testing.assert_frame_equal(
+        df_cmp,
+        baseline,
+        check_exact=False,
+        atol=1e-12,
+        rtol=0,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Codex review §8 — test_no_hidden_behavior_branch (AST scan)
+# ---------------------------------------------------------------------------
+
+# Functions in shape_hourly.py that are ALLOWED to reference _use_seasonal_hourly.
+# Extend deliberately in future plans when behavior gating is intentionally added.
+ALLOWED_FUNCTIONS = {"__init__", "save", "load", "_resolve_flag"}
+
+
+def test_no_hidden_behavior_branch():
+    """Codex review §8 (Plan 05B-05): _use_seasonal_hourly is plumbing only in Phase 5bis-A.
+
+    AST-scans pfc_shaping/lt/model/shape_hourly.py and asserts that the attribute
+    _use_seasonal_hourly (as an Attribute AST node) is accessed ONLY inside functions
+    listed in ALLOWED_FUNCTIONS = {"__init__", "save", "load", "_resolve_flag"}.
+
+    If _use_seasonal_hourly appears in any other function (e.g. fit, apply, _fit_*,
+    _apply_*), this test fails — guarding against silent leakage of behavior gating
+    into Phase 5bis-A (where the flag must be plumbing only, no numerical branch).
+
+    To allow a new function to reference the flag (e.g., when Phase 5bis-B adds
+    behavioral gating), extend ALLOWED_FUNCTIONS deliberately in this file.
+    """
+    src_path = Path(__file__).resolve().parent.parent / "pfc_shaping" / "lt" / "model" / "shape_hourly.py"
+    src = src_path.read_text(encoding="utf-8")
+    tree = ast.parse(src)
+
+    violations: list[str] = []
+
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+
+        fn_name = node.name
+        if fn_name in ALLOWED_FUNCTIONS:
+            continue
+
+        # Walk function body looking for Attribute nodes referencing _use_seasonal_hourly
+        for child in ast.walk(node):
+            if (
+                isinstance(child, ast.Attribute)
+                and child.attr == "_use_seasonal_hourly"
+            ):
+                violations.append(
+                    f"Function '{fn_name}' (line {node.lineno}) references "
+                    f"_use_seasonal_hourly — not in ALLOWED_FUNCTIONS {ALLOWED_FUNCTIONS}"
+                )
+                break  # one violation per function is enough
+
+    assert not violations, (
+        "Phase 5bis-A violation: _use_seasonal_hourly leaked into math-path function(s).\n"
+        + "\n".join(violations)
+        + "\n\nTo intentionally gate behavior on this flag (Phase 5bis-B), "
+        "add the function name to ALLOWED_FUNCTIONS in this test."
+    )

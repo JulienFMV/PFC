@@ -92,11 +92,27 @@ def _build_synthetic_epex(n_15min: int, rng: np.random.Generator) -> pd.DataFram
     return pd.DataFrame({"price_eur_mwh": price}, index=idx)
 
 
-def main() -> None:
+def build_pfc(seed: int = 42, flag: bool = False) -> pd.DataFrame:
+    """Build a deterministic PFC DataFrame using synthetic EPEX data.
+
+    This is the reusable entry point for ``test_baseline_regression`` (plan 05B-05).
+    Both ``flag=False`` and ``flag=True`` must return numerically identical results
+    in Phase 5bis-A (no-op contract: flag is plumbing only).
+
+    Args:
+        seed: Random seed for full reproducibility (default 42 → matches committed fixture).
+        flag: Value for ``use_seasonal_hourly`` kwarg passed to ShapeHourly.  In
+              Phase 5bis-A this has zero numerical effect; the parametrized test
+              asserts both flag values produce output equal to the frozen baseline.
+
+    Returns:
+        pd.DataFrame — PFC output from ``assembler.build()``, same schema as
+        ``tests/fixtures/baseline_pfc_seed42.parquet``.
+    """
     # ── Deterministic seeds ────────────────────────────────────────────
-    random.seed(42)
-    np.random.seed(42)
-    rng = np.random.default_rng(42)
+    random.seed(seed)
+    np.random.seed(seed)
+    rng = np.random.default_rng(seed)
 
     # ── Synthetic EPEX: 3 calendar years at 15-min resolution ────────
     # 2022-01-01 .. 2024-12-31 UTC  (3 * 365 * 96 ≈ 105 120 slots)
@@ -106,8 +122,8 @@ def main() -> None:
     # ── Calendar enrichment ───────────────────────────────────────────
     calendar_df = enrich_15min_index(epex_df.index, country="CH")
 
-    # ── Fit ShapeHourly (no hydro_df → _climatological_fill = None) ──
-    sh = ShapeHourly().fit(epex_df, calendar_df)
+    # ── Fit ShapeHourly — pass flag via constructor kwarg (freeze-at-init, D-06) ──
+    sh = ShapeHourly(use_seasonal_hourly=flag).fit(epex_df, calendar_df)
 
     # ── Fit ShapeIntraday on the same synthetic EPEX ─────────────────
     # PFCAssembler requires a fitted ShapeIntraday; fitting on synthetic
@@ -126,13 +142,17 @@ def main() -> None:
     )
 
     # ── Run build: Cal'27, 1-month horizon, seed=42 reference date ───
-    df_pfc = assembler.build(
+    return assembler.build(
         base_prices={"2027": 80.0},
         start_date="2027-01-01",
         horizon_days=31,
         reference_date=pd.Timestamp("2026-05-18", tz="UTC"),
         country="CH",
     )
+
+
+def main() -> None:
+    df_pfc = build_pfc(seed=42, flag=False)
 
     # ── Write parquet ─────────────────────────────────────────────────
     _OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
