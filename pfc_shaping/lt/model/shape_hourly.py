@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 
 import numpy as np
@@ -45,6 +46,40 @@ GAUSSIAN_SIGMA = 0.5
 # (e.g. future ShapeIntraday) save into the same directory. The convention is
 # `${stem}.meta.parquet` derived from the main artifact filename.
 _META_SIDECAR_SUFFIX = ".meta.parquet"
+
+# Feature flag: enable seasonal-hourly shape behaviour introduced in Phase 5bis-B.
+# Read once at __init__ time and stored in self._use_seasonal_hourly (freeze-at-init).
+# Accepted values in os.environ: "1" → True, "0" (or unset) → False (default off).
+# Any other value emits a logger.warning and is treated as False.
+_FLAG_ENV_VAR = "PFC_LT_USE_SEASONAL_HOURLY_SHAPE"
+
+
+def _resolve_flag(explicit: bool | None) -> bool:
+    """Resolve the use_seasonal_hourly feature flag from constructor arg or env var.
+
+    Precedence (D-06):
+    1. If explicit is not None → use it directly (constructor wins).
+    2. Otherwise read os.getenv(_FLAG_ENV_VAR, "0") exactly once:
+       - "1" → True
+       - "0" (or unset) → False
+       - Any other value → log warning, treat as False (default off).
+
+    The env var is NEVER re-read after __init__; calling code must not call
+    _resolve_flag() again after construction.
+    """
+    if explicit is not None:
+        return bool(explicit)
+    raw = os.getenv(_FLAG_ENV_VAR, "0")
+    if raw == "1":
+        return True
+    if raw == "0":
+        return False
+    logger.warning(
+        "Invalid value %r for %s; treating as '0' (default off)",
+        raw,
+        _FLAG_ENV_VAR,
+    )
+    return False
 
 
 def _meta_path(main_path) -> Path:
@@ -75,6 +110,7 @@ class ShapeHourly:
         sigma: float = GAUSSIAN_SIGMA,
         halflife_days: float = 180.0,
         hydro_weight_sigma: float = 0.25,
+        use_seasonal_hourly: bool | None = None,
     ) -> None:
         self.sigma = sigma
         self.halflife_days = halflife_days  # exponential decay half-life
@@ -90,6 +126,12 @@ class ShapeHourly:
         # Hydro reservoir analogue data (set by fit if hydro_df is provided)
         self._hydro_fill_weekly: pd.Series | None = None
         self._climatological_fill: pd.Series | None = None  # mean fill per week-of-year
+        # Feature flag: resolved once at __init__ and frozen.
+        # Use the constructor kwarg or set env var PFC_LT_USE_SEASONAL_HOURLY_SHAPE BEFORE calling __init__.
+        # Persisted into the ${stem}.meta.parquet sidecar by save() and overwritten by load()
+        # (parquet wins over env — prevents train/serve skew, D-07).
+        # In Phase 5bis-A this flag gates NO behavior; reserved for Phase 5bis-B.
+        self._use_seasonal_hourly: bool = _resolve_flag(use_seasonal_hourly)
 
     def fit(
         self,
@@ -400,6 +442,7 @@ class ShapeHourly:
                 })
 
         # Scalar hyperparams — always present (JSON-string with sorted keys for determinism)
+        # use_seasonal_hourly included to prevent train/serve skew (D-07): parquet wins over env at load.
         meta_records.append({
             "attr": "hyperparams",
             "value": json.dumps(
@@ -407,6 +450,7 @@ class ShapeHourly:
                     "halflife_days": self.halflife_days,
                     "hydro_weight_sigma": self.hydro_weight_sigma,
                     "sigma": self.sigma,
+                    "use_seasonal_hourly": bool(self._use_seasonal_hourly),
                 },
                 sort_keys=True,
             ),
@@ -450,6 +494,12 @@ class ShapeHourly:
                 obj.sigma = hp.get("sigma", obj.sigma)
                 obj.halflife_days = hp.get("halflife_days", obj.halflife_days)
                 obj.hydro_weight_sigma = hp.get("hydro_weight_sigma", obj.hydro_weight_sigma)
+                if "use_seasonal_hourly" in hp:
+                    obj._use_seasonal_hourly = bool(hp["use_seasonal_hourly"])
+                    # parquet wins over env — prevents train/serve skew (D-07)
+                # If "use_seasonal_hourly" key is absent (cross-plan compat — parquet written by
+                # 05B-02 before 05B-03 was merged), leave obj._use_seasonal_hourly at the value
+                # already set by cls() which read the env via _resolve_flag(None).
 
             # -- factors_by_year_ --
             # (value column is stored as repr(float) string — cast back to float array)

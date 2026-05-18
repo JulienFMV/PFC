@@ -179,11 +179,19 @@ class TestSaveSidecarSchema:
         np.testing.assert_allclose(loaded, [0.5, 0.6, 0.7], atol=1e-12, rtol=0)
 
     def test_hyperparams_row(self):
-        """Test 8: hyperparams — single row with JSON value."""
+        """Test 8: hyperparams — single row with JSON value.
+        After Plan 05B-03, use_seasonal_hourly is also persisted in hyperparams.
+        """
         hp_rows = self.meta[self.meta["attr"] == "hyperparams"]
         assert len(hp_rows) == 1
         obj = json.loads(hp_rows["value"].iloc[0])
-        assert obj == {"halflife_days": 90.0, "hydro_weight_sigma": 0.7, "sigma": 0.3}
+        # use_seasonal_hourly added by Plan 05B-03 — must be present
+        assert obj == {
+            "halflife_days": 90.0,
+            "hydro_weight_sigma": 0.7,
+            "sigma": 0.3,
+            "use_seasonal_hourly": False,  # default: _minimal_fitted_sh() uses no flag
+        }
 
     def test_global_factors_not_persisted(self):
         """Test 10: global_factors_ must NOT be written to the meta sidecar."""
@@ -230,7 +238,13 @@ class TestSaveUnfitted:
             meta = pd.read_parquet(os.path.join(d, "shape_hourly.meta.parquet"))
             hp = meta[meta["attr"] == "hyperparams"]
             obj = json.loads(hp["value"].iloc[0])
-            assert obj == {"halflife_days": 180.0, "hydro_weight_sigma": 0.25, "sigma": 0.5}
+            # Plan 05B-03: use_seasonal_hourly now included in hyperparams
+            assert obj == {
+                "halflife_days": 180.0,
+                "hydro_weight_sigma": 0.25,
+                "sigma": 0.5,
+                "use_seasonal_hourly": False,
+            }
 
 
 # ===========================================================================
