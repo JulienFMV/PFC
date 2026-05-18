@@ -49,3 +49,6 @@ pfc_shaping/output/*.parquet
 .env
 *.token
 AutogluonModels/
+
+# GSD local install — machine-specific paths, regenerated per-machine via npx
+.claude/
