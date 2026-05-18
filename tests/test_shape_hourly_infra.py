@@ -1,8 +1,10 @@
 """
 test_shape_hourly_infra.py
 --------------------------
-Tests for ShapeHourly infrastructure: save/load sidecar roundtrip (Plan 05B-02)
-and feature flag PFC_LT_USE_SEASONAL_HOURLY_SHAPE (Plan 05B-03).
+Tests for ShapeHourly infrastructure: save/load sidecar roundtrip (Plan 05B-02),
+feature flag PFC_LT_USE_SEASONAL_HOURLY_SHAPE (Plan 05B-03),
+read-only 3D view factors_3d_ (Plan 05B-04 Task 1),
+and assembler capability check (Plan 05B-04 Task 2).
 
 TDD RED phase: all tests here should FAIL before implementation.
 
@@ -11,6 +13,8 @@ Tests verify:
 - Task 2: load() restores all attributes from sidecar; legacy compat warning on missing sidecar
 - Plan 05B-03 Task 1: feature flag constructor arg + env-default + freeze-at-init
 - Plan 05B-03 Task 2: flag persisted in meta sidecar and restored on load (parquet wins over env)
+- Plan 05B-04 Task 1: factors_3d_ read-only Mapping view on ShapeHourly (SHP-01 literal)
+- Plan 05B-04 Task 2: assembler _sh_apply_accepts_outages helper + _sh_accepts_outages instance cache
 """
 
 import inspect
@@ -707,3 +711,385 @@ class TestFlagNoOpContract:
         attrs_on = {k: v for k, v in vars(sh_on).items() if k != "_use_seasonal_hourly"}
         attrs_off = {k: v for k, v in vars(sh_off).items() if k != "_use_seasonal_hourly"}
         assert set(attrs_on.keys()) == set(attrs_off.keys())
+
+
+# ============================================================================
+# Plan 05B-04 Task 1: factors_3d_ read-only Mapping view (SHP-01 literal)
+# ============================================================================
+
+class TestFactors3DViewExists:
+    """factors_3d_ property must be importable and exist on ShapeHourly."""
+
+    def test_class_has_factors_3d_(self):
+        """ShapeHourly has a factors_3d_ attribute (property)."""
+        assert hasattr(ShapeHourly, "factors_3d_"), "ShapeHourly must have factors_3d_ property"
+
+    def test_factors_3d_is_property(self):
+        """factors_3d_ is a Python property on the class."""
+        assert isinstance(ShapeHourly.__dict__.get("factors_3d_"), property), (
+            "factors_3d_ must be a @property"
+        )
+
+    def test_private_view_class_importable(self):
+        """_Factors3DView class is importable from shape_hourly module."""
+        from pfc_shaping.lt.model.shape_hourly import _Factors3DView  # noqa: F401
+
+
+class TestFactors3DViewEmptyBeforeFit:
+    """factors_3d_ is accessible before fit(), returns empty mapping (len==0)."""
+
+    def test_accessible_before_fit(self):
+        """factors_3d_ does not raise before fit()."""
+        sh = ShapeHourly()
+        v = sh.factors_3d_
+        assert v is not None
+
+    def test_len_zero_before_fit(self):
+        """len(factors_3d_) == 0 when factors_ is empty."""
+        sh = ShapeHourly()
+        assert len(sh.factors_3d_) == 0
+
+    def test_is_mapping_before_fit(self):
+        """factors_3d_ is a collections.abc.Mapping instance."""
+        from collections.abc import Mapping
+        sh = ShapeHourly()
+        assert isinstance(sh.factors_3d_, Mapping)
+
+
+class TestFactors3DViewGetItem:
+    """factors_3d_[(s, tj, h)] returns exact float from underlying factors_."""
+
+    def setup_method(self):
+        self.sh = ShapeHourly()
+        arr = np.linspace(0.8, 1.2, 24)
+        arr = arr / arr.mean()
+        self.arr = arr
+        self.sh.factors_[("Hiver", "Ouvrable")] = arr
+
+    def test_getitem_returns_correct_float(self):
+        """factors_3d_[('Hiver', 'Ouvrable', 12)] == factors_[('Hiver','Ouvrable')][12]."""
+        v = self.sh.factors_3d_
+        expected = float(self.arr[12])
+        assert v[("Hiver", "Ouvrable", 12)] == expected, (
+            f"Expected {expected}, got {v[('Hiver', 'Ouvrable', 12)]}"
+        )
+
+    def test_getitem_first_hour(self):
+        """Hour 0 indexing works."""
+        v = self.sh.factors_3d_
+        assert v[("Hiver", "Ouvrable", 0)] == float(self.arr[0])
+
+    def test_getitem_last_valid_hour(self):
+        """Hour 23 (last valid) works."""
+        v = self.sh.factors_3d_
+        assert v[("Hiver", "Ouvrable", 23)] == float(self.arr[23])
+
+    def test_keyerror_missing_cell(self):
+        """KeyError for (saison, type_jour) not in factors_."""
+        v = self.sh.factors_3d_
+        with pytest.raises(KeyError):
+            _ = v[("nope", "nope", 0)]
+
+    def test_keyerror_hour_out_of_range_high(self):
+        """KeyError for hour == 24 (must be in [0, 24))."""
+        v = self.sh.factors_3d_
+        with pytest.raises(KeyError):
+            _ = v[("Hiver", "Ouvrable", 24)]
+
+    def test_keyerror_hour_negative(self):
+        """KeyError for negative hour."""
+        v = self.sh.factors_3d_
+        with pytest.raises(KeyError):
+            _ = v[("Hiver", "Ouvrable", -1)]
+
+    def test_keyerror_wrong_key_type(self):
+        """KeyError for non-3-tuple key (e.g. 2-tuple)."""
+        v = self.sh.factors_3d_
+        with pytest.raises(KeyError):
+            _ = v[("Hiver", "Ouvrable")]
+
+
+class TestFactors3DViewLen:
+    """len(factors_3d_) == len(factors_) * 24."""
+
+    def test_len_single_cell(self):
+        """One cell → len == 24."""
+        sh = ShapeHourly()
+        arr = np.ones(24)
+        sh.factors_[("Hiver", "Ouvrable")] = arr
+        assert len(sh.factors_3d_) == 24
+
+    def test_len_two_cells(self):
+        """Two cells → len == 48."""
+        sh = ShapeHourly()
+        arr = np.ones(24)
+        sh.factors_[("Hiver", "Ouvrable")] = arr
+        sh.factors_[("Ete", "Samedi")] = arr
+        assert len(sh.factors_3d_) == 48
+
+    def test_len_proportional(self):
+        """len(factors_3d_) == len(factors_) * 24 always."""
+        sh = ShapeHourly()
+        arr = np.ones(24)
+        for s in ["Hiver", "Ete", "Printemps"]:
+            sh.factors_[(s, "Ouvrable")] = arr
+        assert len(sh.factors_3d_) == len(sh.factors_) * 24
+
+
+class TestFactors3DViewIteration:
+    """iter(factors_3d_) yields all (s, tj, h) 3-tuples."""
+
+    def test_iter_yields_3tuples(self):
+        """All items from iter() are 3-tuples (str, str, int)."""
+        sh = ShapeHourly()
+        arr = np.ones(24)
+        sh.factors_[("Hiver", "Ouvrable")] = arr
+        v = sh.factors_3d_
+        keys = list(iter(v))
+        assert all(isinstance(k, tuple) and len(k) == 3 for k in keys)
+
+    def test_iter_correct_count(self):
+        """Exactly len(factors_) * 24 items yielded."""
+        sh = ShapeHourly()
+        arr = np.ones(24)
+        sh.factors_[("Hiver", "Ouvrable")] = arr
+        sh.factors_[("Ete", "Samedi")] = arr
+        keys = list(sh.factors_3d_)
+        assert len(keys) == 2 * 24
+
+    def test_iter_covers_all_hours(self):
+        """For each (s, tj) in factors_, all hours 0..23 appear."""
+        sh = ShapeHourly()
+        arr = np.ones(24)
+        sh.factors_[("Hiver", "Ouvrable")] = arr
+        keys = list(sh.factors_3d_)
+        hours = [k[2] for k in keys if k[0] == "Hiver" and k[1] == "Ouvrable"]
+        assert sorted(hours) == list(range(24))
+
+
+class TestFactors3DViewReadOnly:
+    """factors_3d_ raises TypeError on write attempt (read-only)."""
+
+    def test_setitem_raises_typeerror(self):
+        """Assigning to factors_3d_[(s, tj, h)] raises TypeError."""
+        sh = ShapeHourly()
+        arr = np.ones(24)
+        sh.factors_[("Hiver", "Ouvrable")] = arr
+        v = sh.factors_3d_
+        with pytest.raises(TypeError):
+            v[("Hiver", "Ouvrable", 12)] = 99.0
+
+    def test_underlying_factors_unchanged_after_set_attempt(self):
+        """After TypeError on set, factors_ is unchanged."""
+        sh = ShapeHourly()
+        arr = np.ones(24)
+        sh.factors_[("Hiver", "Ouvrable")] = arr.copy()
+        v = sh.factors_3d_
+        try:
+            v[("Hiver", "Ouvrable", 12)] = 99.0
+        except TypeError:
+            pass
+        assert float(sh.factors_[("Hiver", "Ouvrable")][12]) == 1.0
+
+
+class TestFactors3DViewLiveness:
+    """factors_3d_ is a live facade — reflects mutations of factors_ dict."""
+
+    def test_new_cell_visible_after_first_access(self):
+        """Cell added AFTER first access of factors_3d_ is visible."""
+        sh = ShapeHourly()
+        arr = np.ones(24)
+        sh.factors_[("Hiver", "Ouvrable")] = arr
+        v = sh.factors_3d_  # first access
+        assert len(v) == 24
+        # Add a second cell AFTER getting the view
+        sh.factors_[("Ete", "Samedi")] = arr * 2
+        assert len(v) == 48  # live view reflects the addition
+        assert v[("Ete", "Samedi", 5)] == float(arr[5] * 2)
+
+    def test_view_reflects_mutation_of_existing_cell(self):
+        """Mutating an existing array in factors_ is reflected in the view."""
+        sh = ShapeHourly()
+        arr = np.ones(24)
+        sh.factors_[("Hiver", "Ouvrable")] = arr
+        v = sh.factors_3d_
+        # Mutate the underlying array
+        sh.factors_[("Hiver", "Ouvrable")][12] = 9.0
+        assert v[("Hiver", "Ouvrable", 12)] == 9.0
+
+
+class TestFactors3DViewContains:
+    """'in' operator works without raising on invalid keys."""
+
+    def test_valid_key_in_view(self):
+        """(s, tj, h) in view returns True for existing key."""
+        sh = ShapeHourly()
+        sh.factors_[("Hiver", "Ouvrable")] = np.ones(24)
+        assert ("Hiver", "Ouvrable", 12) in sh.factors_3d_
+
+    def test_missing_cell_not_in_view(self):
+        """(s, tj, h) for missing (s, tj) returns False."""
+        sh = ShapeHourly()
+        sh.factors_[("Hiver", "Ouvrable")] = np.ones(24)
+        assert ("Ete", "Samedi", 0) not in sh.factors_3d_
+
+    def test_hour_out_of_range_not_in_view(self):
+        """(s, tj, 24) returns False (not in view)."""
+        sh = ShapeHourly()
+        sh.factors_[("Hiver", "Ouvrable")] = np.ones(24)
+        assert ("Hiver", "Ouvrable", 24) not in sh.factors_3d_
+
+
+# ============================================================================
+# Plan 05B-04 Task 2: assembler _sh_apply_accepts_outages + capability check
+# ============================================================================
+
+class TestShApplyAcceptsOutagesHelper:
+    """_sh_apply_accepts_outages(cls) returns bool based on signature."""
+
+    def test_helper_importable(self):
+        """_sh_apply_accepts_outages is importable from assembler module."""
+        from pfc_shaping.lt.model.assembler import _sh_apply_accepts_outages  # noqa: F401
+
+    def test_returns_false_for_shape_hourly(self):
+        """ShapeHourly.apply does NOT have outages_forecast → returns False."""
+        from pfc_shaping.lt.model.assembler import _sh_apply_accepts_outages
+        assert _sh_apply_accepts_outages(ShapeHourly) is False
+
+    def test_returns_true_for_shape_hourly_mlp(self):
+        """ShapeHourlyMLP.apply HAS outages_forecast → returns True."""
+        from pfc_shaping.lt.model.assembler import _sh_apply_accepts_outages
+        from pfc_shaping.lt.model.shape_hourly_mlp import ShapeHourlyMLP
+        assert _sh_apply_accepts_outages(ShapeHourlyMLP) is True
+
+    def test_raises_typeerror_for_stub_without_reference_date(self):
+        """Class whose apply() lacks reference_date raises TypeError (minimum contract)."""
+        from pfc_shaping.lt.model.assembler import _sh_apply_accepts_outages
+
+        class LegacyStub:
+            def apply(self, timestamps, calendar_df):
+                pass
+
+        with pytest.raises(TypeError, match="reference_date"):
+            _sh_apply_accepts_outages(LegacyStub)
+
+
+class TestAssemblerCapabilityCache:
+    """PFCAssembler caches _sh_accepts_outages at __init__ time."""
+
+    def _make_assembler(self, sh=None):
+        """Create a minimal PFCAssembler without calibrator/wv/etc."""
+        from pfc_shaping.lt.model.assembler import PFCAssembler
+        from pfc_shaping.lt.model.shape_intraday import ShapeIntraday
+        if sh is None:
+            sh = ShapeHourly()
+        si = ShapeIntraday()
+        return PFCAssembler(shape_hourly=sh, shape_intraday=si)
+
+    def test_instance_has_sh_accepts_outages_attr(self):
+        """PFCAssembler instance has _sh_accepts_outages attribute after __init__."""
+        asm = self._make_assembler()
+        assert hasattr(asm, "_sh_accepts_outages"), (
+            "PFCAssembler must cache _sh_accepts_outages at __init__"
+        )
+
+    def test_sh_accepts_outages_false_for_shape_hourly(self):
+        """_sh_accepts_outages is False when sh is ShapeHourly."""
+        asm = self._make_assembler(sh=ShapeHourly())
+        assert asm._sh_accepts_outages is False
+
+    def test_sh_accepts_outages_true_for_shape_hourly_mlp(self):
+        """_sh_accepts_outages is True when sh is ShapeHourlyMLP."""
+        from pfc_shaping.lt.model.assembler import PFCAssembler
+        from pfc_shaping.lt.model.shape_hourly_mlp import ShapeHourlyMLP
+        from pfc_shaping.lt.model.shape_intraday import ShapeIntraday
+        sh = ShapeHourlyMLP()
+        si = ShapeIntraday()
+        asm = PFCAssembler(shape_hourly=sh, shape_intraday=si)
+        assert asm._sh_accepts_outages is True
+
+    def test_sh_accepts_outages_is_bool(self):
+        """_sh_accepts_outages is a Python bool (not numpy.bool_ etc.)."""
+        asm = self._make_assembler()
+        assert type(asm._sh_accepts_outages) is bool
+
+
+class TestAssemblerNoTryExceptTypeError:
+    """assembler.py no longer has try/except TypeError around self.sh.apply."""
+
+    def test_no_try_except_around_sh_apply(self):
+        """The try/except TypeError pattern around self.sh.apply is gone from assembler.py."""
+        import ast
+        import pathlib
+        src = pathlib.Path("pfc_shaping/lt/model/assembler.py").read_text()
+        tree = ast.parse(src)
+
+        # Walk AST and collect all ExceptHandler nodes that catch TypeError
+        type_error_handlers = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ExceptHandler):
+                exc = node.type
+                if exc is None:
+                    continue
+                names = []
+                if isinstance(exc, ast.Name):
+                    names = [exc.id]
+                elif isinstance(exc, ast.Tuple):
+                    names = [e.id for e in exc.elts if isinstance(e, ast.Name)]
+                if "TypeError" in names:
+                    # Check if any name in the handler body references sh.apply
+                    body_src = ast.unparse(node).lower()
+                    if "sh.apply" in body_src or "sh_apply" in body_src:
+                        type_error_handlers.append(node)
+
+        assert len(type_error_handlers) == 0, (
+            f"Found {len(type_error_handlers)} try/except TypeError block(s) around "
+            f"sh.apply — D-13 requires replacing with explicit signature check"
+        )
+
+
+class TestAssemblerOperatorLog:
+    """PFCAssembler emits exactly one operator log line at __init__ naming the sh class."""
+
+    def _make_assembler_and_capture_log(self, sh=None, caplog=None):
+        from pfc_shaping.lt.model.assembler import PFCAssembler
+        from pfc_shaping.lt.model.shape_intraday import ShapeIntraday
+        if sh is None:
+            sh = ShapeHourly()
+        si = ShapeIntraday()
+        with caplog.at_level(logging.INFO, logger="pfc_shaping.lt.model.assembler"):
+            asm = PFCAssembler(shape_hourly=sh, shape_intraday=si)
+        return asm
+
+    def test_operator_log_emitted_at_init(self, caplog):
+        """logger.info line mentioning 'Detected sh=' is emitted during __init__."""
+        self._make_assembler_and_capture_log(caplog=caplog)
+        messages = [r.message for r in caplog.records]
+        matching = [m for m in messages if "Detected sh=" in m]
+        assert len(matching) >= 1, (
+            f"Expected at least one log line with 'Detected sh=', got: {messages}"
+        )
+
+    def test_operator_log_names_shape_hourly(self, caplog):
+        """Log line for ShapeHourly contains 'ShapeHourly' and 'skipped'."""
+        self._make_assembler_and_capture_log(sh=ShapeHourly(), caplog=caplog)
+        messages = [r.message for r in caplog.records]
+        matching = [m for m in messages if "Detected sh=" in m]
+        assert any("ShapeHourly" in m and "skipped" in m for m in matching), (
+            f"Expected log containing 'ShapeHourly' and 'skipped', got: {matching}"
+        )
+
+    def test_operator_log_names_shape_hourly_mlp(self, caplog):
+        """Log line for ShapeHourlyMLP contains 'ShapeHourlyMLP' and 'passed'."""
+        from pfc_shaping.lt.model.assembler import PFCAssembler
+        from pfc_shaping.lt.model.shape_hourly_mlp import ShapeHourlyMLP
+        from pfc_shaping.lt.model.shape_intraday import ShapeIntraday
+        sh = ShapeHourlyMLP()
+        si = ShapeIntraday()
+        with caplog.at_level(logging.INFO, logger="pfc_shaping.lt.model.assembler"):
+            PFCAssembler(shape_hourly=sh, shape_intraday=si)
+        messages = [r.message for r in caplog.records]
+        matching = [m for m in messages if "Detected sh=" in m]
+        assert any("ShapeHourlyMLP" in m and "passed" in m for m in matching), (
+            f"Expected log containing 'ShapeHourlyMLP' and 'passed', got: {matching}"
+        )
