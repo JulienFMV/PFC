@@ -59,6 +59,12 @@ class SwissShortTermInputHealth:
     has_de_price_support: bool
     neighbor_overlap_hours: dict[str, int]
     has_required_neighbor_support: bool
+    governed_forecast_features_requested: bool = False
+    governed_forecast_features_enabled: bool = False
+    governed_forecast_coverage_ratio: float = 0.0
+    governed_forecast_min_coverage_ratio: float = 0.0
+    governed_forecast_max_supported_horizon_days: int = 0
+    governed_forecast_missing_sources: list[str] | None = None
 
 
 @dataclass
@@ -79,10 +85,10 @@ def run_swiss_short_term_overlay(
     t_lear = time.time()
 
     input_health = _validate_swiss_short_term_inputs(inputs, logger)
-    _save_input_health(input_health, logger)
 
     use_foundation_model = _foundation_enabled()
     use_governed_forecast_features = _governed_forecast_features_enabled()
+    min_governed_forecast_coverage = float(os.getenv("PFC_CT_MIN_GOVERNED_FORECAST_COVERAGE", "0.98"))
     logger.info(
         "  Swiss CT model policy: LEAR CH+DE baseline, foundation=%s, governed_forecast_features=%s, required_neighbors=%s",
         "enabled" if use_foundation_model else "disabled",
@@ -90,23 +96,43 @@ def run_swiss_short_term_overlay(
         inputs.required_neighbor_codes,
     )
 
-    lear = LEARForecaster(
-        tz="Europe/Zurich",
+    lear = _fit_lear_model(
+        inputs=inputs,
         use_foundation_model=use_foundation_model,
         use_governed_forecast_features=use_governed_forecast_features,
     )
-    lear.fit(
-        epex_15min=inputs.epex_ch,
-        entso_15min=inputs.entso,
-        outages_15min=inputs.outages_all,
-        commodities=inputs.commodities,
-        hydro=inputs.hydro,
-        epex_de_15min=inputs.epex_de,
-        neighbor_price_15min=inputs.neighbor_prices_15min,
-        de_renewable_forecast=inputs.de_renewable_forecast,
-        multi_country_forecast=inputs.multi_country_forecast,
-        weather_forecast=inputs.weather_forecast,
+
+    governed_health = lear.assess_governed_forecast_feature_health(
+        horizon_days=10,
+        min_coverage_ratio=min_governed_forecast_coverage,
     )
+    if use_governed_forecast_features and not governed_health.get("enabled_for_run", False):
+        logger.warning(
+            "  Disabling governed forecast features for this run: coverage=%.3f < %.3f, max_supported_horizon_days=%s, missing sources=%s",
+            governed_health.get("coverage_ratio", 0.0),
+            governed_health.get("min_coverage_ratio", min_governed_forecast_coverage),
+            governed_health.get("max_supported_horizon_days", 0),
+            governed_health.get("missing_sources", []),
+        )
+        lear = _fit_lear_model(
+            inputs=inputs,
+            use_foundation_model=use_foundation_model,
+            use_governed_forecast_features=False,
+        )
+
+    governed_enabled_final = bool(
+        use_governed_forecast_features and governed_health.get("enabled_for_run", False)
+    )
+    input_health = replace(
+        input_health,
+        governed_forecast_features_requested=use_governed_forecast_features,
+        governed_forecast_features_enabled=governed_enabled_final,
+        governed_forecast_coverage_ratio=float(governed_health.get("coverage_ratio", 0.0)),
+        governed_forecast_min_coverage_ratio=float(governed_health.get("min_coverage_ratio", 0.0)),
+        governed_forecast_max_supported_horizon_days=int(governed_health.get("max_supported_horizon_days", 0)),
+        governed_forecast_missing_sources=list(governed_health.get("missing_sources", [])),
+    )
+    _save_input_health(input_health, logger)
 
     lear_forecast = lear.predict(horizon_days=10)
     logger.info("  LEAR forecast: %d hours, mean=%.1f EUR/MWh", len(lear_forecast), lear_forecast["price_lear"].mean())
@@ -126,6 +152,31 @@ def run_swiss_short_term_overlay(
 
     logger.info("  LEAR completed in %.1fs", time.time() - t_lear)
     return SwissShortTermArtifacts(pfc_ch=pfc_ch, lear_forecast=lear_forecast, lear_run_id=lear_run_id)
+
+
+def _fit_lear_model(
+    inputs: SwissShortTermInputs,
+    use_foundation_model: bool,
+    use_governed_forecast_features: bool,
+) -> LEARForecaster:
+    lear = LEARForecaster(
+        tz="Europe/Zurich",
+        use_foundation_model=use_foundation_model,
+        use_governed_forecast_features=use_governed_forecast_features,
+    )
+    lear.fit(
+        epex_15min=inputs.epex_ch,
+        entso_15min=inputs.entso,
+        outages_15min=inputs.outages_all,
+        commodities=inputs.commodities,
+        hydro=inputs.hydro,
+        epex_de_15min=inputs.epex_de,
+        neighbor_price_15min=inputs.neighbor_prices_15min,
+        de_renewable_forecast=inputs.de_renewable_forecast,
+        multi_country_forecast=inputs.multi_country_forecast,
+        weather_forecast=inputs.weather_forecast,
+    )
+    return lear
 
 
 def _validate_swiss_short_term_inputs(

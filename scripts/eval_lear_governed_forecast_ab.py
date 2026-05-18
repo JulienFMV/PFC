@@ -119,7 +119,7 @@ def _run_variant(
     weather_forecast: pd.DataFrame | None,
     n_days: int,
     horizon: int,
-) -> pd.DataFrame:
+) -> tuple[pd.DataFrame, dict[str, object]]:
     model = LEARForecaster(
         use_foundation_model=True,
         use_governed_forecast_features=use_governed_forecast_features,
@@ -135,9 +135,13 @@ def _run_variant(
         multi_country_forecast=multi_country_forecast,
         weather_forecast=weather_forecast,
     )
+    governed_health = model.assess_governed_forecast_feature_health(
+        horizon_days=max(1, int(horizon)),
+        min_coverage_ratio=float(os.getenv("PFC_CT_MIN_GOVERNED_FORECAST_COVERAGE", "0.98")),
+    )
     bt = model.backtest(n_days=n_days, horizon=horizon).copy()
     bt["variant"] = label
-    return bt
+    return bt, governed_health
 
 
 def main() -> None:
@@ -176,7 +180,7 @@ def main() -> None:
     multi_country_forecast = _read_optional_parquet(DATA_FILES["multi_country_forecast"])
     weather_forecast = _read_optional_parquet(DATA_FILES["weather_forecast"])
 
-    baseline = _run_variant(
+    baseline, baseline_governed_health = _run_variant(
         "baseline",
         False,
         epex_ch,
@@ -191,7 +195,7 @@ def main() -> None:
         args.n_days,
         args.horizon,
     )
-    experiment = _run_variant(
+    experiment, experiment_governed_health = _run_variant(
         "governed_forecast_features",
         True,
         epex_ch,
@@ -221,6 +225,8 @@ def main() -> None:
         "governed_forecast_features_backtest": str(experiment_path),
         "baseline": baseline_score,
         "governed_forecast_features": experiment_score,
+        "baseline_governed_feature_health": baseline_governed_health,
+        "governed_feature_health": experiment_governed_health,
         "delta": {
             k: experiment_score[k] - baseline_score[k]
             for k in ["mae", "rmse", "mape", "corr"]

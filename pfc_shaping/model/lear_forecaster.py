@@ -138,6 +138,30 @@ class LEARForecaster:
 
     CALIBRATION_WINDOWS = [42, 56, 84, 180, 365]  # days
     LAGS_DAYS = [1, 2, 3, 7, 14]  # price lag structure
+    GOVERNED_FORECAST_COLUMNS = (
+        "forecast_load_ch_mw",
+        "forecast_load_de_mw",
+        "forecast_load_fr_mw",
+        "forecast_load_it_mw",
+        "forecast_solar_ch_mw",
+        "forecast_solar_de_mw",
+        "forecast_solar_fr_mw",
+        "forecast_solar_it_mw",
+        "forecast_wind_de_mw",
+        "forecast_wind_fr_mw",
+        "forecast_wind_at_mw",
+        "forecast_wind_it_mw",
+    )
+    GOVERNED_WEATHER_COLUMNS = (
+        "wx_ch_zurich_shortwave_radiation",
+        "wx_ch_zurich_cloud_cover",
+        "wx_ch_zurich_temperature_2m",
+        "wx_de_hamburg_wind_speed_10m",
+        "wx_de_munich_shortwave_radiation",
+        "wx_fr_lyon_cloud_cover",
+        "wx_at_vienna_wind_speed_10m",
+        "wx_it_milan_shortwave_radiation",
+    )
 
     def __init__(
         self,
@@ -169,6 +193,15 @@ class LEARForecaster:
         self._fitted = False
         self._fm = FoundationForecaster() if use_foundation_model else None
         self._lgbm_device_type = "gpu"
+        self._governed_feature_health: dict[str, object] = {
+            "requested": bool(use_governed_forecast_features),
+            "enabled_for_run": bool(use_governed_forecast_features),
+            "coverage_ratio": 0.0,
+            "min_coverage_ratio": 1.0,
+            "max_supported_horizon_days": 0,
+            "missing_sources": [],
+            "source_coverage": {},
+        }
 
     def fit(
         self,
@@ -295,6 +328,7 @@ class LEARForecaster:
                     continue
                 if s.index.tz is None:
                     s.index = s.index.tz_localize("UTC")
+                self._forecast_feature_pivots[col] = self._series_to_forecast_pivot(s)
                 exog[col] = s.resample("h").mean()
 
         # Governed weather forecast layer
@@ -305,6 +339,7 @@ class LEARForecaster:
                     continue
                 if s.index.tz is None:
                     s.index = s.index.tz_localize("UTC")
+                self._forecast_feature_pivots[col] = self._series_to_forecast_pivot(s)
                 exog[col] = s.resample("h").mean()
 
         # Align
@@ -323,7 +358,8 @@ class LEARForecaster:
             index="date", columns="hour", values="price", aggfunc="mean"
         )
         self._complete_days = self._price_pivot.dropna(thresh=23)
-        self._forecast_feature_pivots = self._build_forecast_feature_pivots(exog)
+        if not self._forecast_feature_pivots:
+            self._forecast_feature_pivots = self._build_forecast_feature_pivots(exog)
 
         # Pre-compute per-hour variance calibration (last 90 days)
         self._var_calib = self._compute_variance_calibration()
@@ -348,23 +384,100 @@ class LEARForecaster:
         """Store hourly pivots for true forecast-time exogenous series."""
         pivots: dict[str, pd.DataFrame] = {}
         for col in exog.columns:
-            if not (
-                col.startswith("forecast_")
-                or col.startswith("wx_")
-            ):
+            if not (col.startswith("forecast_") or col.startswith("wx_")):
                 continue
             series = exog[col].dropna()
             if series.empty:
                 continue
-            local_idx = series.index.tz_convert(self.tz)
-            df = pd.DataFrame({
-                "date": local_idx.date,
-                "hour": local_idx.hour,
-                "value": series.values,
-            })
-            pivot = df.pivot_table(index="date", columns="hour", values="value", aggfunc="mean")
-            pivots[col] = pivot
+            pivots[col] = self._series_to_forecast_pivot(series)
         return pivots
+
+    def _series_to_forecast_pivot(self, series: pd.Series) -> pd.DataFrame:
+        local_idx = series.index.tz_convert(self.tz)
+        df = pd.DataFrame({
+            "date": local_idx.date,
+            "hour": local_idx.hour,
+            "value": series.values,
+        })
+        return df.pivot_table(index="date", columns="hour", values="value", aggfunc="mean")
+
+    def assess_governed_forecast_feature_health(
+        self,
+        horizon_days: int,
+        min_coverage_ratio: float = 0.98,
+    ) -> dict[str, object]:
+        """Measure forward coverage of governed forecast/weather pivots.
+
+        This is used to fail loud in production when future-known inputs are
+        not actually available for the requested horizon.
+        """
+        requested = bool(self.use_governed_forecast_features)
+        health: dict[str, object] = {
+            "requested": requested,
+            "enabled_for_run": requested,
+            "coverage_ratio": 1.0 if not requested else 0.0,
+            "min_coverage_ratio": float(min_coverage_ratio),
+            "max_supported_horizon_days": 0 if requested else int(horizon_days),
+            "missing_sources": [],
+            "source_coverage": {},
+            "forecast_dates_local": [],
+        }
+        if not requested or not self._fitted:
+            self._governed_feature_health = health
+            return health
+
+        last_date = pd.Timestamp(self._idx_local[-1].date(), tz=self.tz)
+        forecast_dates = [(last_date + timedelta(days=d)).date() for d in range(1, int(horizon_days) + 1)]
+        health["forecast_dates_local"] = [str(d) for d in forecast_dates]
+
+        expected_sources = list(self.GOVERNED_FORECAST_COLUMNS) + list(self.GOVERNED_WEATHER_COLUMNS)
+        total_expected = len(forecast_dates) * 24 * len(expected_sources)
+        total_available = 0
+        missing_sources: list[str] = []
+        source_coverage: dict[str, float] = {}
+        max_supported_horizon_days = 0
+
+        for d in range(1, int(horizon_days) + 1):
+            candidate_dates = forecast_dates[:d]
+            candidate_ok = True
+            for source_col in expected_sources:
+                pivot = self._forecast_feature_pivots.get(source_col)
+                if pivot is None:
+                    candidate_ok = False
+                    break
+                future = pivot.reindex(index=candidate_dates, columns=range(24))
+                expected = int(future.shape[0] * future.shape[1])
+                available = int(future.notna().sum().sum())
+                coverage = float(available / expected) if expected else 0.0
+                if coverage < float(min_coverage_ratio):
+                    candidate_ok = False
+                    break
+            if candidate_ok:
+                max_supported_horizon_days = d
+
+        for source_col in expected_sources:
+            pivot = self._forecast_feature_pivots.get(source_col)
+            if pivot is None:
+                source_coverage[source_col] = 0.0
+                missing_sources.append(source_col)
+                continue
+            future = pivot.reindex(index=forecast_dates, columns=range(24))
+            available = int(future.notna().sum().sum())
+            expected = int(future.shape[0] * future.shape[1])
+            coverage = float(available / expected) if expected else 0.0
+            source_coverage[source_col] = coverage
+            total_available += available
+            if coverage < float(min_coverage_ratio):
+                missing_sources.append(source_col)
+
+        coverage_ratio = float(total_available / total_expected) if total_expected else 1.0
+        health["coverage_ratio"] = coverage_ratio
+        health["max_supported_horizon_days"] = max_supported_horizon_days
+        health["missing_sources"] = sorted(set(missing_sources))
+        health["source_coverage"] = source_coverage
+        health["enabled_for_run"] = coverage_ratio >= float(min_coverage_ratio) and not missing_sources
+        self._governed_feature_health = health
+        return health
 
     def _compute_variance_calibration(self) -> dict[int, tuple[float, float]]:
         """Compute per-hour recent mean and std for variance recalibration.
