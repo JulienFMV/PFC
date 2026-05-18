@@ -151,6 +151,12 @@ def load_local_dataset(project_root: str | Path, dataset_name: str, required: bo
     spec = get_dataset_spec(dataset_name)
     path = resolve_local_cache_path(project_root, dataset_name)
     if path is None or not path.exists():
+        if dataset_name in {"ct_entso_fundamentals_15min", "ct_entso_border_15min"}:
+            legacy_path = Path(project_root) / "pfc_shaping" / "data" / "entso_15min.parquet"
+            if legacy_path.exists():
+                legacy_df = pd.read_parquet(legacy_path)
+                fundamentals, border = split_entso_views(legacy_df)
+                return fundamentals if dataset_name == "ct_entso_fundamentals_15min" else border
         if required if required is not None else spec.required:
             raise FileNotFoundError(f"Missing required dataset {dataset_name}: {path}")
         return None
@@ -179,3 +185,27 @@ def split_entso_views(entso_df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFram
     fundamentals = entso_df[[c for c in ENTSO_FUNDAMENTALS_COLUMNS if c in entso_df.columns]].copy()
     border = entso_df[[c for c in ENTSO_BORDER_COLUMNS if c in entso_df.columns]].copy()
     return fundamentals, border
+
+
+def materialize_entso_split_views(project_root: str | Path) -> dict[str, Path]:
+    project_root = Path(project_root)
+    legacy_path = project_root / "pfc_shaping" / "data" / "entso_15min.parquet"
+    if not legacy_path.exists():
+        raise FileNotFoundError(f"Missing legacy ENTSO dataset: {legacy_path}")
+
+    entso_df = pd.read_parquet(legacy_path)
+    fundamentals, border = split_entso_views(entso_df)
+
+    out_fundamentals = resolve_local_cache_path(project_root, "ct_entso_fundamentals_15min")
+    out_border = resolve_local_cache_path(project_root, "ct_entso_border_15min")
+    if out_fundamentals is None or out_border is None:
+        raise ValueError("CT dataset registry missing ENTSO split cache paths.")
+
+    out_fundamentals.parent.mkdir(parents=True, exist_ok=True)
+    out_border.parent.mkdir(parents=True, exist_ok=True)
+    fundamentals.to_parquet(out_fundamentals, engine="pyarrow", compression="snappy")
+    border.to_parquet(out_border, engine="pyarrow", compression="snappy")
+    return {
+        "fundamentals": out_fundamentals,
+        "border": out_border,
+    }

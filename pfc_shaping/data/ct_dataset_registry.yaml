@@ -111,7 +111,7 @@ datasets:
     layer: silver
     domain: realized_fundamentals
     source_system: entsoe
-    local_cache: "pfc_shaping/data/entso_15min.parquet"
+    local_cache: "pfc_shaping/data/entso_fundamentals_15min.parquet"
     target_table: "market_data.ct_entso_fundamentals_15min"
     grain: "15min"
     time_key: "timestamp_utc"
@@ -141,7 +141,7 @@ datasets:
     layer: silver
     domain: cross_border_fundamentals
     source_system: entsoe
-    local_cache: "pfc_shaping/data/entso_15min.parquet"
+    local_cache: "pfc_shaping/data/entso_border_15min.parquet"
     target_table: "market_data.ct_entso_border_15min"
     grain: "15min"
     time_key: "timestamp_utc"

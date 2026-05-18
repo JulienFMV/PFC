@@ -12,8 +12,6 @@ import yaml
 from pfc_shaping.data.ct_datasets import (
     load_local_dataset,
     load_neighbor_price_frames,
-    resolve_local_cache_path,
-    split_entso_views,
 )
 from pfc_shaping.pipeline.swiss_short_term import (
     SwissShortTermArtifacts,
@@ -116,16 +114,17 @@ def load_inputs(project_root: str, logger: logging.Logger) -> LoadedInputs:
     epex_ch = load_local_dataset(project_root, "ct_price_15min_ch", required=True)
     epex_de = load_local_dataset(project_root, "ct_price_15min_de", required=True)
     neighbor_prices_15min = load_neighbor_price_frames(project_root)
-    entso = load_local_dataset(project_root, "ct_entso_fundamentals_15min", required=True)
+    entso_fundamentals = load_local_dataset(project_root, "ct_entso_fundamentals_15min", required=True)
+    entso_border = load_local_dataset(project_root, "ct_entso_border_15min", required=False)
     hydro = load_local_dataset(project_root, "ct_hydro_daily", required=True)
     de_renewable_forecast = load_local_dataset(project_root, "ct_forecast_de_renewables_15min", required=False)
-    entso_fundamentals, entso_border = split_entso_views(entso)
+    entso = entso_fundamentals
 
     logger.info("  EPEX CH:  %d rows  [%s -> %s]", len(epex_ch), epex_ch.index.min().date(), epex_ch.index.max().date())
     logger.info("  EPEX DE:  %d rows  [%s -> %s]", len(epex_de), epex_de.index.min().date(), epex_de.index.max().date())
     logger.info("  ENTSO-E:  %d rows  [%s -> %s]", len(entso), entso.index.min().date(), entso.index.max().date())
     logger.info("  ENTSO fundamentals: %d cols", len(entso_fundamentals.columns))
-    logger.info("  ENTSO border:       %d cols", len(entso_border.columns))
+    logger.info("  ENTSO border:       %d cols", 0 if entso_border is None else len(entso_border.columns))
     logger.info("  Hydro:    %d rows  [%s -> %s]", len(hydro), hydro.index.min().date(), hydro.index.max().date())
     logger.info("  Data loaded in %.1fs", time.time() - t0)
 

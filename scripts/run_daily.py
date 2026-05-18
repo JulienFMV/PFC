@@ -34,6 +34,8 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 os.chdir(ROOT)
 
+from pfc_shaping.data.ct_datasets import materialize_entso_split_views
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
@@ -128,8 +130,10 @@ def ingest_data(days_back: int = 7) -> dict:
 
         fetch_entso_enriched(enrich_start, end, country_code="CH")
         forecast_df = fetch_and_cache_de_renewable_forecast(enrich_start, forecast_end)
+        split_paths = materialize_entso_split_views(ROOT)
         status["entso_enrichment"] = (
-            f"OK (neighbor/border refreshed, DE forecast max_ts={forecast_df.index.max()})"
+            f"OK (neighbor/border refreshed, DE forecast max_ts={forecast_df.index.max()}, "
+            f"fundamentals={split_paths['fundamentals'].name}, border={split_paths['border'].name})"
         )
         logger.info("  ENTSO-E enrichment: %s", status["entso_enrichment"])
     except Exception as e:

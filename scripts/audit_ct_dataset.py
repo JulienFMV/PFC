@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 import sys
 from dataclasses import asdict, dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -15,12 +15,18 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from pfc_shaping.data.ct_datasets import (  # noqa: E402
+    get_dataset_spec,
+    load_local_dataset,
+    resolve_local_cache_path,
+)
 from pfc_shaping.model.lear_forecaster import LEARForecaster  # noqa: E402
 
 
 @dataclass
 class DatasetStatus:
     dataset: str
+    registry_name: str
     path: str
     exists: bool
     rows: int
@@ -43,17 +49,18 @@ class VariableGroupStatus:
     notes: str
 
 
-DATASETS = {
-    "epex_ch": ROOT / "pfc_shaping" / "data" / "epex_15min.parquet",
-    "epex_de": ROOT / "pfc_shaping" / "data" / "epex_de_15min.parquet",
-    "epex_fr": ROOT / "pfc_shaping" / "data" / "epex_fr_15min.parquet",
-    "epex_at": ROOT / "pfc_shaping" / "data" / "epex_at_15min.parquet",
-    "epex_it": ROOT / "pfc_shaping" / "data" / "epex_it_15min.parquet",
-    "entso": ROOT / "pfc_shaping" / "data" / "entso_15min.parquet",
-    "de_renewable_forecast": ROOT / "pfc_shaping" / "data" / "de_renewable_forecast.parquet",
-    "hydro": ROOT / "pfc_shaping" / "data" / "hydro_reservoir.parquet",
-    "outages": ROOT / "pfc_shaping" / "data" / "outages_15min.parquet",
-    "commodities": ROOT / "data" / "commodities_cache.parquet",
+DATASET_REGISTRY = {
+    "epex_ch": "ct_price_15min_ch",
+    "epex_de": "ct_price_15min_de",
+    "epex_fr": "ct_price_15min_fr",
+    "epex_at": "ct_price_15min_at",
+    "epex_it": "ct_price_15min_it",
+    "entso_fundamentals": "ct_entso_fundamentals_15min",
+    "entso_border": "ct_entso_border_15min",
+    "de_renewable_forecast": "ct_forecast_de_renewables_15min",
+    "hydro": "ct_hydro_daily",
+    "outages": "ct_outages_15min",
+    "commodities": "ct_commodities_daily",
 }
 
 
@@ -83,35 +90,35 @@ VARIABLE_GROUPS = [
         "group": "CH realized load/solar/wind/cross-border",
         "priority": "critical",
         "kind": "realized_fundamentals",
-        "source": "entso",
+        "source": "entso_fundamentals",
         "consumed_by_prod": True,
     },
     {
         "group": "DE realized load/solar/wind/residual",
         "priority": "critical",
         "kind": "realized_fundamentals",
-        "source": "entso",
+        "source": "entso_fundamentals",
         "consumed_by_prod": True,
     },
     {
         "group": "FR/AT/IT realized load/solar/wind",
         "priority": "high",
         "kind": "realized_fundamentals",
-        "source": "entso",
+        "source": "entso_fundamentals",
         "consumed_by_prod": False,
     },
     {
         "group": "CH border capacities / balances / schedules",
         "priority": "high",
         "kind": "cross_border_fundamentals",
-        "source": "entso",
+        "source": "entso_border",
         "consumed_by_prod": False,
     },
     {
         "group": "FR nuclear stress",
         "priority": "high",
         "kind": "cross_border_fundamentals",
-        "source": "entso",
+        "source": "entso_fundamentals",
         "consumed_by_prod": False,
     },
     {
@@ -167,10 +174,16 @@ def _iso(ts) -> str | None:
     return str(ts)
 
 
-def _read_df(path: Path) -> pd.DataFrame | None:
-    if not path.exists():
-        return None
-    return pd.read_parquet(path)
+def _extract_time_bounds(df: pd.DataFrame, time_key: str) -> tuple[pd.Timestamp | None, pd.Timestamp | None]:
+    if df.empty:
+        return None, None
+    if isinstance(df.index, pd.DatetimeIndex):
+        return df.index.min(), df.index.max()
+    if time_key in df.columns:
+        series = pd.to_datetime(df[time_key], utc=True, errors="coerce").dropna()
+        if not series.empty:
+            return series.min(), series.max()
+    return None, None
 
 
 def _freshness_from_max(max_ts: pd.Timestamp | None, current_ts: pd.Timestamp, max_age_days: int) -> str:
@@ -178,7 +191,7 @@ def _freshness_from_max(max_ts: pd.Timestamp | None, current_ts: pd.Timestamp, m
         return "missing"
     if max_ts.tz is None:
         max_ts = max_ts.tz_localize("UTC")
-    age = current_ts - max_ts.tz_convert("UTC")
+    age = current_ts.tz_convert("UTC") - max_ts.tz_convert("UTC")
     if age <= pd.Timedelta(days=max_age_days):
         return "ok"
     if age <= pd.Timedelta(days=max_age_days * 14):
@@ -186,43 +199,60 @@ def _freshness_from_max(max_ts: pd.Timestamp | None, current_ts: pd.Timestamp, m
     return "stale"
 
 
-def _dataset_status(name: str, path: Path, current_ts: pd.Timestamp) -> DatasetStatus:
-    df = _read_df(path)
+def _dataset_status(alias: str, current_ts: pd.Timestamp) -> tuple[DatasetStatus, pd.DataFrame | None]:
+    dataset_name = DATASET_REGISTRY[alias]
+    spec = get_dataset_spec(dataset_name)
+    path = resolve_local_cache_path(ROOT, dataset_name)
+    notes: list[str] = []
+    exists = bool(path and path.exists())
+
+    if not exists and dataset_name in {"ct_entso_fundamentals_15min", "ct_entso_border_15min"}:
+        legacy_path = ROOT / "pfc_shaping" / "data" / "entso_15min.parquet"
+        if legacy_path.exists():
+            notes.append("serving from legacy entso_15min fallback until split cache is materialized")
+
+    df = load_local_dataset(ROOT, dataset_name, required=False)
     if df is None:
-        return DatasetStatus(name, str(path), False, 0, None, None, "missing", "dataset file absent")
+        status = DatasetStatus(
+            dataset=alias,
+            registry_name=dataset_name,
+            path="" if path is None else str(path),
+            exists=False,
+            rows=0,
+            min_ts=None,
+            max_ts=None,
+            freshness_status="missing",
+            notes="; ".join(notes) if notes else "dataset file absent",
+        )
+        return status, None
 
-    idx = df.index if isinstance(df.index, pd.DatetimeIndex) else None
-    min_ts = idx.min() if idx is not None and len(df) else None
-    max_ts = idx.max() if idx is not None and len(df) else None
-
-    if name in {"epex_ch", "epex_de", "entso", "outages"}:
-        freshness = _freshness_from_max(max_ts, current_ts, 2)
-    elif name == "de_renewable_forecast":
-        freshness = _freshness_from_max(max_ts, current_ts + pd.Timedelta(days=1), 2)
-    elif name == "hydro":
-        freshness = _freshness_from_max(max_ts, current_ts, 10)
-    else:
-        freshness = _freshness_from_max(max_ts, current_ts, 14)
-
-    return DatasetStatus(
-        dataset=name,
-        path=str(path),
-        exists=True,
+    min_ts, max_ts = _extract_time_bounds(df, spec.time_key)
+    freshness = _freshness_from_max(max_ts, current_ts, spec.freshness_sla_days)
+    status = DatasetStatus(
+        dataset=alias,
+        registry_name=dataset_name,
+        path="" if path is None else str(path),
+        exists=exists,
         rows=len(df),
         min_ts=_iso(min_ts),
         max_ts=_iso(max_ts),
         freshness_status=freshness,
-        notes="",
+        notes="; ".join(notes),
     )
+    return status, df
 
 
-def _build_prod_exog() -> set[str]:
-    epex_ch = pd.read_parquet(DATASETS["epex_ch"])
-    epex_de = pd.read_parquet(DATASETS["epex_de"])
-    entso = pd.read_parquet(DATASETS["entso"])
-    hydro = pd.read_parquet(DATASETS["hydro"])
-    outages = _read_df(DATASETS["outages"])
-    commodities = _read_df(DATASETS["commodities"])
+def _build_prod_exog(dataset_frames: dict[str, pd.DataFrame | None]) -> set[str]:
+    epex_ch = dataset_frames["epex_ch"]
+    epex_de = dataset_frames["epex_de"]
+    entso = dataset_frames["entso_fundamentals"]
+    hydro = dataset_frames["hydro"]
+    outages = dataset_frames["outages"]
+    commodities = dataset_frames["commodities"]
+    de_renewable_forecast = dataset_frames["de_renewable_forecast"]
+
+    if epex_ch is None or epex_de is None or entso is None or hydro is None:
+        return set()
 
     model = LEARForecaster(
         use_foundation_model=True,
@@ -237,43 +267,55 @@ def _build_prod_exog() -> set[str]:
         commodities=commodities,
         hydro=hydro,
         epex_de_15min=epex_de,
+        de_renewable_forecast=de_renewable_forecast,
     )
     return set(model.exog_.columns)
 
 
-def _group_status(group: dict, datasets: dict[str, DatasetStatus], prod_exog: set[str], current_ts: pd.Timestamp) -> VariableGroupStatus:
+def _group_status(
+    group: dict,
+    datasets: dict[str, DatasetStatus],
+    dataset_frames: dict[str, pd.DataFrame | None],
+    prod_exog: set[str],
+    current_ts: pd.Timestamp,
+) -> VariableGroupStatus:
     source = group["source"]
-    notes = []
+    notes: list[str] = []
 
     if source == "epex_neighbors":
         fr = datasets["epex_fr"]
         at = datasets["epex_at"]
         it = datasets["epex_it"]
-        hist = "ok" if all(ds.exists and ds.rows > 0 for ds in [fr, at, it]) else "missing"
+        hist = "ok" if all(ds.rows > 0 for ds in [fr, at, it]) else "missing"
         fresh = "ok" if all(ds.freshness_status in {"ok", "partial"} for ds in [fr, at, it]) else "partial"
     elif source == "missing_multi_country_forecasts":
         hist = "missing"
         fresh = "missing"
-        notes.append("No governed J+1 load/solar/wind forecasts for FR/AT/IT/CH/DE except DE renewables.")
+        notes.append("No governed J+1 load/solar/wind forecasts for CH/DE/FR/AT/IT beyond DE renewables.")
     elif source == "missing_weather_forecasts":
         hist = "missing"
         fresh = "missing"
-        notes.append("No governed forecast weather layer in current CT pipeline.")
+        notes.append("No governed forecast weather layer in the current CT pipeline.")
     else:
         ds = datasets.get(source)
-        hist = "ok" if ds and ds.exists and ds.rows > 0 else "missing"
+        hist = "ok" if ds and ds.rows > 0 else "missing"
         fresh = ds.freshness_status if ds else "missing"
 
-    if group["group"] == "DE realized load/solar/wind/residual":
-        entso = pd.read_parquet(DATASETS["entso"])
-        recent = entso.loc[entso.index >= current_ts.tz_convert("UTC") - pd.Timedelta(days=60)]
+    entso_fundamentals = dataset_frames.get("entso_fundamentals")
+    entso_border = dataset_frames.get("entso_border")
+
+    if group["group"] == "DE realized load/solar/wind/residual" and entso_fundamentals is not None:
+        recent = entso_fundamentals.loc[
+            entso_fundamentals.index >= current_ts.tz_convert("UTC") - pd.Timedelta(days=60)
+        ]
         cols = ["load_de_mw", "solar_de_mw", "wind_de_mw", "residual_load_de_mw"]
         cov = min(float(recent[c].notna().mean()) for c in cols if c in recent.columns)
         hist = "ok" if cov > 0.9 else "partial"
         notes.append(f"recent_60d_coverage={cov:.2%}")
-    elif group["group"] == "FR/AT/IT realized load/solar/wind":
-        entso = pd.read_parquet(DATASETS["entso"])
-        recent = entso.loc[entso.index >= current_ts.tz_convert("UTC") - pd.Timedelta(days=60)]
+    elif group["group"] == "FR/AT/IT realized load/solar/wind" and entso_fundamentals is not None:
+        recent = entso_fundamentals.loc[
+            entso_fundamentals.index >= current_ts.tz_convert("UTC") - pd.Timedelta(days=60)
+        ]
         cols = [
             "load_fr_mw", "solar_fr_mw", "wind_fr_mw",
             "load_at_mw", "solar_at_mw", "wind_at_mw",
@@ -283,9 +325,10 @@ def _group_status(group: dict, datasets: dict[str, DatasetStatus], prod_exog: se
         hist = "partial" if cov > 0.5 else "missing"
         fresh = "ok" if cov > 0.5 else "missing"
         notes.append(f"recent_60d_coverage={cov:.2%}")
-    elif group["group"] == "CH border capacities / balances / schedules":
-        entso = pd.read_parquet(DATASETS["entso"])
-        recent = entso.loc[entso.index >= current_ts.tz_convert("UTC") - pd.Timedelta(days=60)]
+    elif group["group"] == "CH border capacities / balances / schedules" and entso_border is not None:
+        recent = entso_border.loc[
+            entso_border.index >= current_ts.tz_convert("UTC") - pd.Timedelta(days=60)
+        ]
         cols = [
             "ntc_balance_ch_de", "ntc_balance_ch_fr",
             "scheduled_net_export_ch_de_mw_zscore", "scheduled_net_export_ch_fr_mw_zscore",
@@ -294,10 +337,9 @@ def _group_status(group: dict, datasets: dict[str, DatasetStatus], prod_exog: se
         cov = min(float(recent[c].notna().mean()) for c in cols if c in recent.columns)
         hist = "ok" if cov > 0.95 else "partial"
         notes.append(f"recent_60d_coverage={cov:.2%}")
-    elif group["group"] == "FR nuclear stress":
-        entso = pd.read_parquet(DATASETS["entso"])
+    elif group["group"] == "FR nuclear stress" and entso_fundamentals is not None:
         cols = ["fr_nuclear_unavailable_mw", "fr_nuclear_unavailability_ratio", "fr_nuclear_stress_flag"]
-        cov = min(float(entso[c].notna().mean()) for c in cols if c in entso.columns)
+        cov = min(float(entso_fundamentals[c].notna().mean()) for c in cols if c in entso_fundamentals.columns)
         hist = "ok" if cov > 0.95 else "partial"
         notes.append(f"full_history_coverage={cov:.2%}")
     elif group["group"] == "Hydro reservoir / water value drivers":
@@ -314,14 +356,14 @@ def _group_status(group: dict, datasets: dict[str, DatasetStatus], prod_exog: se
 
     consumed = group["consumed_by_prod"]
     if group["group"] == "CH border capacities / balances / schedules":
-        consumed = False
-    if group["group"] == "FR nuclear stress":
-        consumed = False
-    if group["group"] == "FR/AT/IT realized load/solar/wind":
-        consumed = False
-    if group["group"] == "DE renewable day-ahead forecast":
+        consumed = any(c in prod_exog for c in ["ntc_balance_ch_de", "ntc_balance_ch_fr"])
+    elif group["group"] == "FR nuclear stress":
+        consumed = "fr_nuclear_stress_flag" in prod_exog
+    elif group["group"] == "FR/AT/IT realized load/solar/wind":
+        consumed = any(c in prod_exog for c in ["load_fr_mw", "solar_fr_mw", "wind_fr_mw"])
+    elif group["group"] == "DE renewable day-ahead forecast":
         consumed = all(c in prod_exog for c in ["forecast_wind_de_mw", "forecast_solar_de_mw"])
-    if group["group"] == "DE realized load/solar/wind/residual":
+    elif group["group"] == "DE realized load/solar/wind/residual":
         consumed = all(c in prod_exog for c in ["load_de_mw", "solar_de_mw", "wind_de_mw", "residual_load_de_mw"])
 
     if not consumed and overall == "ok":
@@ -347,11 +389,14 @@ def _render_markdown(dataset_statuses: list[DatasetStatus], group_statuses: list
         "",
         "## Dataset Files",
         "",
-        "| Dataset | Freshness | Rows | Max Timestamp | Path |",
-        "|---|---:|---:|---|---|",
+        "| Dataset | Registry | Freshness | Rows | Max Timestamp | Path | Notes |",
+        "|---|---|---:|---:|---|---|---|",
     ]
     for ds in dataset_statuses:
-        lines.append(f"| {ds.dataset} | {ds.freshness_status} | {ds.rows} | {ds.max_ts or ''} | `{ds.path}` |")
+        lines.append(
+            f"| {ds.dataset} | `{ds.registry_name}` | {ds.freshness_status} | {ds.rows} | "
+            f"{ds.max_ts or ''} | `{ds.path}` | {ds.notes} |"
+        )
 
     lines.extend([
         "",
@@ -374,10 +419,19 @@ def main() -> None:
     output_dir = ROOT / "pfc_shaping" / "output"
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    dataset_statuses = [_dataset_status(name, path, current_ts) for name, path in DATASETS.items()]
+    dataset_statuses: list[DatasetStatus] = []
+    dataset_frames: dict[str, pd.DataFrame | None] = {}
+    for alias in DATASET_REGISTRY:
+        status, df = _dataset_status(alias, current_ts)
+        dataset_statuses.append(status)
+        dataset_frames[alias] = df
+
     dataset_map = {ds.dataset: ds for ds in dataset_statuses}
-    prod_exog = _build_prod_exog()
-    group_statuses = [_group_status(group, dataset_map, prod_exog, current_ts) for group in VARIABLE_GROUPS]
+    prod_exog = _build_prod_exog(dataset_frames)
+    group_statuses = [
+        _group_status(group, dataset_map, dataset_frames, prod_exog, current_ts)
+        for group in VARIABLE_GROUPS
+    ]
 
     payload = {
         "created_utc": datetime.now(timezone.utc).isoformat(),

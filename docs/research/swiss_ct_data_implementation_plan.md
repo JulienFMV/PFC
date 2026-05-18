@@ -117,7 +117,7 @@ After silver is trustworthy:
 
 ### 4. ENTSO fundamentals
 - Target silver table: `market_data.ct_entso_fundamentals_15min`
-- Local cache: `pfc_shaping/data/entso_15min.parquet`
+- Local cache: `pfc_shaping/data/entso_fundamentals_15min.parquet`
 - Source now: ENTSO-E / energy-charts mixed
 - Grain: `15min`
 - Time key: `timestamp_utc`
@@ -132,7 +132,8 @@ After silver is trustworthy:
 
 ### 5. ENTSO border metrics
 - Target silver table: `market_data.ct_entso_border_15min`
-- Source now: contained in `entso_15min.parquet`
+- Local cache: `pfc_shaping/data/entso_border_15min.parquet`
+- Source now: extracted from the legacy `entso_15min.parquet` cache, then materialized as its own silver view
 - Grain: `15min`
 - Time key: `timestamp_utc`
 - Required fields:
