@@ -3,9 +3,9 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: État frais sur la branche `claude/clean-lt-ct-integration` @ `28dfd65`.
-last_updated: "2026-05-18T19:45:33.664Z"
-last_activity: 2026-05-18 -- Phase 05B planning complete
+stopped_at: Plan 05B-01 complete. Baseline frozen @ `9cc959b`. Prêt pour 05B-02 (save/load roundtrip).
+last_updated: "2026-05-18T19:48:43.218Z"
+last_activity: 2026-05-18 -- Phase 05B execution started
 progress:
   total_phases: 4
   completed_phases: 0
@@ -23,14 +23,14 @@ See: .planning/PROJECT.md (updated 2026-05-18)
 **Core value:** Pricing trading-grade des blocs profil client (10-15 / 18-9)
 avec ≥ 1.5 €/MWh de MAE-bloc en moins que HFC OMPEX.
 
-**Current focus:** Phase 5bis-A — Shape Hourly Infrastructure & Flag (no-op refactor).
+**Current focus:** Phase 05B — shape-hourly-infrastructure-flag-no-op-refactor
 
 ## Current Position
 
-Phase: 5bis-A of 12 (split de 5bis en 5bis-A infra + 5bis-B bowl, post panel d'experts 2026-05-18)
-Plan: 0 of TBD (à générer via `/gsd:plan-phase 5bis-A`)
-Status: Ready to execute
-Last activity: 2026-05-18 -- Phase 05B planning complete
+Phase: 05B (shape-hourly-infrastructure-flag-no-op-refactor) — EXECUTING
+Plan: 2 of 5
+Status: Executing Phase 05B — Plan 01 complete
+Last activity: 2026-05-18 -- Plan 05B-01 complete (baseline_pfc_seed42 frozen)
 
 Progress: [██████░░░░] 60% (7 phases done sur ~11)
 
@@ -59,6 +59,9 @@ Progress: [██████░░░░] 60% (7 phases done sur ~11)
 
 Voir `.planning/PROJECT.md` section "Key Decisions" pour la liste consolidée.
 Décisions récentes affectant la phase courante :
+
+- **2026-05-18 (05B-01)** : Contract régression = numerical-equality (`atol=1e-12, rtol=0`) pas byte-équivalence parquet — documenté dans README.md et script docstring.
+- **2026-05-18 (05B-01)** : `ShapeIntraday` fitté sur données synthétiques (seed=42) car `PFCAssembler.build()` appelle `self.si.apply()` sans None guard — workaround documenté dans le script.
 
 - **2026-05-18** : Hold Phase 3 (FR/AT/IT) et Phase 4 (basis cross-border)
   pour prioriser Phase 5bis/5/5ter/10. Justification : business case profile
