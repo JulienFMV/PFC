@@ -3,9 +3,9 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Plan 05B-01 complete. Baseline frozen @ `9cc959b`. Prêt pour 05B-02 (save/load roundtrip).
-last_updated: "2026-05-18T19:48:43.218Z"
-last_activity: 2026-05-18 -- Phase 05B execution started
+stopped_at: État frais sur la branche `claude/clean-lt-ct-integration` @ `28dfd65`.
+last_updated: "2026-05-18T20:08:12.759Z"
+last_activity: 2026-05-18
 progress:
   total_phases: 4
   completed_phases: 0
@@ -28,11 +28,11 @@ avec ≥ 1.5 €/MWh de MAE-bloc en moins que HFC OMPEX.
 ## Current Position
 
 Phase: 05B (shape-hourly-infrastructure-flag-no-op-refactor) — EXECUTING
-Plan: 2 of 5
-Status: Executing Phase 05B — Plan 01 complete
-Last activity: 2026-05-18 -- Plan 05B-01 complete (baseline_pfc_seed42 frozen)
+Plan: 3 of 5
+Status: Ready to execute
+Last activity: 2026-05-18
 
-Progress: [██████░░░░] 60% (7 phases done sur ~11)
+Progress: [░░░░░░░░░░] 0%
 
 ## Performance Metrics
 
@@ -40,7 +40,7 @@ Progress: [██████░░░░] 60% (7 phases done sur ~11)
 
 - Phases livrées : 7 (Phase 0, Refactor B, 1ter, 1bis, 2, Audit, Bloc A+C1+C2)
 - Durée moyenne par phase : ~½ journée
-- Tests : 142 passing, 4 skipped (CT-only deps)
+- Tests : 175 passing, 3 skipped (32 nouveaux tests infra 05B-02)
 
 **By Phase:**
 
@@ -52,6 +52,7 @@ Progress: [██████░░░░] 60% (7 phases done sur ~11)
 | 1bis Generic build | 2aa99ea | 2 | 13 |
 | 2 Negative + script | 867c51e + 0915f0e | 4 + 2 | 23 + 2 |
 | Bloc A+C1+C2 | 28dfd65 | 5 | 17 |
+| Phase 05B P02 | 18m | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -62,6 +63,8 @@ Décisions récentes affectant la phase courante :
 
 - **2026-05-18 (05B-01)** : Contract régression = numerical-equality (`atol=1e-12, rtol=0`) pas byte-équivalence parquet — documenté dans README.md et script docstring.
 - **2026-05-18 (05B-01)** : `ShapeIntraday` fitté sur données synthétiques (seed=42) car `PFCAssembler.build()` appelle `self.si.apply()` sans None guard — workaround documenté dans le script.
+- **2026-05-18 (05B-02)** : Meta sidecar `shape_hourly.meta.parquet` — toutes les valeurs stockées en string (`repr(float)` / JSON) pour éviter `pyarrow.ArrowInvalid` sur colonnes à types mixtes. Parsées à la lecture via `.apply(float)` / `json.loads()`.
+- **2026-05-18 (05B-02)** : `global_factors_` non persisté dans le sidecar — reconstruit déterministiquement depuis `factors_` via `_compute_global_fallback()` à la lecture. Élimine le risque de drift state dupliqué.
 
 - **2026-05-18** : Hold Phase 3 (FR/AT/IT) et Phase 4 (basis cross-border)
   pour prioriser Phase 5bis/5/5ter/10. Justification : business case profile
@@ -103,10 +106,9 @@ Après livraison 5bis-A : `/gsd:discuss-phase 5bis-B` pour le bowl-deepening (hy
 
 ## Session Continuity
 
-Last session: 2026-05-18 (Cloud Desktop) — seeded .planning/ + committed audit fixes Bloc A+C1+C2.
+Last session: 2026-05-18T20:08:12.752Z
 
-Stopped at: État frais sur la branche `claude/clean-lt-ct-integration` @ `28dfd65`.
-Tests verts. `.planning/` complet. Prêt pour `/gsd:discuss-phase 5bis` sur Mac Mini.
+Stopped at: Plan 05B-02 complete. save/load sidecar `shape_hourly.meta.parquet` opérationnel @ `3598646`. 175 tests verts. Prêt pour 05B-03 (feature flag).
 
 Pour reprendre sur Mac Mini :
 
