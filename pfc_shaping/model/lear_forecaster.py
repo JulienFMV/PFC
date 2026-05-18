@@ -1939,6 +1939,26 @@ class LEARForecaster:
         )
         return result
 
+    @staticmethod
+    def _feature_tail_mean(X_full: pd.DataFrame, col_name: str, n: int = 28) -> float:
+        data = X_full.loc[:, col_name]
+        if isinstance(data, pd.DataFrame):
+            arr = data.tail(n).to_numpy(dtype=float).ravel()
+        else:
+            arr = data.dropna().tail(n).to_numpy(dtype=float)
+        arr = arr[np.isfinite(arr)]
+        return float(arr.mean()) if arr.size else 0.0
+
+    @staticmethod
+    def _feature_last_value(X_full: pd.DataFrame, col_name: str) -> float:
+        data = X_full.loc[:, col_name]
+        if isinstance(data, pd.DataFrame):
+            arr = data.tail(1).to_numpy(dtype=float).ravel()
+        else:
+            arr = data.dropna().tail(1).to_numpy(dtype=float)
+        arr = arr[np.isfinite(arr)]
+        return float(arr[-1]) if arr.size else 0.0
+
     def _build_prediction_row(
         self,
         X_full: pd.DataFrame,
@@ -2001,7 +2021,7 @@ class LEARForecaster:
                     x[i] = X_full[col_name].dropna().iloc[-1] if not X_full[col_name].dropna().empty else 0
 
             elif col_name.startswith("ch_de_spread_"):
-                x[i] = X_full[col_name].dropna().iloc[-1] if not X_full[col_name].dropna().empty else 0
+                x[i] = self._feature_last_value(X_full, col_name)
 
             # ── Calendar features ──
             elif col_name.startswith("dow_"):
@@ -2071,8 +2091,7 @@ class LEARForecaster:
                     hour_col = int(col_name.split("_d0_h")[1])
                     x[i] = float(pivot.loc[forecast_date, hour_col]) if hour_col in pivot.columns else 0.0
                 else:
-                    vals = X_full[col_name].dropna().tail(28)
-                    x[i] = vals.mean() if not vals.empty else 0.0
+                    x[i] = self._feature_tail_mean(X_full, col_name, n=28)
 
             elif (
                 (col_name.startswith("forecast_") or col_name.startswith("wx_"))
@@ -2084,15 +2103,13 @@ class LEARForecaster:
                     midday_cols = [h for h in range(10, 16) if h in pivot.columns]
                     x[i] = float(pivot.loc[forecast_date, midday_cols].mean()) if midday_cols else 0.0
                 else:
-                    vals = X_full[col_name].dropna().tail(28)
-                    x[i] = vals.mean() if not vals.empty else 0.0
+                    x[i] = self._feature_tail_mean(X_full, col_name, n=28)
 
             elif "_d0_" in col_name:
-                vals = X_full[col_name].dropna().tail(28)
-                x[i] = vals.mean() if not vals.empty else 0
+                x[i] = self._feature_tail_mean(X_full, col_name, n=28)
 
             elif col_name == "hydro_fill":
-                x[i] = X_full[col_name].dropna().iloc[-1] if not X_full[col_name].dropna().empty else 0
+                x[i] = self._feature_last_value(X_full, col_name)
 
             else:
                 # Commodity lags, exogenous lags — use last known

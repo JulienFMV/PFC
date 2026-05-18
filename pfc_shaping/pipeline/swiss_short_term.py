@@ -64,6 +64,7 @@ class SwissShortTermInputHealth:
     governed_forecast_coverage_ratio: float = 0.0
     governed_forecast_min_coverage_ratio: float = 0.0
     governed_forecast_max_supported_horizon_days: int = 0
+    governed_forecast_applied_horizon_days: int = 0
     governed_forecast_missing_sources: list[str] | None = None
 
 
@@ -102,16 +103,20 @@ def run_swiss_short_term_overlay(
         use_governed_forecast_features=use_governed_forecast_features,
     )
 
+    forecast_horizon_days = 10
     governed_health = lear.assess_governed_forecast_feature_health(
-        horizon_days=10,
+        horizon_days=forecast_horizon_days,
         min_coverage_ratio=min_governed_forecast_coverage,
     )
-    if use_governed_forecast_features and not governed_health.get("enabled_for_run", False):
+    max_supported_horizon_days = int(governed_health.get("max_supported_horizon_days", 0))
+    governed_applied_horizon_days = 0
+    fallback_lear: LEARForecaster | None = None
+    if use_governed_forecast_features and max_supported_horizon_days <= 0:
         logger.warning(
             "  Disabling governed forecast features for this run: coverage=%.3f < %.3f, max_supported_horizon_days=%s, missing sources=%s",
             governed_health.get("coverage_ratio", 0.0),
             governed_health.get("min_coverage_ratio", min_governed_forecast_coverage),
-            governed_health.get("max_supported_horizon_days", 0),
+            max_supported_horizon_days,
             governed_health.get("missing_sources", []),
         )
         lear = _fit_lear_model(
@@ -119,22 +124,43 @@ def run_swiss_short_term_overlay(
             use_foundation_model=use_foundation_model,
             use_governed_forecast_features=False,
         )
+    elif use_governed_forecast_features and max_supported_horizon_days < forecast_horizon_days:
+        logger.warning(
+            "  Governed forecast features only supported through J+%d; using baseline fallback for J+%d..J+%d",
+            max_supported_horizon_days,
+            max_supported_horizon_days + 1,
+            forecast_horizon_days,
+        )
+        fallback_lear = _fit_lear_model(
+            inputs=inputs,
+            use_foundation_model=use_foundation_model,
+            use_governed_forecast_features=False,
+        )
+        governed_applied_horizon_days = max_supported_horizon_days
+    elif use_governed_forecast_features:
+        governed_applied_horizon_days = forecast_horizon_days
 
-    governed_enabled_final = bool(
-        use_governed_forecast_features and governed_health.get("enabled_for_run", False)
-    )
+    governed_enabled_final = bool(use_governed_forecast_features and governed_applied_horizon_days > 0)
     input_health = replace(
         input_health,
         governed_forecast_features_requested=use_governed_forecast_features,
         governed_forecast_features_enabled=governed_enabled_final,
         governed_forecast_coverage_ratio=float(governed_health.get("coverage_ratio", 0.0)),
         governed_forecast_min_coverage_ratio=float(governed_health.get("min_coverage_ratio", 0.0)),
-        governed_forecast_max_supported_horizon_days=int(governed_health.get("max_supported_horizon_days", 0)),
+        governed_forecast_max_supported_horizon_days=max_supported_horizon_days,
+        governed_forecast_applied_horizon_days=governed_applied_horizon_days,
         governed_forecast_missing_sources=list(governed_health.get("missing_sources", [])),
     )
     _save_input_health(input_health, logger)
 
-    lear_forecast = lear.predict(horizon_days=10)
+    lear_forecast = lear.predict(horizon_days=forecast_horizon_days)
+    if fallback_lear is not None and governed_applied_horizon_days < forecast_horizon_days:
+        fallback_forecast = fallback_lear.predict(horizon_days=forecast_horizon_days)
+        lear_forecast = _merge_governed_and_baseline_forecasts(
+            governed_forecast=lear_forecast,
+            baseline_forecast=fallback_forecast,
+            governed_horizon_days=governed_applied_horizon_days,
+        )
     logger.info("  LEAR forecast: %d hours, mean=%.1f EUR/MWh", len(lear_forecast), lear_forecast["price_lear"].mean())
 
     lear_forecast = _maybe_apply_experimental_pricefm(project_root, lear_forecast, logger)
@@ -177,6 +203,23 @@ def _fit_lear_model(
         weather_forecast=inputs.weather_forecast,
     )
     return lear
+
+
+def _merge_governed_and_baseline_forecasts(
+    governed_forecast: pd.DataFrame,
+    baseline_forecast: pd.DataFrame,
+    governed_horizon_days: int,
+) -> pd.DataFrame:
+    if governed_horizon_days <= 0:
+        return baseline_forecast.copy()
+    if governed_horizon_days >= int(baseline_forecast["days_ahead"].max()):
+        return governed_forecast.copy()
+
+    governed_part = governed_forecast.loc[governed_forecast["days_ahead"] <= governed_horizon_days].copy()
+    baseline_part = baseline_forecast.loc[baseline_forecast["days_ahead"] > governed_horizon_days].copy()
+    merged = pd.concat([governed_part, baseline_part], axis=0, ignore_index=True)
+    merged = merged.sort_values(["timestamp", "hour"] if "hour" in merged.columns else ["timestamp"]).reset_index(drop=True)
+    return merged
 
 
 def _validate_swiss_short_term_inputs(
