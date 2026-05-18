@@ -22,6 +22,10 @@ def _foundation_enabled() -> bool:
     return os.getenv("PFC_CT_ENABLE_FOUNDATION", "1").strip() == "1"
 
 
+def _governed_forecast_features_enabled() -> bool:
+    return os.getenv("PFC_CT_ENABLE_GOVERNED_FORECAST_FEATURES", "0").strip() == "1"
+
+
 @dataclass
 class SwissShortTermInputs:
     epex_ch: pd.DataFrame
@@ -31,6 +35,9 @@ class SwissShortTermInputs:
     hydro: pd.DataFrame
     commodities: pd.DataFrame | None
     outages_all: pd.DataFrame | None
+    de_renewable_forecast: pd.DataFrame | None
+    multi_country_forecast: pd.DataFrame | None
+    weather_forecast: pd.DataFrame | None
     base_pfc_ch: pd.DataFrame
     require_de_exogenous: bool = True
     required_neighbor_codes: tuple[str, ...] = ("de",)
@@ -44,6 +51,9 @@ class SwissShortTermInputHealth:
     hydro_rows: int
     outages_rows: int
     commodities_rows: int
+    de_renewable_forecast_rows: int
+    multi_country_forecast_rows: int
+    weather_forecast_rows: int
     ch_de_overlap_hours: int
     entso_ch_overlap_hours: int
     has_de_price_support: bool
@@ -72,15 +82,18 @@ def run_swiss_short_term_overlay(
     _save_input_health(input_health, logger)
 
     use_foundation_model = _foundation_enabled()
+    use_governed_forecast_features = _governed_forecast_features_enabled()
     logger.info(
-        "  Swiss CT model policy: LEAR CH+DE baseline, foundation=%s, required_neighbors=%s",
+        "  Swiss CT model policy: LEAR CH+DE baseline, foundation=%s, governed_forecast_features=%s, required_neighbors=%s",
         "enabled" if use_foundation_model else "disabled",
+        "enabled" if use_governed_forecast_features else "disabled",
         inputs.required_neighbor_codes,
     )
 
     lear = LEARForecaster(
         tz="Europe/Zurich",
         use_foundation_model=use_foundation_model,
+        use_governed_forecast_features=use_governed_forecast_features,
     )
     lear.fit(
         epex_15min=inputs.epex_ch,
@@ -90,6 +103,9 @@ def run_swiss_short_term_overlay(
         hydro=inputs.hydro,
         epex_de_15min=inputs.epex_de,
         neighbor_price_15min=inputs.neighbor_prices_15min,
+        de_renewable_forecast=inputs.de_renewable_forecast,
+        multi_country_forecast=inputs.multi_country_forecast,
+        weather_forecast=inputs.weather_forecast,
     )
 
     lear_forecast = lear.predict(horizon_days=10)
@@ -157,6 +173,9 @@ def _validate_swiss_short_term_inputs(
         hydro_rows=len(inputs.hydro),
         outages_rows=0 if inputs.outages_all is None else len(inputs.outages_all),
         commodities_rows=0 if inputs.commodities is None else len(inputs.commodities),
+        de_renewable_forecast_rows=0 if inputs.de_renewable_forecast is None else len(inputs.de_renewable_forecast),
+        multi_country_forecast_rows=0 if inputs.multi_country_forecast is None else len(inputs.multi_country_forecast),
+        weather_forecast_rows=0 if inputs.weather_forecast is None else len(inputs.weather_forecast),
         ch_de_overlap_hours=ch_de_overlap_hours,
         entso_ch_overlap_hours=entso_ch_overlap_hours,
         has_de_price_support=has_de_price_support,
@@ -164,11 +183,14 @@ def _validate_swiss_short_term_inputs(
         has_required_neighbor_support=has_required_neighbor_support,
     )
     logger.info(
-        "  Swiss CT input health: CH=%d rows, DE=%d rows, ENTSO=%d rows, hydro=%d rows, CH/DE overlap=%d h, CH/ENTSO overlap=%d h, neighbors=%s",
+        "  Swiss CT input health: CH=%d rows, DE=%d rows, ENTSO=%d rows, hydro=%d rows, DEfc=%d rows, MCFc=%d rows, WX=%d rows, CH/DE overlap=%d h, CH/ENTSO overlap=%d h, neighbors=%s",
         health.epex_ch_rows,
         health.epex_de_rows,
         health.entso_rows,
         health.hydro_rows,
+        health.de_renewable_forecast_rows,
+        health.multi_country_forecast_rows,
+        health.weather_forecast_rows,
         health.ch_de_overlap_hours,
         health.entso_ch_overlap_hours,
         health.neighbor_overlap_hours,

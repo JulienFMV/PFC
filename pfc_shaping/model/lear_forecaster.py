@@ -152,6 +152,7 @@ class LEARForecaster:
         gbm_blend_max_horizon_days: int = 1,
         use_regime_short_window_weighting: bool = True,
         gbm_weight_cap_peak_block: float = 0.55,
+        use_governed_forecast_features: bool = False,
     ):
         self.tz = tz
         self.max_iter = max_iter
@@ -164,6 +165,7 @@ class LEARForecaster:
         self.gbm_blend_max_horizon_days = max(0, int(gbm_blend_max_horizon_days))
         self.use_regime_short_window_weighting = use_regime_short_window_weighting
         self.gbm_weight_cap_peak_block = float(gbm_weight_cap_peak_block)
+        self.use_governed_forecast_features = use_governed_forecast_features
         self._fitted = False
         self._fm = FoundationForecaster() if use_foundation_model else None
         self._lgbm_device_type = "gpu"
@@ -178,6 +180,8 @@ class LEARForecaster:
         epex_de_15min: pd.DataFrame | None = None,
         neighbor_price_15min: dict[str, pd.DataFrame] | None = None,
         de_renewable_forecast: pd.DataFrame | None = None,
+        multi_country_forecast: pd.DataFrame | None = None,
+        weather_forecast: pd.DataFrame | None = None,
     ) -> "LEARForecaster":
         """Prepare hourly data matrices for LEAR training."""
         # Aggregate EPEX CH to hourly
@@ -189,6 +193,7 @@ class LEARForecaster:
 
         # Build hourly exogenous matrix
         exog = pd.DataFrame(index=self.prices_h_.index)
+        self._forecast_feature_pivots: dict[str, pd.DataFrame] = {}
 
         # Cross-border prices
         self._has_de_prices = False
@@ -282,6 +287,26 @@ class LEARForecaster:
                         exog.get("forecast_wind_de_mw", pd.Series([0])).mean(),
                         exog.get("forecast_solar_de_mw", pd.Series([0])).mean())
 
+        # Governed multi-country load/renewable forecasts
+        if self.use_governed_forecast_features and multi_country_forecast is not None and not multi_country_forecast.empty:
+            for col in multi_country_forecast.columns:
+                s = multi_country_forecast[col].dropna()
+                if s.empty:
+                    continue
+                if s.index.tz is None:
+                    s.index = s.index.tz_localize("UTC")
+                exog[col] = s.resample("h").mean()
+
+        # Governed weather forecast layer
+        if self.use_governed_forecast_features and weather_forecast is not None and not weather_forecast.empty:
+            for col in weather_forecast.columns:
+                s = weather_forecast[col].dropna()
+                if s.empty:
+                    continue
+                if s.index.tz is None:
+                    s.index = s.index.tz_localize("UTC")
+                exog[col] = s.resample("h").mean()
+
         # Align
         common_idx = self.prices_h_.index
         self.exog_ = exog.reindex(common_idx)
@@ -298,6 +323,7 @@ class LEARForecaster:
             index="date", columns="hour", values="price", aggfunc="mean"
         )
         self._complete_days = self._price_pivot.dropna(thresh=23)
+        self._forecast_feature_pivots = self._build_forecast_feature_pivots(exog)
 
         # Pre-compute per-hour variance calibration (last 90 days)
         self._var_calib = self._compute_variance_calibration()
@@ -317,6 +343,28 @@ class LEARForecaster:
             self.prices_h_.index[-1].date(),
         )
         return self
+
+    def _build_forecast_feature_pivots(self, exog: pd.DataFrame) -> dict[str, pd.DataFrame]:
+        """Store hourly pivots for true forecast-time exogenous series."""
+        pivots: dict[str, pd.DataFrame] = {}
+        for col in exog.columns:
+            if not (
+                col.startswith("forecast_")
+                or col.startswith("wx_")
+            ):
+                continue
+            series = exog[col].dropna()
+            if series.empty:
+                continue
+            local_idx = series.index.tz_convert(self.tz)
+            df = pd.DataFrame({
+                "date": local_idx.date,
+                "hour": local_idx.hour,
+                "value": series.values,
+            })
+            pivot = df.pivot_table(index="date", columns="hour", values="value", aggfunc="mean")
+            pivots[col] = pivot
+        return pivots
 
     def _compute_variance_calibration(self) -> dict[int, tuple[float, float]]:
         """Compute per-hour recent mean and std for variance recalibration.
@@ -488,6 +536,77 @@ class LEARForecaster:
                     if target_hour in re_pivot.columns:
                         features_list.append(re_pivot.shift(1)[target_hour].values)
                         feature_names.append(f"{re_col}_d-1_h{target_hour:02d}")
+
+        if self.use_governed_forecast_features:
+            # ── 3a. Compact multi-country forecast block ──
+            compact_forecast_cols = [
+                "forecast_load_ch_mw",
+                "forecast_load_de_mw",
+                "forecast_load_fr_mw",
+                "forecast_load_it_mw",
+                "forecast_solar_ch_mw",
+                "forecast_solar_de_mw",
+                "forecast_solar_fr_mw",
+                "forecast_solar_it_mw",
+                "forecast_wind_de_mw",
+                "forecast_wind_fr_mw",
+                "forecast_wind_at_mw",
+                "forecast_wind_it_mw",
+            ]
+            for fc_col in compact_forecast_cols:
+                if fc_col not in exog.columns:
+                    continue
+                fc_series = exog[fc_col].dropna()
+                if fc_series.empty:
+                    continue
+                fc_local = fc_series.index.tz_convert(self.tz)
+                fc_df = pd.DataFrame({
+                    "date": fc_local.date,
+                    "hour": fc_local.hour,
+                    "value": fc_series.values,
+                })
+                fc_pivot = fc_df.pivot_table(index="date", columns="hour", values="value", aggfunc="mean")
+                fc_pivot = fc_pivot.reindex(complete.index)
+                if target_hour in fc_pivot.columns:
+                    features_list.append(fc_pivot[target_hour].values)
+                    feature_names.append(f"{fc_col}_d0_h{target_hour:02d}")
+                midday_cols = [h for h in range(10, 16) if h in fc_pivot.columns]
+                if midday_cols and ("solar" in fc_col or "load" in fc_col):
+                    features_list.append(fc_pivot[midday_cols].mean(axis=1).values)
+                    feature_names.append(f"{fc_col}_d0_midday_mean")
+
+            # ── 3b. Compact weather forecast block ──
+            compact_weather_cols = [
+                "wx_ch_zurich_shortwave_radiation",
+                "wx_ch_zurich_cloud_cover",
+                "wx_ch_zurich_temperature_2m",
+                "wx_de_hamburg_wind_speed_10m",
+                "wx_de_munich_shortwave_radiation",
+                "wx_fr_lyon_cloud_cover",
+                "wx_at_vienna_wind_speed_10m",
+                "wx_it_milan_shortwave_radiation",
+            ]
+            for wx_col in compact_weather_cols:
+                if wx_col not in exog.columns:
+                    continue
+                wx_series = exog[wx_col].dropna()
+                if wx_series.empty:
+                    continue
+                wx_local = wx_series.index.tz_convert(self.tz)
+                wx_df = pd.DataFrame({
+                    "date": wx_local.date,
+                    "hour": wx_local.hour,
+                    "value": wx_series.values,
+                })
+                wx_pivot = wx_df.pivot_table(index="date", columns="hour", values="value", aggfunc="mean")
+                wx_pivot = wx_pivot.reindex(complete.index)
+                if target_hour in wx_pivot.columns:
+                    features_list.append(wx_pivot[target_hour].values)
+                    feature_names.append(f"{wx_col}_d0_h{target_hour:02d}")
+                midday_cols = [h for h in range(10, 16) if h in wx_pivot.columns]
+                if midday_cols and ("shortwave_radiation" in wx_col or "cloud_cover" in wx_col):
+                    features_list.append(wx_pivot[midday_cols].mean(axis=1).values)
+                    feature_names.append(f"{wx_col}_d0_midday_mean")
 
         # ── 4. Exogenous features (CH) ──
         exog_cols = [c for c in exog.columns
@@ -1829,6 +1948,32 @@ class LEARForecaster:
                     ) else 0.0
 
             # ── Exogenous ──
+            elif (
+                (col_name.startswith("forecast_") or col_name.startswith("wx_"))
+                and "_d0_h" in col_name
+            ):
+                source_col = col_name.split("_d0_h")[0]
+                pivot = getattr(self, "_forecast_feature_pivots", {}).get(source_col)
+                if pivot is not None and forecast_date in pivot.index:
+                    hour_col = int(col_name.split("_d0_h")[1])
+                    x[i] = float(pivot.loc[forecast_date, hour_col]) if hour_col in pivot.columns else 0.0
+                else:
+                    vals = X_full[col_name].dropna().tail(28)
+                    x[i] = vals.mean() if not vals.empty else 0.0
+
+            elif (
+                (col_name.startswith("forecast_") or col_name.startswith("wx_"))
+                and col_name.endswith("_d0_midday_mean")
+            ):
+                source_col = col_name.replace("_d0_midday_mean", "")
+                pivot = getattr(self, "_forecast_feature_pivots", {}).get(source_col)
+                if pivot is not None and forecast_date in pivot.index:
+                    midday_cols = [h for h in range(10, 16) if h in pivot.columns]
+                    x[i] = float(pivot.loc[forecast_date, midday_cols].mean()) if midday_cols else 0.0
+                else:
+                    vals = X_full[col_name].dropna().tail(28)
+                    x[i] = vals.mean() if not vals.empty else 0.0
+
             elif "_d0_" in col_name:
                 vals = X_full[col_name].dropna().tail(28)
                 x[i] = vals.mean() if not vals.empty else 0
