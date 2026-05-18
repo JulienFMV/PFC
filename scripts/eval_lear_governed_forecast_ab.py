@@ -107,6 +107,7 @@ def _segment_metrics(bt: pd.DataFrame) -> dict[str, object]:
 
 def _run_variant(
     label: str,
+    use_foundation_model: bool,
     use_governed_forecast_features: bool,
     epex_ch: pd.DataFrame,
     epex_de: pd.DataFrame,
@@ -121,7 +122,7 @@ def _run_variant(
     horizon: int,
 ) -> tuple[pd.DataFrame, dict[str, object]]:
     model = LEARForecaster(
-        use_foundation_model=True,
+        use_foundation_model=use_foundation_model,
         use_governed_forecast_features=use_governed_forecast_features,
     )
     model.fit(
@@ -180,8 +181,9 @@ def main() -> None:
     multi_country_forecast = _read_optional_parquet(DATA_FILES["multi_country_forecast"])
     weather_forecast = _read_optional_parquet(DATA_FILES["weather_forecast"])
 
-    baseline, baseline_governed_health = _run_variant(
-        "baseline",
+    no_fm_baseline, no_fm_baseline_governed_health = _run_variant(
+        "no_fm_baseline",
+        False,
         False,
         epex_ch,
         epex_de,
@@ -195,8 +197,25 @@ def main() -> None:
         args.n_days,
         args.horizon,
     )
-    experiment, experiment_governed_health = _run_variant(
-        "governed_forecast_features",
+    fm_only, fm_only_governed_health = _run_variant(
+        "fm_only",
+        True,
+        False,
+        epex_ch,
+        epex_de,
+        entso,
+        hydro,
+        outages,
+        commodities,
+        de_renewable_forecast,
+        multi_country_forecast,
+        weather_forecast,
+        args.n_days,
+        args.horizon,
+    )
+    fm_governed, fm_governed_health = _run_variant(
+        "fm_governed",
+        True,
         True,
         epex_ch,
         epex_de,
@@ -211,33 +230,52 @@ def main() -> None:
         args.horizon,
     )
 
-    baseline_path = args.output_dir / f"{run_id}_baseline.parquet"
-    experiment_path = args.output_dir / f"{run_id}_governed_forecast_features.parquet"
-    baseline.to_parquet(baseline_path, index=False)
-    experiment.to_parquet(experiment_path, index=False)
+    no_fm_baseline_path = args.output_dir / f"{run_id}_no_fm_baseline.parquet"
+    fm_only_path = args.output_dir / f"{run_id}_fm_only.parquet"
+    fm_governed_path = args.output_dir / f"{run_id}_fm_governed.parquet"
+    no_fm_baseline.to_parquet(no_fm_baseline_path, index=False)
+    fm_only.to_parquet(fm_only_path, index=False)
+    fm_governed.to_parquet(fm_governed_path, index=False)
 
-    baseline_score = _score(baseline)
-    experiment_score = _score(experiment)
+    no_fm_baseline_score = _score(no_fm_baseline)
+    fm_only_score = _score(fm_only)
+    fm_governed_score = _score(fm_governed)
 
     payload = {
         **manifest,
-        "baseline_backtest": str(baseline_path),
-        "governed_forecast_features_backtest": str(experiment_path),
-        "baseline": baseline_score,
-        "governed_forecast_features": experiment_score,
-        "baseline_governed_feature_health": baseline_governed_health,
-        "governed_feature_health": experiment_governed_health,
-        "delta": {
-            k: experiment_score[k] - baseline_score[k]
+        "no_fm_baseline_backtest": str(no_fm_baseline_path),
+        "fm_only_backtest": str(fm_only_path),
+        "fm_governed_backtest": str(fm_governed_path),
+        "no_fm_baseline": no_fm_baseline_score,
+        "fm_only": fm_only_score,
+        "fm_governed": fm_governed_score,
+        "no_fm_baseline_governed_feature_health": no_fm_baseline_governed_health,
+        "fm_only_governed_feature_health": fm_only_governed_health,
+        "fm_governed_feature_health": fm_governed_health,
+        "delta_vs_no_fm_baseline": {
+            k: fm_governed_score[k] - no_fm_baseline_score[k]
             for k in ["mae", "rmse", "mape", "corr"]
         },
-        "baseline_breakdown": _segment_metrics(baseline),
-        "governed_breakdown": _segment_metrics(experiment),
+        "delta_fm_only_vs_no_fm_baseline": {
+            k: fm_only_score[k] - no_fm_baseline_score[k]
+            for k in ["mae", "rmse", "mape", "corr"]
+        },
+        "delta_fm_governed_vs_fm_only": {
+            k: fm_governed_score[k] - fm_only_score[k]
+            for k in ["mae", "rmse", "mape", "corr"]
+        },
+        "no_fm_baseline_breakdown": _segment_metrics(no_fm_baseline),
+        "fm_only_breakdown": _segment_metrics(fm_only),
+        "fm_governed_breakdown": _segment_metrics(fm_governed),
     }
 
     output_path = args.output_dir / f"{run_id}.json"
     output_path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
-    print(json.dumps(payload["delta"], indent=2))
+    print(json.dumps({
+        "delta_fm_only_vs_no_fm_baseline": payload["delta_fm_only_vs_no_fm_baseline"],
+        "delta_fm_governed_vs_fm_only": payload["delta_fm_governed_vs_fm_only"],
+        "delta_vs_no_fm_baseline": payload["delta_vs_no_fm_baseline"],
+    }, indent=2))
     print(f"output:{output_path.resolve()}")
 
 
