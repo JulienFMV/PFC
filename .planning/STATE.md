@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: executing
-stopped_at: Plan 05B-04 complete. `factors_3d_` view (SHP-01 literal) + assembler capability check (D-13) @ `43e5eb7`. 239 tests verts. Prêt pour 05B-05 (baseline regression).
-last_updated: "2026-05-18T20:26:28.644Z"
+status: verifying
+stopped_at: Plan 05B-03 complete. Feature flag `PFC_LT_USE_SEASONAL_HOURLY_SHAPE` opérationnel @ `e4ab9ee`. 201 tests verts. SHP-04 satisfait. Prêt pour 05B-04 (conftest autouse env-var hygiene + capability check assembler).
+last_updated: "2026-05-18T20:40:21.136Z"
 last_activity: 2026-05-18
 progress:
   total_phases: 4
@@ -29,7 +29,7 @@ avec ≥ 1.5 €/MWh de MAE-bloc en moins que HFC OMPEX.
 
 Phase: 05B (shape-hourly-infrastructure-flag-no-op-refactor) — EXECUTING
 Plan: 5 of 5
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-05-18
 
 Progress: [░░░░░░░░░░] 0%
@@ -113,7 +113,7 @@ Après livraison 5bis-A : `/gsd:discuss-phase 5bis-B` pour le bowl-deepening (hy
 
 ## Session Continuity
 
-Last session: 2026-05-18T20:26:28.638Z
+Last session: 2026-05-18T20:40:21.130Z
 
 Stopped at: Plan 05B-03 complete. Feature flag `PFC_LT_USE_SEASONAL_HOURLY_SHAPE` opérationnel @ `e4ab9ee`. 201 tests verts. SHP-04 satisfait. Prêt pour 05B-04 (conftest autouse env-var hygiene + capability check assembler).
 

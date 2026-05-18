@@ -11,13 +11,13 @@ LT "SOTA maison FMV" et démontrer sa supériorité vs OMPEX sur les profile dea
 
 ### Shape Quality (priorité 1)
 
-- [ ] **SHP-01** : `ShapeHourly.factors_` est indexé par `(saison, type_jour, hour)`
+- [x] **SHP-01** : `ShapeHourly.factors_` est indexé par `(saison, type_jour, hour)`
   au lieu de `(saison, type_jour) → array[24]`. Une recherche sur une heure
   donne une valeur conditionnelle au triplet, pas une moyenne.
-- [ ] **SHP-02** : `assembler.build` consomme le shape seasonal-hour sur le
+- [x] **SHP-02** : `assembler.build` consomme le shape seasonal-hour sur le
   bon `country` (la signature `apply(idx, cal, country=...)` route via
   `_country_local_tz` introduit en Bloc A).
-- [ ] **SHP-03** : `mean(f_H)` calculé sur chaque combinaison `(saison, type_jour)`
+- [x] **SHP-03** : `mean(f_H)` calculé sur chaque combinaison `(saison, type_jour)`
   reste ≈ 1.0 ± 1e-3 — l'invariant énergétique mensuel est préservé.
 - [x] **SHP-04** : Une feature flag `PFC_LT_USE_SEASONAL_HOURLY_SHAPE` (default
   False) permet de désactiver et revenir au comportement legacy.

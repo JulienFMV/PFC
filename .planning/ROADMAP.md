@@ -36,7 +36,7 @@ P&L par 5 €/MWh d'erreur shape), pas par l'ordre alphabétique des features.
     - [x] 05B-02-PLAN.md — Complete save/load roundtrip via _meta.parquet sidecar (fix pre-existing bug)
     - [x] 05B-03-PLAN.md — Feature flag PFC_LT_USE_SEASONAL_HOURLY_SHAPE: constructor arg + env-default + freeze + persist
     - [x] 05B-04-PLAN.md — factors_3d_ read-only 3D view (SHP-01 literal) + replace try/except TypeError at assembler.py:284
-    - [ ] 05B-05-PLAN.md — conftest autouse env hygiene + legacy fixture + 6 tests including parametrized baseline regression
+    - [x] 05B-05-PLAN.md — conftest autouse env hygiene + legacy fixture + 6 tests including parametrized baseline regression
 
 ### Active (P0 — successeurs immédiats)
 
