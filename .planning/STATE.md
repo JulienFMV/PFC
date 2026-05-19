@@ -4,8 +4,8 @@ milestone: v1.0
 milestone_name: milestone
 status: executing
 stopped_at: Phase 5bis-B context gathered — 3 levers locked at EPFL/SOTA, 3 plans séquentiels planned
-last_updated: "2026-05-19T06:39:58.948Z"
-last_activity: 2026-05-19 -- Phase 5bis-B planning complete
+last_updated: "2026-05-19T16:02:45.641Z"
+last_activity: 2026-05-19 -- Phase 05C execution started
 progress:
   total_phases: 4
   completed_phases: 0
@@ -23,14 +23,14 @@ See: .planning/PROJECT.md (updated 2026-05-18)
 **Core value:** Pricing trading-grade des blocs profil client (10-15 / 18-9)
 avec ≥ 1.5 €/MWh de MAE-bloc en moins que HFC OMPEX.
 
-**Current focus:** Phase 05B — shape-hourly-infrastructure-flag-no-op-refactor
+**Current focus:** Phase 05C — shape-hourly-bowl-deepening
 
 ## Current Position
 
-Phase: 05B — COMPLETE
-Plan: 5 of 5
-Status: Ready to execute
-Last activity: 2026-05-19 -- Phase 5bis-B planning complete
+Phase: 05C (shape-hourly-bowl-deepening) — EXECUTING
+Plan: 1 of 3
+Status: Executing Phase 05C
+Last activity: 2026-05-19 -- Phase 05C execution started
 
 Progress: [░░░░░░░░░░] 0%
 
