@@ -197,14 +197,24 @@ class TestSaveSidecarSchema:
     def test_hyperparams_row(self):
         """Test 8: hyperparams — single row with JSON value.
         After Plan 05B-03, use_seasonal_hourly is also persisted in hyperparams.
+        Updated by Plan 05C-01 (D-A3-3 / RESEARCH Pitfall 4): hyperparams JSON gains
+        hydro_weight_sigma_off/_on/_resolved keys when 5bis-B Lever 1 ships.
+        Plan 05C-03 will add the sigma_off/_on/_resolved triplet; that follow-up update
+        is the responsibility of Plan 05C-03 Task 3.
+        The constructor _minimal_fitted_sh(hydro_weight_sigma=0.7) passes the legacy
+        single-sigma arg → D-A1-5 backward-compat: off=on=0.7 (legacy wins).
         """
         hp_rows = self.meta[self.meta["attr"] == "hyperparams"]
         assert len(hp_rows) == 1
         obj = json.loads(hp_rows["value"].iloc[0])
         # use_seasonal_hourly added by Plan 05B-03 — must be present
+        # hydro_weight_sigma_off/_on/_resolved added by Plan 05C-01 (D-A3-3)
         assert obj == {
             "halflife_days": 90.0,
             "hydro_weight_sigma": 0.7,
+            "hydro_weight_sigma_off": 0.7,    # legacy single-sigma wins → off = 0.7
+            "hydro_weight_sigma_on": 0.7,     # legacy single-sigma wins → on = 0.7
+            "hydro_weight_sigma_resolved": 0.7,
             "sigma": 0.3,
             "use_seasonal_hourly": False,  # default: _minimal_fitted_sh() uses no flag
         }
@@ -247,6 +257,13 @@ class TestSaveUnfitted:
             assert len(hp) == 1  # hyperparams row always present
 
     def test_save_unfitted_hyperparams_correct(self):
+        """Updated by Plan 05C-01 (D-A3-3 / RESEARCH Pitfall 4): hyperparams JSON gains
+        hydro_weight_sigma_off/_on/_resolved keys when 5bis-B Lever 1 ships.
+        Plan 05C-03 will add the sigma_off/_on/_resolved triplet; that follow-up update
+        is the responsibility of Plan 05C-03 Task 3.
+        Constructor ShapeHourly(hydro_weight_sigma=0.25) passes legacy single-sigma →
+        D-A1-5 backward-compat: off=on=0.25 (legacy wins).
+        """
         sh = ShapeHourly(sigma=0.5, halflife_days=180.0, hydro_weight_sigma=0.25)
         with tempfile.TemporaryDirectory() as d:
             p = os.path.join(d, "shape_hourly.parquet")
@@ -255,9 +272,13 @@ class TestSaveUnfitted:
             hp = meta[meta["attr"] == "hyperparams"]
             obj = json.loads(hp["value"].iloc[0])
             # Plan 05B-03: use_seasonal_hourly now included in hyperparams
+            # Plan 05C-01 (D-A3-3): hydro_weight_sigma_off/_on/_resolved added
             assert obj == {
                 "halflife_days": 180.0,
                 "hydro_weight_sigma": 0.25,
+                "hydro_weight_sigma_off": 0.25,    # legacy single-sigma wins → off = 0.25
+                "hydro_weight_sigma_on": 0.25,     # legacy single-sigma wins → on = 0.25
+                "hydro_weight_sigma_resolved": 0.25,
                 "sigma": 0.5,
                 "use_seasonal_hourly": False,
             }
@@ -623,7 +644,10 @@ class TestFlagPersistenceInSidecar:
             assert hp["use_seasonal_hourly"] is False
 
     def test_hyperparams_json_has_all_keys(self, monkeypatch):
-        """After 05B-03, hyperparams must include sigma, halflife_days, hydro_weight_sigma, use_seasonal_hourly."""
+        """After 05B-03, hyperparams must include sigma, halflife_days, hydro_weight_sigma, use_seasonal_hourly.
+        Updated by Plan 05C-01 (D-A3-3 / RESEARCH Pitfall 4): also includes
+        hydro_weight_sigma_off/_on/_resolved. Plan 05C-03 will add sigma_off/_on/_resolved.
+        """
         monkeypatch.delenv("PFC_LT_USE_SEASONAL_HOURLY_SHAPE", raising=False)
         sh = ShapeHourly(sigma=0.3, halflife_days=90.0, hydro_weight_sigma=0.7, use_seasonal_hourly=True)
         with tempfile.TemporaryDirectory() as d:
@@ -631,7 +655,16 @@ class TestFlagPersistenceInSidecar:
             sh.save(p)
             meta = pd.read_parquet(os.path.join(d, "shape_hourly.meta.parquet"))
             hp = json.loads(meta[meta["attr"] == "hyperparams"].iloc[0]["value"])
-            assert set(hp.keys()) == {"sigma", "halflife_days", "hydro_weight_sigma", "use_seasonal_hourly"}
+            # After Plan 05C-01: 7 keys (sigma_off/_on/_resolved will be added by Plan 05C-03)
+            assert set(hp.keys()) == {
+                "halflife_days",
+                "hydro_weight_sigma",
+                "hydro_weight_sigma_off",
+                "hydro_weight_sigma_on",
+                "hydro_weight_sigma_resolved",
+                "sigma",
+                "use_seasonal_hourly",
+            }
 
 
 class TestFlagRestoredOnLoad:
@@ -1413,7 +1446,11 @@ def test_baseline_regression(flag):
 
 # Functions in shape_hourly.py that are ALLOWED to reference _use_seasonal_hourly.
 # Extend deliberately in future plans when behavior gating is intentionally added.
-ALLOWED_FUNCTIONS = {"__init__", "save", "load", "_resolve_flag"}
+# Plan 05C-01 (D-A1-2): _apply_hydro_analogue_weights now gates the kernel target on
+# _use_seasonal_hourly (Lever 1 of Phase 5bis-B — per-timestamp climatological fill
+# target vs legacy scalar current_fill). This is intentional behavior gating, NOT a
+# 5bis-A violation. See 05C-CONTEXT.md D-A1-1/D-A1-2 and 05C-REVIEWS.md.
+ALLOWED_FUNCTIONS = {"__init__", "save", "load", "_resolve_flag", "_apply_hydro_analogue_weights"}
 
 
 def test_no_hidden_behavior_branch():
