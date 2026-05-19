@@ -1,5 +1,9 @@
 # Phase 5bis: Shape Hourly Seasonal — Context
 
+> **STATUS: SUPERSEDED.** This pre-doc was the original Phase 5bis context (gathered 2026-05-17). Post-2026-05-18 adversarial panel review, Phase 5bis was split into:
+> - **5bis-A** (no-op infrastructure refactor) — see .planning/phases/05B-shape-hourly-infrastructure-flag-no-op-refactor/ (DELIVERED 2026-05-18).
+> - **5bis-B** (math change: bowl-deepening via 3 levers) — see .planning/phases/05C-shape-hourly-bowl-deepening/ (IN PLANNING 2026-05-19).
+
 **Gathered:** 2026-05-18 (pre-discussion, ready for `/gsd-discuss-phase 5bis`)
 **Status:** Ready for discussion → planning → execution
 

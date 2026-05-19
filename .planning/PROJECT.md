@@ -84,3 +84,4 @@ Aucun encore — validation passe par le backtest par bloc en Phase 10.
 | 2026-05-18 | Bloc A+C1+C2 fixes (commit 28dfd65) | country/tz plumbing + water_value causal + backtest reference_date |
 | 2026-05-18 | **Hold Phase 3/4, prio Phase 5bis/5/5ter/10** | Profile deal P&L >250k€/deal écrase l'urgence FR/AT/IT |
 | 2026-05-18 | **Cible block-MAE -1.5 €/MWh vs HFC OMPEX** | KPI métier mesurable pour démontrer SOTA en interne |
+| 2026-05-19 | **Flag PFC_LT_USE_SEASONAL_HOURLY_SHAPE livré default OFF en Phase 5bis-B. Flip default ON gated par Phase 10 success (Δ MAE bloc ≤ -1.5 EUR/MWh vs HFC OMPEX 2024-2025).** (D-FLIP-1) | EPFL/SOTA principle: no production change without empirical validation gate. Voir .planning/phases/05C-shape-hourly-bowl-deepening/05C-CONTEXT.md D-FLIP-1. |
