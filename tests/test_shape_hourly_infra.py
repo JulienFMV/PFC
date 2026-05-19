@@ -199,16 +199,17 @@ class TestSaveSidecarSchema:
         After Plan 05B-03, use_seasonal_hourly is also persisted in hyperparams.
         Updated by Plan 05C-01 (D-A3-3 / RESEARCH Pitfall 4): hyperparams JSON gains
         hydro_weight_sigma_off/_on/_resolved keys when 5bis-B Lever 1 ships.
-        Plan 05C-03 will add the sigma_off/_on/_resolved triplet; that follow-up update
-        is the responsibility of Plan 05C-03 Task 3.
-        The constructor _minimal_fitted_sh(hydro_weight_sigma=0.7) passes the legacy
-        single-sigma arg → D-A1-5 backward-compat: off=on=0.7 (legacy wins).
+        Updated by Plan 05C-03 (D-A3-3 / RESEARCH Pitfall 4 second wave): hyperparams JSON gains
+        the sigma_off/_on/_resolved triplet. Total schema = 10 keys.
+        The constructor _minimal_fitted_sh(sigma=0.3, hydro_weight_sigma=0.7) passes the legacy
+        single-sigma args → D-A3-2 / D-A1-5 backward-compat: off=on=0.3/0.7 (legacy wins).
         """
         hp_rows = self.meta[self.meta["attr"] == "hyperparams"]
         assert len(hp_rows) == 1
         obj = json.loads(hp_rows["value"].iloc[0])
         # use_seasonal_hourly added by Plan 05B-03 — must be present
         # hydro_weight_sigma_off/_on/_resolved added by Plan 05C-01 (D-A3-3)
+        # sigma_off/_on/_resolved added by Plan 05C-03 (D-A3-3 / RESEARCH Pitfall 4 second wave)
         assert obj == {
             "halflife_days": 90.0,
             "hydro_weight_sigma": 0.7,
@@ -216,6 +217,9 @@ class TestSaveSidecarSchema:
             "hydro_weight_sigma_on": 0.7,     # legacy single-sigma wins → on = 0.7
             "hydro_weight_sigma_resolved": 0.7,
             "sigma": 0.3,
+            "sigma_off": 0.3,                  # legacy sigma wins → off = 0.3 (D-A3-2)
+            "sigma_on": 0.3,                   # legacy sigma wins → on = 0.3 (D-A3-2)
+            "sigma_resolved": 0.3,
             "use_seasonal_hourly": False,  # default: _minimal_fitted_sh() uses no flag
         }
 
@@ -259,10 +263,11 @@ class TestSaveUnfitted:
     def test_save_unfitted_hyperparams_correct(self):
         """Updated by Plan 05C-01 (D-A3-3 / RESEARCH Pitfall 4): hyperparams JSON gains
         hydro_weight_sigma_off/_on/_resolved keys when 5bis-B Lever 1 ships.
-        Plan 05C-03 will add the sigma_off/_on/_resolved triplet; that follow-up update
-        is the responsibility of Plan 05C-03 Task 3.
-        Constructor ShapeHourly(hydro_weight_sigma=0.25) passes legacy single-sigma →
-        D-A1-5 backward-compat: off=on=0.25 (legacy wins).
+        Updated by Plan 05C-03 (D-A3-3 / RESEARCH Pitfall 4 second wave): hyperparams JSON gains
+        the sigma_off/_on/_resolved triplet alongside hydro_weight_sigma_off/_on/_resolved
+        added by Plan 05C-01. Total schema = 10 keys.
+        Constructor ShapeHourly(sigma=0.5, hydro_weight_sigma=0.25) passes legacy single-sigma →
+        D-A3-2 / D-A1-5 backward-compat: off=on=0.5/0.25 (legacy wins for both).
         """
         sh = ShapeHourly(sigma=0.5, halflife_days=180.0, hydro_weight_sigma=0.25)
         with tempfile.TemporaryDirectory() as d:
@@ -273,6 +278,7 @@ class TestSaveUnfitted:
             obj = json.loads(hp["value"].iloc[0])
             # Plan 05B-03: use_seasonal_hourly now included in hyperparams
             # Plan 05C-01 (D-A3-3): hydro_weight_sigma_off/_on/_resolved added
+            # Plan 05C-03 (D-A3-3 / RESEARCH Pitfall 4 second wave): sigma_off/_on/_resolved added
             assert obj == {
                 "halflife_days": 180.0,
                 "hydro_weight_sigma": 0.25,
@@ -280,6 +286,9 @@ class TestSaveUnfitted:
                 "hydro_weight_sigma_on": 0.25,     # legacy single-sigma wins → on = 0.25
                 "hydro_weight_sigma_resolved": 0.25,
                 "sigma": 0.5,
+                "sigma_off": 0.5,                  # legacy sigma wins → off = 0.5 (D-A3-2)
+                "sigma_on": 0.5,                   # legacy sigma wins → on = 0.5 (D-A3-2)
+                "sigma_resolved": 0.5,
                 "use_seasonal_hourly": False,
             }
 
@@ -646,7 +655,9 @@ class TestFlagPersistenceInSidecar:
     def test_hyperparams_json_has_all_keys(self, monkeypatch):
         """After 05B-03, hyperparams must include sigma, halflife_days, hydro_weight_sigma, use_seasonal_hourly.
         Updated by Plan 05C-01 (D-A3-3 / RESEARCH Pitfall 4): also includes
-        hydro_weight_sigma_off/_on/_resolved. Plan 05C-03 will add sigma_off/_on/_resolved.
+        hydro_weight_sigma_off/_on/_resolved.
+        Updated by Plan 05C-03 (D-A3-3 / RESEARCH Pitfall 4 second wave): also includes
+        sigma_off/_on/_resolved. Total schema = 10 keys.
         """
         monkeypatch.delenv("PFC_LT_USE_SEASONAL_HOURLY_SHAPE", raising=False)
         sh = ShapeHourly(sigma=0.3, halflife_days=90.0, hydro_weight_sigma=0.7, use_seasonal_hourly=True)
@@ -655,7 +666,7 @@ class TestFlagPersistenceInSidecar:
             sh.save(p)
             meta = pd.read_parquet(os.path.join(d, "shape_hourly.meta.parquet"))
             hp = json.loads(meta[meta["attr"] == "hyperparams"].iloc[0]["value"])
-            # After Plan 05C-01: 7 keys (sigma_off/_on/_resolved will be added by Plan 05C-03)
+            # After Plan 05C-03: 10 keys (full 5bis-B schema)
             assert set(hp.keys()) == {
                 "halflife_days",
                 "hydro_weight_sigma",
@@ -663,6 +674,9 @@ class TestFlagPersistenceInSidecar:
                 "hydro_weight_sigma_on",
                 "hydro_weight_sigma_resolved",
                 "sigma",
+                "sigma_off",
+                "sigma_on",
+                "sigma_resolved",
                 "use_seasonal_hourly",
             }
 
