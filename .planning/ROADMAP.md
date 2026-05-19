@@ -44,7 +44,7 @@ P&L par 5 €/MWh d'erreur shape), pas par l'ordre alphabétique des features.
   - Goal: creuser la duck curve via (a) fix bug `_apply_hydro_analogue_weights` (utiliser `_climatological_fill[week_of_year]` au lieu de `current_fill`), (b) split `f_H = level × anomaly` avec `shape_freedom['f_H']` damping sur level only, (c) σ paramétrable (0.5 OFF / 0.25 ON).
   - SC: `|Δ price_shape Été-h10-15 vs Hiver-h10-15| > 5 €/MWh` sur fixture EPEX-like réaliste, gated par `PFC_LT_USE_SEASONAL_HOURLY_SHAPE=1`.
   - Depends on: Phase 5bis-A livrée (baseline frozen + flag persisté).
-  - Context: à discuter via `/gsd:discuss-phase 5bis-B` après livraison 5bis-A.
+  - Context: `.planning/phases/05C-shape-hourly-bowl-deepening/05C-CONTEXT.md`.
 
 - [ ] **Phase 5: MSFC log-prix + retire silent floors + PFC peut être négative**
   - Goal: la PFC peut descendre à -20 €/MWh aux heures structurelles (été 2027+ midi).
