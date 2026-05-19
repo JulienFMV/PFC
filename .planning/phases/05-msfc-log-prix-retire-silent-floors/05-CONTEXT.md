@@ -86,6 +86,18 @@
   - **Plan 05-02-PLAN.md (wave 2)** — WaterValueCorrection delta additif + assembler integration (Area 3). `compute_delta_wv` API, `enforce_floor=False` default, refactor `assembler.build()` `P = B×f_H×f_W + delta_wv`, telemetry. Test math `test_water_value_delta_sign_invariant`. **Research dry-run mesure écart baseline_5bisA** ; si >1e-12, ajoute nouvelle baseline ; sinon préserve l'ancienne.
   - **Plan 05-03-PLAN.md (wave 3)** — BlockCascading spread additif (Area 4 math) + master flag `PFC_LT_ALLOW_NEGATIVE_PRICES` audit-trail + fixture generator `_generate_phase05_fixture.py` + nouvelle baseline `baseline_pfc_seed42_phase05.parquet` + tests `test_cascading_spread_signed_base` + `test_phase05_summer_bowl_negative_acceptance` (SC #2 system acceptance, gated par 5bis-B). Update PROJECT.md `Key Decisions` à la livraison (D-FLIP-1 pattern : flag Phase 5 livré defaults OFF, rollback opérateur documenté).
 
+### Area 6 — Scope-cap exception (revision iteration 2)
+
+### D-A6-1: Plan 05-03 scope-cap exception (8 tasks / 10 files in W3)
+
+**Decision:** Plan 05-03 deliberately exceeds the Dimension 5 task cap (5 tasks max) and ships 8 tasks across 10 files in a single wave.
+
+**Why:** Codex action #5 (REVIEWS.md line 119) explicitly requires "no plan restructuring, commit boundary only" for the cascading + master flag + fixtures bundle. Splitting Plan 05-03 into 05-03a/05-03b would contradict the upstream reviewer's directive.
+
+**Risk mitigation:** Plan 05-03 emits two named commits (Tasks 1+4 → `refactor(05): cascading spread-additive + production callsites migration`; Tasks 2+3+5+6+7+8 → `feat(05): master flag + fixtures + phase05 tests + docs`) so git history surfaces the boundary even though the executor loads all 10 files in one wave.
+
+**Operator sign-off:** Implicit via `/gsd:plan-phase 5 --reviews` invocation — the user opted into incorporating reviewer feedback including action #5.
+
 ### Claude's Discretion
 - Format exact du log telemetry (D-A2-2, D-A3-5) : INFO vs DEBUG, format string exact : implémentation.
 - Sidecar persistence pour `PFC_LT_ALLOW_NEGATIVE_PRICES` : étendre `shape_hourly.meta.parquet` JSON hyperparams (cohérence 5bis-A/B) OU créer `assembler.meta.parquet` séparé : trancher au planning research (D-A2-4 question ouverte).
@@ -212,6 +224,16 @@ User a flag que NEG-05 dans REQUIREMENTS.md ("Cal'27 = -10 €/MWh") est non-ré
 - "MSFC log-prix + retire silent floors" → "MSFC retire silent floors + PFC peut être négative". À trancher en planning ou commit final Phase 5. Le titre actuel reste comme aliasing historique mais documenté SUPERSEDED dans CONTEXT.md.
 
 </deferred>
+
+## Revision Log (--reviews iteration 2)
+
+Surgical edits applied 2026-05-19 to address plan-checker iteration 2 BLOCKER 2:
+- Added new locked decision `D-A6-1` under `<decisions>` (new sub-section "Area 6 — Scope-cap exception") documenting why Plan 05-03 ships 8 tasks/10 files in a single wave (codex action #5 forbids plan restructuring → only commit-boundary split applies → 2 commits, single wave).
+- Risk mitigation: the codex-action-#5 commit-boundary mapping (already in Plan 05-03 Revision Log iteration 1) is the operator-visible audit trail surfaced through git history.
+
+No other locked decisions were touched. The audit trail trace is now complete: BLOCKER 2 closure references Plan 05-03 §`Scope-Cap Exception (D-A6-1)` and Plan 05-03 `must_haves.truths[18]`.
+
+---
 
 ---
 

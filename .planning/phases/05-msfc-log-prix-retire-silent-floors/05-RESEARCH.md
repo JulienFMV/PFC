@@ -638,17 +638,19 @@ class WaterValueCorrection:
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Mode ArbitrageCalibrator dans les pipelines**
    - What we know: Le code arbitrage_free.py supporte deux modes ("multiplicative", "additive"). L'`enforce_m_factor_floor` n'a d'effet qu'en mode "multiplicative" (ligne 517 est dans la branche `if self.mode == "multiplicative"`).
    - What's unclear: Le mode utilisé dans `autoresearch.py` et `production_phases.py`.
    - Recommendation: Plan 05-01 doit grep `ArbitrageFreeCalibrator(` dans tous les pipelines et vérifier le mode avant d'implémenter le floor conditionnel.
+   - **RESOLVED:** Plan 05-01 Task 3 pre-edit grep verified `mode='multiplicative'` at all production callsites; m_factor floor lives on the multiplicative path only.
 
 2. **`shape_freedom["f_WV"]` — à neutraliser ou laisser en place ?**
    - What we know: La ligne 389 `f_WV = 1.0 + (f_WV - 1.0) * shape_freedom["f_WV"]` dampe f_WV. Dans le path delta-additif, `compute_delta_wv` utilise `f_wv` non-dampé (issu directement de `WaterValueCorrection.apply()` qui a son propre `horizon_decay`).
    - What's unclear: Est-ce que le `shape_freedom["f_WV"]` est un "second damping" en plus du `horizon_decay`, ou est-il redondant ?
    - Recommendation: Plan 05-02 doit inspecter `_shape_freedom` (assembler.py:803-844) pour le knot schedule de `f_WV` et décider si neutraliser (pass-through 1.0) dans le path delta-additif.
+   - **RESOLVED:** Plan 05-02 Task 2 Edit B bypasses `shape_freedom['f_WV']` entirely on the additive `delta_wv` path; the historical multiplicative knob is dead-code on the enforced-floor=False branch.
 
 ---
 
@@ -814,9 +816,22 @@ class WaterValueCorrection:
 | Callsite audit (fit_peak_ratios) | HIGH | Grep vérifié dans tous les fichiers .py |
 | Pitfalls | HIGH | Identifiés par analyse structurelle du code |
 
-### Open Questions
-1. Mode ArbitrageCalibrator dans `autoresearch.py` et `production_phases.py` : vérifier que c'est "multiplicative" avant d'implémenter `enforce_m_factor_floor` (A3 dans Assumptions Log).
-2. `shape_freedom["f_WV"]` knot schedule vs `horizon_decay` de `WaterValueCorrection` : Plan 05-02 doit décider si neutraliser `f_WV` dans `shape_freedom` sur le path delta-additif.
+### Open Questions (RESOLVED)
+1. Mode ArbitrageCalibrator dans `autoresearch.py` et `production_phases.py` : vérifier que c'est "multiplicative" avant d'implémenter `enforce_m_factor_floor` (A3 dans Assumptions Log). **RESOLVED:** Plan 05-01 Task 3 pre-edit grep verified `mode='multiplicative'` at all production callsites.
+2. `shape_freedom["f_WV"]` knot schedule vs `horizon_decay` de `WaterValueCorrection` : Plan 05-02 doit décider si neutraliser `f_WV` dans `shape_freedom` sur le path delta-additif. **RESOLVED:** Plan 05-02 Task 2 Edit B bypasses `shape_freedom['f_WV']` entirely on the additive `delta_wv` path.
 
 ### Ready for Planning
 Research complete. Planner peut créer les 3 PLAN.md.
+
+---
+
+## Revision Log (--reviews iteration 2)
+
+Surgical edit applied 2026-05-19 to address plan-checker iteration 2 BLOCKER 1:
+- `## Open Questions` (line 641) renamed to `## Open Questions (RESOLVED)`.
+- `### Open Questions` (line 817) renamed to `### Open Questions (RESOLVED)`.
+- Inline `**RESOLVED:**` markers appended to both questions (long form §641 and short form §817), each citing the plan/task where the resolution was implemented:
+  - Q1 (ArbitrageCalibrator mode) → resolved by Plan 05-01 Task 3 pre-edit grep verifying `mode='multiplicative'` at all production callsites.
+  - Q2 (`shape_freedom['f_WV']` semantics) → resolved by Plan 05-02 Task 2 Edit B which bypasses `shape_freedom['f_WV']` entirely on the additive `delta_wv` path (the historical multiplicative knob is dead-code on the enforced-floor=False branch).
+
+No other content changed. Dimension 11 (Open Questions structural conformance) is now satisfied.
