@@ -10,6 +10,8 @@ files_modified:
   - tests/fixtures/bowl_seed42.parquet
   - tests/test_shape_hourly_bowl.py
   - tests/test_shape_hourly_infra.py
+  - scripts/calibrate_bowl_thresholds.py
+  - tests/fixtures/_bowl_calibration_report.json
 autonomous: true
 requirements:
   - SHP-04
@@ -33,9 +35,9 @@ must_haves:
     - "Legacy callsite `ShapeHourly(hydro_weight_sigma=X)` (where X is non-None) resolves to `self._hydro_weight_sigma_off = self._hydro_weight_sigma_on = X` (D-A1-5 / D-A3-2 resolution precedence)."
     - "The persisted sidecar `shape_hourly.meta.parquet` hyperparams JSON gains three new keys: `hydro_weight_sigma_off`, `hydro_weight_sigma_on`, `hydro_weight_sigma_resolved`. Legacy key `hydro_weight_sigma` remains present (carrying the resolved/active value) for 5bis-A reader compat (D-A3-3)."
     - "`ShapeHourly.load()` cross-plan fallback: if sidecar pre-5bis-B lacks `hydro_weight_sigma_off` key, set `obj._hydro_weight_sigma_off = obj._hydro_weight_sigma_on = hp.get('hydro_weight_sigma', 0.25)` (D-A3-3 cross-plan compat — mirrors the 5bis-A D-07 pattern for `use_seasonal_hourly`)."
-    - "Wave 0 calibration task captured the observed ratio `np.ptp(sh_on.factors_[('Ete','Ouvrable')]) / np.ptp(sh_off.factors_[('Ete','Ouvrable')])` on `tests/fixtures/bowl_seed42.parquet`. The committed threshold constant `SC1_PTP_THRESHOLD` in `tests/test_shape_hourly_bowl.py` equals `max(observed_ratio - 0.15, 1.05)` (RESEARCH §4 measure-then-assert; plancher 1.05)."
+    - "Wave 0 calibration is executed via a COMMITTED script `scripts/calibrate_bowl_thresholds.py` (not an interactive terminal one-shot) and produces a COMMITTED immutable artifact `tests/fixtures/_bowl_calibration_report.json` with schema `{calibrated_at: ISO8601, git_sha: str, fixture_sha256: str, ratios: {sc1_ptp_ratio: float, sc1_floor_multiplier: float}, thresholds_emitted: {SC1_PTP_THRESHOLD: float, SC3_M30_AMPLITUDE_THRESHOLD_PLACEHOLDER: float}}`. The threshold constant `SC1_PTP_THRESHOLD` in `tests/test_shape_hourly_bowl.py` is loaded from this report via `json.load(...)['thresholds_emitted']['SC1_PTP_THRESHOLD']` — NOT a free-floating `# observed ratio = X` comment (M2 cross-AI review fix; Codex framing wins)."
     - "`tests/fixtures/_generate_bowl_fixture.py` (seed=42) generates a deterministic synthetic EPEX 15-min DataFrame + a Swiss-like weekly hydro DataFrame covering ≥52 weeks, with an analytically-controlled duck curve (solar depression h10-15 strongest in summer, evening peak h17-20, weekend solar bowl deeper, night discount h22-6). Output `tests/fixtures/bowl_seed42.parquet` (~50KB) is committed (D-A4-1)."
-    - "`tests/test_shape_hourly_bowl.py` is created in this plan with: (a) module docstring referencing 5bis-B and D-A4-2, (b) imports + threshold constants placeholder including `SC1_PTP_THRESHOLD` committed via Wave 0, (c) two passing tests `test_hydro_kernel_uses_per_timestamp_climatological_target` (D-A4-3) and `test_flag_off_bit_for_bit_baseline` (D-A4-8). The file is the durable scaffold; plans 02 and 03 will append the remaining 5 tests (D-A4-4, D-A4-5, D-A4-6, D-A4-7, D-A4-9)."
+    - "`tests/test_shape_hourly_bowl.py` is created in this plan with: (a) module docstring referencing 5bis-B and D-A4-2, (b) imports + threshold constants loaded from `_bowl_calibration_report.json` (M2), (c) two passing tests `test_hydro_kernel_uses_per_timestamp_climatological_target` (D-A4-3) and `test_flag_off_bit_for_bit_baseline` (D-A4-8). The file is the durable scaffold; plans 02 and 03 will append the remaining 5 tests (D-A4-4, D-A4-5, D-A4-6, D-A4-7, D-A4-9)."
     - "Cross-cutting truth (appears in all 3 plans): `flag=OFF baseline 5bis-A preserved at atol=1e-12 rtol=0`. After this plan, the full suite stays green and `test_baseline_regression[False]` (from 5bis-A `tests/test_shape_hourly_infra.py`) continues to pass against `tests/fixtures/baseline_pfc_seed42.parquet`."
     - "`test_hyperparams_json_has_all_keys` (or any test in `tests/test_shape_hourly_infra.py` asserting the exact set of hyperparams JSON keys) is updated in THIS plan to accept the new key set: at minimum `{halflife_days, hydro_weight_sigma, hydro_weight_sigma_off, hydro_weight_sigma_on, hydro_weight_sigma_resolved, sigma, use_seasonal_hourly}` (sigma_off/sigma_on/sigma_resolved added in Plan 05C-03). RESEARCH Pitfall 4 — only authorized modification to `test_shape_hourly_infra.py` in 5bis-B."
   artifacts:
@@ -47,8 +49,14 @@ must_haves:
       contains: "bowl_seed42"
     - path: "tests/fixtures/bowl_seed42.parquet"
       provides: "Long-format 15-min EPEX parquet with analytically-controlled duck curve (~50KB)."
+    - path: "scripts/calibrate_bowl_thresholds.py"
+      provides: "Reproducible Wave 0 calibration script (M2 cross-AI review fix). Reads bowl fixture, fits sh_off + sh_on, computes ptp ratios, writes JSON report to tests/fixtures/_bowl_calibration_report.json."
+      contains: "calibrate_bowl_thresholds"
+    - path: "tests/fixtures/_bowl_calibration_report.json"
+      provides: "Immutable calibration artifact (M2 cross-AI review fix). Schema: {calibrated_at, git_sha, fixture_sha256, ratios, thresholds_emitted}. Consumed by tests via json.load; mismatched fixture_sha256 → CI fails loudly (test added in Plan 05C-03)."
+      contains: "thresholds_emitted"
     - path: "tests/test_shape_hourly_bowl.py"
-      provides: "New isolated test module for 5bis-B math-change tests. Two passing tests after this plan: D-A4-3 (kernel) and D-A4-8 (flag=OFF baseline)."
+      provides: "New isolated test module for 5bis-B math-change tests. Two passing tests after this plan: D-A4-3 (kernel) and D-A4-8 (flag=OFF baseline). Threshold constants loaded from _bowl_calibration_report.json (M2)."
       contains: "test_hydro_kernel_uses_per_timestamp_climatological_target"
     - path: "tests/test_shape_hourly_infra.py"
       provides: "Updated `test_hyperparams_json_has_all_keys` (or equivalent) to accept the extended sidecar schema (RESEARCH Pitfall 4 exception)."
@@ -70,6 +78,10 @@ must_haves:
       to: "tests/fixtures/baseline_pfc_seed42.parquet"
       via: "assert_frame_equal(check_exact=False, atol=1e-12, rtol=0) + identical columns/dtypes/index/sort order"
       pattern: "baseline_pfc_seed42"
+    - from: "tests/test_shape_hourly_bowl.py (SC1_PTP_THRESHOLD constant)"
+      to: "tests/fixtures/_bowl_calibration_report.json"
+      via: "json.load(open(...))['thresholds_emitted']['SC1_PTP_THRESHOLD'] at module load time"
+      pattern: "_bowl_calibration_report"
 ---
 
 <objective>
@@ -79,13 +91,13 @@ Extend `ShapeHourly.__init__` with two new flag-aware kwargs `hydro_weight_sigma
 
 Extend the `${stem}.meta.parquet` sidecar to persist three new keys (`hydro_weight_sigma_off`, `hydro_weight_sigma_on`, `hydro_weight_sigma_resolved`) while preserving the legacy `hydro_weight_sigma` key for 5bis-A readers. Implement cross-plan fallback at `load()` for sidecars pre-5bis-B that lack the new keys.
 
-Create the deterministic synthetic duck-curve fixture (`tests/fixtures/_generate_bowl_fixture.py` + `tests/fixtures/bowl_seed42.parquet`) and the new isolated test module `tests/test_shape_hourly_bowl.py` scaffolded with the two tests that fit in this plan's scope (D-A4-3 kernel test, D-A4-8 flag=OFF baseline). Wave 0 calibrates `SC1_PTP_THRESHOLD` on the new fixture and commits it as a constant in the test file (plancher 1.05 per RESEARCH §4).
+Create the deterministic synthetic duck-curve fixture (`tests/fixtures/_generate_bowl_fixture.py` + `tests/fixtures/bowl_seed42.parquet`) and the new isolated test module `tests/test_shape_hourly_bowl.py` scaffolded with the two tests that fit in this plan's scope (D-A4-3 kernel test, D-A4-8 flag=OFF baseline). Wave 0 calibrates `SC1_PTP_THRESHOLD` on the new fixture via the **committed reproducible script** `scripts/calibrate_bowl_thresholds.py` (M2 cross-AI review fix — Codex framing wins over the original interactive-only approach), producing the **committed immutable artifact** `tests/fixtures/_bowl_calibration_report.json` (schema: calibrated_at, git_sha, fixture_sha256, ratios, thresholds_emitted). The test file loads the threshold from this JSON via `json.load`, not from a free-floating in-comment value.
 
 Update the single 5bis-A test that asserts the exact hyperparams JSON key set (`test_hyperparams_json_has_all_keys` or equivalent in `tests/test_shape_hourly_infra.py`) to accept the extended schema. RESEARCH Pitfall 4 — only authorized modification to `test_shape_hourly_infra.py` across 5bis-B.
 
-Purpose: This plan delivers the "hydro kernel reformulation" lever (the biggest expected contribution to SC #1 ptp deepening per RESEARCH §Lever 1) and establishes the bowl-fixture + new-test-module scaffold that plans 02 and 03 will extend. The flag=OFF baseline test proves the regression contract continues to hold after the math change.
+Purpose: This plan delivers the "hydro kernel reformulation" lever (the biggest expected contribution to SC #1 ptp deepening per RESEARCH §Lever 1) and establishes the bowl-fixture + new-test-module scaffold that plans 02 and 03 will extend. The flag=OFF baseline test proves the regression contract continues to hold after the math change. The committed calibration script + JSON sidecar (M2) closes the cross-AI review's auditability concern: a secondary quant reviewer can re-run `python scripts/calibrate_bowl_thresholds.py` and observe whether the artifact changes — if it does, the test asserts a fixture mismatch and CI fails loudly.
 
-Output: 1 modified production file (`shape_hourly.py`), 1 new fixture generator script, 1 new fixture parquet, 1 new test module (with 2 passing tests + threshold constants), 1 surgical update to an existing infra test. Test suite goes from 247 → 249 passing (4 skipped preserved).
+Output: 1 modified production file (`shape_hourly.py`), 1 new fixture generator script, 1 new fixture parquet, 1 new committed calibration script (`scripts/calibrate_bowl_thresholds.py`), 1 new committed calibration report (`tests/fixtures/_bowl_calibration_report.json`), 1 new test module (with 2 passing tests + threshold constants loaded from JSON), 1 surgical update to an existing infra test. Test suite goes from 247 → 249 passing (4 skipped preserved).
 </objective>
 
 <execution_context>
@@ -101,6 +113,7 @@ Output: 1 modified production file (`shape_hourly.py`), 1 new fixture generator 
 @.planning/phases/05C-shape-hourly-bowl-deepening/05C-CONTEXT.md
 @.planning/phases/05C-shape-hourly-bowl-deepening/05C-RESEARCH.md
 @.planning/phases/05C-shape-hourly-bowl-deepening/05C-VALIDATION.md
+@.planning/phases/05C-shape-hourly-bowl-deepening/05C-REVIEWS.md
 @.planning/phases/05B-shape-hourly-infrastructure-flag-no-op-refactor/05B-CONTEXT.md
 @.planning/phases/05B-shape-hourly-infrastructure-flag-no-op-refactor/05B-REVIEWS.md
 @pfc_shaping/lt/model/shape_hourly.py
@@ -191,6 +204,10 @@ Test counts at start of this plan (verified state from 5bis-A): `247 passed, 4 s
 </interfaces>
 </context>
 
+<deferred_research>
+**T1 (cross-AI review consensus — Codex HIGH, Gemini not flagged):** `hydro_weight_sigma_on = 0.08` is calibrated against simulated N(0, 0.10) anomalies from RESEARCH §Lever 1 dry-run, NOT against Swiss historical reservoir anomaly distribution. A real Swiss historical reservoir anomaly diagnostic (one-off offline artifact, quantiles + floor-hit rate, source: BFE / OFEN weekly reservoir data) should validate or revise this value before D-FLIP-1 production flip. Tracked as A3 in RESEARCH.md §Assumptions. **Does not block 5bis-B ship** — `flag=OFF` default + D-FLIP-1 gate (Phase 10 Δ MAE bloc ≤ -1.5 EUR/MWh vs HFC OMPEX) provide the safety net. Follow-up phase scope: ~1 day offline notebook, output a markdown diagnostic with histogram + quantile table + recommendation (keep 0.08, or revise to data-driven value).
+</deferred_research>
+
 <tasks>
 
 <task type="auto">
@@ -238,7 +255,7 @@ print(f'OK rows={len(df)} size={size_kb:.1f}KB price_range=[{df.price_eur_mwh.mi
     - `grep -q "np.random.default_rng(42)\|seed=42\|seed: int = 42" tests/fixtures/_generate_bowl_fixture.py` exits 0 (seed convention).
     - Verify command above prints `OK rows=...` and exits 0.
     - Re-running `python tests/fixtures/_generate_bowl_fixture.py` produces a byte-identical parquet (determinism check): `sha256sum tests/fixtures/bowl_seed42.parquet` before and after must match.
-    - `pytest tests/ -x -q` exits 0 reporting `247 passed, 4 skipped` (no new test consumes the fixture yet — added in Task 4).
+    - `pytest tests/ -x -q` exits 0 reporting `247 passed, 4 skipped` (no new test consumes the fixture yet — added in Task 5).
   </acceptance_criteria>
   <done>Fixture generator + parquet committed; reusable entry point `build_bowl_fixture()` is available for downstream tests.</done>
 </task>
@@ -380,51 +397,150 @@ print('OK init')
 </task>
 
 <task type="auto">
-  <name>Task 4: Create `tests/test_shape_hourly_bowl.py` with Wave 0 threshold calibration, D-A4-3 (kernel test), D-A4-8 (flag=OFF baseline)</name>
+  <name>Task 4 (Wave 0 — REVISED per M2 cross-AI review): Create committed reproducible calibration script `scripts/calibrate_bowl_thresholds.py` + immutable JSON sidecar `tests/fixtures/_bowl_calibration_report.json`</name>
+  <files>scripts/calibrate_bowl_thresholds.py, tests/fixtures/_bowl_calibration_report.json</files>
+  <read_first>
+    - .planning/phases/05C-shape-hourly-bowl-deepening/05C-REVIEWS.md (consensus item 3 + recommended-action #2 — Codex framing of the auditability fix: committed script + immutable JSON sidecar with calibrated_at, git_sha, fixture_sha256, ratios, thresholds_emitted)
+    - tests/fixtures/_generate_bowl_fixture.py (Task 1 output — exposes `build_bowl_fixture()`)
+    - pfc_shaping/lt/model/shape_hourly.py (post-Task-2 state — confirms ShapeHourly `use_seasonal_hourly` kwarg accepts True/False)
+    - .planning/phases/05C-shape-hourly-bowl-deepening/05C-RESEARCH.md §Lever 1 (np.ptp threshold formula — `threshold = max(observed_ratio - 0.15, 1.05)` with plancher 1.05)
+    - .planning/phases/05C-shape-hourly-bowl-deepening/05C-CONTEXT.md D-A4-3, D-A4-5 (the SC #1 measure-then-assert protocol)
+  </read_first>
+  <action>
+    This task REPLACES the original "interactive terminal Wave 0 calibration" with a committed reproducible script + immutable JSON artifact. This implements **M2 from `05C-REVIEWS.md` consensus** (cross-AI review fix; Codex framing wins over Gemini's lighter "hidden helper" suggestion — Codex's auditability framing is stronger for trading-grade math changes).
+
+    **Part A — Create `scripts/calibrate_bowl_thresholds.py` (a committed, executable, version-controlled script):**
+
+    File path: `scripts/calibrate_bowl_thresholds.py` (create `scripts/` directory if it does not exist; verify first with `test -d scripts && ls scripts/ | head -5`; if scripts/ already contains a `_generate_*.py` or `*.py` artifact, co-locate; do NOT replace existing files).
+
+    Required structure:
+    1. Module docstring: "Wave 0 calibration script for Phase 5bis-B SC #1 (ptp ratio threshold). Reads tests/fixtures/bowl_seed42.parquet, fits sh_off + sh_on, computes ptp ratio on (Ete, Ouvrable) cell, writes immutable JSON artifact tests/fixtures/_bowl_calibration_report.json. Commit BOTH this script AND the JSON output to git after every re-run. M2 cross-AI review fix (REVIEWS.md consensus #3). Reproduce via: python scripts/calibrate_bowl_thresholds.py."
+    2. Imports: `from __future__ import annotations`, `argparse`, `hashlib`, `json`, `subprocess`, `datetime`, `pathlib.Path`, `numpy as np`. Plus the repo bootstrap (sys.path manipulation if needed) followed by `from tests.fixtures._generate_bowl_fixture import build_bowl_fixture`, `from pfc_shaping.data.calendar_ch import enrich_15min_index`, `from pfc_shaping.lt.model.shape_hourly import ShapeHourly`.
+    3. Module constants:
+       - `REPO_ROOT = Path(__file__).resolve().parent.parent`
+       - `FIXTURE_PATH = REPO_ROOT / "tests" / "fixtures" / "bowl_seed42.parquet"`
+       - `REPORT_PATH = REPO_ROOT / "tests" / "fixtures" / "_bowl_calibration_report.json"`
+       - `SC1_FLOOR_MULTIPLIER = 1.05` (RESEARCH §Lever 1 plancher)
+       - `SC1_RATIO_MARGIN = 0.15` (RESEARCH §Lever 1 `max(ratio - 0.15, plancher)` formula)
+    4. Function `_compute_fixture_sha256(path: Path) -> str`: read the parquet file in binary mode (`path.read_bytes()`), return `hashlib.sha256(...).hexdigest()`. This is the M2-mandated immutability link between the JSON report and the fixture binary.
+    5. Function `_get_git_sha() -> str`: invoke `subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, cwd=REPO_ROOT, check=False)`. Return `result.stdout.strip()` if `result.returncode == 0` else `"unknown-not-in-git"`. This handles CI environments where git may not be available.
+    6. Function `_calibrate_sc1(epex_df, hydro_df, cal) -> tuple[float, float, float]`: fit `sh_off = ShapeHourly(use_seasonal_hourly=False).fit(epex_df, cal, hydro_df)` and `sh_on = ShapeHourly(use_seasonal_hourly=True).fit(epex_df, cal, hydro_df)`. Locate key `("Ete", "Ouvrable")`; fall back to first common key if absent. Compute `ptp_off = float(np.ptp(sh_off.factors_[key]))`, `ptp_on = float(np.ptp(sh_on.factors_[key]))`, `ratio = ptp_on / ptp_off`. Return `(ptp_off, ptp_on, ratio)`.
+    7. Function `main() -> None`:
+       - Build fixture: `epex_df, hydro_df = build_bowl_fixture(seed=42)`.
+       - Build calendar: `cal = enrich_15min_index(epex_df.index, country="CH")`.
+       - Run SC #1 calibration: `(ptp_off, ptp_on, ratio) = _calibrate_sc1(epex_df, hydro_df, cal)`.
+       - Compute threshold: `sc1_threshold = max(ratio - SC1_RATIO_MARGIN, SC1_FLOOR_MULTIPLIER)`.
+       - Build report dict matching the M2-mandated schema:
+         ```
+         report = {
+             "calibrated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+             "git_sha": _get_git_sha(),
+             "fixture_sha256": _compute_fixture_sha256(FIXTURE_PATH),
+             "fixture_path": "tests/fixtures/bowl_seed42.parquet",
+             "ratios": {
+                 "sc1_ptp_off": ptp_off,
+                 "sc1_ptp_on": ptp_on,
+                 "sc1_ptp_ratio": ratio,
+                 "sc1_floor_multiplier": SC1_FLOOR_MULTIPLIER,
+                 "sc1_ratio_margin": SC1_RATIO_MARGIN,
+             },
+             "thresholds_emitted": {
+                 "SC1_PTP_THRESHOLD": sc1_threshold,
+                 "SC3_M30_AMPLITUDE_THRESHOLD_PLACEHOLDER": 0.50,
+             },
+             "notes": "Plan 05C-01 ships Lever 1 only — sc1_ptp_ratio is the Lever-1-only gain. Plan 05C-03 will re-run this script with all 3 levers active (Plan 05C-03 Task 3); the updated artifact MUST overwrite this one and be re-committed.",
+         }
+         ```
+       - Write to `REPORT_PATH` via `REPORT_PATH.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")`. The trailing newline + `sort_keys=True` ensures git-friendly stable diffs across re-runs.
+       - Print a one-line confirmation: `print(f"Wave 0 calibrated: ratio={ratio:.4f}, threshold={sc1_threshold:.4f}, report={REPORT_PATH.relative_to(REPO_ROOT)}")`.
+    8. `if __name__ == "__main__": main()` block.
+
+    **Part B — Run the script ONCE and commit BOTH the script AND the report JSON:**
+
+    Execute `python scripts/calibrate_bowl_thresholds.py`. Verify `tests/fixtures/_bowl_calibration_report.json` is created with valid JSON. Sanity-check by `python -c "import json; r = json.load(open('tests/fixtures/_bowl_calibration_report.json')); assert set(r) == {'calibrated_at', 'git_sha', 'fixture_sha256', 'fixture_path', 'ratios', 'thresholds_emitted', 'notes'}; assert 0.50 < r['thresholds_emitted']['SC1_PTP_THRESHOLD'] < 2.00; assert len(r['fixture_sha256']) == 64; print('OK report schema')"`.
+
+    Sanity bounds (if outside, STOP and request investigation):
+    - If `sc1_ptp_ratio < 1.00`: WARN — Lever 1 is REGRESSING amplitude vs flag=OFF. Possible bug in `_apply_hydro_analogue_weights`. STOP.
+    - If `sc1_ptp_ratio > 3.00`: WARN — gain is implausibly large vs RESEARCH §Lever 1 analytic estimate 1.13-1.18. Verify fixture or kernel logic. STOP.
+    - If `sc1_ratio` is below 1.20: threshold falls back to plancher 1.05 (acceptable per RESEARCH §Lever 1). Continue.
+
+    DO NOT create `tests/test_shape_hourly_bowl.py` in this task — that is Task 5. This task ONLY produces the script + JSON artifact.
+
+    DO NOT inline the script body inside a heredoc — use Write tool (per CRITICAL rules in planner).
+  </action>
+  <verify>
+    <automated>test -f scripts/calibrate_bowl_thresholds.py &amp;&amp; python scripts/calibrate_bowl_thresholds.py &amp;&amp; python -c "
+import json, hashlib
+r = json.load(open('tests/fixtures/_bowl_calibration_report.json'))
+expected_keys = {'calibrated_at', 'git_sha', 'fixture_sha256', 'fixture_path', 'ratios', 'thresholds_emitted', 'notes'}
+assert set(r) == expected_keys, f'schema drift: {set(r) ^ expected_keys}'
+assert len(r['fixture_sha256']) == 64, f'sha256 len {len(r[\"fixture_sha256\"])}'
+fixture_bytes = open('tests/fixtures/bowl_seed42.parquet', 'rb').read()
+actual_sha = hashlib.sha256(fixture_bytes).hexdigest()
+assert r['fixture_sha256'] == actual_sha, f'fixture sha mismatch: report={r[\"fixture_sha256\"][:16]}... actual={actual_sha[:16]}...'
+thr = r['thresholds_emitted']['SC1_PTP_THRESHOLD']
+assert 0.50 &lt; thr &lt; 2.00, f'threshold {thr} out of plausible bounds'
+print(f'OK report: ratio={r[\"ratios\"][\"sc1_ptp_ratio\"]:.4f} thr={thr:.4f} sha256={r[\"fixture_sha256\"][:8]}...')
+"</automated>
+  </verify>
+  <acceptance_criteria>
+    - `test -f scripts/calibrate_bowl_thresholds.py` exits 0.
+    - `test -f tests/fixtures/_bowl_calibration_report.json` exits 0.
+    - `grep -q "M2" scripts/calibrate_bowl_thresholds.py` exits 0 (traceability to REVIEWS.md fix).
+    - `grep -q "REVIEWS.md" scripts/calibrate_bowl_thresholds.py` exits 0.
+    - `grep -q "_compute_fixture_sha256\|_get_git_sha\|_calibrate_sc1" scripts/calibrate_bowl_thresholds.py` exits 0 (three required helper functions present).
+    - `python -c "import json; r = json.load(open('tests/fixtures/_bowl_calibration_report.json')); assert {'calibrated_at', 'git_sha', 'fixture_sha256', 'fixture_path', 'ratios', 'thresholds_emitted', 'notes'} == set(r), set(r)"` exits 0 (M2-mandated schema present and complete).
+    - The verify command above prints `OK report: ratio=... thr=... sha256=...` and exits 0.
+    - `python -c "import json; r = json.load(open('tests/fixtures/_bowl_calibration_report.json')); t = r['thresholds_emitted']['SC1_PTP_THRESHOLD']; assert 0.50 < t < 2.00, t"` exits 0 (threshold in plausible bounds).
+    - Re-running `python scripts/calibrate_bowl_thresholds.py` produces a JSON whose `fixture_sha256` and `ratios.sc1_ptp_ratio` match the previous run (only `calibrated_at` and possibly `git_sha` may change between runs); confirmed via `python -c "import json; old = json.load(open('tests/fixtures/_bowl_calibration_report.json')); ..."` before and after.
+    - `pytest tests/ -x -q` exits 0 reporting `247 passed, 4 skipped` (still no new test consumer — Task 5 wires it in).
+  </acceptance_criteria>
+  <done>Reproducible calibration script + immutable JSON sidecar committed. M2 cross-AI review fix landed: a secondary quant reviewer can re-run the script and observe whether the artifact changes; the JSON carries `fixture_sha256` for tamper detection (the matching test_calibration_report_matches_fixture in Plan 05C-03 closes the loop).</done>
+</task>
+
+<task type="auto">
+  <name>Task 5: Create `tests/test_shape_hourly_bowl.py` with thresholds loaded from _bowl_calibration_report.json, D-A4-3 (kernel test), D-A4-8 (flag=OFF baseline)</name>
   <files>tests/test_shape_hourly_bowl.py</files>
   <read_first>
     - tests/fixtures/_generate_bowl_fixture.py (Task 1 output — exposes `build_bowl_fixture()`)
+    - tests/fixtures/_bowl_calibration_report.json (Task 4 output — source of SC1_PTP_THRESHOLD via json.load)
+    - scripts/calibrate_bowl_thresholds.py (Task 4 output — re-run instructions if threshold needs refresh)
     - tests/fixtures/_generate_baseline.py (5bis-A — `build_pfc(seed, flag)` reusable entry point used by D-A4-8 to regenerate the OFF baseline)
     - tests/fixtures/baseline_pfc_seed42.parquet (5bis-A frozen reference for D-A4-8)
     - pfc_shaping/lt/model/shape_hourly.py (post-Task-2 state — confirms `_apply_hydro_analogue_weights` branch and ctor signature)
     - .planning/phases/05C-shape-hourly-bowl-deepening/05C-CONTEXT.md D-A4-2, D-A4-3, D-A4-8 (test specs)
-    - .planning/phases/05C-shape-hourly-bowl-deepening/05C-RESEARCH.md §Validation Architecture, §Pitfall 5 (fixture-real gap docstring), §Lever 1 (np.ptp threshold Wave 0 calibration protocol)
+    - .planning/phases/05C-shape-hourly-bowl-deepening/05C-RESEARCH.md §Validation Architecture, §Pitfall 5 (fixture-real gap docstring)
+    - .planning/phases/05C-shape-hourly-bowl-deepening/05C-REVIEWS.md (M2 — threshold MUST flow from JSON artifact, not in-comment value)
     - .planning/phases/05B-shape-hourly-infrastructure-flag-no-op-refactor/05B-REVIEWS.md §1-2 (tolerance contract addendum atol=1e-12 rtol=0 + identical columns/dtypes/index/sort order)
   </read_first>
   <action>
     Create `tests/test_shape_hourly_bowl.py` — a new test module isolated from `test_shape_hourly_infra.py` per D-A4-2.
 
-    **Module docstring:** Reference Phase 5bis-B, the 7 tests planned (this plan delivers 2 of 7; Plans 05C-02 and 05C-03 deliver the other 5), the no-op contract from 5bis-A REVIEWS.md (`atol=1e-12, rtol=0` + identical columns/dtypes/index/sort order), and the convention that flag=OFF preserves 5bis-A baseline bit-pour-bit per D-A1-2 / SC #4. Document the fixture-real gap explicitly per RESEARCH Pitfall 5.
+    **Module docstring:** Reference Phase 5bis-B, the 7 tests planned (this plan delivers 2 of 7; Plans 05C-02 and 05C-03 deliver the other 5), the no-op contract from 5bis-A REVIEWS.md (`atol=1e-12, rtol=0` + identical columns/dtypes/index/sort order), and the convention that flag=OFF preserves 5bis-A baseline bit-pour-bit per D-A1-2 / SC #4. Document the fixture-real gap explicitly per RESEARCH Pitfall 5. State explicitly that threshold constants are loaded from `tests/fixtures/_bowl_calibration_report.json` (committed by Plan 05C-01 Task 4, re-calibrated by Plan 05C-03 Task 3) — to refresh, re-run `python scripts/calibrate_bowl_thresholds.py`.
 
-    **Wave 0 calibration step (must run BEFORE writing the threshold constant):**
-    Before committing the file, run an interactive dry-run inside the implementation session (NOT a committed script — this is one-shot CAL work):
-    ```
-    python -c "
-    import numpy as np
-    from tests.fixtures._generate_bowl_fixture import build_bowl_fixture
-    from pfc_shaping.data.calendar_ch import enrich_15min_index
-    from pfc_shaping.lt.model.shape_hourly import ShapeHourly
-    epex_df, hydro_df = build_bowl_fixture(seed=42)
-    cal = enrich_15min_index(epex_df.index, country='CH')
-    sh_off = ShapeHourly(use_seasonal_hourly=False).fit(epex_df, cal, hydro_df)
-    sh_on  = ShapeHourly(use_seasonal_hourly=True).fit(epex_df, cal, hydro_df)
-    key = ('Ete', 'Ouvrable')
-    if key not in sh_off.factors_ or key not in sh_on.factors_:
-        key = list(sh_off.factors_.keys())[0]
-        print(f'(Ete,Ouvrable) absent — falling back to {key}')
-    ratio = float(np.ptp(sh_on.factors_[key]) / np.ptp(sh_off.factors_[key]))
-    print(f'SC#1 observed ratio = {ratio:.4f}')
-    print(f'Committed SC1_PTP_THRESHOLD = max(ratio - 0.15, 1.05) = {max(ratio - 0.15, 1.05):.4f}')
-    "
-    ```
-    Record the printed `Committed SC1_PTP_THRESHOLD` value. Commit it as the `SC1_PTP_THRESHOLD = <measured value>` constant at the top of the test file. Add a comment with the source: `# Wave 0 calibrated on tests/fixtures/bowl_seed42.parquet (RESEARCH §Lever 1 measure-then-assert; plancher 1.05). Observed ratio = X.XXXX → threshold = max(ratio - 0.15, 1.05).` If the ratio is below the analytic estimate range 1.13-1.18 (RESEARCH §Lever 1), still commit `max(ratio - 0.15, 1.05) = 1.05` but ALSO note that the gain may need re-calibration in Plan 05C-03 once Lever 3 (σ) and Lever 2 (split) are both active — this plan ships Lever 1 only, so the ratio measured here is the Lever-1-only gain.
+    **Threshold loading block (M2 cross-AI review fix — REPLACES the original in-comment SC1_PTP_THRESHOLD = X pattern):**
 
-    Also commit a placeholder for the M+30 threshold that Plan 05C-02 will replace: `SC3_M30_AMPLITUDE_THRESHOLD = 0.50  # TODO Plan 05C-02 Wave 0: re-calibrate via measure-then-assert; placeholder = RESEARCH §Lever 2 plancher 0.50.` (D-A4-6 lives in Plan 05C-02 but the constant scaffold belongs in this file so all thresholds are co-located.)
+    At the top of the module, AFTER imports and BEFORE the test definitions, load the calibration report via `json.load`:
+
+    ```
+    _CALIBRATION_REPORT_PATH = Path(__file__).parent / "fixtures" / "_bowl_calibration_report.json"
+    _calibration_report = json.loads(_CALIBRATION_REPORT_PATH.read_text())
+
+    # Thresholds derived from committed _bowl_calibration_report.json (M2 cross-AI review fix —
+    # REVIEWS.md consensus #3). To refresh: `python scripts/calibrate_bowl_thresholds.py`.
+    # The matching test_calibration_report_matches_fixture in Plan 05C-03 enforces that
+    # the report's fixture_sha256 matches the actual fixture bytes — if the fixture changes
+    # without re-running calibration, CI fails loudly.
+    SC1_PTP_THRESHOLD: float = _calibration_report["thresholds_emitted"]["SC1_PTP_THRESHOLD"]
+    SC3_M30_AMPLITUDE_THRESHOLD: float = _calibration_report["thresholds_emitted"]["SC3_M30_AMPLITUDE_THRESHOLD_PLACEHOLDER"]  # PLACEHOLDER 0.50 — Plan 05C-02 Task 3 overwrites this key in the report
+    ```
+
+    The constants `SC1_PTP_THRESHOLD` and `SC3_M30_AMPLITUDE_THRESHOLD` are now module-level Python floats sourced from the JSON. Downstream tests in Plans 05C-02 and 05C-03 can import them without changes. Plan 05C-02 Task 3 updates the JSON's `SC3_M30_AMPLITUDE_THRESHOLD_PLACEHOLDER` key (renaming and overwriting); Plan 05C-03 Task 3 re-runs the calibration script after all 3 levers ship and overwrites `SC1_PTP_THRESHOLD`.
 
     **Required imports at file top:**
-    `from __future__ import annotations`, `pytest`, `numpy as np`, `pandas as pd`, `from pathlib import Path`, `from pandas.testing import assert_frame_equal`, and the relevant symbols from `pfc_shaping`: `ShapeHourly`, `enrich_15min_index`. Also import the reusable entry points: `from tests.fixtures._generate_bowl_fixture import build_bowl_fixture` and `from tests.fixtures._generate_baseline import build_pfc as build_baseline_pfc`.
+    `from __future__ import annotations`, `json`, `pytest`, `numpy as np`, `pandas as pd`, `from pathlib import Path`, `from pandas.testing import assert_frame_equal`, and the relevant symbols from `pfc_shaping`: `ShapeHourly`, `enrich_15min_index`. Also import the reusable entry points: `from tests.fixtures._generate_bowl_fixture import build_bowl_fixture` and `from tests.fixtures._generate_baseline import build_pfc as build_baseline_pfc`.
 
-    **Module-level constants:** `_FIXTURE_DIR = Path(__file__).parent / "fixtures"`, `_BASELINE_5BISA = _FIXTURE_DIR / "baseline_pfc_seed42.parquet"`, `_BASELINE_BOWL = _FIXTURE_DIR / "baseline_pfc_seed42_bowl.parquet"  # generated by Plan 05C-03`, `SC1_PTP_THRESHOLD = <measured>`, `SC3_M30_AMPLITUDE_THRESHOLD = 0.50`.
+    **Module-level constants (in addition to the JSON-loaded thresholds):** `_FIXTURE_DIR = Path(__file__).parent / "fixtures"`, `_BASELINE_5BISA = _FIXTURE_DIR / "baseline_pfc_seed42.parquet"`, `_BASELINE_BOWL = _FIXTURE_DIR / "baseline_pfc_seed42_bowl.parquet"  # generated by Plan 05C-03`.
 
     **Test 1 — `test_hydro_kernel_uses_per_timestamp_climatological_target` (D-A4-3):**
 
@@ -468,17 +584,20 @@ print('OK init')
   <acceptance_criteria>
     - `test -f tests/test_shape_hourly_bowl.py` exits 0.
     - `grep -q "SC1_PTP_THRESHOLD" tests/test_shape_hourly_bowl.py` exits 0.
-    - `grep -q "SC3_M30_AMPLITUDE_THRESHOLD" tests/test_shape_hourly_bowl.py` exits 0 (placeholder scaffold present even though Plan 05C-02 owns the test).
+    - `grep -q "SC3_M30_AMPLITUDE_THRESHOLD" tests/test_shape_hourly_bowl.py` exits 0 (placeholder loaded from JSON; Plan 05C-02 Task 3 updates the JSON value).
+    - `grep -q "_bowl_calibration_report" tests/test_shape_hourly_bowl.py` exits 0 (M2 fix — threshold sourced from JSON, NOT in-comment).
+    - `grep -q "json.loads\|json.load" tests/test_shape_hourly_bowl.py` exits 0 (M2 fix — explicit load call).
+    - `python -c "import json, ast; src = open('tests/test_shape_hourly_bowl.py').read(); assert '_calibration_report' in src and 'thresholds_emitted' in src, 'M2 wiring incomplete'; print('OK M2 wiring')"` exits 0.
     - `grep -q "D-A4-3\|D-A4-8" tests/test_shape_hourly_bowl.py` exits 0.
     - `grep -q "atol=1e-12" tests/test_shape_hourly_bowl.py` exits 0 (tolerance contract).
     - `grep -q "build_bowl_fixture\|build_baseline_pfc" tests/test_shape_hourly_bowl.py` exits 0 (reusable entry points imported).
-    - `grep -q "Plan 05C-02" tests/test_shape_hourly_bowl.py` exits 0 (TODO scaffold for next plan).
+    - `grep -q "Plan 05C-02\|Plan 05C-03" tests/test_shape_hourly_bowl.py` exits 0 (cross-plan reference for the threshold-refresh expectation).
     - `pytest tests/test_shape_hourly_bowl.py::test_hydro_kernel_uses_per_timestamp_climatological_target -x` exits 0.
     - `pytest tests/test_shape_hourly_bowl.py::test_flag_off_bit_for_bit_baseline -x` exits 0.
     - `pytest tests/ -x -q` exits 0 reporting `249 passed, 4 skipped` (247 baseline + 2 new tests). If the count is 248 (one test parametrized differently), document the actual count in the SUMMARY.
     - `pytest tests/test_shape_hourly_bowl.py -v 2>&amp;1 | grep -c PASSED` reports ≥ 2.
   </acceptance_criteria>
-  <done>New isolated test module created with Wave 0 calibrated SC1_PTP_THRESHOLD, two passing tests covering D-A4-3 (kernel) and D-A4-8 (flag=OFF baseline). Full suite green at 249 passed.</done>
+  <done>New isolated test module created. Threshold constants loaded from committed _bowl_calibration_report.json (M2 fix). Two passing tests cover D-A4-3 (kernel) and D-A4-8 (flag=OFF baseline). Full suite green at 249 passed.</done>
 </task>
 
 </tasks>
@@ -489,9 +608,11 @@ print('OK init')
 - `python -c "from pfc_shaping.lt.model.shape_hourly import ShapeHourly; sh = ShapeHourly(); assert sh._hydro_weight_sigma_off == 0.25; assert sh._hydro_weight_sigma_on == 0.08; assert sh.hydro_weight_sigma == 0.25; print('OK')"` prints `OK`.
 - `python -c "from pfc_shaping.lt.model.shape_hourly import ShapeHourly; sh = ShapeHourly(hydro_weight_sigma=0.7); assert sh._hydro_weight_sigma_off == 0.7 and sh._hydro_weight_sigma_on == 0.7; print('OK legacy')"` prints `OK legacy`.
 - `python tests/fixtures/_generate_bowl_fixture.py` is idempotent: re-running produces a byte-identical `bowl_seed42.parquet` (sha256 stable).
+- `python scripts/calibrate_bowl_thresholds.py` re-runs cleanly; the resulting JSON's `fixture_sha256` equals `sha256(tests/fixtures/bowl_seed42.parquet)` (M2 invariant — closed by the test added in Plan 05C-03).
 - `test_baseline_regression[False]` from 5bis-A `tests/test_shape_hourly_infra.py` continues to pass against `tests/fixtures/baseline_pfc_seed42.parquet` at `atol=1e-12, rtol=0`.
 - `git diff --stat tests/test_shape_hourly_infra.py` shows ONLY the two surgical edits to `test_hyperparams_row` + `test_save_unfitted_hyperparams_correct` (and docstring updates). No other test modified.
 - `git log --oneline tests/test_shape_hourly_bowl.py | wc -l` reports 1 (single commit introducing the new file).
+- `git ls-files scripts/calibrate_bowl_thresholds.py tests/fixtures/_bowl_calibration_report.json | wc -l` reports 2 (both M2 artifacts committed).
 </verification>
 
 <success_criteria>
@@ -500,11 +621,15 @@ print('OK init')
 - **Ctor extension safe:** All four legacy callsites (`autoresearch.py:234`, `rolling_update.py:365`, `test_shape_hourly_infra.py:239,250,628`) continue to work with no warning. New `hydro_weight_sigma_off/_on` kwargs available for explicit usage.
 - **Sidecar schema extended:** `shape_hourly.meta.parquet` hyperparams JSON includes the 3 new keys (`hydro_weight_sigma_off`, `hydro_weight_sigma_on`, `hydro_weight_sigma_resolved`) + legacy `hydro_weight_sigma` preserved for 5bis-A reader compat. `load()` cross-plan fallback handles pre-5bis-B sidecars.
 - **Bowl fixture committed:** `tests/fixtures/bowl_seed42.parquet` (~50KB, seed=42, analytically-controlled duck curve) + reusable `build_bowl_fixture()` entry point.
-- **New test module scaffolded:** `tests/test_shape_hourly_bowl.py` with 2 passing tests (D-A4-3 kernel, D-A4-8 baseline) + Wave 0 calibrated `SC1_PTP_THRESHOLD` constant + placeholder `SC3_M30_AMPLITUDE_THRESHOLD` for Plan 05C-02.
+- **Auditable calibration (M2 cross-AI review fix):** `scripts/calibrate_bowl_thresholds.py` is a committed reproducible script; `tests/fixtures/_bowl_calibration_report.json` is the committed immutable artifact (schema: calibrated_at, git_sha, fixture_sha256, ratios, thresholds_emitted). Threshold flows from JSON to test via `json.load`, not from a free-floating in-comment value.
+- **New test module scaffolded:** `tests/test_shape_hourly_bowl.py` with 2 passing tests (D-A4-3 kernel, D-A4-8 baseline) + Wave 0 calibrated `SC1_PTP_THRESHOLD` loaded from the JSON sidecar.
 - **Single authorized infra touch:** `test_hyperparams_row` and `test_save_unfitted_hyperparams_correct` in `tests/test_shape_hourly_infra.py` updated for the extended JSON schema. All other 5bis-A infra tests untouched and green.
 - **Test count: 247 → 249** (4 skipped preserved).
+- **T1 deferred-research item acknowledged:** real Swiss hydro anomaly diagnostic justifying `hydro_weight_sigma_on=0.08` is tracked in `<deferred_research>`. Does not block 5bis-B ship.
 </success_criteria>
 
 <output>
 Create `.planning/phases/05C-shape-hourly-bowl-deepening/05C-01-SUMMARY.md` when done.
 </output>
+</content>
+</invoke>

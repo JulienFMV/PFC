@@ -11,6 +11,9 @@ files_modified:
   - tests/test_shape_hourly_bowl.py
   - tests/test_shape_hourly_infra.py
   - tests/fixtures/baseline_pfc_seed42_bowl.parquet
+  - tests/fixtures/_bowl_calibration_report.json
+  - tests/test_sidecar_compat.py
+  - scripts/calibrate_bowl_thresholds.py
   - .planning/PROJECT.md
   - .planning/phases/05bis-shape-seasonal-hourly/CONTEXT.md
 autonomous: true
@@ -45,6 +48,8 @@ must_haves:
     - "`tests/test_shape_hourly_infra.py` — second authorized surgical update (D-A3-3): the same two tests updated in Plan 05C-01 (`test_hyperparams_row`, `test_save_unfitted_hyperparams_correct`) are extended to also accept `sigma_off`, `sigma_on`, `sigma_resolved` keys. After this plan, the full hyperparams JSON dict for `_minimal_fitted_sh(sigma=0.3, halflife_days=90.0, hydro_weight_sigma=0.7)` equals `{halflife_days: 90.0, hydro_weight_sigma: 0.3, hydro_weight_sigma_off: 0.7, hydro_weight_sigma_on: 0.7, hydro_weight_sigma_resolved: 0.7, sigma: 0.3, sigma_off: 0.3, sigma_on: 0.3, sigma_resolved: 0.3, use_seasonal_hourly: False}` (10 keys). For `ShapeHourly(sigma=0.5, halflife_days=180.0, hydro_weight_sigma=0.25)` the dict equals `{halflife_days: 180.0, hydro_weight_sigma: 0.25, hydro_weight_sigma_off: 0.25, hydro_weight_sigma_on: 0.25, hydro_weight_sigma_resolved: 0.25, sigma: 0.5, sigma_off: 0.5, sigma_on: 0.5, sigma_resolved: 0.5, use_seasonal_hourly: False}`. RESEARCH Pitfall 4."
     - "`.planning/PROJECT.md` gains a `Key Decisions` entry D-FLIP-1: `2026-05-19 | Flag PFC_LT_USE_SEASONAL_HOURLY_SHAPE livré default OFF | Flip default ON gated par Phase 10 success (Δ MAE bloc ≤ -1.5 EUR/MWh vs HFC OMPEX). EPFL/SOTA principle: no production change without empirical validation gate.` (D-FLIP-1)."
     - "`.planning/phases/05bis-shape-seasonal-hourly/CONTEXT.md` (pre-doc, deferred ROADMAP backlog cleanup item from CONTEXT.md `## Deferred Ideas`) gains a header note `**STATUS: SUPERSEDED.** This pre-doc was the original 5bis context; post-2026-05-18 adversarial panel review, 5bis was split into 5bis-A (no-op infrastructure, see .planning/phases/05B-shape-hourly-infrastructure-flag-no-op-refactor/) + 5bis-B (math change, see .planning/phases/05C-shape-hourly-bowl-deepening/). Retained for historical reference only.`"
+    - "M2 cross-AI review fix completion (05C-REVIEWS.md consensus #3): `tests/test_shape_hourly_bowl.py::test_calibration_report_matches_fixture` asserts `sha256(tests/fixtures/bowl_seed42.parquet) == json.load(open('tests/fixtures/_bowl_calibration_report.json'))['fixture_sha256']`. If a developer modifies the fixture without re-running `python scripts/calibrate_bowl_thresholds.py`, this test fails CI loudly. Tamper-detection verified by a one-off manual check (documented in SUMMARY)."
+    - "M4 cross-AI review fix (05C-REVIEWS.md consensus #4 / both reviewers MEDIUM-SECONDARY): `tests/test_sidecar_compat.py::test_sidecar_load_matrix` is parametrized across THREE historical sidecar schema versions (`pre_5bisA`, `5bisA`, `5bisB`). For each, `ShapeHourly.load(sidecar_path)` produces a model where `sh.sigma == sh._sigma_off` and `sh.hydro_weight_sigma == sh._hydro_weight_sigma_off` (legacy single-σ caller invariants hold). Fixture-factory approach (per M4 spec): the 3 sidecar parquets are generated via a module-scoped `pytest.fixture(scope='module')` from `tmp_path_factory`, NOT committed binaries (deterministic and < 100ms each)."
     - "Cross-cutting truth (appears in all 3 plans): `flag=OFF baseline 5bis-A preserved at atol=1e-12 rtol=0`. After this plan, `test_flag_off_bit_for_bit_baseline` (Plan 05C-01) + `test_baseline_regression[False]` (5bis-A `test_shape_hourly_infra.py`) both continue to pass at the tightest tolerance. The σ resolution under flag=OFF uses `self._sigma_off = 0.5` (or legacy override), giving byte-identical math to 5bis-A."
   artifacts:
     - path: "pfc_shaping/lt/model/shape_hourly.py"
@@ -64,6 +69,15 @@ must_haves:
     - path: ".planning/phases/05bis-shape-seasonal-hourly/CONTEXT.md"
       provides: "SUPERSEDED note at the top of the pre-doc (deferred ROADMAP backlog cleanup item)."
       contains: "SUPERSEDED"
+    - path: "tests/fixtures/_bowl_calibration_report.json"
+      provides: "Refreshed by re-running scripts/calibrate_bowl_thresholds.py after all 3 levers ship (M2). Contains the post-3-lever SC1_PTP_THRESHOLD value plus the SC3 threshold updated by Plan 05C-02 Task 3. fixture_sha256 unchanged (bowl_seed42.parquet bytes unchanged)."
+      contains: "thresholds_emitted"
+    - path: "scripts/calibrate_bowl_thresholds.py"
+      provides: "Notes-field update referencing Plan 05C-03 as the latest calibrator (M2). Otherwise unchanged from Plan 05C-02 Task 3."
+      contains: "05C-03"
+    - path: "tests/test_sidecar_compat.py"
+      provides: "M4 new test module: `test_sidecar_load_matrix` parametrized across pre_5bisA / 5bisA / 5bisB sidecar formats via fixture-factory."
+      contains: "test_sidecar_load_matrix"
   key_links:
     - from: "pfc_shaping/lt/model/shape_hourly.py::__init__"
       to: "self.sigma (active value resolved from sigma_off/_on)"
@@ -77,7 +91,19 @@ must_haves:
       to: "D-FLIP-1 row referencing Phase 10 success gate"
       via: "table row entry"
       pattern: "D-FLIP-1"
+    - from: "tests/test_shape_hourly_bowl.py::test_calibration_report_matches_fixture"
+      to: "tests/fixtures/_bowl_calibration_report.json + tests/fixtures/bowl_seed42.parquet"
+      via: "hashlib.sha256(fixture_bytes) == report['fixture_sha256'] (M2 immutability binding)"
+      pattern: "fixture_sha256"
+    - from: "tests/test_sidecar_compat.py::test_sidecar_load_matrix"
+      to: "pfc_shaping/lt/model/shape_hourly.py::ShapeHourly.load (cross-plan fallback for sigma_off and hydro_weight_sigma_off)"
+      via: "parametrized fixture-factory at @pytest.fixture(scope='module') generating pre_5bisA / 5bisA / 5bisB sidecar parquets"
+      pattern: "test_sidecar_load_matrix"
 ---
+
+<deferred_research>
+**T2 (cross-AI review consensus — Codex HIGH on tautological-test risk):** SC#1 and SC#3 currently assert against a single synthetic seed (`bowl_seed42.parquet`). Both reviewers want falsification strengthened across multiple seeds, not one fixture. Recommended follow-up: generate `tests/fixtures/bowl_seed99.parquet` via `_generate_bowl_fixture.py` with `seed=99`, then parametrize `test_factors_ptp_deepens_under_flag` (D-A4-5 / SC #1) and `test_f_H_amplitude_preserved_at_M30` (D-A4-6 / SC #3) across both seeds. **Does not block 5bis-B ship** — the M2 calibration report (`_bowl_calibration_report.json`) makes the single-seed threshold derivation auditable, and the `test_calibration_report_matches_fixture` (Task 6) prevents silent threshold drift. Adding a second seed is a strict strengthening, not a correctness gate. Follow-up phase scope: ~30 lines (one new fixture parquet + parametrize decorators on 2 tests + re-run `scripts/calibrate_bowl_thresholds.py` with `--seed 99` if the script gains a CLI flag).
+</deferred_research>
 
 <objective>
 Implement Lever 3 of Phase 5bis-B: σ smoothing paramétrisation (`sigma_off=0.5` / `sigma_on=0.25`) with full backward-compat for legacy `ShapeHourly(sigma=X)` callsites (D-A3-1, D-A3-2). Extend the sidecar `shape_hourly.meta.parquet` to persist the new `sigma_off` / `sigma_on` / `sigma_resolved` keys (D-A3-3) with cross-plan fallback at load. Add the EPFL traceability telemetry init log (D-A3-6).
@@ -292,47 +318,61 @@ Test count at start of this plan: `251 passed, 4 skipped`. Target after this pla
 
     Document the diff in a one-line comment at the top of the parquet's companion README entry (update `tests/fixtures/README.md` if it exists; otherwise note the diff in this plan's SUMMARY).
 
-    Part B — Re-calibrate SC1_PTP_THRESHOLD on the bowl fixture:
-    Plan 05C-01's Wave 0 measured the threshold with Lever 1 only (Plan 05C-02 / 05C-03 not yet shipped). Now that all three levers are active, re-measure:
+    Part B — Re-run the committed calibration script (M2 cross-AI review fix — `05C-REVIEWS.md` consensus #3 continuation) to refresh `tests/fixtures/_bowl_calibration_report.json` with the post-3-lever ratios.
+
+    Plan 05C-01 Task 4 created `scripts/calibrate_bowl_thresholds.py` + `tests/fixtures/_bowl_calibration_report.json`. Plan 05C-02 Task 3 extended the script with `_calibrate_sc3_m30`. Now that all three levers are active, the SC #1 ratio measured in Plan 05C-01 (Lever-1-only) is stale. Refresh by simply re-running the existing committed script:
 
     ```
-    python -c "
-    import numpy as np
-    from tests.fixtures._generate_bowl_fixture import build_bowl_fixture
-    from pfc_shaping.data.calendar_ch import enrich_15min_index
-    from pfc_shaping.lt.model.shape_hourly import ShapeHourly
-    epex_df, hydro_df = build_bowl_fixture(seed=42)
-    cal = enrich_15min_index(epex_df.index, country='CH')
-    sh_off = ShapeHourly(use_seasonal_hourly=False).fit(epex_df, cal, hydro_df)
-    sh_on  = ShapeHourly(use_seasonal_hourly=True).fit(epex_df, cal, hydro_df)
-    key = ('Ete', 'Ouvrable')
-    if key not in sh_off.factors_ or key not in sh_on.factors_:
-        key = list(sh_off.factors_.keys())[0]
-        print(f'(Ete,Ouvrable) absent — falling back to {key}')
-    ratio = float(np.ptp(sh_on.factors_[key]) / np.ptp(sh_off.factors_[key]))
-    threshold = max(ratio - 0.15, 1.05)
-    print(f'SC#1 observed ratio (all 3 levers) = {ratio:.4f}')
-    print(f'Committed SC1_PTP_THRESHOLD = {threshold:.4f}')
-    "
+    python scripts/calibrate_bowl_thresholds.py
     ```
 
-    Update `tests/test_shape_hourly_bowl.py`:
-    - Replace the existing `SC1_PTP_THRESHOLD = <Plan 05C-01 value>` with `SC1_PTP_THRESHOLD = <Plan 05C-03 value>`.
-    - Update the comment to: `# Wave 0 re-calibrated by Plan 05C-03 on bowl_seed42 with all three levers active. Plan 05C-01 measured Lever-1-only = X.XXXX, Plan 05C-03 measures combined = Y.YYYY. Threshold = max(ratio - 0.15, 1.05).`
+    This regenerates `tests/fixtures/_bowl_calibration_report.json` in-place. The new report will:
+    - Update `ratios.sc1_ptp_off`, `ratios.sc1_ptp_on`, `ratios.sc1_ptp_ratio` to reflect the post-3-lever values.
+    - Update `thresholds_emitted.SC1_PTP_THRESHOLD` to the new `max(ratio - 0.15, 1.05)` computed on the combined-lever fit.
+    - Update `thresholds_emitted.SC3_M30_AMPLITUDE_THRESHOLD` (Plan 05C-02 path, also re-measured under the combined-lever stack).
+    - Update `calibrated_at` to the current timestamp.
+    - Update `git_sha` to the current HEAD.
+    - PRESERVE `fixture_sha256` (the bowl_seed42.parquet bytes have not changed since Plan 05C-01 Task 1).
+    - Update `notes` to reference Plan 05C-03 as the latest calibrator: `"Plan 05C-03 re-ran this script after all 3 levers shipped — SC #1 ratio is the combined Lever-1+2+3 gain."`. This requires a one-line update inside `scripts/calibrate_bowl_thresholds.py` to its `notes` template before re-running; commit the script update alongside the regenerated JSON.
 
-    Sanity bounds: the combined ratio should be ≥ the Lever-1-only ratio measured in Plan 05C-01 (the additional Levers 2 and 3 only add bowl gain, never subtract). If `ratio_combined < ratio_lever1_only`, STOP and investigate. Per RESEARCH §Lever 1 + §Lever 3, the analytic estimate is `ratio ≈ 1.13-1.18 × 1.025 ≈ 1.16-1.21`. Plancher 1.05.
+    Sanity bounds (if violated, STOP and request investigation):
+    - The new `ratios.sc1_ptp_ratio` should be ≥ the value previously committed by Plan 05C-01 (the additional Levers 2 and 3 only add bowl gain, never subtract). If `ratio_combined < ratio_lever1_only`, the combined-lever stack has REGRESSED — STOP.
+    - Per RESEARCH §Lever 1 + §Lever 3, the analytic estimate is `ratio ≈ 1.13-1.18 × 1.025 ≈ 1.16-1.21`. Plancher 1.05.
 
-    Commit the new baseline parquet AND the updated test file in this task. DO NOT yet add the consuming tests (Task 4).
+    The `tests/test_shape_hourly_bowl.py` module-level `SC1_PTP_THRESHOLD` constant — set by Plan 05C-01 Task 5 to `_calibration_report["thresholds_emitted"]["SC1_PTP_THRESHOLD"]` — does NOT need editing: it automatically picks up the refreshed value from the regenerated JSON at next module import. This is the M2 contract: thresholds flow through the JSON artifact, not through committed in-file edits.
+
+    Commit the new baseline parquet (Part A), the refreshed `_bowl_calibration_report.json`, and the one-line `notes` update in `scripts/calibrate_bowl_thresholds.py`. DO NOT yet add the consuming tests (Task 4).
   </action>
   <verify>
-    <automated>test -f tests/fixtures/baseline_pfc_seed42_bowl.parquet && python -c "import pandas as pd, numpy as np; off = pd.read_parquet('tests/fixtures/baseline_pfc_seed42.parquet'); on = pd.read_parquet('tests/fixtures/baseline_pfc_seed42_bowl.parquet'); assert list(off.columns) == list(on.columns), 'columns must match between baselines'; assert off.index.equals(on.index), 'indexes must match'; diff = (off['price_shape'] - on['price_shape']).abs(); assert diff.max() > 0.01, f'baselines too similar: {diff.max()}'; print(f'OK new_baseline rows={len(on)} max_diff={diff.max():.4f}')" && python -c "import re; src = open('tests/test_shape_hourly_bowl.py').read(); m = re.search(r'SC1_PTP_THRESHOLD\s*=\s*([0-9.]+)', src); assert m, 'SC1_PTP_THRESHOLD constant not found'; val = float(m.group(1)); assert 1.05 <= val <= 1.50, f'threshold {val} out of plausible bounds'; assert 'Plan 05C-03' in src, 'Plan 05C-03 traceability comment missing'; print(f'OK SC1_PTP_THRESHOLD={val:.4f}')"</automated>
+    <automated>test -f tests/fixtures/baseline_pfc_seed42_bowl.parquet &amp;&amp; python -c "
+import pandas as pd, numpy as np
+off = pd.read_parquet('tests/fixtures/baseline_pfc_seed42.parquet')
+on  = pd.read_parquet('tests/fixtures/baseline_pfc_seed42_bowl.parquet')
+assert list(off.columns) == list(on.columns), 'columns must match between baselines'
+assert off.index.equals(on.index), 'indexes must match'
+diff = (off['price_shape'] - on['price_shape']).abs()
+assert diff.max() &gt; 0.01, f'baselines too similar: {diff.max()}'
+print(f'OK new_baseline rows={len(on)} max_diff={diff.max():.4f}')
+" &amp;&amp; python scripts/calibrate_bowl_thresholds.py &amp;&amp; python -c "
+import json, hashlib
+r = json.load(open('tests/fixtures/_bowl_calibration_report.json'))
+thr = r['thresholds_emitted']['SC1_PTP_THRESHOLD']
+assert 1.05 &lt;= thr &lt;= 1.50, f'SC1 threshold {thr} out of bounds'
+fixture_bytes = open('tests/fixtures/bowl_seed42.parquet', 'rb').read()
+actual_sha = hashlib.sha256(fixture_bytes).hexdigest()
+assert r['fixture_sha256'] == actual_sha, f'fixture sha drift: report={r["fixture_sha256"][:16]} actual={actual_sha[:16]}'
+assert '05C-03' in r.get('notes', ''), f'notes missing Plan 05C-03 reference: {r.get("notes")}'
+print(f'OK refreshed report: SC1_thr={thr:.4f} SC3_thr={r["thresholds_emitted"]["SC3_M30_AMPLITUDE_THRESHOLD"]:.4f} sha={actual_sha[:8]}...')
+"</automated>
   </verify>
   <acceptance_criteria>
     - `test -f tests/fixtures/baseline_pfc_seed42_bowl.parquet` exits 0.
     - The diff sanity verify above prints `OK new_baseline rows=...` and `max_diff > 0.01`.
-    - `SC1_PTP_THRESHOLD` in `tests/test_shape_hourly_bowl.py` is in the bounds `[1.05, 1.50]`.
-    - `grep -q "Plan 05C-03" tests/test_shape_hourly_bowl.py` exits 0 (re-calibration traceability).
+    - `python -c "import json; r = json.load(open('tests/fixtures/_bowl_calibration_report.json')); v = r['thresholds_emitted']['SC1_PTP_THRESHOLD']; assert 1.05 &lt;= v &lt;= 1.50, v"` exits 0.
+    - `python -c "import json, hashlib; r = json.load(open('tests/fixtures/_bowl_calibration_report.json')); b = open('tests/fixtures/bowl_seed42.parquet', 'rb').read(); assert r['fixture_sha256'] == hashlib.sha256(b).hexdigest()"` exits 0 (M2 fixture_sha256 invariant holds — bowl_seed42 bytes unchanged since Plan 05C-01).
+    - `python -c "import json; r = json.load(open('tests/fixtures/_bowl_calibration_report.json')); assert '05C-03' in r.get('notes', ''), r.get('notes')"` exits 0 (notes field updated by Part B).
     - `git status tests/fixtures/baseline_pfc_seed42_bowl.parquet` shows the file is staged/untracked (new commit candidate).
+    - `git status tests/fixtures/_bowl_calibration_report.json scripts/calibrate_bowl_thresholds.py` shows both modified (refreshed JSON + one-line notes update in script).
     - `pytest tests/test_shape_hourly_bowl.py::test_flag_off_bit_for_bit_baseline -x` continues to exit 0 (Plan 05C-01's baseline regression unchanged — that test consumes `baseline_pfc_seed42.parquet`, not the new `_bowl` baseline).
   </acceptance_criteria>
   <done>New frozen flag=ON baseline committed. SC1_PTP_THRESHOLD re-calibrated for the joint 3-lever gain. Pitfall B respected: baseline generated AFTER all three levers ship.</done>
@@ -470,11 +510,164 @@ Test count at start of this plan: `251 passed, 4 skipped`. Target after this pla
   <done>D-FLIP-1 recorded permanently in PROJECT.md Key Decisions. 5bis pre-doc marked SUPERSEDED with pointers to the split-phase replacements. Audit trail intact.</done>
 </task>
 
+<task type="auto">
+  <name>Task 6 (M2 cross-AI review fix — sha256 immutability assertion): Add `test_calibration_report_matches_fixture` to enforce the JSON ↔ fixture binding</name>
+  <files>tests/test_shape_hourly_bowl.py</files>
+  <read_first>
+    - .planning/phases/05C-shape-hourly-bowl-deepening/05C-REVIEWS.md (M2 cross-AI review fix — Codex framing: "If the fixture changes without re-running calibration, CI fails loudly")
+    - tests/fixtures/_bowl_calibration_report.json (Plan 05C-03 Task 3 refreshed state — `fixture_sha256` is the canonical link to the bowl fixture bytes)
+    - tests/fixtures/bowl_seed42.parquet (Plan 05C-01 Task 1 — the bytes whose sha256 is recorded in the report)
+    - tests/test_shape_hourly_bowl.py (current state — has the JSON loading block from Plan 05C-01 Task 5)
+    - scripts/calibrate_bowl_thresholds.py (Plan 05C-01/02/03 — the documented refresh path mentioned in the test's failure message)
+  </read_first>
+  <action>
+    Append a single test `test_calibration_report_matches_fixture` to `tests/test_shape_hourly_bowl.py` that closes the M2 audit loop: if a developer modifies `tests/fixtures/bowl_seed42.parquet` without re-running `python scripts/calibrate_bowl_thresholds.py`, this test fails loudly in CI.
+
+    **Test docstring (mandatory references):** cite M2 from `05C-REVIEWS.md` consensus #3 (Codex framing wins — immutable artifact with fixture_sha256), cite the calibration report's schema. Explain that the test computes `sha256(open("tests/fixtures/bowl_seed42.parquet", "rb").read())` and asserts it equals `report["fixture_sha256"]` — a mismatch means the fixture binary has been edited without the calibration being refreshed, which silently invalidates all `thresholds_emitted` values in the JSON.
+
+    **Test body — concrete behavior:**
+    1. `import hashlib, json` at the top of the file (add to existing imports if not present).
+    2. Load the report: `report = json.loads(Path("tests/fixtures/_bowl_calibration_report.json").read_text())`.
+    3. Compute the actual fixture sha256: `fixture_bytes = Path("tests/fixtures/bowl_seed42.parquet").read_bytes(); actual_sha = hashlib.sha256(fixture_bytes).hexdigest()`.
+    4. Assert with a verbose failure message: `assert report["fixture_sha256"] == actual_sha, ( f"Calibration report fixture_sha256 mismatch:\n  report[fixture_sha256] = {report['fixture_sha256']}\n  sha256(bowl_seed42.parquet) = {actual_sha}\n  This means bowl_seed42.parquet has been modified without re-running calibration.\n  Fix: run `python scripts/calibrate_bowl_thresholds.py` and commit the refreshed report." )`.
+    5. Defensive secondary assertion: confirm the report has the expected schema keys (M2 invariant): `expected_keys = {"calibrated_at", "git_sha", "fixture_sha256", "fixture_path", "ratios", "thresholds_emitted", "notes"}; assert expected_keys.issubset(set(report)), f"report schema drift: missing {expected_keys - set(report)}"`.
+
+    **Scope:** ≤ 20 lines. Inherits the autouse env-var hygiene fixture from `tests/conftest.py`. No fixture-factory needed; reads files directly.
+
+    The test runs in O(milliseconds) since hashing 50KB is negligible. Place it at the end of the test module (after the existing tests, before any helpers if present).
+  </action>
+  <verify>
+    <automated>pytest tests/test_shape_hourly_bowl.py::test_calibration_report_matches_fixture -v 2>&amp;1 | tail -5</automated>
+  </verify>
+  <acceptance_criteria>
+    - `grep -q "def test_calibration_report_matches_fixture" tests/test_shape_hourly_bowl.py` exits 0.
+    - `grep -q "hashlib.sha256" tests/test_shape_hourly_bowl.py` exits 0 (M2 sha256 assertion present).
+    - `grep -q "fixture_sha256" tests/test_shape_hourly_bowl.py` exits 0.
+    - `grep -q "M2\|REVIEWS.md\|05C-REVIEWS" tests/test_shape_hourly_bowl.py` exits 0 (cross-AI review traceability cited).
+    - `pytest tests/test_shape_hourly_bowl.py::test_calibration_report_matches_fixture -x` exits 0.
+    - Tamper-detection sanity check (run once manually, not in CI): `python -c "import pathlib; p = pathlib.Path('tests/fixtures/bowl_seed42.parquet'); orig = p.read_bytes(); p.write_bytes(orig + b'\x00'); import subprocess; r = subprocess.run(['pytest', 'tests/test_shape_hourly_bowl.py::test_calibration_report_matches_fixture'], capture_output=True, text=True); p.write_bytes(orig); assert r.returncode != 0, 'tamper detection FAILED: test should fail when fixture is modified'; print('OK tamper detection')"` — exits 0 (asserts the test correctly fails when the fixture is tampered, then restores the original bytes). This sanity check is documented in the SUMMARY, NOT committed to CI.
+    - `pytest tests/ -x -q` exits 0 reporting `255 passed, 4 skipped` (254 from Tasks 1-5 + 1 new from M2 sha256 test).
+  </acceptance_criteria>
+  <done>M2 audit loop closed: tampering with `tests/fixtures/bowl_seed42.parquet` without re-running `scripts/calibrate_bowl_thresholds.py` now fails CI loudly via the sha256 binding assertion.</done>
+</task>
+
+<task type="auto">
+  <name>Task 7 (M4 cross-AI review fix — sidecar backward-compat matrix): Add `test_sidecar_load_matrix` parametrized across pre-5bis-A / 5bis-A / 5bis-B sidecar formats</name>
+  <files>tests/test_sidecar_compat.py</files>
+  <read_first>
+    - .planning/phases/05C-shape-hourly-bowl-deepening/05C-REVIEWS.md (M4 cross-AI review fix — both reviewers flagged that the per-callsite backward-compat audit covers 4 known callsites but external scripts using `inspect.signature(ShapeHourly.__init__)` or duck-typing the `sigma` default are unverified)
+    - pfc_shaping/lt/model/shape_hourly.py (Plans 05C-01..03 final state — confirms `ShapeHourly.load()` cross-plan fallback handles `hp.get("sigma_off")` MISSING for pre-5bis-B sidecars and `hp.get("use_seasonal_hourly")` MISSING for pre-5bis-A sidecars)
+    - tests/fixtures/baseline_pfc_seed42.parquet (5bis-A frozen baseline — useful as the "legacy_X" input for invariant verification)
+    - tests/fixtures/_generate_baseline.py (`build_pfc(seed, flag)` — pattern for the fixture-factory generators below)
+    - tests/test_shape_hourly_infra.py (5bis-A `test_save_load_full_roundtrip` — pattern for save/load assertion structure)
+    - .planning/phases/05B-shape-hourly-infrastructure-flag-no-op-refactor/05B-05-PLAN.md (5bis-A Plan that introduced the use_seasonal_hourly sidecar key — useful for understanding the "5bis-A sidecar format")
+  </read_first>
+  <action>
+    Create a new test module `tests/test_sidecar_compat.py` that parametrizes `ShapeHourly.load()` over THREE sidecar formats representing the historical schema evolution:
+    1. `pre_5bis-A` — sidecar written before 5bis-A landed; lacks the `use_seasonal_hourly` key (and obviously lacks the `_off`/`_on`/`_resolved` triplets).
+    2. `5bis-A` — sidecar written after 5bis-A but before 5bis-B; has `use_seasonal_hourly` key, has the legacy single `sigma` / `hydro_weight_sigma` keys, but lacks the `_off`/`_on`/`_resolved` triplets.
+    3. `5bis-B` — sidecar written after this phase ships; has all 10 hyperparams JSON keys.
+
+    The M4-mandated invariant: for ALL THREE formats, `ShapeHourly.load(sidecar_path)` MUST produce a model where the legacy single-σ caller invariants hold: `sh.sigma == sh._sigma_off` (flag=OFF) AND `sh.hydro_weight_sigma == sh._hydro_weight_sigma_off` AND `numpy.allclose(predict(legacy_X), legacy_baseline_predict, atol=1e-12)`.
+
+    **Fixture strategy (per `05C-REVIEWS.md` M4 specification — fixture-factory preferred over committed binaries when generation is < 100ms):**
+
+    Implement the three sidecar fixtures as a pytest fixture-factory (module-scoped `pytest.fixture`) rather than committed binary files. Rationale: the fixtures are deterministic from the seed=42 EPEX bowl data + a re-fit with the corresponding code path; committing 3 binary parquets that can be regenerated in < 100ms wastes git history. Document this decision in the test module docstring: "Per M4 / 05C-REVIEWS.md guidance: prefer fixture-factory over committed binaries when generation is < 100ms. Implementation is below."
+
+    However, since the 5bis-B code shipping in THIS plan cannot re-generate a `pre_5bisA` or `5bisA` sidecar (the code is forward-only — old behavior is lost), the test factory must CONSTRUCT the pre-5bis-A / 5bis-A sidecar parquets MANUALLY by writing the appropriate hyperparams JSON dict directly via pandas:
+
+    ```
+    @pytest.fixture(scope="module")
+    def _make_sidecar(tmp_path_factory):
+        """Generate a synthetic ShapeHourly sidecar parquet at the requested schema version."""
+        import json, pandas as pd
+
+        def _factory(version: str) -> Path:
+            out_dir = tmp_path_factory.mktemp(f"sidecar_{version}")
+            main_path = out_dir / "shape_hourly.parquet"
+            meta_path = out_dir / "shape_hourly.meta.parquet"
+
+            # Write a minimal main parquet — content irrelevant to load() metadata path
+            # but the file must exist for ShapeHourly.load() bootstrap.
+            pd.DataFrame({"_placeholder": [0.0]}).to_parquet(main_path)
+
+            # Build the hyperparams JSON dict at the requested schema version.
+            if version == "pre_5bisA":
+                hp = {"halflife_days": 180.0, "hydro_weight_sigma": 0.25, "sigma": 0.5}
+            elif version == "5bisA":
+                hp = {"halflife_days": 180.0, "hydro_weight_sigma": 0.25, "sigma": 0.5,
+                      "use_seasonal_hourly": False}
+            elif version == "5bisB":
+                hp = {"halflife_days": 180.0,
+                      "hydro_weight_sigma": 0.25, "hydro_weight_sigma_off": 0.25,
+                      "hydro_weight_sigma_on": 0.08, "hydro_weight_sigma_resolved": 0.25,
+                      "sigma": 0.5, "sigma_off": 0.5, "sigma_on": 0.25, "sigma_resolved": 0.5,
+                      "use_seasonal_hourly": False}
+            else:
+                raise ValueError(f"unknown version: {version}")
+
+            meta_records = [{"attr": "hyperparams", "value": json.dumps(hp, sort_keys=True)}]
+            # ShapeHourly.load() requires additional `attr` rows for the fitted-state arrays
+            # (factors_, smoothed_, etc.). To keep the fixture minimal, we write only the
+            # hyperparams row and rely on ShapeHourly.load()'s graceful handling of missing
+            # fitted-state rows (legacy-compat warning, returns an unfitted ShapeHourly).
+            # If load() requires more rows for the schema to be valid, add empty placeholder
+            # rows here per the actual save() schema observed in pfc_shaping/lt/model/shape_hourly.py.
+            pd.DataFrame(meta_records).to_parquet(meta_path)
+            return main_path
+
+        return _factory
+    ```
+
+    NOTE on minimal main parquet: if `ShapeHourly.load()` (Plans 05C-01..03 final state) raises on missing fitted-state rows in the meta sidecar, the factory must extend `meta_records` with the canonical attribute rows observed in `pfc_shaping/lt/model/shape_hourly.py::save()`. Read `save()` first; reproduce its minimal rows. If load() supports a "metadata-only" pseudo-load path with a legacy-compat warning, prefer that (less brittle).
+
+    **Test signature:**
+    ```
+    @pytest.mark.parametrize("sidecar_version,expected_use_seasonal,expected_sigma,expected_hydro_sigma", [
+        ("pre_5bisA", False, 0.5, 0.25),
+        ("5bisA",     False, 0.5, 0.25),
+        ("5bisB",     False, 0.5, 0.25),
+    ])
+    def test_sidecar_load_matrix(_make_sidecar, sidecar_version, expected_use_seasonal, expected_sigma, expected_hydro_sigma):
+    ```
+
+    **Test body — concrete behavior:**
+    1. Generate the sidecar: `sidecar_path = _make_sidecar(sidecar_version)`.
+    2. Load: `sh = ShapeHourly.load(sidecar_path)`.
+    3. Assert legacy single-σ caller invariants (the M4 contract):
+       - `assert sh._use_seasonal_hourly == expected_use_seasonal`
+       - `assert sh.sigma == expected_sigma, f"sigma mismatch on {sidecar_version}: expected {expected_sigma}, got {sh.sigma}"`
+       - `assert sh._sigma_off == expected_sigma, f"_sigma_off mismatch on {sidecar_version}"`
+       - For pre_5bisA / 5bisA: `assert sh._sigma_on == expected_sigma, "legacy single-σ fallback should set _sigma_on = legacy_sigma"`
+       - For 5bisB: `assert sh._sigma_on == 0.25, "5bisB sidecar should set _sigma_on to the persisted value"`
+       - Same matrix for hydro: `sh.hydro_weight_sigma == expected_hydro_sigma`, `sh._hydro_weight_sigma_off == expected_hydro_sigma`, and for pre/5bisA `sh._hydro_weight_sigma_on == expected_hydro_sigma` (legacy fallback) vs for 5bisB `sh._hydro_weight_sigma_on == 0.08` (persisted).
+    4. (Optional but recommended — fixture-real spot-check) If the fixture factory wrote enough state for `sh` to be functional (factors_ etc.), call `sh.apply(timestamps, cal)` on a synthetic 96-timestamp index and assert the output shape is `(96,)` and no NaNs. If `load()` returns an unfitted shell, SKIP this step with `pytest.skip("Fixture-factory writes hyperparams-only sidecar; full apply() requires fitted state")` and document in the test docstring.
+
+    **Cross-link:** in the test module docstring, reference the four legacy callsites that Plan 05C-03's backward-compat audit (Task 1) covered manually (autoresearch.py:234, rolling_update.py:365, test_shape_hourly_infra.py:239+250) and explain: "This matrix test complements the manual audit by parametrizing across HISTORICAL sidecar formats — external scripts that use `inspect.signature(ShapeHourly.__init__)` or duck-type sigma defaults still get coverage IF they load sidecars (a sidecar load roundtrip through the matrix above is the canonical contract). For external scripts that bypass sidecars entirely (rare), no test can preempt them; the docstring on the `sigma` parameter (Plan 05C-03 Task 1) is the documented breaking-change notice."
+
+    **Scope:** ≤ 100 lines (fixture-factory + parametrized test + docstring). Inherits autouse env-var hygiene from `tests/conftest.py` (if applicable to this new test module — confirm by reading conftest).
+  </action>
+  <verify>
+    <automated>pytest tests/test_sidecar_compat.py -v 2>&amp;1 | tail -10 &amp;&amp; pytest tests/ -x -q 2>&amp;1 | tail -3</automated>
+  </verify>
+  <acceptance_criteria>
+    - `test -f tests/test_sidecar_compat.py` exits 0.
+    - `grep -q "def test_sidecar_load_matrix" tests/test_sidecar_compat.py` exits 0.
+    - `grep -q "pre_5bisA\|5bisA\|5bisB" tests/test_sidecar_compat.py` exits 0 (all three schema versions parametrized).
+    - `grep -q "M4\|REVIEWS.md\|05C-REVIEWS" tests/test_sidecar_compat.py` exits 0 (cross-AI review traceability cited).
+    - `grep -q "fixture-factory\|fixture_factory\|tmp_path_factory" tests/test_sidecar_compat.py` exits 0 (fixture-factory approach per M4 spec, not committed binaries).
+    - `pytest tests/test_sidecar_compat.py::test_sidecar_load_matrix -v` runs 3 parametrized invocations, all exit 0.
+    - `pytest tests/ -x -q` exits 0 reporting `258 passed, 4 skipped` (255 from Task 6 + 3 new parametrized M4 tests; if pytest collapses parametrization differently, tolerance ±2 on the final count — document the actual count in SUMMARY).
+    - `pytest tests/test_shape_hourly_bowl.py::test_flag_off_bit_for_bit_baseline -x` continues to exit 0 (no regression on baseline contract).
+  </acceptance_criteria>
+  <done>M4 audit loop closed: load matrix asserts that all three historical sidecar formats produce models satisfying the legacy single-σ caller invariants. External scripts that load sidecars (the most common backward-compat surface) are now covered by automated parametrized tests; external scripts that bypass sidecars are documented as the residual breaking-change surface via the `sigma` parameter docstring.</done>
+</task>
+
 </tasks>
 
 <verification>
-- `pytest tests/ -x -q` exits 0 reporting `254 passed, 4 skipped` (tolerance: `253 passed, 5 skipped` if SC #2 fixture-coverage skip path triggers).
-- `pytest tests/ --co -q | tail -1` reports `>= 261 tests collected`.
+- `pytest tests/ -x -q` exits 0 reporting `258 passed, 4 skipped` (tolerance: `257 passed, 5 skipped` if SC #2 fixture-coverage skip path triggers; 254 baseline + 1 from Task 6 M2 sha256 test + 3 from Task 7 M4 sidecar matrix parametrizations).
+- `pytest tests/ --co -q | tail -1` reports `>= 265 tests collected` (post-M2/M4 additions).
 - All FIVE ROADMAP Success Criteria validated by automated tests:
   - SC #1 (ptp deepening) — `test_factors_ptp_deepens_under_flag`
   - SC #2 (€5/MWh delta) — `test_seasonal_solar_winter_evening_delta`
@@ -497,7 +690,10 @@ Test count at start of this plan: `251 passed, 4 skipped`. Target after this pla
 - **EPFL traceability live:** every `ShapeHourly()` construction logs the 7 resolved hyperparams at INFO; `assembler.build()` under flag=ON logs `max |level - 1.0|` and warns above 1e-6.
 - **Flag flip strategy recorded permanently:** D-FLIP-1 in PROJECT.md Key Decisions. Default OFF until Phase 10 real-data validation gate passes.
 - **Project docs cleaned up:** 5bis pre-doc marked SUPERSEDED with audit trail intact.
-- **Test count: 251 → 254** (4 skipped preserved, tolerance ±1 on skip count).
+- **Test count: 252 → 258** (252 from end of Plan 05C-02 (251 + M1) + 3 from Tasks 4 D-A4-5/7/9 + 1 from Task 6 M2 sha256 + 3 from Task 7 M4 sidecar matrix parametrizations; 4 skipped preserved, tolerance ±2 on collected count due to pytest parametrization behavior).
+- **M2 cross-AI review fix complete (cross-plan):** Calibration thresholds flow through the committed immutable `tests/fixtures/_bowl_calibration_report.json` artifact (Plans 05C-01/02/03 all touch it via `scripts/calibrate_bowl_thresholds.py`); `test_calibration_report_matches_fixture` enforces the sha256 binding between report and fixture bytes.
+- **M4 cross-AI review fix shipped:** `tests/test_sidecar_compat.py::test_sidecar_load_matrix` parametrizes `ShapeHourly.load()` across 3 historical sidecar formats (pre_5bisA, 5bisA, 5bisB); all three produce models satisfying the legacy single-σ caller invariants.
+- **T2 deferred-research item acknowledged:** multi-seed SC#1/SC#3 falsification (`bowl_seed99.parquet`) tracked but not blocking ship.
 - **Cross-cutting truth (final wave):** `flag=OFF baseline 5bis-A preserved at atol=1e-12 rtol=0` holds after Lever 3 ships.
 </success_criteria>
 
