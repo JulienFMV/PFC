@@ -30,6 +30,7 @@ from __future__ import annotations
 import logging
 from datetime import timedelta
 from pathlib import Path
+from typing import Any
 
 import lightgbm as lgb
 import numpy as np
@@ -201,7 +202,9 @@ class LEARForecaster:
             "max_supported_horizon_days": 0,
             "missing_sources": [],
             "source_coverage": {},
+            "vintage_schema_verified": False,
         }
+        self._governed_vintage_status: dict[str, dict[str, Any]] = {}
 
     def fit(
         self,
@@ -323,23 +326,35 @@ class LEARForecaster:
         # Governed multi-country load/renewable forecasts
         if self.use_governed_forecast_features and multi_country_forecast is not None and not multi_country_forecast.empty:
             for col in multi_country_forecast.columns:
-                s = multi_country_forecast[col].dropna()
+                s, publication_ts = self._extract_governed_forecast_series(
+                    multi_country_forecast,
+                    col,
+                    dataset_name="multi_country_forecast",
+                )
                 if s.empty:
                     continue
-                if s.index.tz is None:
-                    s.index = s.index.tz_localize("UTC")
-                self._forecast_feature_pivots[col] = self._series_to_forecast_pivot(s)
+                self._forecast_feature_pivots[col] = self._series_to_forecast_pivot(
+                    s,
+                    publication_ts=publication_ts,
+                    source_name=col,
+                )
                 exog[col] = s.resample("h").mean()
 
         # Governed weather forecast layer
         if self.use_governed_forecast_features and weather_forecast is not None and not weather_forecast.empty:
             for col in weather_forecast.columns:
-                s = weather_forecast[col].dropna()
+                s, publication_ts = self._extract_governed_forecast_series(
+                    weather_forecast,
+                    col,
+                    dataset_name="weather_forecast",
+                )
                 if s.empty:
                     continue
-                if s.index.tz is None:
-                    s.index = s.index.tz_localize("UTC")
-                self._forecast_feature_pivots[col] = self._series_to_forecast_pivot(s)
+                self._forecast_feature_pivots[col] = self._series_to_forecast_pivot(
+                    s,
+                    publication_ts=publication_ts,
+                    source_name=col,
+                )
                 exog[col] = s.resample("h").mean()
 
         # Align
@@ -392,7 +407,102 @@ class LEARForecaster:
             pivots[col] = self._series_to_forecast_pivot(series)
         return pivots
 
-    def _series_to_forecast_pivot(self, series: pd.Series) -> pd.DataFrame:
+    def _frame_has_vintage_schema(self, frame: pd.DataFrame) -> bool:
+        cols = set(frame.columns)
+        return "publication_ts" in cols and "delivery_ts" in cols
+
+    def _record_governed_vintage_status(
+        self,
+        dataset_name: str,
+        *,
+        verified: bool,
+        invalid_rows_dropped: int = 0,
+        total_rows: int = 0,
+    ) -> None:
+        status = self._governed_vintage_status.setdefault(
+            dataset_name,
+            {
+                "vintage_schema_verified": verified,
+                "invalid_rows_dropped": 0,
+                "total_rows_seen": 0,
+            },
+        )
+        status["vintage_schema_verified"] = bool(status["vintage_schema_verified"] and verified) if status["total_rows_seen"] else bool(verified)
+        status["invalid_rows_dropped"] = int(status["invalid_rows_dropped"]) + int(invalid_rows_dropped)
+        status["total_rows_seen"] = int(status["total_rows_seen"]) + int(total_rows)
+
+    def _extract_governed_forecast_series(
+        self,
+        frame: pd.DataFrame,
+        value_col: str,
+        dataset_name: str,
+    ) -> tuple[pd.Series, pd.Series | None]:
+        if value_col not in frame.columns:
+            return pd.Series(dtype=float), None
+
+        if self._frame_has_vintage_schema(frame):
+            subset = frame[[value_col, "publication_ts", "delivery_ts"]].dropna(subset=[value_col, "publication_ts", "delivery_ts"]).copy()
+            if subset.empty:
+                self._record_governed_vintage_status(dataset_name, verified=True, total_rows=0)
+                return pd.Series(dtype=float), None
+            publication_ts = pd.to_datetime(subset["publication_ts"], utc=True, errors="coerce")
+            delivery_ts = pd.to_datetime(subset["delivery_ts"], utc=True, errors="coerce")
+            subset = subset.assign(publication_ts=publication_ts, delivery_ts=delivery_ts).dropna(subset=["publication_ts", "delivery_ts"])
+            values = subset[value_col].astype(float)
+            series = pd.Series(values.to_numpy(), index=pd.DatetimeIndex(subset["delivery_ts"], tz="UTC"), name=value_col).sort_index()
+            publication_series = pd.Series(
+                subset["publication_ts"].to_numpy(),
+                index=series.index,
+                name="publication_ts",
+            )
+            self._record_governed_vintage_status(dataset_name, verified=True, total_rows=len(subset))
+            return series, publication_series
+
+        if dataset_name not in self._governed_vintage_status:
+            logger.warning(
+                "Governed dataset '%s' has no publication_ts/delivery_ts schema; governed A/B remains an upper-bound until vintage is verified upstream.",
+                dataset_name,
+            )
+        if "forecast_for_ts_utc" in frame.columns:
+            delivery_index = pd.to_datetime(frame["forecast_for_ts_utc"], utc=True, errors="coerce")
+        else:
+            delivery_index = pd.to_datetime(frame.index, utc=True, errors="coerce")
+        series = pd.Series(frame[value_col].to_numpy(), index=delivery_index, name=value_col).dropna().sort_index()
+        self._record_governed_vintage_status(dataset_name, verified=False, total_rows=len(frame))
+        return series, None
+
+    def _series_to_forecast_pivot(
+        self,
+        series: pd.Series,
+        publication_ts: pd.Series | None = None,
+        source_name: str | None = None,
+    ) -> pd.DataFrame:
+        """Build a local-hour forecast pivot from delivery-indexed values.
+
+        Expected governed schema:
+        - `series.index`: delivery timestamp in UTC
+        - `publication_ts`: timestamp in UTC when the forecast was published
+
+        When `publication_ts` is provided, rows are kept only if:
+        `publication_ts <= delivery_ts - 13h`
+        which approximates the SDAC day-ahead causality cutoff.
+        Violations are dropped and logged as warnings.
+        """
+        series = series.dropna().sort_index()
+        if publication_ts is not None:
+            pub = publication_ts.reindex(series.index)
+            pub = pd.to_datetime(pub, utc=True, errors="coerce")
+            valid = pub <= (series.index - pd.Timedelta(hours=13))
+            invalid_rows = int((~valid.fillna(False)).sum())
+            if invalid_rows:
+                logger.warning(
+                    "Dropping %d governed forecast rows failing vintage cutoff%s.",
+                    invalid_rows,
+                    f" for {source_name}" if source_name else "",
+                )
+            series = series.loc[valid.fillna(False)]
+        if series.empty:
+            return pd.DataFrame()
         local_idx = series.index.tz_convert(self.tz)
         df = pd.DataFrame({
             "date": local_idx.date,
@@ -421,6 +531,10 @@ class LEARForecaster:
             "missing_sources": [],
             "source_coverage": {},
             "forecast_dates_local": [],
+            "vintage_schema_verified": bool(
+                self._governed_vintage_status
+                and all(bool(v.get("vintage_schema_verified", False)) for v in self._governed_vintage_status.values())
+            ),
         }
         if not requested or not self._fitted:
             self._governed_feature_health = health
