@@ -47,7 +47,7 @@ import numpy as np
 import pandas as pd
 
 from pfc_shaping.data.calendar_ch import enrich_15min_index
-from pfc_shaping.lt.model.shape_hourly import ShapeHourly
+from pfc_shaping.lt.model.shape_hourly import ShapeHourly, _split_level_anomaly
 from pfc_shaping.lt.model.shape_intraday import ShapeIntraday
 
 logger = logging.getLogger(__name__)
@@ -120,6 +120,33 @@ def _sh_apply_accepts_outages(sh_class: type) -> bool:
             f"{sh_class.__name__}.apply must accept reference_date; got signature {sig}"
         )
     return "outages_forecast" in sig.parameters
+
+
+def _emit_level_drift_telemetry(level: pd.Series, logger_: logging.Logger) -> None:
+    """Emit D-A2-5 telemetry for the SHP-03 invariant monitor.
+
+    Logs ``max |level - 1.0|`` at INFO on every flag=ON ``assembler.build()`` call.
+    Warns if the drift exceeds 1e-6, which signals that the SHP-03 energy-
+    normalisation invariant (``mean(f_H | cell) ≈ 1.0``) may be degraded — e.g.
+    by a future Phase 5 MSFC log-prix re-normalisation.
+
+    Extracted as a standalone helper so ``test_split_level_anomaly_drift_warning``
+    (Plan 05C-02 Task 5, M1 cross-AI review fix) can call it directly without
+    copy-pasting the inline telemetry logic (Option A pattern).
+
+    Args:
+        level:   pd.Series of per-cell mean values from ``_split_level_anomaly``.
+        logger_: The module logger to emit to (``logging.getLogger(__name__)``
+                 from ``assembler.py`` is the canonical target, so pytest's caplog
+                 can capture it via ``logger="pfc_shaping.lt.model.assembler"``).
+    """
+    max_level_drift = float(abs(level - 1.0).max())
+    logger_.info("f_H split: max |level - 1.0| = %.2e", max_level_drift)
+    if max_level_drift > 1e-6:
+        logger_.warning(
+            "f_H split: level drift %.2e > 1e-6 — SHP-03 invariant may be degraded",
+            max_level_drift,
+        )
 
 
 class PFCAssembler:
@@ -259,6 +286,25 @@ class PFCAssembler:
                                 'f_WV', 'profile_type', 'confidence',
                                 'p10', 'p90', 'calibrated']
             index : DatetimeIndex UTC freq='15min'
+
+        Notes:
+            (a) When ``self.sh._use_seasonal_hourly is True``, the f_H damping uses
+            ``_split_level_anomaly(f_H, cal)`` (Plan 05C-02 / D-A2-3..D-A2-5). The
+            ``level`` component is computed via ``groupby().transform("mean")`` over
+            the timestamps in the CURRENT build window — it is window-dependent, NOT
+            a fit-stable cell anchor (M3 cross-AI review documentation).
+
+            (b) For stable bowl shape across calls, the recommended MINIMUM build
+            horizon is one full year (≥ 52 ISO weeks × all 8 (saison, type_jour) cells
+            = 416 cells covered). Shorter horizons may exhibit small level
+            discontinuities between consecutive ``build()`` calls with different
+            windows.
+
+            (c) The ``max |level - 1.0|`` telemetry (logged at INFO every flag=ON
+            build, warning if > 1e-6) is the runtime detection of SHP-03 invariant
+            degradation. See
+            ``tests/test_shape_hourly_bowl.py::test_split_level_anomaly_drift_warning``
+            (Plan 05C-02 Task 5) for the CI signal that the warning actually fires.
         """
         if start_date is None:
             start_date = (pd.Timestamp.now("UTC") + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
@@ -330,7 +376,15 @@ class PFCAssembler:
         shape_freedom = self._shape_freedom(months_ahead)
         f_S = 1.0 + (f_S - 1.0) * shape_freedom["f_S"]
         f_W = 1.0 + (f_W - 1.0) * shape_freedom["f_W"]
-        f_H = 1.0 + (f_H - 1.0) * shape_freedom["f_H"]
+        # Lever 2 (Plan 05C-02, D-A2-3..D-A2-5): split-based damping under flag=ON,
+        # legacy single-line under flag=OFF.
+        if self.sh._use_seasonal_hourly:
+            level, anomaly = _split_level_anomaly(f_H, cal)
+            _emit_level_drift_telemetry(level, logger)
+            level_damped = 1.0 + (level - 1.0) * shape_freedom["f_H"]
+            f_H = (level_damped + anomaly).rename("f_H")
+        else:
+            f_H = 1.0 + (f_H - 1.0) * shape_freedom["f_H"]
         f_Q = 1.0 + (f_Q - 1.0) * shape_freedom["f_Q"]
         f_WV = 1.0 + (f_WV - 1.0) * shape_freedom["f_WV"]
 

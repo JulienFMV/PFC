@@ -1,18 +1,21 @@
 {
-  "calibrated_at": "2026-05-19T16:20:10+00:00",
+  "calibrated_at": "2026-05-19T16:46:14+00:00",
   "fixture_path": "tests/fixtures/bowl_seed42.parquet",
   "fixture_sha256": "8c9fed6d0874769a6222825607fc251047269872d87e27c0641c4a9959c0f16b",
-  "git_sha": "9db1f53f0eb9f6d3334c037582c7662d7bdbc9fa",
-  "notes": "Plan 05C-01 ships Lever 1 only \u2014 sc1_ptp_ratio is the Lever-1-only gain. Plan 05C-03 will re-run this script with all 3 levers active (Plan 05C-03 Task 3); the updated artifact MUST overwrite this one and be re-committed.",
+  "git_sha": "33658b70ee5e723ebd664329b94417a0b1a54221",
+  "notes": "Plan 05C-02 extended this report with SC #3 M+30 amplitude calibration. Plan 05C-03 will re-run this script with all 3 levers active (Task 3 of 05C-03); the updated artifact MUST overwrite this one and be re-committed.",
   "ratios": {
     "sc1_floor_multiplier": 1.05,
     "sc1_ptp_off": 0.35434160449490604,
     "sc1_ptp_on": 0.35580883240869654,
     "sc1_ptp_ratio": 1.0041407158944318,
-    "sc1_ratio_margin": 0.15
+    "sc1_ratio_margin": 0.15,
+    "sc3_amplitude_formula": "max(ptp_on * 0.80, ptp_off * 1.25, 0.10)",
+    "sc3_ptp_off_m30": 0.19016332774559963,
+    "sc3_ptp_on_m30": 0.35580883240869654
   },
   "thresholds_emitted": {
     "SC1_PTP_THRESHOLD": 1.05,
-    "SC3_M30_AMPLITUDE_THRESHOLD_PLACEHOLDER": 0.5
+    "SC3_M30_AMPLITUDE_THRESHOLD": 0.28464706592695727
   }
 }

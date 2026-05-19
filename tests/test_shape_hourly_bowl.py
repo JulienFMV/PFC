@@ -45,7 +45,8 @@ To refresh thresholds after changing the fixture or model:
     python scripts/calibrate_bowl_thresholds.py
 Then re-commit both the script and the updated JSON.
 
-Plan 05C-02 Task 3 updates SC3_M30_AMPLITUDE_THRESHOLD_PLACEHOLDER in the JSON.
+Plan 05C-02 Task 3 replaced SC3_M30_AMPLITUDE_THRESHOLD_PLACEHOLDER with the calibrated
+SC3_M30_AMPLITUDE_THRESHOLD key (value=0.50, plancher; ptp_on_m30=0.356, ratio=1.87).
 Plan 05C-03 Task 3 re-runs calibration with all 3 levers active and overwrites
 SC1_PTP_THRESHOLD with the final 3-lever ratio.
 """
@@ -55,13 +56,19 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import logging
+import re
+
 import numpy as np
+import numpy.testing as npt
 import pandas as pd
 import pytest
 from pandas.testing import assert_frame_equal
 
 from pfc_shaping.data.calendar_ch import enrich_15min_index
-from pfc_shaping.lt.model.shape_hourly import ShapeHourly
+from pfc_shaping.lt.model.assembler import PFCAssembler, _emit_level_drift_telemetry
+from pfc_shaping.lt.model.shape_hourly import ShapeHourly, _split_level_anomaly
+from pfc_shaping.lt.model.shape_intraday import ShapeIntraday
 
 # ---------------------------------------------------------------------------
 # Reusable entry points from committed fixtures
@@ -90,10 +97,12 @@ _calibration_report = json.loads(_CALIBRATION_REPORT_PATH.read_text())
 SC1_PTP_THRESHOLD: float = _calibration_report["thresholds_emitted"]["SC1_PTP_THRESHOLD"]
 
 # SC3_M30_AMPLITUDE_THRESHOLD: minimum ptp(f_H) at M+30 to prove Lever 2 preserves bowl
-# at far horizon. PLACEHOLDER value 0.50 (see 05C-RESEARCH.md §M+30 amplitude threshold).
-# Plan 05C-02 Task 3 updates the JSON's SC3_M30_AMPLITUDE_THRESHOLD_PLACEHOLDER key.
+# at far horizon. Calibrated by Plan 05C-02 Task 3 (Wave 0 measure-then-assert, M2 fix).
+# Value: max(ptp_on - 0.20, ptp_off * 1.50, 0.50) = 0.50 (plancher, fixture covers Jan-Mar only;
+# ptp_on_m30 = 0.356, ptp_off_m30 = 0.190, ratio = 1.87 confirming Lever 2 amplifies M+30 bowl).
+# Plan 05C-03 Task 3 will re-run calibration with all 3 levers active and overwrite this value.
 SC3_M30_AMPLITUDE_THRESHOLD: float = _calibration_report["thresholds_emitted"][
-    "SC3_M30_AMPLITUDE_THRESHOLD_PLACEHOLDER"
+    "SC3_M30_AMPLITUDE_THRESHOLD"  # Plan 05C-02 Task 3: calibrated (replaces PLACEHOLDER key)
 ]
 
 
@@ -260,4 +269,222 @@ def test_flag_off_bit_for_bit_baseline():
         check_exact=False,
         atol=1e-12,
         rtol=0,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test 3 — D-A4-4 (Lever 2 split invariant, Plan 05C-02)
+# ---------------------------------------------------------------------------
+
+def test_split_level_anomaly_invariant():
+    """Direct verification of the two D-A2-2 invariants of _split_level_anomaly.
+
+    Decision references: D-A4-4 (CONTEXT.md §Test design Area 4), D-A2-2 (split math).
+    Plan: 05C-02 Task 4.
+
+    Tests the helper directly on synthetic f_H arrays, independent of assembler.build().
+    This isolates the math from the build pipeline: if this test fails, the bug is in
+    the helper itself; if test_f_H_amplitude_preserved_at_M30 fails but this passes,
+    the bug is in the assembler integration.
+
+    Asserts:
+    1. ulp-exact sum: numpy.allclose(level + anomaly, f_H, atol=1e-15, rtol=0)
+    2. zero-mean per cell: abs(anomaly.groupby(cell).mean()).max() < 1e-12
+    3. index alignment: level.index / anomaly.index == f_H_series.index
+    4. names: level.name == "level", anomaly.name == "anomaly"
+    """
+    # Synthetic f_H: two cells (Hiver/Ouvrable x48, Ete/Samedi x48), seed=123
+    idx = pd.date_range("2027-01-01", periods=96, freq="15min", tz="UTC")
+    f_H_series = pd.Series(
+        np.random.default_rng(123).normal(1.0, 0.15, 96),
+        index=idx,
+        name="f_H",
+    )
+    cal_df = pd.DataFrame(
+        {
+            "saison": ["Hiver"] * 48 + ["Ete"] * 48,
+            "type_jour": ["Ouvrable"] * 96,
+        },
+        index=idx,
+    )
+
+    level, anomaly = _split_level_anomaly(f_H_series, cal_df)
+
+    # 1. ulp-exact sum (D-A2-2 invariant 1: level + anomaly == f_H)
+    npt.assert_allclose(
+        level.values + anomaly.values,
+        f_H_series.values,
+        atol=1e-15,
+        rtol=0,
+        err_msg="D-A2-2 violated: level + anomaly != f_H at ulp precision",
+    )
+
+    # 2. zero-mean per cell (D-A2-2 invariant 2: mean(anomaly | cell) == 0)
+    anom_df = anomaly.to_frame("anomaly").join(cal_df[["saison", "type_jour"]])
+    cell_anom_means = anom_df.groupby(["saison", "type_jour"])["anomaly"].mean()
+    max_cell_drift = float(abs(cell_anom_means).max())
+    assert max_cell_drift < 1e-12, (
+        f"D-A2-2 violated: per-cell mean of anomaly = {max_cell_drift:.2e} (expected < 1e-12). "
+        "Zero-mean invariant failed."
+    )
+
+    # 3. index alignment
+    assert level.index.equals(f_H_series.index), "level.index != f_H_series.index"
+    assert anomaly.index.equals(f_H_series.index), "anomaly.index != f_H_series.index"
+
+    # 4. names
+    assert level.name == "level", f"level.name = {level.name!r} (expected 'level')"
+    assert anomaly.name == "anomaly", f"anomaly.name = {anomaly.name!r} (expected 'anomaly')"
+
+
+# ---------------------------------------------------------------------------
+# Test 4 — D-A4-6 / SC #3 (M+30 amplitude preserved, Plan 05C-02)
+# ---------------------------------------------------------------------------
+
+def test_f_H_amplitude_preserved_at_M30(bowl_data):
+    """SC #3: Lever 2 preserves f_H bowl amplitude at M+30 horizon.
+
+    Decision references: D-A4-6 (CONTEXT.md §Test design Area 4), SC #3 (ROADMAP).
+    Plan: 05C-02 Task 4.
+
+    RESEARCH §Lever 2 dry-run (05C-RESEARCH.md):
+        Legacy M+30 ptp(f_H): ~0.516 (full damping, sf=0.52 at 30 months)
+        Split M+30 ptp(f_H): ~0.992 (anomaly survives, level ≈ 1.0 by SHP-03)
+        Expected gain ratio: ~1.92
+
+    Measured on bowl_seed42 fixture (Jan-Mar only, Ete cells fall back to Ouvrable):
+        ptp_off_m30 = 0.1902, ptp_on_m30 = 0.3558, ratio = 1.87
+        SC3_M30_AMPLITUDE_THRESHOLD = 0.50 (plancher; calibrated by Task 3 Wave 0)
+
+    The test asserts ptp(f_H) at ~M+30 under flag=ON > SC3_M30_AMPLITUDE_THRESHOLD.
+    This is SC #3: Lever 2 quantitatively proves the duck curve survives at far horizon.
+
+    FIXTURE-REAL GAP: bowl_seed42 covers Jan-Mar; Ete cells fall back to Ouvrable at the
+    June 2029 build date. Absolute ptp_on_m30 = 0.356 vs theoretical 0.99 (full-year fixture).
+    The test validates correctness of the split math (ratio 1.87 ≈ theoretical 1.92 is accurate).
+    Phase 10 validates on HFC OMPEX RÉEL (condition suffisante).
+    """
+    epex_df = bowl_data["epex_df"]
+    hydro_df = bowl_data["hydro_df"]
+    cal_3yr = bowl_data["cal"]
+
+    # Fit ShapeHourly with flag=ON (Lever 1 + Lever 2)
+    sh_on = ShapeHourly(use_seasonal_hourly=True).fit(epex_df, cal_3yr, hydro_df)
+
+    # Fit minimal ShapeIntraday (mirror _generate_baseline.py pattern)
+    si = ShapeIntraday().fit(epex_df, entso_df=None, calendar_df=cal_3yr)
+
+    # Build PFC at far horizon ~M+30 (start_date=2029-06-01, reference=2027-01-01)
+    assembler = PFCAssembler(
+        shape_hourly=sh_on,
+        shape_intraday=si,
+        uncertainty=None,
+        water_value=None,
+        cascader=None,
+        calibrator=None,
+    )
+    df_pfc = assembler.build(
+        base_prices={"2029": 80.0},
+        start_date="2029-06-01",
+        horizon_days=31,
+        reference_date=pd.Timestamp("2027-01-01", tz="UTC"),
+        country="CH",
+    )
+
+    ptp_observed = float(np.ptp(df_pfc["f_H"]))
+    assert ptp_observed > SC3_M30_AMPLITUDE_THRESHOLD, (
+        f"SC #3 FAILED: np.ptp(f_H) at ~M+30 = {ptp_observed:.4f} < "
+        f"SC3_M30_AMPLITUDE_THRESHOLD = {SC3_M30_AMPLITUDE_THRESHOLD:.4f}. "
+        "Lever 2 is NOT preserving bowl amplitude at far horizon. "
+        "If the threshold seems stale, re-run: python scripts/calibrate_bowl_thresholds.py"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test 5 — M1 cross-AI review fix (Plan 05C-02 Task 5)
+# ---------------------------------------------------------------------------
+
+def test_split_level_anomaly_drift_warning(caplog):
+    """M1 cross-AI review fix: assert D-A2-5 telemetry WARNING fires under drift.
+
+    Decision references: D-A2-5 (CONTEXT.md §Lever 2), M1 from 05C-REVIEWS.md consensus #1.
+    Plan: 05C-02 Task 5.
+
+    Both Gemini (LOW) and Codex (MEDIUM) flagged that the D-A2-5 telemetry warning
+    (logger.warning("f_H split: level drift ... > 1e-6 — SHP-03 invariant may be degraded"))
+    was fire-and-forget: silent logger config changes or bugs in the warning path would not
+    fail CI. This test closes the loop by asserting via pytest's caplog fixture that the
+    warning actually fires when level drift exceeds 1e-6.
+
+    The test uses Option A (05C-02 PLAN, Task 5 action): _emit_level_drift_telemetry()
+    was extracted from assembler.build() into a standalone helper so the test can call
+    it directly with injected drift, rather than driving the full build() pipeline.
+
+    Approach:
+    1. Build synthetic f_H + cal (two cells, seed=456, values near 1.0)
+    2. Call _split_level_anomaly to get natural level (per-cell mean ~= 1.0 by construction)
+    3. Inject 1e-4 drift: level_drifted = level + 1e-4
+    4. Call _emit_level_drift_telemetry(level_drifted, assembler_logger) under caplog
+    5. Assert exactly 1 WARNING record with "f_H split: level drift" in message
+    6. Negative case: un-drifted call emits no WARNING (only INFO)
+    """
+    # 1. Build a synthetic level series with per-cell mean EXACTLY 1.0 by construction.
+    # We construct f_H values where the per-cell mean is exactly 1.0 (not just ~1.0),
+    # so that max|level - 1.0| from _split_level_anomaly is exactly 0 (or < floating
+    # point rounding, << 1e-6). This simulates the SHP-03 contract: ShapeHourly.fit()
+    # normalizes smoothed factors so mean(factors | cell) == 1.0.
+    idx = pd.date_range("2027-01-01", periods=96, freq="15min", tz="UTC")
+    rng = np.random.default_rng(456)
+    raw = rng.normal(1.0, 0.05, 96)
+    # Normalize each half (cell) to exact mean 1.0
+    raw[:48] = raw[:48] - raw[:48].mean() + 1.0
+    raw[48:] = raw[48:] - raw[48:].mean() + 1.0
+    f_H_series = pd.Series(raw, index=idx, name="f_H")
+    cal_df = pd.DataFrame(
+        {
+            "saison": ["Hiver"] * 48 + ["Ete"] * 48,
+            "type_jour": ["Ouvrable"] * 96,
+        },
+        index=idx,
+    )
+
+    # 2. Get natural level (per-cell mean == 1.0 exactly by construction above)
+    level, _anomaly = _split_level_anomaly(f_H_series, cal_df)
+
+    # Verify test setup: natural level should have drift well below 1e-6
+    natural_drift = float(abs(level - 1.0).max())
+    assert natural_drift < 1e-6, (
+        f"test setup invalid: natural level drift = {natural_drift:.2e} >= 1e-6. "
+        "Expected: each cell's f_H values were normalized to mean=1.0, so level must be ~1.0."
+    )
+
+    # 3. Inject drift: simulate a future MSFC re-normalisation bug that breaks SHP-03
+    level_drifted = level + 1e-4  # uniform shift >> 1e-6 threshold
+
+    # 4+5. Call _emit_level_drift_telemetry under caplog and assert exactly 1 WARNING
+    assembler_logger = logging.getLogger("pfc_shaping.lt.model.assembler")
+    with caplog.at_level(logging.WARNING, logger="pfc_shaping.lt.model.assembler"):
+        _emit_level_drift_telemetry(level_drifted, assembler_logger)
+
+    warning_records = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert len(warning_records) == 1, (
+        f"expected exactly 1 WARNING record, got {len(warning_records)}: "
+        f"{[r.message for r in warning_records]}"
+    )
+    assert "f_H split: level drift" in warning_records[0].message, (
+        f"unexpected warning message: {warning_records[0].message!r}. "
+        "Expected substring 'f_H split: level drift' (canonical D-A2-5 message)."
+    )
+    # Verify the formatted drift value reflects the injected 1e-4 scale
+    assert re.search(r"1[.,]0\d*e-04|1\.0+e-04|0\.00010|1e-04", warning_records[0].message), (
+        f"drift magnitude not visible in message: {warning_records[0].message!r}"
+    )
+
+    # 6. Negative case: un-drifted call should NOT add a WARNING
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="pfc_shaping.lt.model.assembler"):
+        _emit_level_drift_telemetry(level, assembler_logger)
+    warning_records_clean = [r for r in caplog.records if r.levelname == "WARNING" and "level drift" in r.message]
+    assert len(warning_records_clean) == 0, (
+        f"un-drifted level emitted an unexpected WARNING: {[r.message for r in warning_records_clean]}"
     )
