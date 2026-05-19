@@ -1393,13 +1393,25 @@ def test_flag_persisted_in_parquet(tmp_path, monkeypatch):
 # D-19 — test_baseline_regression (parametrized: THE no-op proof)
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("flag", [False, True])
+@pytest.mark.parametrize("flag", [False])
 def test_baseline_regression(flag):
-    """D-19 (Plan 05B-05): build_pfc(flag=<flag>) equals frozen baseline_pfc_seed42.parquet.
+    """D-19 (Plan 05B-05 / updated Plan 05C-02): build_pfc(flag=False) equals frozen baseline.
 
-    This is THE proof that Phase 5bis-A is a numerical no-op:
-    - flag=False and flag=True must both equal the pre-5bis-A baseline at atol=1e-12, rtol=0.
-    - Identical columns, dtypes, index (tz, values), sort order.
+    SCOPE UPDATE (Plan 05C-02, D-A2-3..D-A2-4):
+    Phase 5bis-A originally tested BOTH flag=False and flag=True as a no-op proof (5bis-A
+    was pure plumbing — the flag had zero numerical effect). Phase 5bis-B (Plan 05C-02)
+    ships Lever 2, which introduces a genuine math change under flag=True: the f_H damping
+    now splits level + anomaly so the duck curve survives at far horizon. As a result:
+
+    - flag=False (this test): MUST still equal the pre-5bis-A baseline at atol=1e-12, rtol=0.
+      The else-branch in assembler.py executes the legacy single-line damping UNCHANGED.
+    - flag=True: intentionally produces DIFFERENT output (Lever 2 math change). Validated
+      by test_f_H_amplitude_preserved_at_M30 (D-A4-6 / SC #3) and will be covered by
+      test_flag_on_bowl_baseline (D-A4-9, Plan 05C-03) — a new frozen baseline for flag=ON.
+
+    The bit-pour-bit contract (atol=1e-12, rtol=0) applies to flag=OFF only from this plan.
+    [Rule 1 - Bug] Auto-fix: removed flag=True parametrization; it was correct for 5bis-A
+    no-op proof but incorrect now that 5bis-B ships a math change. D-A2-3/D-A2-4 verouillé.
 
     Tolerance: atol=1e-12, rtol=0 is the default contract (REVIEWS.md consensus §1).
     Fallback policy: if cross-version pandas/pyarrow patch-level drift breaks this in CI,
