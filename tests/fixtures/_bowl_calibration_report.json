@@ -1,8 +1,8 @@
 {
-  "calibrated_at": "2026-05-19T16:15:16+00:00",
+  "calibrated_at": "2026-05-19T16:20:10+00:00",
   "fixture_path": "tests/fixtures/bowl_seed42.parquet",
   "fixture_sha256": "8c9fed6d0874769a6222825607fc251047269872d87e27c0641c4a9959c0f16b",
-  "git_sha": "43d9d81ad9689bd6fe621e5579880a33c32176b2",
+  "git_sha": "9db1f53f0eb9f6d3334c037582c7662d7bdbc9fa",
   "notes": "Plan 05C-01 ships Lever 1 only \u2014 sc1_ptp_ratio is the Lever-1-only gain. Plan 05C-03 will re-run this script with all 3 levers active (Plan 05C-03 Task 3); the updated artifact MUST overwrite this one and be re-committed.",
   "ratios": {
     "sc1_floor_multiplier": 1.05,
