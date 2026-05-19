@@ -230,6 +230,7 @@ class LEARForecaster:
         # Build hourly exogenous matrix
         exog = pd.DataFrame(index=self.prices_h_.index)
         self._forecast_feature_pivots: dict[str, pd.DataFrame] = {}
+        self._all_forecast_feature_pivots: dict[str, pd.DataFrame] = {}
 
         # Cross-border prices
         self._has_de_prices = False
@@ -375,6 +376,7 @@ class LEARForecaster:
         self._complete_days = self._price_pivot.dropna(thresh=23)
         if not self._forecast_feature_pivots:
             self._forecast_feature_pivots = self._build_forecast_feature_pivots(exog)
+        self._all_forecast_feature_pivots = dict(self._forecast_feature_pivots)
 
         # Pre-compute per-hour variance calibration (last 90 days)
         self._var_calib = self._compute_variance_calibration()
@@ -547,14 +549,41 @@ class LEARForecaster:
         expected_sources = list(self.GOVERNED_FORECAST_COLUMNS) + list(self.GOVERNED_WEATHER_COLUMNS)
         total_expected = len(forecast_dates) * 24 * len(expected_sources)
         total_available = 0
-        missing_sources: list[str] = []
         source_coverage: dict[str, float] = {}
+        dropped_sources: list[str] = []
         max_supported_horizon_days = 0
+        source_pivots = getattr(self, "_all_forecast_feature_pivots", None) or self._forecast_feature_pivots
+
+        for source_col in expected_sources:
+            pivot = source_pivots.get(source_col)
+            if pivot is None:
+                source_coverage[source_col] = 0.0
+                dropped_sources.append(source_col)
+                continue
+            future = pivot.reindex(index=forecast_dates, columns=range(24))
+            available = int(future.notna().sum().sum())
+            expected = int(future.shape[0] * future.shape[1])
+            coverage = float(available / expected) if expected else 0.0
+            source_coverage[source_col] = coverage
+            total_available += available
+            if coverage < float(min_coverage_ratio):
+                dropped_sources.append(source_col)
+
+        retained_sources = [
+            source_col
+            for source_col in expected_sources
+            if source_coverage.get(source_col, 0.0) >= float(min_coverage_ratio)
+        ]
+        self._forecast_feature_pivots = {
+            source_col: source_pivots[source_col]
+            for source_col in retained_sources
+            if source_col in source_pivots
+        }
 
         for d in range(1, int(horizon_days) + 1):
             candidate_dates = forecast_dates[:d]
             candidate_ok = True
-            for source_col in expected_sources:
+            for source_col in retained_sources:
                 pivot = self._forecast_feature_pivots.get(source_col)
                 if pivot is None:
                     candidate_ok = False
@@ -569,27 +598,12 @@ class LEARForecaster:
             if candidate_ok:
                 max_supported_horizon_days = d
 
-        for source_col in expected_sources:
-            pivot = self._forecast_feature_pivots.get(source_col)
-            if pivot is None:
-                source_coverage[source_col] = 0.0
-                missing_sources.append(source_col)
-                continue
-            future = pivot.reindex(index=forecast_dates, columns=range(24))
-            available = int(future.notna().sum().sum())
-            expected = int(future.shape[0] * future.shape[1])
-            coverage = float(available / expected) if expected else 0.0
-            source_coverage[source_col] = coverage
-            total_available += available
-            if coverage < float(min_coverage_ratio):
-                missing_sources.append(source_col)
-
         coverage_ratio = float(total_available / total_expected) if total_expected else 1.0
         health["coverage_ratio"] = coverage_ratio
         health["max_supported_horizon_days"] = max_supported_horizon_days
-        health["missing_sources"] = sorted(set(missing_sources))
+        health["missing_sources"] = sorted(set(dropped_sources))
         health["source_coverage"] = source_coverage
-        health["enabled_for_run"] = coverage_ratio >= float(min_coverage_ratio) and not missing_sources
+        health["enabled_for_run"] = bool(retained_sources) and max_supported_horizon_days > 0
         self._governed_feature_health = health
         return health
 

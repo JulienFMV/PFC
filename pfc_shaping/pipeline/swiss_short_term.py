@@ -66,6 +66,7 @@ class SwissShortTermInputHealth:
     governed_forecast_max_supported_horizon_days: int = 0
     governed_forecast_applied_horizon_days: int = 0
     governed_forecast_missing_sources: list[str] | None = None
+    governed_forecast_source_coverage: dict[str, float] | None = None
     governed_forecast_vintage_schema_verified: bool | None = None
 
 
@@ -151,6 +152,7 @@ def run_swiss_short_term_overlay(
         governed_forecast_max_supported_horizon_days=max_supported_horizon_days,
         governed_forecast_applied_horizon_days=governed_applied_horizon_days,
         governed_forecast_missing_sources=list(governed_health.get("missing_sources", [])),
+        governed_forecast_source_coverage=dict(governed_health.get("source_coverage", {})),
         governed_forecast_vintage_schema_verified=bool(governed_health.get("vintage_schema_verified", False)),
     )
     _save_input_health(input_health, logger)
