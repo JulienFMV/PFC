@@ -34,6 +34,7 @@ DATA_FILES = {
     "commodities": ROOT / "data" / "commodities_cache.parquet",
     "de_renewable_forecast": ROOT / "pfc_shaping" / "data" / "de_renewable_forecast.parquet",
     "multi_country_forecast": ROOT / "pfc_shaping" / "data" / "multi_country_forecast_15min.parquet",
+    "fr_nuclear_forecast": ROOT / "pfc_shaping" / "data" / "fr_nuclear_forecast_15min.parquet",
     "weather_forecast": ROOT / "pfc_shaping" / "data" / "weather_forecast_hourly.parquet",
 }
 
@@ -329,6 +330,7 @@ def _run_variant(
     commodities: pd.DataFrame | None,
     de_renewable_forecast: pd.DataFrame | None,
     multi_country_forecast: pd.DataFrame | None,
+    fr_nuclear_forecast: pd.DataFrame | None,
     weather_forecast: pd.DataFrame | None,
     n_days: int,
     horizon: int,
@@ -346,6 +348,7 @@ def _run_variant(
         epex_de_15min=epex_de,
         de_renewable_forecast=de_renewable_forecast,
         multi_country_forecast=multi_country_forecast,
+        fr_nuclear_forecast=fr_nuclear_forecast,
         weather_forecast=weather_forecast,
     )
     governed_health = model.assess_governed_forecast_feature_health(
@@ -407,6 +410,7 @@ def main() -> None:
     commodities = _read_optional_parquet(DATA_FILES["commodities"])
     de_renewable_forecast = _read_optional_parquet(DATA_FILES["de_renewable_forecast"])
     multi_country_forecast = _read_optional_parquet(DATA_FILES["multi_country_forecast"])
+    fr_nuclear_forecast = _read_optional_parquet(DATA_FILES["fr_nuclear_forecast"])
     weather_forecast = _read_optional_parquet(DATA_FILES["weather_forecast"])
 
     horizons_payload: dict[str, object] = {}
@@ -432,6 +436,7 @@ def main() -> None:
                 commodities,
                 de_renewable_forecast,
                 multi_country_forecast,
+                fr_nuclear_forecast,
                 weather_forecast,
                 args.n_days,
                 horizon,

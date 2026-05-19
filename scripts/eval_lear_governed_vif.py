@@ -44,6 +44,7 @@ def main() -> None:
         epex_de_15min=pd.read_parquet(data_root / "epex_de_15min.parquet"),
         de_renewable_forecast=_read_optional(data_root / "de_renewable_forecast.parquet"),
         multi_country_forecast=_read_optional(data_root / "multi_country_forecast_15min.parquet"),
+        fr_nuclear_forecast=_read_optional(data_root / "fr_nuclear_forecast_15min.parquet"),
         weather_forecast=_read_optional(data_root / "weather_forecast_hourly.parquet"),
     )
     report = lear.get_governed_vif_report()

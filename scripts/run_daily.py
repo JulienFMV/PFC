@@ -126,16 +126,19 @@ def ingest_data(days_back: int = 7) -> dict:
         from pfc_shaping.data.ingest_entso import (
             fetch_and_cache as fetch_entso_enriched,
             fetch_and_cache_de_renewable_forecast,
+            fetch_and_cache_fr_nuclear_forecast,
             fetch_and_cache_multi_country_forecasts,
         )
 
         fetch_entso_enriched(enrich_start, end, country_code="CH")
         forecast_df = fetch_and_cache_de_renewable_forecast(enrich_start, forecast_end)
         multi_country_df = fetch_and_cache_multi_country_forecasts(enrich_start, forecast_end)
+        fr_nuclear_df = fetch_and_cache_fr_nuclear_forecast(enrich_start, (today + timedelta(days=10)).isoformat())
         split_paths = materialize_entso_split_views(ROOT)
         status["entso_enrichment"] = (
             f"OK (neighbor/border refreshed, DE forecast max_ts={forecast_df.index.max()}, "
             f"multi-country forecast max_ts={multi_country_df.index.max() if len(multi_country_df) else None}, "
+            f"FR nuclear forecast max_ts={fr_nuclear_df.index.max() if len(fr_nuclear_df) else None}, "
             f"fundamentals={split_paths['fundamentals'].name}, border={split_paths['border'].name})"
         )
         logger.info("  ENTSO-E enrichment: %s", status["entso_enrichment"])

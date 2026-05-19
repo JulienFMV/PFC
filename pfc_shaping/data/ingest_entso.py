@@ -39,6 +39,9 @@ DEFAULT_DE_RENEWABLE_FORECAST_PARQUET = (
 DEFAULT_MULTI_COUNTRY_FORECAST_PARQUET = (
     Path(__file__).resolve().parent.parent / "data" / "multi_country_forecast_15min.parquet"
 )
+DEFAULT_FR_NUCLEAR_FORECAST_PARQUET = (
+    Path(__file__).resolve().parent.parent / "data" / "fr_nuclear_forecast_15min.parquet"
+)
 
 # Charger .env depuis la racine du worktree, puis fallback vers le repo PFC
 _ENV_CANDIDATES = [
@@ -400,6 +403,32 @@ def load_multi_country_forecasts(
     forecast = forecast[~forecast.index.duplicated(keep="last")]
     forecast.index.name = "forecast_for_ts_utc"
     return forecast
+
+
+def load_fr_nuclear_forecast(
+    start: str,
+    end: str,
+    total_capacity_mw: float = 61000.0,
+) -> pd.DataFrame:
+    """Load future French nuclear availability as a governed Swiss CT signal."""
+    client = _get_client()
+    ts_start = pd.Timestamp(start, tz="UTC")
+    ts_end = pd.Timestamp(end, tz="UTC")
+    unavailable_df = _load_fr_nuclear_outage_features(client, ts_start, ts_end)
+    if unavailable_df.empty or "fr_nuclear_unavailable_mw" not in unavailable_df.columns:
+        return pd.DataFrame()
+
+    unavailable = pd.to_numeric(
+        unavailable_df["fr_nuclear_unavailable_mw"], errors="coerce"
+    ).fillna(0.0).clip(lower=0.0)
+    out = pd.DataFrame(index=unavailable_df.index.copy())
+    out["forecast_fr_nuclear_unavailable_mw"] = unavailable
+    out["forecast_fr_nuclear_available_mw"] = (float(total_capacity_mw) - unavailable).clip(lower=0.0)
+    out["forecast_fr_nuclear_unavailability_ratio"] = (
+        unavailable / float(total_capacity_mw)
+    ).clip(lower=0.0, upper=1.5)
+    out.index.name = "forecast_for_ts_utc"
+    return out.sort_index()
 
 
 def _load_fr_nuclear_outage_features(
@@ -851,6 +880,33 @@ def fetch_and_cache_multi_country_forecasts(
     combined.to_parquet(parquet_path, engine="pyarrow", compression="snappy")
     logger.info(
         "Cache multi-country forecast updated: %s (%d rows, max_ts=%s)",
+        parquet_path,
+        len(combined),
+        combined.index.max() if len(combined) else None,
+    )
+    return combined
+
+
+def fetch_and_cache_fr_nuclear_forecast(
+    start: str,
+    end: str,
+    parquet_path: str | Path = DEFAULT_FR_NUCLEAR_FORECAST_PARQUET,
+) -> pd.DataFrame:
+    """Refresh the cached FR nuclear future-availability dataset for Swiss CT."""
+    new = load_fr_nuclear_forecast(start, end)
+    parquet_path = Path(parquet_path)
+
+    if parquet_path.exists():
+        existing = pd.read_parquet(parquet_path)
+        combined = new.combine_first(existing).sort_index()
+        combined = combined[~combined.index.duplicated(keep="last")]
+    else:
+        combined = new
+
+    parquet_path.parent.mkdir(parents=True, exist_ok=True)
+    combined.to_parquet(parquet_path, engine="pyarrow", compression="snappy")
+    logger.info(
+        "Cache FR nuclear forecast updated: %s (%d rows, max_ts=%s)",
         parquet_path,
         len(combined),
         combined.index.max() if len(combined) else None,

@@ -30,6 +30,7 @@ class LoadedInputs:
     entso_border: pd.DataFrame
     de_renewable_forecast: pd.DataFrame | None
     multi_country_forecast: pd.DataFrame | None
+    fr_nuclear_forecast: pd.DataFrame | None
     weather_forecast: pd.DataFrame | None
     hydro: pd.DataFrame
     cal_ch: pd.DataFrame
@@ -121,6 +122,7 @@ def load_inputs(project_root: str, logger: logging.Logger) -> LoadedInputs:
     hydro = load_local_dataset(project_root, "ct_hydro_daily", required=True)
     de_renewable_forecast = load_local_dataset(project_root, "ct_forecast_de_renewables_15min", required=False)
     multi_country_forecast = load_local_dataset(project_root, "ct_forecast_multi_country_15min", required=False)
+    fr_nuclear_forecast = load_local_dataset(project_root, "ct_forecast_fr_nuclear_15min", required=False)
     weather_forecast = load_local_dataset(project_root, "ct_weather_forecast_hourly", required=False)
     entso = entso_fundamentals
 
@@ -179,6 +181,7 @@ def load_inputs(project_root: str, logger: logging.Logger) -> LoadedInputs:
         entso_border=entso_border,
         de_renewable_forecast=de_renewable_forecast,
         multi_country_forecast=multi_country_forecast,
+        fr_nuclear_forecast=fr_nuclear_forecast,
         weather_forecast=weather_forecast,
         hydro=hydro,
         cal_ch=cal_ch,
@@ -427,6 +430,7 @@ def run_short_term_phase(
         outages_all=inputs.outages_all,
         de_renewable_forecast=inputs.de_renewable_forecast,
         multi_country_forecast=inputs.multi_country_forecast,
+        fr_nuclear_forecast=inputs.fr_nuclear_forecast,
         weather_forecast=inputs.weather_forecast,
         base_pfc_ch=long_term.swiss.pfc,
         require_de_exogenous=os.getenv("PFC_CT_REQUIRE_DE_EXOGENOUS", "1") == "1",

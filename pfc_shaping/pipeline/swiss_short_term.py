@@ -37,6 +37,7 @@ class SwissShortTermInputs:
     outages_all: pd.DataFrame | None
     de_renewable_forecast: pd.DataFrame | None
     multi_country_forecast: pd.DataFrame | None
+    fr_nuclear_forecast: pd.DataFrame | None
     weather_forecast: pd.DataFrame | None
     base_pfc_ch: pd.DataFrame
     require_de_exogenous: bool = True
@@ -54,6 +55,7 @@ class SwissShortTermInputHealth:
     de_renewable_forecast_rows: int
     multi_country_forecast_rows: int
     weather_forecast_rows: int
+    fr_nuclear_forecast_rows: int
     ch_de_overlap_hours: int
     entso_ch_overlap_hours: int
     has_de_price_support: bool
@@ -204,6 +206,7 @@ def _fit_lear_model(
         neighbor_price_15min=inputs.neighbor_prices_15min,
         de_renewable_forecast=inputs.de_renewable_forecast,
         multi_country_forecast=inputs.multi_country_forecast,
+        fr_nuclear_forecast=inputs.fr_nuclear_forecast,
         weather_forecast=inputs.weather_forecast,
     )
     return lear
@@ -362,6 +365,7 @@ def _validate_swiss_short_term_inputs(
         commodities_rows=0 if inputs.commodities is None else len(inputs.commodities),
         de_renewable_forecast_rows=0 if inputs.de_renewable_forecast is None else len(inputs.de_renewable_forecast),
         multi_country_forecast_rows=0 if inputs.multi_country_forecast is None else len(inputs.multi_country_forecast),
+        fr_nuclear_forecast_rows=0 if inputs.fr_nuclear_forecast is None else len(inputs.fr_nuclear_forecast),
         weather_forecast_rows=0 if inputs.weather_forecast is None else len(inputs.weather_forecast),
         ch_de_overlap_hours=ch_de_overlap_hours,
         entso_ch_overlap_hours=entso_ch_overlap_hours,
@@ -370,13 +374,14 @@ def _validate_swiss_short_term_inputs(
         has_required_neighbor_support=has_required_neighbor_support,
     )
     logger.info(
-        "  Swiss CT input health: CH=%d rows, DE=%d rows, ENTSO=%d rows, hydro=%d rows, DEfc=%d rows, MCFc=%d rows, WX=%d rows, CH/DE overlap=%d h, CH/ENTSO overlap=%d h, neighbors=%s",
+        "  Swiss CT input health: CH=%d rows, DE=%d rows, ENTSO=%d rows, hydro=%d rows, DEfc=%d rows, MCFc=%d rows, FRnucFc=%d rows, WX=%d rows, CH/DE overlap=%d h, CH/ENTSO overlap=%d h, neighbors=%s",
         health.epex_ch_rows,
         health.epex_de_rows,
         health.entso_rows,
         health.hydro_rows,
         health.de_renewable_forecast_rows,
         health.multi_country_forecast_rows,
+        health.fr_nuclear_forecast_rows,
         health.weather_forecast_rows,
         health.ch_de_overlap_hours,
         health.entso_ch_overlap_hours,

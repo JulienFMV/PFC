@@ -201,6 +201,22 @@ datasets:
       - forecast_solar_it_mw
       - forecast_wind_it_mw
 
+  ct_forecast_fr_nuclear_15min:
+    layer: silver
+    domain: forecast
+    source_system: entsoe
+    local_cache: "pfc_shaping/data/fr_nuclear_forecast_15min.parquet"
+    target_table: "market_data.ct_forecast_fr_nuclear_15min"
+    grain: "15min"
+    time_key: "forecast_for_ts_utc"
+    freshness_sla_days: 2
+    required: false
+    consumed_by_prod: false
+    major_columns:
+      - forecast_fr_nuclear_available_mw
+      - forecast_fr_nuclear_unavailable_mw
+      - forecast_fr_nuclear_unavailability_ratio
+
   ct_weather_forecast_hourly:
     layer: silver
     domain: forecast

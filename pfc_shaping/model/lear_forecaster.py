@@ -153,6 +153,8 @@ class LEARForecaster:
         "forecast_wind_fr_mw",
         "forecast_wind_at_mw",
         "forecast_wind_it_mw",
+        "forecast_fr_nuclear_available_mw",
+        "forecast_fr_nuclear_unavailability_ratio",
     )
     GOVERNED_WEATHER_COLUMNS = (
         "wx_ch_zurich_shortwave_radiation",
@@ -229,6 +231,7 @@ class LEARForecaster:
         neighbor_price_15min: dict[str, pd.DataFrame] | None = None,
         de_renewable_forecast: pd.DataFrame | None = None,
         multi_country_forecast: pd.DataFrame | None = None,
+        fr_nuclear_forecast: pd.DataFrame | None = None,
         weather_forecast: pd.DataFrame | None = None,
     ) -> "LEARForecaster":
         """Prepare hourly data matrices for LEAR training."""
@@ -343,6 +346,22 @@ class LEARForecaster:
                     multi_country_forecast,
                     col,
                     dataset_name="multi_country_forecast",
+                )
+                if s.empty:
+                    continue
+                self._forecast_feature_pivots[col] = self._series_to_forecast_pivot(
+                    s,
+                    publication_ts=publication_ts,
+                    source_name=col,
+                )
+                exog[col] = s.resample("h").mean()
+
+        if self.use_governed_forecast_features and fr_nuclear_forecast is not None and not fr_nuclear_forecast.empty:
+            for col in fr_nuclear_forecast.columns:
+                s, publication_ts = self._extract_governed_forecast_series(
+                    fr_nuclear_forecast,
+                    col,
+                    dataset_name="fr_nuclear_forecast",
                 )
                 if s.empty:
                     continue
@@ -886,6 +905,8 @@ class LEARForecaster:
                 "forecast_wind_fr_mw",
                 "forecast_wind_at_mw",
                 "forecast_wind_it_mw",
+                "forecast_fr_nuclear_available_mw",
+                "forecast_fr_nuclear_unavailability_ratio",
             ]
             for fc_col in compact_forecast_cols:
                 if fc_col not in exog.columns:
@@ -904,10 +925,18 @@ class LEARForecaster:
                 if target_hour in fc_pivot.columns:
                     features_list.append(fc_pivot[target_hour].values)
                     feature_names.append(f"{fc_col}_d0_h{target_hour:02d}")
+                    features_list.append(fc_pivot.shift(1)[target_hour].values)
+                    feature_names.append(f"{fc_col}_d-1_h{target_hour:02d}")
+                    features_list.append(fc_pivot.shift(7)[target_hour].values)
+                    feature_names.append(f"{fc_col}_d-7_h{target_hour:02d}")
                 midday_cols = [h for h in range(10, 16) if h in fc_pivot.columns]
-                if midday_cols and ("solar" in fc_col or "load" in fc_col):
+                if midday_cols and ("solar" in fc_col or "load" in fc_col or "nuclear" in fc_col):
                     features_list.append(fc_pivot[midday_cols].mean(axis=1).values)
                     feature_names.append(f"{fc_col}_d0_midday_mean")
+                    features_list.append(fc_pivot[midday_cols].mean(axis=1).shift(1).values)
+                    feature_names.append(f"{fc_col}_d-1_midday_mean")
+                    features_list.append(fc_pivot[midday_cols].mean(axis=1).shift(7).values)
+                    feature_names.append(f"{fc_col}_d-7_midday_mean")
 
             # ── 3b. Compact weather forecast block ──
             compact_weather_cols = [
@@ -937,10 +966,18 @@ class LEARForecaster:
                 if target_hour in wx_pivot.columns:
                     features_list.append(wx_pivot[target_hour].values)
                     feature_names.append(f"{wx_col}_d0_h{target_hour:02d}")
+                    features_list.append(wx_pivot.shift(1)[target_hour].values)
+                    feature_names.append(f"{wx_col}_d-1_h{target_hour:02d}")
+                    features_list.append(wx_pivot.shift(7)[target_hour].values)
+                    feature_names.append(f"{wx_col}_d-7_h{target_hour:02d}")
                 midday_cols = [h for h in range(10, 16) if h in wx_pivot.columns]
                 if midday_cols and ("shortwave_radiation" in wx_col or "cloud_cover" in wx_col):
                     features_list.append(wx_pivot[midday_cols].mean(axis=1).values)
                     feature_names.append(f"{wx_col}_d0_midday_mean")
+                    features_list.append(wx_pivot[midday_cols].mean(axis=1).shift(1).values)
+                    feature_names.append(f"{wx_col}_d-1_midday_mean")
+                    features_list.append(wx_pivot[midday_cols].mean(axis=1).shift(7).values)
+                    feature_names.append(f"{wx_col}_d-7_midday_mean")
 
         # ── 4. Exogenous features (CH) ──
         exog_cols = [c for c in exog.columns
