@@ -835,7 +835,14 @@ __all__ = [
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
+
+**Resolution status:** All three questions below were functionally resolved during `/gsd:plan-phase 5bis-B`:
+1. **SC #1 threshold exact** → Wave 0 calibration task in `05C-01 T4` + recalibration in `05C-03 T3` (measure-then-assert pattern).
+2. **`__all__` creation** → handled in `05C-02 T1` (create + add `_split_level_anomaly`).
+3. **`test_hyperparams_json_has_all_keys` touch** → split update across `05C-01 T3` (4 hydro keys) + `05C-03 T2` (3 sigma keys).
+
+Original question wording preserved below for audit trail.
 
 1. **Threshold SC #1 exact :**
    - Ce qu'on sait : plancher 1.05, attendu 1.13-1.18

@@ -45,6 +45,10 @@ P&L par 5 €/MWh d'erreur shape), pas par l'ordre alphabétique des features.
   - SC: `|Δ price_shape Été-h10-15 vs Hiver-h10-15| > 5 €/MWh` sur fixture EPEX-like réaliste, gated par `PFC_LT_USE_SEASONAL_HOURLY_SHAPE=1`.
   - Depends on: Phase 5bis-A livrée (baseline frozen + flag persisté).
   - Context: `.planning/phases/05C-shape-hourly-bowl-deepening/05C-CONTEXT.md`.
+  - **Plans:** 3 plans
+    - [ ] 05C-01-PLAN.md — Lever 1 hydro kernel reformulation + bowl fixture + tests D-A4-3, D-A4-8
+    - [ ] 05C-02-PLAN.md — Lever 2 split f_H = level + anomaly + assembler integration + tests D-A4-4, D-A4-6
+    - [ ] 05C-03-PLAN.md — Lever 3 sigma paramétrisation + baseline flag=ON + PROJECT.md D-FLIP-1 + tests D-A4-5, D-A4-7, D-A4-9
 
 - [ ] **Phase 5: MSFC log-prix + retire silent floors + PFC peut être négative**
   - Goal: la PFC peut descendre à -20 €/MWh aux heures structurelles (été 2027+ midi).
@@ -123,7 +127,10 @@ P&L par 5 €/MWh d'erreur shape), pas par l'ordre alphabétique des features.
 4. Flag OFF reproduit baseline bit-pour-bit (régression assurée).
 5. Suite 142 + nouveaux 5bis-A reste verte.
 
-**Plans**: TBD via `/gsd:discuss-phase 5bis-B` après livraison 5bis-A.
+**Plans**: 3 plans (waves 1→2→3, sequential — plans 02/03 read same files modified by 01):
+1. `05C-01-PLAN.md` (wave 1) — Lever 1: hydro kernel reformulation (per-timestamp `_climatological_fill[woy(t)]` gated by flag) + ctor extension `hydro_weight_sigma_off/_on` with backward-compat resolution + sidecar persistence + bowl fixture + tests D-A4-3 (kernel) and D-A4-8 (flag=OFF baseline).
+2. `05C-02-PLAN.md` (wave 2) — Lever 2: module-level helper `_split_level_anomaly` + `__all__` + integration `assembler.build` at line 333 gated by flag + telemetry drift detection + tests D-A4-4 (split invariant) and D-A4-6 (f_H amplitude M+30).
+3. `05C-03-PLAN.md` (wave 3) — Lever 3: ctor extension `sigma_off/_on` with unified resolution + sidecar (10 keys total) + telemetry init + new baseline `baseline_pfc_seed42_bowl.parquet` (RESEARCH Pitfall B: generated AFTER all three levers ship) + tests D-A4-5 (SC #1 ptp), D-A4-7 (SC #2 delta), D-A4-9 (new baseline convention) + PROJECT.md D-FLIP-1 entry + SUPERSEDED note on 05bis pre-doc.
 
 ---
 
