@@ -43,6 +43,17 @@ logger = logging.getLogger(__name__)
 # Paramètre du lissage gaussien en unités d'heures
 GAUSSIAN_SIGMA = 0.5
 
+# Defaults for hydro kernel bandwidth — flag-aware (Plan 05C-01, D-A1-4 / D-A3-2).
+# These are the canonical defaults used by __init__ and _apply_hydro_analogue_weights.
+# NEVER compare against the received params directly — always compare against these
+# constants (RESEARCH Pitfall 3: conflict detection must not fire on default combos).
+# flag=OFF: 0.25 (legacy value — kernel on ±30pp anomalies from current_fill scalar)
+# flag=ON:  0.08 (calibrated for ±10pp anomalies from per-timestamp clim target; dry-run
+#           on N(0,0.10) distribution gives CV=0.393, equivalent sélectivité to legacy
+#           0.384 on ±30pp — see 05C-RESEARCH.md §Lever 1 for full calibration table)
+_HYDRO_WEIGHT_SIGMA_OFF_DEFAULT: float = 0.25
+_HYDRO_WEIGHT_SIGMA_ON_DEFAULT: float = 0.08
+
 # Per cross-AI review consensus (Plan 05B-02): use a model-specific stem instead of a
 # generic `_meta.parquet` to avoid sidecar-name collisions when sibling components
 # (e.g. future ShapeIntraday) save into the same directory. The convention is
@@ -167,12 +178,13 @@ class ShapeHourly:
         self,
         sigma: float = GAUSSIAN_SIGMA,
         halflife_days: float = 180.0,
-        hydro_weight_sigma: float = 0.25,
+        hydro_weight_sigma: float | None = None,
+        hydro_weight_sigma_off: float = _HYDRO_WEIGHT_SIGMA_OFF_DEFAULT,
+        hydro_weight_sigma_on: float = _HYDRO_WEIGHT_SIGMA_ON_DEFAULT,
         use_seasonal_hourly: bool | None = None,
     ) -> None:
         self.sigma = sigma
         self.halflife_days = halflife_days  # exponential decay half-life
-        self.hydro_weight_sigma = hydro_weight_sigma  # kernel bandwidth for reservoir analogue weighting
         self.factors_: dict[tuple[str, str], np.ndarray] = {}
         self.n_obs_: dict[tuple[str, str], int] = {}
         self.f_W_: dict[str, float] = {}  # ratios empiriques par type_jour (global)
@@ -188,8 +200,39 @@ class ShapeHourly:
         # Use the constructor kwarg or set env var PFC_LT_USE_SEASONAL_HOURLY_SHAPE BEFORE calling __init__.
         # Persisted into the ${stem}.meta.parquet sidecar by save() and overwritten by load()
         # (parquet wins over env — prevents train/serve skew, D-07).
-        # In Phase 5bis-A this flag gates NO behavior; reserved for Phase 5bis-B.
+        # In Phase 5bis-A this flag gates NO behavior; Phase 5bis-B uses it to gate the
+        # per-timestamp climatological kernel target (D-A1-2).
         self._use_seasonal_hourly: bool = _resolve_flag(use_seasonal_hourly)
+
+        # Hydro kernel bandwidth — flag-aware resolution (D-A1-4 / D-A3-2, Plan 05C-01).
+        # Resolution precedence: legacy hydro_weight_sigma wins if not None (backward-compat
+        # for existing callsites: ShapeHourly(hydro_weight_sigma=0.25) etc.).
+        # When both hydro_weight_sigma (legacy) AND hydro_weight_sigma_off/_on are supplied
+        # simultaneously (i.e. caller passed non-default off/on values), warn and let legacy win.
+        if hydro_weight_sigma is not None:
+            # Legacy single-sigma caller: applies to both flag states (bit-pour-bit preservation)
+            if (hydro_weight_sigma_off != _HYDRO_WEIGHT_SIGMA_OFF_DEFAULT
+                    or hydro_weight_sigma_on != _HYDRO_WEIGHT_SIGMA_ON_DEFAULT):
+                logger.warning(
+                    "ShapeHourly: hydro_weight_sigma=%r (legacy) AND "
+                    "hydro_weight_sigma_off=%r/hydro_weight_sigma_on=%r both passed; "
+                    "legacy hydro_weight_sigma wins for both flag states (D-A3-2)",
+                    hydro_weight_sigma,
+                    hydro_weight_sigma_off,
+                    hydro_weight_sigma_on,
+                )
+            self._hydro_weight_sigma_off: float = float(hydro_weight_sigma)
+            self._hydro_weight_sigma_on: float = float(hydro_weight_sigma)
+        else:
+            self._hydro_weight_sigma_off = float(hydro_weight_sigma_off)
+            self._hydro_weight_sigma_on = float(hydro_weight_sigma_on)
+
+        # Active-value: the runtime kernel bandwidth read by _apply_hydro_analogue_weights.
+        # Resolved from the flag state at init (freeze-at-init pattern, D-06).
+        self.hydro_weight_sigma: float = (
+            self._hydro_weight_sigma_on if self._use_seasonal_hourly
+            else self._hydro_weight_sigma_off
+        )
 
     @property
     def factors_3d_(self) -> Mapping:
@@ -515,12 +558,17 @@ class ShapeHourly:
 
         # Scalar hyperparams — always present (JSON-string with sorted keys for determinism)
         # use_seasonal_hourly included to prevent train/serve skew (D-07): parquet wins over env at load.
+        # Plan 05C-01 (D-A3-3): adds hydro_weight_sigma_off/_on/_resolved for flag-aware persistence.
+        # Legacy key hydro_weight_sigma carries the resolved/active value for 5bis-A reader compat.
         meta_records.append({
             "attr": "hyperparams",
             "value": json.dumps(
                 {
                     "halflife_days": self.halflife_days,
-                    "hydro_weight_sigma": self.hydro_weight_sigma,
+                    "hydro_weight_sigma": self.hydro_weight_sigma,            # resolved/active (compat)
+                    "hydro_weight_sigma_off": self._hydro_weight_sigma_off,   # flag=OFF bandwidth
+                    "hydro_weight_sigma_on": self._hydro_weight_sigma_on,     # flag=ON bandwidth
+                    "hydro_weight_sigma_resolved": self.hydro_weight_sigma,   # explicit alias for resolved
                     "sigma": self.sigma,
                     "use_seasonal_hourly": bool(self._use_seasonal_hourly),
                 },
@@ -565,13 +613,33 @@ class ShapeHourly:
                 hp = json.loads(hp_rows["value"].iloc[0])
                 obj.sigma = hp.get("sigma", obj.sigma)
                 obj.halflife_days = hp.get("halflife_days", obj.halflife_days)
-                obj.hydro_weight_sigma = hp.get("hydro_weight_sigma", obj.hydro_weight_sigma)
                 if "use_seasonal_hourly" in hp:
                     obj._use_seasonal_hourly = bool(hp["use_seasonal_hourly"])
                     # parquet wins over env — prevents train/serve skew (D-07)
                 # If "use_seasonal_hourly" key is absent (cross-plan compat — parquet written by
                 # 05B-02 before 05B-03 was merged), leave obj._use_seasonal_hourly at the value
                 # already set by cls() which read the env via _resolve_flag(None).
+
+                # hydro_weight_sigma cross-plan fallback (Plan 05C-01, D-A3-3):
+                # Sidecars written by 5bis-A have only "hydro_weight_sigma" (legacy single-σ).
+                # Sidecars written by 5bis-B have "hydro_weight_sigma_off/_on/_resolved".
+                if "hydro_weight_sigma_off" in hp:
+                    obj._hydro_weight_sigma_off = float(hp["hydro_weight_sigma_off"])
+                    obj._hydro_weight_sigma_on = float(hp["hydro_weight_sigma_on"])
+                else:
+                    # Pre-5bis-B sidecar: only legacy "hydro_weight_sigma" key present.
+                    # Apply as single-σ to both flag states (D-A1-5 backward-compat).
+                    legacy_hws = float(hp.get("hydro_weight_sigma", _HYDRO_WEIGHT_SIGMA_OFF_DEFAULT))
+                    obj._hydro_weight_sigma_off = legacy_hws
+                    obj._hydro_weight_sigma_on = legacy_hws
+                # Active-value: prefer explicit "hydro_weight_sigma_resolved" key if present,
+                # else fall back to legacy "hydro_weight_sigma" (compat), else default.
+                obj.hydro_weight_sigma = float(
+                    hp.get(
+                        "hydro_weight_sigma_resolved",
+                        hp.get("hydro_weight_sigma", obj.hydro_weight_sigma),
+                    )
+                )
 
             # -- factors_by_year_ --
             # (value column is stored as repr(float) string — cast back to float array)
@@ -873,10 +941,16 @@ class ShapeHourly:
             fill.values, index=week_of_year,
         ).groupby(level=0).mean()
 
-        # Current (most recent) fill level
+        # Current (most recent) fill level — used as kernel target under flag=OFF (legacy).
+        # Under flag=ON (Plan 05C-01, D-A1-1), replaced by per-timestamp clim target.
         current_fill = float(fill.iloc[-1])
-        logger.info("Hydro analogue: current fill=%.1f%%, σ=%.2f, clim weeks=%d",
-                     current_fill * 100, self.hydro_weight_sigma, len(self._climatological_fill))
+        if not self._use_seasonal_hourly:
+            logger.info(
+                "Hydro analogue: flag=OFF, current fill=%.1f%%, σ=%.2f, clim weeks=%d",
+                current_fill * 100,
+                self.hydro_weight_sigma,
+                len(self._climatological_fill),
+            )
 
         # Map each timestamp in df to its weekly fill level
         # Create daily fill series by forward-filling weekly data
@@ -893,13 +967,54 @@ class ShapeHourly:
             return
 
         fill_values = fill_at_date.values.astype(float)
-        # Gaussian kernel: w = exp(-0.5 * ((fill - current) / sigma)^2)
+        # Gaussian kernel: w = exp(-0.5 * ((fill - target) / sigma)^2)
         # Floor at 0.3 to prevent over-aggressive downweighting of
-        # dissimilar reservoir states (preserves seasonal diversity)
+        # dissimilar reservoir states (preserves seasonal diversity) — D-A1-3.
         sigma = self.hydro_weight_sigma
-        hydro_weight = np.exp(-0.5 * ((fill_values - current_fill) / sigma) ** 2)
+
+        if self._use_seasonal_hourly:
+            # Lever 1 (Plan 05C-01, D-A1-1): per-timestamp climatological fill target.
+            # Kernel target = get_climatological_fill(woy(t)) for each historical timestamp,
+            # replacing the legacy global scalar current_fill.  This preserves seasonal
+            # diversity of the bowl by measuring "anomaly vs climatological norm" instead of
+            # "distance from most recent fill level".
+            #
+            # Scale invariant: get_climatological_fill() returns [0,1] fill (normalized from
+            # _climatological_fill which is built from the already-normalized fill Series at
+            # lines ~860-875). fill_values is also in [0,1] after the normalize step above.
+            # No additional unit conversion required.
+            #
+            # Vectorized lookup with nearest-neighbor fallback via get_climatological_fill()
+            # — safe for fixtures with partial WOY coverage (RESEARCH Pitfall 1).
+            # At most 52 dict lookups (unique WOY values), then O(N) array fill.
+            if hasattr(df.index, "isocalendar"):
+                woy_arr = df.index.isocalendar().week.values
+            else:
+                woy_arr = df.index.to_series().dt.isocalendar().week.values
+            unique_woy = np.unique(woy_arr)
+            clim_map = {int(w): self.get_climatological_fill(int(w)) for w in unique_woy}
+            clim_target = np.array([clim_map[int(w)] for w in woy_arr], dtype=float)
+            logger.info(
+                "Hydro analogue: flag=ON, per-timestamp clim target "
+                "(mean=%.1f%%), σ=%.2f, clim weeks=%d",
+                np.mean(clim_target) * 100,
+                sigma,
+                len(self._climatological_fill),
+            )
+        else:
+            # Legacy path (flag=OFF): global scalar current_fill — bit-pour-bit identical
+            # to 5bis-A baseline (D-A1-2, SC #4).
+            clim_target = current_fill  # scalar broadcast in kernel below
+
+        # Private debug attribute: populated by both branches for test verification (D-A4-3).
+        # NOT part of the public API. NOT persisted in the sidecar.
+        # flag=ON: clim_target is a NumPy array of per-timestamp clim fill values.
+        # flag=OFF: clim_target is the scalar float current_fill.
+        self._last_clim_target_ = clim_target
+
+        hydro_weight = np.exp(-0.5 * ((fill_values - clim_target) / sigma) ** 2)
         hydro_weight = np.where(np.isnan(hydro_weight), 1.0, hydro_weight)
-        hydro_weight = np.maximum(hydro_weight, 0.3)  # floor
+        hydro_weight = np.maximum(hydro_weight, 0.3)  # floor (D-A1-3)
 
         # Combine: multiply existing temporal decay weight with hydro analogue weight
         df["_weight"] = df["_weight"].values * hydro_weight
