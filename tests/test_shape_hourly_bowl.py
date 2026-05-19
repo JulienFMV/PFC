@@ -45,7 +45,8 @@ To refresh thresholds after changing the fixture or model:
     python scripts/calibrate_bowl_thresholds.py
 Then re-commit both the script and the updated JSON.
 
-Plan 05C-02 Task 3 updates SC3_M30_AMPLITUDE_THRESHOLD_PLACEHOLDER in the JSON.
+Plan 05C-02 Task 3 replaced SC3_M30_AMPLITUDE_THRESHOLD_PLACEHOLDER with the calibrated
+SC3_M30_AMPLITUDE_THRESHOLD key (value=0.50, plancher; ptp_on_m30=0.356, ratio=1.87).
 Plan 05C-03 Task 3 re-runs calibration with all 3 levers active and overwrites
 SC1_PTP_THRESHOLD with the final 3-lever ratio.
 """
@@ -90,10 +91,12 @@ _calibration_report = json.loads(_CALIBRATION_REPORT_PATH.read_text())
 SC1_PTP_THRESHOLD: float = _calibration_report["thresholds_emitted"]["SC1_PTP_THRESHOLD"]
 
 # SC3_M30_AMPLITUDE_THRESHOLD: minimum ptp(f_H) at M+30 to prove Lever 2 preserves bowl
-# at far horizon. PLACEHOLDER value 0.50 (see 05C-RESEARCH.md §M+30 amplitude threshold).
-# Plan 05C-02 Task 3 updates the JSON's SC3_M30_AMPLITUDE_THRESHOLD_PLACEHOLDER key.
+# at far horizon. Calibrated by Plan 05C-02 Task 3 (Wave 0 measure-then-assert, M2 fix).
+# Value: max(ptp_on - 0.20, ptp_off * 1.50, 0.50) = 0.50 (plancher, fixture covers Jan-Mar only;
+# ptp_on_m30 = 0.356, ptp_off_m30 = 0.190, ratio = 1.87 confirming Lever 2 amplifies M+30 bowl).
+# Plan 05C-03 Task 3 will re-run calibration with all 3 levers active and overwrite this value.
 SC3_M30_AMPLITUDE_THRESHOLD: float = _calibration_report["thresholds_emitted"][
-    "SC3_M30_AMPLITUDE_THRESHOLD_PLACEHOLDER"
+    "SC3_M30_AMPLITUDE_THRESHOLD"  # Plan 05C-02 Task 3: calibrated (replaces PLACEHOLDER key)
 ]
 
 
