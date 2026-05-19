@@ -40,6 +40,19 @@ from scipy.ndimage import gaussian_filter1d
 
 logger = logging.getLogger(__name__)
 
+# Public API — explicit __all__ added by Plan 05C-02 (RESEARCH Pitfall C).
+# Pre-5bis-B this module had no __all__; verified no downstream "import *" consumers exist.
+# _HYDRO_WEIGHT_SIGMA_*_DEFAULT constants are private and intentionally NOT exported.
+# Plan 05C-03 may extend __all__ with further symbols; _split_level_anomaly is already present.
+__all__ = [
+    "ShapeHourly",
+    "GAUSSIAN_SIGMA",
+    "_FLAG_ENV_VAR",
+    "_resolve_flag",
+    "_meta_path",
+    "_split_level_anomaly",
+]
+
 # Paramètre du lissage gaussien en unités d'heures
 GAUSSIAN_SIGMA = 0.5
 
@@ -1051,3 +1064,89 @@ def _gaussian_smooth_circular(x: np.ndarray, sigma: float) -> np.ndarray:
     tiled = np.tile(x, 3)
     smoothed = gaussian_filter1d(tiled, sigma=sigma)
     return smoothed[n: 2 * n]
+
+
+# ---------------------------------------------------------------------------
+# Lever 2 helper — Plan 05C-02, D-A2-1
+# ---------------------------------------------------------------------------
+
+def _split_level_anomaly(
+    f_H_series: pd.Series,
+    cal_df: pd.DataFrame,
+) -> tuple[pd.Series, pd.Series]:
+    """Decompose f_H into an additive level + anomaly pair.
+
+    Purpose: Extract the per-(saison, type_jour) cell mean as ``level`` and
+    the zero-mean residual as ``anomaly``, so that damping in
+    ``PFCAssembler.build()`` can shrink only the level towards neutral (1.0)
+    while letting the seasonal duck-curve signature (anomaly) survive at 100%
+    to far horizon (Y+2/Y+3).
+
+    Math (D-A2-2):
+        level[t]   = mean_h(f_H | saison(t), type_jour(t))  — per-cell mean
+        anomaly[t] = f_H[t] - level[t]                       — zero-mean per cell
+
+    Invariants (tested in test_split_level_anomaly_invariant / D-A4-4):
+        level + anomaly == f_H    (ulp exact, atol=1e-15)
+        mean_h(anomaly | cell) == 0  (atol=1e-12) for every cell present in cal_df
+
+    Args:
+        f_H_series: pd.Series indexed by DatetimeIndex (output of ShapeHourly.apply()).
+            Values should be near 1.0 (normalised hourly shape factors, SHP-03).
+        cal_df: Calendar enrichment DataFrame with at minimum columns ``saison`` and
+            ``type_jour``, indexed compatibly with ``f_H_series`` (same DatetimeIndex
+            or a superset). Mismatched timestamps yield NaN in those columns, which
+            triggers the fallback path (see below).
+
+    Returns:
+        (level, anomaly): both pd.Series with the SAME index as ``f_H_series``,
+        named ``"level"`` and ``"anomaly"`` respectively.
+
+    ## Window-dependence
+
+    (a) ``level`` is computed via ``groupby().transform("mean")`` over the timestamps
+    present in the CURRENT call window — it is NOT a fit-stable cell anchor; the
+    decomposition depends on the build horizon length and composition.
+
+    (b) For stable decomposition the recommended MINIMUM build window is one full year
+    (or equivalently 52 ISO weeks × all 8 (saison, type_jour) cells = 416 cells
+    covered). Shorter horizons may produce small level discontinuities between
+    consecutive ``build()`` calls with different window compositions.
+
+    (c) The invariant ``level + anomaly == f_H`` is EXACT pre-damping only;
+    post-damping invariance (``level_damped + anomaly == f_H`` modulo level
+    shrinkage) holds ONLY when ``level == 1.0`` per cell, which is the SHP-03
+    contract. The D-A2-5 telemetry (``max |level - 1.0| > 1e-6`` → ``logger.warning``)
+    exists precisely to detect violations of this contract; the
+    ``test_split_level_anomaly_drift_warning`` test (Plan 05C-02 Task 5) asserts the
+    telemetry fires under drift.
+    """
+    # Join f_H with the calendar to get (saison, type_jour) per timestamp.
+    # The join aligns on index; timestamps in f_H_series not in cal_df yield NaN.
+    df = pd.DataFrame({"f_H": f_H_series}).join(cal_df[["saison", "type_jour"]])
+
+    # --- NaN-cell fallback (RESEARCH Pitfall 6) ---
+    nan_mask = df["saison"].isna() | df["type_jour"].isna()
+    n_missing = int(nan_mask.sum())
+    if n_missing > 0:
+        logger.warning(
+            "_split_level_anomaly: %d timestamps with missing cal — using f_H directly (level=1.0)",
+            n_missing,
+        )
+
+    # Compute per-cell mean for rows with valid calendar data.
+    # groupby().transform("mean") produces a Series aligned with df.index where
+    # each row holds the mean of its (saison, type_jour) cell.
+    non_nan_mask = ~nan_mask
+    cell_means = pd.Series(np.nan, index=df.index, name="level")
+    if non_nan_mask.any():
+        valid_df = df[non_nan_mask]
+        cell_means_valid = valid_df.groupby(["saison", "type_jour"])["f_H"].transform("mean")
+        cell_means[non_nan_mask] = cell_means_valid
+
+    # Construct outputs:
+    # - level: per-cell mean; 1.0 for timestamps where cal is missing (NaN fallback)
+    # - anomaly: ulp-exact subtraction; sum invariant trivially holds by construction
+    level = cell_means.where(non_nan_mask, 1.0).rename("level")
+    anomaly = (f_H_series - level).rename("anomaly")
+    return level, anomaly
