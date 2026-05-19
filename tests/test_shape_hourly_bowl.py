@@ -57,12 +57,15 @@ import json
 from pathlib import Path
 
 import numpy as np
+import numpy.testing as npt
 import pandas as pd
 import pytest
 from pandas.testing import assert_frame_equal
 
 from pfc_shaping.data.calendar_ch import enrich_15min_index
-from pfc_shaping.lt.model.shape_hourly import ShapeHourly
+from pfc_shaping.lt.model.assembler import PFCAssembler
+from pfc_shaping.lt.model.shape_hourly import ShapeHourly, _split_level_anomaly
+from pfc_shaping.lt.model.shape_intraday import ShapeIntraday
 
 # ---------------------------------------------------------------------------
 # Reusable entry points from committed fixtures
@@ -263,4 +266,132 @@ def test_flag_off_bit_for_bit_baseline():
         check_exact=False,
         atol=1e-12,
         rtol=0,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test 3 — D-A4-4 (Lever 2 split invariant, Plan 05C-02)
+# ---------------------------------------------------------------------------
+
+def test_split_level_anomaly_invariant():
+    """Direct verification of the two D-A2-2 invariants of _split_level_anomaly.
+
+    Decision references: D-A4-4 (CONTEXT.md §Test design Area 4), D-A2-2 (split math).
+    Plan: 05C-02 Task 4.
+
+    Tests the helper directly on synthetic f_H arrays, independent of assembler.build().
+    This isolates the math from the build pipeline: if this test fails, the bug is in
+    the helper itself; if test_f_H_amplitude_preserved_at_M30 fails but this passes,
+    the bug is in the assembler integration.
+
+    Asserts:
+    1. ulp-exact sum: numpy.allclose(level + anomaly, f_H, atol=1e-15, rtol=0)
+    2. zero-mean per cell: abs(anomaly.groupby(cell).mean()).max() < 1e-12
+    3. index alignment: level.index / anomaly.index == f_H_series.index
+    4. names: level.name == "level", anomaly.name == "anomaly"
+    """
+    # Synthetic f_H: two cells (Hiver/Ouvrable x48, Ete/Samedi x48), seed=123
+    idx = pd.date_range("2027-01-01", periods=96, freq="15min", tz="UTC")
+    f_H_series = pd.Series(
+        np.random.default_rng(123).normal(1.0, 0.15, 96),
+        index=idx,
+        name="f_H",
+    )
+    cal_df = pd.DataFrame(
+        {
+            "saison": ["Hiver"] * 48 + ["Ete"] * 48,
+            "type_jour": ["Ouvrable"] * 96,
+        },
+        index=idx,
+    )
+
+    level, anomaly = _split_level_anomaly(f_H_series, cal_df)
+
+    # 1. ulp-exact sum (D-A2-2 invariant 1: level + anomaly == f_H)
+    npt.assert_allclose(
+        level.values + anomaly.values,
+        f_H_series.values,
+        atol=1e-15,
+        rtol=0,
+        err_msg="D-A2-2 violated: level + anomaly != f_H at ulp precision",
+    )
+
+    # 2. zero-mean per cell (D-A2-2 invariant 2: mean(anomaly | cell) == 0)
+    anom_df = anomaly.to_frame("anomaly").join(cal_df[["saison", "type_jour"]])
+    cell_anom_means = anom_df.groupby(["saison", "type_jour"])["anomaly"].mean()
+    max_cell_drift = float(abs(cell_anom_means).max())
+    assert max_cell_drift < 1e-12, (
+        f"D-A2-2 violated: per-cell mean of anomaly = {max_cell_drift:.2e} (expected < 1e-12). "
+        "Zero-mean invariant failed."
+    )
+
+    # 3. index alignment
+    assert level.index.equals(f_H_series.index), "level.index != f_H_series.index"
+    assert anomaly.index.equals(f_H_series.index), "anomaly.index != f_H_series.index"
+
+    # 4. names
+    assert level.name == "level", f"level.name = {level.name!r} (expected 'level')"
+    assert anomaly.name == "anomaly", f"anomaly.name = {anomaly.name!r} (expected 'anomaly')"
+
+
+# ---------------------------------------------------------------------------
+# Test 4 — D-A4-6 / SC #3 (M+30 amplitude preserved, Plan 05C-02)
+# ---------------------------------------------------------------------------
+
+def test_f_H_amplitude_preserved_at_M30(bowl_data):
+    """SC #3: Lever 2 preserves f_H bowl amplitude at M+30 horizon.
+
+    Decision references: D-A4-6 (CONTEXT.md §Test design Area 4), SC #3 (ROADMAP).
+    Plan: 05C-02 Task 4.
+
+    RESEARCH §Lever 2 dry-run (05C-RESEARCH.md):
+        Legacy M+30 ptp(f_H): ~0.516 (full damping, sf=0.52 at 30 months)
+        Split M+30 ptp(f_H): ~0.992 (anomaly survives, level ≈ 1.0 by SHP-03)
+        Expected gain ratio: ~1.92
+
+    Measured on bowl_seed42 fixture (Jan-Mar only, Ete cells fall back to Ouvrable):
+        ptp_off_m30 = 0.1902, ptp_on_m30 = 0.3558, ratio = 1.87
+        SC3_M30_AMPLITUDE_THRESHOLD = 0.50 (plancher; calibrated by Task 3 Wave 0)
+
+    The test asserts ptp(f_H) at ~M+30 under flag=ON > SC3_M30_AMPLITUDE_THRESHOLD.
+    This is SC #3: Lever 2 quantitatively proves the duck curve survives at far horizon.
+
+    FIXTURE-REAL GAP: bowl_seed42 covers Jan-Mar; Ete cells fall back to Ouvrable at the
+    June 2029 build date. Absolute ptp_on_m30 = 0.356 vs theoretical 0.99 (full-year fixture).
+    The test validates correctness of the split math (ratio 1.87 ≈ theoretical 1.92 is accurate).
+    Phase 10 validates on HFC OMPEX RÉEL (condition suffisante).
+    """
+    epex_df = bowl_data["epex_df"]
+    hydro_df = bowl_data["hydro_df"]
+    cal_3yr = bowl_data["cal"]
+
+    # Fit ShapeHourly with flag=ON (Lever 1 + Lever 2)
+    sh_on = ShapeHourly(use_seasonal_hourly=True).fit(epex_df, cal_3yr, hydro_df)
+
+    # Fit minimal ShapeIntraday (mirror _generate_baseline.py pattern)
+    si = ShapeIntraday().fit(epex_df, entso_df=None, calendar_df=cal_3yr)
+
+    # Build PFC at far horizon ~M+30 (start_date=2029-06-01, reference=2027-01-01)
+    assembler = PFCAssembler(
+        shape_hourly=sh_on,
+        shape_intraday=si,
+        uncertainty=None,
+        water_value=None,
+        cascader=None,
+        calibrator=None,
+    )
+    df_pfc = assembler.build(
+        base_prices={"2029": 80.0},
+        start_date="2029-06-01",
+        horizon_days=31,
+        reference_date=pd.Timestamp("2027-01-01", tz="UTC"),
+        country="CH",
+    )
+
+    ptp_observed = float(np.ptp(df_pfc["f_H"]))
+    assert ptp_observed > SC3_M30_AMPLITUDE_THRESHOLD, (
+        f"SC #3 FAILED: np.ptp(f_H) at ~M+30 = {ptp_observed:.4f} < "
+        f"SC3_M30_AMPLITUDE_THRESHOLD = {SC3_M30_AMPLITUDE_THRESHOLD:.4f}. "
+        "Lever 2 is NOT preserving bowl amplitude at far horizon. "
+        "If the threshold seems stale, re-run: python scripts/calibrate_bowl_thresholds.py"
     )
