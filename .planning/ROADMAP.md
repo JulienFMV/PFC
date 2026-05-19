@@ -46,7 +46,7 @@ P&L par 5 €/MWh d'erreur shape), pas par l'ordre alphabétique des features.
   - Depends on: Phase 5bis-A livrée (baseline frozen + flag persisté).
   - Context: `.planning/phases/05C-shape-hourly-bowl-deepening/05C-CONTEXT.md`.
   - **Plans:** 3 plans
-    - [ ] 05C-01-PLAN.md — Lever 1 hydro kernel reformulation + bowl fixture + tests D-A4-3, D-A4-8
+    - [x] 05C-01-PLAN.md — Lever 1 hydro kernel reformulation + bowl fixture + tests D-A4-3, D-A4-8
     - [ ] 05C-02-PLAN.md — Lever 2 split f_H = level + anomaly + assembler integration + tests D-A4-4, D-A4-6
     - [ ] 05C-03-PLAN.md — Lever 3 sigma paramétrisation + baseline flag=ON + PROJECT.md D-FLIP-1 + tests D-A4-5, D-A4-7, D-A4-9
 
