@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: completed
-stopped_at: Plan 05B-03 complete. Feature flag `PFC_LT_USE_SEASONAL_HOURLY_SHAPE` opérationnel @ `e4ab9ee`. 201 tests verts. SHP-04 satisfait. Prêt pour 05B-04 (conftest autouse env-var hygiene + capability check assembler).
-last_updated: "2026-05-18T20:42:58.968Z"
+stopped_at: Phase 5bis-B context gathered — 3 levers locked at EPFL/SOTA, 3 plans séquentiels planned
+last_updated: "2026-05-19T05:53:11.669Z"
 last_activity: 2026-05-18 -- Phase 05B marked complete
 progress:
   total_phases: 4
@@ -113,9 +113,9 @@ Après livraison 5bis-A : `/gsd:discuss-phase 5bis-B` pour le bowl-deepening (hy
 
 ## Session Continuity
 
-Last session: 2026-05-18T20:40:21.130Z
+Last session: 2026-05-19T05:53:11.657Z
 
-Stopped at: Plan 05B-03 complete. Feature flag `PFC_LT_USE_SEASONAL_HOURLY_SHAPE` opérationnel @ `e4ab9ee`. 201 tests verts. SHP-04 satisfait. Prêt pour 05B-04 (conftest autouse env-var hygiene + capability check assembler).
+Stopped at: Phase 5bis-B context gathered — 3 levers locked at EPFL/SOTA, 3 plans séquentiels planned
 
 Pour reprendre sur Mac Mini :
 
