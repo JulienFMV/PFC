@@ -56,6 +56,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import logging
+import re
+
 import numpy as np
 import numpy.testing as npt
 import pandas as pd
@@ -63,7 +66,7 @@ import pytest
 from pandas.testing import assert_frame_equal
 
 from pfc_shaping.data.calendar_ch import enrich_15min_index
-from pfc_shaping.lt.model.assembler import PFCAssembler
+from pfc_shaping.lt.model.assembler import PFCAssembler, _emit_level_drift_telemetry
 from pfc_shaping.lt.model.shape_hourly import ShapeHourly, _split_level_anomaly
 from pfc_shaping.lt.model.shape_intraday import ShapeIntraday
 
@@ -394,4 +397,94 @@ def test_f_H_amplitude_preserved_at_M30(bowl_data):
         f"SC3_M30_AMPLITUDE_THRESHOLD = {SC3_M30_AMPLITUDE_THRESHOLD:.4f}. "
         "Lever 2 is NOT preserving bowl amplitude at far horizon. "
         "If the threshold seems stale, re-run: python scripts/calibrate_bowl_thresholds.py"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test 5 — M1 cross-AI review fix (Plan 05C-02 Task 5)
+# ---------------------------------------------------------------------------
+
+def test_split_level_anomaly_drift_warning(caplog):
+    """M1 cross-AI review fix: assert D-A2-5 telemetry WARNING fires under drift.
+
+    Decision references: D-A2-5 (CONTEXT.md §Lever 2), M1 from 05C-REVIEWS.md consensus #1.
+    Plan: 05C-02 Task 5.
+
+    Both Gemini (LOW) and Codex (MEDIUM) flagged that the D-A2-5 telemetry warning
+    (logger.warning("f_H split: level drift ... > 1e-6 — SHP-03 invariant may be degraded"))
+    was fire-and-forget: silent logger config changes or bugs in the warning path would not
+    fail CI. This test closes the loop by asserting via pytest's caplog fixture that the
+    warning actually fires when level drift exceeds 1e-6.
+
+    The test uses Option A (05C-02 PLAN, Task 5 action): _emit_level_drift_telemetry()
+    was extracted from assembler.build() into a standalone helper so the test can call
+    it directly with injected drift, rather than driving the full build() pipeline.
+
+    Approach:
+    1. Build synthetic f_H + cal (two cells, seed=456, values near 1.0)
+    2. Call _split_level_anomaly to get natural level (per-cell mean ~= 1.0 by construction)
+    3. Inject 1e-4 drift: level_drifted = level + 1e-4
+    4. Call _emit_level_drift_telemetry(level_drifted, assembler_logger) under caplog
+    5. Assert exactly 1 WARNING record with "f_H split: level drift" in message
+    6. Negative case: un-drifted call emits no WARNING (only INFO)
+    """
+    # 1. Build a synthetic level series with per-cell mean EXACTLY 1.0 by construction.
+    # We construct f_H values where the per-cell mean is exactly 1.0 (not just ~1.0),
+    # so that max|level - 1.0| from _split_level_anomaly is exactly 0 (or < floating
+    # point rounding, << 1e-6). This simulates the SHP-03 contract: ShapeHourly.fit()
+    # normalizes smoothed factors so mean(factors | cell) == 1.0.
+    idx = pd.date_range("2027-01-01", periods=96, freq="15min", tz="UTC")
+    rng = np.random.default_rng(456)
+    raw = rng.normal(1.0, 0.05, 96)
+    # Normalize each half (cell) to exact mean 1.0
+    raw[:48] = raw[:48] - raw[:48].mean() + 1.0
+    raw[48:] = raw[48:] - raw[48:].mean() + 1.0
+    f_H_series = pd.Series(raw, index=idx, name="f_H")
+    cal_df = pd.DataFrame(
+        {
+            "saison": ["Hiver"] * 48 + ["Ete"] * 48,
+            "type_jour": ["Ouvrable"] * 96,
+        },
+        index=idx,
+    )
+
+    # 2. Get natural level (per-cell mean == 1.0 exactly by construction above)
+    level, _anomaly = _split_level_anomaly(f_H_series, cal_df)
+
+    # Verify test setup: natural level should have drift well below 1e-6
+    natural_drift = float(abs(level - 1.0).max())
+    assert natural_drift < 1e-6, (
+        f"test setup invalid: natural level drift = {natural_drift:.2e} >= 1e-6. "
+        "Expected: each cell's f_H values were normalized to mean=1.0, so level must be ~1.0."
+    )
+
+    # 3. Inject drift: simulate a future MSFC re-normalisation bug that breaks SHP-03
+    level_drifted = level + 1e-4  # uniform shift >> 1e-6 threshold
+
+    # 4+5. Call _emit_level_drift_telemetry under caplog and assert exactly 1 WARNING
+    assembler_logger = logging.getLogger("pfc_shaping.lt.model.assembler")
+    with caplog.at_level(logging.WARNING, logger="pfc_shaping.lt.model.assembler"):
+        _emit_level_drift_telemetry(level_drifted, assembler_logger)
+
+    warning_records = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert len(warning_records) == 1, (
+        f"expected exactly 1 WARNING record, got {len(warning_records)}: "
+        f"{[r.message for r in warning_records]}"
+    )
+    assert "f_H split: level drift" in warning_records[0].message, (
+        f"unexpected warning message: {warning_records[0].message!r}. "
+        "Expected substring 'f_H split: level drift' (canonical D-A2-5 message)."
+    )
+    # Verify the formatted drift value reflects the injected 1e-4 scale
+    assert re.search(r"1[.,]0\d*e-04|1\.0+e-04|0\.00010|1e-04", warning_records[0].message), (
+        f"drift magnitude not visible in message: {warning_records[0].message!r}"
+    )
+
+    # 6. Negative case: un-drifted call should NOT add a WARNING
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="pfc_shaping.lt.model.assembler"):
+        _emit_level_drift_telemetry(level, assembler_logger)
+    warning_records_clean = [r for r in caplog.records if r.levelname == "WARNING" and "level drift" in r.message]
+    assert len(warning_records_clean) == 0, (
+        f"un-drifted level emitted an unexpected WARNING: {[r.message for r in warning_records_clean]}"
     )
