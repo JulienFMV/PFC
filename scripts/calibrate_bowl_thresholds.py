@@ -290,9 +290,11 @@ def main() -> None:
         "fixture_sha256": _compute_fixture_sha256(FIXTURE_PATH),
         "git_sha": _get_git_sha(),
         "notes": (
-            "Plan 05C-02 extended this report with SC #3 M+30 amplitude calibration. "
-            "Plan 05C-03 will re-run this script with all 3 levers active (Task 3 of 05C-03); "
-            "the updated artifact MUST overwrite this one and be re-committed."
+            "Plan 05C-03 re-ran this script after all 3 levers shipped — SC #1 ratio is the "
+            "combined Lever-1+2+3 gain (Lever 1: per-timestamp clim kernel, Lever 2: split "
+            "level/anomaly, Lever 3: sigma_off=0.5/sigma_on=0.25). SC #3 also re-measured "
+            "under the combined-lever stack. fixture_sha256 unchanged (bowl_seed42.parquet "
+            "bytes unchanged since Plan 05C-01)."
         ),
         "ratios": {
             "sc1_floor_multiplier": SC1_FLOOR_MULTIPLIER,

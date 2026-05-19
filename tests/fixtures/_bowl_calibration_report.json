@@ -1,21 +1,21 @@
 {
-  "calibrated_at": "2026-05-19T16:46:14+00:00",
+  "calibrated_at": "2026-05-19T17:05:58+00:00",
   "fixture_path": "tests/fixtures/bowl_seed42.parquet",
   "fixture_sha256": "8c9fed6d0874769a6222825607fc251047269872d87e27c0641c4a9959c0f16b",
-  "git_sha": "33658b70ee5e723ebd664329b94417a0b1a54221",
-  "notes": "Plan 05C-02 extended this report with SC #3 M+30 amplitude calibration. Plan 05C-03 will re-run this script with all 3 levers active (Task 3 of 05C-03); the updated artifact MUST overwrite this one and be re-committed.",
+  "git_sha": "647f39ec8dd81936c3c1e54dffe05f26ce4bfa5c",
+  "notes": "Plan 05C-03 re-ran this script after all 3 levers shipped \u2014 SC #1 ratio is the combined Lever-1+2+3 gain (Lever 1: per-timestamp clim kernel, Lever 2: split level/anomaly, Lever 3: sigma_off=0.5/sigma_on=0.25). SC #3 also re-measured under the combined-lever stack. fixture_sha256 unchanged (bowl_seed42.parquet bytes unchanged since Plan 05C-01).",
   "ratios": {
     "sc1_floor_multiplier": 1.05,
     "sc1_ptp_off": 0.35434160449490604,
-    "sc1_ptp_on": 0.35580883240869654,
-    "sc1_ptp_ratio": 1.0041407158944318,
+    "sc1_ptp_on": 0.358561200199892,
+    "sc1_ptp_ratio": 1.0119082705825662,
     "sc1_ratio_margin": 0.15,
     "sc3_amplitude_formula": "max(ptp_on * 0.80, ptp_off * 1.25, 0.10)",
     "sc3_ptp_off_m30": 0.19016332774559963,
-    "sc3_ptp_on_m30": 0.35580883240869654
+    "sc3_ptp_on_m30": 0.358561200199892
   },
   "thresholds_emitted": {
     "SC1_PTP_THRESHOLD": 1.05,
-    "SC3_M30_AMPLITUDE_THRESHOLD": 0.28464706592695727
+    "SC3_M30_AMPLITUDE_THRESHOLD": 0.2868489601599136
   }
 }

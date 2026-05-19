@@ -67,6 +67,15 @@ GAUSSIAN_SIGMA = 0.5
 _HYDRO_WEIGHT_SIGMA_OFF_DEFAULT: float = 0.25
 _HYDRO_WEIGHT_SIGMA_ON_DEFAULT: float = 0.08
 
+# Defaults for Gaussian smoothing bandwidth — flag-aware (Plan 05C-03, D-A3-4).
+# NEVER compare against the received params directly — always compare against these
+# constants (RESEARCH Pitfall 3: conflict detection must not fire on default combos).
+# flag=OFF: 0.5 (legacy GAUSSIAN_SIGMA — preserves 5bis-A baseline bit-pour-bit)
+# flag=ON:  0.25 (RESEARCH §Lever 3 CONFIRMED: FWHM = 2√(2ln2)×0.25 = 0.5887h
+#           on hourly grid, ~1 quantum smoothing — minimum useful without inter-hour discontinuities)
+_SIGMA_OFF_DEFAULT: float = 0.5   # Plan 05C-03 D-A3-4: preserves legacy GAUSSIAN_SIGMA = 0.5
+_SIGMA_ON_DEFAULT: float = 0.25   # Plan 05C-03 D-A3-4 / RESEARCH §Lever 3 CONFIRMED FWHM=0.5887h
+
 # Per cross-AI review consensus (Plan 05B-02): use a model-specific stem instead of a
 # generic `_meta.parquet` to avoid sidecar-name collisions when sibling components
 # (e.g. future ShapeIntraday) save into the same directory. The convention is
@@ -189,14 +198,15 @@ class ShapeHourly:
 
     def __init__(
         self,
-        sigma: float = GAUSSIAN_SIGMA,
+        sigma: float | None = None,
+        sigma_off: float = _SIGMA_OFF_DEFAULT,
+        sigma_on: float = _SIGMA_ON_DEFAULT,
         halflife_days: float = 180.0,
         hydro_weight_sigma: float | None = None,
         hydro_weight_sigma_off: float = _HYDRO_WEIGHT_SIGMA_OFF_DEFAULT,
         hydro_weight_sigma_on: float = _HYDRO_WEIGHT_SIGMA_ON_DEFAULT,
         use_seasonal_hourly: bool | None = None,
     ) -> None:
-        self.sigma = sigma
         self.halflife_days = halflife_days  # exponential decay half-life
         self.factors_: dict[tuple[str, str], np.ndarray] = {}
         self.n_obs_: dict[tuple[str, str], int] = {}
@@ -216,6 +226,33 @@ class ShapeHourly:
         # In Phase 5bis-A this flag gates NO behavior; Phase 5bis-B uses it to gate the
         # per-timestamp climatological kernel target (D-A1-2).
         self._use_seasonal_hourly: bool = _resolve_flag(use_seasonal_hourly)
+
+        # Gaussian smoothing bandwidth — flag-aware resolution (D-A3-1 / D-A3-2, Plan 05C-03).
+        # Resolution precedence: legacy sigma wins if not None (backward-compat
+        # for existing callsites: ShapeHourly(sigma=X) etc.).
+        # When both sigma (legacy) AND sigma_off/_on are supplied simultaneously
+        # (i.e. caller passed non-default off/on values), warn and let legacy win.
+        # CRITICAL: conflict detection uses _SIGMA_{OFF,ON}_DEFAULT constants, NOT
+        # the received params — this prevents spurious warnings on ShapeHourly() (Pitfall 3).
+        if sigma is not None:
+            # Legacy single-sigma caller: applies to both flag states (bit-pour-bit preservation)
+            if sigma_off != _SIGMA_OFF_DEFAULT or sigma_on != _SIGMA_ON_DEFAULT:
+                logger.warning(
+                    "ShapeHourly: sigma=%r (legacy) AND sigma_off=%r/sigma_on=%r both passed; "
+                    "legacy sigma wins for both flag states (D-A3-2)",
+                    sigma,
+                    sigma_off,
+                    sigma_on,
+                )
+            self._sigma_off: float = float(sigma)
+            self._sigma_on: float = float(sigma)
+        else:
+            self._sigma_off = float(sigma_off)
+            self._sigma_on = float(sigma_on)
+
+        # Active-value: the runtime sigma read by fit() via _gaussian_smooth_circular.
+        # Resolved from the flag state at init (freeze-at-init pattern, D-06).
+        self.sigma: float = self._sigma_on if self._use_seasonal_hourly else self._sigma_off
 
         # Hydro kernel bandwidth — flag-aware resolution (D-A1-4 / D-A3-2, Plan 05C-01).
         # Resolution precedence: legacy hydro_weight_sigma wins if not None (backward-compat
@@ -245,6 +282,16 @@ class ShapeHourly:
         self.hydro_weight_sigma: float = (
             self._hydro_weight_sigma_on if self._use_seasonal_hourly
             else self._hydro_weight_sigma_off
+        )
+
+        # EPFL traceability telemetry — D-A3-6 (Plan 05C-03).
+        # Every ShapeHourly construction logs its resolved hyperparams for MLflow traceability.
+        logger.info(
+            "ShapeHourly init: σ_resolved=%.4f, σ_off=%.4f, σ_on=%.4f, "
+            "flag=%s, hydro_σ_resolved=%.4f, hydro_σ_off=%.4f, hydro_σ_on=%.4f",
+            self.sigma, self._sigma_off, self._sigma_on,
+            self._use_seasonal_hourly,
+            self.hydro_weight_sigma, self._hydro_weight_sigma_off, self._hydro_weight_sigma_on,
         )
 
     @property
@@ -572,7 +619,8 @@ class ShapeHourly:
         # Scalar hyperparams — always present (JSON-string with sorted keys for determinism)
         # use_seasonal_hourly included to prevent train/serve skew (D-07): parquet wins over env at load.
         # Plan 05C-01 (D-A3-3): adds hydro_weight_sigma_off/_on/_resolved for flag-aware persistence.
-        # Legacy key hydro_weight_sigma carries the resolved/active value for 5bis-A reader compat.
+        # Plan 05C-03 (D-A3-3): adds sigma_off/_on/_resolved for flag-aware persistence (10 keys total).
+        # Legacy keys sigma and hydro_weight_sigma carry the resolved/active values for 5bis-A reader compat.
         meta_records.append({
             "attr": "hyperparams",
             "value": json.dumps(
@@ -582,7 +630,10 @@ class ShapeHourly:
                     "hydro_weight_sigma_off": self._hydro_weight_sigma_off,   # flag=OFF bandwidth
                     "hydro_weight_sigma_on": self._hydro_weight_sigma_on,     # flag=ON bandwidth
                     "hydro_weight_sigma_resolved": self.hydro_weight_sigma,   # explicit alias for resolved
-                    "sigma": self.sigma,
+                    "sigma": self.sigma,                                       # resolved/active (compat)
+                    "sigma_off": self._sigma_off,                             # flag=OFF smoothing σ
+                    "sigma_on": self._sigma_on,                               # flag=ON smoothing σ
+                    "sigma_resolved": self.sigma,                             # explicit alias for resolved
                     "use_seasonal_hourly": bool(self._use_seasonal_hourly),
                 },
                 sort_keys=True,
@@ -624,7 +675,6 @@ class ShapeHourly:
             hp_rows = meta_df[meta_df["attr"] == "hyperparams"]
             if len(hp_rows) > 0:
                 hp = json.loads(hp_rows["value"].iloc[0])
-                obj.sigma = hp.get("sigma", obj.sigma)
                 obj.halflife_days = hp.get("halflife_days", obj.halflife_days)
                 if "use_seasonal_hourly" in hp:
                     obj._use_seasonal_hourly = bool(hp["use_seasonal_hourly"])
@@ -651,6 +701,27 @@ class ShapeHourly:
                     hp.get(
                         "hydro_weight_sigma_resolved",
                         hp.get("hydro_weight_sigma", obj.hydro_weight_sigma),
+                    )
+                )
+
+                # sigma cross-plan fallback (Plan 05C-03, D-A3-3):
+                # Sidecars written by 5bis-A have only "sigma" (legacy single-σ).
+                # Sidecars written by 5bis-B Plan 05C-03+ have "sigma_off/_on/_resolved".
+                if "sigma_off" in hp:
+                    obj._sigma_off = float(hp["sigma_off"])
+                    obj._sigma_on = float(hp["sigma_on"])
+                else:
+                    # Pre-5bis-B sidecar: only legacy "sigma" key present.
+                    # Apply as single-σ to both flag states (D-A3-5 backward-compat).
+                    legacy_sigma = float(hp.get("sigma", _SIGMA_OFF_DEFAULT))
+                    obj._sigma_off = legacy_sigma
+                    obj._sigma_on = legacy_sigma
+                # Active-value: prefer explicit "sigma_resolved" key if present,
+                # else fall back to legacy "sigma" (compat), else default.
+                obj.sigma = float(
+                    hp.get(
+                        "sigma_resolved",
+                        hp.get("sigma", _SIGMA_OFF_DEFAULT),
                     )
                 )
 
