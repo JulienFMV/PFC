@@ -53,6 +53,7 @@ SC1_PTP_THRESHOLD with the final 3-lever ratio.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -707,4 +708,38 @@ def test_flag_on_bowl_baseline():
         check_exact=False,
         atol=1e-12,
         rtol=0,
+    )
+
+
+# ---------------------------------------------------------------------------
+# M2 cross-AI review fix (REVIEWS.md mandatory #3):
+# Calibration report <-> fixture sha256 binding
+# ---------------------------------------------------------------------------
+
+def test_calibration_report_matches_fixture() -> None:
+    """Verify that the committed _bowl_calibration_report.json was generated
+    against the current bowl_seed42.parquet fixture (M2 cross-AI review fix).
+
+    The calibration script (scripts/calibrate_bowl_thresholds.py) writes the
+    sha256 of bowl_seed42.parquet into the JSON at calibration time.  This test
+    re-hashes the fixture on disk and asserts it matches the stored value,
+    preventing silent threshold drift when the fixture is regenerated without
+    re-running calibration.
+
+    If this test fails:
+        1. Regenerate the fixture:   python tests/fixtures/_generate_bowl_fixture.py
+        2. Re-run calibration:       python scripts/calibrate_bowl_thresholds.py
+        3. Commit both changes in a single PR with a justification block.
+    """
+    # Re-hash the live fixture
+    fixture_path = _FIXTURE_DIR / "bowl_seed42.parquet"
+    digest = hashlib.sha256(fixture_path.read_bytes()).hexdigest()
+
+    stored = _calibration_report["fixture_sha256"]
+    assert digest == stored, (
+        f"bowl_seed42.parquet sha256 mismatch.\n"
+        f"  On disk : {digest}\n"
+        f"  In JSON : {stored}\n"
+        "The fixture was regenerated without re-running calibrate_bowl_thresholds.py. "
+        "Re-run the calibration script and commit the updated JSON."
     )
