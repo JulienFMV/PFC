@@ -39,6 +39,7 @@ from sklearn.linear_model import ElasticNetCV, QuantileRegressor
 from sklearn.neural_network import MLPRegressor
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import TimeSeriesSplit
+from statsmodels.stats.outliers_influence import variance_inflation_factor
 
 from pfc_shaping.model.foundation_forecaster import FoundationForecaster
 
@@ -191,6 +192,8 @@ class LEARForecaster:
         self.use_regime_short_window_weighting = use_regime_short_window_weighting
         self.gbm_weight_cap_peak_block = float(gbm_weight_cap_peak_block)
         self.use_governed_forecast_features = use_governed_forecast_features
+        self.elasticnet_l1_ratio_base = 0.1
+        self.elasticnet_l1_ratio_effective = 0.1
         self._fitted = False
         self._fm = FoundationForecaster() if use_foundation_model else None
         self._lgbm_device_type = "gpu"
@@ -205,6 +208,15 @@ class LEARForecaster:
             "vintage_schema_verified": False,
         }
         self._governed_vintage_status: dict[str, dict[str, Any]] = {}
+        self._governed_vif_report: dict[str, Any] = {
+            "enabled": False,
+            "standard_scaler_applied": True,
+            "base_l1_ratio": self.elasticnet_l1_ratio_base,
+            "effective_l1_ratio": self.elasticnet_l1_ratio_effective,
+            "features_over_5": [],
+            "feature_max_vif": {},
+            "per_hour": {},
+        }
 
     def fit(
         self,
@@ -377,6 +389,8 @@ class LEARForecaster:
         if not self._forecast_feature_pivots:
             self._forecast_feature_pivots = self._build_forecast_feature_pivots(exog)
         self._all_forecast_feature_pivots = dict(self._forecast_feature_pivots)
+        self._governed_vif_report = self._analyze_governed_feature_vif()
+        self.elasticnet_l1_ratio_effective = self._select_effective_l1_ratio(self._governed_vif_report)
 
         # Pre-compute per-hour variance calibration (last 90 days)
         self._var_calib = self._compute_variance_calibration()
@@ -606,6 +620,85 @@ class LEARForecaster:
         health["enabled_for_run"] = bool(retained_sources) and max_supported_horizon_days > 0
         self._governed_feature_health = health
         return health
+
+    def _select_effective_l1_ratio(self, vif_report: dict[str, Any]) -> float:
+        features_over_5 = list(vif_report.get("features_over_5", []))
+        if len(features_over_5) > 3:
+            return 0.5
+        return float(self.elasticnet_l1_ratio_base)
+
+    def _analyze_governed_feature_vif(
+        self,
+        hours: tuple[int, ...] = (7, 12, 18),
+        max_rows: int = 180,
+    ) -> dict[str, Any]:
+        report: dict[str, Any] = {
+            "enabled": bool(self.use_governed_forecast_features),
+            "standard_scaler_applied": True,
+            "base_l1_ratio": float(self.elasticnet_l1_ratio_base),
+            "effective_l1_ratio": float(self.elasticnet_l1_ratio_base),
+            "threshold": 5.0,
+            "hours_evaluated": list(hours),
+            "features_over_5": [],
+            "feature_max_vif": {},
+            "per_hour": {},
+        }
+        if not self.use_governed_forecast_features:
+            return report
+
+        feature_max_vif: dict[str, float] = {}
+        features_over_5: set[str] = set()
+        for hour in hours:
+            X_hour, _ = self._build_features(self.prices_h_, self.exog_, target_hour=hour)
+            governed_cols = [
+                c for c in X_hour.columns
+                if c.startswith("forecast_") or c.startswith("wx_")
+            ]
+            if len(governed_cols) < 2:
+                report["per_hour"][str(hour)] = {"n_features": len(governed_cols), "n_rows": int(len(X_hour))}
+                continue
+            X_sub = X_hour[governed_cols].tail(max_rows).copy()
+            std = X_sub.std(axis=0)
+            X_sub = X_sub.loc[:, std.fillna(0.0) > 1e-12]
+            if X_sub.shape[1] < 2 or X_sub.shape[0] <= X_sub.shape[1] + 1:
+                report["per_hour"][str(hour)] = {
+                    "n_features": int(X_sub.shape[1]),
+                    "n_rows": int(X_sub.shape[0]),
+                    "skipped": True,
+                }
+                continue
+            X_arr = np.nan_to_num(X_sub.to_numpy(dtype=float), nan=0.0)
+            vif_rows: list[dict[str, float | str]] = []
+            for i, col in enumerate(X_sub.columns):
+                try:
+                    vif = float(variance_inflation_factor(X_arr, i))
+                except Exception:
+                    vif = float("inf")
+                vif_rows.append({"feature": col, "vif": vif})
+                if np.isfinite(vif):
+                    feature_max_vif[col] = max(feature_max_vif.get(col, 0.0), vif)
+                    if vif > 5.0:
+                        features_over_5.add(col)
+                else:
+                    feature_max_vif[col] = float("inf")
+                    features_over_5.add(col)
+            vif_rows.sort(key=lambda row: float(row["vif"]) if np.isfinite(float(row["vif"])) else 1e12, reverse=True)
+            report["per_hour"][str(hour)] = {
+                "n_features": int(X_sub.shape[1]),
+                "n_rows": int(X_sub.shape[0]),
+                "top_vif": vif_rows[:15],
+            }
+
+        report["feature_max_vif"] = {
+            feature: (value if np.isfinite(value) else "inf")
+            for feature, value in sorted(feature_max_vif.items(), key=lambda item: (-(item[1] if np.isfinite(item[1]) else 1e12), item[0]))
+        }
+        report["features_over_5"] = sorted(features_over_5)
+        report["effective_l1_ratio"] = float(self._select_effective_l1_ratio(report))
+        return report
+
+    def get_governed_vif_report(self) -> dict[str, Any]:
+        return dict(self._governed_vif_report)
 
     def _compute_variance_calibration(self) -> dict[int, tuple[float, float]]:
         """Compute per-hour recent mean and std for variance recalibration.
@@ -1593,7 +1686,7 @@ class LEARForecaster:
                 X_scaled = scaler.transform(X_arr)
                 cv = self._time_series_cv(n_train)
                 model = ElasticNetCV(
-                    l1_ratio=0.1,
+                    l1_ratio=self.elasticnet_l1_ratio_effective,
                     max_iter=self.max_iter,
                     cv=cv,
                     random_state=self.random_state,

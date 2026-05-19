@@ -97,3 +97,12 @@ def test_assess_governed_health_drops_only_low_coverage_sources() -> None:
     assert health["source_coverage"][weak_source] < 0.98
     assert weak_source not in lear._forecast_feature_pivots
     assert lear.GOVERNED_FORECAST_COLUMNS[0] in lear._forecast_feature_pivots
+
+
+def test_select_effective_l1_ratio_bumps_when_vif_is_dense() -> None:
+    lear = LEARForecaster(use_governed_forecast_features=True)
+    low = lear._select_effective_l1_ratio({"features_over_5": ["a", "b", "c"]})
+    high = lear._select_effective_l1_ratio({"features_over_5": ["a", "b", "c", "d"]})
+
+    assert low == 0.1
+    assert high == 0.5
