@@ -48,7 +48,7 @@ P&L par 5 €/MWh d'erreur shape), pas par l'ordre alphabétique des features.
   - **Plans:** 3 plans
     - [x] 05C-01-PLAN.md — Lever 1 hydro kernel reformulation + bowl fixture + tests D-A4-3, D-A4-8
     - [x] 05C-02-PLAN.md — Lever 2 split f_H = level + anomaly + assembler integration + tests D-A4-4, D-A4-6
-    - [ ] 05C-03-PLAN.md — Lever 3 sigma paramétrisation + baseline flag=ON + PROJECT.md D-FLIP-1 + tests D-A4-5, D-A4-7, D-A4-9
+    - [x] 05C-03-PLAN.md — Lever 3 sigma paramétrisation + baseline flag=ON + PROJECT.md D-FLIP-1 + tests D-A4-5, D-A4-7, D-A4-9
 
 - [ ] **Phase 5: MSFC log-prix + retire silent floors + PFC peut être négative**
   - Goal: la PFC peut descendre à -20 €/MWh aux heures structurelles (été 2027+ midi).
