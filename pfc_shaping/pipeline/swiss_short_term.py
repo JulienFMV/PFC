@@ -219,11 +219,100 @@ def _merge_governed_and_baseline_forecasts(
     if governed_horizon_days >= int(baseline_forecast["days_ahead"].max()):
         return governed_forecast.copy()
 
-    governed_part = governed_forecast.loc[governed_forecast["days_ahead"] <= governed_horizon_days].copy()
-    baseline_part = baseline_forecast.loc[baseline_forecast["days_ahead"] > governed_horizon_days].copy()
-    merged = pd.concat([governed_part, baseline_part], axis=0, ignore_index=True)
+    join_cols = ["timestamp"]
+    if "hour" in governed_forecast.columns and "hour" in baseline_forecast.columns:
+        join_cols.append("hour")
+    cols_keep = [c for c in ["date", "days_ahead", "n_windows", "mlp_used", "fm_used", "fm_raw_price"] if c in baseline_forecast.columns or c in governed_forecast.columns]
+
+    gov = governed_forecast.copy().rename(
+        columns={
+            "price_lear": "price_lear_gov",
+            "price_p10": "price_p10_gov",
+            "price_p90": "price_p90_gov",
+        }
+    )
+    base = baseline_forecast.copy().rename(
+        columns={
+            "price_lear": "price_lear_base",
+            "price_p10": "price_p10_base",
+            "price_p90": "price_p90_base",
+        }
+    )
+    merged = base.merge(
+        gov[[c for c in gov.columns if c in join_cols or c.endswith("_gov")]],
+        on=join_cols,
+        how="left",
+    )
     merged = merged.sort_values(["timestamp", "hour"] if "hour" in merged.columns else ["timestamp"]).reset_index(drop=True)
+
+    def weight(days_ahead: int) -> float:
+        d = float(days_ahead)
+        if d <= governed_horizon_days:
+            return 1.0
+        if d <= governed_horizon_days + 2:
+            return float(np.clip(1.0 - (d - governed_horizon_days) / 2.0, 0.0, 1.0))
+        return 0.0
+
+    merged["_w_governed"] = merged["days_ahead"].astype(float).map(weight)
+    for col in ["price_lear", "price_p10", "price_p90"]:
+        gov_col = f"{col}_gov"
+        base_col = f"{col}_base"
+        if gov_col not in merged.columns or base_col not in merged.columns:
+            continue
+        merged[col] = (
+            merged["_w_governed"] * merged[gov_col].fillna(merged[base_col])
+            + (1.0 - merged["_w_governed"]) * merged[base_col]
+        )
+
+    if all(col in merged.columns for col in ["price_p10_gov", "price_p90_gov", "price_p10_base", "price_p90_base"]):
+        mid_g = (merged["price_p10_gov"].fillna(merged["price_p10_base"]) + merged["price_p90_gov"].fillna(merged["price_p90_base"])) / 2.0
+        mid_b = (merged["price_p10_base"] + merged["price_p90_base"]) / 2.0
+        half_g = (merged["price_p90_gov"].fillna(merged["price_p90_base"]) - merged["price_p10_gov"].fillna(merged["price_p10_base"])) / 2.0
+        half_b = (merged["price_p90_base"] - merged["price_p10_base"]) / 2.0
+        q_mid = merged["_w_governed"] * mid_g + (1.0 - merged["_w_governed"]) * mid_b
+        q_half = merged["_w_governed"] * half_g + (1.0 - merged["_w_governed"]) * half_b
+        merged["price_p10"] = q_mid - q_half
+        merged["price_p90"] = q_mid + q_half
+
+    merged = _apply_transition_continuity_guard(merged, governed_horizon_days=governed_horizon_days)
+
+    keep_cols = [c for c in join_cols + cols_keep + ["price_lear", "price_p10", "price_p90"] if c in merged.columns]
+    merged = merged[keep_cols].copy()
+    for bool_col in ["mlp_used", "fm_used"]:
+        if bool_col in merged.columns:
+            merged[bool_col] = merged[bool_col].astype(bool)
     return merged
+
+
+def _apply_transition_continuity_guard(
+    forecast: pd.DataFrame,
+    governed_horizon_days: int,
+    max_jump_eur_mwh: float = 1.5,
+) -> pd.DataFrame:
+    guarded = forecast.copy()
+    if "days_ahead" not in guarded.columns or "price_lear" not in guarded.columns:
+        return guarded
+    sort_cols = ["days_ahead"]
+    if "hour" in guarded.columns:
+        group_cols = ["hour"]
+    else:
+        group_cols = []
+    transition_mask = guarded["days_ahead"].between(governed_horizon_days, governed_horizon_days + 2, inclusive="both")
+    for _, idx in guarded.loc[transition_mask].groupby(group_cols or (lambda _: 0)).groups.items():
+        rows = guarded.loc[list(idx)].sort_values(sort_cols).index.tolist()
+        for col in [c for c in ["price_lear", "price_p10", "price_p90"] if c in guarded.columns]:
+            for pos in range(1, len(rows)):
+                prev_idx = rows[pos - 1]
+                curr_idx = rows[pos]
+                delta = float(guarded.at[curr_idx, col] - guarded.at[prev_idx, col])
+                if abs(delta) > max_jump_eur_mwh:
+                    guarded.at[curr_idx, col] = float(
+                        guarded.at[prev_idx, col] + np.sign(delta) * max_jump_eur_mwh
+                    )
+    if all(col in guarded.columns for col in ["price_p10", "price_lear", "price_p90"]):
+        guarded["price_p10"] = np.minimum(guarded["price_p10"], guarded["price_lear"])
+        guarded["price_p90"] = np.maximum(guarded["price_p90"], guarded["price_lear"])
+    return guarded
 
 
 def _validate_swiss_short_term_inputs(
