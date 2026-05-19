@@ -50,9 +50,14 @@ P&L par 5 €/MWh d'erreur shape), pas par l'ordre alphabétique des features.
     - [x] 05C-02-PLAN.md — Lever 2 split f_H = level + anomaly + assembler integration + tests D-A4-4, D-A4-6
     - [x] 05C-03-PLAN.md — Lever 3 sigma paramétrisation + baseline flag=ON + PROJECT.md D-FLIP-1 + tests D-A4-5, D-A4-7, D-A4-9
 
-- [ ] **Phase 5: MSFC log-prix + retire silent floors + PFC peut être négative**
+- [ ] **Phase 5: MSFC retire silent floors + PFC peut être négative**
   - Goal: la PFC peut descendre à -20 €/MWh aux heures structurelles (été 2027+ midi).
   - Bloque la profondeur du bowl, requis pour pricer correctement le bloc 10-15 d'été.
+  - Context: `.planning/phases/05-msfc-log-prix-retire-silent-floors/05-CONTEXT.md`.
+  - **Plans:** 3 plans
+    - [ ] 05-01-PLAN.md — MSFC enforce_positivity + ArbitrageFreeCalibrator enforce_m_factor_floor + REQUIREMENTS.md NEG-05 reformulation + scaffold tests/test_phase05_negative_prices.py
+    - [ ] 05-02-PLAN.md — WaterValueCorrection delta-additif (compute_delta_wv) + assembler integration + telemetry + 2 NEG-03 tests
+    - [ ] 05-03-PLAN.md — ContractCascader spread-additif + master flag PFC_LT_ALLOW_NEGATIVE_PRICES audit-trail + fixture/baseline parquets + 6 tests + PROJECT.md D-FLIP-2
 - [ ] **Phase 5ter: Distribution probabiliste par bloc**
   - Goal: `pfc_block_distribution(start, end, hours_mask) → (p10, p50, p90)` via Monte-Carlo shape.
   - Permet au trader de calculer une prime de risque (shape inhedgeable).
@@ -134,21 +139,26 @@ P&L par 5 €/MWh d'erreur shape), pas par l'ordre alphabétique des features.
 
 ---
 
-### Phase 5: MSFC log-prix + retire silent floors
-**Goal**: Autoriser une PFC négative aux heures structurelles, en retirant les 4 planchers silencieux actuels.
+### Phase 5: MSFC retire silent floors + PFC peut être négative
+**Goal**: Autoriser une PFC négative aux heures structurelles, en retirant les 4 planchers silencieux actuels par ctor args defaults OFF (negative-ready) avec master flag `PFC_LT_ALLOW_NEGATIVE_PRICES` en audit-trail INFO log only (les 4 ctor args sont la véritable surface API, rollback opérateur explicite per D-A2-3).
 
-**Depends on**: Phase 5bis.
+**Recadrage** : Le titre historique "MSFC log-prix" est un artefact pré-audit (D-A1-1 : MSFC reste LINÉAIRE, aucune transformation log-space appliquée). CONTEXT.md autoritative pour le nouveau scope.
 
-**Requirements**: NEG-01 → NEG-05.
+**Depends on**: Phase 5bis-A (baseline frozen, flag sidecar) + 5bis-B (bowl deepening shippé, requis pour SC #2 acceptance test).
+
+**Requirements**: NEG-01, NEG-02, NEG-03, NEG-04, NEG-05 (reformulé per D-A4-7 dans Plan 05-01 : monthly forward négatif, pas Cal annuel).
 
 **Success Criteria**:
-  1. Un Cal'27 forward coté -10 €/MWh produit une PFC qui moyenne à -10 €/MWh exactement sur l'année (calibration arbitrage-free respectée même en négatif).
-  2. Un mois solaire (juillet) avec forward 30 €/MWh produit une PFC qui pique à -25 €/MWh à h13 dimanche.
-  3. Les 4 planchers silencieux (MSFC `np.maximum(B, 1.0)`, `m_factor >= 0.1`, F_WV_FLOOR, peak ratio >= 1) sont soit retirés, soit gated par une option `enforce_positivity` désactivable.
-  4. La feature flag `PFC_LT_ALLOW_NEGATIVE_PRICES=0` permet rollback.
-  5. La PFC mid-market (flavor) reste positive si tous les inputs sont positifs (régression test).
+  1. Un monthly forward négatif (e.g. July M-07'27 = -2 €/MWh, autres months positifs typiques EEX) est correctement repricé par la PFC à -2 €/MWh moyenne sur le mois (math invariance test). Couvre NEG-05 reformulé.
+  2. Un mois solaire (juillet) avec forward 20 €/MWh positif produit, sous `PFC_LT_USE_SEASONAL_HOURLY_SHAPE=1` (bowl 5bis-B actif) + `PFC_LT_ALLOW_NEGATIVE_PRICES=1`, une PFC qui pique à -20 €/MWh ou moins à h13 dimanche (acceptance gated par 5bis-B bowl marker).
+  3. Les 4 planchers silencieux (MSFC `np.maximum(B, 1.0)` ligne 131 ET ligne 203, `m_factor >= 0.1` ligne 517, F_WV_FLOOR ligne 394/407, peak ratio >= 1) sont rendus optionnels par 4 ctor args defaults OFF : `enforce_positivity=False`, `enforce_m_factor_floor=False`, `enforce_floor=False`, `allow_negative_peak=True`.
+  4. La feature flag `PFC_LT_ALLOW_NEGATIVE_PRICES` est lue ONCE à `PFCAssembler.__init__` (audit-trail INFO log only per D-A2-2). Rollback opérateur = passer `enforce_*=True` / `allow_negative_peak=False` EXPLICITEMENT aux 4 callsites (D-A2-3).
+  5. La PFC mid-market reste IDENTIQUE au baseline 5bis-A (`baseline_pfc_seed42.parquet`) à `atol=1e-12, rtol=0` quand les 4 ctor args sont passés en mode legacy (`enforce_*=True, allow_negative_peak=False`). Le baseline canonique Phase 5 (`baseline_pfc_seed42_phase05.parquet`) est généré avec defaults negative-ready et asservi à la même tolerance.
 
-**Plans**: TBD via `/gsd:plan-phase 5`.
+**Plans**: 3 plans séquentiels (wave 1 → 2 → 3, no parallelism — partage `assembler.py` entre Plans 02 et 03)
+- `05-01-PLAN.md` (wave 1) — MSFC `enforce_positivity` + ArbitrageFreeCalibrator `enforce_m_factor_floor` + REQUIREMENTS.md NEG-05 reformulation per D-A4-7 + scaffolding `tests/test_phase05_negative_prices.py` (10 tests, 2 populated, 8 skip-stubbed). Couvre NEG-01, NEG-02, NEG-05.
+- `05-02-PLAN.md` (wave 2) — WaterValueCorrection `enforce_floor` + nouveau `compute_delta_wv(B_smooth, fill_df, calendar_df) → pd.Series` + `assembler.build()` refactor `P = B × f_H × f_W + delta_wv` + telemetry INFO (D-A3-5) + 2 NEG-03 tests populés. Couvre NEG-03.
+- `05-03-PLAN.md` (wave 3) — ContractCascader `allow_negative_peak` + `fit_peak_spreads` + `fit_peak_ratios` DeprecationWarning shim + master flag `PFC_LT_ALLOW_NEGATIVE_PRICES` audit-trail INFO log + fixture/baseline parquets + 4 callsite migrations (`production_phases.py:344,644` migrations explicites, doc comments aux 4 callsites) + 6 tests promus (NEG-04 ×2, master flag, SC #2 acceptance gated, 2 regressions canonique+rollback) + `.planning/PROJECT.md` D-FLIP-2 entry. Couvre NEG-04, NEG-05.
 
 ---
 
