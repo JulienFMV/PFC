@@ -38,6 +38,7 @@ from __future__ import annotations
 import logging
 import warnings
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
@@ -48,6 +49,7 @@ from pfc_shaping.calibration.arbitrage_free import (
     ArbitrageFreeCalibrator,
     FuturesContract,
 )
+from pfc_shaping.lt.model.water_value import WaterValueCorrection
 
 # ---------------------------------------------------------------------------
 # Helpers shared across multiple tests
@@ -385,21 +387,320 @@ def test_arbitrage_free_converged_reason_floor_induced():
 
 
 def test_water_value_delta_sign_invariant():
-    """compute_delta_wv(B_smooth=-10, f_wv=1.20) → delta_wv = +2.0 EUR/MWh.
+    """compute_delta_wv sign-invariance: (f_wv - 1) * |B| has correct directional semantic.
 
-    Requirement: NEG-03.
-    Populated in Plan 05-02.
+    Test ID: 5-02-01 | Requirement: NEG-03 | Reference: 05-VALIDATION.md task 5-02-01.
+
+    Verifies that the delta-additive WV formula:
+        delta_wv = (f_wv - 1.0) * |B_smooth|
+    has the correct scarcity/abundance semantic regardless of sign(B), unlike the
+    legacy multiplicative path ``f_wv * B`` which inverts the semantic when B < 0.
+
+    Uses unittest.mock to fix f_wv at known values (scarcity=1.20, abundance=0.80)
+    — this tests the formula, not the calibration accuracy of apply().
+
+    Codex review action #1 (2026-05-19): compute_delta_wv is called with keyword-
+    only args after B_smooth (fill_df=..., calendar_df=...) to prevent the easy
+    swap with apply(timestamps, calendar_df, hydro_forecast) positional order.
     """
-    pytest.skip("populated in Plan 05-02")
+    idx = pd.date_range("2027-07-01", periods=24 * 7, freq="h", tz="UTC")
+
+    # Case 1 — scarcity (f_wv > 1): delta should be POSITIVE regardless of sign(B)
+    # delta = (1.20 - 1) * |-10| = +2.0  (correct: scarcity → price LESS negative)
+    # vs legacy: f_wv * B = 1.20 * -10 = -12  (WRONG: scarcity makes it MORE negative)
+    B_negative = pd.Series(-10.0, index=idx, name="B_smooth")
+    wv = WaterValueCorrection()
+    f_wv_scarcity = pd.Series(1.20, index=idx, name="f_WV")
+    with patch.object(WaterValueCorrection, "apply", return_value=f_wv_scarcity):
+        delta_scarce = wv.compute_delta_wv(
+            B_negative, fill_df=None, calendar_df=pd.DataFrame(index=idx)
+        )
+    assert abs(float(delta_scarce.mean()) - 2.0) < 0.05, (
+        f"Scarcity case: expected delta_wv ≈ +2.0 EUR/MWh, got {delta_scarce.mean():.4f}. "
+        "Check formula: (f_wv - 1) * |B| with f_wv=1.20, B=-10 → (0.20) * 10 = +2.0."
+    )
+
+    # Case 2 — abundance (f_wv < 1): delta should be NEGATIVE regardless of sign(B)
+    # delta = (0.80 - 1) * |-10| = -2.0  (correct: abundance → price MORE negative)
+    # vs legacy: f_wv * B = 0.80 * -10 = -8  (WRONG: abundance makes it LESS negative)
+    f_wv_abundance = pd.Series(0.80, index=idx, name="f_WV")
+    with patch.object(WaterValueCorrection, "apply", return_value=f_wv_abundance):
+        delta_abund = wv.compute_delta_wv(
+            B_negative, fill_df=None, calendar_df=pd.DataFrame(index=idx)
+        )
+    assert abs(float(delta_abund.mean()) - (-2.0)) < 0.05, (
+        f"Abundance case: expected delta_wv ≈ -2.0 EUR/MWh, got {delta_abund.mean():.4f}. "
+        "Check formula: (f_wv - 1) * |B| with f_wv=0.80, B=-10 → (-0.20) * 10 = -2.0."
+    )
+
+    # Case 3 — sign-invariance: |B| means the same delta for B=+10 and B=-10
+    # With f_wv=1.20: delta(B=+10) = (0.20)*10 = +2.0 AND delta(B=-10) = (0.20)*10 = +2.0
+    B_mixed = pd.Series(
+        [10.0 if i % 2 == 0 else -10.0 for i in range(len(idx))],
+        index=idx, name="B_smooth"
+    )
+    with patch.object(WaterValueCorrection, "apply", return_value=f_wv_scarcity):
+        delta_mixed = wv.compute_delta_wv(
+            B_mixed, fill_df=None, calendar_df=pd.DataFrame(index=idx)
+        )
+    # All values of delta_mixed should be ≈ +2.0 regardless of whether B was +10 or -10
+    assert abs(float(delta_mixed.mean()) - 2.0) < 0.05, (
+        f"Sign-invariance: expected delta_wv ≈ +2.0 for all positions, got mean={delta_mixed.mean():.4f}. "
+        "delta_wv depends on |B|, not sign(B)."
+    )
+    assert float(delta_mixed.min()) > 0.0, (
+        f"All delta_wv values should be positive (scarcity) for all B signs, "
+        f"got min={delta_mixed.min():.4f}."
+    )
+
+    # Case 4 — enforce_floor=True raises ValueError (D-A3-4)
+    wv_legacy = WaterValueCorrection(enforce_floor=True)
+    with pytest.raises(ValueError, match="enforce_floor"):
+        wv_legacy.compute_delta_wv(
+            B_negative, fill_df=None, calendar_df=pd.DataFrame(index=idx)
+        )
+
+    # Verify Series name
+    assert delta_scarce.name == "delta_wv", (
+        f"Expected delta_wv.name == 'delta_wv', got {delta_scarce.name!r}"
+    )
 
 
 def test_assembler_delta_additive():
-    """assembler.build() consumes compute_delta_wv additively: P = B*fH*fW + delta_wv.
+    """assembler.build() emits 'WV delta_wv:' INFO log on delta-additive path.
 
-    Requirement: NEG-03 (assembler integration).
-    Populated in Plan 05-02.
+    Test ID: 5-02-02 | Requirement: NEG-03 | Reference: 05-VALIDATION.md task 5-02-02.
+
+    Verifies the Phase 5 assembler delta-additive integration:
+    - INFO log line starting with 'WV delta_wv:' emitted on the delta-additive path
+      (wv.enforce_floor=False, the default)
+    - result['delta_wv'] is a pd.Series (column in returned DataFrame)
+    - delta_wv is NOT identically zero (WV contribution flows through)
+    - Negative control: enforce_floor=True path emits NO 'WV delta_wv:' log
+    - result_legacy['delta_wv'] is all zeros (legacy path placeholder)
+
+    Builds a minimal PFCAssembler with WaterValueCorrection (default enforce_floor=False)
+    using the _generate_baseline helpers for ShapeHourly + ShapeIntraday.
     """
-    pytest.skip("populated in Plan 05-02")
+    import random
+    from tests.fixtures._generate_baseline import (
+        _build_synthetic_epex,
+    )
+    from pfc_shaping.data.calendar_ch import enrich_15min_index
+    from pfc_shaping.lt.model.assembler import PFCAssembler
+    from pfc_shaping.lt.model.shape_hourly import ShapeHourly
+    from pfc_shaping.lt.model.shape_intraday import ShapeIntraday
+
+    # Deterministic seed
+    seed = 42
+    random.seed(seed)
+    np.random.seed(seed)
+    rng = np.random.default_rng(seed)
+
+    # Minimal synthetic EPEX (3 years at 15-min)
+    n_15min = 3 * 365 * 96
+    epex_df = _build_synthetic_epex(n_15min, rng)
+    calendar_df = enrich_15min_index(epex_df.index, country="CH")
+
+    sh = ShapeHourly(use_seasonal_hourly=False).fit(epex_df, calendar_df)
+    si = ShapeIntraday().fit(epex_df, entso_df=None, calendar_df=calendar_df)
+
+    # Build WaterValueCorrection — it doesn't need hydro data for apply()
+    # (returns f_WV=1.0 neutral when hydro_forecast is None); we test that the path
+    # is taken and the telemetry fires, even if delta_wv values are zero (no hydro).
+    # To ensure delta_wv is non-zero, we use a mock that returns a constant f_wv.
+    wv = WaterValueCorrection()  # enforce_floor=False by default
+
+    assembler = PFCAssembler(
+        shape_hourly=sh,
+        shape_intraday=si,
+        uncertainty=None,
+        water_value=wv,
+        cascader=None,
+        calibrator=None,
+    )
+
+    # Use a 1-month horizon so the build is fast
+    ref_date = pd.Timestamp("2026-05-18", tz="UTC")
+    base_prices = {"2027": 50.0, "2027-07": 30.0}
+
+    # Mock wv.apply to return a non-neutral f_wv so delta_wv is non-zero
+    f_wv_mock_val = 1.10  # scarcity: delta = (0.10) * |B|
+
+    asm_logger = "pfc_shaping.lt.model.assembler"
+    with patch.object(
+        WaterValueCorrection, "apply",
+        return_value=None  # will be overridden per-call below
+    ) as mock_apply:
+        # Return a Series with the right index for each apply() call
+        def side_effect(timestamps, calendar_df_arg, hydro_forecast_arg=None):
+            return pd.Series(f_wv_mock_val, index=timestamps, name="f_WV")
+        mock_apply.side_effect = side_effect
+
+        import logging as _logging
+        with pytest.raises(Exception) if False else __import__("contextlib").nullcontext():
+            # Capture INFO log records during build
+            log_records: list[logging.LogRecord] = []
+
+            class _Capture(logging.Handler):
+                def emit(self, r: logging.LogRecord) -> None:
+                    log_records.append(r)
+
+            handler = _Capture()
+            handler.setLevel(logging.DEBUG)
+            asm_log = logging.getLogger(asm_logger)
+            orig_lvl = asm_log.level
+            asm_log.setLevel(logging.DEBUG)
+            asm_log.addHandler(handler)
+            try:
+                result = assembler.build(
+                    base_prices=base_prices,
+                    start_date="2027-07-01",
+                    horizon_days=31,
+                    reference_date=ref_date,
+                )
+            finally:
+                asm_log.removeHandler(handler)
+                asm_log.setLevel(orig_lvl)
+
+    # Assert INFO log with 'WV delta_wv:' was emitted on the delta-additive path
+    wv_log_records = [
+        r for r in log_records
+        if r.getMessage().startswith("WV delta_wv:")
+    ]
+    assert len(wv_log_records) >= 1, (
+        f"Expected at least 1 INFO log starting with 'WV delta_wv:' on delta-additive path "
+        f"(wv.enforce_floor=False), got 0 of {len(log_records)} total records. "
+        "Check assembler.py: INFO telemetry on the delta-additive path (D-A3-5)."
+    )
+    wv_msg = wv_log_records[0].getMessage()
+    assert "min=" in wv_msg, f"'min=' missing in telemetry: {wv_msg!r}"
+    assert "max=" in wv_msg, f"'max=' missing in telemetry: {wv_msg!r}"
+    assert "mean=" in wv_msg, f"'mean=' missing in telemetry: {wv_msg!r}"
+    assert "sign(B) flips:" in wv_msg, f"'sign(B) flips:' missing in telemetry: {wv_msg!r}"
+
+    # Assert delta_wv column exists in result DataFrame
+    assert "delta_wv" in result.columns, (
+        f"'delta_wv' column missing in build() result. Got columns: {list(result.columns)}"
+    )
+    assert isinstance(result["delta_wv"], pd.Series), (
+        f"result['delta_wv'] should be pd.Series, got {type(result['delta_wv'])}"
+    )
+    assert len(result["delta_wv"]) == len(result.index), (
+        "delta_wv length mismatch with result.index"
+    )
+    assert result["delta_wv"].dtype.kind == "f", (
+        f"delta_wv should be float dtype, got {result['delta_wv'].dtype}"
+    )
+    # With f_wv_mock=1.10 and B not all zero, delta_wv should be non-zero
+    assert float(result["delta_wv"].abs().max()) > 0.0, (
+        "delta_wv should be non-zero when f_wv=1.10 (WV contribution must flow through on "
+        "the delta-additive path)."
+    )
+
+    # Negative control: enforce_floor=True → legacy path, no 'WV delta_wv:' log, delta_wv=0
+    wv_legacy = WaterValueCorrection(enforce_floor=True)
+    assembler_legacy = PFCAssembler(
+        shape_hourly=sh,
+        shape_intraday=si,
+        uncertainty=None,
+        water_value=wv_legacy,
+        cascader=None,
+        calibrator=None,
+    )
+
+    log_records_legacy: list[logging.LogRecord] = []
+
+    class _CaptureLegacy(logging.Handler):
+        def emit(self, r: logging.LogRecord) -> None:
+            log_records_legacy.append(r)
+
+    handler_legacy = _CaptureLegacy()
+    handler_legacy.setLevel(logging.DEBUG)
+    asm_log = logging.getLogger(asm_logger)
+    orig_lvl = asm_log.level
+    asm_log.setLevel(logging.DEBUG)
+    asm_log.addHandler(handler_legacy)
+    try:
+        result_legacy = assembler_legacy.build(
+            base_prices=base_prices,
+            start_date="2027-07-01",
+            horizon_days=31,
+            reference_date=ref_date,
+        )
+    finally:
+        asm_log.removeHandler(handler_legacy)
+        asm_log.setLevel(orig_lvl)
+
+    wv_legacy_records = [
+        r for r in log_records_legacy
+        if r.getMessage().startswith("WV delta_wv:")
+    ]
+    assert len(wv_legacy_records) == 0, (
+        f"Legacy path (enforce_floor=True) should emit NO 'WV delta_wv:' log, "
+        f"got {len(wv_legacy_records)} records."
+    )
+    assert float(result_legacy["delta_wv"].abs().max()) == 0.0, (
+        "Legacy path (enforce_floor=True) should produce delta_wv=0 placeholder "
+        "(pass-through Series of zeros)."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Plan 05-02 — Test NEW: test_compute_delta_wv_index_alignment (codex action #1)
+# ---------------------------------------------------------------------------
+
+
+def test_compute_delta_wv_index_alignment():
+    """compute_delta_wv index alignment + TypeError on positional kwarg.
+
+    Test ID: 5-02-03 (NEW — added by Plan 05-02 per codex review action #1)
+    Requirement: NEG-03 (codex action #1 ergonomics guard)
+    Reference: 05-REVIEWS.md lines 102-103 (suggested test) and lines 113-115 (action #1).
+
+    Codex action #1 (2026-05-19): asserts
+      (a) ``delta_wv.index.equals(B_smooth.index)`` post-call — the index is preserved
+          through the formula ``(f_wv - 1.0) * B_smooth.abs()`` (pandas arithmetic).
+      (b) ``TypeError`` when ``fill_df``/``calendar_df`` are passed positionally —
+          the ``*`` separator in compute_delta_wv's signature is the enforcement mechanism.
+
+    Case C (assembler precondition guard) is scoped out: it is exercised at runtime
+    by ``test_assembler_delta_additive`` via a real assembler build with aligned indices.
+    Any future regression that breaks alignment will trip the ``assert delta_wv.index.equals(B.index)``
+    guard in assembler.py at runtime.
+    """
+    # Build a 1-month hourly index (July 2027)
+    idx = pd.date_range("2027-07-01", periods=24 * 30, freq="h", tz="UTC")
+    B_smooth = pd.Series([10.0] * len(idx), index=idx, name="B_smooth")
+
+    wv = WaterValueCorrection()  # enforce_floor=False by default
+
+    # Mock apply() to return a constant f_wv=1.10 (avoid need for calibrated wv)
+    f_wv_mock = pd.Series(1.10, index=idx, name="f_WV")
+    with patch.object(WaterValueCorrection, "apply", return_value=f_wv_mock):
+        # Case A — KEYWORD-ONLY call works and index is preserved
+        delta = wv.compute_delta_wv(
+            B_smooth,
+            fill_df=None,
+            calendar_df=pd.DataFrame(index=idx),
+        )
+
+    assert delta.index.equals(B_smooth.index), (
+        "delta_wv.index must equal B_smooth.index (codex action #1 index alignment check). "
+        f"delta.index has {len(delta.index)} entries, B_smooth.index has {len(B_smooth.index)}."
+    )
+    assert delta.name == "delta_wv", (
+        f"Expected delta.name == 'delta_wv', got {delta.name!r}"
+    )
+    assert delta.shape == B_smooth.shape, (
+        f"Expected delta.shape == B_smooth.shape {B_smooth.shape}, got {delta.shape}"
+    )
+
+    # Case B — TypeError on positional kwarg (codex action #1 enforcement via * separator)
+    with patch.object(WaterValueCorrection, "apply", return_value=f_wv_mock):
+        with pytest.raises(TypeError):
+            # Passing fill_df and calendar_df POSITIONALLY must raise TypeError
+            wv.compute_delta_wv(B_smooth, None, pd.DataFrame(index=idx))
 
 
 # ---------------------------------------------------------------------------
