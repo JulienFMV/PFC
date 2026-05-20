@@ -923,20 +923,57 @@ class LEARForecaster:
                 fc_pivot = fc_df.pivot_table(index="date", columns="hour", values="value", aggfunc="mean")
                 fc_pivot = fc_pivot.reindex(complete.index)
                 if target_hour in fc_pivot.columns:
-                    features_list.append(fc_pivot[target_hour].values)
-                    feature_names.append(f"{fc_col}_d0_h{target_hour:02d}")
-                    features_list.append(fc_pivot.shift(1)[target_hour].values)
-                    feature_names.append(f"{fc_col}_d-1_h{target_hour:02d}")
-                    features_list.append(fc_pivot.shift(7)[target_hour].values)
-                    feature_names.append(f"{fc_col}_d-7_h{target_hour:02d}")
+                    self._append_feature_if_sufficient_history(
+                        features_list, feature_names, fc_pivot[target_hour],
+                        f"{fc_col}_d0_h{target_hour:02d}",
+                        min_non_null=60,
+                        reference_len=len(complete),
+                        min_coverage_ratio=0.15,
+                        max_required_non_null=180,
+                    )
+                    self._append_feature_if_sufficient_history(
+                        features_list, feature_names, fc_pivot.shift(1)[target_hour],
+                        f"{fc_col}_d-1_h{target_hour:02d}",
+                        min_non_null=60,
+                        reference_len=len(complete),
+                        min_coverage_ratio=0.15,
+                        max_required_non_null=180,
+                    )
+                    self._append_feature_if_sufficient_history(
+                        features_list, feature_names, fc_pivot.shift(7)[target_hour],
+                        f"{fc_col}_d-7_h{target_hour:02d}",
+                        min_non_null=60,
+                        reference_len=len(complete),
+                        min_coverage_ratio=0.15,
+                        max_required_non_null=180,
+                    )
                 midday_cols = [h for h in range(10, 16) if h in fc_pivot.columns]
                 if midday_cols and ("solar" in fc_col or "load" in fc_col or "nuclear" in fc_col):
-                    features_list.append(fc_pivot[midday_cols].mean(axis=1).values)
-                    feature_names.append(f"{fc_col}_d0_midday_mean")
-                    features_list.append(fc_pivot[midday_cols].mean(axis=1).shift(1).values)
-                    feature_names.append(f"{fc_col}_d-1_midday_mean")
-                    features_list.append(fc_pivot[midday_cols].mean(axis=1).shift(7).values)
-                    feature_names.append(f"{fc_col}_d-7_midday_mean")
+                    midday_mean = fc_pivot[midday_cols].mean(axis=1)
+                    self._append_feature_if_sufficient_history(
+                        features_list, feature_names, midday_mean,
+                        f"{fc_col}_d0_midday_mean",
+                        min_non_null=60,
+                        reference_len=len(complete),
+                        min_coverage_ratio=0.15,
+                        max_required_non_null=180,
+                    )
+                    self._append_feature_if_sufficient_history(
+                        features_list, feature_names, midday_mean.shift(1),
+                        f"{fc_col}_d-1_midday_mean",
+                        min_non_null=60,
+                        reference_len=len(complete),
+                        min_coverage_ratio=0.15,
+                        max_required_non_null=180,
+                    )
+                    self._append_feature_if_sufficient_history(
+                        features_list, feature_names, midday_mean.shift(7),
+                        f"{fc_col}_d-7_midday_mean",
+                        min_non_null=60,
+                        reference_len=len(complete),
+                        min_coverage_ratio=0.15,
+                        max_required_non_null=180,
+                    )
 
             # ── 3b. Compact weather forecast block ──
             compact_weather_cols = [
@@ -964,20 +1001,57 @@ class LEARForecaster:
                 wx_pivot = wx_df.pivot_table(index="date", columns="hour", values="value", aggfunc="mean")
                 wx_pivot = wx_pivot.reindex(complete.index)
                 if target_hour in wx_pivot.columns:
-                    features_list.append(wx_pivot[target_hour].values)
-                    feature_names.append(f"{wx_col}_d0_h{target_hour:02d}")
-                    features_list.append(wx_pivot.shift(1)[target_hour].values)
-                    feature_names.append(f"{wx_col}_d-1_h{target_hour:02d}")
-                    features_list.append(wx_pivot.shift(7)[target_hour].values)
-                    feature_names.append(f"{wx_col}_d-7_h{target_hour:02d}")
+                    self._append_feature_if_sufficient_history(
+                        features_list, feature_names, wx_pivot[target_hour],
+                        f"{wx_col}_d0_h{target_hour:02d}",
+                        min_non_null=60,
+                        reference_len=len(complete),
+                        min_coverage_ratio=0.15,
+                        max_required_non_null=180,
+                    )
+                    self._append_feature_if_sufficient_history(
+                        features_list, feature_names, wx_pivot.shift(1)[target_hour],
+                        f"{wx_col}_d-1_h{target_hour:02d}",
+                        min_non_null=60,
+                        reference_len=len(complete),
+                        min_coverage_ratio=0.15,
+                        max_required_non_null=180,
+                    )
+                    self._append_feature_if_sufficient_history(
+                        features_list, feature_names, wx_pivot.shift(7)[target_hour],
+                        f"{wx_col}_d-7_h{target_hour:02d}",
+                        min_non_null=60,
+                        reference_len=len(complete),
+                        min_coverage_ratio=0.15,
+                        max_required_non_null=180,
+                    )
                 midday_cols = [h for h in range(10, 16) if h in wx_pivot.columns]
                 if midday_cols and ("shortwave_radiation" in wx_col or "cloud_cover" in wx_col):
-                    features_list.append(wx_pivot[midday_cols].mean(axis=1).values)
-                    feature_names.append(f"{wx_col}_d0_midday_mean")
-                    features_list.append(wx_pivot[midday_cols].mean(axis=1).shift(1).values)
-                    feature_names.append(f"{wx_col}_d-1_midday_mean")
-                    features_list.append(wx_pivot[midday_cols].mean(axis=1).shift(7).values)
-                    feature_names.append(f"{wx_col}_d-7_midday_mean")
+                    midday_mean = wx_pivot[midday_cols].mean(axis=1)
+                    self._append_feature_if_sufficient_history(
+                        features_list, feature_names, midday_mean,
+                        f"{wx_col}_d0_midday_mean",
+                        min_non_null=60,
+                        reference_len=len(complete),
+                        min_coverage_ratio=0.15,
+                        max_required_non_null=180,
+                    )
+                    self._append_feature_if_sufficient_history(
+                        features_list, feature_names, midday_mean.shift(1),
+                        f"{wx_col}_d-1_midday_mean",
+                        min_non_null=60,
+                        reference_len=len(complete),
+                        min_coverage_ratio=0.15,
+                        max_required_non_null=180,
+                    )
+                    self._append_feature_if_sufficient_history(
+                        features_list, feature_names, midday_mean.shift(7),
+                        f"{wx_col}_d-7_midday_mean",
+                        min_non_null=60,
+                        reference_len=len(complete),
+                        min_coverage_ratio=0.15,
+                        max_required_non_null=180,
+                    )
 
         # ── 4. Exogenous features (CH) ──
         exog_cols = [c for c in exog.columns
@@ -1111,8 +1185,16 @@ class LEARForecaster:
             })
             daily_avg = edf.groupby("date")["value"].mean()
             daily_aligned = daily_avg.reindex(complete.index)
-            features_list.append(daily_aligned.shift(2).values)
-            feature_names.append(f"{col}_d-2")
+            self._append_feature_if_sufficient_history(
+                features_list,
+                feature_names,
+                daily_aligned.shift(2),
+                f"{col}_d-2",
+                min_non_null=60,
+                reference_len=len(complete),
+                min_coverage_ratio=0.15,
+                max_required_non_null=180,
+            )
 
         # ── 5. Hydro fill ──
         if "hydro_fill" in exog.columns:
@@ -1127,14 +1209,30 @@ class LEARForecaster:
                 daily_avg = edf.groupby("date")["value"].mean()
                 daily_aligned = daily_avg.reindex(complete.index)
                 hydro_fill_available = daily_aligned.shift(2)
-                features_list.append(hydro_fill_available.values)
-                feature_names.append("hydro_fill")
+                self._append_feature_if_sufficient_history(
+                    features_list,
+                    feature_names,
+                    hydro_fill_available,
+                    "hydro_fill",
+                    min_non_null=60,
+                    reference_len=len(complete),
+                    min_coverage_ratio=0.15,
+                    max_required_non_null=180,
+                )
 
                 # Swiss Market Intelligence: hydro fill delta (rate of change)
                 # Captures filling (snowmelt) vs emptying (winter drawdown)
                 hydro_delta_7d = hydro_fill_available - hydro_fill_available.shift(7)
-                features_list.append(hydro_delta_7d.values)
-                feature_names.append("hydro_fill_delta_7d")
+                self._append_feature_if_sufficient_history(
+                    features_list,
+                    feature_names,
+                    hydro_delta_7d,
+                    "hydro_fill_delta_7d",
+                    min_non_null=60,
+                    reference_len=len(complete),
+                    min_coverage_ratio=0.15,
+                    max_required_non_null=180,
+                )
 
         # CH physical stack compact ratios: make hydro / nuclear informative without
         # requiring the model to infer relative scale from raw MW levels alone.
@@ -1330,8 +1428,16 @@ class LEARForecaster:
                 co2_df = pd.DataFrame({"date": co2_local.date, "value": co2_daily.values})
                 co2_by_date = co2_df.groupby("date")["value"].mean()
                 fuel_proxy = (gas_by_date * 2.0 + co2_by_date * 0.37).reindex(complete.index)
-                features_list.append(fuel_proxy.shift(1).values)
-                feature_names.append("fuel_stack_proxy_d-1")
+                self._append_feature_if_sufficient_history(
+                    features_list,
+                    feature_names,
+                    fuel_proxy.shift(1),
+                    "fuel_stack_proxy_d-1",
+                    min_non_null=60,
+                    reference_len=len(complete),
+                    min_coverage_ratio=0.15,
+                    max_required_non_null=180,
+                )
 
         # Assemble
         X = np.column_stack(features_list)
@@ -1351,6 +1457,31 @@ class LEARForecaster:
         if n_samples < 30:
             n_splits = 2
         return TimeSeriesSplit(n_splits=n_splits)
+
+    @staticmethod
+    def _append_feature_if_sufficient_history(
+        features_list: list,
+        feature_names: list[str],
+        values: pd.Series | np.ndarray,
+        name: str,
+        min_non_null: int = 30,
+        reference_len: int | None = None,
+        min_coverage_ratio: float = 0.0,
+        max_required_non_null: int | None = None,
+    ) -> None:
+        if name in feature_names:
+            return
+        arr = values.values if isinstance(values, pd.Series) else np.asarray(values)
+        required_non_null = int(min_non_null)
+        if reference_len is not None and float(min_coverage_ratio) > 0.0:
+            coverage_required = int(np.ceil(float(reference_len) * float(min_coverage_ratio)))
+            required_non_null = max(required_non_null, coverage_required)
+        if max_required_non_null is not None:
+            required_non_null = min(required_non_null, int(max_required_non_null))
+        if int(pd.Series(arr).notna().sum()) < required_non_null:
+            return
+        features_list.append(arr)
+        feature_names.append(name)
 
     @staticmethod
     def _safe_mae(y_true: np.ndarray, y_pred: np.ndarray) -> float:
