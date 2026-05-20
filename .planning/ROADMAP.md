@@ -50,14 +50,14 @@ P&L par 5 €/MWh d'erreur shape), pas par l'ordre alphabétique des features.
     - [x] 05C-02-PLAN.md — Lever 2 split f_H = level + anomaly + assembler integration + tests D-A4-4, D-A4-6
     - [x] 05C-03-PLAN.md — Lever 3 sigma paramétrisation + baseline flag=ON + PROJECT.md D-FLIP-1 + tests D-A4-5, D-A4-7, D-A4-9
 
-- [ ] **Phase 5: MSFC retire silent floors + PFC peut être négative**
+- [x] **Phase 5: MSFC retire silent floors + PFC peut être négative** (completed 2026-05-20)
   - Goal: la PFC peut descendre à -20 €/MWh aux heures structurelles (été 2027+ midi).
   - Bloque la profondeur du bowl, requis pour pricer correctement le bloc 10-15 d'été.
   - Context: `.planning/phases/05-msfc-log-prix-retire-silent-floors/05-CONTEXT.md`.
   - **Plans:** 3 plans
     - [x] 05-01-PLAN.md — MSFC enforce_positivity + ArbitrageFreeCalibrator enforce_m_factor_floor + REQUIREMENTS.md NEG-05 reformulation + scaffold tests/test_phase05_negative_prices.py
     - [x] 05-02-PLAN.md — WaterValueCorrection delta-additif (compute_delta_wv) + assembler integration + telemetry + 2 NEG-03 tests
-    - [ ] 05-03-PLAN.md — ContractCascader spread-additif + master flag PFC_LT_ALLOW_NEGATIVE_PRICES audit-trail + fixture/baseline parquets + 6 tests + PROJECT.md D-FLIP-2
+    - [x] 05-03-PLAN.md — ContractCascader spread-additif + master flag PFC_LT_ALLOW_NEGATIVE_PRICES audit-trail + fixture/baseline parquets + 6 tests + PROJECT.md D-FLIP-2
 - [ ] **Phase 5ter: Distribution probabiliste par bloc**
   - Goal: `pfc_block_distribution(start, end, hours_mask) → (p10, p50, p90)` via Monte-Carlo shape.
   - Permet au trader de calculer une prime de risque (shape inhedgeable).
