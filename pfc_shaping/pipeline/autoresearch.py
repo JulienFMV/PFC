@@ -231,6 +231,11 @@ def _run_backtest(
         lookback = int(hourly_p.get("fh_lookback_months", 36))
         sigma = hourly_p.get("gaussian_sigma", 0.5)
 
+        # Phase 5 D-A2-1 default (negative-ready): no explicit enforce_* kwargs.
+        # Legacy rollback per D-A2-3: pass enforce_positivity=True (smooth_base_prices),
+        # enforce_m_factor_floor=True (ArbitrageFreeCalibrator), enforce_floor=True
+        # (WaterValueCorrection), allow_negative_peak=False (ContractCascader) explicitly
+        # at the PFCAssembler construction site.
         sh = ShapeHourly(sigma=sigma)
         lb_cutoff = train.index.max() - pd.DateOffset(months=lookback)
         train_lb = train[train.index >= lb_cutoff]

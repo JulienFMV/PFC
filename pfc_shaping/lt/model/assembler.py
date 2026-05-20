@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import inspect
 import logging
+import os
 from pathlib import Path
 
 import holidays
@@ -51,6 +52,40 @@ from pfc_shaping.lt.model.shape_hourly import ShapeHourly, _split_level_anomaly
 from pfc_shaping.lt.model.shape_intraday import ShapeIntraday
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Phase 5 D-A2-2 — master flag PFC_LT_ALLOW_NEGATIVE_PRICES
+# ---------------------------------------------------------------------------
+_ALLOW_NEG_ENV_VAR = "PFC_LT_ALLOW_NEGATIVE_PRICES"
+
+
+def _resolve_allow_negative(explicit: bool | None) -> bool:
+    """Resolve PFC_LT_ALLOW_NEGATIVE_PRICES — explicit arg wins, else env-var, else False.
+
+    Phase 5 D-A2-2 — mirrors the 5bis-A ``_resolve_flag`` helper in
+    ``shape_hourly.py`` for consistency. The flag is freeze-at-init:
+    ``PFCAssembler.__init__`` reads the env-var exactly once and stores
+    the resolved value on ``self._allow_negative_prices``. Subsequent
+    env-var changes do not affect the running assembler.
+
+    Audit-trail-only: this flag does NOT override the four ctor args of
+    the sub-components (``enforce_positivity``, ``enforce_m_factor_floor``,
+    ``enforce_floor``, ``allow_negative_peak``). It is logged INFO once at
+    init for operator traceability (D-A2-2).
+    """
+    if explicit is not None:
+        return bool(explicit)
+    raw = os.getenv(_ALLOW_NEG_ENV_VAR, "0")
+    if raw == "1":
+        return True
+    if raw == "0":
+        return False
+    logger.warning(
+        "%s=%r invalide — traité comme False (Phase 5 D-A2-2)",
+        _ALLOW_NEG_ENV_VAR, raw,
+    )
+    return False
+
 
 # Horizon standard N+3 ans en jours
 HORIZON_DAYS = 3 * 365
@@ -153,18 +188,48 @@ class PFCAssembler:
     """
     Assembleur de la PFC 15min N+3 ans.
 
-    IntÃƒÂ¨gre les 3 modules ajoutÃƒÂ©s :
-        - ContractCascader  : dÃƒÂ©composition automatique des forwards
-        - WaterValueCorrection : correction hydro saisonniÃƒÂ¨re
+    Intègre les 3 modules ajoutés :
+        - ContractCascader  : décomposition automatique des forwards
+        - WaterValueCorrection : correction hydro saisonnière
         - ArbitrageFreeCalibrator : calibration no-arbitrage
 
+    Phase 5 D-A2-2 / D-A2-3 — master flag PFC_LT_ALLOW_NEGATIVE_PRICES is an
+    audit-trail INFO log only, NOT an override. The four EXPLICIT FLOOR KWARGS
+    on PFCAssembler.__init__ are the authoritative API surface:
+      - enforce_positivity: bool = False
+          (forwarded to smooth_base_prices(...) at the MSFC callsite in build())
+      - enforce_m_factor_floor: bool = False
+          (forwarded to self.calibrator.enforce_m_factor_floor)
+      - enforce_floor: bool = False
+          (forwarded to self.wv.enforce_floor)
+      - allow_negative_peak: bool = True
+          (forwarded to self.cascader.allow_negative_peak)
+
+    Defaults are negative-ready (D-A2-1). To roll back to legacy positive-only
+    behavior, construct:
+        PFCAssembler(
+            ...,
+            enforce_positivity=True,
+            enforce_m_factor_floor=True,
+            enforce_floor=True,
+            allow_negative_peak=False,
+        )
+    This is the canonical D-A2-3 operator rollback path — testable via
+    ``tests/test_phase05_negative_prices.py::test_phase05_baseline_5bisA_via_enforce_true``
+    (Plan 05-03 Task 7), which uses these four explicit ctor args.
+
     Args:
-        shape_hourly   : instance ShapeHourly fittÃƒÂ©e
-        shape_intraday : instance ShapeIntraday fittÃƒÂ©e
+        shape_hourly   : instance ShapeHourly fittée
+        shape_intraday : instance ShapeIntraday fittée
         uncertainty    : instance Uncertainty (optionnel, pour IC p10/p90)
-        water_value    : instance WaterValueCorrection fittÃƒÂ©e (optionnel)
-        cascader       : instance ContractCascader fittÃƒÂ©e (optionnel)
+        water_value    : instance WaterValueCorrection fittée (optionnel)
+        cascader       : instance ContractCascader fittée (optionnel)
         calibrator     : instance ArbitrageFreeCalibrator (optionnel)
+        allow_negative_prices : master flag audit-trail (D-A2-2); INFO-log only
+        enforce_positivity    : floor for MSFC smooth_base_prices (D-A2-1, default OFF)
+        enforce_m_factor_floor: floor for ArbitrageFreeCalibrator (D-A2-1, default OFF)
+        enforce_floor         : floor for WaterValueCorrection (D-A2-1, default OFF)
+        allow_negative_peak   : spread-additive peak synthesis (D-A2-1, default ON)
     """
 
     def __init__(
@@ -178,6 +243,11 @@ class PFCAssembler:
         calibration_fallback_to_raw: bool = True,
         peak_source_policy: str = "same_first",
         confidence_thresholds: dict[str, float] | None = None,
+        allow_negative_prices: bool | None = None,
+        enforce_positivity: bool = False,
+        enforce_m_factor_floor: bool = False,
+        enforce_floor: bool = False,
+        allow_negative_peak: bool = True,
     ) -> None:
         self.sh = shape_hourly
         self.si = shape_intraday
@@ -198,6 +268,52 @@ class PFCAssembler:
             "Detected sh=%s — outages_forecast %s",
             type(shape_hourly).__name__,
             "passed" if self._sh_accepts_outages else "skipped",
+        )
+
+        # Phase 5 — store the four explicit floor kwargs as attributes (B1/B4 Approach B).
+        # These are the authoritative API surface for floor enforcement; sub-component
+        # ctor args (e.g. wv.enforce_floor) are honored when explicitly set by the
+        # caller, but PFCAssembler-level kwargs take precedence on its own forwarding
+        # paths (the MSFC callsite at build() and the diagnostic audit log here).
+        self.enforce_positivity: bool = bool(enforce_positivity)
+        self.enforce_m_factor_floor: bool = bool(enforce_m_factor_floor)
+        self.enforce_floor: bool = bool(enforce_floor)
+        self.allow_negative_peak: bool = bool(allow_negative_peak)
+
+        # B1/B4 Approach B — forward the four floor kwargs to sub-components
+        # Override sub-component attributes at init time when rollback is requested.
+        # The reverse direction (caller constructs sub-component with floor=True and
+        # PFCAssembler with floor=False) is handled via 'or' semantics in the audit log.
+        if self.calibrator is not None and self.enforce_m_factor_floor:
+            self.calibrator.enforce_m_factor_floor = True  # override sub-component default per D-A2-3
+        if self.wv is not None and self.enforce_floor:
+            self.wv.enforce_floor = True  # override sub-component default per D-A2-3
+        if self.cascader is not None and not self.allow_negative_peak:
+            self.cascader.allow_negative_peak = False  # override sub-component default per D-A2-3
+
+        # Phase 5 D-A2-2 master flag — audit-trail INFO only, NOT an override.
+        # The four ctor args above are the actual API surface — operator rollback
+        # per D-A2-3 = pass enforce_*=True / allow_negative_peak=False explicitly.
+        self._allow_negative_prices: bool = _resolve_allow_negative(allow_negative_prices)
+
+        # The audit log resolves each floor state from the PFCAssembler-level
+        # kwarg first (authoritative), falling back to the sub-component attribute
+        # if explicit forwarding has not been wired. This keeps the log accurate
+        # even if a caller bypasses PFCAssembler kwargs and constructs sub-components
+        # with enforce_floor=True directly.
+        msfc_floor_on = self.enforce_positivity
+        af_floor_on = self.enforce_m_factor_floor or bool(getattr(self.calibrator, "enforce_m_factor_floor", False))
+        wv_floor_on = self.enforce_floor or bool(getattr(self.wv, "enforce_floor", False))
+        cascading_neg_peak_on = self.allow_negative_peak and bool(getattr(self.cascader, "allow_negative_peak", True))
+
+        logger.info(
+            "PFC_LT_ALLOW_NEGATIVE_PRICES=%s, floors_disabled={msfc:enforce_positivity=%s, "
+            "af:m_factor_floor=%s, wv:floor=%s, cascading:allow_neg_peak=%s}",
+            self._allow_negative_prices,
+            not msfc_floor_on,      # "floors_disabled" semantic: True when floor is OFF
+            not af_floor_on,
+            not wv_floor_on,
+            cascading_neg_peak_on,  # allow_negative_peak=True == floor OFF, no negation
         )
 
     def _select_peak_key(
@@ -414,9 +530,12 @@ class PFCAssembler:
         B = self._resolve_base(idx, base_prices, country=country)
 
         # ── MSFC smoothing: spline lisse B(t) across period boundaries ──
+        # Phase 5 B1/B4 Approach B: enforce_positivity forwarded from PFCAssembler
+        # kwarg to smooth_base_prices (propagates to _enforce_mean_constraints
+        # per Plan 05-01 RESEARCH Pitfall 1 — TWO floors, both gated by the same flag).
         try:
             from pfc_shaping.lt.model.msfc_spline import smooth_base_prices
-            B = smooth_base_prices(idx, base_prices, B)
+            B = smooth_base_prices(idx, base_prices, B, enforce_positivity=self.enforce_positivity)
         except Exception as exc:
             logger.warning("MSFC smoothing failed, using flat B: %s", exc)
 

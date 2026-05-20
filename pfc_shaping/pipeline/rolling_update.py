@@ -362,6 +362,11 @@ def run_update(config: dict | None = None) -> Path:
             logger.info("Calibration window: %s -> %s (%d rows)", epex_fit.index.min().date(), epex_fit.index.max().date(), len(epex_fit))
 
             logger.info("5/8 Calibrate ShapeHourly")
+            # Phase 5 D-A2-1 default (negative-ready): no explicit enforce_* kwargs.
+            # Legacy rollback per D-A2-3: pass enforce_positivity=True (smooth_base_prices),
+            # enforce_m_factor_floor=True (ArbitrageFreeCalibrator), enforce_floor=True
+            # (WaterValueCorrection), allow_negative_peak=False (ContractCascader) explicitly
+            # at the PFCAssembler construction site.
             sh = ShapeHourly(sigma=params.get("gaussian_sigma", 0.5)).fit(epex_fit, cal_fit)
             model_dir_path.mkdir(parents=True, exist_ok=True)
             sh.save(model_dir_path / "shape_hourly.parquet")
