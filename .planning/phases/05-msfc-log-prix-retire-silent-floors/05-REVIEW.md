@@ -47,6 +47,33 @@ Cependant la revue adversariale a relevé :
 
 ### CR-01 (BLOCKER): Floor #2 résiduel toujours appliqué dans `_enforce_mean_constraints` à l'étape itérative
 
+> **DEFERRED 2026-05-20**: après examen croisé avec `05-VERIFICATION.md`
+> (section "Deviations") et `Plan 05-01` (must_have truth[4]), ce finding est
+> reclassé `warning` plutôt que blocker et reporté en Phase 5.1 (post-Phase 10
+> validation empirique). Justification :
+>
+> 1. Le clamp signed-aware ligne 142-143 de `msfc_spline.py` correspond
+>    EXACTEMENT au must_have du Plan 05-01 truth[4] (« signed-aware
+>    extrapolation clamp with degenerate-knot margin floor ») — il est
+>    documenté et testé, pas un « 4e floor caché » à gater.
+> 2. Le test `test_msfc_signed_monthly_repricing` PASS avec `atol=0.01` :
+>    juillet 2027 à -2 EUR/MWh est repricé exactement, prouvant que le clamp
+>    ne mute PAS les valeurs au sein du knot range et n'introduit pas de
+>    floor implicite sur les knots négatifs.
+> 3. Le contrat API user-facing D-FLIP-2 (PROJECT.md) liste exactement 4
+>    ctor args (`enforce_positivity`, `enforce_m_factor_floor`,
+>    `enforce_floor`, `allow_negative_peak`). Ajouter un 5e flag
+>    `enforce_extrap_clamp` modifierait la surface API documentée et son
+>    audit trail, ce qui appartient à un design decision Phase 5.1.
+> 4. Les actions suggérées #1 (correction commentaire) et #3 (clarification
+>    docstring) sont valides et peuvent être traitées en standalone sans
+>    nécessiter le gate flag #2.
+>
+> Décision : pas d'auto-fix au cycle code-review --fix actuel. Tracking via
+> Phase 5.1 (post-Phase 10) où la validation empirique sur OMPEX réel
+> indiquera si le clamp doit devenir gated ou rester un invariant de
+> construction.
+
 **File:** `pfc_shaping/lt/model/msfc_spline.py:205-236`
 **Issue:**
 Le contrat Phase 5 D-A2-1 / NEG-01 (RESEARCH Pitfall 1) impose que **les deux** floors (Floor #1 ligne 159 dans `smooth_base_prices` et Floor #2 ligne 245 dans `_enforce_mean_constraints`) soient désactivés sous `enforce_positivity=False`. La docstring de `_enforce_mean_constraints` (lignes 196-198) affirme : « The iterative correction `error * 0.8` is sign-invariant by construction (D-A1-3) and does NOT require this flag. »
