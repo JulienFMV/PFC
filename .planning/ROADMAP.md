@@ -178,7 +178,7 @@ P&L par 5 €/MWh d'erreur shape), pas par l'ordre alphabétique des features.
 
 ---
 
-### Phase 10 (refondu): Backtest par bloc vs HFC OMPEX
+### Phase 10: Backtest par bloc vs HFC OMPEX
 **Goal**: Démontrer la supériorité de notre PFC vs OMPEX sur les profile deals.
 
 **Depends on**: Phase 5bis livrée (peut être lancé en parallèle des Phases 5/5ter).

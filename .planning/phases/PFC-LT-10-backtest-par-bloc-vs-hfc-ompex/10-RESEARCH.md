@@ -862,32 +862,24 @@ def test_phase10_sc1_continuity(pillar1_results):
 
 **If this table is empty:** *N/A — assumption list above is the explicit handoff to discuss-phase / user confirmation before plan execution.*
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Holiday-weekend threshold re-calibration (Pitfall 1)**
-   - What we know: SOTA threshold [0.65, 0.95] from Hildmann 2013 (calibrated pre-PV-boom CH market).
-   - What's unclear: Whether the threshold still holds on a 2024-2025 negative-prone CH market under Config 4.
-   - Recommendation: Plan 10-02 Task A — measure ratio on raw 2019-2023 EPEX. If observed empirical ratio is < 0.65 or > 0.95, propose re-calibrated bounds (e.g. P10-P90 of 12 monthly windows) and document in 10-VERIFICATION.md.
+> Toutes les 5 questions sont resolved par les Plans 10-01..10-04 ou par décision technique explicite documentée ci-dessous. Statut mis à jour 2026-05-20 post-plan-checker iter 1.
 
-2. **Forwards `eex_report_path` historical vintage availability**
-   - What we know: Path is `H:\...Price_Report_EEX.xlsx` — only accessible from FMV poste (NOT Mac Mini). `config.yaml:77`.
-   - What's unclear: Whether there is a local snapshot/copy on Mac Mini, or whether vintage forwards need to be reconstructed from cached parquet.
-   - Recommendation: Plan 10-01 Task 1 — check `data/` for any forward-history parquet (e.g. `data/forwards_hist_2024_2025.parquet`). If absent, ask user for one-time bootstrap from FMV poste OR cascade-derive from EPEX-realised Cal/Q/M means (lossy but actionable).
+1. **Holiday-weekend threshold re-calibration (Pitfall 1)** — **RESOLVED → Plan 10-01 Task 3b**
+   - Resolution path: Plan 10-01 Task 3 sub-step 3b mesure empirique `mean(EPEX|weekend) / mean(EPEX|weekday)` sur 2019-2023 EPEX (cached) et documente la décision dans `10-01-NOTES.md`. Le threshold résolu (keep [0.65, 0.95] OU re-calibrate P10-P90 OU exclude PV-driven hours) est passé en constante consommée par `structural_tests.py` (Plan 10-02). Plan 10-02 wires sur cette constante, pas sur le hardcode [0.65, 0.95].
 
-3. **Pillar 5 KYOS/Volue/EULER public sources access from Mac Mini**
-   - What we know: `reference_pfc_state_of_art.md` user memory has the synthesis.
-   - What's unclear: Whether KYOS KyCurve / Volue HPFC / EULER marketing pages (vendor websites) need fresh fetch for 2024-2025 product updates.
-   - Recommendation: Plan 10-04 Task A — fetch latest KYOS/Volue product pages via WebFetch to confirm no SOTA shift since user-memory snapshot. If shift detected, augment the comparative table. If not, use memory verbatim.
+2. **Forwards `eex_report_path` historical vintage availability** — **RESOLVED → Plan 10-01 Task 3c**
+   - Resolution path: Plan 10-01 Task 3 sub-step 3c teste l'accès local au snapshot forwards XLSX. Si présent → wire `pfc_shaping.data.ingest_forwards` standard. Si absent → fallback `derive_forwards_from_epex_hist(epex_hist, vintage) → dict` dans `scorecard.py` (cache `data/forwards_history_phase10.parquet` pour les 24 vintages) + sanity test contre 1-2 spot-check quotes. Décision documentée dans `10-01-NOTES.md`.
 
-4. **Mincer-Zarnowitz pooled vs per-vintage**
-   - What we know: CONTEXT D-A2-4 says "Wald joint test α=0 & β=1", no per-vintage spec.
-   - What's unclear: Whether MZ is computed per-vintage (24 separate MZ p-values, then aggregated) or pooled (1 MZ per (bloc × horizon × config) on all 24 vintages concatenated).
-   - Recommendation: **Pooled** (Pitfall 5). Per-vintage MZ on 1-month windows has too-low n. Pooled gives a single p-value per cell with n ≈ thousands. Documented as decision in Plan 10-02.
+3. **Pillar 5 KYOS/Volue/EULER public sources access from Mac Mini** — **RESOLVED → Plan 10-04 (accept user-memory)**
+   - Resolution path: Plan 10-04 Task 3 utilise `~/.claude/projects/-Users-julienbattaglia-Desktop-PFC/memory/reference_pfc_state_of_art.md` user-memory verbatim per CONTEXT D-A5-2 ("Sources : `reference_pfc_state_of_art.md` mémoire"). Un fresh-fetch est optionnel (gated par `checkpoint:human-verify` Plan 10-04 Task 4 — operator peut demander re-fetch si shift suspecté pendant la review). Pas de blocker.
 
-5. **Bowl OFF + Phase 5 floors OFF (Config 3) numerical stability**
-   - What we know: Phase 5 D-A2-3 documents the operator rollback path uses `enforce_*=True` for all 4 floors.
-   - What's unclear: Whether Config 3 (bowl OFF + floors OFF = legacy shape + negative-ready) is numerically stable for all 24 vintages, or whether some vintages crash.
-   - Recommendation: Plan 10-02 Task B — try Config 3 build on 1 vintage (e.g. 2024-06-28) first, validate no crash. If crash → Plan 10-03 adds an `--allow-config-3-failures` flag (skip + warn), document in scorecard.
+4. **Mincer-Zarnowitz pooled vs per-vintage** — **RESOLVED → pooled (Pitfall 5)**
+   - Resolution path: **Pooled** consistent avec Pitfall 5. Per-vintage MZ sur 1-month windows a `n` trop faible (~10-100 obs). Pooled aggrège sur les 24 vintages avant compute (`n_obs >> 30`), 1 MZ par cellule (bloc × horizon × config). Plan 10-02 documente le pattern dans `compute_cell_kpis` ; Plan 10-04 Task 2 step 5b agrège pred sur les 24 vintages avant le call MZ.
+
+5. **Bowl OFF + Phase 5 floors OFF (Config 3) numerical stability** — **RESOLVED → Plan 10-02 smoke test (added per checker iter 1)**
+   - Resolution path: Plan 10-02 ajoute une smoke-test task : `build_one(config=Config3, vintage='2024-06-28')` doit ne pas crasher (`assert pfc.notna().all() and (pfc.abs() < 1000).all()` sanity bounds). Si crash → Plan 10-03 ajoute un mécanisme `--allow-config-3-failures` (skip + warn dans scorecard). Documenté dans Plan 10-02 frontmatter notes.
 
 ## Environment Availability
 
