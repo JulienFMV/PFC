@@ -33,8 +33,7 @@ LT "SOTA maison FMV" et démontrer sa supériorité vs OMPEX sur les profile dea
   ou est explicitement désactivé sur l'export LT mid-market.
 - [ ] **NEG-04** : `cascading.synthesize_peak_prices` n'impose pas un ratio ≥ 1
   sur les forwards Cal négatifs.
-- [ ] **NEG-05** : Un Cal'27 forward coté -10 €/MWh est correctement repricé par
-  la PFC à -10 €/MWh moyenne sur l'année (test de bout-en-bout).
+- [ ] **NEG-05** : Un monthly forward négatif (e.g., July M-07'27 = -2 €/MWh, autres months positifs typiques EEX) est correctement repricé par la PFC à -2 €/MWh moyenne sur le mois (math invariance test, vérifie l'absence des floors silencieux ligne 131 et ligne 203 du MSFC spline). Note (2026-05-19) : reformulation post-discuss-phase Phase 5 — un Cal annuel n'est jamais négatif en pratique, ce sont des heures structurelles qui le sont (D-A4-7 / 05-CONTEXT.md).
 
 ### Block Distribution / Risk Premium (priorité 2)
 

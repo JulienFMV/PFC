@@ -25,6 +25,11 @@ def _pfc_lt_env_hygiene():
 
     Prevents test-to-test env-var leakage for any key matching ``PFC_LT_*``
     (in particular ``PFC_LT_USE_SEASONAL_HOURLY_SHAPE`` used by ShapeHourly).
+
+    Known PFC_LT_* keys covered by the prefix snapshot (no code change needed
+    when new keys are added — the prefix match handles them automatically):
+    - PFC_LT_USE_SEASONAL_HOURLY_SHAPE (5bis-A D-06, ShapeHourly freeze-at-init)
+    - PFC_LT_ALLOW_NEGATIVE_PRICES (Phase 5 D-A2-2, PFCAssembler — introduced in Plan 05-03)
     """
     # Snapshot all PFC_LT_* keys present at test entry
     snapshot = {k: v for k, v in os.environ.items() if k.startswith("PFC_LT_")}

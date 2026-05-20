@@ -40,6 +40,7 @@ def smooth_base_prices(
     idx: pd.DatetimeIndex,
     base_prices: dict[str, float],
     B_flat: pd.Series,
+    enforce_positivity: bool = False,
 ) -> pd.Series:
     """Smooth the flat staircase B(t) into a continuous curve.
 
@@ -51,6 +52,17 @@ def smooth_base_prices(
         idx: 15-min DatetimeIndex (UTC).
         base_prices: Forward price dict (keys: '2026', '2026-Q1', '2026-03', etc.).
         B_flat: The staircase base price series from _resolve_base().
+        enforce_positivity: When False (default, negative-ready per Phase 5 D-A2-1 /
+            NEG-01), neither the floor at line 131 nor the floor at line 203 inside
+            ``_enforce_mean_constraints`` clamps the smoothed curve — allowing
+            negative prices driven by negative forwards.  When True (legacy rollback
+            path, operator opt-in per D-A2-3), both floors are restored exactly.
+
+            RESEARCH Pitfall 1: two independent floors exist — one in this function
+            (``B_smooth = np.maximum(B_smooth, 1.0)``) and one at the very end of
+            ``_enforce_mean_constraints`` (``return np.maximum(result, 1.0)``).
+            This kwarg is PROPAGATED to the helper so both are conditional under the
+            same flag; disabling only the first leaves the second active silently.
 
     Returns:
         pd.Series with same index, smoothed B values.
@@ -113,11 +125,22 @@ def smooth_base_prices(
     x_target = (idx_zh - start_ts).total_seconds().values / 86400.0
     B_smooth_raw = interpolator(x_target)
 
-    # Clamp extrapolation to nearest knot value (P1-02)
-    # PCHIP with extrapolate=True can produce aberrant prices before the
-    # first and after the last monthly midpoint.  Clamp to a generous
-    # band around the knot range to prevent runaway extrapolation.
-    B_smooth_raw = np.clip(B_smooth_raw, y_knots.min() * 0.5, y_knots.max() * 2.0)
+    # Clamp extrapolation to a signed-aware band around the knot range (P1-02,
+    # Phase 5 D-A1-2, codex action #3).
+    # PCHIP with extrapolate=True can produce aberrant prices before the first
+    # and after the last monthly midpoint.
+    #
+    # Old formula:  np.clip(..., y_knots.min()*0.5, y_knots.max()*2.0)
+    #   Broken for all-negative knots — produces inverted bounds (lo > hi).
+    #   Example: y_knots=[-30,-20,-25] → lo=-15, hi=-40 (lo > hi, np.clip UB).
+    #
+    # New formula uses a symmetric margin around the knot range:
+    #   margin = max(0.5 * ptp(y_knots), 1.0)
+    # The max(..., 1.0) floor prevents margin==0 when all knots are identical
+    # (np.ptp==0 would pin B_smooth_raw to a single value regardless of PCHIP).
+    # 1.0 EUR/MWh is a meaningful EEX-scale floor for the clamp window width.
+    margin = max(0.5 * float(np.ptp(y_knots)), 1.0)
+    B_smooth_raw = np.clip(B_smooth_raw, y_knots.min() - margin, y_knots.max() + margin)
 
     # ── 3. Enforce mean constraints per delivery period ───────────────
     # Iterative correction: adjust knot values so that the mean
@@ -125,10 +148,15 @@ def smooth_base_prices(
     B_smooth = _enforce_mean_constraints(
         idx_zh, x_target, x_knots, y_knots, month_keys,
         base_only, B_smooth_raw, start_ts, max_iter=10,
+        enforce_positivity=enforce_positivity,
     )
 
-    # Ensure positivity
-    B_smooth = np.maximum(B_smooth, 1.0)
+    # Floor #1 — conditional on enforce_positivity (Phase 5 D-A2-1 / NEG-01).
+    # When False (default, negative-ready): skip so negative forwards propagate.
+    # When True (legacy rollback, D-A2-3): restore the 1.0 EUR/MWh floor.
+    # Note: Floor #2 lives inside _enforce_mean_constraints (see Pitfall 1).
+    if enforce_positivity:
+        B_smooth = np.maximum(B_smooth, 1.0)
 
     # ── 4. Verify ──────────────────────────────────────────────────────
     max_correction = np.max(np.abs(B_smooth - B_flat.values))
@@ -152,12 +180,22 @@ def _enforce_mean_constraints(
     B_initial: np.ndarray,
     start_ts: pd.Timestamp,
     max_iter: int = 10,
+    enforce_positivity: bool = False,
 ) -> np.ndarray:
     """Iteratively adjust knot values to match monthly mean constraints.
 
     Simple and robust: for each month where mean(B) != forward price,
     scale the knot value proportionally. Converges quickly because
     PCHIP is local (changing one knot mainly affects nearby months).
+
+    Args:
+        enforce_positivity: When False (default, Phase 5 D-A2-1 negative-ready),
+            the final ``np.maximum(result, 1.0)`` floor is skipped — allowing
+            negative values driven by negative monthly forwards.  When True
+            (legacy rollback path), the floor is applied.  This is Floor #2
+            (RESEARCH Pitfall 1); Floor #1 lives in ``smooth_base_prices``.
+            The iterative correction ``error * 0.8`` is sign-invariant by
+            construction (D-A1-3) and does NOT require this flag.
     """
     years = np.array([t.year for t in idx_zh])
     months = np.array([t.month for t in idx_zh])
@@ -197,10 +235,14 @@ def _enforce_mean_constraints(
                          iteration + 1, max_error)
             break
 
-    # Final interpolation with positivity floor
+    # Final interpolation — floor #2, conditional on enforce_positivity (Phase 5 D-A2-1).
+    # When False (default, negative-ready): return raw interpolated values.
+    # When True (legacy rollback): restore the 1.0 EUR/MWh positivity floor.
+    # See RESEARCH Pitfall 1 — this is the second (hidden) floor; the first is
+    # in smooth_base_prices after the call to this function.
     interpolator = PchipInterpolator(x_knots, y_adjusted, extrapolate=True)
     result = interpolator(x_target)
-    return np.maximum(result, 1.0)
+    return np.maximum(result, 1.0) if enforce_positivity else result
 
 
 def _verify_constraints(
