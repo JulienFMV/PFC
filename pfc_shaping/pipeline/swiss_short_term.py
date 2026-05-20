@@ -101,20 +101,32 @@ def run_swiss_short_term_overlay(
         inputs.required_neighbor_codes,
     )
 
-    lear = _fit_lear_model(
+    primary_lear = _fit_lear_model(
         inputs=inputs,
         use_foundation_model=use_foundation_model,
-        use_governed_forecast_features=use_governed_forecast_features,
+        use_governed_forecast_features=False,
     )
 
+    governed_lear: LEARForecaster | None = None
     forecast_horizon_days = 10
-    governed_health = lear.assess_governed_forecast_feature_health(
-        horizon_days=forecast_horizon_days,
-        min_coverage_ratio=min_governed_forecast_coverage,
-    )
-    max_supported_horizon_days = int(governed_health.get("max_supported_horizon_days", 0))
     governed_applied_horizon_days = 0
-    fallback_lear: LEARForecaster | None = None
+    if use_governed_forecast_features:
+        governed_lear = _fit_lear_model(
+            inputs=inputs,
+            use_foundation_model=False,
+            use_governed_forecast_features=True,
+        )
+        governed_health = governed_lear.assess_governed_forecast_feature_health(
+            horizon_days=forecast_horizon_days,
+            min_coverage_ratio=min_governed_forecast_coverage,
+        )
+    else:
+        governed_health = primary_lear.assess_governed_forecast_feature_health(
+            horizon_days=forecast_horizon_days,
+            min_coverage_ratio=min_governed_forecast_coverage,
+        )
+
+    max_supported_horizon_days = int(governed_health.get("max_supported_horizon_days", 0))
     if use_governed_forecast_features and max_supported_horizon_days <= 0:
         logger.warning(
             "  Disabling governed forecast features for this run: coverage=%.3f < %.3f, max_supported_horizon_days=%s, missing sources=%s",
@@ -123,22 +135,13 @@ def run_swiss_short_term_overlay(
             max_supported_horizon_days,
             governed_health.get("missing_sources", []),
         )
-        lear = _fit_lear_model(
-            inputs=inputs,
-            use_foundation_model=use_foundation_model,
-            use_governed_forecast_features=False,
-        )
+        governed_lear = None
     elif use_governed_forecast_features and max_supported_horizon_days < forecast_horizon_days:
         logger.warning(
             "  Governed forecast features only supported through J+%d; using baseline fallback for J+%d..J+%d",
             max_supported_horizon_days,
             max_supported_horizon_days + 1,
             forecast_horizon_days,
-        )
-        fallback_lear = _fit_lear_model(
-            inputs=inputs,
-            use_foundation_model=use_foundation_model,
-            use_governed_forecast_features=False,
         )
         governed_applied_horizon_days = max_supported_horizon_days
     elif use_governed_forecast_features:
@@ -159,14 +162,21 @@ def run_swiss_short_term_overlay(
     )
     _save_input_health(input_health, logger)
 
-    lear_forecast = lear.predict(horizon_days=forecast_horizon_days)
-    if fallback_lear is not None and governed_applied_horizon_days < forecast_horizon_days:
-        fallback_forecast = fallback_lear.predict(horizon_days=forecast_horizon_days)
+    primary_forecast = primary_lear.predict(horizon_days=forecast_horizon_days)
+    lear_forecast = primary_forecast.copy()
+    if governed_lear is not None and governed_applied_horizon_days > 0:
+        governed_forecast = governed_lear.predict(horizon_days=forecast_horizon_days)
         lear_forecast = _merge_governed_and_baseline_forecasts(
-            governed_forecast=lear_forecast,
-            baseline_forecast=fallback_forecast,
+            governed_forecast=governed_forecast,
+            baseline_forecast=primary_forecast,
             governed_horizon_days=governed_applied_horizon_days,
         )
+        if use_foundation_model:
+            lear_forecast = _overwrite_routed_day_slice(
+                base_forecast=lear_forecast,
+                replacement_forecast=primary_forecast,
+                day_values=[1],
+            )
     logger.info("  LEAR forecast: %d hours, mean=%.1f EUR/MWh", len(lear_forecast), lear_forecast["price_lear"].mean())
 
     lear_forecast = _maybe_apply_experimental_pricefm(project_root, lear_forecast, logger)
@@ -180,7 +190,7 @@ def run_swiss_short_term_overlay(
     logger.info("  LEAR standalone saved: %s.parquet", lear_base)
 
     lear_run_id = _persist_lear_forecast(lear_forecast, logger)
-    _maybe_run_lear_backtest(lear, lear_run_id, logger)
+    _maybe_run_lear_backtest(primary_lear, lear_run_id, logger)
 
     logger.info("  LEAR completed in %.1fs", time.time() - t_lear)
     return SwissShortTermArtifacts(pfc_ch=pfc_ch, lear_forecast=lear_forecast, lear_run_id=lear_run_id)
@@ -287,6 +297,43 @@ def _merge_governed_and_baseline_forecasts(
     return merged
 
 
+def _overwrite_routed_day_slice(
+    base_forecast: pd.DataFrame,
+    replacement_forecast: pd.DataFrame,
+    day_values: list[int],
+    max_jump_eur_mwh: float = 1.5,
+) -> pd.DataFrame:
+    merged = base_forecast.copy()
+    join_cols = ["timestamp"]
+    if "hour" in merged.columns and "hour" in replacement_forecast.columns:
+        join_cols.append("hour")
+
+    repl = replacement_forecast.copy()
+    for col in [c for c in ["price_lear", "price_p10", "price_p90", "n_windows", "mlp_used", "fm_used", "fm_raw_price"] if c in repl.columns]:
+        repl = repl.rename(columns={col: f"{col}_repl"})
+
+    merged = merged.merge(
+        repl[[c for c in repl.columns if c in join_cols or c.endswith("_repl")]],
+        on=join_cols,
+        how="left",
+    )
+    mask = merged["days_ahead"].isin(day_values)
+    for col in ["price_lear", "price_p10", "price_p90", "n_windows", "mlp_used", "fm_used", "fm_raw_price"]:
+        repl_col = f"{col}_repl"
+        if repl_col in merged.columns and col in merged.columns:
+            merged.loc[mask, col] = merged.loc[mask, repl_col].fillna(merged.loc[mask, col])
+
+    keep_cols = [c for c in base_forecast.columns if c in merged.columns]
+    merged = merged[keep_cols].copy()
+    if "days_ahead" in merged.columns and day_values:
+        merged = _apply_local_boundary_continuity_guard(
+            merged,
+            boundary_days=[int(max(day_values))],
+            max_jump_eur_mwh=max_jump_eur_mwh,
+        )
+    return merged
+
+
 def _apply_transition_continuity_guard(
     forecast: pd.DataFrame,
     governed_horizon_days: int,
@@ -307,6 +354,34 @@ def _apply_transition_continuity_guard(
             for pos in range(1, len(rows)):
                 prev_idx = rows[pos - 1]
                 curr_idx = rows[pos]
+                delta = float(guarded.at[curr_idx, col] - guarded.at[prev_idx, col])
+                if abs(delta) > max_jump_eur_mwh:
+                    guarded.at[curr_idx, col] = float(
+                        guarded.at[prev_idx, col] + np.sign(delta) * max_jump_eur_mwh
+                    )
+    if all(col in guarded.columns for col in ["price_p10", "price_lear", "price_p90"]):
+        guarded["price_p10"] = np.minimum(guarded["price_p10"], guarded["price_lear"])
+        guarded["price_p90"] = np.maximum(guarded["price_p90"], guarded["price_lear"])
+    return guarded
+
+
+def _apply_local_boundary_continuity_guard(
+    forecast: pd.DataFrame,
+    boundary_days: list[int],
+    max_jump_eur_mwh: float = 1.5,
+) -> pd.DataFrame:
+    guarded = forecast.copy()
+    if "days_ahead" not in guarded.columns or "price_lear" not in guarded.columns:
+        return guarded
+    group_cols = ["hour"] if "hour" in guarded.columns else []
+    for boundary_day in sorted(set(int(v) for v in boundary_days)):
+        boundary_mask = guarded["days_ahead"].isin([boundary_day, boundary_day + 1])
+        for _, idx in guarded.loc[boundary_mask].groupby(group_cols or (lambda _: 0)).groups.items():
+            rows = guarded.loc[list(idx)].sort_values(["days_ahead"]).index.tolist()
+            if len(rows) != 2:
+                continue
+            prev_idx, curr_idx = rows
+            for col in [c for c in ["price_lear", "price_p10", "price_p90"] if c in guarded.columns]:
                 delta = float(guarded.at[curr_idx, col] - guarded.at[prev_idx, col])
                 if abs(delta) > max_jump_eur_mwh:
                     guarded.at[curr_idx, col] = float(

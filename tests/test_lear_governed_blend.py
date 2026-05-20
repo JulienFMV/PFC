@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import pandas as pd
 
-from pfc_shaping.pipeline.swiss_short_term import _merge_governed_and_baseline_forecasts
+from pfc_shaping.pipeline.swiss_short_term import (
+    _merge_governed_and_baseline_forecasts,
+    _overwrite_routed_day_slice,
+)
 
 
 def _make_forecast(prices: list[float], p10_shift: float = -5.0, p90_shift: float = 5.0) -> pd.DataFrame:
@@ -52,3 +55,18 @@ def test_governed_baseline_blend_preserves_interval_ordering() -> None:
 
     assert (merged["price_p10"] <= merged["price_lear"]).all()
     assert (merged["price_lear"] <= merged["price_p90"]).all()
+
+
+def test_overwrite_routed_day_slice_replaces_j1_and_caps_jump_to_j2() -> None:
+    routed = _make_forecast([110.0, 100.0, 100.0, 100.0])
+    replacement = _make_forecast([90.0, 95.0, 95.0, 95.0])
+
+    merged = _overwrite_routed_day_slice(
+        base_forecast=routed,
+        replacement_forecast=replacement,
+        day_values=[1],
+    )
+
+    out = merged.sort_values("days_ahead").reset_index(drop=True)
+    assert float(out.loc[0, "price_lear"]) == 90.0
+    assert abs(float(out.loc[1, "price_lear"]) - float(out.loc[0, "price_lear"])) <= 1.5 + 1e-9
