@@ -1853,9 +1853,12 @@ class LEARForecaster:
                 scaler.fit(X_arr[:n_train])
                 X_scaled = scaler.transform(X_arr)
                 cv = self._time_series_cv(n_train)
+                effective_max_iter = self.max_iter
+                if self.use_governed_forecast_features and float(self.elasticnet_l1_ratio_effective) >= 0.5:
+                    effective_max_iter = max(int(effective_max_iter), 5000)
                 model = ElasticNetCV(
                     l1_ratio=self.elasticnet_l1_ratio_effective,
-                    max_iter=self.max_iter,
+                    max_iter=effective_max_iter,
                     cv=cv,
                     random_state=self.random_state,
                 )
