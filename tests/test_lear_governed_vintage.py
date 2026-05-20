@@ -99,6 +99,37 @@ def test_assess_governed_health_drops_only_low_coverage_sources() -> None:
     assert lear.GOVERNED_FORECAST_COLUMNS[0] in lear._forecast_feature_pivots
 
 
+def test_assess_governed_health_disables_run_when_no_sources_meet_threshold() -> None:
+    lear = LEARForecaster(use_governed_forecast_features=True)
+    lear._fitted = True
+    idx = pd.date_range("2026-05-01", periods=48, freq="h", tz="Europe/Zurich")
+    lear._idx_local = idx
+    forecast_dates = [
+        (idx[-1] + pd.Timedelta(days=1)).date(),
+        (idx[-1] + pd.Timedelta(days=2)).date(),
+    ]
+    weak_pivot = pd.DataFrame(
+        {h: [1.0, 1.0] for h in range(24)},
+        index=forecast_dates,
+    )
+    weak_pivot.loc[:, :] = None
+    weak_pivot.loc[forecast_dates[0], 0] = 1.0
+
+    all_sources = (*lear.GOVERNED_FORECAST_COLUMNS, *lear.GOVERNED_WEATHER_COLUMNS)
+    pivots = {source: weak_pivot.copy() for source in all_sources}
+    lear._forecast_feature_pivots = dict(pivots)
+    lear._all_forecast_feature_pivots = dict(pivots)
+    lear._governed_vintage_status = {
+        "multi_country_forecast": {"vintage_schema_verified": False, "invalid_rows_dropped": 0, "total_rows_seen": 10},
+        "weather_forecast": {"vintage_schema_verified": False, "invalid_rows_dropped": 0, "total_rows_seen": 10},
+    }
+
+    health = lear.assess_governed_forecast_feature_health(horizon_days=2, min_coverage_ratio=0.98)
+
+    assert health["enabled_for_run"] is False
+    assert health["max_supported_horizon_days"] == 0
+
+
 def test_select_effective_l1_ratio_bumps_when_vif_is_dense() -> None:
     lear = LEARForecaster(use_governed_forecast_features=True)
     low = lear._select_effective_l1_ratio({"features_over_5": ["a", "b", "c"]})

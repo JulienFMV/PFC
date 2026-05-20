@@ -615,23 +615,24 @@ class LEARForecaster:
             if source_col in source_pivots
         }
 
-        for d in range(1, int(horizon_days) + 1):
-            candidate_dates = forecast_dates[:d]
-            candidate_ok = True
-            for source_col in retained_sources:
-                pivot = self._forecast_feature_pivots.get(source_col)
-                if pivot is None:
-                    candidate_ok = False
-                    break
-                future = pivot.reindex(index=candidate_dates, columns=range(24))
-                expected = int(future.shape[0] * future.shape[1])
-                available = int(future.notna().sum().sum())
-                coverage = float(available / expected) if expected else 0.0
-                if coverage < float(min_coverage_ratio):
-                    candidate_ok = False
-                    break
-            if candidate_ok:
-                max_supported_horizon_days = d
+        if retained_sources:
+            for d in range(1, int(horizon_days) + 1):
+                candidate_dates = forecast_dates[:d]
+                candidate_ok = True
+                for source_col in retained_sources:
+                    pivot = self._forecast_feature_pivots.get(source_col)
+                    if pivot is None:
+                        candidate_ok = False
+                        break
+                    future = pivot.reindex(index=candidate_dates, columns=range(24))
+                    expected = int(future.shape[0] * future.shape[1])
+                    available = int(future.notna().sum().sum())
+                    coverage = float(available / expected) if expected else 0.0
+                    if coverage < float(min_coverage_ratio):
+                        candidate_ok = False
+                        break
+                if candidate_ok:
+                    max_supported_horizon_days = d
 
         coverage_ratio = float(total_available / total_expected) if total_expected else 1.0
         health["coverage_ratio"] = coverage_ratio

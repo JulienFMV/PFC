@@ -127,6 +127,7 @@ def run_swiss_short_term_overlay(
         )
 
     max_supported_horizon_days = int(governed_health.get("max_supported_horizon_days", 0))
+    governed_health_enabled = bool(governed_health.get("enabled_for_run", False))
     if use_governed_forecast_features and max_supported_horizon_days <= 0:
         logger.warning(
             "  Disabling governed forecast features for this run: coverage=%.3f < %.3f, max_supported_horizon_days=%s, missing sources=%s",
@@ -136,6 +137,12 @@ def run_swiss_short_term_overlay(
             governed_health.get("missing_sources", []),
         )
         governed_lear = None
+    elif use_governed_forecast_features and not governed_health_enabled:
+        logger.warning(
+            "  Disabling governed forecast features for this run: no retained governed sources passed coverage threshold."
+        )
+        governed_lear = None
+        max_supported_horizon_days = 0
     elif use_governed_forecast_features and max_supported_horizon_days < forecast_horizon_days:
         logger.warning(
             "  Governed forecast features only supported through J+%d; using baseline fallback for J+%d..J+%d",
