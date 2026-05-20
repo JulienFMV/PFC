@@ -359,6 +359,7 @@ class ArbitrageFreeCalibrator:
         regularisation: float = 1e-8,
         tol: float = 0.01,
         mode: str = "multiplicative",
+        enforce_m_factor_floor: bool = False,
     ) -> None:
         if mode not in ("additive", "multiplicative"):
             raise ValueError(f"mode must be 'additive' or 'multiplicative', got {mode!r}")
@@ -367,6 +368,15 @@ class ArbitrageFreeCalibrator:
         self.regularisation = regularisation
         self.tol = tol
         self.mode = mode
+        self.enforce_m_factor_floor = enforce_m_factor_floor
+        # Phase 5 D-A2-1 / NEG-02: when False (default, negative-ready), the
+        # m_factor = np.maximum(m_factor, 0.1) clip in the multiplicative path
+        # is skipped — allowing m_factor < 0.1 and thus negative calibrated prices.
+        # When True (legacy rollback path, D-A2-3): the clip is applied AND
+        # converged=False is propagated whenever the clip actually mutates m_factor
+        # (NEG-02 literal — the floor must not silently mask calibration residuals).
+        # The ctor arg is inconditionnel for traceability even in additive mode
+        # (the floor is a no-op in additive path; ctor arg is still stored).
 
     # -----------------------------------------------------------------
     # Public API
@@ -503,6 +513,9 @@ class ArbitrageFreeCalibrator:
         )
 
         # ── Calibrated curve ──────────────────────────────────────────
+        # floor_applied tracks whether the m_factor floor mutated the values;
+        # initialised False so the additive path is safe (no floor there).
+        floor_applied = False
         if self.mode == "multiplicative":
             # Additive delta is solved; convert to multiplicative:
             # P_add = S + delta_add (reprices exactly)
@@ -514,7 +527,26 @@ class ArbitrageFreeCalibrator:
             small_mask = np.abs(S) < 1.0
             safe_S = np.where(small_mask, 1.0, S)
             m_factor = P_add / safe_S
-            m_factor = np.maximum(m_factor, 0.1)
+            # Floor #3 — m_factor >= 0.1 clip (Phase 5 D-A2-1 / NEG-02).
+            # Conditional on enforce_m_factor_floor (default False = OFF).
+            # When False (negative-ready): skip clip; m_factor can be < 0.1,
+            # allowing calibrated prices below ~10% of the raw curve level.
+            # When True (legacy rollback): apply clip AND propagate converged=False
+            # whenever the clip actually mutates m_factor (NEG-02 literal —
+            # floor-hit must not silently mask calibration non-convergence).
+            # codex action #6: reason-tagged INFO log distinguishes floor-induced
+            # non-convergence from iteration-limit non-convergence.
+            if self.enforce_m_factor_floor:
+                m_clipped = np.maximum(m_factor, 0.1)
+                n_clipped = int(np.sum(m_clipped != m_factor))
+                if n_clipped > 0:
+                    floor_applied = True
+                    logger.warning(
+                        "m_factor floor 0.1 applied at %d timestamps"
+                        " (enforce_m_factor_floor=True)",
+                        n_clipped,
+                    )
+                m_factor = m_clipped
             # For near-zero S, use additive result directly (no div-by-zero)
             P = np.where(small_mask, P_add, S * m_factor)
             delta_for_log = m_factor - 1.0
@@ -549,10 +581,31 @@ class ArbitrageFreeCalibrator:
                 max_abs_residual,
                 self.tol,
             )
+            logger.info(
+                "Calibration non-convergence: max_abs_residual=%.6f > tol=%.4f",
+                max_abs_residual,
+                self.tol,
+                extra={"reason": "iteration_limit"},
+            )
         else:
             logger.info(
                 "Calibration converged. Max residual: %.6f EUR/MWh.",
                 max_abs_residual,
+            )
+
+        # Phase 5 NEG-02 / codex action #6: floor-induced non-convergence.
+        # When enforce_m_factor_floor=True AND the clip mutated m_factor,
+        # force converged=False regardless of residual level (the floor
+        # masked the calibration problem — residuals may appear within tol
+        # but the underlying repricing is incorrect without the clamp).
+        # Emit reason-tagged INFO so operators can distinguish this case from
+        # iteration_limit non-convergence in production log aggregators.
+        if floor_applied:
+            converged = False
+            logger.info(
+                "Calibration non-convergence: m_factor floor hit"
+                " (enforce_m_factor_floor=True); converged forced False.",
+                extra={"reason": "m_factor_floor_hit"},
             )
 
         # ── Smoothness cost ───────────────────────────────────────────
