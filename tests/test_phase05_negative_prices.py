@@ -459,3 +459,17 @@ def test_phase05_baseline_5bisA_via_enforce_true():
     Populated in Plan 05-03.
     """
     pytest.skip("populated in Plan 05-03")
+
+
+def test_fit_peak_spreads_empty_spot_history():
+    """fit_peak_spreads with empty or missing spot_history falls back to default spread + WARN.
+
+    Test ID: 5-03-07, codex action #7 (05-REVIEWS.md).
+    Owning plan: Plan 05-03.
+    Contract: ContractCascader.fit_peak_spreads(empty_df) emits a WARNING and
+    populates peak_base_spreads_ with a default spread (e.g. 5.0 EUR/MWh for
+    all 12 months) rather than raising an exception — this ensures the pipeline
+    is resilient when spot history is unavailable (e.g. first run on a new market).
+    Populated in Plan 05-03.
+    """
+    pytest.skip("populated in Plan 05-03 — codex action #7 fallback spread + warning")
