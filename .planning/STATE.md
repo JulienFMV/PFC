@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: milestone_complete
-stopped_at: Milestone complete (Phase 05 was final phase)
-last_updated: 2026-05-20T11:44:42.311Z
-last_activity: 2026-05-20 -- Phase 05 execution started
+status: completed
+stopped_at: Phase 10 context gathered (reframed scorecard, OMPEX deferred to 10B)
+last_updated: "2026-05-20T18:48:52.004Z"
+last_activity: 2026-05-20
 progress:
   total_phases: 4
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 3
-  completed_plans: 11
-  percent: 0
+  completed_plans: 3
+  percent: 25
 ---
 
 # Project State
@@ -113,9 +113,9 @@ Après livraison 5bis-A : `/gsd:discuss-phase 5bis-B` pour le bowl-deepening (hy
 
 ## Session Continuity
 
-Last session: 2026-05-19T18:52:43.485Z
+Last session: 2026-05-20T18:48:51.992Z
 
-Stopped at: Phase 5 context gathered
+Stopped at: Phase 10 context gathered (reframed scorecard, OMPEX deferred to 10B)
 
 Pour reprendre sur Mac Mini :
 
