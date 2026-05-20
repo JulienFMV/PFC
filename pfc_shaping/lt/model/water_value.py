@@ -414,8 +414,23 @@ class WaterValueCorrection:
         for year in np.unique(delivery_year):
             year_mask = delivery_year == year
             mean_f = float(raw_f_wv.loc[year_mask].mean())
-            if abs(mean_f) > 1e-8:
+            # WR-06 (Phase 5 code review): the previous guard ``abs(mean_f) > 1e-8``
+            # was numerically too lax — for mean_f ~ 1e-7 the division still produces
+            # factors of order 1e7, blowing up delta_wv = (f_wv - 1) * |B|. The
+            # pathological case is enforce_floor=False (new default) combined with a
+            # raw_f_wv ~ 0 fit (improbable in EEX practice but possible). Use a
+            # 1e-6 threshold — well above floating-point precision for ratio
+            # arithmetic at EEX scales — and skip renormalisation (raw_f_wv stays)
+            # with a logged warning when the mean is suspicious.
+            if abs(mean_f) > 1e-6:
                 f_wv.loc[year_mask] = raw_f_wv.loc[year_mask] / mean_f
+            else:
+                logger.warning(
+                    "WV renormalisation skipped for year %d: mean(raw_f_wv)=%.2e "
+                    "below 1e-6 threshold — dividing would amplify noise. "
+                    "raw_f_wv kept unrenormalised for this year.",
+                    int(year), mean_f,
+                )
 
         # Re-clamping après renormalisation
         if self.enforce_floor:
