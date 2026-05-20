@@ -67,6 +67,13 @@ def smooth_base_prices(
     Returns:
         pd.Series with same index, smoothed B values.
     """
+    # WR-05 (Phase 5 code review): coerce in bool to mirror PFCAssembler ctor pattern
+    # (assembler.py:278). Prevents truthiness surprises with non-bool kwargs
+    # (e.g. ``enforce_positivity="False"`` evaluates truthy because it is a non-empty
+    # string). All downstream branches read this variable, including the propagated
+    # value to ``_enforce_mean_constraints`` below.
+    enforce_positivity = bool(enforce_positivity)
+
     base_only = {k: v for k, v in base_prices.items() if not k.endswith("-Peak")}
 
     idx_zh = idx.tz_convert("Europe/Zurich")
