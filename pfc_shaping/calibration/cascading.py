@@ -500,13 +500,24 @@ class ContractCascader:
         """Add synthetic Peak forwards where only Base exists.
 
         Phase 5 D-A4-1 / D-A4-3 / NEG-04 — two paths:
-          - ``allow_negative_peak=True`` (default, negative-ready): spread-additive formula
-            ``peak = base + spread`` where spread is in €/MWh. Sign-invariant: with
-            ``base=-10`` and ``spread=+5``, ``peak=-5`` (NOT the legacy
+          - ``allow_negative_peak=True`` (default, negative-ready): spread-additive
+            formula ``peak = base + spread`` where spread is in €/MWh. Sign-invariant:
+            with ``base=-10`` and ``spread=+5``, ``peak=-5`` (NOT the legacy
             ``-10 × 1.05 = -10.5`` which inverts the spread semantic for negative base).
+            The modern fitter ``fit_peak_spreads`` does NOT constrain the sign of the
+            spread — a negative fitted spread (rare in EEX history but possible) flows
+            through unchanged.
           - ``allow_negative_peak=False`` (legacy rollback per D-A4-3): historical
-            multiplicative ``peak = base × ratio`` with implicit ``Peak >= Base``
-            (ratio >= 1 constraint). Existing ``peak_base_ratios_`` cache is honored.
+            multiplicative ``peak = base × ratio``. The ratio is NOT enforced to be
+            ``>= 1`` — the legacy shim ``fit_peak_ratios`` derives ratios from spreads
+            via ``ratio = 1.0 + spread / max(base, 1.0)``, which produces ``ratio < 1``
+            whenever the underlying fitted spread is negative. The "Peak >= Base"
+            invariant is therefore informational only and CAN be violated by the
+            legacy path even when both base and ratio are positive. Additionally, for
+            negative base prices, ``peak = base × ratio`` inverts the spread semantic
+            (a 1.05 multiplier on a -10 base yields -10.5, i.e. Peak < Base) — callers
+            relying on operator rollback with negative base prices should be aware of
+            this incompatibility. Existing ``peak_base_ratios_`` cache is honored.
 
         RESEARCH Pitfall 4: if ``fit_peak_spreads`` was never called on the
         spread-additive path, a default spread of 5.0 €/MWh is used with a WARN log.
