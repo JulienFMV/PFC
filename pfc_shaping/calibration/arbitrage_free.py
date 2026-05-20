@@ -696,97 +696,101 @@ class ArbitrageFreeCalibrator:
 
         converged = True
 
+        # WR-01 (Phase 5 code review): use warnings.catch_warnings() context
+        # manager rather than filterwarnings/resetwarnings(). The previous
+        # implementation called warnings.resetwarnings() in the finally clause,
+        # which purges ALL global filters (including those set by pytest,
+        # urllib3, user --W flags, and other modules). catch_warnings saves
+        # and restores the filter state on entry/exit, so we only mute
+        # RuntimeWarning locally for the duration of the solve.
         try:
-            # Suppress overflow/divide warnings during iterative refinement
-            # — NaN/Inf are caught explicitly below
-            warnings.filterwarnings("ignore", category=RuntimeWarning)
-            # Factorise H_reg (SPD, banded -> fast sparse LU)
-            logger.debug("Factorising H_reg (%d x %d)...", n, n)
-            H_factor = splu(H_reg.tocsc())
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", category=RuntimeWarning)
+                # Factorise H_reg (SPD, banded -> fast sparse LU)
+                logger.debug("Factorising H_reg (%d x %d)...", n, n)
+                H_factor = splu(H_reg.tocsc())
 
-            # Compute H^{-1} A^T column by column (M solves, each O(N))
-            A_t_dense = A.T.toarray()  # N x M (M is small, typically < 100)
-            H_inv_At = np.zeros((n, m))
-            for j in range(m):
-                H_inv_At[:, j] = H_factor.solve(A_t_dense[:, j])
+                # Compute H^{-1} A^T column by column (M solves, each O(N))
+                A_t_dense = A.T.toarray()  # N x M (M is small, typically < 100)
+                H_inv_At = np.zeros((n, m))
+                for j in range(m):
+                    H_inv_At[:, j] = H_factor.solve(A_t_dense[:, j])
 
-            # Schur complement: S = A H^{-1} A^T (M x M dense)
-            S_mat = np.asarray(A @ H_inv_At)
+                # Schur complement: S = A H^{-1} A^T (M x M dense)
+                S_mat = np.asarray(A @ H_inv_At)
 
-            # Detect rank
-            U, sigma, Vt = np.linalg.svd(S_mat, full_matrices=False)
-            rank_tol = max(m, n) * np.finfo(float).eps * sigma[0]
-            rank = int(np.sum(sigma > rank_tol))
+                # Detect rank
+                U, sigma, Vt = np.linalg.svd(S_mat, full_matrices=False)
+                rank_tol = max(m, n) * np.finfo(float).eps * sigma[0]
+                rank = int(np.sum(sigma > rank_tol))
 
-            if rank < m:
-                logger.warning(
-                    "Constraint matrix is rank-deficient: rank %d / %d. "
-                    "Overlapping contracts may have inconsistent prices; "
-                    "using least-squares fit for redundant constraints.",
-                    rank,
-                    m,
-                )
-                # Pseudoinverse solve: minimises ||S lam + b||_2
-                sigma_inv = np.zeros_like(sigma)
-                sigma_inv[:rank] = 1.0 / sigma[:rank]
-                lam = Vt.T @ (sigma_inv * (U.T @ (-b)))
-                delta = H_inv_At @ (-lam)
-
-                # Iterative refinement within the column space
-                for iteration in range(10):
-                    if np.any(np.isnan(delta)) or np.any(np.isinf(delta)):
-                        logger.warning("NaN/Inf during rank-def refinement iter %d — stopping.", iteration)
-                        break
-                    r = b - np.asarray(A @ delta).ravel()
-                    # Project residual onto column space of S
-                    r_proj = U[:, :rank] @ (U[:, :rank].T @ r)
-                    max_r_proj = np.max(np.abs(r_proj))
-                    if max_r_proj < 1e-10:
-                        logger.debug(
-                            "Rank-deficient refinement converged at "
-                            "iteration %d.",
-                            iteration,
-                        )
-                        break
-                    d_lam = Vt[:rank, :].T @ (
-                        (1.0 / sigma[:rank]) * (U[:, :rank].T @ (-r_proj))
+                if rank < m:
+                    logger.warning(
+                        "Constraint matrix is rank-deficient: rank %d / %d. "
+                        "Overlapping contracts may have inconsistent prices; "
+                        "using least-squares fit for redundant constraints.",
+                        rank,
+                        m,
                     )
-                    delta += H_factor.solve(A_t_dense @ (-d_lam))
+                    # Pseudoinverse solve: minimises ||S lam + b||_2
+                    sigma_inv = np.zeros_like(sigma)
+                    sigma_inv[:rank] = 1.0 / sigma[:rank]
+                    lam = Vt.T @ (sigma_inv * (U.T @ (-b)))
+                    delta = H_inv_At @ (-lam)
 
-            else:
-                # Full-rank: direct solve with iterative refinement
-                lam = np.linalg.solve(S_mat, -b)
-                delta = H_factor.solve(A_t_dense @ (-lam))
-
-                for iteration in range(10):
-                    if np.any(np.isnan(delta)) or np.any(np.isinf(delta)):
-                        logger.warning("NaN/Inf during refinement iter %d — stopping.", iteration)
-                        break
-                    r = b - np.asarray(A @ delta).ravel()
-                    max_r = np.max(np.abs(r))
-                    if max_r < 1e-10:
-                        logger.debug(
-                            "Iterative refinement converged at iteration %d "
-                            "(max residual %.2e).",
-                            iteration,
-                            max_r,
+                    # Iterative refinement within the column space
+                    for iteration in range(10):
+                        if np.any(np.isnan(delta)) or np.any(np.isinf(delta)):
+                            logger.warning("NaN/Inf during rank-def refinement iter %d — stopping.", iteration)
+                            break
+                        r = b - np.asarray(A @ delta).ravel()
+                        # Project residual onto column space of S
+                        r_proj = U[:, :rank] @ (U[:, :rank].T @ r)
+                        max_r_proj = np.max(np.abs(r_proj))
+                        if max_r_proj < 1e-10:
+                            logger.debug(
+                                "Rank-deficient refinement converged at "
+                                "iteration %d.",
+                                iteration,
+                            )
+                            break
+                        d_lam = Vt[:rank, :].T @ (
+                            (1.0 / sigma[:rank]) * (U[:, :rank].T @ (-r_proj))
                         )
-                        break
-                    d_lam = np.linalg.solve(S_mat, -r)
-                    delta += H_factor.solve(A_t_dense @ (-d_lam))
+                        delta += H_factor.solve(A_t_dense @ (-d_lam))
 
-            if np.any(np.isnan(delta)) or np.any(np.isinf(delta)):
-                raise ValueError("Solution contains NaN/Inf.")
+                else:
+                    # Full-rank: direct solve with iterative refinement
+                    lam = np.linalg.solve(S_mat, -b)
+                    delta = H_factor.solve(A_t_dense @ (-lam))
 
-            logger.debug("Schur complement solve succeeded.")
-            return delta, converged
+                    for iteration in range(10):
+                        if np.any(np.isnan(delta)) or np.any(np.isinf(delta)):
+                            logger.warning("NaN/Inf during refinement iter %d — stopping.", iteration)
+                            break
+                        r = b - np.asarray(A @ delta).ravel()
+                        max_r = np.max(np.abs(r))
+                        if max_r < 1e-10:
+                            logger.debug(
+                                "Iterative refinement converged at iteration %d "
+                                "(max residual %.2e).",
+                                iteration,
+                                max_r,
+                            )
+                            break
+                        d_lam = np.linalg.solve(S_mat, -r)
+                        delta += H_factor.solve(A_t_dense @ (-d_lam))
+
+                if np.any(np.isnan(delta)) or np.any(np.isinf(delta)):
+                    raise ValueError("Solution contains NaN/Inf.")
+
+                logger.debug("Schur complement solve succeeded.")
+                return delta, converged
 
         except Exception as exc:
             logger.error("Schur complement solve failed: %s", exc)
             converged = False
             return np.zeros(n), converged
-        finally:
-            warnings.resetwarnings()
 
     def _solve_mixed_system(
         self,
@@ -819,69 +823,70 @@ class ArbitrageFreeCalibrator:
 
         converged = True
 
+        # WR-01 (Phase 5 code review): same rationale as in _solve_schur —
+        # catch_warnings restores prior filter state, resetwarnings() wiped it.
         try:
-            warnings.filterwarnings("ignore", category=RuntimeWarning)
-            n_hard = len(hard_idx)
-            n_soft = len(soft_idx)
-            logger.info(
-                "Mixed calibration solve: %d hard constraints, %d soft constraints.",
-                n_hard,
-                n_soft,
-            )
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", category=RuntimeWarning)
+                n_hard = len(hard_idx)
+                n_soft = len(soft_idx)
+                logger.info(
+                    "Mixed calibration solve: %d hard constraints, %d soft constraints.",
+                    n_hard,
+                    n_soft,
+                )
 
-            A_soft = A[soft_idx]
-            b_soft = np.asarray(b[soft_idx], dtype=float)
-            w_soft = np.asarray(weights[soft_idx], dtype=float)
-            W_diag = np.square(w_soft)
+                A_soft = A[soft_idx]
+                b_soft = np.asarray(b[soft_idx], dtype=float)
+                w_soft = np.asarray(weights[soft_idx], dtype=float)
+                W_diag = np.square(w_soft)
 
-            # Factorise the smoothness operator once, then work only in
-            # contract space via Woodbury / Schur complements.
-            H_factor = splu(H_reg.tocsc())
+                # Factorise the smoothness operator once, then work only in
+                # contract space via Woodbury / Schur complements.
+                H_factor = splu(H_reg.tocsc())
 
-            A_soft_t_dense = A_soft.T.toarray()
-            H_inv_AsT = np.zeros((n, n_soft))
-            for j in range(n_soft):
-                H_inv_AsT[:, j] = H_factor.solve(A_soft_t_dense[:, j])
+                A_soft_t_dense = A_soft.T.toarray()
+                H_inv_AsT = np.zeros((n, n_soft))
+                for j in range(n_soft):
+                    H_inv_AsT[:, j] = H_factor.solve(A_soft_t_dense[:, j])
 
-            S_ss = np.asarray(A_soft @ H_inv_AsT, dtype=float)
-            W_inv = np.diag(1.0 / W_diag)
-            R = W_inv + S_ss
-            R_inv = np.linalg.pinv(R, rcond=1e-12)
+                S_ss = np.asarray(A_soft @ H_inv_AsT, dtype=float)
+                W_inv = np.diag(1.0 / W_diag)
+                R = W_inv + S_ss
+                R_inv = np.linalg.pinv(R, rcond=1e-12)
 
-            Wb = W_diag * b_soft
-            H_inv_rhs = H_inv_AsT @ Wb
-            soft_rhs_proj = S_ss @ Wb
-            H_eff_inv_rhs = H_inv_rhs - H_inv_AsT @ (R_inv @ soft_rhs_proj)
+                Wb = W_diag * b_soft
+                H_inv_rhs = H_inv_AsT @ Wb
+                soft_rhs_proj = S_ss @ Wb
+                H_eff_inv_rhs = H_inv_rhs - H_inv_AsT @ (R_inv @ soft_rhs_proj)
 
-            if n_hard == 0:
-                delta = H_eff_inv_rhs
+                if n_hard == 0:
+                    delta = H_eff_inv_rhs
+                    if np.any(np.isnan(delta)) or np.any(np.isinf(delta)):
+                        raise ValueError("Soft-only mixed solution contains NaN/Inf.")
+                    return delta, converged
+
+                A_hard = A[hard_idx]
+                b_hard = np.asarray(b[hard_idx], dtype=float)
+                A_hard_t_dense = A_hard.T.toarray()
+                H_inv_AhT = np.zeros((n, n_hard))
+                for j in range(n_hard):
+                    H_inv_AhT[:, j] = H_factor.solve(A_hard_t_dense[:, j])
+
+                S_sh = np.asarray(A_soft @ H_inv_AhT, dtype=float)
+                H_eff_inv_AhT = H_inv_AhT - H_inv_AsT @ (R_inv @ S_sh)
+
+                K = np.asarray(A_hard @ H_eff_inv_AhT, dtype=float)
+                rhs_lambda = np.asarray(A_hard @ H_eff_inv_rhs, dtype=float).ravel() - b_hard
+                lambda_vec = np.linalg.pinv(K, rcond=1e-12) @ rhs_lambda
+                delta = H_eff_inv_rhs - H_eff_inv_AhT @ lambda_vec
+
                 if np.any(np.isnan(delta)) or np.any(np.isinf(delta)):
-                    raise ValueError("Soft-only mixed solution contains NaN/Inf.")
-                return delta, converged
-
-            A_hard = A[hard_idx]
-            b_hard = np.asarray(b[hard_idx], dtype=float)
-            A_hard_t_dense = A_hard.T.toarray()
-            H_inv_AhT = np.zeros((n, n_hard))
-            for j in range(n_hard):
-                H_inv_AhT[:, j] = H_factor.solve(A_hard_t_dense[:, j])
-
-            S_sh = np.asarray(A_soft @ H_inv_AhT, dtype=float)
-            H_eff_inv_AhT = H_inv_AhT - H_inv_AsT @ (R_inv @ S_sh)
-
-            K = np.asarray(A_hard @ H_eff_inv_AhT, dtype=float)
-            rhs_lambda = np.asarray(A_hard @ H_eff_inv_rhs, dtype=float).ravel() - b_hard
-            lambda_vec = np.linalg.pinv(K, rcond=1e-12) @ rhs_lambda
-            delta = H_eff_inv_rhs - H_eff_inv_AhT @ lambda_vec
-
-            if np.any(np.isnan(delta)) or np.any(np.isinf(delta)):
-                raise ValueError("Mixed hard/soft solution contains NaN/Inf.")
-            return np.asarray(delta, dtype=float).ravel(), converged
+                    raise ValueError("Mixed hard/soft solution contains NaN/Inf.")
+                return np.asarray(delta, dtype=float).ravel(), converged
         except Exception as exc:
             logger.error("Mixed hard/soft solve failed: %s", exc)
             return np.zeros(n), False
-        finally:
-            warnings.resetwarnings()
 
     def _trivial_result(self, raw_curve: pd.Series) -> CalibrationResult:
         """Return a no-op calibration result when there are no constraints.
