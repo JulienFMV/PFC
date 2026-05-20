@@ -479,16 +479,36 @@ class ContractCascader:
             DeprecationWarning,
             stacklevel=2,
         )
-        # Step 1+2: delegate transparently (populates peak_base_spreads_ AND _base_price_per_month_)
+        # Step 1+2: delegate transparently (populates peak_base_spreads_ AND
+        # _base_price_per_month_).
         self.fit_peak_spreads(spot_history)
-        # Step 3 (codex action #2): derive peak_base_ratios_ during deprecation window
-        # so legacy attribute readers do not see AttributeError.
-        # Formula: ratio_m = 1.0 + spread_m / max(base_price_m, 1.0). The max(., 1.0)
-        # avoids division by very small or zero base prices (which would produce
-        # unbounded ratios). For typical EEX scales (10-100 €/MWh base), this is a
-        # near-no-op safety floor.
+        # WR-08 (Phase 5 code review): the shim previously relied on
+        # fit_peak_spreads always caching ``_base_price_per_month_`` as an
+        # implementation detail of its private contract. A future refactor of
+        # fit_peak_spreads that drops this cache would surface as an
+        # AttributeError here. Defensive fallback to a typical EEX-scale base
+        # price (50.0 €/MWh) when the cache is missing — same default as the
+        # ``max(., 50.0)`` fallback inside the dict-comprehension below — so
+        # the shim remains robust to implementation changes upstream.
+        base_per_month = getattr(self, "_base_price_per_month_", None)
+        if not base_per_month:
+            logger.warning(
+                "ContractCascader.fit_peak_ratios shim: _base_price_per_month_ "
+                "cache missing after fit_peak_spreads — falling back to a flat "
+                "50.0 €/MWh base for every month. Legacy peak_base_ratios_ "
+                "values will be approximate (typical EEX scale)."
+            )
+            base_per_month = {m: 50.0 for m in range(1, 13)}
+            # Persist the fallback so subsequent reads see a populated cache.
+            self._base_price_per_month_ = base_per_month
+        # Step 3 (codex action #2): derive peak_base_ratios_ during deprecation
+        # window so legacy attribute readers do not see AttributeError.
+        # Formula: ratio_m = 1.0 + spread_m / max(base_price_m, 1.0). The
+        # max(., 1.0) avoids division by very small or zero base prices (which
+        # would produce unbounded ratios). For typical EEX scales (10-100 €/MWh
+        # base), this is a near-no-op safety floor.
         self.peak_base_ratios_: dict[int, float] = {
-            m: 1.0 + spread / max(self._base_price_per_month_.get(m, 50.0), 1.0)
+            m: 1.0 + spread / max(base_per_month.get(m, 50.0), 1.0)
             for m, spread in self.peak_base_spreads_.items()
         }
         return self
