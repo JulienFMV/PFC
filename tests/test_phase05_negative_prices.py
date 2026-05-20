@@ -962,20 +962,39 @@ def test_phase05_summer_bowl_negative_acceptance():
     """
     # Gate 1: 5bis-B bowl marker present
     if not _BOWL_MARKER_PATH.exists():
-        pytest.skip("Phase 5 SC #2 requires 5bis-B bowl deepening calibrated first")
+        pytest.skip(
+            "Phase 5 SC #2 acceptance gated per D-A4-5: 5bis-B bowl deepening "
+            "marker (baseline_pfc_seed42_bowl.parquet) is absent — the bowl "
+            "calibration MUST be run before SC #2 can produce h13 Sunday "
+            "negative prices. This skip is a known synthetic-environment "
+            "limitation, not a regression. Phase 10 empirical validation on "
+            "real OMPEX data is required before this assertion is unmuted."
+        )
 
     # Gate 2: Phase-5 baseline contains negative prices
     # (if min >= 0, we're in a synthetic environment where SC #2 is not achievable)
+    # WR-09 (Phase 5 code review): the skip message below is intentionally
+    # assertive and informative so an operator who triggers the skip
+    # understands (a) why the test is gated, (b) the upstream cause (synthetic
+    # ShapeHourly [0.4, 2.0] clip), and (c) what action unblocks it (real
+    # OMPEX data + Phase 10 empirical validation). The gate logic itself
+    # is BY DESIGN per 05-CONTEXT.md D-A4-5 and is NOT changed by this fix.
     if _PHASE05_BASELINE_PATH.exists():
         _baseline_check = pd.read_parquet(str(_PHASE05_BASELINE_PATH))
         _price_col_check = "price_shape" if "price_shape" in _baseline_check.columns else _baseline_check.columns[0]
-        if float(_baseline_check[_price_col_check].min()) >= 0.0:
+        _baseline_min = float(_baseline_check[_price_col_check].min())
+        if _baseline_min >= 0.0:
             pytest.skip(
-                "Phase 5 SC #2: baseline_pfc_seed42_phase05.parquet has no negative prices "
-                f"(min={_baseline_check[_price_col_check].min():.2f} >= 0). "
-                "SC #2 threshold < -20 EUR/MWh requires real OMPEX data with genuine "
-                "negative prices; ShapeHourly [0.4, 2.0] factor clip prevents negative "
-                "output on synthetic training data. Gated-skip per D-A4-5."
+                f"Phase 5 SC #2 acceptance gated per D-A4-5: synthetic baseline "
+                f"min={_baseline_min:.2f} >= 0 — Phase 10 empirical validation on "
+                f"real OMPEX data is required before this assertion can be "
+                f"unmuted. Root cause: ShapeHourly [0.4, 2.0] factor clip "
+                f"prevents the synthetic baseline_pfc_seed42_phase05.parquet "
+                f"from producing the negative prices the SC #2 < -20 EUR/MWh "
+                f"threshold needs. This is a SYNTHETIC-environment limitation, "
+                f"NOT a code defect: the negative-prices path is exercised by "
+                f"test_msfc_signed_monthly_repricing and test_arbitrage_free_"
+                f"signed_target which use synthetic NEGATIVE forwards directly."
             )
 
     from tests.fixtures._generate_phase05_fixture import (
