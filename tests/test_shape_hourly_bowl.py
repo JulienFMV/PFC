@@ -246,12 +246,16 @@ def test_flag_off_bit_for_bit_baseline():
     df_off = build_baseline_pfc(seed=42, flag=False)
     baseline = pd.read_parquet(_BASELINE_5BISA)
 
-    # Strict schema identity (columns, dtypes, index)
-    assert list(df_off.columns) == list(baseline.columns), (
-        f"Column mismatch: got {list(df_off.columns)}, expected {list(baseline.columns)}"
+    # Schema: baseline columns must all be present (Phase 5 Plan 05-02 adds `delta_wv`
+    # as a new column — baseline parquet pre-dates this change, so we check that all
+    # baseline columns are present in the fresh df rather than strict equality).
+    # [Rule 1 fix: Phase 5 02 extended build() schema; 5bis-A/B baselines predate delta_wv]
+    baseline_cols = list(baseline.columns)
+    assert all(c in df_off.columns for c in baseline_cols), (
+        f"Column mismatch: baseline cols {baseline_cols} not all in {list(df_off.columns)}"
     )
-    assert df_off.dtypes.to_dict() == baseline.dtypes.to_dict(), (
-        f"Dtype mismatch: {df_off.dtypes.to_dict()} vs {baseline.dtypes.to_dict()}"
+    assert df_off[baseline_cols].dtypes.to_dict() == baseline.dtypes.to_dict(), (
+        f"Dtype mismatch: {df_off[baseline_cols].dtypes.to_dict()} vs {baseline.dtypes.to_dict()}"
     )
     assert df_off.index.equals(baseline.index), (
         "Index mismatch — sort order or timestamps differ"
@@ -262,7 +266,7 @@ def test_flag_off_bit_for_bit_baseline():
     # freq=<15 * Minutes> while the loaded baseline has freq=None. Reset freq
     # on the fresh frame before comparing so assert_frame_equal does not fail on freq.
     # (Same workaround as test_baseline_regression in test_shape_hourly_infra.py.)
-    df_cmp = df_off.copy()
+    df_cmp = df_off[baseline_cols].copy()
     df_cmp.index.freq = None
     assert_frame_equal(
         df_cmp,
@@ -685,12 +689,15 @@ def test_flag_on_bowl_baseline():
     df_on = build_baseline_pfc(seed=42, flag=True)
     baseline_bowl = pd.read_parquet(_BASELINE_BOWL)
 
-    # Strict schema identity (columns, dtypes, index)
-    assert list(df_on.columns) == list(baseline_bowl.columns), (
-        f"Column mismatch: got {list(df_on.columns)}, expected {list(baseline_bowl.columns)}"
+    # Schema: baseline columns must all be present.
+    # [Rule 1 fix: Phase 5 Plan 05-02 extended build() schema with delta_wv column;
+    # 5bis-B bowl baseline predates this change. Compare using baseline_cols subset.]
+    baseline_cols = list(baseline_bowl.columns)
+    assert all(c in df_on.columns for c in baseline_cols), (
+        f"Column mismatch: got {list(df_on.columns)}, expected {baseline_cols}"
     )
-    assert df_on.dtypes.to_dict() == baseline_bowl.dtypes.to_dict(), (
-        f"Dtype mismatch: {df_on.dtypes.to_dict()} vs {baseline_bowl.dtypes.to_dict()}"
+    assert df_on[baseline_cols].dtypes.to_dict() == baseline_bowl.dtypes.to_dict(), (
+        f"Dtype mismatch: {df_on[baseline_cols].dtypes.to_dict()} vs {baseline_bowl.dtypes.to_dict()}"
     )
     assert df_on.index.equals(baseline_bowl.index), (
         "Index mismatch — sort order or timestamps differ"
@@ -700,7 +707,7 @@ def test_flag_on_bowl_baseline():
     # Parquet does NOT preserve DatetimeIndex.freq — reset freq to None before comparing
     # to avoid assert_frame_equal failing on freq mismatch (same workaround as
     # test_flag_off_bit_for_bit_baseline above).
-    df_cmp = df_on.copy()
+    df_cmp = df_on[baseline_cols].copy()
     df_cmp.index.freq = None
     assert_frame_equal(
         df_cmp,

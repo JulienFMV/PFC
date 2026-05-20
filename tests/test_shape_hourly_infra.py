@@ -1438,11 +1438,14 @@ def test_baseline_regression(flag):
     df = build_pfc(seed=42, flag=flag)
     baseline = pd.read_parquet(str(_FIXTURES_DIR / "baseline_pfc_seed42.parquet"))
 
-    # ── Identical schema (columns, dtypes) ──
-    assert list(df.columns) == list(baseline.columns), (
-        f"Column mismatch: {list(df.columns)} != {list(baseline.columns)}"
+    # ── Schema: baseline columns must all be present ──
+    # [Rule 1 fix: Phase 5 Plan 05-02 extended build() schema with delta_wv column;
+    # 5bis-A/B baselines predate this change. Compare using baseline_cols subset.]
+    baseline_cols = list(baseline.columns)
+    assert all(c in df.columns for c in baseline_cols), (
+        f"Column mismatch: baseline cols {baseline_cols} not all in {list(df.columns)}"
     )
-    assert df.dtypes.to_dict() == baseline.dtypes.to_dict(), (
+    assert df[baseline_cols].dtypes.to_dict() == baseline.dtypes.to_dict(), (
         f"Dtype mismatch for flag={flag}"
     )
 
@@ -1455,7 +1458,7 @@ def test_baseline_regression(flag):
     # Parquet does not preserve DatetimeIndex.freq — the fresh DataFrame has
     # freq=<15 * Minutes> while the loaded baseline has freq=None. Reset to None
     # on the fresh frame before comparing so assert_frame_equal does not fail on freq.
-    df_cmp = df.copy()
+    df_cmp = df[baseline_cols].copy()
     df_cmp.index.freq = None
     pd.testing.assert_frame_equal(
         df_cmp,

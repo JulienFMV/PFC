@@ -365,10 +365,27 @@ class PFCAssembler:
         f_Q = self.si.apply(idx, cal, entso_forecast, reference_date=reference_date)
 
         # Ã¢â€â‚¬Ã¢â€â‚¬ Facteur Water Value f_WV Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
-        if self.wv is not None:
-            f_WV = self.wv.apply(idx, cal, hydro_forecast)
-        else:
+        # Phase 5 D-A3-2: delta-additif by default when enforce_floor=False (D-A2-1).
+        use_delta_additive_wv = (self.wv is not None) and (not self.wv.enforce_floor)
+        if use_delta_additive_wv:
+            # Phase 5 delta-additive path. f_WV stays at 1.0 (pass-through) in the
+            # multiplicative product; the actual WV contribution is added separately
+            # below via compute_delta_wv once B is in scope. The shape_freedom['f_WV']
+            # damping below is BYPASSED on this path (RESEARCH Pitfall 2 — the
+            # horizon_decay inside WaterValueCorrection.apply() is the single source
+            # of truth for far-horizon shrinkage; double-damping would over-flatten
+            # the WV correction). delta_wv is computed AFTER B is in scope below.
             f_WV = pd.Series(1.0, index=idx, name="f_WV")
+            delta_wv_pending = True
+        elif self.wv is None:
+            f_WV = pd.Series(1.0, index=idx, name="f_WV")
+            delta_wv_pending = False
+        else:
+            # Legacy multiplicative path (operator rollback via enforce_floor=True
+            # per D-A2-3 — preserves the historical F_WV_FLOOR/CAP clip behavior
+            # AND the shape_freedom['f_WV'] damping path).
+            f_WV = self.wv.apply(idx, cal, hydro_forecast)
+            delta_wv_pending = False
 
         # Explicit long-horizon governance:
         # near horizon keeps rich historical shapes, far horizon converges
@@ -386,7 +403,12 @@ class PFCAssembler:
         else:
             f_H = 1.0 + (f_H - 1.0) * shape_freedom["f_H"]
         f_Q = 1.0 + (f_Q - 1.0) * shape_freedom["f_Q"]
-        f_WV = 1.0 + (f_WV - 1.0) * shape_freedom["f_WV"]
+        if not delta_wv_pending:
+            # Only damp f_WV on the legacy multiplicative path; on the delta-additive
+            # path, f_WV is the pass-through 1.0 set above and the damping would be
+            # a no-op anyway (1 + (1-1)*sf = 1). The explicit guard documents the
+            # intent and avoids RESEARCH Pitfall 2 (double-damping anti-pattern).
+            f_WV = 1.0 + (f_WV - 1.0) * shape_freedom["f_WV"]
 
         # Ã¢â€â‚¬Ã¢â€â‚¬ Niveau de base B par timestamp Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         B = self._resolve_base(idx, base_prices, country=country)
@@ -400,7 +422,40 @@ class PFCAssembler:
 
         #Ã¢â€â‚¬Ã¢â€â‚¬ Prix brut (avant calibration) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         f_bridge = self._near_term_bridge_factor(idx, months_ahead, days_ahead, country=country)
-        price_raw = B * f_S * f_W * f_H * f_Q * f_WV * f_bridge
+        if delta_wv_pending:
+            # Phase 5 delta-additive WV path (D-A3-2). B is the post-MSFC signed
+            # signal (RESEARCH Pitfall 3 — pass B, not price_raw). The compute_delta_wv
+            # method internally calls self.wv.apply(B.index, cal, hydro_forecast) so
+            # the (unclipped) f_wv is computed identically to the legacy path,
+            # then converted to a signed €/MWh delta via (f_wv - 1) * |B|.
+            # Codex review action #1 (2026-05-19, see 05-REVIEWS.md):
+            # KEYWORD-ONLY call style (fill_df=..., calendar_df=...) is required by
+            # the * separator in compute_delta_wv's signature — prevents the easy
+            # swap with apply(timestamps, calendar_df, hydro_forecast) order.
+            delta_wv = self.wv.compute_delta_wv(B, fill_df=hydro_forecast, calendar_df=cal)
+            # Codex action #1 precondition guard: an index misalignment between
+            # delta_wv and B would either propagate NaN through arithmetic or
+            # silently broadcast the indices, both producing wrong PFC outputs.
+            # This assert surfaces the bug immediately at the call site.
+            assert delta_wv.index.equals(B.index), (
+                f"compute_delta_wv returned mismatched index: "
+                f"delta_wv.index has {len(delta_wv.index)} entries, "
+                f"B.index has {len(B.index)} entries; "
+                f"first 3 delta_wv: {list(delta_wv.index[:3])}; "
+                f"first 3 B: {list(B.index[:3])}"
+            )
+            price_raw = B * f_S * f_W * f_H * f_Q * f_bridge + delta_wv
+            # D-A3-5 telemetry — emitted ONCE per build call on the delta-additive path.
+            sign_flips = int((np.sign(B) != np.sign(B.shift(1))).fillna(False).sum())
+            logger.info(
+                "WV delta_wv: min=%.2f, max=%.2f, mean=%.2f €/MWh, sign(B) flips: %d",
+                float(delta_wv.min()), float(delta_wv.max()), float(delta_wv.mean()),
+                sign_flips,
+            )
+        else:
+            # Legacy multiplicative path (wv is None OR wv.enforce_floor=True).
+            delta_wv = pd.Series(0.0, index=idx, name="delta_wv")
+            price_raw = B * f_S * f_W * f_H * f_Q * f_WV * f_bridge
         price_raw = self._stabilize_raw_curve(price_raw, B, months_ahead)
 
         # Ã¢â€â‚¬Ã¢â€â‚¬ Profile type (pour traÃƒÂ§abilitÃƒÂ©) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
@@ -434,6 +489,7 @@ class PFCAssembler:
                 "f_H": f_H,
                 "f_Q": f_Q,
                 "f_WV": f_WV,
+                "delta_wv": delta_wv,
                 "f_bridge": f_bridge,
                 "profile_type": profile_type,
                 "confidence": self._confidence_score(months_ahead),

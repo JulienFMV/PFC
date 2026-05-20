@@ -86,9 +86,19 @@ class WaterValueCorrection:
         beta_wv_             : coefficient calibré (négatif)
         season_sensitivity_  : dict[saison -> float] sensibilité par saison
         n_obs_               : nombre d'observations utilisées pour la calibration
+
+    Phase 5 D-A2-1 / D-A3-1 / NEG-03:
+        When ``enforce_floor=False`` (default, negative-ready), the multiplicative
+        F_WV_FLOOR (0.80) / F_WV_CAP (1.20) clips at lines 394 and 407 are bypassed
+        and f_wv flows through unconstrained from ``beta_wv_`` × ``season_sensitivity_``
+        × ``horizon_decay`` — no re-fit needed. When ``enforce_floor=True`` (legacy
+        rollback path per D-A2-3), the original multiplicative clip behavior is
+        preserved exactly. The delta-additive API ``compute_delta_wv()`` is incompatible
+        with ``enforce_floor=True`` and raises ValueError per D-A3-4.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, enforce_floor: bool = False) -> None:
+        self.enforce_floor: bool = bool(enforce_floor)
         self.beta_wv_: float = 0.0
         self.season_sensitivity_: dict[str, float] = {}
         self.n_obs_: int = 0
@@ -391,7 +401,11 @@ class WaterValueCorrection:
         raw_f_wv = 1.0 + beta * fill_dev_vals * season_sens * asym_multiplier * horizon_decay
 
         # ── Clamping pour éviter les valeurs aberrantes ──────────────────
-        raw_f_wv = raw_f_wv.clip(lower=F_WV_FLOOR, upper=F_WV_CAP)
+        if self.enforce_floor:
+            raw_f_wv = raw_f_wv.clip(lower=F_WV_FLOOR, upper=F_WV_CAP)
+        # Else (Phase 5 default, negative-ready, D-A2-1 / NEG-03): f_wv flows
+        # unclipped — sign of (f_wv - 1) determines scarcity (>0) / abundance
+        # (<0), converted to a signed €/MWh delta in compute_delta_wv via |B_smooth|.
 
         # ── Renormalisation par année de livraison : preserve annual forwards ──
         raw_f_wv = pd.Series(raw_f_wv, index=timestamps, name="f_WV")
@@ -404,13 +418,87 @@ class WaterValueCorrection:
                 f_wv.loc[year_mask] = raw_f_wv.loc[year_mask] / mean_f
 
         # Re-clamping après renormalisation
-        f_wv = f_wv.clip(lower=F_WV_FLOOR, upper=F_WV_CAP)
+        if self.enforce_floor:
+            f_wv = f_wv.clip(lower=F_WV_FLOOR, upper=F_WV_CAP)
+        # Else: see comment at the analogous block above (raw_f_wv).
 
         logger.info(
             "f_WV appliqué : mean=%.4f, min=%.4f, max=%.4f, β_WV=%.4f",
             f_wv.mean(), f_wv.min(), f_wv.max(), beta,
         )
         return f_wv
+
+    def compute_delta_wv(
+        self,
+        B_smooth: pd.Series,
+        *,
+        fill_df: "pd.DataFrame | None",
+        calendar_df: pd.DataFrame,
+    ) -> pd.Series:
+        """Return the delta-additive WaterValue correction in €/MWh.
+
+        Phase 5 D-A3-1 / NEG-03. Sign-invariant by construction:
+
+          delta_wv = (f_wv - 1.0) * |B_smooth|
+
+        Scarcity (f_wv > 1) yields delta_wv > 0 regardless of sign(B),
+        meaning the corrected price is shifted UP (in €/MWh) — for B<0 this
+        means LESS negative (correct directional semantic). Abundance
+        (f_wv < 1) yields delta_wv < 0 — for B<0 this means MORE negative
+        (correct directional semantic). The legacy multiplicative path
+        ``f_wv × B`` would invert these semantics under B<0.
+
+        The (unclipped) ``f_wv`` is computed via
+        ``self.apply(B_smooth.index, calendar_df, fill_df)``, which carries the
+        calibrated ``beta_wv_``, ``season_sensitivity_``, ``horizon_decay``
+        (no re-fit needed — RESEARCH §Don't Hand-Roll).
+
+        Codex review action item #1 (2026-05-19, see 05-REVIEWS.md):
+        ``fill_df`` and ``calendar_df`` are KEYWORD-ONLY (enforced by the ``*``
+        separator). The legacy ``apply(timestamps, calendar_df, hydro_forecast)``
+        positional signature is easy to swap at call sites — keyword-only
+        kwargs prevent silent index-misalignment bugs.
+
+        Raises
+        ------
+        ValueError
+            If ``self.enforce_floor=True``. The delta-additive semantic is
+            incompatible with the multiplicative F_WV_FLOOR clip (D-A3-4) —
+            an operator who wants the legacy multiplicative behavior must
+            use ``apply()`` directly and the assembler's legacy path.
+        TypeError
+            If ``fill_df`` or ``calendar_df`` are passed positionally (the ``*``
+            separator after ``B_smooth`` requires keyword form — codex action #1).
+
+        Parameters
+        ----------
+        B_smooth : pd.Series
+            Post-MSFC smoothed signal in €/MWh. May be signed
+            (Phase 5 NEG-01). POSITIONAL (no ``*`` separator before this arg).
+        fill_df : pd.DataFrame | None
+            Hydro reservoir fill forecast — forwarded to ``apply()``.
+            KEYWORD-ONLY (codex action #1).
+        calendar_df : pd.DataFrame
+            Calendar DataFrame (saison/type_jour/heure/month) — forwarded.
+            KEYWORD-ONLY (codex action #1).
+
+        Returns
+        -------
+        pd.Series
+            delta_wv in €/MWh, indexed by ``B_smooth.index``, name='delta_wv'.
+            The caller in assembler.build() is expected to assert
+            ``delta_wv.index.equals(B_smooth.index)`` per codex action #1
+            (precondition guard on the additive use).
+        """
+        if self.enforce_floor:
+            raise ValueError(
+                "compute_delta_wv() incompatible avec enforce_floor=True. "
+                "Utiliser apply() pour le comportement multiplicatif legacy."
+            )
+        f_wv = self.apply(B_smooth.index, calendar_df, fill_df)
+        delta = (f_wv - 1.0) * B_smooth.abs()
+        delta.name = "delta_wv"
+        return delta
 
     def save(self, path: str | Path) -> None:
         """Sauvegarde les paramètres calibrés en Parquet.
