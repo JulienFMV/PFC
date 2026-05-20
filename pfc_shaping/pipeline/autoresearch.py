@@ -477,7 +477,21 @@ class AutoResearchLoop:
             trial = _run_backtest(epex, self.agents, self.config, test_months)
 
             # 4. Keep or revert
+            # CR-02 (Phase 5 code review): capture rmse_before BEFORE any
+            # mutation and decide the action via an explicit flag, not by
+            # re-checking ``trial.rmse < current_rmse + 0.001`` after the
+            # keep-branch has already overwritten current_rmse. The previous
+            # implementation mutated current_rmse on line 482, then the
+            # history record on line 519 evaluated ``trial.rmse <
+            # current_rmse + 0.001`` — which is ALWAYS true after the keep
+            # branch (``trial.rmse < trial.rmse + 0.001`` is trivially true),
+            # and ALSO true in the revert branch whenever trial.rmse is
+            # within 1e-3 of current_rmse. Result: practically every
+            # iteration was logged as "keep" in history, polluting the
+            # Darwinian audit trail and producing wrong rmse_before values.
+            rmse_before_iter = current_rmse
             if trial.rmse < current_rmse:
+                action = "keep"
                 delta = current_rmse - trial.rmse
                 current_rmse = trial.rmse
                 baseline = trial
@@ -487,9 +501,10 @@ class AutoResearchLoop:
 
                 logger.info(
                     "KEEP: RMSE %.2f -> %.2f (delta=%.3f) [%s]",
-                    current_rmse + delta, current_rmse, delta, worst_name,
+                    rmse_before_iter, current_rmse, delta, worst_name,
                 )
             else:
+                action = "revert"
                 worst_agent.params = old_params
                 reverts += 1
                 worst_agent.n_reverts += 1
@@ -512,12 +527,13 @@ class AutoResearchLoop:
                 for name, agent in self.agents.items():
                     agent.update_weight(name in top_q)
 
-            # Record history
+            # Record history — use the explicit ``action`` flag and the
+            # rmse_before_iter snapshot captured above (CR-02 fix).
             self.history.append({
                 "iteration": iteration,
                 "target_agent": worst_name,
-                "action": "keep" if trial.rmse < current_rmse + 0.001 else "revert",
-                "rmse_before": float(current_rmse if trial.rmse < current_rmse + 0.001 else current_rmse),
+                "action": action,
+                "rmse_before": float(rmse_before_iter),
                 "rmse_after": float(trial.rmse),
                 "agent_weights": {n: a.weight for n, a in self.agents.items()},
                 "agent_params": {n: a.params.values for n, a in self.agents.items()},
