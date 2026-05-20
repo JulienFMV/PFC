@@ -55,7 +55,7 @@ P&L par 5 €/MWh d'erreur shape), pas par l'ordre alphabétique des features.
   - Bloque la profondeur du bowl, requis pour pricer correctement le bloc 10-15 d'été.
   - Context: `.planning/phases/05-msfc-log-prix-retire-silent-floors/05-CONTEXT.md`.
   - **Plans:** 3 plans
-    - [ ] 05-01-PLAN.md — MSFC enforce_positivity + ArbitrageFreeCalibrator enforce_m_factor_floor + REQUIREMENTS.md NEG-05 reformulation + scaffold tests/test_phase05_negative_prices.py
+    - [x] 05-01-PLAN.md — MSFC enforce_positivity + ArbitrageFreeCalibrator enforce_m_factor_floor + REQUIREMENTS.md NEG-05 reformulation + scaffold tests/test_phase05_negative_prices.py
     - [ ] 05-02-PLAN.md — WaterValueCorrection delta-additif (compute_delta_wv) + assembler integration + telemetry + 2 NEG-03 tests
     - [ ] 05-03-PLAN.md — ContractCascader spread-additif + master flag PFC_LT_ALLOW_NEGATIVE_PRICES audit-trail + fixture/baseline parquets + 6 tests + PROJECT.md D-FLIP-2
 - [ ] **Phase 5ter: Distribution probabiliste par bloc**
