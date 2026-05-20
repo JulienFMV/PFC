@@ -555,14 +555,18 @@ class PFCAssembler:
             # Codex action #1 precondition guard: an index misalignment between
             # delta_wv and B would either propagate NaN through arithmetic or
             # silently broadcast the indices, both producing wrong PFC outputs.
-            # This assert surfaces the bug immediately at the call site.
-            assert delta_wv.index.equals(B.index), (
-                f"compute_delta_wv returned mismatched index: "
-                f"delta_wv.index has {len(delta_wv.index)} entries, "
-                f"B.index has {len(B.index)} entries; "
-                f"first 3 delta_wv: {list(delta_wv.index[:3])}; "
-                f"first 3 B: {list(B.index[:3])}"
-            )
+            # WR-02 (Phase 5 code review): use explicit ValueError rather than
+            # ``assert`` because ``assert`` statements are stripped under
+            # ``python -O`` — a common production setting in containerised
+            # deployments where this precondition would silently disappear.
+            if not delta_wv.index.equals(B.index):
+                raise ValueError(
+                    f"compute_delta_wv returned mismatched index: "
+                    f"delta_wv.index has {len(delta_wv.index)} entries, "
+                    f"B.index has {len(B.index)} entries; "
+                    f"first 3 delta_wv: {list(delta_wv.index[:3])}; "
+                    f"first 3 B: {list(B.index[:3])}"
+                )
             price_raw = B * f_S * f_W * f_H * f_Q * f_bridge + delta_wv
             # D-A3-5 telemetry — emitted ONCE per build call on the delta-additive path.
             sign_flips = int((np.sign(B) != np.sign(B.shift(1))).fillna(False).sum())
