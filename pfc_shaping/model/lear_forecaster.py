@@ -181,6 +181,7 @@ class LEARForecaster:
         use_regime_short_window_weighting: bool = True,
         gbm_weight_cap_peak_block: float = 0.55,
         use_governed_forecast_features: bool = False,
+        use_governed_d7_features: bool = False,
     ):
         self.tz = tz
         self.max_iter = max_iter
@@ -194,6 +195,7 @@ class LEARForecaster:
         self.use_regime_short_window_weighting = use_regime_short_window_weighting
         self.gbm_weight_cap_peak_block = float(gbm_weight_cap_peak_block)
         self.use_governed_forecast_features = use_governed_forecast_features
+        self.use_governed_d7_features = use_governed_d7_features
         self.elasticnet_l1_ratio_base = 0.1
         self.elasticnet_l1_ratio_effective = 0.1
         self._fitted = False
@@ -939,14 +941,15 @@ class LEARForecaster:
                         min_coverage_ratio=0.15,
                         max_required_non_null=180,
                     )
-                    self._append_feature_if_sufficient_history(
-                        features_list, feature_names, fc_pivot.shift(7)[target_hour],
-                        f"{fc_col}_d-7_h{target_hour:02d}",
-                        min_non_null=60,
-                        reference_len=len(complete),
-                        min_coverage_ratio=0.15,
-                        max_required_non_null=180,
-                    )
+                    if self.use_governed_d7_features:
+                        self._append_feature_if_sufficient_history(
+                            features_list, feature_names, fc_pivot.shift(7)[target_hour],
+                            f"{fc_col}_d-7_h{target_hour:02d}",
+                            min_non_null=60,
+                            reference_len=len(complete),
+                            min_coverage_ratio=0.15,
+                            max_required_non_null=180,
+                        )
                 midday_cols = [h for h in range(10, 16) if h in fc_pivot.columns]
                 if midday_cols and ("solar" in fc_col or "load" in fc_col or "nuclear" in fc_col):
                     midday_mean = fc_pivot[midday_cols].mean(axis=1)
@@ -966,14 +969,15 @@ class LEARForecaster:
                         min_coverage_ratio=0.15,
                         max_required_non_null=180,
                     )
-                    self._append_feature_if_sufficient_history(
-                        features_list, feature_names, midday_mean.shift(7),
-                        f"{fc_col}_d-7_midday_mean",
-                        min_non_null=60,
-                        reference_len=len(complete),
-                        min_coverage_ratio=0.15,
-                        max_required_non_null=180,
-                    )
+                    if self.use_governed_d7_features:
+                        self._append_feature_if_sufficient_history(
+                            features_list, feature_names, midday_mean.shift(7),
+                            f"{fc_col}_d-7_midday_mean",
+                            min_non_null=60,
+                            reference_len=len(complete),
+                            min_coverage_ratio=0.15,
+                            max_required_non_null=180,
+                        )
 
             # ── 3b. Compact weather forecast block ──
             compact_weather_cols = [
@@ -1017,14 +1021,15 @@ class LEARForecaster:
                         min_coverage_ratio=0.15,
                         max_required_non_null=180,
                     )
-                    self._append_feature_if_sufficient_history(
-                        features_list, feature_names, wx_pivot.shift(7)[target_hour],
-                        f"{wx_col}_d-7_h{target_hour:02d}",
-                        min_non_null=60,
-                        reference_len=len(complete),
-                        min_coverage_ratio=0.15,
-                        max_required_non_null=180,
-                    )
+                    if self.use_governed_d7_features:
+                        self._append_feature_if_sufficient_history(
+                            features_list, feature_names, wx_pivot.shift(7)[target_hour],
+                            f"{wx_col}_d-7_h{target_hour:02d}",
+                            min_non_null=60,
+                            reference_len=len(complete),
+                            min_coverage_ratio=0.15,
+                            max_required_non_null=180,
+                        )
                 midday_cols = [h for h in range(10, 16) if h in wx_pivot.columns]
                 if midday_cols and ("shortwave_radiation" in wx_col or "cloud_cover" in wx_col):
                     midday_mean = wx_pivot[midday_cols].mean(axis=1)
@@ -1044,14 +1049,15 @@ class LEARForecaster:
                         min_coverage_ratio=0.15,
                         max_required_non_null=180,
                     )
-                    self._append_feature_if_sufficient_history(
-                        features_list, feature_names, midday_mean.shift(7),
-                        f"{wx_col}_d-7_midday_mean",
-                        min_non_null=60,
-                        reference_len=len(complete),
-                        min_coverage_ratio=0.15,
-                        max_required_non_null=180,
-                    )
+                    if self.use_governed_d7_features:
+                        self._append_feature_if_sufficient_history(
+                            features_list, feature_names, midday_mean.shift(7),
+                            f"{wx_col}_d-7_midday_mean",
+                            min_non_null=60,
+                            reference_len=len(complete),
+                            min_coverage_ratio=0.15,
+                            max_required_non_null=180,
+                        )
 
         # ── 4. Exogenous features (CH) ──
         exog_cols = [c for c in exog.columns
