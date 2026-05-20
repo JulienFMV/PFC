@@ -29,7 +29,7 @@ Aucun encore — validation passe par le backtest par bloc en Phase 10.
 ### Active
 
 - [ ] **Shape seasonal × hour** sur les 5 marchés (Phase 5bis)
-- [ ] **Prix négatifs autorisés** par la PFC (Phase 5, retire 4 floors silencieux)
+- [x] **Prix négatifs autorisés** par la PFC (Phase 5 livrée 2026-05-20, 4 floors retirés via ctor args defaults OFF, voir D-FLIP-2)
 - [ ] **Distribution probabiliste par bloc** (Phase 5ter, Monte-Carlo shape)
 - [ ] **Backtest par bloc client** vs HFC OMPEX (Phase 10 reformulé)
 - [ ] **Activation FR/AT/IT** (Phase 3, HOLD — pas de valeur sur deals CH actuels)
