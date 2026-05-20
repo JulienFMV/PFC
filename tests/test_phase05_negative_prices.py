@@ -605,6 +605,13 @@ def test_assembler_delta_additive():
     )
 
     # Negative control: enforce_floor=True → legacy path, no 'WV delta_wv:' log, delta_wv=0
+    # WR-03 (Phase 5 code review): PFCAssembler now propagates its enforce_floor
+    # kwarg bidirectionally to the sub-component (it is the authoritative source
+    # of truth, per D-A2-3). Passing enforce_floor=True at the assembler level
+    # is therefore required to engage the legacy multiplicative path — wiring
+    # only wv_legacy.enforce_floor=True via the WaterValueCorrection ctor is
+    # no longer sufficient because the assembler ctor would otherwise reset it
+    # to False (the PFCAssembler default).
     wv_legacy = WaterValueCorrection(enforce_floor=True)
     assembler_legacy = PFCAssembler(
         shape_hourly=sh,
@@ -613,6 +620,7 @@ def test_assembler_delta_additive():
         water_value=wv_legacy,
         cascader=None,
         calibrator=None,
+        enforce_floor=True,
     )
 
     log_records_legacy: list[logging.LogRecord] = []

@@ -280,16 +280,33 @@ class PFCAssembler:
         self.enforce_floor: bool = bool(enforce_floor)
         self.allow_negative_peak: bool = bool(allow_negative_peak)
 
-        # B1/B4 Approach B — forward the four floor kwargs to sub-components
-        # Override sub-component attributes at init time when rollback is requested.
-        # The reverse direction (caller constructs sub-component with floor=True and
-        # PFCAssembler with floor=False) is handled via 'or' semantics in the audit log.
-        if self.calibrator is not None and self.enforce_m_factor_floor:
-            self.calibrator.enforce_m_factor_floor = True  # override sub-component default per D-A2-3
-        if self.wv is not None and self.enforce_floor:
-            self.wv.enforce_floor = True  # override sub-component default per D-A2-3
-        if self.cascader is not None and not self.allow_negative_peak:
-            self.cascader.allow_negative_peak = False  # override sub-component default per D-A2-3
+        # B1/B4 Approach B — forward the four floor kwargs to sub-components.
+        # WR-03 (Phase 5 code review): the previous one-way mutation
+        # (``if self.enforce_m_factor_floor: sub.enforce_m_factor_floor = True``)
+        # was non-idempotent and broke shared sub-component scenarios. If a
+        # second PFCAssembler was constructed with the floor OFF over the same
+        # cascader/calibrator/wv, the sub-component kept the floor that the
+        # FIRST assembler had turned ON — silently giving the wrong behaviour.
+        #
+        # Fix: propagate the kwarg bidirectionally (PFCAssembler is the
+        # authoritative source) and emit a WARNING if the sub-component had a
+        # different prior value, so operators sharing components across
+        # assemblers can detect unintended overrides.
+        def _sync_sub_attr(sub, attr_name: str, target: bool, sub_label: str) -> None:
+            if sub is None:
+                return
+            prior = getattr(sub, attr_name, None)
+            if prior is not None and bool(prior) != bool(target):
+                logger.warning(
+                    "PFCAssembler overrides %s.%s: %s -> %s (sub-component shared "
+                    "across assemblers may now see the new value).",
+                    sub_label, attr_name, prior, target,
+                )
+            setattr(sub, attr_name, bool(target))
+
+        _sync_sub_attr(self.calibrator, "enforce_m_factor_floor", self.enforce_m_factor_floor, "calibrator")
+        _sync_sub_attr(self.wv, "enforce_floor", self.enforce_floor, "wv")
+        _sync_sub_attr(self.cascader, "allow_negative_peak", self.allow_negative_peak, "cascader")
 
         # Phase 5 D-A2-2 master flag — audit-trail INFO only, NOT an override.
         # The four ctor args above are the actual API surface — operator rollback
