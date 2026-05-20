@@ -724,9 +724,14 @@ class PFCAssembler:
                 result.max_abs_residual,
             )
 
-        # Consider calibration applied even if not perfectly converged
-        # (moderate residuals are acceptable with MSFC pre-smoothing)
-        return result.calibrated_curve, True
+        # WR-07 (Phase 5 code review): propagate result.converged faithfully.
+        # Previously this returned a hard-coded True whenever the curve was
+        # applied (even if convergence was False under the moderate-residual
+        # path), which broke the CalibrationResult.converged contract in
+        # downstream consumers and masked the NEG-02 floor-induced
+        # non-convergence signal. The two prior log paths (converged True
+        # vs False) already inform the operator; let the boolean trace through.
+        return result.calibrated_curve, bool(result.converged)
 
     def _build_non_overlapping_contracts(
         self,
