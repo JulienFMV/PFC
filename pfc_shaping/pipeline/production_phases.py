@@ -341,7 +341,13 @@ def run_long_term_phase(
 
     cascader_ch = ContractCascader()
     cascader_ch.fit_seasonal_ratios(inputs.epex_ch)
-    cascader_ch.fit_peak_ratios(inputs.epex_ch)
+    # Phase 5 D-A4-2 migration (NEG-04): fit_peak_spreads calibrates spreads
+    # in €/MWh (sign-invariant for negative forwards). The deprecation shim
+    # still routes fit_peak_ratios() → fit_peak_spreads() but explicit migration
+    # avoids the runtime DeprecationWarning.
+    # Phase 5 D-A2-1 default (negative-ready): no explicit enforce_* kwargs.
+    # Legacy rollback per D-A2-3: pass allow_negative_peak=False at ContractCascader construction.
+    cascader_ch.fit_peak_spreads(inputs.epex_ch)
     cascaded_prices_ch = cascader_ch.cascade(base_prices_ch)
     cascaded_prices_ch = cascader_ch.synthesize_peak_prices(cascaded_prices_ch)
 
@@ -639,9 +645,12 @@ def _build_long_term_branch(
         cascader = pre_loaded_cascader
         cascaded_prices = pre_loaded_cascaded_prices
     else:
+        # Phase 5 D-A2-1 default (negative-ready): no explicit enforce_* kwargs.
+        # Legacy rollback per D-A2-3: pass allow_negative_peak=False at ContractCascader construction.
         cascader = ContractCascader(tz=spec.tz)
         cascader.fit_seasonal_ratios(spec.epex_df)
-        cascader.fit_peak_ratios(spec.epex_df)
+        # Phase 5 D-A4-2 migration (NEG-04) — see comment at the analogous callsite above.
+        cascader.fit_peak_spreads(spec.epex_df)
         cascaded_prices = cascader.cascade(base_prices)
         cascaded_prices = cascader.synthesize_peak_prices(cascaded_prices)
 
