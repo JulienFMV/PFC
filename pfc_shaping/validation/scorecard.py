@@ -525,6 +525,24 @@ def run_scorecard_pillar_1(
             )
             pfc_v.to_parquet(cache_file)
 
+        # WR-01 mitigation : en mock mode, le PFC buildé est discardé en
+        # faveur d'un synth designed-to-PASS (cf. _synth_pfc_for_mock).
+        # Pour qu'une régression silencieuse de `build_one` (e.g. all NaN,
+        # ou prix explosifs) ne passe pas inaperçue, on assert des
+        # post-conditions de sanité sur chaque `pfc_v` avant de le
+        # discarder. Ces assertions protègent le no-crash coverage du
+        # chain ShapeHourly → ShapeIntraday → PFCAssembler.
+        if epex_source == "mock":
+            shape_col = pfc_v["price_shape"] if "price_shape" in pfc_v.columns else None
+            if shape_col is not None:
+                assert shape_col.notna().all(), (
+                    f"build_one returned NaNs in price_shape for vintage {vintage_str}"
+                )
+                assert shape_col.abs().max() < 1000.0, (
+                    f"build_one returned implausible prices "
+                    f"(|max|={shape_col.abs().max():.1f}) for vintage {vintage_str}"
+                )
+
         pfc_per_vintage.append(pfc_v)
 
     forwards_agg = forwards_asof  # alias for clarity below
@@ -540,6 +558,11 @@ def run_scorecard_pillar_1(
     #     (MSFC constraint violations connues sur 5y train), donc le mock CI
     #     gate utilise un PFC synthétique 'idéal'. Le **verdict réel SC#1**
     #     vient du run parquet Plan 10-04 Task 2 sur les vraies données.
+    #
+    #     WR-01 mitigation : les outputs `pfc_v` du loop précédent sont
+    #     validés via assertions (no-NaN, |max|<1000) dans la boucle pour
+    #     attraper une régression silencieuse de build_one avant le
+    #     short-circuit vers _synth_pfc_for_mock.
     #   - 'parquet' : full 24-vintage first-vintage-wins aggregate (Plan 10-04 real-run).
     if epex_source == "mock":
         # pfc_per_vintage déjà buildée → no-crash garanti pour le code path.
