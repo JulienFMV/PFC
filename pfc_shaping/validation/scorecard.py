@@ -322,10 +322,16 @@ def derive_forwards_from_epex_hist(
         # Cal proxy = mean of all hist (uniform shape proxy)
         out[f"{year_target:04d}"] = float(hist.mean())
 
-    # Quarterly forwards : each QN on each future calendar year
-    for y in range(vintage.year + 1, vintage.year + 1 + (horizon_days // 365) + 1):
+    # Quarterly forwards : each QN on each future calendar year.
+    # WR-03 : align the year range with the yearly loop above (Y+1..Y+H)
+    # rather than `range(vintage.year + 1, vintage.year + 1 + H + 1)`
+    # which emits keys for Y+H+1 only to filter them out via `q_start >
+    # end`. The previous form was correct (all spurious keys masked) but
+    # confusing and one extra full-cycle iteration per call.
+    n_years = max(horizon_days // 365, 1)
+    for y in range(vintage.year + 1, vintage.year + 1 + n_years):
         for q in (1, 2, 3, 4):
-            # Skip if quarter end is past horizon
+            # Skip if quarter start is past horizon
             q_start = pd.Timestamp(f"{y}-{(q-1)*3 + 1:02d}-01", tz="UTC")
             if q_start > end:
                 continue
