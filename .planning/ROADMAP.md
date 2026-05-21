@@ -214,8 +214,8 @@ FMV (accès H:\\). Cf. `.planning/phases/10-pfc-fmv-quality-scorecard/10-CONTEXT
      la phase ni le flip D-FLIP-1.
 
 **Plans**:
-- [ ] 10-01-PLAN.md — Infrastructure + block_masks + scorecard skeleton + ROADMAP/REQ/PROJECT updates + EPEX/forwards bootstrap + threshold Hildmann empirique
-- [ ] 10-02-PLAN.md — Pillars 1 (Hildmann SC#1 gate) + 2 (Empirical accuracy MAE/RMSE/MZ)
+- [x] 10-01-PLAN.md — Infrastructure + block_masks + scorecard skeleton + ROADMAP/REQ/PROJECT updates + EPEX/forwards bootstrap + threshold Hildmann empirique
+- [x] 10-02-PLAN.md — Pillars 1 (Hildmann SC#1 gate) + 2 (Empirical accuracy MAE/RMSE/MZ)
 - [ ] 10-03-PLAN.md — Pillars 3 (Christoffersen unconditional) + 4 (DM vs 3 naive baselines)
 - [ ] 10-04-PLAN.md — Pillar 5 + final scorecard assembly + 96-build ablation grid run + 10-VERIFICATION.md + D-FLIP-1 flip (gated)
 
