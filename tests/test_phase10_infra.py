@@ -152,6 +152,71 @@ def test_block_winter_evening_peak_seasonality():
     assert not mask_jun.any(), "June should be FALSE (not winter)"
 
 
+def test_block_winter_evening_peak_wraparound():
+    """WR-08 : BlockWinterEveningPeak couvre nov-fév (wrap-around à l'année).
+
+    Le test précédent ne vérifie que jan/juin. Une régression où la
+    condition `(month >= 11) | (month <= 2)` deviendrait
+    `(month >= 11) & (month <= 2)` (= False partout) passerait silencieuse
+    car juin reste False et janvier... aussi. Ce test vérifie EXPLICITEMENT
+    le contrat sur chaque mois pivot autour de la frontière.
+    """
+    from pfc_shaping.validation.block_masks import BlockWinterEveningPeak
+
+    bloc = BlockWinterEveningPeak()
+    # (month, expected_any) : nov-fév doivent avoir ≥1 entry TRUE,
+    # mars-octobre doivent être tous FALSE.
+    cases = [
+        (11, True),   # novembre dans bloc
+        (12, True),   # décembre dans bloc
+        (1, True),    # janvier dans bloc
+        (2, True),    # février dans bloc
+        (3, False),   # mars hors bloc (frontière fév→mars)
+        (10, False),  # octobre hors bloc (frontière oct→nov)
+        (5, False),   # mai full-summer, sanity
+        (8, False),   # août full-summer, sanity
+    ]
+    for month, expected_any in cases:
+        # 1 semaine au début du mois — assez pour inclure 5 weekdays × 4h
+        idx = pd.date_range(
+            f"2024-{month:02d}-01", periods=24 * 7, freq="1h", tz="UTC"
+        )
+        mask = bloc.apply(idx)
+        assert bool(mask.any()) == expected_any, (
+            f"month {month}: expected any={expected_any}, got any={mask.any()}"
+        )
+
+
+def test_block_summer_solar_bowl_boundary_months():
+    """WR-08 : BlockSummerSolarBowl couvre mai-août (frontières incluses).
+
+    Le test précédent ne vérifie qu'avril/septembre/juin. Les frontières
+    mai et août ne sont pas explicitement assertées — une régression sur
+    `(month >= 5) & (month <= 8)` (e.g. `> 5` ou `< 8`) ne serait pas
+    capturée. Ce test exerce les 2 frontières.
+    """
+    from pfc_shaping.validation.block_masks import BlockSummerSolarBowl
+
+    bloc = BlockSummerSolarBowl()
+    # mai-août inclus, avril/septembre exclus
+    cases = [
+        (4, False),   # avril hors bloc (frontière avr→mai)
+        (5, True),    # mai INCLUS (frontière début)
+        (6, True),    # juin sanity
+        (7, True),    # juillet sanity
+        (8, True),    # août INCLUS (frontière fin)
+        (9, False),   # septembre hors bloc (frontière août→sep)
+    ]
+    for month, expected_any in cases:
+        idx = pd.date_range(
+            f"2024-{month:02d}-01", periods=24 * 7, freq="1h", tz="UTC"
+        )
+        mask = bloc.apply(idx)
+        assert bool(mask.any()) == expected_any, (
+            f"month {month}: expected any={expected_any}, got any={mask.any()}"
+        )
+
+
 # ---------------------------------------------------------------------------
 # scorecard.py skeleton — AblationConfig + list_vintages + helpers + constants
 # ---------------------------------------------------------------------------
