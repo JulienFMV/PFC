@@ -65,7 +65,7 @@ naive baselines maison. BT-06..BT-10 ajoutés (1 par pilier scorecard Phase 10).
   DM-stat | p-value | better_than_baseline (Y/N)`. Baselines maison =
   climatology, persistence Y-1, forwards-flat-no-shape (D-A4-1 CONTEXT).
   DM test avec Newey-West HAC lag=h-1 + HLN small-sample correction (D-A4-2 CONTEXT).
-- [ ] **BT-06** (Pillar 1 — Structural Hildmann) : Sous Config 4 (bowl ON +
+- [~] **BT-06** (Pillar 1 — Structural Hildmann) : Sous Config 4 (bowl ON +
   floors negative-ready), les 4 tests structurels Hildmann PASS :
   arb-free < 0.01 €/MWh sur chaque Cal/Q/M tradé,
   holiday/weekend ratio ∈ [0.65, 0.95] (threshold décidé Plan 10-01 NOTES,
@@ -73,27 +73,37 @@ naive baselines maison. BT-06..BT-10 ajoutés (1 par pilier scorecard Phase 10).
   seasonal corr > 0.85 entre PFC monthly signature et EPEX 2019-2023 monthly signature,
   continuity max-jump < 2 €/MWh aux frontières mensuelles.
   **SC#1 UNIQUE GATE Phase 10.**
-- [ ] **BT-07** (Pillar 2 — Empirical KYOS) : Pour chaque cellule (bloc × horizon
+  *Plan 10-04 real-run 2026-05-21 : 2/4 PASS sous `forwards_source=fallback_diagnostic` —
+  DIAGNOSTIC ONLY, not gate-eligible. D-FLIP-1 BLOCKED (PROJECT.md 2026-05-21).
+  Gate-eligible run reporté Phase 10B (FMV poste H:\\).*
+- [x] **BT-07** (Pillar 2 — Empirical KYOS) : Pour chaque cellule (bloc × horizon
   ∈ {M+1, M+3, M+6, Y+1, Y+2} × config), MAE, RMSE, bias absolu et
   Mincer-Zarnowitz régression `realised = α + β·pred + ε` avec test joint
   `α=0 & β=1` (Wald via `statsmodels.OLS.f_test`) reportés dans le scorecard markdown.
-- [ ] **BT-08** (Pillar 3 — Christoffersen unconditional) : IC80 source =
+  *Livré Plan 10-04 : 100 rows dans `scorecard_kpis_pillar2.parquet` + tables markdown
+  dans `10-VERIFICATION.md`.*
+- [x] **BT-08** (Pillar 3 — Christoffersen unconditional) : IC80 source =
   `Uncertainty(n_boot=500, seed=42)` bootstrap (cols p10/p90). Per (bloc × horizon)
   sur Config 4 : test binomial LR_uc Christoffersen 1998 (`H0: observed_freq ==
   nominal`) reportée dans le scorecard.
   **IC95 (p2.5/p97.5) NON supportée par Uncertainty API actuelle → déférée
   Phase 5ter** (CONTEXT D-A3-3 amendé). Conditional coverage + reliability
   diagrams aussi déférés Phase 5ter.
-- [ ] **BT-09** (Pillar 4 — DM vs naive baselines) : 3 baselines maison
+  *Livré Plan 10-04 : 5 rows (1 par bloc) dans `scorecard_kpis_pillar3.parquet`,
+  IC80 only, IC95 audit-trail dans 10-VERIFICATION.md §Annexes.*
+- [x] **BT-09** (Pillar 4 — DM vs naive baselines) : 3 baselines maison
   (climatology = mean(EPEX hist pré-2024) par bloc, persistence Y-1 = mean(EPEX |
   bloc, vintage-1yr ± 15j), forwards-flat-no-shape = forward EEX Cal/Q/M
   as-of vintage sans shape). DM test avec loss differential MAE-cohérent et
   HAC Newey-West lag=h-1 + HLN small-sample correction. **Reformulation
   de BT-04 historique** (qui était vs OMPEX → migré vers BT-10B-*).
-- [ ] **BT-10** (Pillar 5 — Peer review SOTA) : Table comparative 9×6 (9
+  *Livré Plan 10-04 : 300 rows dans `scorecard_kpis_pillar4.parquet` (4 configs ×
+  5 blocs × 5 horizons × 3 baselines), DM stats + p-values + better_than_baseline.*
+- [x] **BT-10** (Pillar 5 — Peer review SOTA) : Table comparative 9×6 (9
   features methodology × 6 références PFC FMV/KYOS/Volue/EULER/Benth-Koekebakker/Caldana) +
   gap analysis 3 paragraphes (~150 mots chacun : où FMV est SOTA / où il y a
   gap actionnable / où on innove) intégrés dans `10-VERIFICATION.md`.
+  *Livré Plan 10-04 Task 3 : table 9×6 + 3 paragraphs + sources (6 références).*
 
 ### Backtest comparatif HFC OMPEX (Phase 10B, deferred — requires FMV poste)
 
