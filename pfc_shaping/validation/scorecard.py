@@ -1572,24 +1572,87 @@ def run_scorecard_full(
     pfc_c4_agg = pfc_c4_agg.groupby(level=0).first()  # first-vintage-wins overlap
     pfc_c4_series = pfc_c4_agg["price_shape"]
 
-    # Aggregate forwards-as-of-vintage : first vintage's forwards (shape-stable)
-    first_vintage = vintages[0]
-    fwds_first = _forwards_for_vintage(forwards_df, first_vintage, epex_hist)
-
     from pfc_shaping.validation.structural_tests import (
+        TestResult,
         test_arb_free,
         test_continuity,
         test_holiday_weekend,
         test_seasonal_profile,
     )
 
+    # WR-10 : per-vintage arb-free evaluation. L'ancienne implémentation
+    # comparait l'agrégat des 24 PFCs aux forwards de la PREMIÈRE vintage
+    # uniquement — donc les delivery periods couvertes par les vintages
+    # postérieures n'étaient JAMAIS validées contre leurs as-of forwards
+    # (silently skipped via empty mask combined with WR-06's silent-skip,
+    # désormais protégé). On évalue maintenant arb_free per vintage, puis
+    # on agrège max_dev across vintages et calcule un pass_rate (% vintages
+    # PASS) en plus du verdict global. C'est plus aligné avec les pratiques
+    # KYOS/Volue HPFC validation.
+    per_vintage_arb_free: list[dict[str, Any]] = []
+    for vintage in vintages:
+        pfc_v = pfc_cache[(config4.name, vintage)]["price_shape"]
+        fwds_v = _forwards_for_vintage(forwards_df, vintage, epex_hist)
+        res_v = test_arb_free(pfc_v, fwds_v)
+        per_vintage_arb_free.append(
+            {
+                "vintage": vintage,
+                "n_keys": len(fwds_v),
+                "n_evaluated": int(res_v.details.get("n_evaluated", -1))
+                if "n_evaluated" in res_v.details
+                else len(res_v.details) - (1 if "_skipped" in res_v.details else 0),
+                "max_dev": float(res_v.observed),
+                "passed": bool(res_v.passed),
+                "degenerate": bool(res_v.details.get("degenerate", False)),
+            }
+        )
+
+    if per_vintage_arb_free:
+        valid_devs = [
+            row["max_dev"]
+            for row in per_vintage_arb_free
+            if not row["degenerate"] and not (row["max_dev"] != row["max_dev"])
+            # `x != x` est True ssi NaN — protège contre les vintages
+            # entièrement skipées (max_dev=NaN per WR-06)
+        ]
+        agg_max_dev = max(valid_devs) if valid_devs else float("nan")
+        n_pass = sum(1 for row in per_vintage_arb_free if row["passed"])
+        n_total = len(per_vintage_arb_free)
+        pass_rate = n_pass / n_total if n_total > 0 else 0.0
+        # Verdict global : on exige PASS sur TOUTES les vintages — tolérance
+        # zéro car SC#1 est le gate du flip de production.
+        arb_free_agg = TestResult(
+            passed=(n_pass == n_total) and not (agg_max_dev != agg_max_dev),
+            observed=agg_max_dev,
+            threshold=0.01,
+            details={
+                "per_vintage": per_vintage_arb_free,
+                "n_vintages": n_total,
+                "n_pass": n_pass,
+                "pass_rate": pass_rate,
+                "agg_max_dev": agg_max_dev,
+            },
+        )
+    else:
+        arb_free_agg = TestResult(
+            passed=False,
+            observed=float("nan"),
+            threshold=0.01,
+            details={"per_vintage": [], "reason": "no_vintages"},
+        )
+
     pillar1 = {
-        "arb_free": test_arb_free(pfc_c4_series, fwds_first),
+        "arb_free": arb_free_agg,
         "holiday_weekend": test_holiday_weekend(pfc_c4_series),
         "seasonal_profile": test_seasonal_profile(pfc_c4_series, epex_hist),
         "continuity": test_continuity(pfc_c4_series),
     }
-    _emit("[progress] Pillar 1 complete")
+    _emit(
+        f"[progress] Pillar 1 complete "
+        f"(arb_free pass_rate {n_pass}/{n_total} vintages)"
+        if per_vintage_arb_free
+        else "[progress] Pillar 1 complete (no vintages)"
+    )
 
     # ---- 6. Pillar 2 (KYOS empirical accuracy) on all 4 configs ----
     from pfc_shaping.validation.block_masks import ALL_BLOCKS
