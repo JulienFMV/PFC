@@ -165,7 +165,7 @@
 
 ### D1 — Data sourcing (Claude default, no question)
 
-**Claude's decision:** EPEX 15-min réalisé via pipelines existants (energy_charts.info primary, SMARD/ENTSO-E fallbacks, config.yaml:33-55). Cache `data/epex_15min.parquet` gitignored, bootstrap au premier run.
+**Claude's decision:** EPEX 15-min réalisé via pipelines existants (energy_charts.info primary, SMARD/ENTSO-E fallbacks, config.yaml:33-55). Cache `data/epex_hourly.parquet` gitignored, bootstrap au premier run.
 **Notes:** Pas de question car pattern bien établi dans le repo. Pas de dépendance H:\ ni Databricks pour Phase 10.
 
 ### D2 — Flag matrix ablation

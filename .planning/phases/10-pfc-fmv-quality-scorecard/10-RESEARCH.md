@@ -16,7 +16,7 @@ Les 4 modules à créer dans `pfc_shaping/validation/` (`block_masks.py`, `struc
 
 | Capability | Primary Tier | Secondary Tier | Rationale |
 |------------|-------------|----------------|-----------|
-| EPEX 15-min realised data ingest | `pfc_shaping/data/ingest_energy_charts.py` (existing) | SMARD fallback `ingest_smard.py` | Pipeline déjà câblé, cache `data/epex_15min.parquet` |
+| EPEX 15-min realised data ingest | `pfc_shaping/data/ingest_energy_charts.py` (existing) | SMARD fallback `ingest_smard.py` | Pipeline déjà câblé, cache `data/epex_hourly.parquet` |
 | 5 block masks (tz-aware Europe/Zurich) | `pfc_shaping/validation/block_masks.py` (NEW) | — | Pure filter logic sur DatetimeIndex tz-aware, pas de dépendance modèle |
 | 4 structural tests Hildmann | `pfc_shaping/validation/structural_tests.py` (NEW) | `cascading._holidays_set` (existing) | Computation pure sur PFC output + forwards + EPEX hist |
 | Walk-forward 24 vintages + 4 configs ablation | `pfc_shaping/validation/scorecard.py` (NEW) | `PFCAssembler.build(reference_date=...)` (existing, no change) | Harness wrapper, pas de modif assembler |
@@ -43,7 +43,7 @@ Les 4 modules à créer dans `pfc_shaping/validation/` (`block_masks.py`, `struc
 ### Supporting
 | Library | Version | Purpose | When to Use |
 |---------|---------|---------|-------------|
-| `pyarrow` | 21.0.0 (pinned) | Parquet I/O for `data/epex_15min.parquet` cache + scorecard KPIs persistence | Already used, tolerance-contract compatible (numerical-equality not byte) |
+| `pyarrow` | 21.0.0 (pinned) | Parquet I/O for `data/epex_hourly.parquet` cache + scorecard KPIs persistence | Already used, tolerance-contract compatible (numerical-equality not byte) |
 | `pytest` | 8.4.2 (pinned) | Test framework for `tests/test_phase10_*.py` (gate SC#1) | Already pinned, existing conftest autouse env hygiene |
 | `requests` | 2.32.5 (pinned) | HTTP for energy-charts.info bootstrap (already wired in `ingest_energy_charts.py`) | No change needed |
 
@@ -176,7 +176,7 @@ tests/
     └── pillar3_ic80_observed_vs_nominal.png
 
 data/
-└── epex_15min.parquet       # EXISTING gitignored — cache 2024-2025 EPEX
+└── epex_hourly.parquet       # EXISTING gitignored — cache 2024-2025 EPEX
 ```
 
 ### Pattern 1: Block mask class-based (tz Europe/Zurich)
@@ -585,7 +585,7 @@ def build_one(
 
 | Category | Items Found | Action Required |
 |----------|-------------|------------------|
-| Stored data | EPEX 15-min cache `data/epex_15min.parquet` already exists (Mar 2025 snapshot, 1.3 MB). Re-bootstrap needed to extend to 2024-2025 full coverage. | Plan 10-01 task: re-run `ingest_energy_charts.load_prices('2019-01-01', '2025-12-31', bzn='CH')` and overwrite cache. ~2-5 min download. |
+| Stored data | EPEX 15-min cache `data/epex_hourly.parquet` already exists (Mar 2025 snapshot, 1.3 MB). Re-bootstrap needed to extend to 2024-2025 full coverage. | Plan 10-01 task: re-run `ingest_energy_charts.load_prices('2019-01-01', '2025-12-31', bzn='CH')` and overwrite cache. ~2-5 min download. |
 | Live service config | None — no n8n / Datadog / Tailscale dependencies in PFC LT scope. | None |
 | OS-registered state | None — no pm2, no Task Scheduler, no launchd. CI-only + local Mac Mini Python execution. | None |
 | Secrets/env vars | `ENTSOE_API_KEY` (fallback only — not needed if energy-charts works); `DATABRICKS_TOKEN` (NOT used by Phase 10 — forwards XLSX via `eex_report_path` local file). `PFC_LT_USE_SEASONAL_HOURLY_SHAPE` and `PFC_LT_ALLOW_NEGATIVE_PRICES` (existing, conftest autouse env hygiene already covers Phase 10). | None — existing env hygiene covers all PFC_LT_* keys via prefix snapshot (conftest.py:35) |
@@ -651,7 +651,7 @@ from pfc_shaping.data.ingest_energy_charts import load_prices
 
 # Re-bootstrap EPEX 15-min cache for full 2024-2025 coverage
 epex_2024_2025 = load_prices(start="2019-01-01", end="2025-12-31", bzn="CH")
-epex_2024_2025.to_parquet("data/epex_15min.parquet")
+epex_2024_2025.to_parquet("data/epex_hourly.parquet")
 # 7 yrs × 35040 quarters/yr ≈ 245k rows ; ~2-5 min download via Fraunhofer ISE
 ```
 **API note:** Endpoint `https://api.energy-charts.info/price?bzn=CH&start=2019-01-01&end=2025-12-31` returns JSON `{"unix_seconds": [...], "price": [...], "license": "CC BY 4.0"}`. No auth, no rate-limit hard cap (Fraunhofer ISE polite-use convention). [CITED: api.energy-charts.info docs + freepublicapis.com/energy-charts-api]
@@ -893,7 +893,7 @@ def test_phase10_sc1_continuity(pillar1_results):
 | `statsmodels` | Pillar 2 (MZ regression), Pillar 4 (acovf) | ✗ | — | **Install required:** `pip install statsmodels==0.14.6`. Pin in requirements.txt. |
 | `matplotlib` | Figures PNG | ✗ | — | **Install required:** `pip install matplotlib>=3.7`. Pin (commented line 36 already exists). |
 | `pytest` | SC#1 gate test suite | ✓ | 8.4.2 | — |
-| EPEX 15-min hist 2024-2025 | Pillar 1.3 (seasonal hist), Pillar 2 (realised baseline), Pillar 4 (forwards-flat baseline) | ⚠️ partial | `data/epex_15min.parquet` (1.3 MB, Mar 2025 snapshot) | Re-bootstrap via `ingest_energy_charts.load_prices('2019-01-01', '2025-12-31', bzn='CH')` — 2-5 min download |
+| EPEX 15-min hist 2024-2025 | Pillar 1.3 (seasonal hist), Pillar 2 (realised baseline), Pillar 4 (forwards-flat baseline) | ⚠️ partial | `data/epex_hourly.parquet` (1.3 MB, Mar 2025 snapshot) | Re-bootstrap via `ingest_energy_charts.load_prices('2019-01-01', '2025-12-31', bzn='CH')` — 2-5 min download |
 | Forwards EEX historical | Pillar 1.1 (arb-free), Pillar 4 (forwards-flat) | ⚠️ unclear | `H:\` not mounted on Mac Mini | Check local snapshot ; if absent, ask user to copy 1 snapshot OR cascade-derive from EPEX-hist Cal/Q/M (lossy) |
 | `H:\` HFC OMPEX dir | Phase 10B (NOT Phase 10) | ✗ | — | Out of scope Phase 10 |
 | `ENTSOE_API_KEY` env var | Fallback only if energy-charts down | optional | — | Primary path (energy-charts) is reliable, fallback rarely triggered |
@@ -903,7 +903,7 @@ def test_phase10_sc1_continuity(pillar1_results):
 - None. All missing deps are pip-installable (statsmodels, matplotlib) or cacheable (EPEX bootstrap).
 
 **Missing dependencies with fallback:**
-- `data/epex_15min.parquet` extension to 2025: re-bootstrap via existing `ingest_energy_charts.load_prices` — 2-5 min.
+- `data/epex_hourly.parquet` extension to 2025: re-bootstrap via existing `ingest_energy_charts.load_prices` — 2-5 min.
 - Forwards historical 2024-2025: TBD, see Open Question 2.
 
 ## Validation Architecture
@@ -962,7 +962,7 @@ def test_phase10_sc1_continuity(pillar1_results):
 | V5 Input Validation | yes | EPEX cache parquet validated via `_spike_flag` (ingest_energy_charts.py:132), forwards via `_RE_YEAR/_RE_QUARTER/_RE_MONTH` strict regex parse (cascading.py:87-89), bloc masks raise on tz-naive index |
 | V6 Cryptography | no | No secrets stored ; no signing operations in Phase 10 |
 | V7 Error Handling | yes | All file/network ops have retry + structured logging (`logger.warning`/`logger.info`) ; tolerance contract documented for re-run reproducibility |
-| V8 Data Protection | partial | `data/epex_15min.parquet` is public-license CC BY 4.0 data, gitignored. No PII. |
+| V8 Data Protection | partial | `data/epex_hourly.parquet` is public-license CC BY 4.0 data, gitignored. No PII. |
 | V12 Files and Resources | yes | All file paths via `Path` objects + `.resolve()` ; no shell exec, no `pickle.load`, no `eval` |
 
 ### Known Threat Patterns for Python stack

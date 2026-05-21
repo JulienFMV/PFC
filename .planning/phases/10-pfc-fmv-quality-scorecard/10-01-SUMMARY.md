@@ -15,7 +15,7 @@ requires:
 provides:
   - pfc_shaping/validation/block_masks.py with 5 BlockMask classes (D-A2-2) + ALL_BLOCKS
   - pfc_shaping/validation/scorecard.py skeleton (AblationConfig × 4, list_vintages_2024_2025 × 24, last_business_day_of_month, build_one, derive_forwards_from_epex_hist body, FORWARDS_SOURCE_* constants, run_scorecard_pillar_1 stub)
-  - data/epex_15min.parquet (245,472 rows, 2019-2025 tz-UTC 15-min, gitignored)
+  - data/epex_hourly.parquet (61,368 rows, 2019-2025 tz-UTC horaire, gitignored)
   - data/forwards_history_phase10.parquet (1,188 records, 24 vintages × ~49 keys, forwards_source=fallback_diagnostic, gitignored)
   - 10-01-NOTES.md decisions empiriques (C2 REVIEWS frozen method + ratio 0.8033 + threshold (0.65, 0.95) IF branch + Q2 fallback path + C3 REVIEWS marker convention)
   - ROADMAP.md / REQUIREMENTS.md / PROJECT.md updates reflecting D-A0-2 pivot
@@ -40,7 +40,7 @@ key-files:
     - pfc_shaping/validation/scorecard.py
     - tests/test_phase10_infra.py
     - .planning/phases/10-pfc-fmv-quality-scorecard/10-01-NOTES.md
-    - data/epex_15min.parquet (gitignored)
+    - data/epex_hourly.parquet (gitignored)
     - data/forwards_history_phase10.parquet (gitignored)
   modified:
     - pfc_shaping/validation/__init__.py (was 0-byte → enriched docstring + __all__)
@@ -89,7 +89,7 @@ completed: 2026-05-21
 ## Accomplishments
 
 - **Scorecard infra livré (skeleton-only)** : `pfc_shaping/validation/{block_masks,scorecard}.py` importables, `ALL_BLOCKS` (5 items) + `ABLATION_GRID` (4 items) + `list_vintages_2024_2025()` (24 timestamps) + `derive_forwards_from_epex_hist` (body implémenté) + `FORWARDS_SOURCE_REAL/_FALLBACK_DIAGNOSTIC` constants exportés.
-- **Cache EPEX 2019-2025 prêt** : 245,472 rows tz-UTC 15-min dans `data/epex_15min.parquet` (gitignored), bootstrap via `energy-charts.info` pipeline existant. Couvre la totalité de la fenêtre Phase 10 walk-forward.
+- **Cache EPEX 2019-2025 prêt** : 61,368 rows tz-UTC horaire dans `data/epex_hourly.parquet` (gitignored), bootstrap via `energy-charts.info` pipeline existant. Couvre la totalité de la fenêtre Phase 10 walk-forward.
 - **Décision empirique Hildmann Pillar 1.2 tranchée mécaniquement** : ratio mesuré 0.8033 sur 2019-2023 CH/VS → branche IF de la formule frozen → threshold (0.65, 0.95) research default confirmé. Aucune déviation vs la formule (C2 REVIEWS audit-trail green).
 - **Q2 RESEARCH forwards-as-of-vintage tranchée** : test H:\ FAIL → fallback `derive_forwards_from_epex_hist` body implémenté + 1,188 records (24 vintages × ~49 keys) cachés dans `data/forwards_history_phase10.parquet` avec colonne `forwards_source=fallback_diagnostic` (C3 REVIEWS marker structuré).
 - **Pivot D-A0-2 acté en doc** : ROADMAP/REQUIREMENTS/PROJECT.md cohérents avec Phase 10 = scorecard absolu (SC#1 Hildmann gate) + Phase 10B = OMPEX deferred.
@@ -118,7 +118,7 @@ _Note: Task 2 followed TDD (RED → GREEN). Task 3 followed C2 REVIEWS ex-ante f
 - `pfc_shaping/validation/scorecard.py` (~280 lignes) — AblationConfig + ABLATION_GRID (4 configs) + list_vintages_2024_2025 + last_business_day_of_month + build_one + derive_forwards_from_epex_hist (body) + FORWARDS_SOURCE_* constants + run_scorecard_pillar_1 stub
 - `tests/test_phase10_infra.py` (312 lignes, 16 tests) — block_masks + scorecard + conftest env hygiene
 - `.planning/phases/10-pfc-fmv-quality-scorecard/10-01-NOTES.md` (~200 lignes) — 4 sections (C2 REVIEWS frozen formula, Pitfall 1 mesure, Q2 forwards path, C3 REVIEWS marker convention)
-- `data/epex_15min.parquet` (gitignored) — 245,472 rows tz-UTC 15-min, range 2019-01-01..2025-12-31
+- `data/epex_hourly.parquet` (gitignored) — 61,368 rows tz-UTC horaire, range 2019-01-01..2025-12-31
 - `data/forwards_history_phase10.parquet` (gitignored) — 1,188 records, 24 vintages × ~49 keys, forwards_source=fallback_diagnostic
 
 ### Modified
@@ -148,15 +148,15 @@ _Note: Task 2 followed TDD (RED → GREEN). Task 3 followed C2 REVIEWS ex-ante f
 - **Issue:** Le plan §verify suggère `df['price']` mais `load_prices` retourne en réalité `df[['price_eur_mwh', 'spike_flag']]` (column name canonique dans ingest_energy_charts.py:113).
 - **Fix:** Tous mes appels (`prices = df['price_eur_mwh']`, parquet readback) utilisent le nom canonique. La signature de `derive_forwards_from_epex_hist` prend `pd.Series` (caller-controlled) donc agnostique au nom — pas de patch source nécessaire.
 - **Files modified:** N/A (decision propagée dans les Bash calls + tests qui se basent déjà sur la Series passée, pas sur le DataFrame).
-- **Verification:** `data/epex_15min.parquet` re-loaded successfully + derive_forwards returns 49 keys on vintage 2024-06-28.
+- **Verification:** `data/epex_hourly.parquet` re-loaded successfully + derive_forwards returns 49 keys on vintage 2024-06-28.
 - **Committed in:** `e955a2f` (Task 3) — documenté dans le commit body.
 
 **2. [Rule 3 — Blocking] `.gitignore` extension for root-level data/*.parquet**
 - **Found during:** Task 3 sub-step 3a (gitignore audit)
-- **Issue:** `.gitignore` couvrait uniquement `pfc_shaping/data/*` pour les caches parquet, pas `data/*.parquet` au repo root. Sans patch, `data/epex_15min.parquet` (245k rows = ~20 MB) aurait été untracked-mais-visible et risque de commit accidentel par `git add -A` futur.
+- **Issue:** `.gitignore` couvrait uniquement `pfc_shaping/data/*` pour les caches parquet, pas `data/*.parquet` au repo root. Sans patch, `data/epex_hourly.parquet` (245k rows = ~20 MB) aurait été untracked-mais-visible et risque de commit accidentel par `git add -A` futur.
 - **Fix:** Ajouté `data/*.parquet`, `data/_cache/`, `data/_h_cache/` au `.gitignore`. Vérifié que `data/eex_forwards_history.parquet` + `data/commodities_cache.parquet` (déjà trackés) ne sont pas masqués (git ignore ne s'applique pas aux fichiers déjà trackés).
 - **Files modified:** `.gitignore`
-- **Verification:** `git check-ignore -v data/epex_15min.parquet` → 21:data/*.parquet match. `git ls-files data/*.parquet` → 2 trackés (eex_forwards_history, commodities_cache) toujours présents.
+- **Verification:** `git check-ignore -v data/epex_hourly.parquet` → 21:data/*.parquet match. `git ls-files data/*.parquet` → 2 trackés (eex_forwards_history, commodities_cache) toujours présents.
 - **Committed in:** `e955a2f` (Task 3)
 
 **3. [Rule 3 — Blocking] `last_business_day_of_month` returns Europe/Zurich tz (not UTC)**
@@ -210,7 +210,7 @@ None — pas de configuration de service externe. La Phase 10 reste 100% Mac Min
 - `pfc_shaping.validation.scorecard.ABLATION_GRID` (4 AblationConfig)
 - `pfc_shaping.validation.scorecard.list_vintages_2024_2025()` (24 timestamps UTC)
 - `pfc_shaping.validation.scorecard.build_one(config, vintage, epex_hist, forwards_asof)` (no-leakage fit + PFCAssembler kwargs câblé)
-- `data/epex_15min.parquet` (cache 2019-2025 tz-UTC 15-min)
+- `data/epex_hourly.parquet` (cache 2019-2025 tz-UTC 15-min)
 - `data/forwards_history_phase10.parquet` (24 vintages × 49 keys forwards proxy, forwards_source=fallback_diagnostic)
 - Threshold Hildmann Pillar 1.2 = (0.65, 0.95) tranché empiriquement (cf. NOTES §Pitfall 1)
 - requirements.txt prêt à recevoir matplotlib + statsmodels (in-place decomment, 2 lignes annotées human-verified)
@@ -228,7 +228,7 @@ Files asserted as created/modified :
 - `[FOUND]` pfc_shaping/validation/scorecard.py
 - `[FOUND]` tests/test_phase10_infra.py
 - `[FOUND]` .planning/phases/10-pfc-fmv-quality-scorecard/10-01-NOTES.md
-- `[FOUND]` data/epex_15min.parquet (245,472 rows, tz=UTC)
+- `[FOUND]` data/epex_hourly.parquet (61,368 rows, tz=UTC)
 - `[FOUND]` data/forwards_history_phase10.parquet (1,188 records, forwards_source unique)
 - `[FOUND]` pfc_shaping/validation/__init__.py (non-empty)
 - `[FOUND]` pfc_shaping/requirements.txt (matplotlib line + statsmodels line, 1 occurrence each)

@@ -62,7 +62,7 @@ DM test config :
 
 ### Infrastructure
 - **Ablation grid 2x2** : `bowl OFF/ON × floors OFF/ON` = 4 configs × 24 vintages = **96 PFC FMV builds** (~4h compute Mac Mini).
-- **Data sourcing EPEX 15-min réalisé 2024-2025** : via pipelines existants `energy_charts.info` (primary, config.yaml:33) + SMARD/ENTSO-E (fallbacks). Cache local `data/epex_15min.parquet` (gitignored).
+- **Data sourcing EPEX CH spot day-ahead 2019-2025 (cadence horaire native)** : via pipelines existants `energy_charts.info` (primary, config.yaml:33) + SMARD/ENTSO-E (fallbacks). Cache local `data/epex_hourly.parquet` (gitignored). **Cadence convention Phase 10 (amendement 2026-05-21) :** CH spot DA n'a pas de pas 15-min natif (seul DE-LU est passé en quart-horaire en juin 2025) ; la convention CT pipeline `_15min.parquet` (ffill upsample homogénéité) n'est PAS utilisée ici — Phase 10 garde le pas horaire natif pour ne pas biaiser N effectif des tests DM/Christoffersen (Plan 10-03) d'un facteur 4 et pour réduire le coût mémoire/CPU walk-forward 24 vintages × 4 configs.
 - **Reporting** : tout dans `.planning/phases/10-pfc-fmv-quality-scorecard/10-VERIFICATION.md` (convention gsd) + figures matplotlib PNG dans `.planning/phases/10-pfc-fmv-quality-scorecard/figures/`. Versionnés, suit le workflow gsd.
 - **CI strategy** : tests unitaires harness avec mock synthetic data (Mac Mini-friendly). Real-run end-to-end depuis Mac Mini avec EPEX cached. Pas de dépendance H:\ ni OMPEX.
 
@@ -114,7 +114,7 @@ DM test config :
   - `block_winter_evening_peak` (17h-21h, Lun-Ven, nov-fév)
 - **D-A2-3 :** **5 horizons scorés** : M+1, M+3, M+6, Y+1, Y+2. Skip M+12 (redondant avec Y+1) et Y+3 (très peu liquide en forwards).
 - **D-A2-4 :** **KPIs par cellule (bloc × horizon × config)** : MAE, RMSE, bias (€/MWh, absolu). Mincer-Zarnowitz régression `realised = α + β·pred + ε` avec test joint `α=0 & β=1` (Wald), p-value reportée.
-- **D-A2-5 :** Realised EPEX 15-min 2024-2025 source : pipeline existant via `energy_charts.info` (primary, config.yaml:33), SMARD fallback. Cache `data/epex_15min.parquet` (gitignored). Aggrégation 15-min → hourly avec mean intra-hour pour aligner avec les blocs horaires.
+- **D-A2-5 :** Realised EPEX CH spot day-ahead source : pipeline existant via `energy_charts.info` (primary, config.yaml:33), SMARD fallback. Cache `data/epex_hourly.parquet` (gitignored, pas horaire natif — cf. note Cadence convention §Infrastructure). Pas d'agrégation cadence requise : CH spot est nativement horaire, les blocs sont horaires.
 
 ### Area 3 — Pillar 3 Probabilistic (Christoffersen unconditional only)
 
@@ -147,7 +147,7 @@ DM test config :
   - Config 4 : bowl ON + floors OFF (production target post-5bis-B+5)
   - SC#1 Hildmann gate évalué uniquement sur **Config 4** (production target).
   - Pillars 2-5 reportent les 4 configs (compare-effect ablation).
-- **D-A6-2 :** **Data ingestion** : pipeline existant `pfc_shaping.data.*` via `energy_charts.info` (primary, config.yaml:33-35). Cache `data/epex_15min.parquet` (gitignored, premier-run bootstrap ~2 ans × 15-min ≈ 70k rows = quelques minutes download). Pas de dépendance Databricks / H:\.
+- **D-A6-2 :** **Data ingestion** : pipeline existant `pfc_shaping.data.*` via `energy_charts.info` (primary, config.yaml:33-35). Cache `data/epex_hourly.parquet` (gitignored, premier-run bootstrap 7 ans × 8 760h ≈ 61k rows horaire CH = quelques minutes download ; CH spot DA n'a pas de 15-min natif, cf. §Infrastructure Cadence convention). Pas de dépendance Databricks / H:\.
 - **D-A6-3 :** **Reproducibility contract** : `assert_frame_equal(scorecard_kpis_run1, scorecard_kpis_run2, check_exact=False, atol=1e-12, rtol=0)` — convention 5bis-A/B/5 tolerance préservée. Random seed=42 pour `Uncertainty` bootstrap (déjà géré via `seed=0` dans `Uncertainty(n_boot=200, seed=0)`).
 - **D-A6-4 :** **Exec location** : tout depuis Mac Mini. Pas de dépendance H:\, pas de dépendance FMV poste, pas d'OMPEX. CI tests harness avec mock synthetic data + real-run end-to-end depuis Mac Mini avec EPEX cached.
 - **D-A6-5 :** **Reporting** : `10-VERIFICATION.md` dans `.planning/phases/10-pfc-fmv-quality-scorecard/` + figures PNG matplotlib dans `figures/` du même dossier. Versionnés.
@@ -204,7 +204,7 @@ DM test config :
 - `tests/test_phase10_empirical.py` — pytest sanity Pillar 2.
 - `tests/test_phase10_probabilistic.py` — pytest Pillar 3.
 - `tests/test_phase10_dm.py` — pytest Pillar 4.
-- `data/epex_15min.parquet` (gitignored) — cache EPEX historical 15-min réalisé 2024-2025, bootstrap depuis energy_charts.info au premier run.
+- `data/epex_hourly.parquet` (gitignored) — cache EPEX CH spot day-ahead **horaire** 2019-2025 (61 368 rows ≈ 7 ans × 8 760h + leap-years), bootstrap depuis energy_charts.info au premier run. Distinct du cache CT `pfc_shaping/data/epex_15min.parquet` (qui ffill-upsample pour homogénéité pipeline CT).
 
 ### Convention SOTA literature (Pillar 5 sources)
 - [~/.claude/projects/-Users-julienbattaglia-Desktop-PFC/memory/reference_pfc_state_of_art.md](file:///Users/julienbattaglia/.claude/projects/-Users-julienbattaglia-Desktop-PFC/memory/reference_pfc_state_of_art.md) — Fleten-Lemming 2003, Benth-Koekebakker 2007 (Max Smoothness REFERENCE), Caldana 2017 thin granularity, Hildmann 2013 (ETH Zurich, 4 quality criteria), Adams-Van Deventer 1994, Biegler-König Pilz arbitrage-free shifting, KYOS KyCurve, Volue HPFC, EULER (Phinergy). Source primaire pour Pillar 5 peer review + Pillar 1 Hildmann formalisation.

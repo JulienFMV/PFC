@@ -96,19 +96,31 @@ Toute déviation vs cette formule = BLOCKER (commit `git revert` immédiat).
 
 ## RESEARCH Pitfall 1 — Hildmann holiday/weekend ratio threshold (Pillar 1.2)
 
-**Measurement (EPEX CH 15-min, source `energy-charts.info`, période strict
-`2019-01-01..2023-12-31` exclusif, holidays subdiv VS via
+**Measurement (EPEX CH **horaire** day-ahead, source `energy-charts.info`,
+période strict `2019-01-01..2023-12-31` exclusif, holidays subdiv VS via
 `holidays.country_holidays("CH", subdiv="VS", years=range(2019, 2024))`) :**
 
-- Sample size : `175 296` rows 15-min (≈ 5 × 35 040)
-- VS holidays uniques 2019-2023 : `45` dates
-- N(weekend ∪ holidays_VS) = `53 276` rows
-- N(weekday hors holidays_VS) = `122 020` rows
-- mean(price | weekend ∪ holidays_VS) = `98.8969 €/MWh`
-- mean(price | weekday hors holidays) = `123.1085 €/MWh`
-- **ratio empirique = 0.8033** (4 décimales)
+> **Cadence convention Phase 10 (amendement 2026-05-21) :** EPEX CH spot
+> day-ahead n'a **pas** de résolution 15-min native (seul DE-LU est passé en
+> auction quart-horaire en juin 2025). La convention CT pipeline
+> (`pfc_shaping/data/ingest_*.py`) stocke en `_15min.parquet` avec ffill
+> homogénéité-pipeline ; Phase 10 utilise un cache séparé
+> `data/epex_hourly.parquet` au pas horaire natif pour ne pas gonfler
+> artificiellement N (sinon DM/Christoffersen Plan 10-03 voient p-values
+> biaisées par facteur ~2 via N×4 effectif factice).
+> Mesure ci-dessous re-jouée au pas horaire ; ratio identique aux 4 décimales
+> à la mesure initiale 15-min (les prix sont équivalents — ffill upsample
+> conserve la mean).
 
-**Ratios mensuels (60 = 5y × 12m, tous computables, agrégat 15-min) :**
+- Sample size : `43 824` rows horaire (= 5 × 8 760 + 24h année bissextile 2020)
+- VS holidays uniques 2019-2023 : `45` dates
+- N(weekend ∪ holidays_VS) = `13 320` rows
+- N(weekday hors holidays_VS) = `30 504` rows
+- mean(price | weekend ∪ holidays_VS) = `98.8914 €/MWh`
+- mean(price | weekday hors holidays) = `123.1117 €/MWh`
+- **ratio empirique = 0.8033** (4 décimales — identique à la mesure 15-min initiale, valide la preuve d'invariance ffill)
+
+**Ratios mensuels (60 = 5y × 12m, tous computables, agrégat horaire) :**
 
 | Quantile | Valeur |
 |----------|--------|
