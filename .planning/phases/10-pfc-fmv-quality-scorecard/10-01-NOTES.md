@@ -96,18 +96,136 @@ Toute déviation vs cette formule = BLOCKER (commit `git revert` immédiat).
 
 ## RESEARCH Pitfall 1 — Hildmann holiday/weekend ratio threshold (Pillar 1.2)
 
-_(à remplir par Sub-step 3b après bootstrap EPEX 2019-2025)_
+**Measurement (EPEX CH 15-min, source `energy-charts.info`, période strict
+`2019-01-01..2023-12-31` exclusif, holidays subdiv VS via
+`holidays.country_holidays("CH", subdiv="VS", years=range(2019, 2024))`) :**
+
+- Sample size : `175 296` rows 15-min (≈ 5 × 35 040)
+- VS holidays uniques 2019-2023 : `45` dates
+- N(weekend ∪ holidays_VS) = `53 276` rows
+- N(weekday hors holidays_VS) = `122 020` rows
+- mean(price | weekend ∪ holidays_VS) = `98.8969 €/MWh`
+- mean(price | weekday hors holidays) = `123.1085 €/MWh`
+- **ratio empirique = 0.8033** (4 décimales)
+
+**Ratios mensuels (60 = 5y × 12m, tous computables, agrégat 15-min) :**
+
+| Quantile | Valeur |
+|----------|--------|
+| min      | 0.5132 |
+| P10      | 0.6916 |
+| P50      | 0.8002 |
+| P90      | 0.8850 |
+| max      | 0.9402 |
+
+**Threshold decision Pillar 1.2 (Plan 10-02 SC#1 gate) — APPLICATION
+MÉCANIQUE de la formule frozen Sub-step 3a-bis [C2 REVIEWS] :**
+
+```
+IF empirical_ratio ∈ [0.65, 0.95]: threshold := (0.65, 0.95)  # research default confirmé
+ELSE: threshold := (max(0.50, P10_monthly_ratios), min(0.99, P90_monthly_ratios))
+```
+
+- **empirical_ratio = 0.8033**
+- **0.8033 ∈ [0.65, 0.95]** → vrai
+- **Branch retenue : IF**
+- **threshold final Pillar 1.2 retenu = (0.65, 0.95)** (research default
+  confirmé empiriquement sur 2019-2023 CH/VS)
+
+Aucune déviation vs la formule. Aucune mention de "Option 2 KYOS" ou
+autre forbidden pattern. Audit-trail clean : la branche `IF` est prise
+mécaniquement parce que `0.65 ≤ 0.8033 ≤ 0.95`.
+
+**Sanity-check qualitatif :** 0.8033 est compatible avec la SOTA literature
+CH (Hildmann 2013 reporte 0.75-0.85 pour le marché suisse) ; le P50 monthly
+0.8002 confirme que la moyenne agrégée n'est pas distordue par un mois
+outlier ; le P90 0.8850 reste sous le seuil supérieur 0.95 (no overlap
+weekend-weekday). Convention adoptée Plan 10-02.
 
 ---
 
 ## RESEARCH Q2 — Forwards historiques as-of vintage (Mac Mini)
 
-_(à remplir par Sub-step 3c après test H:\\ + implémentation
- derive_forwards_from_epex_hist body)_
+**Test accès `H:\\Energy\\GeCom\\MARCHE & NEGOCE\\Prix\\EEX - ER\\Price_Report_EEX.xlsx` :
+FAIL** (cas attendu sur Mac Mini Sion ; le share réseau Windows H:\\ n'est
+pas monté sur macOS).
+
+**Path retenu (Mac Mini default) : fallback `derive_forwards_from_epex_hist`**
+(body implémenté Plan 10-01 Task 3 sub-step 3c dans
+`pfc_shaping/validation/scorecard.py`).
+
+**Spot-check 1-2 quotes vs forwards XLSX :** non-testable (XLSX inaccessible).
+Sera fait sur FMV poste si Phase 10B exécutée plus tard.
+
+**Convention parser keys** (identique à `assembler.build(base_prices=...)`) :
+
+- Année      : `"YYYY"` → e.g. `"2025"`, `"2026"`, `"2027"`
+- Trimestre  : `"YYYY-QN"` avec `N ∈ {1, 2, 3, 4}` → e.g. `"2025-Q1"`, `"2025-Q4"`
+- Mois       : `"YYYY-MM"` avec zero-padding → e.g. `"2024-08"`, `"2025-12"`
+
+**Body `derive_forwards_from_epex_hist` (résumé impl) :**
+
+1. Strict filter `epex_hist.loc[epex_hist.index < vintage]` (no leakage).
+2. Yearly proxy `Y+1, Y+2, Y+3` = `mean(hist)` (uniform shape proxy ; le
+   true shape est rétabli par `ShapeHourly` downstream).
+3. Quarterly proxy `YYYY-QN` = `mean(hist | quarter==N)` sur chacune des
+   3 calendar years futures couvertes par `horizon_days` (default 3×365).
+4. Monthly proxy `YYYY-MM` = `mean(hist | month==MM)` sur tous les mois
+   contenus dans `[vintage, vintage + horizon_days]`.
+
+**Persistance :** les 24 vintages × ~49 keys ont été cachés dans
+`data/forwards_history_phase10.parquet` (long format : `vintage | key |
+price | forwards_source`). 1 188 records totaux, `forwards_source.nunique()
+== 1` avec valeur `"fallback_diagnostic"`.
+
+**Sanity-check qualitatif vintage 2024-06-28 :** Cal 2025-2027 ≈ 111.41 €/MWh
+(moyenne historique 2019-mi-2024, dominée par les pics 2022 énergie), Q1
+2025 = 100.94 (≈ hiver), Q2 2025 = 84.05 (≈ printemps doux), Q3 2025 =
+138.22 (≈ été haute demande). Ordre de grandeur plausible pour un proxy
+hist-based — pas un vrai forward, mais utilisable pour le benchmark Pillar 2
+au sens C3 REVIEWS (diagnostic only).
 
 ---
 
 ## C3 REVIEWS — forwards_source structured flag (NOT just a log line)
 
-_(à remplir par Sub-step 3c — convention valeurs FORWARDS_SOURCE_REAL /
- FORWARDS_SOURCE_FALLBACK_DIAGNOSTIC + propagation parquet + gate impact)_
+**Marker convention** (constantes module-level exportées depuis
+`pfc_shaping/validation/scorecard.py`) :
+
+```python
+FORWARDS_SOURCE_REAL                 = "real_eex_xlsx"
+FORWARDS_SOURCE_FALLBACK_DIAGNOSTIC  = "fallback_diagnostic"
+```
+
+**Propagation :**
+
+1. **Parquet level (`data/forwards_history_phase10.parquet`)** : colonne
+   obligatoire `forwards_source` à chaque row. Sur Mac Mini default cette
+   colonne porte uniformément `"fallback_diagnostic"` (vérifié :
+   `nunique() == 1`).
+2. **Build level (`build_one(..., forwards_asof=...)`)** : la métadonnée
+   est héritée du parquet source des forwards consommés.
+3. **Scorecard parquet output (Plan 10-04)** : la métadonnée est propagée
+   à chaque cellule (bloc × horizon × config) du scorecard final.
+
+**Gate impact (Plan 10-04 SC#1 evaluator) :**
+
+- Toute cellule avec `forwards_source == "fallback_diagnostic"` est
+  annotée explicitement `"Diagnostic only — not gate-eligible"` dans
+  `10-VERIFICATION.md` (cf. Plan 10-04 Task 2/3).
+- **SC#1 Hildmann 4/4 PASS ne peut être satisfait QUE par un run avec
+  `forwards_source == "real_eex_xlsx"`** agrégé sur Config 4
+  (production target). Un run fallback ne flippe pas D-FLIP-1.
+- Conséquence opérationnelle : si Plan 10-04 est exécuté depuis Mac
+  Mini (path actuel), SC#1 ne peut pas être validé sans override
+  user explicit acceptant le statut diagnostic-only (auquel cas
+  D-FLIP-1 reste BLOCKED).
+
+**Path retenu Plan 10-01 (Mac Mini default) :** `fallback_diagnostic` —
+le run final SC#1 nécessitera soit l'accès H:\\ (FMV poste), soit une
+override user.
+
+**derive_forwards_from_epex_hist body implémenté :**
+oui (Plan 10-01 Task 3 sub-step 3c) dans
+`pfc_shaping/validation/scorecard.py`, conformément à la signature
+exposée Task 2.

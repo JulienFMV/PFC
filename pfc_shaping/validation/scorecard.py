@@ -251,13 +251,33 @@ def derive_forwards_from_epex_hist(
     vintage: pd.Timestamp,
     horizon_days: int = 3 * 365,
 ) -> dict[str, float]:
-    """Skeleton — body implémenté Plan 10-01 Task 3 sub-step 3c.
+    """Q2 fallback (Mac Mini) — proxy "would-be-forwards" depuis EPEX hist.
 
-    Q2 fallback Mac Mini : quand le snapshot forwards XLSX H:\\ n'est pas
-    accessible, on dérive des "would-be-forwards" proxy depuis l'EPEX
-    historique en utilisant les fenêtres futures perçues = mean(EPEX_hist[
-    same_period_last_N_years]) pour chaque Cal/Q/M key sur l'horizon `[vintage,
-    vintage + horizon_days]`.
+    Body implémenté Plan 10-01 Task 3 sub-step 3c.
+
+    Quand le snapshot forwards XLSX H:\\ n'est pas accessible (cas Mac Mini),
+    on dérive des forwards proxy non-leaky depuis l'EPEX historique :
+
+    1. Filtre strict `epex_hist.loc[epex_hist.index < vintage]` (no leakage,
+       cf. RESEARCH Pitfall 2).
+    2. Construit les fenêtres futures perçues sur `[vintage, vintage +
+       horizon_days]` : `Cal_years = [vintage.year+1, +2, +3]`, `Quarters =`
+       chaque QN sur les 3 années, `Months =` chaque mois sur les 12 mois
+       suivants `vintage`.
+    3. Pour chaque key, calcule `mean(epex_hist[same_period_last_N_years])`
+       comme proxy. Convention :
+         - Year `YYYY` → moyenne hist des prix des années `<vintage.year`
+         - Quarter `YYYY-QN` → moyenne hist des prix où `quarter==N`
+         - Month `YYYY-MM` → moyenne hist des prix où `month==MM`
+
+    Parameters
+    ----------
+    epex_hist
+        Série tz-aware UTC (index DatetimeIndex), valeurs €/MWh.
+    vintage
+        Date as-of (tz-aware) ; le filtre est strict `index < vintage`.
+    horizon_days
+        Profondeur d'horizon (default 3*365 pour M+1..Y+2).
 
     Returns
     -------
@@ -267,14 +287,62 @@ def derive_forwards_from_epex_hist(
 
     Notes
     -----
-    Cette fonction porte le marker `forwards_source = "fallback_diagnostic"`
-    (cf. `FORWARDS_SOURCE_FALLBACK_DIAGNOSTIC`) propagé au scorecard parquet.
-    Plan 10-04 SC#1 ne peut PAS être satisfait par un run fallback (gate
-    eligible uniquement avec `forwards_source = "real_eex_xlsx"`).
+    Caveat : c'est un proxy non-leaky pour benchmark Pillar 2 KPIs, **PAS**
+    un vrai forward EEX — sera substitué par le snapshot XLSX réel quand
+    exécuté depuis FMV poste (accès H:\\). Cette fonction porte le marker
+    `forwards_source = "fallback_diagnostic"` (cf.
+    `FORWARDS_SOURCE_FALLBACK_DIAGNOSTIC`) propagé au scorecard parquet ;
+    Plan 10-04 SC#1 ne peut PAS être satisfait par un run fallback.
     """
-    raise NotImplementedError(
-        "derive_forwards_from_epex_hist body implémenté Plan 10-01 Task 3 sub-step 3c"
-    )
+    if epex_hist.index.tz is None:
+        raise ValueError("epex_hist must be tz-aware (UTC expected).")
+
+    # Strict no-leakage filter
+    hist = epex_hist.loc[epex_hist.index < vintage]
+    if hist.empty:
+        return {}
+
+    # Compute future windows [vintage, vintage + horizon_days]
+    end = vintage + pd.Timedelta(days=horizon_days)
+    future_idx = pd.date_range(vintage, end, freq="MS", tz="UTC")
+
+    # Convert historical index quarter/month for groupby aggregation
+    hist_q = hist.index.quarter
+    hist_m = hist.index.month
+    hist_y = hist.index.year
+
+    out: dict[str, float] = {}
+
+    # Yearly forwards : Y+1, Y+2, Y+3
+    for offset in (1, 2, 3):
+        year_target = vintage.year + offset
+        if year_target > vintage.year + (horizon_days // 365):
+            continue
+        # Cal proxy = mean of all hist (uniform shape proxy)
+        out[f"{year_target:04d}"] = float(hist.mean())
+
+    # Quarterly forwards : each QN on each future calendar year
+    for y in range(vintage.year + 1, vintage.year + 1 + (horizon_days // 365) + 1):
+        for q in (1, 2, 3, 4):
+            # Skip if quarter end is past horizon
+            q_start = pd.Timestamp(f"{y}-{(q-1)*3 + 1:02d}-01", tz="UTC")
+            if q_start > end:
+                continue
+            mask = hist_q == q
+            if mask.sum() == 0:
+                continue
+            out[f"{y:04d}-Q{q}"] = float(hist[mask].mean())
+
+    # Monthly forwards : each month on the next 12-36 months from vintage
+    for ts in future_idx:
+        if ts < vintage:
+            continue
+        mask = hist_m == ts.month
+        if mask.sum() == 0:
+            continue
+        out[f"{ts.year:04d}-{ts.month:02d}"] = float(hist[mask].mean())
+
+    return out
 
 
 # ---------------------------------------------------------------------------
