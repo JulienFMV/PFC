@@ -201,6 +201,7 @@ def test_arb_free(
     max_dev = 0.0
     details: dict[str, Any] = {}
     skipped: list[str] = []
+    evaluated: list[str] = []
 
     for key, fwd_price in forwards.items():
         try:
@@ -222,11 +223,33 @@ def test_arb_free(
             "forward": float(fwd_price),
             "dev": dev,
         }
+        evaluated.append(key)
         if dev > max_dev:
             max_dev = dev
 
     if skipped:
         details["_skipped"] = skipped
+
+    # WR-06 : coverage-aware gating. Si forwards non-vide mais AUCUNE key
+    # n'est évaluable (toutes skipées par mask vide ou parse-error), c'est
+    # un trou de couverture silencieux — pas un PASS triviale (max_dev=0).
+    # Le caller doit savoir pour distinguer "PFC reproduit parfaitement
+    # ses forwards" de "PFC ne couvre AUCUN delivery period référencé".
+    n_keys = len(forwards)
+    n_evaluated = len(evaluated)
+    if n_keys > 0 and n_evaluated == 0:
+        return TestResult(
+            passed=False,
+            observed=float("nan"),
+            threshold=tol,
+            details={
+                **details,
+                "reason": "no_keys_evaluable",
+                "degenerate": True,
+                "n_keys": n_keys,
+                "n_evaluated": 0,
+            },
+        )
 
     return TestResult(
         passed=max_dev < tol,
