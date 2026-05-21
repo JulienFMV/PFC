@@ -996,6 +996,148 @@ def compute_pillar3_coverage(
     }
 
 
+# ---------------------------------------------------------------------------
+# Pillar 4 — Forecast accuracy comparison (DM test PFC vs 3 baselines)
+# ---------------------------------------------------------------------------
+
+
+def compute_pillar4_dm(
+    pred_pfc: pd.Series,
+    pred_baseline: pd.Series | float,
+    realised: pd.Series,
+    bloc: Any,
+    h_months: int,
+) -> dict:
+    """Pillar 4 Diebold-Mariano cell KPI (bloc × horizon × baseline).
+
+    Compare la PFC FMV à une baseline naïve (climatology / persistence Y-1 /
+    forwards-flat) via le DM test maison `diebold_mariano`.
+
+    Convention sign : `errors_a = realised - pred_pfc` (PFC), `errors_b =
+    realised - pred_baseline` (baseline). `mean_d < 0` → PFC meilleur que
+    baseline.
+
+    Parameters
+    ----------
+    pred_pfc
+        Prédictions PFC tz-aware (UTC).
+    pred_baseline
+        Soit Series (e.g. forecast time-varying), soit float (e.g. baseline
+        climatology scalar). Si float, broadcast vers Series alignée sur
+        realised.index.
+    realised
+        Série EPEX realised tz-aware (UTC).
+    bloc
+        Instance `BlockMask`.
+    h_months
+        Horizon en mois (1 pour M+1, 24 pour Y+2). Utilisé comme `h=` du
+        DM test (HAC lag = h - 1).
+
+    Returns
+    -------
+    dict
+        Mapping 13 keys :
+        - `bloc` : str (= bloc.name)
+        - `h_months` : int (= h_months)
+        - `dm_stat`, `p_value`, `n`, `mean_d`, `var_d`, `n_lags_hac`,
+          `degenerate` (cf. `diebold_mariano` return)
+        - `mae_pfc` : float
+        - `mae_baseline` : float
+        - `delta_mae` : float (= mae_pfc - mae_baseline ; < 0 → PFC meilleur)
+        - `better_than_baseline` : str (`"Y"` si `mean_d < 0` AND `p_value < 0.05`,
+          sinon `"N"`)
+    """
+    from pfc_shaping.validation.dm_test import diebold_mariano
+
+    # ------------------------------------------------------------------
+    # Broadcast pred_baseline scalar → Series aligned on realised.index
+    # ------------------------------------------------------------------
+    if isinstance(pred_baseline, (int, float, np.integer, np.floating)):
+        pred_baseline = pd.Series(
+            float(pred_baseline), index=realised.index, name="baseline"
+        )
+
+    # ------------------------------------------------------------------
+    # Align all 3 series via inner join + dropna
+    # ------------------------------------------------------------------
+    aligned = pd.concat(
+        [
+            pred_pfc.rename("pfc"),
+            pred_baseline.rename("baseline"),
+            realised.rename("realised"),
+        ],
+        axis=1,
+        join="inner",
+    ).dropna()
+
+    if aligned.empty:
+        return {
+            "bloc": bloc.name,
+            "h_months": int(h_months),
+            "dm_stat": float("nan"),
+            "p_value": float("nan"),
+            "n": 0,
+            "mean_d": float("nan"),
+            "var_d": float("nan"),
+            "n_lags_hac": int(max(h_months - 1, 0)),
+            "degenerate": True,
+            "mae_pfc": float("nan"),
+            "mae_baseline": float("nan"),
+            "delta_mae": float("nan"),
+            "better_than_baseline": "N",
+        }
+
+    # ------------------------------------------------------------------
+    # Apply bloc mask
+    # ------------------------------------------------------------------
+    mask = bloc.apply(aligned.index)
+    if mask.sum() == 0:
+        return {
+            "bloc": bloc.name,
+            "h_months": int(h_months),
+            "dm_stat": float("nan"),
+            "p_value": float("nan"),
+            "n": 0,
+            "mean_d": float("nan"),
+            "var_d": float("nan"),
+            "n_lags_hac": int(max(h_months - 1, 0)),
+            "degenerate": True,
+            "mae_pfc": float("nan"),
+            "mae_baseline": float("nan"),
+            "delta_mae": float("nan"),
+            "better_than_baseline": "N",
+        }
+
+    pfc_masked = aligned["pfc"].values[mask]
+    baseline_masked = aligned["baseline"].values[mask]
+    realised_masked = aligned["realised"].values[mask]
+
+    errors_a = realised_masked - pfc_masked  # PFC errors
+    errors_b = realised_masked - baseline_masked  # Baseline errors
+
+    mae_pfc = float(np.mean(np.abs(errors_a)))
+    mae_baseline = float(np.mean(np.abs(errors_b)))
+    delta_mae = mae_pfc - mae_baseline
+
+    dm = diebold_mariano(errors_a, errors_b, h=int(h_months), loss="mae")
+
+    better = (
+        "Y"
+        if (not dm["degenerate"] and dm["mean_d"] < 0 and dm["p_value"] < 0.05)
+        else "N"
+    )
+
+    return {
+        **dm,
+        "bloc": bloc.name,
+        "h_months": int(h_months),
+        "mae_pfc": mae_pfc,
+        "mae_baseline": mae_baseline,
+        "delta_mae": delta_mae,
+        "better_than_baseline": better,
+    }
+
+
 __all__ = [
     "AblationConfig",
     "ABLATION_GRID",
@@ -1011,4 +1153,5 @@ __all__ = [
     "mz_test",
     "compute_cell_kpis",
     "compute_pillar3_coverage",
+    "compute_pillar4_dm",
 ]
