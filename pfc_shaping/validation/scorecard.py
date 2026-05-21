@@ -1591,7 +1591,6 @@ def run_scorecard_full(
         for horizon in HORIZONS_PILLAR2:
             # Pool pred_pfc across vintages
             pred_pfc_pieces: list[pd.Series] = []
-            baseline_pieces: dict[str, list[pd.Series]] = {b: [] for b in BASELINES}
             for vintage in vintages:
                 w_start, w_end = _horizon_to_window(vintage, horizon)
                 pfc_v = pfc_cache[(config.name, vintage)]
@@ -1601,16 +1600,9 @@ def run_scorecard_full(
                 )
                 pred_v = pfc_v_hourly.loc[window_mask]
                 pred_pfc_pieces.append(pred_v)
-                # Build baselines on the same window
-                fwds_v = _forwards_for_vintage(forwards_df, vintage, epex_hist)
-                for bname in BASELINES:
-                    for bloc in ALL_BLOCKS:
-                        # Pre-build per bloc happens below ; here we collect
-                        # full-window broadcast (scalar over realised_window).
-                        # We will mask by bloc inside compute_pillar4_dm.
-                        pass
-                # Each baseline is scalar-per-(bloc, vintage, horizon) — we
-                # build inside the bloc loop below to avoid duplicate work.
+                # Baselines are built per-(bloc, vintage, horizon) inside the
+                # bloc loop below — _forwards_for_vintage is called there with
+                # the same `vintage` to avoid duplicate parquet lookups here.
             pred_pfc_pooled = pd.concat(pred_pfc_pieces).sort_index()
             pred_pfc_pooled = pred_pfc_pooled.groupby(level=0).first()
             realised_aligned = epex_realised.reindex(pred_pfc_pooled.index)
