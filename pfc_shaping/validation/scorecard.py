@@ -532,7 +532,7 @@ def run_scorecard_pillar_1(
             pfc_v.to_parquet(cache_file)
 
         # WR-01 mitigation : en mock mode, le PFC buildé est discardé en
-        # faveur d'un synth designed-to-PASS (cf. _synth_pfc_for_mock).
+        # faveur d'un synth designed-to-PASS (cf. _synth_passing_fixture).
         # Pour qu'une régression silencieuse de `build_one` (e.g. all NaN,
         # ou prix explosifs) ne passe pas inaperçue, on assert des
         # post-conditions de sanité sur chaque `pfc_v` avant de le
@@ -559,7 +559,7 @@ def run_scorecard_pillar_1(
     #   - 'mock' : 4 vintages buildées via build_one() pour PROUVER le no-crash
     #     du chain (couverture branche code). MAIS la SC#1 gate est évaluée sur
     #     une PFC SYNTHÉTIQUE DÉTERMINISTE construite pour PASS les 4 tests par
-    #     design — cf. _synth_pfc_for_mock(). Le pipeline assembler avec
+    #     design — cf. _synth_passing_fixture(). Le pipeline assembler avec
     #     synthetic EPEX ne converge pas systématiquement à tol=0.01 sur Cal Y+3
     #     (MSFC constraint violations connues sur 5y train), donc le mock CI
     #     gate utilise un PFC synthétique 'idéal'. Le **verdict réel SC#1**
@@ -568,14 +568,17 @@ def run_scorecard_pillar_1(
     #     WR-01 mitigation : les outputs `pfc_v` du loop précédent sont
     #     validés via assertions (no-NaN, |max|<1000) dans la boucle pour
     #     attraper une régression silencieuse de build_one avant le
-    #     short-circuit vers _synth_pfc_for_mock.
+    #     short-circuit vers _synth_passing_fixture.
     #   - 'parquet' : full 24-vintage first-vintage-wins aggregate (Plan 10-04 real-run).
     if epex_source == "mock":
         # pfc_per_vintage déjà buildée → no-crash garanti pour le code path.
         # SC#1 mock CI gate évalué sur un PFC SYNTHÉTIQUE designed-to-PASS
-        # (cf. _synth_pfc_for_mock). Verdict réel SC#1 = Plan 10-04 real-run.
-        pfc_eval_series, forwards_eval = _synth_pfc_for_mock(
-            forwards_asof, seed=42
+        # (cf. _synth_passing_fixture). Verdict réel SC#1 = Plan 10-04 real-run.
+        # On passe les keys de forwards_asof à titre informatif pour que la
+        # fenêtre du PFC synth couvre la même période que les vraies forwards,
+        # mais les VALEURS de forwards_asof sont IGNORÉES (WR-05).
+        pfc_eval_series, forwards_eval = _synth_passing_fixture(
+            forward_keys=list(forwards_asof.keys())
         )
     else:
         pfc_concat = pd.concat(pfc_per_vintage).sort_index()
@@ -593,35 +596,48 @@ def run_scorecard_pillar_1(
     return results
 
 
-def _synth_pfc_for_mock(
-    forwards_asof: dict[str, float],
-    seed: int = 42,
+def _synth_passing_fixture(
+    forward_keys: list[str] | None = None,
+    start: pd.Timestamp | None = None,
+    end: pd.Timestamp | None = None,
 ) -> tuple[pd.Series, dict[str, float]]:
-    """Helper Plan 10-02 — PFC + forwards SYNTHÉTIQUES coherents (mock CI).
+    """Helper Plan 10-02 — PFC + forwards SYNTHÉTIQUES designed-to-PASS (mock CI).
 
     **MOCK CI only** : retourne une paire (pfc, forwards) construite pour PASS
     les 4 tests Hildmann sur les seuils SOTA-grade (arb_free<0.01,
     continuity<2.0, ratio∈[0.65,0.95], corr>0.85). Le verdict SC#1 réel =
     Plan 10-04 Task 2 sur real-run parquet.
 
+    **Contract (WR-05)** : cette fonction NE TIENT PAS COMPTE des forwards
+    réels — elle GÉNÈRE un PFC synthétique et fabrique des forwards
+    cohérents avec lui par construction (arb-free parfait). Le rename
+    `_synth_pfc_for_mock` → `_synth_passing_fixture` rend cette
+    sémantique explicite. La paire `(pfc, forwards_synth)` retournée est
+    UNIQUEMENT utile pour prouver que les 4 fonctions Hildmann passent
+    sur une entrée idéale ; elle n'exerce PAS le pipeline assembler.
+
     Stratégie :
         - PFC nearly-flat (50 €/MWh base) avec saisonnalité douce (±10) →
           continuité naturelle, jamais de saut > 2 €/MWh.
         - Niveau par mois = pré-calculé puis injecté dans forwards.
-        - Modulation horaire midi-peak centrée par mois (préserve mean exact).
-        - Modulation weekday/weekend centrée par mois (préserve mean exact).
-        - **Forwards `forwards_asof` IGNORÉS en mock** : on retourne nos propres
-          forwards synthétiques qui matchent exactement le PFC synth (arb-free
-          parfait par construction).
+        - Modulation horaire midi-peak SMOOTH (cos hour-of-day).
+        - Modulation weekday/weekend smoothée 24h (préserve continuité).
+        - Forwards synth = mean(PFC | period local) par construction.
 
     Parameters
     ----------
-    forwards_asof
-        Mapping `{key: forward_price}` réel ; utilisé UNIQUEMENT pour détecter
-        la fenêtre temporelle visée (premier mois disponible). Les valeurs
-        sont remplacées par les forwards synth coherent avec le PFC.
-    seed
-        Seed (réservé pour future extension, non utilisé ici car déterministe).
+    forward_keys
+        Liste optionnelle des keys Cal/Q/M à synthétiser (e.g.
+        `["2024-01", "2024-Q1", "2024"]`). Si None → keys mensuelles
+        2024-01..2024-12 par défaut. Les keys non parseables sont
+        silencieusement ignorées.
+    start
+        Bornes optionnelles de la fenêtre temporelle UTC. Si None → dérivées
+        des `forward_keys` mensuelles (premier mois). Default fallback :
+        2024-01-01 UTC.
+    end
+        Borne fin (exclusive) UTC. Si None → dérivée du dernier mois +1.
+        Default fallback : 2025-01-01 UTC.
 
     Returns
     -------
@@ -632,19 +648,42 @@ def _synth_pfc_for_mock(
     """
     import re
 
+    keys = list(forward_keys) if forward_keys is not None else []
     month_pattern = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
-    month_keys = sorted([k for k in forwards_asof.keys() if month_pattern.match(k)])
-    if not month_keys:
-        month_keys = [f"2024-{m:02d}" for m in range(1, 13)]
-    first_month = month_keys[0]
-    last_month = month_keys[-1]
-    first_year, first_m = int(first_month[:4]), int(first_month[5:7])
-    last_year, last_m = int(last_month[:4]), int(last_month[5:7])
-    start = pd.Timestamp(f"{first_year:04d}-{first_m:02d}-01", tz="UTC")
-    if last_m == 12:
-        end = pd.Timestamp(f"{last_year + 1:04d}-01-01", tz="UTC")
-    else:
-        end = pd.Timestamp(f"{last_year:04d}-{last_m + 1:02d}-01", tz="UTC")
+    quarter_pattern = re.compile(r"^\d{4}-Q[1-4]$")
+    year_pattern = re.compile(r"^\d{4}$")
+
+    month_keys = sorted([k for k in keys if month_pattern.match(k)])
+    quarter_keys = [k for k in keys if quarter_pattern.match(k)]
+    year_keys = [k for k in keys if year_pattern.match(k)]
+
+    # Dériver la fenêtre temporelle :
+    #   priorité 1 : `start`/`end` explicites
+    #   priorité 2 : premier/dernier mois de `month_keys`
+    #   priorité 3 : 2024-01..2024-12 (fallback CI mock historique)
+    if start is None or end is None:
+        if month_keys:
+            first_month = month_keys[0]
+            last_month = month_keys[-1]
+            first_year, first_m = int(first_month[:4]), int(first_month[5:7])
+            last_year, last_m = int(last_month[:4]), int(last_month[5:7])
+            inferred_start = pd.Timestamp(
+                f"{first_year:04d}-{first_m:02d}-01", tz="UTC"
+            )
+            if last_m == 12:
+                inferred_end = pd.Timestamp(f"{last_year + 1:04d}-01-01", tz="UTC")
+            else:
+                inferred_end = pd.Timestamp(
+                    f"{last_year:04d}-{last_m + 1:02d}-01", tz="UTC"
+                )
+        else:
+            # Fallback CI mock historique : 2024 entier
+            inferred_start = pd.Timestamp("2024-01-01", tz="UTC")
+            inferred_end = pd.Timestamp("2025-01-01", tz="UTC")
+            month_keys = [f"2024-{m:02d}" for m in range(1, 13)]
+        start = start if start is not None else inferred_start
+        end = end if end is not None else inferred_end
+
     idx = pd.date_range(start, end, freq="1h", inclusive="left", tz="UTC")
     idx_local = idx.tz_convert("Europe/Zurich")
 
@@ -684,20 +723,16 @@ def _synth_pfc_for_mock(
         mask = (idx_local.year == yr) & (idx_local.month == mo)
         if mask.sum() > 0:
             forwards_synth[k] = float(pfc.values[mask].mean())
-    quarter_pattern = re.compile(r"^\d{4}-Q[1-4]$")
-    for k in forwards_asof.keys():
-        if quarter_pattern.match(k):
-            yr, q = int(k[:4]), int(k[6])
-            mask = (idx_local.year == yr) & (idx_local.quarter == q)
-            if mask.sum() > 0:
-                forwards_synth[k] = float(pfc.values[mask].mean())
-    year_pattern = re.compile(r"^\d{4}$")
-    for k in forwards_asof.keys():
-        if year_pattern.match(k):
-            yr = int(k)
-            mask = idx_local.year == yr
-            if mask.sum() > 0:
-                forwards_synth[k] = float(pfc.values[mask].mean())
+    for k in quarter_keys:
+        yr, q = int(k[:4]), int(k[6])
+        mask = (idx_local.year == yr) & (idx_local.quarter == q)
+        if mask.sum() > 0:
+            forwards_synth[k] = float(pfc.values[mask].mean())
+    for k in year_keys:
+        yr = int(k)
+        mask = idx_local.year == yr
+        if mask.sum() > 0:
+            forwards_synth[k] = float(pfc.values[mask].mean())
 
     return pfc, forwards_synth
 
@@ -2159,7 +2194,7 @@ __all__ = [
     "FORWARDS_SOURCE_FALLBACK_DIAGNOSTIC",
     "run_scorecard_pillar_1",
     "_synth_epex_hist_for_mock",
-    "_synth_pfc_for_mock",
+    "_synth_passing_fixture",
     "mz_test",
     "compute_cell_kpis",
     "compute_pillar3_coverage",
