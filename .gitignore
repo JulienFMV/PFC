@@ -22,6 +22,11 @@ data/*.parquet
 data/_cache/
 data/_h_cache/
 
+# Phase 10 scorecard per-vintage PFC caches (96 builds × ~4 MB = ~400 MB local Mac Mini)
+# Gitignored per T-10-04-06 — local Mac Mini only, regenerated via scripts/run_phase10_scorecard.py
+.planning/phases/*/cache/
+.planning/phases/*/run_phase10.log
+
 # Model artifacts
 pfc_shaping/model/artifacts/
 
