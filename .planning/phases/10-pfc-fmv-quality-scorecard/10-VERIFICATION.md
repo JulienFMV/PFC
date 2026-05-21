@@ -1,10 +1,10 @@
 # Phase 10 — PFC FMV Quality Scorecard (5-pillar SOTA replication)
 
-**Generated** : 2026-05-21T18:12:50+00:00
+**Generated** : 2026-05-21T18:35:44+00:00
 **Config target** : bowl_on_floors_off (Config 4)
 **Vintages** : 24 (last business day of each month 2024-01..2025-12)
 **Forwards source** : `fallback_diagnostic`
-**Compute time** : 24.6 s
+**Compute time** : 104.9 s
 
 ---
 
@@ -12,7 +12,7 @@
 
 - **SC#1 Hildmann gate** : 2/4 tests PASS — **DIAGNOSTIC-ONLY** (⚠ Diagnostic only — not gate-eligible (forwards derived from EPEX-history fallback)).
 - **Pillar 2 (Empirical KYOS)** : mean MAE Config 4 across blocs×horizons = 42.38 €/MWh (min 3.63, max 64.91).
-- **Pillar 3 (Christoffersen IC80)** : observed violation freq per bloc range = [0.000, 0.110] (nominal 0.20 ; IC95 deferred Phase 5ter).
+- **Pillar 3 (Christoffersen IC80)** : observed violation freq per bloc range = [0.025, 0.291] (nominal 0.20 ; IC95 deferred Phase 5ter).
 - **Pillar 4 (DM vs 3 baselines)** : Config 4 strictly better (p<0.05) in 28/58 testable cells (17 cells DEGEN excluded).
 - **Pillar 5 (Peer review SOTA)** : 9-feature comparative table + gap analysis (see §Pillar 5 below).
 
@@ -159,11 +159,11 @@ KPIs per (config × bloc × horizon). *Cells with `forwards_source=fallback_diag
 
 | Bloc | IC level | Nominal p | Observed freq | n | x | LR stat | p-value | Degenerate |
 |------|----------|-----------|---------------|---|---|---------|---------|------------|
-| block_midday_weekday | 0.8 | 0.20 | 0.0395 | 2505 | 99 | 559 | 1.63e-123 | N |
-| block_overnight_weekday | 0.8 | 0.20 | 0.0128 | 7515 | 96 | 2.59e+03 | 0 | N |
-| block_summer_solar_bowl | 0.8 | 0.20 | 0.11 | 738 | 81 | 43.2 | 4.85e-11 | N |
-| block_weekend_midday | 0.8 | 0.20 | 0.0737 | 800 | 59 | 99.4 | 2.02e-23 | N |
-| block_winter_evening_peak | 0.8 | 0.20 | 0 | 604 | 0 | NaN | 2.93e-59 | N |
+| block_midday_weekday | 0.8 | 0.20 | 0.149 | 2505 | 374 | 43.2 | 4.93e-11 | N |
+| block_overnight_weekday | 0.8 | 0.20 | 0.0514 | 7515 | 386 | 1.38e+03 | 3.98e-302 | N |
+| block_summer_solar_bowl | 0.8 | 0.20 | 0.291 | 738 | 215 | 34.9 | 3.4e-09 | N |
+| block_weekend_midday | 0.8 | 0.20 | 0.184 | 800 | 147 | 1.35 | 0.246 | N |
+| block_winter_evening_peak | 0.8 | 0.20 | 0.0248 | 604 | 15 | 171 | 5.32e-39 | N |
 
 ![Pillar 3 IC80 observed vs nominal](figures/pillar3_ic80_observed_vs_nominal.png)
 
@@ -569,4 +569,4 @@ runtime.
 - **Forwards-as-of-vintage path** : `fallback_diagnostic` (derive_forwards_from_epex_hist fallback — SC#1 NOT gate-eligible).
 - **IC95 deferral** : Phase 5ter. Reference : `pfc_shaping/lt/model/uncertainty.py` lines 51-194 expose `p10/p90 only` (no `level=` param).
 - **Reproducibility contract** : `assert_frame_equal(..., check_exact=False, atol=1e-12, rtol=0)` verified by `tests/test_phase10_reproducibility.py`.
-- **Compute summary** : 96 builds = 24.6 seconds wall time Mac Mini.
+- **Compute summary** : 96 builds = 104.9 seconds wall time Mac Mini.
