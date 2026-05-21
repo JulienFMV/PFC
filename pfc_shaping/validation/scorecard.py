@@ -861,6 +861,141 @@ def compute_cell_kpis(
     }
 
 
+# ---------------------------------------------------------------------------
+# Pillar 3 — Probabilistic calibration (Christoffersen LR_uc on IC80 only)
+# ---------------------------------------------------------------------------
+
+
+def compute_pillar3_coverage(
+    pfc_with_ic: pd.DataFrame,
+    realised: pd.Series,
+    bloc: Any,
+    ic_level: float = 0.80,
+) -> dict:
+    """Pillar 3 unconditional coverage test (Christoffersen 1998 LR_uc, IC80 only).
+
+    **IC80 only — IC95 explicitly deferred Phase 5ter.**
+
+    Blocker #4 fix (Plan 10-03 revision iter 1) : la classe
+    `pfc_shaping.lt.model.uncertainty.Uncertainty.compute()` retourne
+    UNIQUEMENT les colonnes `['p10', 'p90']` (percentiles 10/90 = IC80
+    par construction). Pas de paramètre `level=` ni `confidence=`. Étendre
+    Uncertainty pour IC95 toucherait le code core LT model = scope-creep
+    Phase 10. Décision : IC95 explicitement déférée Phase 5ter (CONTEXT
+    D-A3-3 amendé).
+
+    Cette fonction REJETTE explicitement `ic_level != 0.80` avec ValueError
+    explicite mentionnant `IC95` + `Phase 5ter` + `uncertainty.py` (audit-trail
+    anti-silent-skip).
+
+    Parameters
+    ----------
+    pfc_with_ic
+        DataFrame PFC tz-aware (UTC), DOIT avoir les colonnes
+        `["price_shape", "p10", "p90"]` (output `assembler.build` avec
+        `Uncertainty` injecté).
+    realised
+        Série EPEX realised tz-aware (UTC).
+    bloc
+        Instance `BlockMask` (avec `apply(idx_utc) -> np.ndarray[bool]` et
+        attribut `name`).
+    ic_level
+        Niveau d'IC testé. **Doit valoir 0.80 en Phase 10** ; tout autre
+        valeur raise ValueError explicite (IC95 → Phase 5ter).
+
+    Returns
+    -------
+    dict
+        Mapping avec :
+        - `bloc` : str (= bloc.name)
+        - `ic_level` : float (= ic_level, 0.80 en Phase 10)
+        - `nominal_p` : float (= 1 - ic_level, 0.20 en Phase 10)
+        - `lr_stat`, `p_value`, `observed_freq`, `n`, `x`, `degenerate`
+          (cf. `lr_unconditional_coverage` return).
+
+    Raises
+    ------
+    ValueError
+        - Si `ic_level != 0.80` (avec message verbatim mentionnant IC95 +
+          Phase 5ter + uncertainty.py — audit-trail blocker #4).
+        - Si `pfc_with_ic` n'a pas les colonnes `p10` et/ou `p90`.
+
+    Examples
+    --------
+    >>> # IC95 rejection (blocker #4 défense)
+    >>> compute_pillar3_coverage(pfc, realised, bloc, ic_level=0.95)
+    Traceback (most recent call last):
+        ...
+    ValueError: compute_pillar3_coverage: ic_level=0.95 not supported. ...
+    """
+    from pfc_shaping.validation.christoffersen import lr_unconditional_coverage
+
+    # ------------------------------------------------------------------
+    # Blocker #4 fix : IC95 explicit reject (no silent skip, no fallback)
+    # ------------------------------------------------------------------
+    if not np.isclose(ic_level, 0.80):
+        raise ValueError(
+            f"compute_pillar3_coverage: ic_level={ic_level} not supported. "
+            f"Phase 10 tests IC80 only (Uncertainty.compute returns p10/p90, "
+            f"no IC95 bounds). IC95 deferred to Phase 5ter (CONTEXT D-A3-3 "
+            f"amendé). To enable IC95: extend pfc_shaping/lt/model/"
+            f"uncertainty.py to support level= param, then re-open this guard."
+        )
+
+    # ------------------------------------------------------------------
+    # Required columns check (explicit ValueError, no KeyError silent)
+    # ------------------------------------------------------------------
+    missing_cols = [c for c in ("p10", "p90") if c not in pfc_with_ic.columns]
+    if missing_cols:
+        raise ValueError(
+            f"compute_pillar3_coverage: pfc_with_ic missing columns {missing_cols}. "
+            f"Expected ['p10', 'p90'] (IC80 bounds from Uncertainty.compute). "
+            f"Got columns: {list(pfc_with_ic.columns)}."
+        )
+
+    nominal_p = 1.0 - float(ic_level)  # 0.20 pour IC80
+
+    # ------------------------------------------------------------------
+    # Align pfc_with_ic and realised via inner join on DatetimeIndex
+    # ------------------------------------------------------------------
+    aligned = pd.concat(
+        [pfc_with_ic[["p10", "p90"]], realised.rename("realised")],
+        axis=1,
+        join="inner",
+    ).dropna()
+
+    if aligned.empty:
+        return {
+            **lr_unconditional_coverage(x=0, n=0, p=nominal_p),
+            "bloc": bloc.name,
+            "ic_level": float(ic_level),
+        }
+
+    # ------------------------------------------------------------------
+    # Apply bloc mask + count violations (realised < p10 OR > p90)
+    # ------------------------------------------------------------------
+    mask = bloc.apply(aligned.index)
+    n = int(mask.sum())
+    if n == 0:
+        return {
+            **lr_unconditional_coverage(x=0, n=0, p=nominal_p),
+            "bloc": bloc.name,
+            "ic_level": float(ic_level),
+        }
+
+    p10_masked = aligned["p10"].values[mask]
+    p90_masked = aligned["p90"].values[mask]
+    realised_masked = aligned["realised"].values[mask]
+    violations = (realised_masked < p10_masked) | (realised_masked > p90_masked)
+    x = int(violations.sum())
+
+    return {
+        **lr_unconditional_coverage(x=x, n=n, p=nominal_p),
+        "bloc": bloc.name,
+        "ic_level": float(ic_level),
+    }
+
+
 __all__ = [
     "AblationConfig",
     "ABLATION_GRID",
@@ -875,4 +1010,5 @@ __all__ = [
     "_synth_pfc_for_mock",
     "mz_test",
     "compute_cell_kpis",
+    "compute_pillar3_coverage",
 ]

@@ -164,8 +164,8 @@ class TestComputePillar3Coverage:
         res = compute_pillar3_coverage(pfc_with_ic, realised, bloc, ic_level=0.80)
         # Structure checks
         assert res["bloc"] == "block_midday_weekday"
-        assert res["ic_level"] == 0.80
-        assert res["nominal_p"] == 0.20
+        assert res["ic_level"] == pytest.approx(0.80)
+        assert res["nominal_p"] == pytest.approx(0.20)  # 1.0 - 0.80 floating-point ULP
         assert res["n"] > 0  # in-bloc count after mask
         assert res["x"] >= 0
         assert "observed_freq" in res
