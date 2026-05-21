@@ -35,8 +35,8 @@ duckdb>=1.1.0
 pytest==8.4.2
 
 # Optionnel : visualisation (backtest / diagnostic)
-# matplotlib>=3.7.0  # Phase 10 (Plan 10-02 wiring) : scorecard figures PNG, human-verified Plan 10-01 Task 1
-# statsmodels==0.14.6  # Phase 10 (Plan 10-02 wiring) : MZ regression + DM HAC variance (Plan 10-03), human-verified Plan 10-01 Task 1
+matplotlib>=3.7.0  # Phase 10: scorecard figures PNG (Plan 10-04)
+statsmodels==0.14.6  # Phase 10: MZ regression (Pillar 2) + DM HAC variance (Plan 10-03)
 # seaborn>=0.12.0
 
 # Optionnel : planificateur (alternative à cron)
