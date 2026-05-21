@@ -18,10 +18,13 @@ files_reviewed_list:
   - tests/test_phase10_probabilistic.py
 findings:
   critical: 1
-  warning: 9
+  warning: 12
   info: 6
-  total: 16
+  total: 19
 status: issues_found
+sources:
+  - claude (gsd-code-reviewer): CR-01, WR-01..WR-09, IN-01..IN-06
+  - codex-cli-0.125.0 (independent blind pass): WR-10, WR-11, WR-12 (Claude misses)
 ---
 
 # Phase 10: Code Review Report
@@ -504,6 +507,107 @@ def _dm_degenerate_dict(bloc_name: str, h_months: int) -> dict:
 ```
 Update `render_markdown_report` to filter out `"DEGEN"` before computing
 the better-than-baseline ratio.
+
+---
+
+### WR-10: `run_scorecard_full` Pillar 1 tests arb-free against only the first-vintage forwards, missing per-vintage validation
+
+**File:** `pfc_shaping/validation/scorecard.py:1476-1493`
+**Source:** codex-cli-0.125.0 (independent review, blind pass)
+**Issue:**
+In `run_scorecard_full`, Pillar 1 aggregates PFCs from 24 vintages but
+evaluates `test_arb_free` exclusively against `fwds_first` (forwards of
+the first vintage). The periods covered by later vintages are never
+validated against their as-of forwards. Combined with WR-06's silent-skip
+behavior in `test_arb_free`, this can mask real multi-vintage arb-free
+violations: a divergence emerging after vintage 1 will not contribute to
+`max_dev` because `fwds_first` does not even contain its delivery-period
+key (silently skipped via empty mask).
+
+The aggregation pattern is asymmetric: PFCs from all 24 vintages are
+concatenated into the test corpus, but the reference forwards come from
+only 1/24th of the observation window. SC#1 effectively tests
+"vintage-1 forwards reproducibility of a 24-vintage average" — a
+weaker contract than the documented "PFC reproduces every vintage's
+forwards within tol."
+
+**Fix:**
+Either (a) evaluate arb-free per vintage with its own forwards and
+aggregate max_dev / pass-rate across vintages, or (b) build a
+period→forward table keyed by (delivery_period, vintage_timestamp) and
+compute the test against the matching forward for each PFC observation.
+Option (a) is closer to KYOS/Volue HPFC validation patterns and easier to
+report (24 rows of (vintage, max_dev, n_evaluated)).
+
+---
+
+### WR-11: `diebold_mariano` does not validate `h >= 1`, silently producing meaningless statistics for `h <= 0`
+
+**File:** `pfc_shaping/validation/dm_test.py:125`
+**Source:** codex-cli-0.125.0 (independent review)
+**Issue:**
+The DM function signature accepts `h: int` without precondition checks.
+With `h <= 0`, `n_lags = max(h - 1, 0) = 0` forces a degenerate Bartlett
+window, and the Harvey-Leybourne-Newbold (HLN) small-sample correction at
+line 198 becomes mathematically out-of-contract (the HLN formula assumes
+`h >= 1`). Resulting `dm_stat` and `p_value` are syntactically valid
+floats but carry no econometric meaning. A caller passing `h=0` (e.g. a
+nowcast comparison miswritten as "horizon zero") receives a silent
+nonsense result rather than an error.
+
+**Fix:**
+Add input validation at function entry:
+```python
+def diebold_mariano(
+    errors_a: np.ndarray,
+    errors_b: np.ndarray,
+    h: int,
+    loss: str = "mae",
+) -> dict:
+    if h < 1:
+        raise ValueError(
+            f"diebold_mariano: h must be >= 1 (got h={h}). "
+            "DM/HLN is undefined for h<=0."
+        )
+    ...
+```
+Add a regression test asserting that `h=0` and `h=-1` raise.
+
+---
+
+### WR-12: `christoffersen.py` only implements LR_uc; the documented "conditional coverage" (LR_ind + LR_cc) is missing
+
+**File:** `pfc_shaping/validation/christoffersen.py` (entire module)
+**Source:** codex-cli-0.125.0 (independent review)
+**Issue:**
+The module name and the Phase 10 RESEARCH/SUMMARY narrative present
+Christoffersen-style **conditional coverage** as part of the Pillar 3
+toolkit. Christoffersen (1998) decomposes conditional coverage into:
+- LR_uc — unconditional coverage (correct violation rate)
+- LR_ind — independence of violations (no clustering)
+- LR_cc = LR_uc + LR_ind — combined conditional coverage statistic
+
+The current module implements **only LR_uc**. Neither `LR_ind` nor
+`LR_cc` appears in the file. A reader auditing the scorecard against the
+Christoffersen reference will find a gap: clustered IC80 violations (e.g.
+all violations in Q4 due to seasonal miscalibration) will pass the
+current Pillar 3 gate as long as the global violation count matches the
+nominal level. This is a real audit hole for a long-term PFC where
+seasonal misspecification is the dominant failure mode.
+
+**Fix:**
+One of:
+(a) Implement `lr_ind` (likelihood-ratio test on the 2-state Markov chain
+    of consecutive violations) and `lr_cc = lr_uc + lr_ind` with
+    chi-squared(df=2) reference. Wire `compute_pillar3_coverage` to call
+    both and report all three p-values.
+(b) Explicitly scope-down Phase 10: rename the module
+    `unconditional_coverage.py` and update RESEARCH/SUMMARY to state that
+    independence-of-violations testing is deferred to a follow-up phase.
+
+Option (a) is preferred — LR_ind is ~30 lines of code and the
+Markov-chain transition counts are trivially derivable from the boolean
+violation series already computed in Pillar 3.
 
 ---
 
