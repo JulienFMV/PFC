@@ -126,16 +126,33 @@ def _period_mask(
     -------
     np.ndarray[bool]
         Mask aligné sur idx_utc.
+
+    Notes
+    -----
+    Forwards (Cal/Q/M base) sont tradés contre des **périodes de livraison
+    en calendrier local** (Europe/Zurich convention trader EEX/EPEX), pas
+    UTC. Une PFC indexée UTC doit être convertie en heure locale AVANT
+    bucketing : sinon ~1 h par frontière Cal/Q/M tombe dans le mauvais
+    bucket (e.g. 2024-12-31 23:00 UTC = 2025-01-01 00:00 CET appartient
+    au Cal 2025, pas Cal 2024). Avec `tol = 0.01 €/MWh` de
+    `test_arb_free`, ce biais ~`Δ_price / 720` €/MWh par mois suffit à
+    fabriquer un faux fail de la gate SC#1. Cf. CR-01 (REVIEW 2026-05-21)
+    + `block_masks.py` (même convention) + `test_continuity`
+    (`tz_convert("Europe/Zurich")` ligne 456).
     """
+    if idx_utc.tz is None:
+        raise ValueError("_period_mask: idx must be tz-aware")
+    # Forwards bucket by LOCAL calendar (Europe/Zurich trader convention).
+    idx_local = idx_utc.tz_convert("Europe/Zurich")
     if product_type == "Cal":
-        return np.asarray(idx_utc.year == year, dtype=bool)
+        return np.asarray(idx_local.year == year, dtype=bool)
     if product_type == "Quarter":
         return np.asarray(
-            (idx_utc.year == year) & (idx_utc.quarter == sub), dtype=bool
+            (idx_local.year == year) & (idx_local.quarter == sub), dtype=bool
         )
     if product_type == "Month":
         return np.asarray(
-            (idx_utc.year == year) & (idx_utc.month == sub), dtype=bool
+            (idx_local.year == year) & (idx_local.month == sub), dtype=bool
         )
     # Peak/Offpeak ou type inconnu → mask vide (skip silencieux)
     return np.zeros(len(idx_utc), dtype=bool)

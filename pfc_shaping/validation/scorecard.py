@@ -646,24 +646,27 @@ def _synth_pfc_for_mock(
     pfc = pd.Series(final, index=idx, name="price_eur_mwh")
 
     # 4. Construire forwards synth coherent (= mean(pfc) per period).
+    #    CR-01 alignment : bucketing en heure LOCALE (Europe/Zurich) pour
+    #    matcher la convention `_period_mask` utilisée par `test_arb_free`.
+    #    Sinon mismatch ~1h par frontière Cal/Q/M → faux fail à tol=0.01.
     forwards_synth: dict[str, float] = {}
     for k in month_keys:
         yr, mo = int(k[:4]), int(k[5:7])
-        mask = (idx.year == yr) & (idx.month == mo)
+        mask = (idx_local.year == yr) & (idx_local.month == mo)
         if mask.sum() > 0:
             forwards_synth[k] = float(pfc.values[mask].mean())
     quarter_pattern = re.compile(r"^\d{4}-Q[1-4]$")
     for k in forwards_asof.keys():
         if quarter_pattern.match(k):
             yr, q = int(k[:4]), int(k[6])
-            mask = (idx.year == yr) & (idx.quarter == q)
+            mask = (idx_local.year == yr) & (idx_local.quarter == q)
             if mask.sum() > 0:
                 forwards_synth[k] = float(pfc.values[mask].mean())
     year_pattern = re.compile(r"^\d{4}$")
     for k in forwards_asof.keys():
         if year_pattern.match(k):
             yr = int(k)
-            mask = idx.year == yr
+            mask = idx_local.year == yr
             if mask.sum() > 0:
                 forwards_synth[k] = float(pfc.values[mask].mean())
 

@@ -198,6 +198,38 @@ class TestArbFreeFunction:
         assert res.passed
         assert res.observed == 0.0
 
+    def test_cr01_local_calendar_boundary_bucketing(self):
+        """CR-01 regression: `_period_mask` doit bucket en Europe/Zurich, pas UTC.
+
+        Une PFC indexée UTC avec un step de +10 €/MWh à la frontière LOCALE
+        2024→2025 (i.e. 2024-12-31 23:00 UTC = 2025-01-01 00:00 CET) doit voir
+        sa moyenne Cal-2024 correspondre au mean des 8784 heures où LOCAL year
+        == 2024. Avec la conv UTC buggée, l'heure 2024-12-31 23:00 UTC serait
+        comptée dans Cal-2024 alors qu'elle appartient en local au Cal-2025 →
+        biais de l'ordre de Δprice / 8760 dans la moyenne, déclenchant un
+        faux fail à tol=0.01 €/MWh.
+        """
+        from pfc_shaping.validation.structural_tests import test_arb_free
+
+        idx = pd.date_range(
+            "2024-01-01", "2026-01-01", freq="1h", inclusive="left", tz="UTC"
+        )
+        idx_local = idx.tz_convert("Europe/Zurich")
+        # Step +10 à la frontière locale 2024→2025
+        values = np.where(idx_local.year == 2024, 50.0, 60.0).astype(float)
+        pfc = pd.Series(values, index=idx)
+        # Forward Cal-2024 = exactement 50.0 (mean local bucket année 2024)
+        forwards = {"2024": 50.0, "2025": 60.0}
+        res = test_arb_free(pfc, forwards, tol=0.01)
+        assert res.passed, (
+            f"CR-01 regression: Cal-2024 mean diverge (UTC bucketing bug) — "
+            f"max_dev={res.observed:.6f}, details={res.details}"
+        )
+        # Dev sur les deux Cal doit être ~exactement 0 (pas ~10/8760)
+        assert res.observed < 1e-9, (
+            f"CR-01 regression: expected dev ~0, got {res.observed:.6e}"
+        )
+
 
 class TestHolidayWeekendFunction:
     """test_holiday_weekend — Pillar 1.2 Hildmann ratio weekend ∪ holidays / weekday."""
