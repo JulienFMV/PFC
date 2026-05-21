@@ -293,6 +293,22 @@ class TestDieboldMariano:
         with pytest.raises(ValueError, match="[Ll]ength"):
             diebold_mariano(errors_a, errors_b, h=1, loss="mae")
 
+    def test_h_le_zero_raises(self):
+        """WR-11 : h <= 0 → ValueError explicit (DM/HLN undefined).
+
+        Sans ce guard, h=0 ou h=-1 silently retourne un dm_stat /
+        p_value syntaxiquement valide mais sans signification
+        économétrique (n_lags=0 force Bartlett dégénéré ; correction
+        HLN viole son contrat h>=1).
+        """
+        from pfc_shaping.validation.dm_test import diebold_mariano
+
+        errors_a = np.zeros(20)
+        errors_b = np.zeros(20)
+        for h in (0, -1, -5):
+            with pytest.raises(ValueError, match="h must be >= 1"):
+                diebold_mariano(errors_a, errors_b, h=h, loss="mae")
+
 
 # ---------------------------------------------------------------------------
 # TestBaselines — 3 naive baselines maison

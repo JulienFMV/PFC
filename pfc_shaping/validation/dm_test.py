@@ -121,6 +121,19 @@ def diebold_mariano(
             f"diebold_mariano: length mismatch — a={len(errors_a)}, b={len(errors_b)}"
         )
 
+    # WR-11 : DM/HLN est mathématiquement défini uniquement pour h >= 1
+    # (n_lags = h-1 >= 0 ET la correction HLN ligne 198 suppose h >= 1).
+    # Avec h <= 0, n_lags = 0 force une fenêtre Bartlett dégénérée et la
+    # formule HLN sort de son contrat ; le résultat (dm_stat, p_value) est
+    # syntaxiquement valide mais sans signification économétrique. Raise
+    # explicit pour bloquer ce silent-nonsense (e.g. nowcast comparison
+    # miswritten as "horizon zero").
+    if int(h) < 1:
+        raise ValueError(
+            f"diebold_mariano: h must be >= 1 (got h={h}). "
+            "DM/HLN is undefined for h<=0."
+        )
+
     n = len(errors_a)
     n_lags = max(h - 1, 0)
 
