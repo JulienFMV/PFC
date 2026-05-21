@@ -61,7 +61,7 @@ P&L par 5 €/MWh d'erreur shape), pas par l'ordre alphabétique des features.
 - [ ] **Phase 5ter: Distribution probabiliste par bloc**
   - Goal: `pfc_block_distribution(start, end, hours_mask) → (p10, p50, p90)` via Monte-Carlo shape.
   - Permet au trader de calculer une prime de risque (shape inhedgeable).
-- [ ] **Phase 10: PFC FMV Quality Scorecard (5-pillar SOTA replication)**
+- [x] **Phase 10: PFC FMV Quality Scorecard (5-pillar SOTA replication)** (completed 2026-05-21)
   - Goal: Démontrer que la PFC FMV est SOTA par construction via 5 piliers
     (Hildmann structural + KYOS empirical accuracy + Christoffersen unconditional +
     DM vs 3 naive baselines + peer review SOTA literature). SC#1 unique gate =
@@ -217,7 +217,7 @@ FMV (accès H:\\). Cf. `.planning/phases/10-pfc-fmv-quality-scorecard/10-CONTEXT
 - [x] 10-01-PLAN.md — Infrastructure + block_masks + scorecard skeleton + ROADMAP/REQ/PROJECT updates + EPEX/forwards bootstrap + threshold Hildmann empirique
 - [x] 10-02-PLAN.md — Pillars 1 (Hildmann SC#1 gate) + 2 (Empirical accuracy MAE/RMSE/MZ)
 - [x] 10-03-PLAN.md — Pillars 3 (Christoffersen unconditional) + 4 (DM vs 3 naive baselines)
-- [ ] 10-04-PLAN.md — Pillar 5 + final scorecard assembly + 96-build ablation grid run + 10-VERIFICATION.md + D-FLIP-1 flip (gated)
+- [x] 10-04-PLAN.md — Pillar 5 + final scorecard assembly + 96-build ablation grid run + 10-VERIFICATION.md + D-FLIP-1 flip (gated)
 
 ---
 
