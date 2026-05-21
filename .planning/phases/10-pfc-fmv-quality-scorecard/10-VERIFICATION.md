@@ -12,7 +12,7 @@
 
 - **SC#1 Hildmann gate** : 2/4 tests PASS — **DIAGNOSTIC-ONLY** (⚠ Diagnostic only — not gate-eligible (forwards derived from EPEX-history fallback)).
 - **Pillar 2 (Empirical KYOS)** : mean MAE Config 4 across blocs×horizons = 42.38 €/MWh (min 3.63, max 64.91).
-- **Pillar 3 (Christoffersen IC80)** : observed violation freq per bloc range = [0.025, 0.291] (nominal 0.20 ; IC95 deferred Phase 5ter).
+- **Pillar 3 (Christoffersen IC80)** : observed violation freq per bloc range = [0.025, 0.291] (nominal 0.20) — **DIAGNOSTIC-ONLY** (same status as Pillar 1: PFC anchored on `fallback_diagnostic` synthetic forwards; gate-eligible test requires Phase 10B real EEX forwards). 1/5 bloc passes LR_uc post-`Uncertainty` v2 rewrite (commit `c545d4c`).
 - **Pillar 4 (DM vs 3 baselines)** : Config 4 strictly better (p<0.05) in 28/58 testable cells (17 cells DEGEN excluded).
 - **Pillar 5 (Peer review SOTA)** : 9-feature comparative table + gap analysis (see §Pillar 5 below).
 
@@ -155,15 +155,31 @@ KPIs per (config × bloc × horizon). *Cells with `forwards_source=fallback_diag
 
 ## Pillar 3 — Probabilistic (Christoffersen unconditional, Config 4 only, IC80 only)
 
-**Note** : IC95 (p2.5/p97.5) deferred to Phase 5ter (extension of `pfc_shaping/lt/model/uncertainty.py:51-194` required to expose `level=` param). Only IC80 (p10/p90) tested here.
+**Gate eligibility** : ⚠ **DIAGNOSTIC-ONLY** — same status as Pillar 1 (SC#1).
+The PFC is anchored on `forwards_source=fallback_diagnostic` (synthetic
+extrapolation from EPEX history when real EEX forward curves are unavailable
+in this environment). Mean PFC level for Config 4 over the test window is
+119 €/MWh vs EPEX realised mean 76 €/MWh (2024) / 102 €/MWh (2025) — a 17–43
+€/MWh structural gap inherited from the fake forwards. Under-coverage rates
+below thus measure the forwards-fallback distortion rather than `Uncertainty`
+miscalibration. A gate-eligible Pillar 3 evaluation requires real EEX forward
+curves (Phase 10B prerequisite, "requires FMV poste H:\\").
 
-| Bloc | IC level | Nominal p | Observed freq | n | x | LR stat | p-value | Degenerate |
-|------|----------|-----------|---------------|---|---|---------|---------|------------|
-| block_midday_weekday | 0.8 | 0.20 | 0.149 | 2505 | 374 | 43.2 | 4.93e-11 | N |
-| block_overnight_weekday | 0.8 | 0.20 | 0.0514 | 7515 | 386 | 1.38e+03 | 3.98e-302 | N |
-| block_summer_solar_bowl | 0.8 | 0.20 | 0.291 | 738 | 215 | 34.9 | 3.4e-09 | N |
-| block_weekend_midday | 0.8 | 0.20 | 0.184 | 800 | 147 | 1.35 | 0.246 | N |
-| block_winter_evening_peak | 0.8 | 0.20 | 0.0248 | 604 | 15 | 171 | 5.32e-39 | N |
+**Note** : IC95 (p2.5/p97.5) deferred to Phase 5ter (extension of `pfc_shaping/lt/model/uncertainty.py` required to expose `level=` param). Only IC80 (p10/p90) tested here. `Uncertainty` v2 (commit `c545d4c`) uses empirical residual quantile per (saison, type_jour, heure) cell and was validated on synthetic data to achieve nominal 20% coverage by construction — see `tests/test_uncertainty_calibration.py`.
+
+| Bloc | IC level | Nominal p | Observed freq | n | x | LR stat | p-value | Degenerate | Forwards source |
+|------|----------|-----------|---------------|---|---|---------|---------|------------|-----------------|
+| block_midday_weekday | 0.8 | 0.20 | 0.149 | 2505 | 374 | 43.2 | 4.93e-11 | N | fallback_diagnostic (diagnostic) |
+| block_overnight_weekday | 0.8 | 0.20 | 0.0514 | 7515 | 386 | 1.38e+03 | 3.98e-302 | N | fallback_diagnostic (diagnostic) |
+| block_summer_solar_bowl | 0.8 | 0.20 | 0.291 | 738 | 215 | 34.9 | 3.4e-09 | N | fallback_diagnostic (diagnostic) |
+| block_weekend_midday | 0.8 | 0.20 | 0.184 | 800 | 147 | 1.35 | 0.246 | N | fallback_diagnostic (diagnostic) |
+| block_winter_evening_peak | 0.8 | 0.20 | 0.0248 | 604 | 15 | 171 | 5.32e-39 | N | fallback_diagnostic (diagnostic) |
+
+**Verdict diagnostic** : 1/5 bloc passes LR_uc (`block_weekend_midday`, p=0.246).
+4/5 blocs sous-couvrent. Audit empirique (commit pending) confirme que la cause
+dominante est le biais PFC vs spot induit par les fakes forwards (PFC mean +43
+€/MWh au-dessus du réalisé 2024), **pas** une miscalibration intrinsèque de
+`Uncertainty` v2 (méthode validée par construction sur tests synthétiques).
 
 ![Pillar 3 IC80 observed vs nominal](figures/pillar3_ic80_observed_vs_nominal.png)
 
