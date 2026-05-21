@@ -1138,42 +1138,14 @@ def compute_pillar4_dm(
     ).dropna()
 
     if aligned.empty:
-        return {
-            "bloc": bloc.name,
-            "h_months": int(h_months),
-            "dm_stat": float("nan"),
-            "p_value": float("nan"),
-            "n": 0,
-            "mean_d": float("nan"),
-            "var_d": float("nan"),
-            "n_lags_hac": int(max(h_months - 1, 0)),
-            "degenerate": True,
-            "mae_pfc": float("nan"),
-            "mae_baseline": float("nan"),
-            "delta_mae": float("nan"),
-            "better_than_baseline": "N",
-        }
+        return _dm_degenerate_dict(bloc.name, h_months)
 
     # ------------------------------------------------------------------
     # Apply bloc mask
     # ------------------------------------------------------------------
     mask = bloc.apply(aligned.index)
     if mask.sum() == 0:
-        return {
-            "bloc": bloc.name,
-            "h_months": int(h_months),
-            "dm_stat": float("nan"),
-            "p_value": float("nan"),
-            "n": 0,
-            "mean_d": float("nan"),
-            "var_d": float("nan"),
-            "n_lags_hac": int(max(h_months - 1, 0)),
-            "degenerate": True,
-            "mae_pfc": float("nan"),
-            "mae_baseline": float("nan"),
-            "delta_mae": float("nan"),
-            "better_than_baseline": "N",
-        }
+        return _dm_degenerate_dict(bloc.name, h_months)
 
     pfc_masked = aligned["pfc"].values[mask]
     baseline_masked = aligned["baseline"].values[mask]
@@ -1188,9 +1160,22 @@ def compute_pillar4_dm(
 
     dm = diebold_mariano(errors_a, errors_b, h=int(h_months), loss="mae")
 
+    # WR-09 : si le DM interne signale degenerate (n insuffisant), on remonte
+    # le sentinel "DEGEN" plutôt que "N" pour ne pas confondre "PFC n'a pas
+    # battu la baseline" (signal) avec "donnée insuffisante" (manque
+    # d'évidence). Les MAEs restent populés (calculables même si DM
+    # incalculable) — c'est juste le verdict comparatif qui devient DEGEN.
+    if dm["degenerate"]:
+        return {
+            **_dm_degenerate_dict(bloc.name, h_months),
+            "mae_pfc": mae_pfc,
+            "mae_baseline": mae_baseline,
+            "delta_mae": delta_mae,
+        }
+
     better = (
         "Y"
-        if (not dm["degenerate"] and dm["mean_d"] < 0 and dm["p_value"] < 0.05)
+        if (dm["mean_d"] < 0 and dm["p_value"] < 0.05)
         else "N"
     )
 
@@ -1202,6 +1187,48 @@ def compute_pillar4_dm(
         "mae_baseline": mae_baseline,
         "delta_mae": delta_mae,
         "better_than_baseline": better,
+    }
+
+
+def _dm_degenerate_dict(bloc_name: str, h_months: int) -> dict:
+    """WR-09 : helper centralisant la construction du dict 'cellule degenerate'
+    pour Pillar 4 DM cells.
+
+    Ancienne implémentation : 3 chemins (empty-aligned, empty-mask, DM-internal
+    degenerate) émettaient chacun leur propre dict avec un risque de divergence
+    sur les keys / l'usage de `better_than_baseline = "N"` (indistinguable
+    d'un vrai fail). Cette helper :
+    - Centralise les 13 keys cohérents.
+    - Utilise le sentinel `"DEGEN"` pour `better_than_baseline` au lieu de
+      `"N"`, de sorte que `render_markdown_report` puisse filtrer ces
+      cellules du dénominateur de la ratio "better than baseline".
+
+    Parameters
+    ----------
+    bloc_name
+        Nom du bloc (e.g. "block_overnight_weekday").
+    h_months
+        Horizon en mois pour calculer `n_lags_hac = max(h - 1, 0)`.
+
+    Returns
+    -------
+    dict
+        Dict de 13 keys cohérent avec les non-degenerate returns.
+    """
+    return {
+        "bloc": bloc_name,
+        "h_months": int(h_months),
+        "dm_stat": float("nan"),
+        "p_value": float("nan"),
+        "n": 0,
+        "mean_d": float("nan"),
+        "var_d": float("nan"),
+        "n_lags_hac": int(max(h_months - 1, 0)),
+        "degenerate": True,
+        "mae_pfc": float("nan"),
+        "mae_baseline": float("nan"),
+        "delta_mae": float("nan"),
+        "better_than_baseline": "DEGEN",
     }
 
 
@@ -1967,13 +1994,17 @@ def render_markdown_report(
             f"(nominal 0.20 ; IC95 deferred Phase 5ter)."
         )
     if not pillar4_df.empty:
-        better = pillar4_df[
-            (pillar4_df["config"] == "bowl_on_floors_off")
-            & (pillar4_df["better_than_baseline"] == "Y")
-        ]
+        # WR-09 : on filtre les cellules DEGEN du dénominateur — sinon une
+        # cellule "data insuffisante" gonfle artificiellement le dénominateur
+        # et biaise la ratio "better than baseline" vers le pessimisme.
+        c4_all = pillar4_df[pillar4_df["config"] == "bowl_on_floors_off"]
+        c4_testable = c4_all[c4_all["better_than_baseline"] != "DEGEN"]
+        better = c4_testable[c4_testable["better_than_baseline"] == "Y"]
+        n_degen = len(c4_all) - len(c4_testable)
+        degen_note = f" ({n_degen} cells DEGEN excluded)" if n_degen > 0 else ""
         lines.append(
             f"- **Pillar 4 (DM vs 3 baselines)** : Config 4 strictly better "
-            f"(p<0.05) in {len(better)}/{len(pillar4_df[pillar4_df['config']=='bowl_on_floors_off'])} cells."
+            f"(p<0.05) in {len(better)}/{len(c4_testable)} testable cells{degen_note}."
         )
     lines.append(
         "- **Pillar 5 (Peer review SOTA)** : 9-feature comparative table + "
