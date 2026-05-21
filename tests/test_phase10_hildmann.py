@@ -322,24 +322,37 @@ class TestContinuityFunction:
         assert res.observed == 0.0
 
     def test_5eur_jump_at_month_boundary_fails(self):
-        """PFC avec saut de 5 €/MWh au 31 janvier → 1 février → passed=False."""
+        """PFC avec saut de 5 €/MWh aux frontières mois local → passed=False."""
         from pfc_shaping.validation.structural_tests import test_continuity
 
         idx = _hourly_index_2024_2025_utc()
-        values = np.where(idx.month == 1, 50.0, 55.0).astype(float)
-        # On a un saut à la frontière 31/01 → 01/02, 28/02 → 01/03, etc.
+        idx_local = idx.tz_convert("Europe/Zurich")
+        # Use LOCAL month (cohérent avec la sémantique de test_continuity)
+        values = np.where(idx_local.month == 1, 50.0, 55.0).astype(float)
         pfc = pd.Series(values, index=idx)
         res = test_continuity(pfc, max_jump=2.0)
-        assert not res.passed
-        assert res.observed >= 5.0 - 1e-9
+        assert not res.passed, (
+            f"Expected fail with 5€ jump, got passed=True observed={res.observed}"
+        )
+        assert res.observed >= 5.0 - 1e-9, (
+            f"Expected jump >= 5.0, got {res.observed}"
+        )
 
     def test_single_month_edge_case_no_boundary(self):
-        """PFC sur 1 seul mois → aucune frontière → passed=True (max_jump=0)."""
+        """PFC sur 1 seul mois local → aucune frontière → passed=True (max_jump=0)."""
         from pfc_shaping.validation.structural_tests import test_continuity
 
-        idx = _hourly_index_jan_2024_utc()
+        # Construire un index strictement contenu dans 1 mois LOCAL CH
+        # (= 2024-01-02 00:00 UTC à 2024-01-30 23:00 UTC pour éviter
+        # le débordement UTC↔local au 31 janvier).
+        idx = pd.date_range(
+            "2024-01-02", "2024-01-31", freq="1h", inclusive="left", tz="UTC"
+        )
         pfc = pd.Series(np.linspace(40, 60, len(idx)), index=idx)
         res = test_continuity(pfc, max_jump=2.0)
         assert res.passed
-        # 0 boundary (1 month only) → max_jump_obs = 0
-        assert res.observed == 0.0
+        # 0 boundary (1 month local only) → max_jump_obs = 0
+        assert res.observed == 0.0, (
+            f"Single-month should yield 0 jump, got {res.observed}"
+        )
+        assert res.details["n_boundaries"] == 0

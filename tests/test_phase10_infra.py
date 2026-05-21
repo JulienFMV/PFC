@@ -260,12 +260,27 @@ def test_forwards_source_constants_defined():
     assert FORWARDS_SOURCE_REAL == "real_eex_xlsx"
 
 
-def test_run_scorecard_pillar_1_stub_raises():
-    """run_scorecard_pillar_1 = stub interface only (Plan 10-02 wires)."""
+def test_run_scorecard_pillar_1_now_wired():
+    """run_scorecard_pillar_1 est wired Plan 10-02 (n'est plus un stub).
+
+    Plan 10-01 : stub raise NotImplementedError.
+    Plan 10-02 : wired → couverture deep dans tests/test_phase10_hildmann.py
+    (4 SC#1 + ≥12 unit tests). Ici on assert juste l'absence de
+    NotImplementedError pour catch un éventuel revert accidentel.
+
+    Le code path complet est testé par tests/test_phase10_hildmann.py et
+    ne devrait pas être ré-exécuté ici (runtime ≈ 14s, lourd).
+    """
     from pfc_shaping.validation.scorecard import run_scorecard_pillar_1
 
-    with pytest.raises(NotImplementedError, match="Plan 10-02"):
-        run_scorecard_pillar_1("bowl_on_floors_off", cache_dir=".")
+    # Smoke : la fonction est appelable avec un epex_source invalide → raise
+    # ValueError (PAS NotImplementedError, qui prouverait un revert vers Plan 10-01).
+    with pytest.raises(ValueError, match="epex_source"):
+        run_scorecard_pillar_1(
+            "bowl_on_floors_off",
+            cache_dir=".",
+            epex_source="invalid_source",
+        )
 
 
 # ---------------------------------------------------------------------------
