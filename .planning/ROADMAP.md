@@ -61,10 +61,20 @@ P&L par 5 €/MWh d'erreur shape), pas par l'ordre alphabétique des features.
 - [ ] **Phase 5ter: Distribution probabiliste par bloc**
   - Goal: `pfc_block_distribution(start, end, hours_mask) → (p10, p50, p90)` via Monte-Carlo shape.
   - Permet au trader de calculer une prime de risque (shape inhedgeable).
-- [ ] **Phase 10 (refondu): Backtest par bloc client vs HFC OMPEX 2024-2025**
-  - Goal: démontrer Δ MAE ≤ -1.5 €/MWh sur ≥ 3 blocs.
-  - Argument interne décisif vs OMPEX.
-  - Depends on: Phase 5bis-B (sinon backtest mesure un no-op).
+- [ ] **Phase 10: PFC FMV Quality Scorecard (5-pillar SOTA replication)**
+  - Goal: Démontrer que la PFC FMV est SOTA par construction via 5 piliers
+    (Hildmann structural + KYOS empirical accuracy + Christoffersen unconditional +
+    DM vs 3 naive baselines + peer review SOTA literature). SC#1 unique gate =
+    Hildmann 4/4 PASS sous Config 4 (bowl ON + floors negative-ready).
+  - Depends on: Phase 5bis-B + Phase 5 livrées. Argument interne décisif
+    (autonome, pas comparatif).
+  - Pillars 2-5 produisent du content informational mais ne bloquent PAS le flip D-FLIP-1.
+- [ ] **Phase 10B: PFC FMV vs HFC OMPEX block-MAE benchmark (deferred, requires FMV poste H:\\)**
+  - Goal: Backtest comparatif PFC FMV vs HFC OMPEX 2024-2025 par bloc.
+    KPI : Δ MAE bloc ≤ -1.5 €/MWh sur ≥ 3 blocs. Réutilise l'infra Phase 10
+    (block_masks, scorecard harness, structural_tests). Exécutable depuis poste
+    FMV avec accès au chemin `H:\Energy\GeCom\MARCHE & NEGOCE\Prix\Analyse HFC\HFC test\ER -HFC_OMPEX_15min`.
+  - Requirements: BT-10B-01, BT-10B-02 (migrés de BT-03/BT-05 historiques).
 
 ### Deferred (HOLD — pas de valeur sur deal CH actuel)
 
@@ -178,20 +188,55 @@ P&L par 5 €/MWh d'erreur shape), pas par l'ordre alphabétique des features.
 
 ---
 
-### Phase 10: Backtest par bloc vs HFC OMPEX
-**Goal**: Démontrer la supériorité de notre PFC vs OMPEX sur les profile deals.
+### Phase 10: PFC FMV Quality Scorecard (5-pillar SOTA replication)
+**Goal**: Démontrer que la PFC FMV est SOTA par construction via 5 piliers
+(Hildmann structural + KYOS empirical accuracy + Christoffersen unconditional +
+DM vs 3 naive baselines + peer review SOTA literature). Le scorecard est
+l'argument interne décisif pour démontrer la qualité absolue de la PFC,
+sans dépendre d'un benchmark concurrent. Gate du flip D-FLIP-1
+(`PFC_LT_USE_SEASONAL_HOURLY_SHAPE` default ON).
 
-**Depends on**: Phase 5bis livrée (peut être lancé en parallèle des Phases 5/5ter).
+**Pivot 2026-05-20 (D-A0-1..D-A0-4)** : Le benchmark comparatif vs HFC OMPEX
+est désormais déféré à une **nouvelle Phase 10B** exécutable depuis le poste
+FMV (accès H:\\). Cf. `.planning/phases/10-pfc-fmv-quality-scorecard/10-CONTEXT.md`.
 
-**Requirements**: BT-01 → BT-05.
+**Depends on**: Phase 5bis-A + 5bis-B + Phase 5 livrées.
+
+**Requirements**: BT-01, BT-02, BT-04 (reformulé), BT-06..BT-10.
 
 **Success Criteria**:
-  1. Harness produit un tableau markdown reproductible avec MAE FMV vs MAE OMPEX par bloc.
-  2. Δ MAE ≤ -1.5 €/MWh sur au moins 3 blocs des 5 testés (sur 2024-2025).
-  3. DM test p-value < 0.05 sur ≥ 2 blocs (significativité statistique).
-  4. Le tableau peut être référencé directement dans une note interne FMV.
+  1. **SC#1 — UNIQUE GATE** : Sous Config 4 (bowl ON + floors negative-ready,
+     = production target post-5bis-B+5), les 4 tests structurels Hildmann
+     (Pillar 1) PASS aux seuils SOTA-grade (arb-free < 0.01 €/MWh, holiday/weekend
+     ratio ∈ [0.65, 0.95] cf. 10-01-NOTES.md mesure empirique 2019-2023,
+     seasonal corr > 0.85, continuity < 2 €/MWh) sur l'agrégat des 24 vintages 2024-2025.
+  2. Pillars 2-5 produisent du **content informational** mais NE bloquent PAS
+     la phase ni le flip D-FLIP-1.
 
-**Plans**: TBD via `/gsd:plan-phase 10`.
+**Plans**:
+- [ ] 10-01-PLAN.md — Infrastructure + block_masks + scorecard skeleton + ROADMAP/REQ/PROJECT updates + EPEX/forwards bootstrap + threshold Hildmann empirique
+- [ ] 10-02-PLAN.md — Pillars 1 (Hildmann SC#1 gate) + 2 (Empirical accuracy MAE/RMSE/MZ)
+- [ ] 10-03-PLAN.md — Pillars 3 (Christoffersen unconditional) + 4 (DM vs 3 naive baselines)
+- [ ] 10-04-PLAN.md — Pillar 5 + final scorecard assembly + 96-build ablation grid run + 10-VERIFICATION.md + D-FLIP-1 flip (gated)
+
+---
+
+### Phase 10B: PFC FMV vs HFC OMPEX block-MAE benchmark (deferred)
+**Goal**: Backtest comparatif PFC FMV vs HFC OMPEX 2024-2025 par bloc.
+Réutilise toute l'infra Phase 10 (block_masks, scorecard harness,
+structural_tests). Phase deferred — requires FMV poste avec accès au
+chemin `H:\Energy\GeCom\MARCHE & NEGOCE\Prix\Analyse HFC\HFC test\ER -HFC_OMPEX_15min`.
+
+**Depends on**: Phase 10 livrée (infra réutilisée).
+
+**Requirements**: BT-10B-01, BT-10B-02.
+
+**Success Criteria**:
+  1. Δ MAE PFC FMV vs HFC OMPEX ≤ -1.5 €/MWh sur ≥ 3 blocs des 5 testés.
+  2. Table markdown reproductible référençable dans une note interne FMV.
+  3. DM test p-value < 0.05 sur ≥ 2 blocs vs OMPEX (significativité).
+
+**Plans**: TBD via `/gsd:plan-phase 10B` (à lancer depuis poste FMV).
 
 ---
 
