@@ -63,7 +63,7 @@ DM test config :
 ### Infrastructure
 - **Ablation grid 2x2** : `bowl OFF/ON × floors OFF/ON` = 4 configs × 24 vintages = **96 PFC FMV builds** (~4h compute Mac Mini).
 - **Data sourcing EPEX 15-min réalisé 2024-2025** : via pipelines existants `energy_charts.info` (primary, config.yaml:33) + SMARD/ENTSO-E (fallbacks). Cache local `data/epex_15min.parquet` (gitignored).
-- **Reporting** : tout dans `.planning/phases/PFC-LT-10-backtest-par-bloc-vs-hfc-ompex/10-VERIFICATION.md` (convention gsd) + figures matplotlib PNG dans `.planning/phases/PFC-LT-10-backtest-par-bloc-vs-hfc-ompex/figures/`. Versionnés, suit le workflow gsd.
+- **Reporting** : tout dans `.planning/phases/10-pfc-fmv-quality-scorecard/10-VERIFICATION.md` (convention gsd) + figures matplotlib PNG dans `.planning/phases/10-pfc-fmv-quality-scorecard/figures/`. Versionnés, suit le workflow gsd.
 - **CI strategy** : tests unitaires harness avec mock synthetic data (Mac Mini-friendly). Real-run end-to-end depuis Mac Mini avec EPEX cached. Pas de dépendance H:\ ni OMPEX.
 
 **Success criteria (gate D-FLIP-1) :**
@@ -91,7 +91,7 @@ DM test config :
 - **D-A0-1 :** Phase 10 devient **PFC FMV Quality Scorecard** à 5 piliers SOTA literature replication (Hildmann + KYOS empirical + Christoffersen uncond + DM vs naive baselines + Peer review). OMPEX comparison **déférée** à nouvelle Phase 10B exécutable depuis poste FMV. Justification user verbatim : *"oublier OMPEX, focus qualité absolue PFC FMV state-of-the-art, c'est notre mission... comment font les autres, qu'est-ce qui se fait sur le marché, on va essayer de se baser là-dessus, puis répliquer ça"*.
 - **D-A0-2 :** ROADMAP/REQUIREMENTS/PROJECT.md updates en Plan 10-01 (mini-fix doc) : nouveau title Phase 10, BT-01..BT-05 reformulés (BT-03/BT-04 OMPEX → BT-10B-* group deferred), nouveau key decision PROJECT.md "2026-05-20 : Phase 10 reframed as quality scorecard, OMPEX bench → Phase 10B deferred".
 - **D-A0-3 :** SC#1 Hildmann 4/4 PASS = **UNIQUE GATE** verrouillant la phase + autorisant flip D-FLIP-1 `PFC_LT_USE_SEASONAL_HOURLY_SHAPE` default ON. Pillars 2-5 = informational/diagnostic, ne bloquent pas. User explicit choice : qualité absolue structurelle prime sur statistique/comparative.
-- **D-A0-4 :** Le scorecard est versionné dans `.planning/phases/PFC-LT-10-backtest-par-bloc-vs-hfc-ompex/10-VERIFICATION.md` (gsd convention), pas dans `output/`. Single source of truth, audit-trail naturel via git.
+- **D-A0-4 :** Le scorecard est versionné dans `.planning/phases/10-pfc-fmv-quality-scorecard/10-VERIFICATION.md` (gsd convention), pas dans `output/`. Single source of truth, audit-trail naturel via git.
 
 ### Area 1 — Pillar 1 Structural (Hildmann 2013)
 
@@ -150,7 +150,7 @@ DM test config :
 - **D-A6-2 :** **Data ingestion** : pipeline existant `pfc_shaping.data.*` via `energy_charts.info` (primary, config.yaml:33-35). Cache `data/epex_15min.parquet` (gitignored, premier-run bootstrap ~2 ans × 15-min ≈ 70k rows = quelques minutes download). Pas de dépendance Databricks / H:\.
 - **D-A6-3 :** **Reproducibility contract** : `assert_frame_equal(scorecard_kpis_run1, scorecard_kpis_run2, check_exact=False, atol=1e-12, rtol=0)` — convention 5bis-A/B/5 tolerance préservée. Random seed=42 pour `Uncertainty` bootstrap (déjà géré via `seed=0` dans `Uncertainty(n_boot=200, seed=0)`).
 - **D-A6-4 :** **Exec location** : tout depuis Mac Mini. Pas de dépendance H:\, pas de dépendance FMV poste, pas d'OMPEX. CI tests harness avec mock synthetic data + real-run end-to-end depuis Mac Mini avec EPEX cached.
-- **D-A6-5 :** **Reporting** : `10-VERIFICATION.md` dans `.planning/phases/PFC-LT-10-backtest-par-bloc-vs-hfc-ompex/` + figures PNG matplotlib dans `figures/` du même dossier. Versionnés.
+- **D-A6-5 :** **Reporting** : `10-VERIFICATION.md` dans `.planning/phases/10-pfc-fmv-quality-scorecard/` + figures PNG matplotlib dans `figures/` du même dossier. Versionnés.
 
 ### Plan decomposition (preview, à finaliser au planning)
 

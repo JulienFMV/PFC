@@ -163,7 +163,7 @@ tests/
 ├── test_phase10_probabilistic.py   # NEW — Pillar 3 (coverage LR)
 └── test_phase10_dm.py              # NEW — Pillar 4 (DM stat sanity on synth)
 
-.planning/phases/PFC-LT-10-backtest-par-bloc-vs-hfc-ompex/
+.planning/phases/10-pfc-fmv-quality-scorecard/
 ├── 10-CONTEXT.md            # EXISTING (autoritative)
 ├── 10-DISCUSSION-LOG.md     # EXISTING (audit trail)
 ├── 10-RESEARCH.md           # THIS FILE

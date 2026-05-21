@@ -13,7 +13,8 @@
     "code_review_command": null,
     "plan_bounce": false,
     "plan_bounce_passes": 2,
-    "cross_ai_execution": false
+    "cross_ai_execution": false,
+    "_auto_chain_active": false
   },
   "ship": {
     "pr_body_sections": [
