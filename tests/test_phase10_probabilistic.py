@@ -109,20 +109,51 @@ class TestLrUnconditionalCoverage:
         assert res["x"] == 0
         assert np.isnan(res["lr_stat"])
 
-    def test_degenerate_x_in_extremes(self):
-        """x=0 OR x=n → degenerate=True, no log(0) crash."""
+    def test_boundary_x_zero_uses_binomial_exact(self):
+        """WR-07 : x=0 boundary → binomial exact p_value, NOT degenerate.
+
+        L'ancien comportement (degenerate=True, p_value=NaN) jetait le
+        signal le plus fort de overcoverage (n=100, p=0.20 →
+        (1-p)^n ≈ 2e-10, ultra-significatif). Nouveau contrat (WR-07) :
+        retourne le p-value binomial exact `P(X=0|n,p) = (1-p)^n` et
+        flag `method="binomial_exact"`.
+        """
         from pfc_shaping.validation.christoffersen import lr_unconditional_coverage
 
-        # x=0 → no violations at all
         res_zero = lr_unconditional_coverage(x=0, n=100, p=0.20)
-        assert res_zero["degenerate"] is True
-        assert np.isnan(res_zero["p_value"])
+        # No more degenerate=True
+        assert res_zero["degenerate"] is False
+        # LR_stat reste NaN (LR diverge à la frontière)
+        assert np.isnan(res_zero["lr_stat"])
+        # p_value finite = (0.8)^100 ≈ 2.04e-10
+        assert res_zero["p_value"] == pytest.approx((0.8) ** 100, rel=1e-9)
+        assert res_zero["p_value"] < 1e-9
         assert res_zero["observed_freq"] == 0.0
-        # x=n → all violations
+        assert res_zero["method"] == "binomial_exact"
+
+    def test_boundary_x_equals_n_uses_binomial_exact(self):
+        """WR-07 : x=n boundary → binomial exact p_value `p^n`, NOT degenerate."""
+        from pfc_shaping.validation.christoffersen import lr_unconditional_coverage
+
         res_all = lr_unconditional_coverage(x=100, n=100, p=0.20)
-        assert res_all["degenerate"] is True
-        assert np.isnan(res_all["p_value"])
+        assert res_all["degenerate"] is False
+        assert np.isnan(res_all["lr_stat"])
+        # p_value = (0.2)^100 ≈ 1.27e-70 — astronomically small, total miscalib
+        assert res_all["p_value"] == pytest.approx((0.2) ** 100, rel=1e-9)
         assert res_all["observed_freq"] == 1.0
+        assert res_all["method"] == "binomial_exact"
+
+    def test_boundary_small_n_still_useful_signal(self):
+        """WR-07 : x=0, n=14, p=0.20 → p_value = (0.8)^14 ≈ 0.044 (significatif 5%)."""
+        from pfc_shaping.validation.christoffersen import lr_unconditional_coverage
+
+        res = lr_unconditional_coverage(x=0, n=14, p=0.20)
+        assert res["degenerate"] is False
+        assert res["method"] == "binomial_exact"
+        # (0.8)^14 ≈ 0.04398
+        assert res["p_value"] == pytest.approx((0.8) ** 14, rel=1e-9)
+        # Just below 5% → rejette H0 → l'info qu'on aurait jetée avant
+        assert res["p_value"] < 0.05
 
 
 # ---------------------------------------------------------------------------
