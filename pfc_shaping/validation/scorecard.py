@@ -1138,6 +1138,992 @@ def compute_pillar4_dm(
     }
 
 
+# ---------------------------------------------------------------------------
+# Plan 10-04 — _build_pred_baseline_for_vintage helper (warning #8 fix)
+# ---------------------------------------------------------------------------
+
+
+def _build_pred_baseline_for_vintage(
+    baseline_name: str,
+    bloc: Any,
+    vintage_date: pd.Timestamp,
+    horizon_label: str,
+    epex_hist: pd.Series,
+    epex_realised: pd.Series,
+    forwards_asof: dict[str, float],
+    realised_window: pd.DatetimeIndex,
+) -> pd.Series:
+    """Construct broadcast Series aligned on realised_window per baseline type.
+
+    Convention per D-A4-1 CONTEXT Phase 10 :
+
+    - **climatology** : scalar(bloc) constant per bloc, broadcast over realised_window.
+      ``scalar = baseline_climatology(epex_hist, bloc, years=(2019, 2023))``
+      Independent of vintage_date and horizon_label.
+
+    - **persistence_y1** : scalar(bloc, vintage_date) constant per (bloc, vintage_date),
+      broadcast over realised_window.
+      ``scalar = baseline_persistence_y1(epex_realised, vintage_date, bloc, window_days=15)``
+      Window = vintage_date - 1yr ± 15 days. NaN if empty window.
+
+    - **forwards_flat** : scalar(bloc, vintage_date, horizon_label) constant per
+      (bloc, vintage_date, horizon_label), broadcast over realised_window.
+      ``scalar = baseline_forwards_flat(forwards_asof, horizon_label, vintage_date)``
+      Lookup priority Month > Quarter > Year per assembler convention.
+
+    Parameters
+    ----------
+    baseline_name
+        One of {'climatology', 'persistence_y1', 'forwards_flat'}.
+    bloc
+        Instance ``BlockMask``.
+    vintage_date
+        tz-aware UTC vintage timestamp.
+    horizon_label
+        e.g. 'M+1', 'M+3', 'M+6', 'Y+1', 'Y+2'.
+    epex_hist
+        Series EPEX historique tz-aware UTC (used by climatology).
+    epex_realised
+        Series EPEX realised tz-aware UTC (used by persistence_y1 ; usually a
+        subset of epex_hist post-vintage for fairness, but the function does
+        not enforce — caller responsibility).
+    forwards_asof
+        Mapping ``{key: forward_price}`` for forwards_flat lookup.
+    realised_window
+        DatetimeIndex tz-aware UTC over which to broadcast the scalar.
+
+    Returns
+    -------
+    pd.Series
+        Series of constant ``scalar`` over ``realised_window``, named
+        ``f"baseline_{baseline_name}"``. If ``scalar`` is NaN (empty window /
+        missing key), the Series is filled with NaN — caller will see
+        ``degenerate=True`` downstream in DM cell KPI.
+
+    Raises
+    ------
+    ValueError
+        If ``baseline_name`` is not in the 3 supported names.
+    """
+    from pfc_shaping.validation.dm_test import (
+        baseline_climatology,
+        baseline_forwards_flat,
+        baseline_persistence_y1,
+    )
+
+    if baseline_name == "climatology":
+        scalar = baseline_climatology(epex_hist, bloc, years=(2019, 2023))
+    elif baseline_name == "persistence_y1":
+        scalar = baseline_persistence_y1(
+            epex_realised, vintage_date, bloc, window_days=15
+        )
+    elif baseline_name == "forwards_flat":
+        scalar = baseline_forwards_flat(forwards_asof, horizon_label, vintage_date)
+    else:
+        raise ValueError(
+            f"_build_pred_baseline_for_vintage: unknown baseline_name={baseline_name!r} "
+            f"(expected 'climatology', 'persistence_y1', or 'forwards_flat')."
+        )
+    return pd.Series(scalar, index=realised_window, name=f"baseline_{baseline_name}")
+
+
+# ---------------------------------------------------------------------------
+# Plan 10-04 — Horizon helpers (M+N / Y+N → (start, end) window per vintage)
+# ---------------------------------------------------------------------------
+
+
+#: Canonical Pillar 2/4 horizons (per CONTEXT D-A4-1).
+HORIZONS_PILLAR2: list[str] = ["M+1", "M+3", "M+6", "Y+1", "Y+2"]
+
+
+def _horizon_to_window(
+    vintage: pd.Timestamp, horizon_label: str
+) -> tuple[pd.Timestamp, pd.Timestamp]:
+    """Convert (vintage, horizon_label) → [start, end) tz-aware UTC window.
+
+    - ``M+N`` → calendar month N months ahead of ``vintage`` (month boundaries
+      in local Europe/Zurich, converted back to UTC for the bound).
+    - ``Y+N`` → calendar year N years ahead of ``vintage``.
+
+    Returns
+    -------
+    tuple[pd.Timestamp, pd.Timestamp]
+        ``(start_utc, end_utc)`` half-open ``[start, end)``.
+    """
+    label = horizon_label.strip()
+    if label.startswith("M+"):
+        n_months = int(label[2:])
+        target = vintage + pd.DateOffset(months=n_months)
+        start_local = pd.Timestamp(
+            f"{target.year:04d}-{target.month:02d}-01", tz="Europe/Zurich"
+        )
+        if target.month == 12:
+            end_local = pd.Timestamp(
+                f"{target.year + 1:04d}-01-01", tz="Europe/Zurich"
+            )
+        else:
+            end_local = pd.Timestamp(
+                f"{target.year:04d}-{target.month + 1:02d}-01", tz="Europe/Zurich"
+            )
+        return start_local.tz_convert("UTC"), end_local.tz_convert("UTC")
+    if label.startswith("Y+"):
+        n_years = int(label[2:])
+        target_year = vintage.year + n_years
+        start_local = pd.Timestamp(f"{target_year:04d}-01-01", tz="Europe/Zurich")
+        end_local = pd.Timestamp(f"{target_year + 1:04d}-01-01", tz="Europe/Zurich")
+        return start_local.tz_convert("UTC"), end_local.tz_convert("UTC")
+    raise ValueError(
+        f"_horizon_to_window: unrecognized horizon_label={horizon_label!r}"
+    )
+
+
+def _horizon_to_h_months(horizon_label: str) -> int:
+    """Convert 'M+N' → N, 'Y+N' → 12*N (used as DM h= arg)."""
+    label = horizon_label.strip()
+    if label.startswith("M+"):
+        return int(label[2:])
+    if label.startswith("Y+"):
+        return 12 * int(label[2:])
+    raise ValueError(
+        f"_horizon_to_h_months: unrecognized horizon_label={horizon_label!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Plan 10-04 — run_scorecard_full orchestrator (96-build ablation grid)
+# ---------------------------------------------------------------------------
+
+
+def _detect_forwards_source(forwards_df: pd.DataFrame | None) -> str:
+    """Inspect the forwards_history_phase10 frame and return the unique source.
+
+    Returns ``FORWARDS_SOURCE_FALLBACK_DIAGNOSTIC`` when ``forwards_df`` is
+    ``None`` (caller deriving on the fly). When a column ``forwards_source``
+    exists with a single unique value, return that value verbatim. Mixed
+    values → return ``"mixed"`` (downstream banner becomes diagnostic).
+    """
+    if forwards_df is None:
+        return FORWARDS_SOURCE_FALLBACK_DIAGNOSTIC
+    if "forwards_source" not in forwards_df.columns:
+        return FORWARDS_SOURCE_FALLBACK_DIAGNOSTIC
+    uniq = forwards_df["forwards_source"].dropna().unique()
+    if len(uniq) == 1:
+        return str(uniq[0])
+    if len(uniq) == 0:
+        return FORWARDS_SOURCE_FALLBACK_DIAGNOSTIC
+    return "mixed"
+
+
+def _forwards_for_vintage(
+    forwards_df: pd.DataFrame | None,
+    vintage: pd.Timestamp,
+    epex_hist: pd.Series,
+) -> dict[str, float]:
+    """Return forwards_asof dict for a given vintage.
+
+    Lookup in ``forwards_df`` (Plan 10-01 Task 3 schema: vintage/key/price/
+    forwards_source). If not found OR ``forwards_df is None`` → fall back to
+    ``derive_forwards_from_epex_hist`` (FORWARDS_SOURCE_FALLBACK_DIAGNOSTIC).
+    """
+    if forwards_df is None:
+        return derive_forwards_from_epex_hist(epex_hist, vintage)
+    sub = forwards_df[forwards_df["vintage"] == vintage]
+    if sub.empty:
+        return derive_forwards_from_epex_hist(epex_hist, vintage)
+    return dict(zip(sub["key"], sub["price"]))
+
+
+def run_scorecard_full(
+    epex_source: str = "parquet",
+    output_dir: Any = None,
+    vintages_limit: int | None = None,
+    cache_intermediate: bool = True,
+    progress_callback: Any = None,
+) -> dict:
+    """Plan 10-04 Task 2 — orchestrate 96-build ablation grid + 5-pillar scorecard.
+
+    Architecture (per CONTEXT D-A6-1 + RESEARCH §Pattern 5 Pitfall 7 mitigation) :
+
+    - 24 vintages × 4 configs = 96 PFC builds.
+    - Pillar 3 (Uncertainty bootstrap n_boot=500 seed=42) **only on Config 4**
+      (production target) — the other 3 configs build with ``with_uncertainty=False``
+      to keep total runtime ≤ 2h Mac Mini.
+    - Per-vintage parquet cache to enable reruns without recomputing.
+    - Pooling across vintages BEFORE MZ/DM tests (Pitfall 5 mitigation).
+
+    Parameters
+    ----------
+    epex_source
+        ``"parquet"`` (real-run, reads ``data/epex_hourly.parquet``) or
+        ``"mock"`` (synth EPEX, deterministic seed=42).
+    output_dir
+        Directory where caches + KPIs parquets + figures + markdown report
+        will be written. Subdirs ``cache/`` and ``figures/`` are created.
+    vintages_limit
+        If not None, truncate ``list_vintages_2024_2025()[:vintages_limit]``
+        (dry-run support).
+    cache_intermediate
+        If True, write per-vintage PFC parquet to ``output_dir/cache/`` (default).
+    progress_callback
+        Optional callable ``(stage_str) -> None`` invoked at each progress
+        milestone (used by the CLI to print ``[progress] ...`` lines without
+        triggering tool calls).
+
+    Returns
+    -------
+    dict
+        ``{"pillar1": dict[str, TestResult], "pillar2_df": DataFrame,
+        "pillar3_df": DataFrame, "pillar4_df": DataFrame,
+        "forwards_source": str, "sc1_gate_eligible": bool,
+        "vintages": list, "configs": list, "compute_seconds": float}``.
+    """
+    import time as _time
+    from pathlib import Path as _Path
+
+    if output_dir is None:
+        output_dir = _Path(".")
+    output_dir = _Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    cache_dir = output_dir / "cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
+    t0 = _time.perf_counter()
+
+    def _emit(msg: str) -> None:
+        if progress_callback is not None:
+            progress_callback(msg)
+
+    # ---- 1. Load EPEX historical series + realised ----
+    if epex_source == "parquet":
+        epex_path = _Path("data/epex_hourly.parquet")
+        if not epex_path.exists():
+            raise FileNotFoundError(
+                f"EPEX parquet cache not found at {epex_path}. "
+                "Run Plan 10-01 Task 3 bootstrap first."
+            )
+        epex_hist = pd.read_parquet(epex_path)["price_eur_mwh"]
+    elif epex_source == "mock":
+        epex_hist = _synth_epex_hist_for_mock(seed=42)
+    else:
+        raise ValueError(
+            f"run_scorecard_full: epex_source={epex_source!r} must be "
+            "'parquet' or 'mock'."
+        )
+
+    # Realised = full history (used for Pillar 2 alignment + persistence_y1 lookup)
+    epex_realised = epex_hist.copy()
+
+    # ---- 2. Load forwards-as-of-vintage history (real_eex_xlsx OR fallback) ----
+    fwds_path = _Path("data/forwards_history_phase10.parquet")
+    if fwds_path.exists() and epex_source == "parquet":
+        forwards_df = pd.read_parquet(fwds_path)
+    else:
+        forwards_df = None
+
+    forwards_source = _detect_forwards_source(forwards_df)
+    sc1_gate_eligible = forwards_source == FORWARDS_SOURCE_REAL
+    _emit(
+        f"[progress] forwards_source={forwards_source} "
+        f"sc1_gate_eligible={'Y' if sc1_gate_eligible else 'N'}"
+    )
+
+    # ---- 3. Vintages list ----
+    vintages = list_vintages_2024_2025()
+    if vintages_limit is not None:
+        vintages = vintages[:vintages_limit]
+    _emit(f"[progress] vintages={len(vintages)} configs={len(ABLATION_GRID)}")
+
+    # ---- 4. 96-build loop ----
+    # Layout : pfc_cache[(config_name, vintage)] = pfc_df (15-min UTC)
+    pfc_cache: dict[tuple[str, pd.Timestamp], pd.DataFrame] = {}
+
+    n_total = len(ABLATION_GRID) * len(vintages)
+    n_done = 0
+    epex_hist_df = epex_hist.to_frame(name="price_eur_mwh")
+    for config in ABLATION_GRID:
+        # Pillar 3 = only on Config 4 (production target) per Pitfall 7
+        is_config4 = config.name == "bowl_on_floors_off"
+        with_unc = is_config4
+        for vidx, vintage in enumerate(vintages):
+            vintage_str = vintage.strftime("%Y%m%d_%H%M%S")
+            cache_file = cache_dir / f"pfc_{config.name}_{vintage_str}.parquet"
+            if cache_file.exists() and cache_intermediate:
+                pfc_v = pd.read_parquet(cache_file)
+            else:
+                fwds_asof = _forwards_for_vintage(forwards_df, vintage, epex_hist)
+                pfc_v = build_one(
+                    config=config,
+                    vintage=vintage,
+                    epex_hist=epex_hist_df,
+                    forwards_asof=fwds_asof,
+                    with_uncertainty=with_unc,
+                )
+                if cache_intermediate:
+                    pfc_v.to_parquet(cache_file)
+            pfc_cache[(config.name, vintage)] = pfc_v
+            n_done += 1
+            if n_done % 4 == 0 or n_done == n_total:
+                _emit(
+                    f"[progress] build {n_done}/{n_total} "
+                    f"config={config.name} vintage={vidx + 1}/{len(vintages)}"
+                )
+
+    _emit("[progress] 96-build loop complete — computing pillars")
+
+    # ---- 5. Pillar 1 (Hildmann SC#1 gate) on Config 4 aggregated ----
+    pillar1: dict[str, Any]
+    config4 = next(c for c in ABLATION_GRID if c.name == "bowl_on_floors_off")
+    pfc_c4_list = [pfc_cache[(config4.name, v)] for v in vintages]
+    pfc_c4_agg = pd.concat(pfc_c4_list).sort_index()
+    pfc_c4_agg = pfc_c4_agg.groupby(level=0).first()  # first-vintage-wins overlap
+    pfc_c4_series = pfc_c4_agg["price_shape"]
+
+    # Aggregate forwards-as-of-vintage : first vintage's forwards (shape-stable)
+    first_vintage = vintages[0]
+    fwds_first = _forwards_for_vintage(forwards_df, first_vintage, epex_hist)
+
+    from pfc_shaping.validation.structural_tests import (
+        test_arb_free,
+        test_continuity,
+        test_holiday_weekend,
+        test_seasonal_profile,
+    )
+
+    pillar1 = {
+        "arb_free": test_arb_free(pfc_c4_series, fwds_first),
+        "holiday_weekend": test_holiday_weekend(pfc_c4_series),
+        "seasonal_profile": test_seasonal_profile(pfc_c4_series, epex_hist),
+        "continuity": test_continuity(pfc_c4_series),
+    }
+    _emit("[progress] Pillar 1 complete")
+
+    # ---- 6. Pillar 2 (KYOS empirical accuracy) on all 4 configs ----
+    from pfc_shaping.validation.block_masks import ALL_BLOCKS
+
+    pillar2_rows: list[dict] = []
+    for config in ABLATION_GRID:
+        for horizon in HORIZONS_PILLAR2:
+            # Pool pred/realised across the 24 vintages for this horizon
+            pred_pieces: list[pd.Series] = []
+            for vintage in vintages:
+                w_start, w_end = _horizon_to_window(vintage, horizon)
+                pfc_v = pfc_cache[(config.name, vintage)]
+                # Resample PFC 15-min → hourly mean (align with hourly EPEX realised)
+                pfc_v_hourly = (
+                    pfc_v["price_shape"].resample("1h").mean()
+                )
+                window_mask = (pfc_v_hourly.index >= w_start) & (
+                    pfc_v_hourly.index < w_end
+                )
+                pred_pieces.append(pfc_v_hourly.loc[window_mask])
+            pred_pooled = pd.concat(pred_pieces).sort_index()
+            pred_pooled = pred_pooled.groupby(level=0).first()
+            realised_aligned = epex_realised.reindex(pred_pooled.index)
+            for bloc in ALL_BLOCKS:
+                kpi = compute_cell_kpis(
+                    pred_pooled, realised_aligned, bloc, horizon
+                )
+                kpi["config"] = config.name
+                kpi["forwards_source"] = forwards_source
+                pillar2_rows.append(kpi)
+        _emit(f"[progress] Pillar 2 config={config.name} complete")
+    pillar2_df = pd.DataFrame(pillar2_rows).sort_values(
+        ["config", "horizon", "bloc"]
+    ).reset_index(drop=True)
+
+    # ---- 7. Pillar 3 (Christoffersen IC80) on Config 4 only ----
+    pillar3_rows: list[dict] = []
+    pfc_c4_with_ic_pieces: list[pd.DataFrame] = []
+    for vintage in vintages:
+        pfc_v = pfc_cache[(config4.name, vintage)]
+        if "p10" in pfc_v.columns and "p90" in pfc_v.columns:
+            pfc_c4_with_ic_pieces.append(
+                pfc_v[["price_shape", "p10", "p90"]]
+                .resample("1h")
+                .mean()
+            )
+    if pfc_c4_with_ic_pieces:
+        pfc_c4_ic = pd.concat(pfc_c4_with_ic_pieces).sort_index()
+        pfc_c4_ic = pfc_c4_ic.groupby(level=0).first()
+        realised_for_ic = epex_realised.reindex(pfc_c4_ic.index)
+        for bloc in ALL_BLOCKS:
+            cov = compute_pillar3_coverage(
+                pfc_c4_ic, realised_for_ic, bloc, ic_level=0.80
+            )
+            cov["config"] = config4.name
+            cov["forwards_source"] = forwards_source
+            pillar3_rows.append(cov)
+    pillar3_df = pd.DataFrame(pillar3_rows)
+    if not pillar3_df.empty:
+        pillar3_df = pillar3_df.sort_values(["bloc"]).reset_index(drop=True)
+    _emit("[progress] Pillar 3 complete")
+
+    # ---- 8. Pillar 4 (DM vs 3 baselines) on all 4 configs ----
+    BASELINES = ["climatology", "persistence_y1", "forwards_flat"]
+    pillar4_rows: list[dict] = []
+    for config in ABLATION_GRID:
+        for horizon in HORIZONS_PILLAR2:
+            # Pool pred_pfc across vintages
+            pred_pfc_pieces: list[pd.Series] = []
+            baseline_pieces: dict[str, list[pd.Series]] = {b: [] for b in BASELINES}
+            for vintage in vintages:
+                w_start, w_end = _horizon_to_window(vintage, horizon)
+                pfc_v = pfc_cache[(config.name, vintage)]
+                pfc_v_hourly = pfc_v["price_shape"].resample("1h").mean()
+                window_mask = (pfc_v_hourly.index >= w_start) & (
+                    pfc_v_hourly.index < w_end
+                )
+                pred_v = pfc_v_hourly.loc[window_mask]
+                pred_pfc_pieces.append(pred_v)
+                # Build baselines on the same window
+                fwds_v = _forwards_for_vintage(forwards_df, vintage, epex_hist)
+                for bname in BASELINES:
+                    for bloc in ALL_BLOCKS:
+                        # Pre-build per bloc happens below ; here we collect
+                        # full-window broadcast (scalar over realised_window).
+                        # We will mask by bloc inside compute_pillar4_dm.
+                        pass
+                # Each baseline is scalar-per-(bloc, vintage, horizon) — we
+                # build inside the bloc loop below to avoid duplicate work.
+            pred_pfc_pooled = pd.concat(pred_pfc_pieces).sort_index()
+            pred_pfc_pooled = pred_pfc_pooled.groupby(level=0).first()
+            realised_aligned = epex_realised.reindex(pred_pfc_pooled.index)
+
+            for bloc in ALL_BLOCKS:
+                # Pool baseline scalars across vintages → broadcast on pooled window
+                for bname in BASELINES:
+                    baseline_pieces_b: list[pd.Series] = []
+                    for vintage in vintages:
+                        w_start, w_end = _horizon_to_window(vintage, horizon)
+                        fwds_v = _forwards_for_vintage(
+                            forwards_df, vintage, epex_hist
+                        )
+                        sub_window = pred_pfc_pooled.index[
+                            (pred_pfc_pooled.index >= w_start)
+                            & (pred_pfc_pooled.index < w_end)
+                        ]
+                        baseline_pieces_b.append(
+                            _build_pred_baseline_for_vintage(
+                                baseline_name=bname,
+                                bloc=bloc,
+                                vintage_date=vintage,
+                                horizon_label=horizon,
+                                epex_hist=epex_hist,
+                                epex_realised=epex_realised,
+                                forwards_asof=fwds_v,
+                                realised_window=sub_window,
+                            )
+                        )
+                    baseline_pooled = pd.concat(baseline_pieces_b).sort_index()
+                    baseline_pooled = baseline_pooled.groupby(level=0).first()
+                    h_months = _horizon_to_h_months(horizon)
+                    dm_kpi = compute_pillar4_dm(
+                        pred_pfc=pred_pfc_pooled,
+                        pred_baseline=baseline_pooled,
+                        realised=realised_aligned,
+                        bloc=bloc,
+                        h_months=h_months,
+                    )
+                    dm_kpi["config"] = config.name
+                    dm_kpi["horizon"] = horizon
+                    dm_kpi["baseline"] = bname
+                    dm_kpi["forwards_source"] = forwards_source
+                    pillar4_rows.append(dm_kpi)
+        _emit(f"[progress] Pillar 4 config={config.name} complete")
+    pillar4_df = pd.DataFrame(pillar4_rows).sort_values(
+        ["config", "horizon", "baseline", "bloc"]
+    ).reset_index(drop=True)
+
+    # ---- 9. Save KPIs parquets (deterministic order for D-A6-3) ----
+    pillar2_df_out = pillar2_df.reindex(sorted(pillar2_df.columns), axis=1)
+    pillar3_df_out = (
+        pillar3_df.reindex(sorted(pillar3_df.columns), axis=1)
+        if not pillar3_df.empty
+        else pillar3_df
+    )
+    pillar4_df_out = pillar4_df.reindex(sorted(pillar4_df.columns), axis=1)
+
+    pillar2_df_out.to_parquet(output_dir / "scorecard_kpis_pillar2.parquet")
+    if not pillar3_df_out.empty:
+        pillar3_df_out.to_parquet(output_dir / "scorecard_kpis_pillar3.parquet")
+    pillar4_df_out.to_parquet(output_dir / "scorecard_kpis_pillar4.parquet")
+
+    compute_seconds = float(_time.perf_counter() - t0)
+    _emit(f"[progress] run_scorecard_full done in {compute_seconds:.1f}s")
+
+    return {
+        "pillar1": pillar1,
+        "pillar2_df": pillar2_df_out,
+        "pillar3_df": pillar3_df_out,
+        "pillar4_df": pillar4_df_out,
+        "forwards_source": forwards_source,
+        "sc1_gate_eligible": sc1_gate_eligible,
+        "vintages": vintages,
+        "configs": [c.name for c in ABLATION_GRID],
+        "compute_seconds": compute_seconds,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Plan 10-04 — render_figures (4 matplotlib PNG publication-grade)
+# ---------------------------------------------------------------------------
+
+
+def render_figures(scorecard_results: dict, output_dir: Any) -> list:
+    """Render the 4 Pillar figures as ≥150 dpi PNGs.
+
+    Files (under ``output_dir/figures/``) :
+        1. pillar1_seasonal_correlation_scatter.png
+        2. pillar2_mae_per_horizon_bar.png
+        3. pillar2_scatter_pred_vs_realised.png
+        4. pillar3_ic80_observed_vs_nominal.png
+    """
+    from pathlib import Path as _Path
+
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    figures_dir = _Path(output_dir) / "figures"
+    figures_dir.mkdir(parents=True, exist_ok=True)
+    out: list = []
+
+    # ----- Figure 1 : Pillar 1 seasonal correlation scatter -----
+    seasonal_result = scorecard_results["pillar1"].get("seasonal_profile")
+    f1 = figures_dir / "pillar1_seasonal_correlation_scatter.png"
+    fig, ax = plt.subplots(figsize=(7, 5), dpi=150)
+    if seasonal_result is not None and not seasonal_result.details.get(
+        "degenerate", False
+    ):
+        r = float(seasonal_result.observed)
+        ax.set_title(
+            f"Pillar 1 — Seasonal correlation (Pearson r={r:.3f})\n"
+            f"PFC FMV monthly signature vs EPEX hist 2019-2023"
+        )
+        # Annotate r in big text since we don't have the raw monthly series here
+        # (TestResult only stores observed scalar).
+        ax.text(
+            0.5,
+            0.5,
+            f"Pearson r = {r:.3f}\n(threshold > {seasonal_result.threshold})",
+            ha="center",
+            va="center",
+            fontsize=18,
+            transform=ax.transAxes,
+        )
+        ax.set_xticks([])
+        ax.set_yticks([])
+    else:
+        ax.text(0.5, 0.5, "degenerate", ha="center", va="center", fontsize=18)
+        ax.set_xticks([])
+        ax.set_yticks([])
+    fig.tight_layout()
+    fig.savefig(f1, dpi=150)
+    plt.close(fig)
+    out.append(f1)
+
+    # ----- Figure 2 : Pillar 2 MAE per horizon, faceted by bloc, config4 only -----
+    p2_df = scorecard_results["pillar2_df"]
+    f2 = figures_dir / "pillar2_mae_per_horizon_bar.png"
+    sub = p2_df[p2_df["config"] == "bowl_on_floors_off"]
+    blocs_order = sub["bloc"].drop_duplicates().tolist()
+    horizons_order = HORIZONS_PILLAR2
+    fig, ax = plt.subplots(figsize=(11, 6), dpi=150)
+    if not sub.empty:
+        n_blocs = len(blocs_order)
+        bar_width = 0.8 / max(n_blocs, 1)
+        for i, bloc_name in enumerate(blocs_order):
+            mae_vals = []
+            for h in horizons_order:
+                row = sub[(sub["bloc"] == bloc_name) & (sub["horizon"] == h)]
+                mae_vals.append(
+                    float(row["mae"].iloc[0]) if not row.empty else float("nan")
+                )
+            xs = np.arange(len(horizons_order)) + i * bar_width
+            ax.bar(xs, mae_vals, width=bar_width, label=bloc_name)
+        ax.set_xticks(
+            np.arange(len(horizons_order))
+            + bar_width * (n_blocs - 1) / 2
+        )
+        ax.set_xticklabels(horizons_order)
+        ax.set_xlabel("Horizon")
+        ax.set_ylabel("MAE (€/MWh)")
+        ax.set_title(
+            "Pillar 2 — MAE per horizon × bloc (Config 4 = bowl_on_floors_off)"
+        )
+        ax.legend(loc="upper right", fontsize=8)
+    else:
+        ax.text(0.5, 0.5, "no data", ha="center", va="center")
+    fig.tight_layout()
+    fig.savefig(f2, dpi=150)
+    plt.close(fig)
+    out.append(f2)
+
+    # ----- Figure 3 : Pillar 2 scatter pred vs realised, 5 panels per bloc -----
+    f3 = figures_dir / "pillar2_scatter_pred_vs_realised.png"
+    fig, axes = plt.subplots(1, 5, figsize=(20, 4), dpi=150)
+    sub_m1 = p2_df[
+        (p2_df["config"] == "bowl_on_floors_off") & (p2_df["horizon"] == "M+1")
+    ]
+    for ax, bloc_name in zip(axes, blocs_order if blocs_order else [""] * 5):
+        row = sub_m1[sub_m1["bloc"] == bloc_name]
+        if row.empty:
+            ax.set_title(f"{bloc_name}\n(no data)")
+            continue
+        mae = float(row["mae"].iloc[0])
+        bias = float(row["bias"].iloc[0])
+        rmse = float(row["rmse"].iloc[0])
+        n = int(row["n_obs"].iloc[0])
+        ax.text(
+            0.5,
+            0.5,
+            f"{bloc_name}\nMAE={mae:.2f}\nRMSE={rmse:.2f}\nbias={bias:.2f}\nn={n}",
+            ha="center",
+            va="center",
+            fontsize=9,
+            transform=ax.transAxes,
+        )
+        ax.set_xticks([])
+        ax.set_yticks([])
+    fig.suptitle("Pillar 2 — Per-bloc KPIs (Config 4, M+1)")
+    fig.tight_layout()
+    fig.savefig(f3, dpi=150)
+    plt.close(fig)
+    out.append(f3)
+
+    # ----- Figure 4 : Pillar 3 IC80 observed vs nominal reliability -----
+    p3_df = scorecard_results["pillar3_df"]
+    f4 = figures_dir / "pillar3_ic80_observed_vs_nominal.png"
+    fig, ax = plt.subplots(figsize=(8, 5), dpi=150)
+    if not p3_df.empty:
+        blocs = p3_df["bloc"].tolist()
+        obs = p3_df["observed_freq"].astype(float).tolist()
+        xs = np.arange(len(blocs))
+        ax.bar(xs, obs, color="steelblue", label="observed violation freq (IC80)")
+        ax.axhline(
+            y=0.20,
+            color="red",
+            linestyle="--",
+            label="nominal p=0.20 (1-IC80)",
+        )
+        ax.set_xticks(xs)
+        ax.set_xticklabels(blocs, rotation=15, ha="right", fontsize=8)
+        ax.set_ylabel("Violation frequency")
+        ax.set_title(
+            "Pillar 3 — IC80 observed violation vs nominal 0.20 "
+            "(Config 4, IC95 deferred Phase 5ter)"
+        )
+        ax.legend(loc="upper right")
+    else:
+        ax.text(0.5, 0.5, "no Pillar 3 data", ha="center", va="center")
+    fig.tight_layout()
+    fig.savefig(f4, dpi=150)
+    plt.close(fig)
+    out.append(f4)
+
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Plan 10-04 — render_markdown_report (10-VERIFICATION.md)
+# ---------------------------------------------------------------------------
+
+
+def render_markdown_report(
+    scorecard_results: dict,
+    output_dir: Any,
+    holiday_weekend_range: tuple = (0.65, 0.95),
+) -> Any:
+    """Render 10-VERIFICATION.md (executive summary + 5 pillar sections + figures).
+
+    Pillar 5 is left as a PLACEHOLDER (filled by Plan 10-04 Task 3 separately).
+    """
+    from datetime import datetime, timezone
+    from pathlib import Path as _Path
+
+    output_dir = _Path(output_dir)
+    md_path = output_dir / "10-VERIFICATION.md"
+
+    pillar1 = scorecard_results["pillar1"]
+    pillar2_df = scorecard_results["pillar2_df"]
+    pillar3_df = scorecard_results["pillar3_df"]
+    pillar4_df = scorecard_results["pillar4_df"]
+    forwards_source = scorecard_results["forwards_source"]
+    sc1_gate_eligible = scorecard_results["sc1_gate_eligible"]
+    vintages = scorecard_results["vintages"]
+    compute_seconds = scorecard_results["compute_seconds"]
+
+    sc1_passed = sum(1 for v in pillar1.values() if v.passed)
+    sc1_total = len(pillar1)
+    sc1_verdict_label = f"{sc1_passed}/{sc1_total}"
+    if sc1_gate_eligible:
+        sc1_status = "PASS" if sc1_passed == sc1_total else "FAIL"
+        gate_banner = "✓ Gate-eligible run"
+    else:
+        sc1_status = "DIAGNOSTIC-ONLY"
+        gate_banner = (
+            "⚠ Diagnostic only — not gate-eligible (forwards derived from "
+            "EPEX-history fallback)"
+        )
+
+    lines: list[str] = []
+    lines.append("# Phase 10 — PFC FMV Quality Scorecard (5-pillar SOTA replication)")
+    lines.append("")
+    lines.append(
+        f"**Generated** : {datetime.now(timezone.utc).isoformat(timespec='seconds')}"
+    )
+    lines.append("**Config target** : bowl_on_floors_off (Config 4)")
+    lines.append(
+        f"**Vintages** : {len(vintages)} (last business day of each month "
+        f"{vintages[0].strftime('%Y-%m')}..{vintages[-1].strftime('%Y-%m')})"
+    )
+    lines.append(f"**Forwards source** : `{forwards_source}`")
+    lines.append(f"**Compute time** : {compute_seconds:.1f} s")
+    lines.append("")
+    lines.append("---")
+    lines.append("")
+    lines.append("## Executive Summary")
+    lines.append("")
+    lines.append(
+        f"- **SC#1 Hildmann gate** : {sc1_verdict_label} tests PASS — "
+        f"**{sc1_status}** ({gate_banner})."
+    )
+    if not pillar2_df.empty:
+        mae_c4 = pillar2_df[
+            (pillar2_df["config"] == "bowl_on_floors_off")
+            & (~pillar2_df["mae"].isna())
+        ]["mae"]
+        if not mae_c4.empty:
+            lines.append(
+                f"- **Pillar 2 (Empirical KYOS)** : mean MAE Config 4 across "
+                f"blocs×horizons = {mae_c4.mean():.2f} €/MWh "
+                f"(min {mae_c4.min():.2f}, max {mae_c4.max():.2f})."
+            )
+    if not pillar3_df.empty:
+        obs_freq = pillar3_df["observed_freq"].astype(float)
+        lines.append(
+            f"- **Pillar 3 (Christoffersen IC80)** : observed violation freq "
+            f"per bloc range = [{obs_freq.min():.3f}, {obs_freq.max():.3f}] "
+            f"(nominal 0.20 ; IC95 deferred Phase 5ter)."
+        )
+    if not pillar4_df.empty:
+        better = pillar4_df[
+            (pillar4_df["config"] == "bowl_on_floors_off")
+            & (pillar4_df["better_than_baseline"] == "Y")
+        ]
+        lines.append(
+            f"- **Pillar 4 (DM vs 3 baselines)** : Config 4 strictly better "
+            f"(p<0.05) in {len(better)}/{len(pillar4_df[pillar4_df['config']=='bowl_on_floors_off'])} cells."
+        )
+    lines.append(
+        "- **Pillar 5 (Peer review SOTA)** : 9-feature comparative table + "
+        "gap analysis (see §Pillar 5 below)."
+    )
+    lines.append("")
+    lines.append("## Table of Contents")
+    lines.append("")
+    lines.append("1. [Pillar 1 — Structural Quality (Hildmann)](#pillar-1--structural-quality-hildmann-2013--sc1-unique-gate)")
+    lines.append("2. [Pillar 2 — Empirical Accuracy (KYOS)](#pillar-2--empirical-accuracy-kyos-style)")
+    lines.append("3. [Pillar 3 — Probabilistic Coverage](#pillar-3--probabilistic-christoffersen-unconditional-config-4-only-ic80-only)")
+    lines.append("4. [Pillar 4 — DM vs Baselines](#pillar-4--diebold-mariano-vs-naive-baselines)")
+    lines.append("5. [Pillar 5 — Peer Review SOTA](#pillar-5--peer-review-sota-literature)")
+    lines.append("6. [Annexes](#annexes)")
+    lines.append("")
+    lines.append("---")
+    lines.append("")
+
+    # ---- Pillar 1 ----
+    lines.append("## Pillar 1 — Structural Quality (Hildmann 2013) — SC#1 UNIQUE GATE")
+    lines.append("")
+    lines.append(f"**Gate eligibility** : {gate_banner}")
+    lines.append("")
+    lines.append("| Test | Observed | Threshold | Passed | Forwards source |")
+    lines.append("|------|----------|-----------|--------|-----------------|")
+    for key in ("arb_free", "holiday_weekend", "seasonal_profile", "continuity"):
+        r = pillar1[key]
+        thr = r.threshold
+        thr_s = (
+            f"[{thr[0]}, {thr[1]}]"
+            if isinstance(thr, tuple)
+            else f"{thr}"
+        )
+        passed_s = "✓" if r.passed else "✗"
+        # Diagnostic suffix when not gate-eligible
+        fs_suffix = forwards_source
+        if not sc1_gate_eligible:
+            fs_suffix = f"{forwards_source} (diagnostic)"
+        lines.append(
+            f"| {key} | {r.observed:.4g} | {thr_s} | {passed_s} | {fs_suffix} |"
+        )
+    lines.append("")
+    lines.append(
+        f"**Verdict global** : {sc1_verdict_label} PASS — **{sc1_status}**."
+    )
+    lines.append("")
+    lines.append("![Pillar 1 seasonal correlation](figures/pillar1_seasonal_correlation_scatter.png)")
+    lines.append("")
+
+    # ---- Pillar 2 ----
+    lines.append("## Pillar 2 — Empirical Accuracy (KYOS-style)")
+    lines.append("")
+    diag_note = (
+        " *Cells with `forwards_source=fallback_diagnostic` are tagged "
+        '"(diagnostic)" — informational only, not SC#1 gate-eligible.*'
+        if not sc1_gate_eligible
+        else ""
+    )
+    lines.append(
+        f"KPIs per (config × bloc × horizon).{diag_note}"
+    )
+    lines.append("")
+    lines.append(
+        "| Config | Bloc | Horizon | n_obs | MAE | RMSE | Bias | MZ p-value | "
+        "Low-power flag | Forwards source |"
+    )
+    lines.append(
+        "|--------|------|---------|-------|-----|------|------|------------|"
+        "-----------------|-----------------|"
+    )
+    for _, r in pillar2_df.iterrows():
+        diag_tag = (
+            " (diagnostic)"
+            if r["forwards_source"] == FORWARDS_SOURCE_FALLBACK_DIAGNOSTIC
+            else ""
+        )
+        mae = "NaN" if pd.isna(r["mae"]) else f"{r['mae']:.3g}"
+        rmse = "NaN" if pd.isna(r["rmse"]) else f"{r['rmse']:.3g}"
+        bias = "NaN" if pd.isna(r["bias"]) else f"{r['bias']:.3g}"
+        mzp = (
+            "NaN"
+            if pd.isna(r["mz_p_value"])
+            else f"{r['mz_p_value']:.3g}"
+        )
+        lpf = "Y" if r["low_power_flag"] else "N"
+        lines.append(
+            f"| {r['config']} | {r['bloc']} | {r['horizon']} | {r['n_obs']} | "
+            f"{mae} | {rmse} | {bias} | {mzp} | {lpf} | {r['forwards_source']}{diag_tag} |"
+        )
+    lines.append("")
+    lines.append("![Pillar 2 MAE per horizon](figures/pillar2_mae_per_horizon_bar.png)")
+    lines.append("")
+    lines.append("![Pillar 2 scatter pred vs realised](figures/pillar2_scatter_pred_vs_realised.png)")
+    lines.append("")
+
+    # ---- Pillar 3 ----
+    lines.append(
+        "## Pillar 3 — Probabilistic (Christoffersen unconditional, Config 4 only, IC80 only)"
+    )
+    lines.append("")
+    lines.append(
+        "**Note** : IC95 (p2.5/p97.5) deferred to Phase 5ter (extension of "
+        "`pfc_shaping/lt/model/uncertainty.py:51-194` required to expose "
+        "`level=` param). Only IC80 (p10/p90) tested here."
+    )
+    lines.append("")
+    if not pillar3_df.empty:
+        lines.append(
+            "| Bloc | IC level | Nominal p | Observed freq | n | x | LR stat | "
+            "p-value | Degenerate |"
+        )
+        lines.append(
+            "|------|----------|-----------|---------------|---|---|---------|"
+            "---------|------------|"
+        )
+        for _, r in pillar3_df.iterrows():
+            obs = (
+                "NaN"
+                if pd.isna(r["observed_freq"])
+                else f"{r['observed_freq']:.3g}"
+            )
+            lr = "NaN" if pd.isna(r["lr_stat"]) else f"{r['lr_stat']:.3g}"
+            pv = "NaN" if pd.isna(r["p_value"]) else f"{r['p_value']:.3g}"
+            deg = "Y" if r["degenerate"] else "N"
+            lines.append(
+                f"| {r['bloc']} | {r['ic_level']} | {r['nominal_p']:.2f} | "
+                f"{obs} | {r['n']} | {r['x']} | {lr} | {pv} | {deg} |"
+            )
+    else:
+        lines.append("*No Pillar 3 output (no Uncertainty caches available).*")
+    lines.append("")
+    lines.append("![Pillar 3 IC80 observed vs nominal](figures/pillar3_ic80_observed_vs_nominal.png)")
+    lines.append("")
+
+    # ---- Pillar 4 ----
+    lines.append("## Pillar 4 — Diebold-Mariano vs Naive Baselines")
+    lines.append("")
+    lines.append(
+        f"3 baselines (climatology, persistence_y1, forwards_flat). "
+        f"`better_than_baseline=Y` ssi `mean_d<0 AND p_value<0.05`.{diag_note}"
+    )
+    lines.append("")
+    lines.append(
+        "| Config | Bloc | Horizon | Baseline | n | DM stat | p-value | "
+        "MAE PFC | MAE base | Δ MAE | Better | Forwards source |"
+    )
+    lines.append(
+        "|--------|------|---------|----------|---|---------|---------|"
+        "---------|----------|-------|--------|-----------------|"
+    )
+    for _, r in pillar4_df.iterrows():
+        diag_tag = (
+            " (diagnostic)"
+            if r["forwards_source"] == FORWARDS_SOURCE_FALLBACK_DIAGNOSTIC
+            else ""
+        )
+        dms = "NaN" if pd.isna(r["dm_stat"]) else f"{r['dm_stat']:.3g}"
+        pv = "NaN" if pd.isna(r["p_value"]) else f"{r['p_value']:.3g}"
+        mp = "NaN" if pd.isna(r["mae_pfc"]) else f"{r['mae_pfc']:.3g}"
+        mb = "NaN" if pd.isna(r["mae_baseline"]) else f"{r['mae_baseline']:.3g}"
+        dm = "NaN" if pd.isna(r["delta_mae"]) else f"{r['delta_mae']:.3g}"
+        lines.append(
+            f"| {r['config']} | {r['bloc']} | {r['horizon']} | {r['baseline']} | "
+            f"{r['n']} | {dms} | {pv} | {mp} | {mb} | {dm} | "
+            f"{r['better_than_baseline']} | {r['forwards_source']}{diag_tag} |"
+        )
+    lines.append("")
+
+    # ---- Pillar 5 placeholder ----
+    lines.append("## Pillar 5 — Peer Review SOTA Literature")
+    lines.append("")
+    lines.append(
+        "PLACEHOLDER — Plan 10-04 Task 3 replaces this section with a "
+        "9×6 comparative table + 3-paragraph gap analysis."
+    )
+    lines.append("")
+
+    # ---- Annexes ----
+    lines.append("## Annexes")
+    lines.append("")
+    lines.append(
+        f"- **HOLIDAY_WEEKEND_RANGE** = `{holiday_weekend_range}` "
+        f"(frozen Plan 10-01 NOTES §Pitfall 1, C2 REVIEWS audit-trail)."
+    )
+    lines.append(
+        "- **Forwards-as-of-vintage path** : "
+        f"`{forwards_source}` "
+        f"({'real EEX snapshot' if forwards_source == FORWARDS_SOURCE_REAL else 'derive_forwards_from_epex_hist fallback — SC#1 NOT gate-eligible'})."
+    )
+    lines.append(
+        "- **IC95 deferral** : Phase 5ter. Reference : "
+        "`pfc_shaping/lt/model/uncertainty.py` lines 51-194 expose `p10/p90 only` "
+        "(no `level=` param)."
+    )
+    lines.append(
+        "- **Reproducibility contract** : `assert_frame_equal(..., check_exact=False, "
+        "atol=1e-12, rtol=0)` verified by `tests/test_phase10_reproducibility.py`."
+    )
+    lines.append(
+        f"- **Compute summary** : "
+        f"{len(scorecard_results['configs']) * len(vintages)} builds = "
+        f"{compute_seconds:.1f} seconds wall time Mac Mini."
+    )
+    lines.append("")
+
+    md_path.write_text("\n".join(lines), encoding="utf-8")
+    return md_path
+
+
 __all__ = [
     "AblationConfig",
     "ABLATION_GRID",
@@ -1154,4 +2140,9 @@ __all__ = [
     "compute_cell_kpis",
     "compute_pillar3_coverage",
     "compute_pillar4_dm",
+    "_build_pred_baseline_for_vintage",
+    "run_scorecard_full",
+    "render_figures",
+    "render_markdown_report",
+    "HORIZONS_PILLAR2",
 ]
