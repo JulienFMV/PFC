@@ -1,10 +1,10 @@
 # Phase 10 — PFC FMV Quality Scorecard (5-pillar SOTA replication)
 
-**Generated** : 2026-05-21T10:45:23+00:00
+**Generated** : 2026-05-21T18:12:50+00:00
 **Config target** : bowl_on_floors_off (Config 4)
 **Vintages** : 24 (last business day of each month 2024-01..2025-12)
 **Forwards source** : `fallback_diagnostic`
-**Compute time** : 634.5 s
+**Compute time** : 24.6 s
 
 ---
 
@@ -13,7 +13,7 @@
 - **SC#1 Hildmann gate** : 2/4 tests PASS — **DIAGNOSTIC-ONLY** (⚠ Diagnostic only — not gate-eligible (forwards derived from EPEX-history fallback)).
 - **Pillar 2 (Empirical KYOS)** : mean MAE Config 4 across blocs×horizons = 42.38 €/MWh (min 3.63, max 64.91).
 - **Pillar 3 (Christoffersen IC80)** : observed violation freq per bloc range = [0.000, 0.110] (nominal 0.20 ; IC95 deferred Phase 5ter).
-- **Pillar 4 (DM vs 3 baselines)** : Config 4 strictly better (p<0.05) in 28/75 cells.
+- **Pillar 4 (DM vs 3 baselines)** : Config 4 strictly better (p<0.05) in 28/58 testable cells (17 cells DEGEN excluded).
 - **Pillar 5 (Peer review SOTA)** : 9-feature comparative table + gap analysis (see §Pillar 5 below).
 
 ## Table of Contents
@@ -33,7 +33,7 @@
 
 | Test | Observed | Threshold | Passed | Forwards source |
 |------|----------|-----------|--------|-----------------|
-| arb_free | 11.37 | 0.01 | ✗ | fallback_diagnostic (diagnostic) |
+| arb_free | 22.64 | 0.01 | ✗ | fallback_diagnostic (diagnostic) |
 | holiday_weekend | 0.8311 | [0.65, 0.95] | ✓ | fallback_diagnostic (diagnostic) |
 | seasonal_profile | 0.9978 | 0.85 | ✓ | fallback_diagnostic (diagnostic) |
 | continuity | 59.17 | 2.0 | ✗ | fallback_diagnostic (diagnostic) |
@@ -163,7 +163,7 @@ KPIs per (config × bloc × horizon). *Cells with `forwards_source=fallback_diag
 | block_overnight_weekday | 0.8 | 0.20 | 0.0128 | 7515 | 96 | 2.59e+03 | 0 | N |
 | block_summer_solar_bowl | 0.8 | 0.20 | 0.11 | 738 | 81 | 43.2 | 4.85e-11 | N |
 | block_weekend_midday | 0.8 | 0.20 | 0.0737 | 800 | 59 | 99.4 | 2.02e-23 | N |
-| block_winter_evening_peak | 0.8 | 0.20 | 0 | 604 | 0 | NaN | NaN | Y |
+| block_winter_evening_peak | 0.8 | 0.20 | 0 | 604 | 0 | NaN | 2.93e-59 | N |
 
 ![Pillar 3 IC80 observed vs nominal](figures/pillar3_ic80_observed_vs_nominal.png)
 
@@ -215,9 +215,9 @@ KPIs per (config × bloc × horizon). *Cells with `forwards_source=fallback_diag
 | bowl_off_floors_off | block_winter_evening_peak | M+6 | forwards_flat | 516 | 1.16 | 0.246 | 41.8 | 37.9 | 3.94 | N | fallback_diagnostic (diagnostic) |
 | bowl_off_floors_off | block_midday_weekday | M+6 | persistence_y1 | 1965 | -6.37 | 2.41e-10 | 44.6 | 56.9 | -12.3 | Y | fallback_diagnostic (diagnostic) |
 | bowl_off_floors_off | block_overnight_weekday | M+6 | persistence_y1 | 5896 | -1.65 | 0.0982 | 38 | 39.4 | -1.36 | N | fallback_diagnostic (diagnostic) |
-| bowl_off_floors_off | block_summer_solar_bowl | M+6 | persistence_y1 | 0 | NaN | NaN | NaN | NaN | NaN | N | fallback_diagnostic (diagnostic) |
+| bowl_off_floors_off | block_summer_solar_bowl | M+6 | persistence_y1 | 0 | NaN | NaN | NaN | NaN | NaN | DEGEN | fallback_diagnostic (diagnostic) |
 | bowl_off_floors_off | block_weekend_midday | M+6 | persistence_y1 | 624 | -12.2 | 1.16e-30 | 39.4 | 83.7 | -44.3 | Y | fallback_diagnostic (diagnostic) |
-| bowl_off_floors_off | block_winter_evening_peak | M+6 | persistence_y1 | 0 | NaN | NaN | NaN | NaN | NaN | N | fallback_diagnostic (diagnostic) |
+| bowl_off_floors_off | block_winter_evening_peak | M+6 | persistence_y1 | 0 | NaN | NaN | NaN | NaN | NaN | DEGEN | fallback_diagnostic (diagnostic) |
 | bowl_off_floors_off | block_midday_weekday | Y+1 | climatology | 1305 | -3.78 | 0.000166 | 34.9 | 43.7 | -8.74 | Y | fallback_diagnostic (diagnostic) |
 | bowl_off_floors_off | block_overnight_weekday | Y+1 | climatology | 3916 | 8.92 | 6.93e-19 | 30.9 | 21.7 | 9.27 | N | fallback_diagnostic (diagnostic) |
 | bowl_off_floors_off | block_summer_solar_bowl | Y+1 | climatology | 369 | -5.41 | 1.13e-07 | 51.4 | 72.9 | -21.5 | Y | fallback_diagnostic (diagnostic) |
@@ -233,21 +233,21 @@ KPIs per (config × bloc × horizon). *Cells with `forwards_source=fallback_diag
 | bowl_off_floors_off | block_summer_solar_bowl | Y+1 | persistence_y1 | 369 | 0.738 | 0.461 | 51.4 | 48.8 | 2.64 | N | fallback_diagnostic (diagnostic) |
 | bowl_off_floors_off | block_weekend_midday | Y+1 | persistence_y1 | 416 | -6.01 | 4.03e-09 | 45.4 | 64.2 | -18.8 | Y | fallback_diagnostic (diagnostic) |
 | bowl_off_floors_off | block_winter_evening_peak | Y+1 | persistence_y1 | 344 | -0.923 | 0.357 | 38.2 | 41.2 | -2.94 | N | fallback_diagnostic (diagnostic) |
-| bowl_off_floors_off | block_midday_weekday | Y+2 | climatology | 0 | NaN | NaN | NaN | NaN | NaN | N | fallback_diagnostic (diagnostic) |
-| bowl_off_floors_off | block_overnight_weekday | Y+2 | climatology | 1 | NaN | NaN | 3.48 | 13.4 | -9.95 | N | fallback_diagnostic (diagnostic) |
-| bowl_off_floors_off | block_summer_solar_bowl | Y+2 | climatology | 0 | NaN | NaN | NaN | NaN | NaN | N | fallback_diagnostic (diagnostic) |
-| bowl_off_floors_off | block_weekend_midday | Y+2 | climatology | 0 | NaN | NaN | NaN | NaN | NaN | N | fallback_diagnostic (diagnostic) |
-| bowl_off_floors_off | block_winter_evening_peak | Y+2 | climatology | 0 | NaN | NaN | NaN | NaN | NaN | N | fallback_diagnostic (diagnostic) |
-| bowl_off_floors_off | block_midday_weekday | Y+2 | forwards_flat | 0 | NaN | NaN | NaN | NaN | NaN | N | fallback_diagnostic (diagnostic) |
-| bowl_off_floors_off | block_overnight_weekday | Y+2 | forwards_flat | 1 | NaN | NaN | 3.48 | 7.82 | -4.33 | N | fallback_diagnostic (diagnostic) |
-| bowl_off_floors_off | block_summer_solar_bowl | Y+2 | forwards_flat | 0 | NaN | NaN | NaN | NaN | NaN | N | fallback_diagnostic (diagnostic) |
-| bowl_off_floors_off | block_weekend_midday | Y+2 | forwards_flat | 0 | NaN | NaN | NaN | NaN | NaN | N | fallback_diagnostic (diagnostic) |
-| bowl_off_floors_off | block_winter_evening_peak | Y+2 | forwards_flat | 0 | NaN | NaN | NaN | NaN | NaN | N | fallback_diagnostic (diagnostic) |
-| bowl_off_floors_off | block_midday_weekday | Y+2 | persistence_y1 | 0 | NaN | NaN | NaN | NaN | NaN | N | fallback_diagnostic (diagnostic) |
-| bowl_off_floors_off | block_overnight_weekday | Y+2 | persistence_y1 | 1 | NaN | NaN | 3.48 | 61.5 | -58 | N | fallback_diagnostic (diagnostic) |
-| bowl_off_floors_off | block_summer_solar_bowl | Y+2 | persistence_y1 | 0 | NaN | NaN | NaN | NaN | NaN | N | fallback_diagnostic (diagnostic) |
-| bowl_off_floors_off | block_weekend_midday | Y+2 | persistence_y1 | 0 | NaN | NaN | NaN | NaN | NaN | N | fallback_diagnostic (diagnostic) |
-| bowl_off_floors_off | block_winter_evening_peak | Y+2 | persistence_y1 | 0 | NaN | NaN | NaN | NaN | NaN | N | fallback_diagnostic (diagnostic) |
+| bowl_off_floors_off | block_midday_weekday | Y+2 | climatology | 0 | NaN | NaN | NaN | NaN | NaN | DEGEN | fallback_diagnostic (diagnostic) |
+| bowl_off_floors_off | block_overnight_weekday | Y+2 | climatology | 0 | NaN | NaN | 3.48 | 13.4 | -9.95 | DEGEN | fallback_diagnostic (diagnostic) |
+| bowl_off_floors_off | block_summer_solar_bowl | Y+2 | climatology | 0 | NaN | NaN | NaN | NaN | NaN | DEGEN | fallback_diagnostic (diagnostic) |
+| bowl_off_floors_off | block_weekend_midday | Y+2 | climatology | 0 | NaN | NaN | NaN | NaN | NaN | DEGEN | fallback_diagnostic (diagnostic) |
+| bowl_off_floors_off | block_winter_evening_peak | Y+2 | climatology | 0 | NaN | NaN | NaN | NaN | NaN | DEGEN | fallback_diagnostic (diagnostic) |
+| bowl_off_floors_off | block_midday_weekday | Y+2 | forwards_flat | 0 | NaN | NaN | NaN | NaN | NaN | DEGEN | fallback_diagnostic (diagnostic) |
+| bowl_off_floors_off | block_overnight_weekday | Y+2 | forwards_flat | 0 | NaN | NaN | 3.48 | 7.82 | -4.33 | DEGEN | fallback_diagnostic (diagnostic) |
+| bowl_off_floors_off | block_summer_solar_bowl | Y+2 | forwards_flat | 0 | NaN | NaN | NaN | NaN | NaN | DEGEN | fallback_diagnostic (diagnostic) |
+| bowl_off_floors_off | block_weekend_midday | Y+2 | forwards_flat | 0 | NaN | NaN | NaN | NaN | NaN | DEGEN | fallback_diagnostic (diagnostic) |
+| bowl_off_floors_off | block_winter_evening_peak | Y+2 | forwards_flat | 0 | NaN | NaN | NaN | NaN | NaN | DEGEN | fallback_diagnostic (diagnostic) |
+| bowl_off_floors_off | block_midday_weekday | Y+2 | persistence_y1 | 0 | NaN | NaN | NaN | NaN | NaN | DEGEN | fallback_diagnostic (diagnostic) |
+| bowl_off_floors_off | block_overnight_weekday | Y+2 | persistence_y1 | 0 | NaN | NaN | 3.48 | 61.5 | -58 | DEGEN | fallback_diagnostic (diagnostic) |
+| bowl_off_floors_off | block_summer_solar_bowl | Y+2 | persistence_y1 | 0 | NaN | NaN | NaN | NaN | NaN | DEGEN | fallback_diagnostic (diagnostic) |
+| bowl_off_floors_off | block_weekend_midday | Y+2 | persistence_y1 | 0 | NaN | NaN | NaN | NaN | NaN | DEGEN | fallback_diagnostic (diagnostic) |
+| bowl_off_floors_off | block_winter_evening_peak | Y+2 | persistence_y1 | 0 | NaN | NaN | NaN | NaN | NaN | DEGEN | fallback_diagnostic (diagnostic) |
 | bowl_off_floors_on | block_midday_weekday | M+1 | climatology | 2500 | -9.64 | 1.26e-21 | 44.6 | 50.4 | -5.78 | Y | fallback_diagnostic (diagnostic) |
 | bowl_off_floors_on | block_overnight_weekday | M+1 | climatology | 7501 | 17.4 | 1.36e-66 | 37.7 | 31.4 | 6.27 | N | fallback_diagnostic (diagnostic) |
 | bowl_off_floors_on | block_summer_solar_bowl | M+1 | climatology | 738 | -12.6 | 3.92e-33 | 56.5 | 74.9 | -18.4 | Y | fallback_diagnostic (diagnostic) |
@@ -290,9 +290,9 @@ KPIs per (config × bloc × horizon). *Cells with `forwards_source=fallback_diag
 | bowl_off_floors_on | block_winter_evening_peak | M+6 | forwards_flat | 516 | 1.16 | 0.246 | 41.8 | 37.9 | 3.94 | N | fallback_diagnostic (diagnostic) |
 | bowl_off_floors_on | block_midday_weekday | M+6 | persistence_y1 | 1965 | -6.37 | 2.41e-10 | 44.6 | 56.9 | -12.3 | Y | fallback_diagnostic (diagnostic) |
 | bowl_off_floors_on | block_overnight_weekday | M+6 | persistence_y1 | 5896 | -1.65 | 0.0982 | 38 | 39.4 | -1.36 | N | fallback_diagnostic (diagnostic) |
-| bowl_off_floors_on | block_summer_solar_bowl | M+6 | persistence_y1 | 0 | NaN | NaN | NaN | NaN | NaN | N | fallback_diagnostic (diagnostic) |
+| bowl_off_floors_on | block_summer_solar_bowl | M+6 | persistence_y1 | 0 | NaN | NaN | NaN | NaN | NaN | DEGEN | fallback_diagnostic (diagnostic) |
 | bowl_off_floors_on | block_weekend_midday | M+6 | persistence_y1 | 624 | -12.2 | 1.16e-30 | 39.4 | 83.7 | -44.3 | Y | fallback_diagnostic (diagnostic) |
-| bowl_off_floors_on | block_winter_evening_peak | M+6 | persistence_y1 | 0 | NaN | NaN | NaN | NaN | NaN | N | fallback_diagnostic (diagnostic) |
+| bowl_off_floors_on | block_winter_evening_peak | M+6 | persistence_y1 | 0 | NaN | NaN | NaN | NaN | NaN | DEGEN | fallback_diagnostic (diagnostic) |
 | bowl_off_floors_on | block_midday_weekday | Y+1 | climatology | 1305 | -3.78 | 0.000166 | 34.9 | 43.7 | -8.74 | Y | fallback_diagnostic (diagnostic) |
 | bowl_off_floors_on | block_overnight_weekday | Y+1 | climatology | 3916 | 8.92 | 6.93e-19 | 30.9 | 21.7 | 9.27 | N | fallback_diagnostic (diagnostic) |
 | bowl_off_floors_on | block_summer_solar_bowl | Y+1 | climatology | 369 | -5.41 | 1.13e-07 | 51.4 | 72.9 | -21.5 | Y | fallback_diagnostic (diagnostic) |
@@ -308,21 +308,21 @@ KPIs per (config × bloc × horizon). *Cells with `forwards_source=fallback_diag
 | bowl_off_floors_on | block_summer_solar_bowl | Y+1 | persistence_y1 | 369 | 0.738 | 0.461 | 51.4 | 48.8 | 2.64 | N | fallback_diagnostic (diagnostic) |
 | bowl_off_floors_on | block_weekend_midday | Y+1 | persistence_y1 | 416 | -6.01 | 4.03e-09 | 45.4 | 64.2 | -18.8 | Y | fallback_diagnostic (diagnostic) |
 | bowl_off_floors_on | block_winter_evening_peak | Y+1 | persistence_y1 | 344 | -0.923 | 0.357 | 38.2 | 41.2 | -2.94 | N | fallback_diagnostic (diagnostic) |
-| bowl_off_floors_on | block_midday_weekday | Y+2 | climatology | 0 | NaN | NaN | NaN | NaN | NaN | N | fallback_diagnostic (diagnostic) |
-| bowl_off_floors_on | block_overnight_weekday | Y+2 | climatology | 1 | NaN | NaN | 3.48 | 13.4 | -9.95 | N | fallback_diagnostic (diagnostic) |
-| bowl_off_floors_on | block_summer_solar_bowl | Y+2 | climatology | 0 | NaN | NaN | NaN | NaN | NaN | N | fallback_diagnostic (diagnostic) |
-| bowl_off_floors_on | block_weekend_midday | Y+2 | climatology | 0 | NaN | NaN | NaN | NaN | NaN | N | fallback_diagnostic (diagnostic) |
-| bowl_off_floors_on | block_winter_evening_peak | Y+2 | climatology | 0 | NaN | NaN | NaN | NaN | NaN | N | fallback_diagnostic (diagnostic) |
-| bowl_off_floors_on | block_midday_weekday | Y+2 | forwards_flat | 0 | NaN | NaN | NaN | NaN | NaN | N | fallback_diagnostic (diagnostic) |
-| bowl_off_floors_on | block_overnight_weekday | Y+2 | forwards_flat | 1 | NaN | NaN | 3.48 | 7.82 | -4.33 | N | fallback_diagnostic (diagnostic) |
-| bowl_off_floors_on | block_summer_solar_bowl | Y+2 | forwards_flat | 0 | NaN | NaN | NaN | NaN | NaN | N | fallback_diagnostic (diagnostic) |
-| bowl_off_floors_on | block_weekend_midday | Y+2 | forwards_flat | 0 | NaN | NaN | NaN | NaN | NaN | N | fallback_diagnostic (diagnostic) |
-| bowl_off_floors_on | block_winter_evening_peak | Y+2 | forwards_flat | 0 | NaN | NaN | NaN | NaN | NaN | N | fallback_diagnostic (diagnostic) |
-| bowl_off_floors_on | block_midday_weekday | Y+2 | persistence_y1 | 0 | NaN | NaN | NaN | NaN | NaN | N | fallback_diagnostic (diagnostic) |
-| bowl_off_floors_on | block_overnight_weekday | Y+2 | persistence_y1 | 1 | NaN | NaN | 3.48 | 61.5 | -58 | N | fallback_diagnostic (diagnostic) |
-| bowl_off_floors_on | block_summer_solar_bowl | Y+2 | persistence_y1 | 0 | NaN | NaN | NaN | NaN | NaN | N | fallback_diagnostic (diagnostic) |
-| bowl_off_floors_on | block_weekend_midday | Y+2 | persistence_y1 | 0 | NaN | NaN | NaN | NaN | NaN | N | fallback_diagnostic (diagnostic) |
-| bowl_off_floors_on | block_winter_evening_peak | Y+2 | persistence_y1 | 0 | NaN | NaN | NaN | NaN | NaN | N | fallback_diagnostic (diagnostic) |
+| bowl_off_floors_on | block_midday_weekday | Y+2 | climatology | 0 | NaN | NaN | NaN | NaN | NaN | DEGEN | fallback_diagnostic (diagnostic) |
+| bowl_off_floors_on | block_overnight_weekday | Y+2 | climatology | 0 | NaN | NaN | 3.48 | 13.4 | -9.95 | DEGEN | fallback_diagnostic (diagnostic) |
+| bowl_off_floors_on | block_summer_solar_bowl | Y+2 | climatology | 0 | NaN | NaN | NaN | NaN | NaN | DEGEN | fallback_diagnostic (diagnostic) |
+| bowl_off_floors_on | block_weekend_midday | Y+2 | climatology | 0 | NaN | NaN | NaN | NaN | NaN | DEGEN | fallback_diagnostic (diagnostic) |
+| bowl_off_floors_on | block_winter_evening_peak | Y+2 | climatology | 0 | NaN | NaN | NaN | NaN | NaN | DEGEN | fallback_diagnostic (diagnostic) |
+| bowl_off_floors_on | block_midday_weekday | Y+2 | forwards_flat | 0 | NaN | NaN | NaN | NaN | NaN | DEGEN | fallback_diagnostic (diagnostic) |
+| bowl_off_floors_on | block_overnight_weekday | Y+2 | forwards_flat | 0 | NaN | NaN | 3.48 | 7.82 | -4.33 | DEGEN | fallback_diagnostic (diagnostic) |
+| bowl_off_floors_on | block_summer_solar_bowl | Y+2 | forwards_flat | 0 | NaN | NaN | NaN | NaN | NaN | DEGEN | fallback_diagnostic (diagnostic) |
+| bowl_off_floors_on | block_weekend_midday | Y+2 | forwards_flat | 0 | NaN | NaN | NaN | NaN | NaN | DEGEN | fallback_diagnostic (diagnostic) |
+| bowl_off_floors_on | block_winter_evening_peak | Y+2 | forwards_flat | 0 | NaN | NaN | NaN | NaN | NaN | DEGEN | fallback_diagnostic (diagnostic) |
+| bowl_off_floors_on | block_midday_weekday | Y+2 | persistence_y1 | 0 | NaN | NaN | NaN | NaN | NaN | DEGEN | fallback_diagnostic (diagnostic) |
+| bowl_off_floors_on | block_overnight_weekday | Y+2 | persistence_y1 | 0 | NaN | NaN | 3.48 | 61.5 | -58 | DEGEN | fallback_diagnostic (diagnostic) |
+| bowl_off_floors_on | block_summer_solar_bowl | Y+2 | persistence_y1 | 0 | NaN | NaN | NaN | NaN | NaN | DEGEN | fallback_diagnostic (diagnostic) |
+| bowl_off_floors_on | block_weekend_midday | Y+2 | persistence_y1 | 0 | NaN | NaN | NaN | NaN | NaN | DEGEN | fallback_diagnostic (diagnostic) |
+| bowl_off_floors_on | block_winter_evening_peak | Y+2 | persistence_y1 | 0 | NaN | NaN | NaN | NaN | NaN | DEGEN | fallback_diagnostic (diagnostic) |
 | bowl_on_floors_off | block_midday_weekday | M+1 | climatology | 2500 | -10.1 | 1.42e-23 | 44.3 | 50.4 | -6.06 | Y | fallback_diagnostic (diagnostic) |
 | bowl_on_floors_off | block_overnight_weekday | M+1 | climatology | 7501 | 17.7 | 5.02e-69 | 37.9 | 31.4 | 6.47 | N | fallback_diagnostic (diagnostic) |
 | bowl_on_floors_off | block_summer_solar_bowl | M+1 | climatology | 738 | -12.7 | 8.8e-34 | 56.3 | 74.9 | -18.6 | Y | fallback_diagnostic (diagnostic) |
@@ -365,9 +365,9 @@ KPIs per (config × bloc × horizon). *Cells with `forwards_source=fallback_diag
 | bowl_on_floors_off | block_winter_evening_peak | M+6 | forwards_flat | 516 | 1.26 | 0.208 | 42.3 | 37.9 | 4.39 | N | fallback_diagnostic (diagnostic) |
 | bowl_on_floors_off | block_midday_weekday | M+6 | persistence_y1 | 1965 | -6.63 | 4.2e-11 | 44.2 | 56.9 | -12.7 | Y | fallback_diagnostic (diagnostic) |
 | bowl_on_floors_off | block_overnight_weekday | M+6 | persistence_y1 | 5896 | -1.3 | 0.194 | 38.3 | 39.4 | -1.08 | N | fallback_diagnostic (diagnostic) |
-| bowl_on_floors_off | block_summer_solar_bowl | M+6 | persistence_y1 | 0 | NaN | NaN | NaN | NaN | NaN | N | fallback_diagnostic (diagnostic) |
+| bowl_on_floors_off | block_summer_solar_bowl | M+6 | persistence_y1 | 0 | NaN | NaN | NaN | NaN | NaN | DEGEN | fallback_diagnostic (diagnostic) |
 | bowl_on_floors_off | block_weekend_midday | M+6 | persistence_y1 | 624 | -12.3 | 2.01e-31 | 39.1 | 83.7 | -44.6 | Y | fallback_diagnostic (diagnostic) |
-| bowl_on_floors_off | block_winter_evening_peak | M+6 | persistence_y1 | 0 | NaN | NaN | NaN | NaN | NaN | N | fallback_diagnostic (diagnostic) |
+| bowl_on_floors_off | block_winter_evening_peak | M+6 | persistence_y1 | 0 | NaN | NaN | NaN | NaN | NaN | DEGEN | fallback_diagnostic (diagnostic) |
 | bowl_on_floors_off | block_midday_weekday | Y+1 | climatology | 1305 | -4.22 | 2.59e-05 | 33.8 | 43.7 | -9.87 | Y | fallback_diagnostic (diagnostic) |
 | bowl_on_floors_off | block_overnight_weekday | Y+1 | climatology | 3916 | 9.01 | 3.2e-19 | 31.3 | 21.7 | 9.63 | N | fallback_diagnostic (diagnostic) |
 | bowl_on_floors_off | block_summer_solar_bowl | Y+1 | climatology | 369 | -6.15 | 2.01e-09 | 49.2 | 72.9 | -23.7 | Y | fallback_diagnostic (diagnostic) |
@@ -383,21 +383,21 @@ KPIs per (config × bloc × horizon). *Cells with `forwards_source=fallback_diag
 | bowl_on_floors_off | block_summer_solar_bowl | Y+1 | persistence_y1 | 369 | 0.123 | 0.902 | 49.2 | 48.8 | 0.422 | N | fallback_diagnostic (diagnostic) |
 | bowl_on_floors_off | block_weekend_midday | Y+1 | persistence_y1 | 416 | -6.43 | 3.48e-10 | 44.2 | 64.2 | -20 | Y | fallback_diagnostic (diagnostic) |
 | bowl_on_floors_off | block_winter_evening_peak | Y+1 | persistence_y1 | 344 | -0.331 | 0.741 | 40.1 | 41.2 | -1.1 | N | fallback_diagnostic (diagnostic) |
-| bowl_on_floors_off | block_midday_weekday | Y+2 | climatology | 0 | NaN | NaN | NaN | NaN | NaN | N | fallback_diagnostic (diagnostic) |
-| bowl_on_floors_off | block_overnight_weekday | Y+2 | climatology | 1 | NaN | NaN | 3.63 | 13.4 | -9.79 | N | fallback_diagnostic (diagnostic) |
-| bowl_on_floors_off | block_summer_solar_bowl | Y+2 | climatology | 0 | NaN | NaN | NaN | NaN | NaN | N | fallback_diagnostic (diagnostic) |
-| bowl_on_floors_off | block_weekend_midday | Y+2 | climatology | 0 | NaN | NaN | NaN | NaN | NaN | N | fallback_diagnostic (diagnostic) |
-| bowl_on_floors_off | block_winter_evening_peak | Y+2 | climatology | 0 | NaN | NaN | NaN | NaN | NaN | N | fallback_diagnostic (diagnostic) |
-| bowl_on_floors_off | block_midday_weekday | Y+2 | forwards_flat | 0 | NaN | NaN | NaN | NaN | NaN | N | fallback_diagnostic (diagnostic) |
-| bowl_on_floors_off | block_overnight_weekday | Y+2 | forwards_flat | 1 | NaN | NaN | 3.63 | 7.82 | -4.18 | N | fallback_diagnostic (diagnostic) |
-| bowl_on_floors_off | block_summer_solar_bowl | Y+2 | forwards_flat | 0 | NaN | NaN | NaN | NaN | NaN | N | fallback_diagnostic (diagnostic) |
-| bowl_on_floors_off | block_weekend_midday | Y+2 | forwards_flat | 0 | NaN | NaN | NaN | NaN | NaN | N | fallback_diagnostic (diagnostic) |
-| bowl_on_floors_off | block_winter_evening_peak | Y+2 | forwards_flat | 0 | NaN | NaN | NaN | NaN | NaN | N | fallback_diagnostic (diagnostic) |
-| bowl_on_floors_off | block_midday_weekday | Y+2 | persistence_y1 | 0 | NaN | NaN | NaN | NaN | NaN | N | fallback_diagnostic (diagnostic) |
-| bowl_on_floors_off | block_overnight_weekday | Y+2 | persistence_y1 | 1 | NaN | NaN | 3.63 | 61.5 | -57.9 | N | fallback_diagnostic (diagnostic) |
-| bowl_on_floors_off | block_summer_solar_bowl | Y+2 | persistence_y1 | 0 | NaN | NaN | NaN | NaN | NaN | N | fallback_diagnostic (diagnostic) |
-| bowl_on_floors_off | block_weekend_midday | Y+2 | persistence_y1 | 0 | NaN | NaN | NaN | NaN | NaN | N | fallback_diagnostic (diagnostic) |
-| bowl_on_floors_off | block_winter_evening_peak | Y+2 | persistence_y1 | 0 | NaN | NaN | NaN | NaN | NaN | N | fallback_diagnostic (diagnostic) |
+| bowl_on_floors_off | block_midday_weekday | Y+2 | climatology | 0 | NaN | NaN | NaN | NaN | NaN | DEGEN | fallback_diagnostic (diagnostic) |
+| bowl_on_floors_off | block_overnight_weekday | Y+2 | climatology | 0 | NaN | NaN | 3.63 | 13.4 | -9.79 | DEGEN | fallback_diagnostic (diagnostic) |
+| bowl_on_floors_off | block_summer_solar_bowl | Y+2 | climatology | 0 | NaN | NaN | NaN | NaN | NaN | DEGEN | fallback_diagnostic (diagnostic) |
+| bowl_on_floors_off | block_weekend_midday | Y+2 | climatology | 0 | NaN | NaN | NaN | NaN | NaN | DEGEN | fallback_diagnostic (diagnostic) |
+| bowl_on_floors_off | block_winter_evening_peak | Y+2 | climatology | 0 | NaN | NaN | NaN | NaN | NaN | DEGEN | fallback_diagnostic (diagnostic) |
+| bowl_on_floors_off | block_midday_weekday | Y+2 | forwards_flat | 0 | NaN | NaN | NaN | NaN | NaN | DEGEN | fallback_diagnostic (diagnostic) |
+| bowl_on_floors_off | block_overnight_weekday | Y+2 | forwards_flat | 0 | NaN | NaN | 3.63 | 7.82 | -4.18 | DEGEN | fallback_diagnostic (diagnostic) |
+| bowl_on_floors_off | block_summer_solar_bowl | Y+2 | forwards_flat | 0 | NaN | NaN | NaN | NaN | NaN | DEGEN | fallback_diagnostic (diagnostic) |
+| bowl_on_floors_off | block_weekend_midday | Y+2 | forwards_flat | 0 | NaN | NaN | NaN | NaN | NaN | DEGEN | fallback_diagnostic (diagnostic) |
+| bowl_on_floors_off | block_winter_evening_peak | Y+2 | forwards_flat | 0 | NaN | NaN | NaN | NaN | NaN | DEGEN | fallback_diagnostic (diagnostic) |
+| bowl_on_floors_off | block_midday_weekday | Y+2 | persistence_y1 | 0 | NaN | NaN | NaN | NaN | NaN | DEGEN | fallback_diagnostic (diagnostic) |
+| bowl_on_floors_off | block_overnight_weekday | Y+2 | persistence_y1 | 0 | NaN | NaN | 3.63 | 61.5 | -57.9 | DEGEN | fallback_diagnostic (diagnostic) |
+| bowl_on_floors_off | block_summer_solar_bowl | Y+2 | persistence_y1 | 0 | NaN | NaN | NaN | NaN | NaN | DEGEN | fallback_diagnostic (diagnostic) |
+| bowl_on_floors_off | block_weekend_midday | Y+2 | persistence_y1 | 0 | NaN | NaN | NaN | NaN | NaN | DEGEN | fallback_diagnostic (diagnostic) |
+| bowl_on_floors_off | block_winter_evening_peak | Y+2 | persistence_y1 | 0 | NaN | NaN | NaN | NaN | NaN | DEGEN | fallback_diagnostic (diagnostic) |
 | bowl_on_floors_on | block_midday_weekday | M+1 | climatology | 2500 | -10.1 | 1.42e-23 | 44.3 | 50.4 | -6.06 | Y | fallback_diagnostic (diagnostic) |
 | bowl_on_floors_on | block_overnight_weekday | M+1 | climatology | 7501 | 17.7 | 5.02e-69 | 37.9 | 31.4 | 6.47 | N | fallback_diagnostic (diagnostic) |
 | bowl_on_floors_on | block_summer_solar_bowl | M+1 | climatology | 738 | -12.7 | 8.8e-34 | 56.3 | 74.9 | -18.6 | Y | fallback_diagnostic (diagnostic) |
@@ -440,9 +440,9 @@ KPIs per (config × bloc × horizon). *Cells with `forwards_source=fallback_diag
 | bowl_on_floors_on | block_winter_evening_peak | M+6 | forwards_flat | 516 | 1.26 | 0.208 | 42.3 | 37.9 | 4.39 | N | fallback_diagnostic (diagnostic) |
 | bowl_on_floors_on | block_midday_weekday | M+6 | persistence_y1 | 1965 | -6.63 | 4.2e-11 | 44.2 | 56.9 | -12.7 | Y | fallback_diagnostic (diagnostic) |
 | bowl_on_floors_on | block_overnight_weekday | M+6 | persistence_y1 | 5896 | -1.3 | 0.194 | 38.3 | 39.4 | -1.08 | N | fallback_diagnostic (diagnostic) |
-| bowl_on_floors_on | block_summer_solar_bowl | M+6 | persistence_y1 | 0 | NaN | NaN | NaN | NaN | NaN | N | fallback_diagnostic (diagnostic) |
+| bowl_on_floors_on | block_summer_solar_bowl | M+6 | persistence_y1 | 0 | NaN | NaN | NaN | NaN | NaN | DEGEN | fallback_diagnostic (diagnostic) |
 | bowl_on_floors_on | block_weekend_midday | M+6 | persistence_y1 | 624 | -12.3 | 2.01e-31 | 39.1 | 83.7 | -44.6 | Y | fallback_diagnostic (diagnostic) |
-| bowl_on_floors_on | block_winter_evening_peak | M+6 | persistence_y1 | 0 | NaN | NaN | NaN | NaN | NaN | N | fallback_diagnostic (diagnostic) |
+| bowl_on_floors_on | block_winter_evening_peak | M+6 | persistence_y1 | 0 | NaN | NaN | NaN | NaN | NaN | DEGEN | fallback_diagnostic (diagnostic) |
 | bowl_on_floors_on | block_midday_weekday | Y+1 | climatology | 1305 | -4.22 | 2.59e-05 | 33.8 | 43.7 | -9.87 | Y | fallback_diagnostic (diagnostic) |
 | bowl_on_floors_on | block_overnight_weekday | Y+1 | climatology | 3916 | 9.01 | 3.2e-19 | 31.3 | 21.7 | 9.63 | N | fallback_diagnostic (diagnostic) |
 | bowl_on_floors_on | block_summer_solar_bowl | Y+1 | climatology | 369 | -6.15 | 2.01e-09 | 49.2 | 72.9 | -23.7 | Y | fallback_diagnostic (diagnostic) |
@@ -458,21 +458,21 @@ KPIs per (config × bloc × horizon). *Cells with `forwards_source=fallback_diag
 | bowl_on_floors_on | block_summer_solar_bowl | Y+1 | persistence_y1 | 369 | 0.123 | 0.902 | 49.2 | 48.8 | 0.422 | N | fallback_diagnostic (diagnostic) |
 | bowl_on_floors_on | block_weekend_midday | Y+1 | persistence_y1 | 416 | -6.43 | 3.48e-10 | 44.2 | 64.2 | -20 | Y | fallback_diagnostic (diagnostic) |
 | bowl_on_floors_on | block_winter_evening_peak | Y+1 | persistence_y1 | 344 | -0.331 | 0.741 | 40.1 | 41.2 | -1.1 | N | fallback_diagnostic (diagnostic) |
-| bowl_on_floors_on | block_midday_weekday | Y+2 | climatology | 0 | NaN | NaN | NaN | NaN | NaN | N | fallback_diagnostic (diagnostic) |
-| bowl_on_floors_on | block_overnight_weekday | Y+2 | climatology | 1 | NaN | NaN | 3.63 | 13.4 | -9.79 | N | fallback_diagnostic (diagnostic) |
-| bowl_on_floors_on | block_summer_solar_bowl | Y+2 | climatology | 0 | NaN | NaN | NaN | NaN | NaN | N | fallback_diagnostic (diagnostic) |
-| bowl_on_floors_on | block_weekend_midday | Y+2 | climatology | 0 | NaN | NaN | NaN | NaN | NaN | N | fallback_diagnostic (diagnostic) |
-| bowl_on_floors_on | block_winter_evening_peak | Y+2 | climatology | 0 | NaN | NaN | NaN | NaN | NaN | N | fallback_diagnostic (diagnostic) |
-| bowl_on_floors_on | block_midday_weekday | Y+2 | forwards_flat | 0 | NaN | NaN | NaN | NaN | NaN | N | fallback_diagnostic (diagnostic) |
-| bowl_on_floors_on | block_overnight_weekday | Y+2 | forwards_flat | 1 | NaN | NaN | 3.63 | 7.82 | -4.18 | N | fallback_diagnostic (diagnostic) |
-| bowl_on_floors_on | block_summer_solar_bowl | Y+2 | forwards_flat | 0 | NaN | NaN | NaN | NaN | NaN | N | fallback_diagnostic (diagnostic) |
-| bowl_on_floors_on | block_weekend_midday | Y+2 | forwards_flat | 0 | NaN | NaN | NaN | NaN | NaN | N | fallback_diagnostic (diagnostic) |
-| bowl_on_floors_on | block_winter_evening_peak | Y+2 | forwards_flat | 0 | NaN | NaN | NaN | NaN | NaN | N | fallback_diagnostic (diagnostic) |
-| bowl_on_floors_on | block_midday_weekday | Y+2 | persistence_y1 | 0 | NaN | NaN | NaN | NaN | NaN | N | fallback_diagnostic (diagnostic) |
-| bowl_on_floors_on | block_overnight_weekday | Y+2 | persistence_y1 | 1 | NaN | NaN | 3.63 | 61.5 | -57.9 | N | fallback_diagnostic (diagnostic) |
-| bowl_on_floors_on | block_summer_solar_bowl | Y+2 | persistence_y1 | 0 | NaN | NaN | NaN | NaN | NaN | N | fallback_diagnostic (diagnostic) |
-| bowl_on_floors_on | block_weekend_midday | Y+2 | persistence_y1 | 0 | NaN | NaN | NaN | NaN | NaN | N | fallback_diagnostic (diagnostic) |
-| bowl_on_floors_on | block_winter_evening_peak | Y+2 | persistence_y1 | 0 | NaN | NaN | NaN | NaN | NaN | N | fallback_diagnostic (diagnostic) |
+| bowl_on_floors_on | block_midday_weekday | Y+2 | climatology | 0 | NaN | NaN | NaN | NaN | NaN | DEGEN | fallback_diagnostic (diagnostic) |
+| bowl_on_floors_on | block_overnight_weekday | Y+2 | climatology | 0 | NaN | NaN | 3.63 | 13.4 | -9.79 | DEGEN | fallback_diagnostic (diagnostic) |
+| bowl_on_floors_on | block_summer_solar_bowl | Y+2 | climatology | 0 | NaN | NaN | NaN | NaN | NaN | DEGEN | fallback_diagnostic (diagnostic) |
+| bowl_on_floors_on | block_weekend_midday | Y+2 | climatology | 0 | NaN | NaN | NaN | NaN | NaN | DEGEN | fallback_diagnostic (diagnostic) |
+| bowl_on_floors_on | block_winter_evening_peak | Y+2 | climatology | 0 | NaN | NaN | NaN | NaN | NaN | DEGEN | fallback_diagnostic (diagnostic) |
+| bowl_on_floors_on | block_midday_weekday | Y+2 | forwards_flat | 0 | NaN | NaN | NaN | NaN | NaN | DEGEN | fallback_diagnostic (diagnostic) |
+| bowl_on_floors_on | block_overnight_weekday | Y+2 | forwards_flat | 0 | NaN | NaN | 3.63 | 7.82 | -4.18 | DEGEN | fallback_diagnostic (diagnostic) |
+| bowl_on_floors_on | block_summer_solar_bowl | Y+2 | forwards_flat | 0 | NaN | NaN | NaN | NaN | NaN | DEGEN | fallback_diagnostic (diagnostic) |
+| bowl_on_floors_on | block_weekend_midday | Y+2 | forwards_flat | 0 | NaN | NaN | NaN | NaN | NaN | DEGEN | fallback_diagnostic (diagnostic) |
+| bowl_on_floors_on | block_winter_evening_peak | Y+2 | forwards_flat | 0 | NaN | NaN | NaN | NaN | NaN | DEGEN | fallback_diagnostic (diagnostic) |
+| bowl_on_floors_on | block_midday_weekday | Y+2 | persistence_y1 | 0 | NaN | NaN | NaN | NaN | NaN | DEGEN | fallback_diagnostic (diagnostic) |
+| bowl_on_floors_on | block_overnight_weekday | Y+2 | persistence_y1 | 0 | NaN | NaN | 3.63 | 61.5 | -57.9 | DEGEN | fallback_diagnostic (diagnostic) |
+| bowl_on_floors_on | block_summer_solar_bowl | Y+2 | persistence_y1 | 0 | NaN | NaN | NaN | NaN | NaN | DEGEN | fallback_diagnostic (diagnostic) |
+| bowl_on_floors_on | block_weekend_midday | Y+2 | persistence_y1 | 0 | NaN | NaN | NaN | NaN | NaN | DEGEN | fallback_diagnostic (diagnostic) |
+| bowl_on_floors_on | block_winter_evening_peak | Y+2 | persistence_y1 | 0 | NaN | NaN | NaN | NaN | NaN | DEGEN | fallback_diagnostic (diagnostic) |
 
 ## Pillar 5 — Peer Review SOTA Literature
 
@@ -569,4 +569,4 @@ runtime.
 - **Forwards-as-of-vintage path** : `fallback_diagnostic` (derive_forwards_from_epex_hist fallback — SC#1 NOT gate-eligible).
 - **IC95 deferral** : Phase 5ter. Reference : `pfc_shaping/lt/model/uncertainty.py` lines 51-194 expose `p10/p90 only` (no `level=` param).
 - **Reproducibility contract** : `assert_frame_equal(..., check_exact=False, atol=1e-12, rtol=0)` verified by `tests/test_phase10_reproducibility.py`.
-- **Compute summary** : 96 builds = 634.5 seconds wall time Mac Mini.
+- **Compute summary** : 96 builds = 24.6 seconds wall time Mac Mini.
