@@ -670,6 +670,197 @@ def _synth_pfc_for_mock(
     return pfc, forwards_synth
 
 
+# ---------------------------------------------------------------------------
+# Pillar 2 — Empirical accuracy primitives (MAE, RMSE, bias, Mincer-Zarnowitz)
+# ---------------------------------------------------------------------------
+
+
+def mz_test(realised: pd.Series, predicted: pd.Series) -> dict:
+    """Mincer-Zarnowitz joint unbiasedness test.
+
+    Régression `realised = α + β·predicted + ε` puis test F joint `α = 0 & β = 1`.
+    Si `p_value > 0.05` → forecast unbiased au sens MZ (joint H0 not rejected).
+
+    Implementation : statsmodels.OLS.f_test (Pattern 2 RESEARCH canonical).
+
+    Parameters
+    ----------
+    realised
+        Série des valeurs observées (€/MWh).
+    predicted
+        Série des valeurs prédites (€/MWh).
+
+    Returns
+    -------
+    dict
+        Mapping avec :
+        - alpha : float (intercept estimé)
+        - beta : float (slope estimé)
+        - p_value_joint_unbiased : float (p-value F-test joint α=0 & β=1)
+        - n_obs : int (nombre d'observations alignées + non-NaN)
+        - r_squared : float (R² du fit)
+        - degenerate : bool (True si n<3, alpha/beta/p NaN, pas de crash)
+
+    Notes
+    -----
+    Edge case n<3 : OLS underdetermined (2 params const+slope) → return
+    degenerate=True dict avec NaN, pas de crash. Per RESEARCH Pitfall 5
+    (low-power flag downstream).
+    """
+    import statsmodels.api as sm
+
+    aligned = pd.concat([realised, predicted], axis=1, join="inner").dropna()
+    aligned.columns = ["realised", "predicted"]
+
+    if len(aligned) < 3:
+        return {
+            "alpha": float("nan"),
+            "beta": float("nan"),
+            "p_value_joint_unbiased": float("nan"),
+            "n_obs": int(len(aligned)),
+            "r_squared": float("nan"),
+            "degenerate": True,
+        }
+
+    # Force has_constant='add' pour garantir la colonne 'const' dans X
+    # même si 'predicted' est constant (sinon sm.add_constant la skip → f_test
+    # avec 'const = 0' raise PatsyError sur token unknown).
+    X = sm.add_constant(aligned["predicted"], has_constant="add")
+    y = aligned["realised"]
+    fit = sm.OLS(y, X).fit()
+    f_result = fit.f_test("const = 0, predicted = 1")
+
+    # f_result.pvalue can be NaN on perfect fit (R²=1 → F=0/0)
+    pval_raw = f_result.pvalue
+    if pval_raw is None:
+        pval = float("nan")
+    else:
+        try:
+            pval = float(pval_raw)
+        except (TypeError, ValueError):
+            pval = float("nan")
+
+    return {
+        "alpha": float(fit.params["const"]),
+        "beta": float(fit.params["predicted"]),
+        "p_value_joint_unbiased": pval,
+        "n_obs": int(len(aligned)),
+        "r_squared": float(fit.rsquared),
+        "degenerate": False,
+    }
+
+
+def compute_cell_kpis(
+    pred: pd.Series,
+    realised: pd.Series,
+    bloc: Any,
+    horizon_label: str,
+) -> dict:
+    """Compute KPIs (MAE, RMSE, bias, MZ) pour une cellule (bloc × horizon).
+
+    Cellule unitaire du scorecard Pillar 2. L'agrégation cross-vintage pooling
+    (Pitfall 5 mitigation) est faite par le caller Plan 10-04.
+
+    Parameters
+    ----------
+    pred
+        Série pred PFC tz-aware (UTC).
+    realised
+        Série realised EPEX tz-aware (UTC).
+    bloc
+        Instance `BlockMask` (avec `apply(idx_utc) -> np.ndarray[bool]` et
+        attribut `name`).
+    horizon_label
+        Étiquette horizon (e.g. "M+1", "Y+2").
+
+    Returns
+    -------
+    dict
+        Mapping 12 keys :
+        - bloc : str (= bloc.name)
+        - horizon : str (= horizon_label)
+        - n_obs : int (nombre d'obs in-block après alignment + masking)
+        - mae : float
+        - rmse : float
+        - bias : float (mean(pred - realised), signed)
+        - mz_alpha : float
+        - mz_beta : float
+        - mz_p_value : float
+        - mz_r_squared : float
+        - low_power_flag : bool (True si n<30 — Pitfall 5 interpret-with-caution)
+        - degenerate : bool (True si mask vide OR mz_test degenerate)
+
+    Notes
+    -----
+    Edge case mask empty (e.g. BlockWinterEveningPeak sur juin) → n_obs=0,
+    KPIs NaN, degenerate=True, low_power_flag=True, pas de crash.
+    """
+    # Alignment via inner join (drop NaN sur l'un OU l'autre)
+    aligned = pd.concat([pred.rename("pred"), realised.rename("realised")],
+                        axis=1, join="inner").dropna()
+
+    if aligned.empty:
+        return {
+            "bloc": bloc.name,
+            "horizon": horizon_label,
+            "n_obs": 0,
+            "mae": float("nan"),
+            "rmse": float("nan"),
+            "bias": float("nan"),
+            "mz_alpha": float("nan"),
+            "mz_beta": float("nan"),
+            "mz_p_value": float("nan"),
+            "mz_r_squared": float("nan"),
+            "low_power_flag": True,
+            "degenerate": True,
+        }
+
+    mask = bloc.apply(aligned.index)
+    n_obs = int(mask.sum())
+
+    if n_obs == 0:
+        return {
+            "bloc": bloc.name,
+            "horizon": horizon_label,
+            "n_obs": 0,
+            "mae": float("nan"),
+            "rmse": float("nan"),
+            "bias": float("nan"),
+            "mz_alpha": float("nan"),
+            "mz_beta": float("nan"),
+            "mz_p_value": float("nan"),
+            "mz_r_squared": float("nan"),
+            "low_power_flag": True,
+            "degenerate": True,
+        }
+
+    pred_masked = aligned["pred"].values[mask]
+    realised_masked = aligned["realised"].values[mask]
+
+    mae = float(np.mean(np.abs(pred_masked - realised_masked)))
+    rmse = float(np.sqrt(np.mean((pred_masked - realised_masked) ** 2)))
+    bias = float(np.mean(pred_masked - realised_masked))
+
+    pred_series = pd.Series(pred_masked)
+    realised_series = pd.Series(realised_masked)
+    mz = mz_test(realised_series, pred_series)
+
+    return {
+        "bloc": bloc.name,
+        "horizon": horizon_label,
+        "n_obs": n_obs,
+        "mae": mae,
+        "rmse": rmse,
+        "bias": bias,
+        "mz_alpha": mz["alpha"],
+        "mz_beta": mz["beta"],
+        "mz_p_value": mz["p_value_joint_unbiased"],
+        "mz_r_squared": mz["r_squared"],
+        "low_power_flag": bool(n_obs < 30),
+        "degenerate": bool(mz.get("degenerate", False)),
+    }
+
+
 __all__ = [
     "AblationConfig",
     "ABLATION_GRID",
@@ -682,4 +873,6 @@ __all__ = [
     "run_scorecard_pillar_1",
     "_synth_epex_hist_for_mock",
     "_synth_pfc_for_mock",
+    "mz_test",
+    "compute_cell_kpis",
 ]
