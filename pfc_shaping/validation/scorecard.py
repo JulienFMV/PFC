@@ -995,7 +995,11 @@ def compute_pillar3_coverage(
         ...
     ValueError: compute_pillar3_coverage: ic_level=0.95 not supported. ...
     """
-    from pfc_shaping.validation.christoffersen import lr_unconditional_coverage
+    from pfc_shaping.validation.christoffersen import (
+        lr_conditional_coverage,
+        lr_independence_coverage,
+        lr_unconditional_coverage,
+    )
 
     # ------------------------------------------------------------------
     # Blocker #4 fix : IC95 explicit reject (no silent skip, no fallback)
@@ -1031,12 +1035,45 @@ def compute_pillar3_coverage(
         join="inner",
     ).dropna()
 
-    if aligned.empty:
+    # WR-12 helper : assemble le dict combiné (LR_uc + LR_ind + LR_cc) avec
+    # préfixes distincts pour éviter les collisions de clés.
+    def _assemble(
+        uc_res: dict, ind_res: dict, cc_res: dict, bloc_name: str
+    ) -> dict:
         return {
-            **lr_unconditional_coverage(x=0, n=0, p=nominal_p),
-            "bloc": bloc.name,
+            # Keys natives de lr_unconditional_coverage (back-compat) :
+            "lr_stat": uc_res["lr_stat"],
+            "p_value": uc_res["p_value"],
+            "observed_freq": uc_res.get("observed_freq"),
+            "nominal_p": uc_res["nominal_p"],
+            "n": uc_res["n"],
+            "x": uc_res["x"],
+            "degenerate": uc_res["degenerate"],
+            "method": uc_res.get("method", "lr_chi2"),
+            # WR-12 : independence test
+            "lr_ind_stat": ind_res["lr_stat"],
+            "lr_ind_p_value": ind_res["p_value"],
+            "lr_ind_degenerate": ind_res["degenerate"],
+            "lr_ind_method": ind_res.get("method"),
+            "n_00": ind_res.get("n_00"),
+            "n_01": ind_res.get("n_01"),
+            "n_10": ind_res.get("n_10"),
+            "n_11": ind_res.get("n_11"),
+            # WR-12 : combined conditional
+            "lr_cc_stat": cc_res["lr_stat"],
+            "lr_cc_p_value": cc_res["p_value"],
+            "lr_cc_degenerate": cc_res["degenerate"],
+            "lr_cc_method": cc_res.get("method"),
+            # Echo bloc/ic_level
+            "bloc": bloc_name,
             "ic_level": float(ic_level),
         }
+
+    if aligned.empty:
+        uc_res = lr_unconditional_coverage(x=0, n=0, p=nominal_p)
+        ind_res = lr_independence_coverage(np.zeros(0, dtype=bool))
+        cc_res = lr_conditional_coverage(uc_res, ind_res)
+        return _assemble(uc_res, ind_res, cc_res, bloc.name)
 
     # ------------------------------------------------------------------
     # Apply bloc mask + count violations (realised < p10 OR > p90)
@@ -1044,11 +1081,10 @@ def compute_pillar3_coverage(
     mask = bloc.apply(aligned.index)
     n = int(mask.sum())
     if n == 0:
-        return {
-            **lr_unconditional_coverage(x=0, n=0, p=nominal_p),
-            "bloc": bloc.name,
-            "ic_level": float(ic_level),
-        }
+        uc_res = lr_unconditional_coverage(x=0, n=0, p=nominal_p)
+        ind_res = lr_independence_coverage(np.zeros(0, dtype=bool))
+        cc_res = lr_conditional_coverage(uc_res, ind_res)
+        return _assemble(uc_res, ind_res, cc_res, bloc.name)
 
     p10_masked = aligned["p10"].values[mask]
     p90_masked = aligned["p90"].values[mask]
@@ -1056,11 +1092,10 @@ def compute_pillar3_coverage(
     violations = (realised_masked < p10_masked) | (realised_masked > p90_masked)
     x = int(violations.sum())
 
-    return {
-        **lr_unconditional_coverage(x=x, n=n, p=nominal_p),
-        "bloc": bloc.name,
-        "ic_level": float(ic_level),
-    }
+    uc_res = lr_unconditional_coverage(x=x, n=n, p=nominal_p)
+    ind_res = lr_independence_coverage(violations)
+    cc_res = lr_conditional_coverage(uc_res, ind_res)
+    return _assemble(uc_res, ind_res, cc_res, bloc.name)
 
 
 # ---------------------------------------------------------------------------

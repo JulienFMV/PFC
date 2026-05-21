@@ -156,6 +156,149 @@ class TestLrUnconditionalCoverage:
         assert res["p_value"] < 0.05
 
 
+class TestLrIndependenceCoverage:
+    """WR-12 : LR_ind Markov-chain independence test on consecutive violations."""
+
+    def test_iid_violations_h0_not_rejected(self):
+        """Violations iid ~Bernoulli(0.20) → pas de clustering → p>0.05."""
+        from pfc_shaping.validation.christoffersen import lr_independence_coverage
+
+        rng = np.random.RandomState(0)
+        # n grand pour test bien-powered
+        viol = rng.binomial(1, 0.20, 1000).astype(bool)
+        res = lr_independence_coverage(viol)
+        assert res["degenerate"] is False
+        assert res["method"] == "lr_chi2"
+        assert res["p_value"] > 0.05, (
+            f"iid violations devraient NOT reject H0 indep, got p={res['p_value']}"
+        )
+
+    def test_clustered_violations_h0_rejected(self):
+        """Violations clusterées (Q4 only) → forte dépendance lag-1 → p<0.05."""
+        from pfc_shaping.validation.christoffersen import lr_independence_coverage
+
+        # 500 obs : 400 no-viol au début, puis 100 viols consécutives → grand
+        # n_11, presque pas de n_01 (1 seule transition non-viol → viol).
+        viol = np.zeros(500, dtype=bool)
+        viol[400:] = True
+        res = lr_independence_coverage(viol)
+        assert res["degenerate"] is False
+        # Forte dépendance : pi_11 ≈ 1, pi_01 ≈ 1/400 → LR_ind grand
+        assert res["lr_stat"] > 10
+        assert res["p_value"] < 0.01
+
+    def test_alternating_violations_h0_rejected(self):
+        """Violations alternantes (anti-cluster) → forte dépendance négative → p<0.05."""
+        from pfc_shaping.validation.christoffersen import lr_independence_coverage
+
+        # 0,1,0,1,0,1... → pi_01 = 1, pi_11 = 0 (perfectement anti-corrélé)
+        viol = np.array([i % 2 == 0 for i in range(500)], dtype=bool)
+        res = lr_independence_coverage(viol)
+        assert res["degenerate"] is False
+        assert res["lr_stat"] > 10  # Forte dépendance détectée
+        assert res["p_value"] < 0.01
+
+    def test_no_violations_degenerate(self):
+        """Tous False → impossible de tester indépendance (pas de viol observée)."""
+        from pfc_shaping.validation.christoffersen import lr_independence_coverage
+
+        viol = np.zeros(100, dtype=bool)
+        res = lr_independence_coverage(viol)
+        assert res["degenerate"] is True
+        assert res["method"] == "degenerate_empty_state"
+        assert np.isnan(res["p_value"])
+
+    def test_too_few_obs_degenerate(self):
+        """len(viol) < 2 → no transitions calculable → degenerate."""
+        from pfc_shaping.validation.christoffersen import lr_independence_coverage
+
+        for n_obs in (0, 1):
+            viol = np.zeros(n_obs, dtype=bool)
+            res = lr_independence_coverage(viol)
+            assert res["degenerate"] is True
+            assert res["method"] == "degenerate_too_few_obs"
+            assert np.isnan(res["p_value"])
+            assert res["n_transitions"] == 0
+
+
+class TestLrConditionalCoverage:
+    """WR-12 : LR_cc = LR_uc + LR_ind, chi-squared df=2."""
+
+    def test_standard_path_sums_uc_and_ind(self):
+        """LR_cc = LR_uc + LR_ind avec p_value via chi2(df=2)."""
+        from pfc_shaping.validation.christoffersen import (
+            lr_conditional_coverage,
+            lr_independence_coverage,
+            lr_unconditional_coverage,
+        )
+
+        rng = np.random.RandomState(1)
+        viol = rng.binomial(1, 0.20, 500).astype(bool)
+        x = int(viol.sum())
+        n = len(viol)
+        uc = lr_unconditional_coverage(x=x, n=n, p=0.20)
+        ind = lr_independence_coverage(viol)
+        cc = lr_conditional_coverage(uc, ind)
+        assert cc["degenerate"] is False
+        assert cc["method"] == "lr_chi2_df2"
+        assert cc["lr_stat"] == pytest.approx(uc["lr_stat"] + ind["lr_stat"])
+        # p_value sous chi2(df=2)
+        from scipy.stats import chi2
+
+        assert cc["p_value"] == pytest.approx(chi2.sf(cc["lr_stat"], df=2))
+
+    def test_uc_boundary_propagates_to_cc(self):
+        """Si LR_uc est en mode binomial_exact (x=0 ou x=n) → LR_cc degenerate."""
+        from pfc_shaping.validation.christoffersen import (
+            lr_conditional_coverage,
+            lr_independence_coverage,
+            lr_unconditional_coverage,
+        )
+
+        # x=0, n=100 → uc method=binomial_exact
+        viol = np.zeros(100, dtype=bool)
+        uc = lr_unconditional_coverage(x=0, n=100, p=0.20)
+        assert uc["method"] == "binomial_exact"
+        ind = lr_independence_coverage(viol)  # degenerate_empty_state
+        cc = lr_conditional_coverage(uc, ind)
+        assert cc["degenerate"] is True
+        assert cc["method"] == "degenerate_uc_boundary"
+        assert np.isnan(cc["lr_stat"])
+        assert np.isnan(cc["p_value"])
+
+    def test_compute_pillar3_coverage_persists_3_pvalues(self):
+        """WR-12 wiring : compute_pillar3_coverage retourne les 3 p-values."""
+        from pfc_shaping.validation.block_masks import BlockMiddayWeekday
+        from pfc_shaping.validation.scorecard import compute_pillar3_coverage
+
+        idx = _utc_hourly_index(n_days=30)
+        n = len(idx)
+        rng = np.random.RandomState(42)
+        # IC80 width=10 centered on 50 ; realised iid normal → ≈ 20% violations
+        pfc_with_ic = pd.DataFrame(
+            {
+                "price_shape": np.full(n, 50.0),
+                "p10": np.full(n, 45.0),
+                "p90": np.full(n, 55.0),
+            },
+            index=idx,
+        )
+        # Realised : normal(50, sigma) tuned for ~20% violations (sigma s.t.
+        # P(|z| > 1.28) = 0.20 → sigma = 10/(2*1.28) ≈ 3.906)
+        realised = pd.Series(50.0 + rng.normal(0, 3.906, n), index=idx)
+        bloc = BlockMiddayWeekday()
+        res = compute_pillar3_coverage(pfc_with_ic, realised, bloc, ic_level=0.80)
+        # Les 3 p-values sont présentes
+        for key in ("p_value", "lr_ind_p_value", "lr_cc_p_value"):
+            assert key in res, f"missing key {key!r} in pillar 3 result"
+        # Methods documentent les chemins
+        for key in ("method", "lr_ind_method", "lr_cc_method"):
+            assert key in res, f"missing key {key!r} in pillar 3 result"
+        # Transitions counts pour audit
+        for key in ("n_00", "n_01", "n_10", "n_11"):
+            assert key in res, f"missing transition count {key!r}"
+
+
 # ---------------------------------------------------------------------------
 # TestComputePillar3Coverage — integration (PFC + IC + realised + bloc)
 # ---------------------------------------------------------------------------
