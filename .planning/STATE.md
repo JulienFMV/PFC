@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: executing
-stopped_at: Phase 10 context gathered (reframed scorecard, OMPEX deferred to 10B)
-last_updated: "2026-05-21T05:25:53.070Z"
+status: ready_to_plan
+stopped_at: Phase 10 complete (4/4) — ready to discuss Phase 10B
+last_updated: 2026-05-21T11:12:28.288Z
 last_activity: 2026-05-21 -- Phase 10 execution started
 progress:
   total_phases: 5
   completed_phases: 1
   total_plans: 7
-  completed_plans: 3
+  completed_plans: 15
   percent: 20
 ---
 
@@ -23,14 +23,14 @@ See: .planning/PROJECT.md (updated 2026-05-18)
 **Core value:** Pricing trading-grade des blocs profil client (10-15 / 18-9)
 avec ≥ 1.5 €/MWh de MAE-bloc en moins que HFC OMPEX.
 
-**Current focus:** Phase 10 — PFC FMV Quality Scorecard
+**Current focus:** Phase 10B — pfc fmv vs hfc ompex block mae benchmark (deferred)
 
 ## Current Position
 
-Phase: 10 (PFC FMV Quality Scorecard) — EXECUTING
-Plan: 1 of 4
-Status: Executing Phase 10
-Last activity: 2026-05-21 -- Phase 10 execution started
+Phase: 10B
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-05-21
 
 Progress: [░░░░░░░░░░] 0%
 

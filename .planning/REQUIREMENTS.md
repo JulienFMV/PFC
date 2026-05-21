@@ -52,15 +52,15 @@ LT "SOTA maison FMV" et démontrer sa supériorité vs OMPEX sur les profile dea
 nouveau groupe BT-10B-* (Phase 10B deferred). BT-04 reformulé pour DM vs 3
 naive baselines maison. BT-06..BT-10 ajoutés (1 par pilier scorecard Phase 10).
 
-- [ ] **BT-01** : Le harness backtest accepte une définition de bloc client
+- [x] **BT-01** : Le harness backtest accepte une définition de bloc client
   `{start_hour, end_hour, dow_filter, month_filter}` et retourne MAE par bloc.
-- [ ] **BT-02** : Backtest 2024-2025 sur CH spot, **5 blocs renommés D-A2-2** :
+- [x] **BT-02** : Backtest 2024-2025 sur CH spot, **5 blocs renommés D-A2-2** :
   `block_overnight_weekday` (18-9 Lun-Ven, crosses midnight),
   `block_midday_weekday` (10-15 Lun-Ven),
   `block_weekend_midday` (11-15 Sam-Dim),
   `block_summer_solar_bowl` (11-14 mai-août toutes DOW),
   `block_winter_evening_peak` (17-21 Lun-Ven nov-fév).
-- [ ] **BT-04** (reformulé Plan 10-01, D-A0-2) : Sortie : tableau markdown
+- [x] **BT-04** (reformulé Plan 10-01, D-A0-2) : Sortie : tableau markdown
   avec colonnes `bloc | baseline | horizon | MAE_PFC | MAE_baseline | Δ MAE |
   DM-stat | p-value | better_than_baseline (Y/N)`. Baselines maison =
   climatology, persistence Y-1, forwards-flat-no-shape (D-A4-1 CONTEXT).
