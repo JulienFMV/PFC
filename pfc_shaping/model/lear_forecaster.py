@@ -169,6 +169,17 @@ class LEARForecaster:
     GOVERNED_FORECAST_CORE_COLUMNS = tuple(
         col for col in GOVERNED_FORECAST_COLUMNS if not col.startswith("forecast_fr_nuclear_")
     )
+    GOVERNED_WEATHER_PROXY_MAP = {
+        "forecast_solar_ch_mw": ("wx_ch_zurich_shortwave_radiation", "solar"),
+        "forecast_solar_de_mw": ("wx_de_munich_shortwave_radiation", "solar"),
+        "forecast_solar_fr_mw": ("wx_fr_lyon_shortwave_radiation", "solar"),
+        "forecast_solar_it_mw": ("wx_it_milan_shortwave_radiation", "solar"),
+        "forecast_solar_at_mw": ("wx_at_vienna_shortwave_radiation", "solar"),
+        "forecast_wind_de_mw": ("wx_de_hamburg_wind_speed_10m", "wind"),
+        "forecast_wind_fr_mw": ("wx_fr_lyon_wind_speed_10m", "wind"),
+        "forecast_wind_at_mw": ("wx_at_vienna_wind_speed_10m", "wind"),
+        "forecast_wind_it_mw": ("wx_it_milan_wind_speed_10m", "wind"),
+    }
 
     def __init__(
         self,
@@ -251,6 +262,7 @@ class LEARForecaster:
         exog = pd.DataFrame(index=self.prices_h_.index)
         self._forecast_feature_pivots: dict[str, pd.DataFrame] = {}
         self._all_forecast_feature_pivots: dict[str, pd.DataFrame] = {}
+        self._governed_raw_series: dict[str, pd.Series] = {}
 
         # Cross-border prices
         self._has_de_prices = False
@@ -354,6 +366,7 @@ class LEARForecaster:
                 )
                 if s.empty:
                     continue
+                self._governed_raw_series[col] = s
                 self._forecast_feature_pivots[col] = self._series_to_forecast_pivot(
                     s,
                     publication_ts=publication_ts,
@@ -370,6 +383,7 @@ class LEARForecaster:
                 )
                 if s.empty:
                     continue
+                self._governed_raw_series[col] = s
                 self._forecast_feature_pivots[col] = self._series_to_forecast_pivot(
                     s,
                     publication_ts=publication_ts,
@@ -387,12 +401,16 @@ class LEARForecaster:
                 )
                 if s.empty:
                     continue
+                self._governed_raw_series[col] = s
                 self._forecast_feature_pivots[col] = self._series_to_forecast_pivot(
                     s,
                     publication_ts=publication_ts,
                     source_name=col,
                 )
                 exog[col] = s.resample("h").mean()
+
+        if self.use_governed_forecast_features:
+            self._fill_governed_forecast_gaps_from_weather(exog)
 
         # Align
         common_idx = self.prices_h_.index
@@ -434,6 +452,78 @@ class LEARForecaster:
             self.prices_h_.index[-1].date(),
         )
         return self
+
+    def _build_weather_proxy_series(
+        self,
+        forecast_series: pd.Series | None,
+        weather_series: pd.Series,
+        mode: str,
+    ) -> pd.Series:
+        """Build a conservative weather-derived proxy for missing forecast horizons."""
+        weather = pd.to_numeric(weather_series, errors="coerce").dropna().sort_index()
+        if weather.empty:
+            return pd.Series(dtype=float)
+
+        forecast = (
+            pd.to_numeric(forecast_series, errors="coerce").dropna().sort_index()
+            if forecast_series is not None else pd.Series(dtype=float)
+        )
+        overlap = pd.concat(
+            [forecast.rename("forecast"), weather.rename("weather")],
+            axis=1,
+            join="inner",
+        ).dropna()
+        overlap = overlap.tail(24 * 90)
+        if overlap.empty:
+            return pd.Series(dtype=float)
+
+        if mode == "solar":
+            overlap = overlap[overlap["weather"] > 10.0]
+            if overlap.empty:
+                return pd.Series(dtype=float)
+            scale = float((overlap["forecast"] / overlap["weather"]).replace([np.inf, -np.inf], np.nan).dropna().median())
+            if not np.isfinite(scale) or scale <= 0:
+                return pd.Series(dtype=float)
+            proxy = weather * scale
+            proxy = proxy.where(weather > 5.0, 0.0)
+        else:
+            overlap = overlap[overlap["weather"] > 0.1]
+            if overlap.empty:
+                return pd.Series(dtype=float)
+            scale = float((overlap["forecast"] / overlap["weather"]).replace([np.inf, -np.inf], np.nan).dropna().median())
+            if not np.isfinite(scale) or scale <= 0:
+                return pd.Series(dtype=float)
+            proxy = weather * scale
+            proxy = proxy.clip(lower=0.0)
+
+        return proxy.rename(forecast_series.name if forecast_series is not None else weather_series.name)
+
+    def _fill_governed_forecast_gaps_from_weather(self, exog: pd.DataFrame) -> None:
+        """Fill missing governed solar/wind forecasts with conservative weather-based proxies."""
+        raw_series_map = getattr(self, "_governed_raw_series", {})
+        for forecast_col, (weather_col, mode) in self.GOVERNED_WEATHER_PROXY_MAP.items():
+            weather_series = raw_series_map.get(weather_col)
+            if (weather_series is None or weather_series.empty) and weather_col in exog.columns:
+                weather_series = exog[weather_col].dropna()
+            if weather_series is None or weather_series.empty:
+                continue
+            forecast_series = raw_series_map.get(forecast_col)
+            if forecast_series is None and forecast_col in exog.columns:
+                forecast_series = exog[forecast_col].dropna()
+            proxy = self._build_weather_proxy_series(forecast_series, weather_series, mode=mode)
+            if proxy.empty:
+                continue
+            if forecast_series is None:
+                filled = proxy
+            else:
+                filled = forecast_series.combine_first(proxy)
+            raw_series_map[forecast_col] = filled
+            self._governed_raw_series = raw_series_map
+            exog[forecast_col] = filled
+            self._forecast_feature_pivots[forecast_col] = self._series_to_forecast_pivot(
+                filled.dropna(),
+                source_name=f"{forecast_col}_weather_proxy",
+            )
 
     def _build_forecast_feature_pivots(self, exog: pd.DataFrame) -> dict[str, pd.DataFrame]:
         """Store hourly pivots for true forecast-time exogenous series."""
