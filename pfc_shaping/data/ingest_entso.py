@@ -74,6 +74,7 @@ FORECAST_ZONES = {
     "at": "AT",
     "it": "IT_NORD",
 }
+FORECAST_PROCESS_TYPES = ("A01", "A31")
 
 
 def _get_client():
@@ -319,6 +320,7 @@ def _query_load_forecast_or_empty(
     ts_start: pd.Timestamp,
     ts_end: pd.Timestamp,
     name: str,
+    process_type: str = "A01",
 ) -> pd.Series:
     """Run ENTSO-E load forecast query and degrade gracefully if unavailable."""
     query_func = getattr(client, "query_load_forecast", None)
@@ -326,9 +328,9 @@ def _query_load_forecast_or_empty(
         logger.warning("ENTSO-E client has no query_load_forecast method for %s", name)
         return pd.Series(dtype=float, name=name)
     try:
-        raw = _retry(query_func, zone_code, start=ts_start, end=ts_end)
+        raw = _retry(query_func, zone_code, start=ts_start, end=ts_end, process_type=process_type)
     except Exception as exc:
-        logger.warning("ENTSO-E load forecast failed for %s: %s", name, exc)
+        logger.warning("ENTSO-E load forecast failed for %s (%s): %s", name, process_type, exc)
         return pd.Series(dtype=float, name=name)
 
     if isinstance(raw, pd.DataFrame):
@@ -341,6 +343,35 @@ def _query_load_forecast_or_empty(
     else:
         series = raw
     return _to_15min_series(series, name)
+
+
+def _merge_preferred_forecast_series(
+    preferred: pd.Series,
+    fallback: pd.Series,
+    name: str,
+) -> pd.Series:
+    """Prefer the higher-fidelity series and fill remaining gaps from the fallback horizon."""
+    if preferred.empty:
+        return fallback.rename(name)
+    if fallback.empty:
+        return preferred.rename(name)
+    merged = preferred.combine_first(fallback).sort_index()
+    merged = merged[~merged.index.duplicated(keep="last")]
+    return merged.rename(name)
+
+
+def _merge_preferred_forecast_frames(
+    preferred: pd.DataFrame,
+    fallback: pd.DataFrame,
+) -> pd.DataFrame:
+    """Prefer the higher-fidelity frame and fill remaining gaps from fallback columns."""
+    if preferred.empty:
+        return fallback
+    if fallback.empty:
+        return preferred
+    merged = preferred.combine_first(fallback).sort_index()
+    merged = merged[~merged.index.duplicated(keep="last")]
+    return merged
 
 
 def load_multi_country_forecasts(
@@ -365,36 +396,67 @@ def load_multi_country_forecasts(
 
     frames: list[pd.Series] = []
     for key, zone_code in zones.items():
-        load_series = _query_load_forecast_or_empty(
+        load_series_da = _query_load_forecast_or_empty(
             client,
             zone_code,
             ts_start,
             ts_end,
             name=f"forecast_load_{key}_mw",
+            process_type="A01",
+        )
+        load_series_wa = _query_load_forecast_or_empty(
+            client,
+            zone_code,
+            ts_start,
+            ts_end,
+            name=f"forecast_load_{key}_mw",
+            process_type="A31",
+        )
+        load_series = _merge_preferred_forecast_series(
+            preferred=load_series_da,
+            fallback=load_series_wa,
+            name=f"forecast_load_{key}_mw",
         )
         if not load_series.empty:
             frames.append(load_series)
 
-        try:
-            forecast_raw = _retry(
-                client.query_wind_and_solar_forecast,
-                zone_code,
-                start=ts_start,
-                end=ts_end,
-            )
-            solar = _extract_forecast_column(forecast_raw, "Solar").rename(f"forecast_solar_{key}_mw")
-            wind = _extract_forecast_column(forecast_raw, "Wind").rename(f"forecast_wind_{key}_mw")
-            forecast_df = pd.concat([solar, wind], axis=1)
-            if not forecast_df.empty:
+        forecast_frames_by_process: list[pd.DataFrame] = []
+        for process_type in FORECAST_PROCESS_TYPES:
+            try:
+                forecast_raw = _retry(
+                    client.query_wind_and_solar_forecast,
+                    zone_code,
+                    start=ts_start,
+                    end=ts_end,
+                    process_type=process_type,
+                )
+                solar = _extract_forecast_column(forecast_raw, "Solar").rename(f"forecast_solar_{key}_mw")
+                wind = _extract_forecast_column(forecast_raw, "Wind").rename(f"forecast_wind_{key}_mw")
+                forecast_df = pd.concat([solar, wind], axis=1)
+                if forecast_df.empty:
+                    continue
                 if forecast_df.index.tz is None:
                     forecast_df.index = forecast_df.index.tz_localize("UTC")
                 forecast_df = _resample_to_15min(forecast_df).sort_index()
                 forecast_df = forecast_df[(forecast_df.index >= ts_start) & (forecast_df.index < ts_end)]
                 for col in forecast_df.columns:
                     forecast_df[col] = forecast_df[col].astype(float).fillna(0.0)
-                frames.extend(forecast_df[col] for col in forecast_df.columns)
-        except Exception as exc:
-            logger.warning("ENTSO-E wind/solar forecast failed for %s: %s", key, exc)
+                forecast_frames_by_process.append(forecast_df)
+            except Exception as exc:
+                logger.warning(
+                    "ENTSO-E wind/solar forecast failed for %s (%s): %s",
+                    key,
+                    process_type,
+                    exc,
+                )
+        if forecast_frames_by_process:
+            forecast_df = forecast_frames_by_process[0]
+            for extra_frame in forecast_frames_by_process[1:]:
+                forecast_df = _merge_preferred_forecast_frames(
+                    preferred=forecast_df,
+                    fallback=extra_frame,
+                )
+            frames.extend(forecast_df[col] for col in forecast_df.columns)
 
     if not frames:
         return pd.DataFrame()

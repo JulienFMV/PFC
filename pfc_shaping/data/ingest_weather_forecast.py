@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import os
 import logging
+import warnings
 from pathlib import Path
 
 import certifi
 import pandas as pd
 import requests
+from urllib3.exceptions import InsecureRequestWarning
 
 logger = logging.getLogger(__name__)
 
@@ -80,18 +82,25 @@ def _open_meteo_get(params: dict[str, object]) -> requests.Response:
         response.raise_for_status()
         return response
     except requests.exceptions.SSLError:
-        if os.getenv("PFC_ALLOW_INSECURE_WEATHER_SSL", "0") != "1":
+        allow_insecure = os.getenv("PFC_ALLOW_INSECURE_WEATHER_SSL")
+        force_strict = os.getenv("PFC_FORCE_STRICT_WEATHER_SSL", "0") == "1"
+        if force_strict:
+            raise
+        if allow_insecure == "0":
             raise
         logger.warning(
-            "Retrying Open-Meteo weather request with SSL verification disabled because "
-            "PFC_ALLOW_INSECURE_WEATHER_SSL=1 is set."
+            "Retrying Open-Meteo weather request with SSL verification disabled after "
+            "certificate verification failure. Set PFC_FORCE_STRICT_WEATHER_SSL=1 to "
+            "disable this corporate-network fallback."
         )
-        response = requests.get(
-            OPEN_METEO_HISTORICAL_FORECAST_URL,
-            params=params,
-            timeout=60,
-            verify=False,
-        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", InsecureRequestWarning)
+            response = requests.get(
+                OPEN_METEO_HISTORICAL_FORECAST_URL,
+                params=params,
+                timeout=60,
+                verify=False,
+            )
         response.raise_for_status()
         return response
 
