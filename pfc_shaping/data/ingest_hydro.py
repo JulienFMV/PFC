@@ -37,6 +37,8 @@ import numpy as np
 import pandas as pd
 import requests
 
+from pfc_shaping.data.ct_datasets import resolve_local_cache_path
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_PARQUET = Path(__file__).parent.parent / "data" / "hydro_reservoir.parquet"
@@ -278,15 +280,19 @@ def build_water_value(df: pd.DataFrame) -> pd.DataFrame:
 # Cache Parquet
 # ---------------------------------------------------------------------------
 
-def load_parquet(path: str | Path = DEFAULT_PARQUET) -> pd.DataFrame:
+def load_parquet(path: str | Path | None = None) -> pd.DataFrame:
     """Charge le cache Parquet local."""
+    if path is None:
+        path = resolve_local_cache_path(Path(__file__).resolve().parents[2], "ct_hydro_daily")
+    if path is None:
+        raise ValueError("Missing cache path for ct_hydro_daily")
     return pd.read_parquet(path)
 
 
 def fetch_and_cache(
     start: str,
     end: str,
-    parquet_path: str | Path = DEFAULT_PARQUET,
+    parquet_path: str | Path | None = None,
     db_config: dict | None = None,
 ) -> pd.DataFrame:
     """
@@ -322,7 +328,11 @@ def fetch_and_cache(
         except Exception as e:
             logger.warning("Databricks hydro échoué (%s) — fallback cache local", e)
 
-    parquet_path = Path(parquet_path)
+    parquet_path = Path(parquet_path) if parquet_path is not None else resolve_local_cache_path(
+        Path(__file__).resolve().parents[2], "ct_hydro_daily"
+    )
+    if parquet_path is None:
+        raise ValueError("Missing cache path for ct_hydro_daily")
 
     if new_raw is not None and not new_raw.empty:
         if parquet_path.exists():

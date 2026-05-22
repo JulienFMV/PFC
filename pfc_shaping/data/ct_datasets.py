@@ -164,7 +164,7 @@ def load_local_dataset(project_root: str | Path, dataset_name: str, required: bo
     path = resolve_local_cache_path(project_root, dataset_name)
     if path is None or not path.exists():
         if dataset_name in {"ct_entso_fundamentals_15min", "ct_entso_border_15min"}:
-            legacy_path = Path(project_root) / "pfc_shaping" / "data" / "entso_15min.parquet"
+            legacy_path = get_ct_data_root(project_root) / "pfc_shaping" / "data" / "entso_15min.parquet"
             if legacy_path.exists():
                 legacy_df = pd.read_parquet(legacy_path)
                 fundamentals, border = split_entso_views(legacy_df)
@@ -201,7 +201,7 @@ def split_entso_views(entso_df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFram
 
 def materialize_entso_split_views(project_root: str | Path) -> dict[str, Path]:
     project_root = Path(project_root)
-    legacy_path = project_root / "pfc_shaping" / "data" / "entso_15min.parquet"
+    legacy_path = get_ct_data_root(project_root) / "pfc_shaping" / "data" / "entso_15min.parquet"
     if not legacy_path.exists():
         raise FileNotFoundError(f"Missing legacy ENTSO dataset: {legacy_path}")
 

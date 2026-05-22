@@ -30,7 +30,7 @@ import numpy as np
 import pandas as pd
 from dotenv import load_dotenv
 
-from pfc_shaping.data.ct_datasets import resolve_local_cache_path
+from pfc_shaping.data.ct_datasets import get_ct_data_root, resolve_local_cache_path
 
 logger = logging.getLogger(__name__)
 
@@ -501,11 +501,19 @@ def _load_fr_nuclear_outage_features(
     ts_end: pd.Timestamp,
 ) -> pd.DataFrame:
     """Load French nuclear unavailability as a compact Swiss regime signal."""
+    registry_outages_path = resolve_local_cache_path(
+        Path(__file__).resolve().parents[2],
+        "ct_outages_15min",
+    )
     cache_candidates = [
+        registry_outages_path.parent / "outages_fr_15min.parquet" if registry_outages_path is not None else None,
+        registry_outages_path,
         Path(__file__).resolve().parent.parent / "data" / "outages_fr_15min.parquet",
         Path(__file__).resolve().parent.parent / "data" / "outages_15min.parquet",
     ]
     for cache_path in cache_candidates:
+        if cache_path is None:
+            continue
         if not cache_path.exists():
             continue
         try:
@@ -842,15 +850,17 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def load_parquet(path: str | Path = DEFAULT_PARQUET) -> pd.DataFrame:
+def load_parquet(path: str | Path | None = None) -> pd.DataFrame:
     """Charge le cache Parquet local."""
+    if path is None:
+        path = get_ct_data_root(Path(__file__).resolve().parents[2]) / "pfc_shaping" / "data" / "entso_15min.parquet"
     return pd.read_parquet(path)
 
 
 def fetch_and_cache(
     start: str,
     end: str,
-    parquet_path: str | Path = DEFAULT_PARQUET,
+    parquet_path: str | Path | None = None,
     country_code: str = "CH",
 ) -> pd.DataFrame:
     """
@@ -862,7 +872,9 @@ def fetch_and_cache(
     """
     new_raw = load_from_api(start, end, country_code)
 
-    parquet_path = Path(parquet_path)
+    parquet_path = Path(parquet_path) if parquet_path is not None else (
+        get_ct_data_root(Path(__file__).resolve().parents[2]) / "pfc_shaping" / "data" / "entso_15min.parquet"
+    )
     if parquet_path.exists():
         existing = load_parquet(parquet_path)
         raw_cols = [

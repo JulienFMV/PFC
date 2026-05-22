@@ -382,7 +382,7 @@ def fetch_and_cache_power(
     start: str,
     end: str,
     country: str = "ch",
-    parquet_path: str | Path = DEFAULT_ENTSO_PARQUET,
+    parquet_path: str | Path | None = None,
 ) -> pd.DataFrame:
     """
     Télécharge load/generation depuis energy-charts, fusionne avec le cache
@@ -390,7 +390,13 @@ def fetch_and_cache_power(
     """
     new = load_power(start, end, country)
 
-    parquet_path = Path(parquet_path)
+    parquet_path = Path(parquet_path) if parquet_path is not None else (
+        resolve_local_cache_path(Path(__file__).resolve().parents[2], "ct_entso_fundamentals_15min")
+    )
+    if parquet_path is not None:
+        parquet_path = parquet_path.parent / "entso_15min.parquet"
+    if parquet_path is None:
+        raise ValueError("Missing cache path for entso_15min power cache")
     if parquet_path.exists():
         existing = load_power_parquet(parquet_path)
         # Preserve ENTSO-E-enriched columns already present in the cache

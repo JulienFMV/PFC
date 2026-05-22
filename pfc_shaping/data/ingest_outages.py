@@ -29,6 +29,8 @@ import numpy as np
 import pandas as pd
 from dotenv import load_dotenv
 
+from pfc_shaping.data.ct_datasets import resolve_local_cache_path
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_PARQUET = Path(__file__).resolve().parent.parent / "data" / "outages_15min.parquet"
@@ -227,7 +229,7 @@ def _events_to_timeseries(
 def fetch_and_cache(
     start: str,
     end: str,
-    parquet_path: str | Path = DEFAULT_PARQUET,
+    parquet_path: str | Path | None = None,
     country_code: str = "CH",
 ) -> pd.DataFrame:
     """
@@ -235,7 +237,11 @@ def fetch_and_cache(
     """
     new_data = load_outages_from_api(start, end, country_code)
 
-    parquet_path = Path(parquet_path)
+    parquet_path = Path(parquet_path) if parquet_path is not None else resolve_local_cache_path(
+        Path(__file__).resolve().parents[2], "ct_outages_15min"
+    )
+    if parquet_path is None:
+        raise ValueError("Missing cache path for ct_outages_15min")
     if parquet_path.exists():
         existing = pd.read_parquet(parquet_path)
         combined = pd.concat([existing, new_data])
@@ -249,8 +255,12 @@ def fetch_and_cache(
     return combined
 
 
-def load_parquet(path: str | Path = DEFAULT_PARQUET) -> pd.DataFrame | None:
+def load_parquet(path: str | Path | None = None) -> pd.DataFrame | None:
     """Charge le cache Parquet local, retourne None si inexistant."""
+    if path is None:
+        path = resolve_local_cache_path(Path(__file__).resolve().parents[2], "ct_outages_15min")
+    if path is None:
+        raise ValueError("Missing cache path for ct_outages_15min")
     p = Path(path)
     if p.exists():
         return pd.read_parquet(p)

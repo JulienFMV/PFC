@@ -17,6 +17,7 @@ from pathlib import Path
 import pandas as pd
 import yaml
 from dotenv import load_dotenv
+from pfc_shaping.data.ct_datasets import get_ct_data_root
 
 LOG_DIR = Path(__file__).parent.parent / "logs"
 LOG_DIR.mkdir(exist_ok=True)
@@ -54,6 +55,8 @@ def _resolve_config_path(value: str | Path) -> Path:
     p = Path(value)
     if p.is_absolute():
         return p
+    if p.parts and p.parts[0] == "data":
+        return (get_ct_data_root(CONFIG_PATH.parent.parent) / "pfc_shaping" / "data" / p.name).resolve()
     return (CONFIG_PATH.parent / p).resolve()
 
 
