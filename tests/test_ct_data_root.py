@@ -1,0 +1,22 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+from pfc_shaping.data.ct_datasets import get_ct_data_root, resolve_local_cache_path
+
+
+def test_ct_data_root_defaults_to_project_root() -> None:
+    project_root = Path(r"C:\tmp\pfc_project")
+    assert get_ct_data_root(project_root) == project_root.resolve()
+
+
+def test_ct_data_root_uses_environment_override(monkeypatch) -> None:
+    monkeypatch.setenv("PFC_CT_DATA_ROOT", r"C:\Users\jbattaglia\PFC_CT_DATA")
+    assert get_ct_data_root(Path(r"H:\repo")) == Path(r"C:\Users\jbattaglia\PFC_CT_DATA").resolve()
+
+
+def test_resolve_local_cache_path_uses_ct_data_root(monkeypatch) -> None:
+    monkeypatch.setenv("PFC_CT_DATA_ROOT", r"C:\Users\jbattaglia\PFC_CT_DATA")
+    path = resolve_local_cache_path(Path(r"H:\repo"), "ct_forecast_multi_country_15min")
+    expected = Path(r"C:\Users\jbattaglia\PFC_CT_DATA\pfc_shaping\data\multi_country_forecast_15min.parquet").resolve()
+    assert path == expected

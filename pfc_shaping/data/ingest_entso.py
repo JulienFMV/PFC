@@ -30,6 +30,8 @@ import numpy as np
 import pandas as pd
 from dotenv import load_dotenv
 
+from pfc_shaping.data.ct_datasets import resolve_local_cache_path
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_PARQUET = Path(__file__).resolve().parent.parent / "data" / "entso_15min.parquet"
@@ -887,7 +889,7 @@ def fetch_and_cache(
 def fetch_and_cache_de_renewable_forecast(
     start: str,
     end: str,
-    parquet_path: str | Path = DEFAULT_DE_RENEWABLE_FORECAST_PARQUET,
+    parquet_path: str | Path | None = None,
     country_code: str = "DE_LU",
 ) -> pd.DataFrame:
     """
@@ -898,7 +900,11 @@ def fetch_and_cache_de_renewable_forecast(
     """
     new = load_de_renewable_forecast(start, end, country_code=country_code)
 
-    parquet_path = Path(parquet_path)
+    parquet_path = Path(parquet_path) if parquet_path is not None else resolve_local_cache_path(
+        Path(__file__).resolve().parents[2], "ct_forecast_de_renewables_15min"
+    )
+    if parquet_path is None:
+        raise ValueError("Missing cache path for ct_forecast_de_renewables_15min")
     if parquet_path.exists():
         existing = pd.read_parquet(parquet_path)
         combined = new.combine_first(existing).sort_index()
@@ -920,7 +926,7 @@ def fetch_and_cache_de_renewable_forecast(
 def fetch_and_cache_multi_country_forecasts(
     start: str,
     end: str,
-    parquet_path: str | Path = DEFAULT_MULTI_COUNTRY_FORECAST_PARQUET,
+    parquet_path: str | Path | None = None,
     zones: dict[str, str] | None = None,
 ) -> pd.DataFrame:
     """
@@ -929,7 +935,11 @@ def fetch_and_cache_multi_country_forecasts(
     The cache stores forecast-for timestamps on a normalized 15min UTC grid.
     """
     new = load_multi_country_forecasts(start, end, zones=zones)
-    parquet_path = Path(parquet_path)
+    parquet_path = Path(parquet_path) if parquet_path is not None else resolve_local_cache_path(
+        Path(__file__).resolve().parents[2], "ct_forecast_multi_country_15min"
+    )
+    if parquet_path is None:
+        raise ValueError("Missing cache path for ct_forecast_multi_country_15min")
 
     if parquet_path.exists():
         existing = pd.read_parquet(parquet_path)
@@ -952,11 +962,15 @@ def fetch_and_cache_multi_country_forecasts(
 def fetch_and_cache_fr_nuclear_forecast(
     start: str,
     end: str,
-    parquet_path: str | Path = DEFAULT_FR_NUCLEAR_FORECAST_PARQUET,
+    parquet_path: str | Path | None = None,
 ) -> pd.DataFrame:
     """Refresh the cached FR nuclear future-availability dataset for Swiss CT."""
     new = load_fr_nuclear_forecast(start, end)
-    parquet_path = Path(parquet_path)
+    parquet_path = Path(parquet_path) if parquet_path is not None else resolve_local_cache_path(
+        Path(__file__).resolve().parents[2], "ct_forecast_fr_nuclear_15min"
+    )
+    if parquet_path is None:
+        raise ValueError("Missing cache path for ct_forecast_fr_nuclear_15min")
 
     if parquet_path.exists():
         existing = pd.read_parquet(parquet_path)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from pathlib import Path
 from typing import Any
 
@@ -9,6 +10,7 @@ import yaml
 
 
 REGISTRY_PATH = Path(__file__).resolve().parent / "ct_dataset_registry.yaml"
+DEFAULT_PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 ENTSO_FUNDAMENTALS_COLUMNS = [
     "load_mw",
@@ -105,6 +107,16 @@ def load_registry() -> dict[str, Any]:
         return yaml.safe_load(handle)
 
 
+def get_ct_data_root(project_root: str | Path | None = None) -> Path:
+    """Resolve the local CT dataset root, optionally overridden to a local C: cache."""
+    override = os.getenv("PFC_CT_DATA_ROOT")
+    if override:
+        return Path(override).expanduser().resolve()
+    if project_root is None:
+        return DEFAULT_PROJECT_ROOT
+    return Path(project_root).resolve()
+
+
 def get_dataset_spec(name: str) -> DatasetSpec:
     registry = load_registry()
     raw = registry.get("datasets", {}).get(name)
@@ -144,7 +156,7 @@ def resolve_local_cache_path(project_root: str | Path, dataset_name: str) -> Pat
     spec = get_dataset_spec(dataset_name)
     if not spec.local_cache:
         return None
-    return Path(project_root) / spec.local_cache
+    return get_ct_data_root(project_root) / spec.local_cache
 
 
 def load_local_dataset(project_root: str | Path, dataset_name: str, required: bool | None = None) -> pd.DataFrame | None:

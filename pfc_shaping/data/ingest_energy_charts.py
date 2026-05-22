@@ -33,6 +33,8 @@ import numpy as np
 import pandas as pd
 import requests
 
+from pfc_shaping.data.ct_datasets import resolve_local_cache_path
+
 logger = logging.getLogger(__name__)
 
 API_BASE = "https://api.energy-charts.info"
@@ -317,7 +319,7 @@ def fetch_and_cache_prices(
     start: str,
     end: str,
     bzn: str = "CH",
-    parquet_path: str | Path = DEFAULT_EPEX_PARQUET,
+    parquet_path: str | Path | None = None,
 ) -> pd.DataFrame:
     """
     Télécharge les prix depuis energy-charts, fusionne avec le cache Parquet,
@@ -325,7 +327,11 @@ def fetch_and_cache_prices(
     """
     new = load_prices(start, end, bzn)
 
-    parquet_path = Path(parquet_path)
+    parquet_path = Path(parquet_path) if parquet_path is not None else resolve_local_cache_path(
+        Path(__file__).resolve().parents[2], "ct_price_15min_ch"
+    )
+    if parquet_path is None:
+        raise ValueError("Missing cache path for ct_price_15min_ch")
     if parquet_path.exists():
         existing = load_epex_parquet(parquet_path)
         combined = pd.concat([existing, new])
@@ -342,7 +348,7 @@ def fetch_and_cache_prices(
 def fetch_and_cache_prices_de(
     start: str,
     end: str,
-    parquet_path: str | Path = DEFAULT_EPEX_DE_PARQUET,
+    parquet_path: str | Path | None = None,
 ) -> pd.DataFrame:
     """
     Télécharge les prix DE-LU 15min depuis energy-charts et met à jour le cache.
@@ -354,7 +360,11 @@ def fetch_and_cache_prices_de(
     """
     new = load_prices(start, end, bzn="DE-LU")
 
-    parquet_path = Path(parquet_path)
+    parquet_path = Path(parquet_path) if parquet_path is not None else resolve_local_cache_path(
+        Path(__file__).resolve().parents[2], "ct_price_15min_de"
+    )
+    if parquet_path is None:
+        raise ValueError("Missing cache path for ct_price_15min_de")
     if parquet_path.exists():
         existing = load_epex_parquet(parquet_path)
         combined = pd.concat([existing, new])
