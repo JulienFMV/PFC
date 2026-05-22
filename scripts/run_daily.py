@@ -72,7 +72,9 @@ def ingest_data(days_back: int = 7) -> dict:
     end = (today + timedelta(days=1)).isoformat()
     enrich_start = (today - timedelta(days=max(days_back, 45))).isoformat()
     governed_forecast_horizon_days = 10
-    forecast_end = (today + timedelta(days=governed_forecast_horizon_days)).isoformat()
+    # Fetch two extra UTC days so local-market J+10 coverage remains complete
+    # after the spot layer already extends one day ahead and Europe/Zurich adds DST offset.
+    forecast_end = (today + timedelta(days=governed_forecast_horizon_days + 2)).isoformat()
 
     status = {}
 
