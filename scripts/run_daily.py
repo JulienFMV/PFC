@@ -71,7 +71,8 @@ def ingest_data(days_back: int = 7) -> dict:
     start = (today - timedelta(days=days_back)).isoformat()
     end = (today + timedelta(days=1)).isoformat()
     enrich_start = (today - timedelta(days=max(days_back, 45))).isoformat()
-    forecast_end = (today + timedelta(days=3)).isoformat()
+    governed_forecast_horizon_days = 10
+    forecast_end = (today + timedelta(days=governed_forecast_horizon_days)).isoformat()
 
     status = {}
 
@@ -133,7 +134,7 @@ def ingest_data(days_back: int = 7) -> dict:
         fetch_entso_enriched(enrich_start, end, country_code="CH")
         forecast_df = fetch_and_cache_de_renewable_forecast(enrich_start, forecast_end)
         multi_country_df = fetch_and_cache_multi_country_forecasts(enrich_start, forecast_end)
-        fr_nuclear_df = fetch_and_cache_fr_nuclear_forecast(enrich_start, (today + timedelta(days=10)).isoformat())
+        fr_nuclear_df = fetch_and_cache_fr_nuclear_forecast(enrich_start, forecast_end)
         split_paths = materialize_entso_split_views(ROOT)
         status["entso_enrichment"] = (
             f"OK (neighbor/border refreshed, DE forecast max_ts={forecast_df.index.max()}, "

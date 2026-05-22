@@ -166,6 +166,9 @@ class LEARForecaster:
         "wx_at_vienna_wind_speed_10m",
         "wx_it_milan_shortwave_radiation",
     )
+    GOVERNED_FORECAST_CORE_COLUMNS = tuple(
+        col for col in GOVERNED_FORECAST_COLUMNS if not col.startswith("forecast_fr_nuclear_")
+    )
 
     def __init__(
         self,
@@ -634,12 +637,29 @@ class LEARForecaster:
                 if candidate_ok:
                     max_supported_horizon_days = d
 
+        retained_core_forecast = [
+            source_col for source_col in retained_sources
+            if source_col in self.GOVERNED_FORECAST_CORE_COLUMNS
+        ]
+        retained_weather = [
+            source_col for source_col in retained_sources
+            if source_col in self.GOVERNED_WEATHER_COLUMNS
+        ]
+        enabled_for_run = (
+            bool(retained_sources)
+            and bool(retained_core_forecast)
+            and bool(retained_weather)
+            and max_supported_horizon_days > 0
+        )
+        if not enabled_for_run:
+            max_supported_horizon_days = 0
+
         coverage_ratio = float(total_available / total_expected) if total_expected else 1.0
         health["coverage_ratio"] = coverage_ratio
         health["max_supported_horizon_days"] = max_supported_horizon_days
         health["missing_sources"] = sorted(set(dropped_sources))
         health["source_coverage"] = source_coverage
-        health["enabled_for_run"] = bool(retained_sources) and max_supported_horizon_days > 0
+        health["enabled_for_run"] = enabled_for_run
         self._governed_feature_health = health
         return health
 
