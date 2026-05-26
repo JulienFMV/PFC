@@ -5,6 +5,7 @@ import pandas as pd
 from pfc_shaping.pipeline.swiss_short_term import (
     _merge_governed_and_baseline_forecasts,
     _overwrite_routed_day_slice,
+    _resolve_governed_applied_horizon_days,
 )
 
 
@@ -70,3 +71,14 @@ def test_overwrite_routed_day_slice_replaces_j1_and_caps_jump_to_j2() -> None:
     out = merged.sort_values("days_ahead").reset_index(drop=True)
     assert float(out.loc[0, "price_lear"]) == 90.0
     assert abs(float(out.loc[1, "price_lear"]) - float(out.loc[0, "price_lear"])) <= 1.5 + 1e-9
+
+
+def test_resolve_governed_applied_horizon_days_caps_at_j7() -> None:
+    assert _resolve_governed_applied_horizon_days(10, 10) == 7
+    assert _resolve_governed_applied_horizon_days(8, 10) == 7
+    assert _resolve_governed_applied_horizon_days(5, 10) == 5
+
+
+def test_resolve_governed_applied_horizon_days_returns_zero_when_unsupported() -> None:
+    assert _resolve_governed_applied_horizon_days(0, 10) == 0
+    assert _resolve_governed_applied_horizon_days(-1, 10) == 0

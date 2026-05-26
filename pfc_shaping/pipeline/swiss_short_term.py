@@ -16,6 +16,8 @@ from pfc_shaping.model.lear_forecaster import LEARForecaster
 from pfc_shaping.storage.local_duckdb import init_db, upsert_lear_backtest, upsert_lear_forecast
 
 DEFAULT_PRICEFM_PYTHON = r"C:\Users\jbattaglia\.conda\pricefm_tf\python.exe"
+PRIMARY_FORECAST_WINNER_DAYS = (1,)
+GOVERNED_ROUTE_MAX_DAYS = 7
 
 
 def _foundation_enabled() -> bool:
@@ -143,16 +145,28 @@ def run_swiss_short_term_overlay(
         )
         governed_lear = None
         max_supported_horizon_days = 0
-    elif use_governed_forecast_features and max_supported_horizon_days < forecast_horizon_days:
-        logger.warning(
-            "  Governed forecast features only supported through J+%d; using baseline fallback for J+%d..J+%d",
-            max_supported_horizon_days,
-            max_supported_horizon_days + 1,
-            forecast_horizon_days,
-        )
-        governed_applied_horizon_days = max_supported_horizon_days
     elif use_governed_forecast_features:
-        governed_applied_horizon_days = forecast_horizon_days
+        governed_applied_horizon_days = _resolve_governed_applied_horizon_days(
+            max_supported_horizon_days=max_supported_horizon_days,
+            forecast_horizon_days=forecast_horizon_days,
+        )
+        if governed_applied_horizon_days < max_supported_horizon_days:
+            logger.info(
+                "  Capping governed routing to J+%d even though health supports J+%d",
+                governed_applied_horizon_days,
+                max_supported_horizon_days,
+            )
+        if governed_applied_horizon_days < forecast_horizon_days:
+            logger.warning(
+                "  Governed forecast features only routed through J+%d; using baseline fallback for J+%d..J+%d",
+                governed_applied_horizon_days,
+                governed_applied_horizon_days + 1,
+                forecast_horizon_days,
+            )
+        else:
+            logger.info("  Governed forecast features routed through full J+%d horizon", forecast_horizon_days)
+    else:
+        governed_applied_horizon_days = 0
 
     governed_enabled_final = bool(use_governed_forecast_features and governed_applied_horizon_days > 0)
     input_health = replace(
@@ -178,12 +192,11 @@ def run_swiss_short_term_overlay(
             baseline_forecast=primary_forecast,
             governed_horizon_days=governed_applied_horizon_days,
         )
-        if use_foundation_model:
-            lear_forecast = _overwrite_routed_day_slice(
-                base_forecast=lear_forecast,
-                replacement_forecast=primary_forecast,
-                day_values=[1],
-            )
+        lear_forecast = _overwrite_routed_day_slice(
+            base_forecast=lear_forecast,
+            replacement_forecast=primary_forecast,
+            day_values=list(PRIMARY_FORECAST_WINNER_DAYS),
+        )
     logger.info("  LEAR forecast: %d hours, mean=%.1f EUR/MWh", len(lear_forecast), lear_forecast["price_lear"].mean())
 
     lear_forecast = _maybe_apply_experimental_pricefm(project_root, lear_forecast, logger)
@@ -227,6 +240,15 @@ def _fit_lear_model(
         weather_forecast=inputs.weather_forecast,
     )
     return lear
+
+
+def _resolve_governed_applied_horizon_days(
+    max_supported_horizon_days: int,
+    forecast_horizon_days: int,
+) -> int:
+    if max_supported_horizon_days <= 0 or forecast_horizon_days <= 0:
+        return 0
+    return int(min(max_supported_horizon_days, forecast_horizon_days, GOVERNED_ROUTE_MAX_DAYS))
 
 
 def _merge_governed_and_baseline_forecasts(
