@@ -161,6 +161,39 @@ def test_assess_governed_health_requires_core_forecast_and_weather_families() ->
     assert health["max_supported_horizon_days"] == 0
 
 
+def test_assess_governed_health_caps_long_horizon_on_load_forecast_support() -> None:
+    lear = LEARForecaster(use_governed_forecast_features=True)
+    lear._fitted = True
+    idx = pd.date_range("2026-05-01", periods=48, freq="h", tz="Europe/Zurich")
+    lear._idx_local = idx
+    forecast_dates = [
+        (idx[-1] + pd.Timedelta(days=d)).date()
+        for d in range(1, 11)
+    ]
+    full_pivot = pd.DataFrame(
+        {h: [1.0] * len(forecast_dates) for h in range(24)},
+        index=forecast_dates,
+    )
+    short_load_pivot = full_pivot.copy()
+    short_load_pivot.loc[forecast_dates[7]:, :] = None  # support only through day 7
+
+    all_sources = (*lear.GOVERNED_FORECAST_COLUMNS, *lear.GOVERNED_WEATHER_COLUMNS)
+    pivots = {source: full_pivot.copy() for source in all_sources}
+    for source in lear.GOVERNED_LONG_HORIZON_REQUIRED_COLUMNS:
+        pivots[source] = short_load_pivot.copy()
+    lear._forecast_feature_pivots = dict(pivots)
+    lear._all_forecast_feature_pivots = dict(pivots)
+    lear._governed_vintage_status = {
+        "multi_country_forecast": {"vintage_schema_verified": False, "invalid_rows_dropped": 0, "total_rows_seen": 10},
+        "weather_forecast": {"vintage_schema_verified": False, "invalid_rows_dropped": 0, "total_rows_seen": 10},
+    }
+
+    health = lear.assess_governed_forecast_feature_health(horizon_days=10, min_coverage_ratio=0.98)
+
+    assert health["enabled_for_run"] is True
+    assert health["max_supported_horizon_days"] == 7
+
+
 def test_select_effective_l1_ratio_bumps_when_vif_is_dense() -> None:
     lear = LEARForecaster(use_governed_forecast_features=True)
     low = lear._select_effective_l1_ratio({"features_over_5": ["a", "b", "c"]})

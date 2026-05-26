@@ -169,6 +169,12 @@ class LEARForecaster:
     GOVERNED_FORECAST_CORE_COLUMNS = tuple(
         col for col in GOVERNED_FORECAST_COLUMNS if not col.startswith("forecast_fr_nuclear_")
     )
+    GOVERNED_LONG_HORIZON_REQUIRED_COLUMNS = (
+        "forecast_load_ch_mw",
+        "forecast_load_de_mw",
+        "forecast_load_fr_mw",
+        "forecast_load_it_mw",
+    )
     GOVERNED_WEATHER_PROXY_MAP = {
         "forecast_solar_ch_mw": ("wx_ch_zurich_shortwave_radiation", "solar"),
         "forecast_solar_de_mw": ("wx_de_munich_shortwave_radiation", "solar"),
@@ -735,6 +741,34 @@ class LEARForecaster:
             source_col for source_col in retained_sources
             if source_col in self.GOVERNED_WEATHER_COLUMNS
         ]
+
+        if retained_sources and int(horizon_days) > 5:
+            long_horizon_required = [
+                source_col
+                for source_col in self.GOVERNED_LONG_HORIZON_REQUIRED_COLUMNS
+                if source_col in source_pivots
+            ]
+            if long_horizon_required:
+                long_horizon_supported_days = 0
+                for d in range(1, int(horizon_days) + 1):
+                    candidate_dates = forecast_dates[:d]
+                    candidate_ok = True
+                    for source_col in long_horizon_required:
+                        pivot = source_pivots.get(source_col)
+                        if pivot is None:
+                            candidate_ok = False
+                            break
+                        future = pivot.reindex(index=candidate_dates, columns=range(24))
+                        expected = int(future.shape[0] * future.shape[1])
+                        available = int(future.notna().sum().sum())
+                        coverage = float(available / expected) if expected else 0.0
+                        if coverage < float(min_coverage_ratio):
+                            candidate_ok = False
+                            break
+                    if candidate_ok:
+                        long_horizon_supported_days = d
+                max_supported_horizon_days = min(max_supported_horizon_days, long_horizon_supported_days)
+
         enabled_for_run = (
             bool(retained_sources)
             and bool(retained_core_forecast)
