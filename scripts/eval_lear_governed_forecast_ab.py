@@ -117,10 +117,10 @@ def _segment_metrics(bt: pd.DataFrame) -> dict[str, object]:
 
 
 def _parse_horizons(args_horizons: str | None, args_horizon: int | None) -> list[int]:
-    if args_horizons:
-        return [int(x.strip()) for x in args_horizons.split(",") if x.strip()]
     if args_horizon is not None:
         return [int(args_horizon)]
+    if args_horizons:
+        return [int(x.strip()) for x in args_horizons.split(",") if x.strip()]
     return [1, 5, 10]
 
 
@@ -471,7 +471,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Run Swiss CT governed feature 2x2 A/B.")
     parser.add_argument("--n-days", type=int, default=15)
     parser.add_argument("--horizon", type=int, default=None)
-    parser.add_argument("--horizons", type=str, default="1,5,10")
+    parser.add_argument("--horizons", type=str, default=None)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--bootstrap-samples", type=int, default=1000)
     parser.add_argument("--output-dir", type=Path, default=ROOT / "pfc_shaping" / "output")
