@@ -246,6 +246,113 @@ def _pairwise_stats(
     return pairwise
 
 
+def _normalized_mae_comparison(
+    pairwise_stats: dict[str, object],
+    candidate: str,
+    other: str,
+) -> dict[str, float | bool | str]:
+    """Return candidate-minus-other MAE stats with candidate-better p-value."""
+    direct_key = f"{other}__vs__{candidate}"
+    reverse_key = f"{candidate}__vs__{other}"
+    if direct_key in pairwise_stats:
+        payload = pairwise_stats[direct_key]
+        dm = payload["dm_test"]["mae_loss"]
+        boot = payload["bootstrap_diff_b_minus_a"]["mae"]
+        point = float(boot["point_estimate"])
+        ci_low = float(boot["ci_low"])
+        ci_high = float(boot["ci_high"])
+        p_value = float(dm["p_value_one_sided"])
+    elif reverse_key in pairwise_stats:
+        payload = pairwise_stats[reverse_key]
+        dm = payload["dm_test"]["mae_loss"]
+        boot = payload["bootstrap_diff_b_minus_a"]["mae"]
+        point = -float(boot["point_estimate"])
+        ci_low = -float(boot["ci_high"])
+        ci_high = -float(boot["ci_low"])
+        p_value = float(1.0 - dm["p_value_one_sided"])
+    else:
+        raise KeyError(f"Missing pairwise stats for {candidate} vs {other}")
+    return {
+        "candidate": candidate,
+        "other": other,
+        "candidate_minus_other_mae": point,
+        "ci_low": ci_low,
+        "ci_high": ci_high,
+        "p_value_candidate_better": p_value,
+        "significant_candidate_better": bool(p_value < 0.05 and ci_high < 0.0),
+    }
+
+
+def _winner_family(label: str) -> str:
+    if label == "fm_only":
+        return "primary_fm_only"
+    if label == "no_fm_baseline":
+        return "primary_no_fm"
+    if label == "no_fm_governed":
+        return "governed_no_fm"
+    if label == "fm_governed":
+        return "governed_with_fm"
+    return "unknown"
+
+
+def _horizon_winner_summary(
+    horizon: int,
+    scores: dict[str, dict[str, float | int]],
+    pairwise_stats: dict[str, object],
+) -> dict[str, object]:
+    ranking = sorted(
+        (
+            {
+                "variant": label,
+                "mae": float(metrics["mae"]),
+                "rmse": float(metrics["rmse"]),
+                "mape": float(metrics["mape"]),
+                "corr": float(metrics["corr"]),
+            }
+            for label, metrics in scores.items()
+        ),
+        key=lambda row: row["mae"],
+    )
+    winner = ranking[0]["variant"]
+    comparisons = [
+        _normalized_mae_comparison(pairwise_stats, candidate=winner, other=row["variant"])
+        for row in ranking[1:]
+    ]
+    second = ranking[1]["variant"] if len(ranking) > 1 else None
+    second_gap = (
+        next(
+            (float(comp["candidate_minus_other_mae"]) for comp in comparisons if comp["other"] == second),
+            0.0,
+        )
+        if second is not None
+        else 0.0
+    )
+    significant_vs_all = bool(comparisons) and all(
+        bool(comp["significant_candidate_better"]) for comp in comparisons
+    )
+    significant_vs_second = second is not None and any(
+        comp["other"] == second and bool(comp["significant_candidate_better"])
+        for comp in comparisons
+    )
+    return {
+        "horizon": int(horizon),
+        "winner_by_mae": winner,
+        "winner_family": _winner_family(winner),
+        "winner_score": ranking[0],
+        "ranking": ranking,
+        "winner_vs_others": comparisons,
+        "significant_vs_all": significant_vs_all,
+        "significant_vs_second_best": bool(significant_vs_second),
+        "second_best_variant": second,
+        "winner_minus_second_best_mae": float(second_gap),
+        "recommended_routing_action": (
+            "promote"
+            if significant_vs_second
+            else "hold"
+        ),
+    }
+
+
 def _decomposition(
     variants_bt: dict[str, pd.DataFrame],
     n_boot: int,
@@ -415,6 +522,7 @@ def main() -> None:
 
     horizons_payload: dict[str, object] = {}
     summary: dict[str, object] = {}
+    horizon_winners: dict[str, object] = {}
 
     for horizon in horizons:
         variants_bt: dict[str, pd.DataFrame] = {}
@@ -462,6 +570,11 @@ def main() -> None:
         )
 
         horizon_key = f"h{horizon}"
+        winner_summary = _horizon_winner_summary(
+            horizon=horizon,
+            scores=scores,
+            pairwise_stats=pairwise,
+        )
         horizons_payload[horizon_key] = {
             "horizon": int(horizon),
             "variant_scores": scores,
@@ -470,7 +583,9 @@ def main() -> None:
             "pairwise_stats": pairwise,
             "decomposition": decomp,
             "breakdowns": breakdowns,
+            "winner_summary": winner_summary,
         }
+        horizon_winners[horizon_key] = winner_summary
         summary[horizon_key] = {
             "no_fm_baseline_mae": scores["no_fm_baseline"]["mae"],
             "fm_only_mae": scores["fm_only"]["mae"],
@@ -479,18 +594,25 @@ def main() -> None:
             "dm_p_fm_governed_vs_fm_only_mae": pairwise["fm_only__vs__fm_governed"]["dm_test"]["mae_loss"]["p_value_one_sided"],
             "bootstrap_ci_fm_governed_vs_fm_only_mae": pairwise["fm_only__vs__fm_governed"]["bootstrap_diff_b_minus_a"]["mae"],
             "vintage_schema_verified": manifest["vintage_schema_verified"],
+            "winner_by_mae": winner_summary["winner_by_mae"],
+            "winner_family": winner_summary["winner_family"],
+            "winner_significant_vs_second_best": winner_summary["significant_vs_second_best"],
         }
 
     payload = {
         **manifest,
         "summary": summary,
         "horizons": horizons_payload,
+        "horizon_winners": horizon_winners,
     }
 
     output_path = args.output_dir / f"{run_id}.json"
     output_path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
+    winners_path = args.output_dir / f"{run_id}_horizon_winners.json"
+    winners_path.write_text(json.dumps(horizon_winners, indent=2, default=str), encoding="utf-8")
     print(json.dumps(summary, indent=2))
     print(f"output:{output_path.resolve()}")
+    print(f"horizon_winners:{winners_path.resolve()}")
 
 
 if __name__ == "__main__":
