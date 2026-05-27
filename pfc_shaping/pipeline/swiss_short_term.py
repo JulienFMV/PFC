@@ -28,6 +28,10 @@ def _governed_forecast_features_enabled() -> bool:
     return os.getenv("PFC_CT_ENABLE_GOVERNED_FORECAST_FEATURES", "0").strip() == "1"
 
 
+def _governed_routing_enabled() -> bool:
+    return os.getenv("PFC_CT_ENABLE_GOVERNED_ROUTING", "0").strip() == "1"
+
+
 @dataclass
 class SwissShortTermInputs:
     epex_ch: pd.DataFrame
@@ -95,11 +99,13 @@ def run_swiss_short_term_overlay(
 
     use_foundation_model = _foundation_enabled()
     use_governed_forecast_features = _governed_forecast_features_enabled()
+    use_governed_routing = _governed_routing_enabled()
     min_governed_forecast_coverage = float(os.getenv("PFC_CT_MIN_GOVERNED_FORECAST_COVERAGE", "0.98"))
     logger.info(
-        "  Swiss CT model policy: LEAR CH+DE baseline, foundation=%s, governed_forecast_features=%s, required_neighbors=%s",
+        "  Swiss CT model policy: LEAR CH+DE baseline, foundation=%s, governed_forecast_features=%s, governed_routing=%s, required_neighbors=%s",
         "enabled" if use_foundation_model else "disabled",
         "enabled" if use_governed_forecast_features else "disabled",
+        "enabled" if use_governed_routing else "disabled",
         inputs.required_neighbor_codes,
     )
 
@@ -145,6 +151,11 @@ def run_swiss_short_term_overlay(
         )
         governed_lear = None
         max_supported_horizon_days = 0
+    elif use_governed_forecast_features and not use_governed_routing:
+        logger.info(
+            "  Governed forecast features passed health checks but routing is disabled by policy; using primary forecast only."
+        )
+        governed_applied_horizon_days = 0
     elif use_governed_forecast_features:
         governed_applied_horizon_days = _resolve_governed_applied_horizon_days(
             max_supported_horizon_days=max_supported_horizon_days,

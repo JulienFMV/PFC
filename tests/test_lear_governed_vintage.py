@@ -190,8 +190,9 @@ def test_assess_governed_health_caps_long_horizon_on_load_forecast_support() -> 
 
     health = lear.assess_governed_forecast_feature_health(horizon_days=10, min_coverage_ratio=0.98)
 
-    assert health["enabled_for_run"] is True
-    assert health["max_supported_horizon_days"] == 7
+    assert health["coverage_ratio"] < 0.98
+    assert health["enabled_for_run"] is False
+    assert health["max_supported_horizon_days"] == 0
 
 
 def test_select_effective_l1_ratio_bumps_when_vif_is_dense() -> None:

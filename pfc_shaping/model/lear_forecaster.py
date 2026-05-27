@@ -769,16 +769,17 @@ class LEARForecaster:
                         long_horizon_supported_days = d
                 max_supported_horizon_days = min(max_supported_horizon_days, long_horizon_supported_days)
 
+        coverage_ratio = float(total_available / total_expected) if total_expected else 1.0
         enabled_for_run = (
             bool(retained_sources)
             and bool(retained_core_forecast)
             and bool(retained_weather)
             and max_supported_horizon_days > 0
+            and coverage_ratio >= float(min_coverage_ratio)
         )
         if not enabled_for_run:
             max_supported_horizon_days = 0
 
-        coverage_ratio = float(total_available / total_expected) if total_expected else 1.0
         health["coverage_ratio"] = coverage_ratio
         health["max_supported_horizon_days"] = max_supported_horizon_days
         health["missing_sources"] = sorted(set(dropped_sources))

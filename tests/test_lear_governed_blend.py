@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 
 from pfc_shaping.pipeline.swiss_short_term import (
+    _governed_routing_enabled,
     _merge_governed_and_baseline_forecasts,
     _overwrite_routed_day_slice,
     _resolve_governed_applied_horizon_days,
@@ -82,3 +83,13 @@ def test_resolve_governed_applied_horizon_days_caps_at_j7() -> None:
 def test_resolve_governed_applied_horizon_days_returns_zero_when_unsupported() -> None:
     assert _resolve_governed_applied_horizon_days(0, 10) == 0
     assert _resolve_governed_applied_horizon_days(-1, 10) == 0
+
+
+def test_governed_routing_disabled_by_default(monkeypatch) -> None:
+    monkeypatch.delenv("PFC_CT_ENABLE_GOVERNED_ROUTING", raising=False)
+    assert _governed_routing_enabled() is False
+
+
+def test_governed_routing_can_be_enabled_explicitly(monkeypatch) -> None:
+    monkeypatch.setenv("PFC_CT_ENABLE_GOVERNED_ROUTING", "1")
+    assert _governed_routing_enabled() is True
