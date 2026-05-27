@@ -214,18 +214,27 @@ def _derive_policy(horizons: dict[str, dict]) -> dict:
     governed_significant_days_nominal: list[int] = []
     governed_directional_days: list[int] = []
     governed_p_values: dict[str, float] = {}
+    fm_conditioned_p_values: dict[str, float] = {}
     for key, payload in horizons.items():
         if key == "h10":
             continue
-        if payload.get("source") == "full_json" and payload.get("winner_family", "").startswith("governed"):
-            day = int(key[1:])
+        if payload.get("source") != "full_json":
+            continue
+        day = int(key[1:])
+        if payload.get("winner_family", "").startswith("governed"):
             governed_directional_days.append(day)
-            governed_vs_baseline = payload.get("decision_stats", {}).get("governed_vs_baseline") or {}
-            p_value = governed_vs_baseline.get("dm_p_value_one_sided")
-            if p_value is not None:
-                governed_p_values[key] = float(p_value)
-            if bool(governed_vs_baseline.get("significant_nominal", False)):
-                governed_significant_days_nominal.append(day)
+
+        governed_vs_baseline = payload.get("decision_stats", {}).get("governed_vs_baseline") or {}
+        p_value = governed_vs_baseline.get("dm_p_value_one_sided")
+        if p_value is not None:
+            governed_p_values[key] = float(p_value)
+        if bool(governed_vs_baseline.get("significant_nominal", False)):
+            governed_significant_days_nominal.append(day)
+
+        fm_conditioned = payload.get("decision_stats", {}).get("fm_governed_vs_fm_only") or {}
+        fm_p_value = fm_conditioned.get("dm_p_value_one_sided")
+        if fm_p_value is not None:
+            fm_conditioned_p_values[key] = float(fm_p_value)
 
     h1_governed_supported = (
         h1_json
@@ -250,6 +259,7 @@ def _derive_policy(horizons: dict[str, dict]) -> dict:
             )
 
     holm_flags = _holm_bonferroni_flags(governed_p_values)
+    fm_holm_flags = _holm_bonferroni_flags(fm_conditioned_p_values)
     governed_significant_days_holm = [
         int(key[1:])
         for key, meta in holm_flags.items()
@@ -266,6 +276,11 @@ def _derive_policy(horizons: dict[str, dict]) -> dict:
         if key != "h10"
         and payload.get("source") == "full_json"
         and bool(((payload.get("decision_stats", {}) or {}).get("fm_governed_vs_fm_only") or {}).get("significant_nominal", False))
+    ]
+    fm_conditioned_mid_horizon_holm = [
+        int(key[1:])
+        for key, meta in fm_holm_flags.items()
+        if bool(meta.get("significant_holm", False)) and 2 <= int(key[1:]) <= 7
     ]
 
     return {
@@ -286,13 +301,21 @@ def _derive_policy(horizons: dict[str, dict]) -> dict:
         "governed_directional_window_days": governed_directional_days,
         "governed_directional_window_runs": directional_runs,
         "fm_conditioned_candidate_window_days": fm_conditioned_mid_horizon,
+        "fm_conditioned_candidate_window_days_holm": fm_conditioned_mid_horizon_holm,
         "h1_governed_significant": h1_governed_supported,
         "h5_governed_significant": 5 in governed_significant_days_nominal,
         "h10_tail_risk_red_flag": h10_tail_risk_red_flag,
         "multiple_comparison_control": {
-            "method": "holm_bonferroni",
-            "family": sorted(governed_p_values.keys(), key=lambda key: int(key[1:])),
-            "results": holm_flags,
+            "governed_vs_baseline": {
+                "method": "holm_bonferroni",
+                "family": sorted(governed_p_values.keys(), key=lambda key: int(key[1:])),
+                "results": holm_flags,
+            },
+            "fm_governed_vs_fm_only": {
+                "method": "holm_bonferroni",
+                "family": sorted(fm_conditioned_p_values.keys(), key=lambda key: int(key[1:])),
+                "results": fm_holm_flags,
+            },
         },
         "rationale": [
             "Prod stays conservative because h1 governed is not statistically significant versus baseline and vintage schema remains unverified.",

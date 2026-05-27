@@ -80,6 +80,7 @@ def test_policy_reopens_governed_mid_horizon_when_h5_is_significant() -> None:
     assert policy["research_candidate_window_evidence_status"] == "nominal_only_pending_replication"
     assert policy["governed_directional_window_days"] == [1, 2, 3, 4, 5, 6, 7]
     assert policy["fm_conditioned_candidate_window_days"] == [2, 3, 4, 5]
+    assert policy["fm_conditioned_candidate_window_days_holm"] == []
     assert policy["h1_governed_significant"] is False
     assert policy["h5_governed_significant"] is True
     assert policy["h10_tail_risk_red_flag"] is True
@@ -105,3 +106,79 @@ def test_holm_bonferroni_flags_stop_after_first_failure() -> None:
     assert flags["h2"]["significant_holm"] is True
     assert flags["h3"]["significant_holm"] is True
     assert flags["h4"]["significant_holm"] is True
+
+
+def test_policy_holm_uses_full_family_not_only_governed_winners() -> None:
+    horizons = {
+        "h1": {
+            "source": "full_json",
+            "winner_family": "primary_no_fm",
+            "decision_stats": {
+                "governed_vs_baseline": {"dm_p_value_one_sided": 0.40, "significant_nominal": False},
+                "fm_governed_vs_fm_only": {"dm_p_value_one_sided": 0.40, "significant_nominal": False},
+            },
+        },
+        "h2": {
+            "source": "full_json",
+            "winner_family": "governed_no_fm",
+            "decision_stats": {
+                "governed_vs_baseline": {"dm_p_value_one_sided": 0.02, "significant_nominal": True},
+                "fm_governed_vs_fm_only": {"dm_p_value_one_sided": 0.50, "significant_nominal": False},
+            },
+        },
+        "h3": {
+            "source": "full_json",
+            "winner_family": "primary_no_fm",
+            "decision_stats": {
+                "governed_vs_baseline": {"dm_p_value_one_sided": 0.55, "significant_nominal": False},
+                "fm_governed_vs_fm_only": {"dm_p_value_one_sided": 0.55, "significant_nominal": False},
+            },
+        },
+        "h4": {
+            "source": "full_json",
+            "winner_family": "primary_no_fm",
+            "decision_stats": {
+                "governed_vs_baseline": {"dm_p_value_one_sided": 0.60, "significant_nominal": False},
+                "fm_governed_vs_fm_only": {"dm_p_value_one_sided": 0.60, "significant_nominal": False},
+            },
+        },
+        "h5": {
+            "source": "full_json",
+            "winner_family": "primary_no_fm",
+            "decision_stats": {
+                "governed_vs_baseline": {"dm_p_value_one_sided": 0.50, "significant_nominal": False},
+                "fm_governed_vs_fm_only": {"dm_p_value_one_sided": 0.50, "significant_nominal": False},
+            },
+        },
+        "h6": {
+            "source": "full_json",
+            "winner_family": "primary_no_fm",
+            "decision_stats": {
+                "governed_vs_baseline": {"dm_p_value_one_sided": 0.70, "significant_nominal": False},
+                "fm_governed_vs_fm_only": {"dm_p_value_one_sided": 0.70, "significant_nominal": False},
+            },
+        },
+        "h7": {
+            "source": "full_json",
+            "winner_family": "primary_no_fm",
+            "decision_stats": {
+                "governed_vs_baseline": {"dm_p_value_one_sided": 0.80, "significant_nominal": False},
+                "fm_governed_vs_fm_only": {"dm_p_value_one_sided": 0.80, "significant_nominal": False},
+            },
+        },
+        "h10": {
+            "source": "directional_parquet",
+            "baseline": {"mae": 24.0, "rmse": 29.8},
+            "governed": {"mae": 18.0, "rmse": 33.0},
+        },
+    }
+
+    policy = _derive_policy(horizons)
+
+    assert policy["research_candidate_window_days"] == [2]
+    assert policy["research_candidate_window_days_holm"] == []
+    assert (
+        policy["multiple_comparison_control"]["governed_vs_baseline"]["results"]["h2"]["significant_holm"]
+        is False
+    )
+    assert policy["fm_conditioned_candidate_window_days"] == []
