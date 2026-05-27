@@ -86,21 +86,24 @@ def _extract_pairwise_mae_stats(horizon_payload: dict, variant_a: str, variant_b
     point = float(boot.get("point_estimate", 0.0))
     ci_low = float(boot.get("ci_low", 0.0))
     ci_high = float(boot.get("ci_high", 0.0))
-    p_value = float(dm.get("p_value_one_sided", 1.0))
+    dm_status = "computed" if "p_value_one_sided" in dm else "missing"
+    p_value = float(dm["p_value_one_sided"]) if "p_value_one_sided" in dm else None
     if flipped:
         point = -point
         ci_low, ci_high = -ci_high, -ci_low
-        p_value = float(1.0 - p_value)
+        if p_value is not None:
+            p_value = float(1.0 - p_value)
     return {
         "candidate_variant": variant_b,
         "reference_variant": variant_a,
+        "dm_test_status": dm_status,
         "dm_p_value_one_sided": p_value,
         "bootstrap_ci_mae_delta": {
             "point_estimate": point,
             "ci_low": ci_low,
             "ci_high": ci_high,
         },
-        "significant_nominal": bool(p_value < 0.05 and ci_high < 0.0),
+        "significant_nominal": bool(p_value is not None and p_value < 0.05 and ci_high < 0.0),
     }
 
 
@@ -226,14 +229,14 @@ def _derive_policy(horizons: dict[str, dict]) -> dict:
 
         governed_vs_baseline = payload.get("decision_stats", {}).get("governed_vs_baseline") or {}
         p_value = governed_vs_baseline.get("dm_p_value_one_sided")
-        if p_value is not None:
+        if governed_vs_baseline.get("dm_test_status") == "computed" and p_value is not None:
             governed_p_values[key] = float(p_value)
         if bool(governed_vs_baseline.get("significant_nominal", False)):
             governed_significant_days_nominal.append(day)
 
         fm_conditioned = payload.get("decision_stats", {}).get("fm_governed_vs_fm_only") or {}
         fm_p_value = fm_conditioned.get("dm_p_value_one_sided")
-        if fm_p_value is not None:
+        if fm_conditioned.get("dm_test_status") == "computed" and fm_p_value is not None:
             fm_conditioned_p_values[key] = float(fm_p_value)
 
     h1_governed_supported = (
