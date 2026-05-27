@@ -69,6 +69,61 @@ def _winner_vs_baseline_significant(winner_summary: dict, baseline_variant: str 
     return False
 
 
+def _extract_pairwise_mae_stats(horizon_payload: dict, variant_a: str, variant_b: str) -> dict[str, object] | None:
+    pairwise = horizon_payload.get("pairwise_stats", {})
+    direct_key = f"{variant_a}__vs__{variant_b}"
+    reverse_key = f"{variant_b}__vs__{variant_a}"
+    flipped = False
+    if direct_key in pairwise:
+        payload = pairwise[direct_key]
+    elif reverse_key in pairwise:
+        payload = pairwise[reverse_key]
+        flipped = True
+    else:
+        return None
+    dm = payload.get("dm_test", {}).get("mae_loss", {})
+    boot = payload.get("bootstrap_diff_b_minus_a", {}).get("mae", {})
+    point = float(boot.get("point_estimate", 0.0))
+    ci_low = float(boot.get("ci_low", 0.0))
+    ci_high = float(boot.get("ci_high", 0.0))
+    p_value = float(dm.get("p_value_one_sided", 1.0))
+    if flipped:
+        point = -point
+        ci_low, ci_high = -ci_high, -ci_low
+        p_value = float(1.0 - p_value)
+    return {
+        "candidate_variant": variant_b,
+        "reference_variant": variant_a,
+        "dm_p_value_one_sided": p_value,
+        "bootstrap_ci_mae_delta": {
+            "point_estimate": point,
+            "ci_low": ci_low,
+            "ci_high": ci_high,
+        },
+        "significant_nominal": bool(p_value < 0.05 and ci_high < 0.0),
+    }
+
+
+def _holm_bonferroni_flags(p_values: dict[str, float]) -> dict[str, dict[str, float | bool]]:
+    if not p_values:
+        return {}
+    items = sorted(p_values.items(), key=lambda item: item[1])
+    m = len(items)
+    accepted: dict[str, dict[str, float | bool]] = {}
+    stop = False
+    for idx, (key, p_value) in enumerate(items, start=1):
+        threshold = 0.05 / float(m - idx + 1)
+        reject = (not stop) and p_value <= threshold
+        if not reject:
+            stop = True
+        accepted[key] = {
+            "p_value": float(p_value),
+            "holm_threshold": float(threshold),
+            "significant_holm": bool(reject),
+        }
+    return accepted
+
+
 def _load_horizon_json_summary(directory: Path, horizon_key: str) -> dict | None:
     winners_path = _find_latest(directory, "_horizon_winners.json")
     full_path = _find_latest(directory, ".json", exclude_contains="_horizon_winners")
@@ -77,11 +132,22 @@ def _load_horizon_json_summary(directory: Path, horizon_key: str) -> dict | None
     winners_payload = _load_json(winners_path)[horizon_key]
     full_payload = _load_json(full_path)
     summary = full_payload["summary"][horizon_key]
+    horizon_payload = full_payload["horizons"][horizon_key]
     input_signatures = {
         key: value.get("sha256")
         for key, value in full_payload.get("inputs", {}).items()
         if isinstance(value, dict) and value.get("sha256")
     }
+    governed_vs_baseline = _extract_pairwise_mae_stats(
+        horizon_payload,
+        variant_a="no_fm_baseline",
+        variant_b="no_fm_governed",
+    )
+    fm_governed_vs_fm_only = _extract_pairwise_mae_stats(
+        horizon_payload,
+        variant_a="fm_only",
+        variant_b="fm_governed",
+    )
     return {
         "source": "full_json",
         "winners_path": str(winners_path),
@@ -94,8 +160,8 @@ def _load_horizon_json_summary(directory: Path, horizon_key: str) -> dict | None
         "winner_summary": winners_payload,
         "summary": summary,
         "decision_stats": {
-            "dm_p_value_governed_vs_baseline": summary.get("dm_p_fm_governed_vs_fm_only_mae"),
-            "bootstrap_ci_mae_governed_vs_baseline": summary.get("bootstrap_ci_fm_governed_vs_fm_only_mae"),
+            "governed_vs_baseline": governed_vs_baseline,
+            "fm_governed_vs_fm_only": fm_governed_vs_fm_only,
             "alpha_nominal": 0.05,
             "test_type": "one_sided_dm_plus_bootstrap",
         },
@@ -145,21 +211,26 @@ def _contiguous_runs(days: list[int]) -> list[list[int]]:
 def _derive_policy(horizons: dict[str, dict]) -> dict:
     h1 = horizons["h1"]
     h1_json = h1.get("source") == "full_json"
-    governed_significant_days: list[int] = []
+    governed_significant_days_nominal: list[int] = []
     governed_directional_days: list[int] = []
+    governed_p_values: dict[str, float] = {}
     for key, payload in horizons.items():
         if key == "h10":
             continue
         if payload.get("source") == "full_json" and payload.get("winner_family", "").startswith("governed"):
             day = int(key[1:])
             governed_directional_days.append(day)
-            if bool(payload.get("significant_winner_vs_baseline", False)):
-                governed_significant_days.append(day)
+            governed_vs_baseline = payload.get("decision_stats", {}).get("governed_vs_baseline") or {}
+            p_value = governed_vs_baseline.get("dm_p_value_one_sided")
+            if p_value is not None:
+                governed_p_values[key] = float(p_value)
+            if bool(governed_vs_baseline.get("significant_nominal", False)):
+                governed_significant_days_nominal.append(day)
 
     h1_governed_supported = (
         h1_json
         and h1.get("winner_family", "").startswith("governed")
-        and bool(h1.get("significant_winner_vs_baseline", False))
+        and bool((h1.get("decision_stats", {}).get("governed_vs_baseline") or {}).get("significant_nominal", False))
     )
 
     h10 = horizons["h10"]
@@ -178,25 +249,56 @@ def _derive_policy(horizons: dict[str, dict]) -> dict:
                 and scores.get("rmse", float("inf")) > baseline.get("rmse", float("-inf"))
             )
 
-    significant_runs = _contiguous_runs(governed_significant_days)
+    holm_flags = _holm_bonferroni_flags(governed_p_values)
+    governed_significant_days_holm = [
+        int(key[1:])
+        for key, meta in holm_flags.items()
+        if bool(meta.get("significant_holm", False))
+    ]
+    significant_runs_nominal = _contiguous_runs(governed_significant_days_nominal)
+    significant_runs_holm = _contiguous_runs(governed_significant_days_holm)
     directional_runs = _contiguous_runs(governed_directional_days)
-    significant_mid_horizon = [day for day in governed_significant_days if 2 <= day <= 7]
+    significant_mid_horizon_nominal = [day for day in governed_significant_days_nominal if 2 <= day <= 7]
+    significant_mid_horizon_holm = [day for day in governed_significant_days_holm if 2 <= day <= 7]
+    fm_conditioned_mid_horizon = [
+        int(key[1:])
+        for key, payload in horizons.items()
+        if key != "h10"
+        and payload.get("source") == "full_json"
+        and bool(((payload.get("decision_stats", {}) or {}).get("fm_governed_vs_fm_only") or {}).get("significant_nominal", False))
+    ]
 
     return {
         "prod_policy": "primary_only_conservative",
         "governed_prod_enabled_by_default": False,
-        "research_policy_candidate": "governed_mid_horizon_candidate" if significant_mid_horizon else "primary_only",
-        "research_candidate_window_days": significant_mid_horizon,
-        "research_candidate_window_runs": significant_runs,
+        "research_policy_candidate": "governed_mid_horizon_candidate" if significant_mid_horizon_nominal else "primary_only",
+        "research_candidate_window_days": significant_mid_horizon_nominal,
+        "research_candidate_window_runs": significant_runs_nominal,
+        "research_candidate_window_days_holm": significant_mid_horizon_holm,
+        "research_candidate_window_runs_holm": significant_runs_holm,
+        "research_candidate_window_evidence_status": (
+            "holm_supported"
+            if significant_mid_horizon_holm
+            else "nominal_only_pending_replication"
+            if significant_mid_horizon_nominal
+            else "not_supported"
+        ),
         "governed_directional_window_days": governed_directional_days,
         "governed_directional_window_runs": directional_runs,
+        "fm_conditioned_candidate_window_days": fm_conditioned_mid_horizon,
         "h1_governed_significant": h1_governed_supported,
-        "h5_governed_significant": 5 in governed_significant_days,
+        "h5_governed_significant": 5 in governed_significant_days_nominal,
         "h10_tail_risk_red_flag": h10_tail_risk_red_flag,
+        "multiple_comparison_control": {
+            "method": "holm_bonferroni",
+            "family": sorted(governed_p_values.keys(), key=lambda key: int(key[1:])),
+            "results": holm_flags,
+        },
         "rationale": [
             "Prod stays conservative because h1 governed is not statistically significant versus baseline and vintage schema remains unverified.",
             "Governed reopens as a serious research candidate because canonical-cache reruns now show statistically significant MAE wins on the mid-horizon block.",
-            "Current evidence supports governed most cleanly on h2..h5; h6..h7 remain directional but not yet statistically strong enough for default production routing.",
+            "Current evidence supports governed most cleanly on h2..h5 at nominal significance; h6..h7 remain directional but not yet statistically strong enough for default production routing.",
+            "Holm-Bonferroni correction is now surfaced explicitly so the mid-horizon candidate is treated as exploratory until replicated cleanly across periods and seeds.",
             "At h10, any MAE gain still carries a tail-risk warning when RMSE worsens versus baseline.",
             "The earlier primary-only conclusion was invalidated by evaluation harnesses reading stale H: caches instead of the canonical C: cache.",
         ],
