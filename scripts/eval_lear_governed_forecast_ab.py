@@ -22,20 +22,21 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from pfc_shaping.data.ct_datasets import resolve_local_cache_path  # noqa: E402
 from pfc_shaping.model.lear_forecaster import LEARForecaster  # noqa: E402
 
 
 DATA_FILES = {
-    "epex_ch": ROOT / "pfc_shaping" / "data" / "epex_15min.parquet",
-    "epex_de": ROOT / "pfc_shaping" / "data" / "epex_de_15min.parquet",
-    "entso": ROOT / "pfc_shaping" / "data" / "entso_fundamentals_15min.parquet",
-    "hydro": ROOT / "pfc_shaping" / "data" / "hydro_reservoir.parquet",
-    "outages": ROOT / "pfc_shaping" / "data" / "outages_15min.parquet",
+    "epex_ch": resolve_local_cache_path(ROOT, "ct_price_15min_ch"),
+    "epex_de": resolve_local_cache_path(ROOT, "ct_price_15min_de"),
+    "entso": resolve_local_cache_path(ROOT, "ct_entso_fundamentals_15min"),
+    "hydro": resolve_local_cache_path(ROOT, "ct_hydro_daily"),
+    "outages": resolve_local_cache_path(ROOT, "ct_outages_15min"),
     "commodities": ROOT / "data" / "commodities_cache.parquet",
-    "de_renewable_forecast": ROOT / "pfc_shaping" / "data" / "de_renewable_forecast.parquet",
-    "multi_country_forecast": ROOT / "pfc_shaping" / "data" / "multi_country_forecast_15min.parquet",
-    "fr_nuclear_forecast": ROOT / "pfc_shaping" / "data" / "fr_nuclear_forecast_15min.parquet",
-    "weather_forecast": ROOT / "pfc_shaping" / "data" / "weather_forecast_hourly.parquet",
+    "de_renewable_forecast": resolve_local_cache_path(ROOT, "ct_forecast_de_renewables_15min"),
+    "multi_country_forecast": resolve_local_cache_path(ROOT, "ct_forecast_multi_country_15min"),
+    "fr_nuclear_forecast": resolve_local_cache_path(ROOT, "ct_forecast_fr_nuclear_15min"),
+    "weather_forecast": resolve_local_cache_path(ROOT, "ct_weather_forecast_hourly"),
 }
 
 VARIANTS = (
@@ -46,8 +47,8 @@ VARIANTS = (
 )
 
 
-def _read_optional_parquet(path: Path) -> pd.DataFrame | None:
-    if not path.exists():
+def _read_optional_parquet(path: Path | None) -> pd.DataFrame | None:
+    if path is None or not path.exists():
         return None
     df = pd.read_parquet(path)
     return None if df.empty else df
