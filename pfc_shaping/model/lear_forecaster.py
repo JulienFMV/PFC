@@ -28,6 +28,7 @@ Usage:
 from __future__ import annotations
 
 import logging
+import warnings
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
@@ -35,6 +36,7 @@ from typing import Any
 import lightgbm as lgb
 import numpy as np
 import pandas as pd
+from sklearn.exceptions import ConvergenceWarning
 from sklearn.linear_model import ElasticNetCV, QuantileRegressor
 from sklearn.neural_network import MLPRegressor
 from sklearn.preprocessing import StandardScaler
@@ -241,6 +243,7 @@ class LEARForecaster:
             "feature_max_vif": {},
             "per_hour": {},
         }
+        self._governed_convergence_status: dict[str, Any] = {}
 
     def fit(
         self,
@@ -1635,6 +1638,88 @@ class LEARForecaster:
         features_list.append(arr)
         feature_names.append(name)
 
+    def _elasticnet_retry_configs(self) -> list[tuple[float, int]]:
+        base_l1_ratio = float(self.elasticnet_l1_ratio_effective)
+        base_max_iter = int(self.max_iter)
+        configs: list[tuple[float, int]] = [(base_l1_ratio, base_max_iter)]
+        if self.use_governed_forecast_features:
+            configs.extend(
+                [
+                    (max(base_l1_ratio, 0.7), max(base_max_iter, 10000)),
+                    (max(base_l1_ratio, 0.9), max(base_max_iter, 20000)),
+                ]
+            )
+        deduped: list[tuple[float, int]] = []
+        for config in configs:
+            if config not in deduped:
+                deduped.append(config)
+        return deduped
+
+    def _fit_elasticnet_with_retries(
+        self,
+        X_train: np.ndarray,
+        y_train: np.ndarray,
+        sample_weight: np.ndarray,
+        cv: TimeSeriesSplit,
+        hour: int,
+        window: int,
+    ) -> ElasticNetCV:
+        attempt_records: list[dict[str, Any]] = []
+        last_model: ElasticNetCV | None = None
+        for attempt_idx, (l1_ratio, max_iter) in enumerate(self._elasticnet_retry_configs(), start=1):
+            model = ElasticNetCV(
+                l1_ratio=l1_ratio,
+                max_iter=max_iter,
+                cv=cv,
+                random_state=self.random_state,
+            )
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always", ConvergenceWarning)
+                model.fit(X_train, y_train, sample_weight=sample_weight)
+            convergence_warnings = [
+                warning
+                for warning in caught
+                if issubclass(getattr(warning, "category", Warning), ConvergenceWarning)
+            ]
+            attempt_records.append(
+                {
+                    "attempt": attempt_idx,
+                    "l1_ratio": float(l1_ratio),
+                    "max_iter": int(max_iter),
+                    "converged": not bool(convergence_warnings),
+                    "warning_count": int(len(convergence_warnings)),
+                }
+            )
+            last_model = model
+            if not convergence_warnings:
+                break
+        status_key = f"h{int(hour):02d}_w{int(window)}"
+        recovered = len(attempt_records) > 1 and bool(attempt_records[-1]["converged"])
+        self._governed_convergence_status[status_key] = {
+            "attempts": attempt_records,
+            "recovered": recovered,
+            "converged": bool(attempt_records[-1]["converged"]) if attempt_records else False,
+        }
+        if recovered:
+            logger.info(
+                "Recovered governed ElasticNet convergence h=%d w=%d after %d attempts",
+                hour,
+                window,
+                len(attempt_records),
+            )
+        if attempt_records and not attempt_records[-1]["converged"]:
+            logger.warning(
+                "ElasticNet did not converge h=%d w=%d after %d attempts; last l1_ratio=%.2f max_iter=%d",
+                hour,
+                window,
+                len(attempt_records),
+                attempt_records[-1]["l1_ratio"],
+                attempt_records[-1]["max_iter"],
+            )
+        if last_model is None:
+            raise RuntimeError("ElasticNet fitting produced no model")
+        return last_model
+
     @staticmethod
     def _safe_mae(y_true: np.ndarray, y_pred: np.ndarray) -> float:
         if y_true.size == 0:
@@ -2005,22 +2090,19 @@ class LEARForecaster:
                 scaler.fit(X_arr[:n_train])
                 X_scaled = scaler.transform(X_arr)
                 cv = self._time_series_cv(n_train)
-                effective_max_iter = self.max_iter
-                if self.use_governed_forecast_features and float(self.elasticnet_l1_ratio_effective) >= 0.5:
-                    effective_max_iter = max(int(effective_max_iter), 5000)
-                model = ElasticNetCV(
-                    l1_ratio=self.elasticnet_l1_ratio_effective,
-                    max_iter=effective_max_iter,
-                    cv=cv,
-                    random_state=self.random_state,
-                )
 
                 # Exponential decay weighting: recent obs matter more
                 # Half-life 180 days (Paraschiv et al., Swiss market)
                 days_ago_train = np.arange(n_train)[::-1].astype(float) + n_val
                 sample_weights = np.exp(-days_ago_train * (np.log(2) / 180))
-                model.fit(X_scaled[:n_train], y_t[:n_train],
-                          sample_weight=sample_weights)
+                model = self._fit_elasticnet_with_retries(
+                    X_scaled[:n_train],
+                    y_t[:n_train],
+                    sample_weights,
+                    cv,
+                    hour=hour,
+                    window=window,
+                )
 
                 # Out-of-time validation on held-out recent data
                 Xv_scaled = scaler.transform(
