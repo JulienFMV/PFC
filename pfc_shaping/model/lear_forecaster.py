@@ -150,6 +150,7 @@ class LEARForecaster:
         commodities: pd.DataFrame | None = None,
         hydro: pd.DataFrame | None = None,
         epex_de_15min: pd.DataFrame | None = None,
+        neighbor_price_15min: dict[str, pd.DataFrame] | None = None,
         de_renewable_forecast: pd.DataFrame | None = None,
     ) -> "LEARForecaster":
         """Prepare hourly data matrices for LEAR training."""
@@ -163,8 +164,9 @@ class LEARForecaster:
         # Build hourly exogenous matrix
         exog = pd.DataFrame(index=self.prices_h_.index)
 
-        # DE cross-border prices
+        # Cross-border prices
         self._has_de_prices = False
+        self._neighbor_price_series_h_: dict[str, pd.Series] = {}
         if epex_de_15min is not None and not epex_de_15min.empty:
             de_col = "price_eur_mwh" if "price_eur_mwh" in epex_de_15min.columns else epex_de_15min.columns[0]
             self.prices_de_h_ = (
@@ -173,8 +175,19 @@ class LEARForecaster:
                 .dropna()
             )
             exog["de_price"] = self.prices_de_h_
+            self._neighbor_price_series_h_["de"] = self.prices_de_h_
             self._has_de_prices = True
             logger.info("  DE cross-border prices loaded: %d hours", len(self.prices_de_h_))
+        if neighbor_price_15min:
+            for code, frame in neighbor_price_15min.items():
+                code = str(code).lower()
+                if code == "de" or frame is None or frame.empty:
+                    continue
+                nb_col = "price_eur_mwh" if "price_eur_mwh" in frame.columns else frame.columns[0]
+                nb_series_h = frame[nb_col].resample("h").mean().dropna()
+                exog[f"{code}_price"] = nb_series_h
+                self._neighbor_price_series_h_[code] = nb_series_h
+                logger.info("  %s cross-border prices loaded: %d hours", code.upper(), len(nb_series_h))
 
         # ENTSO-E
         if entso_15min is not None and not entso_15min.empty:
@@ -269,10 +282,11 @@ class LEARForecaster:
 
         self._fitted = True
         logger.info(
-            "LEAR data prepared: %d hours, %d exog features (DE=%s), %s → %s",
+            "LEAR data prepared: %d hours, %d exog features (DE=%s, neighbors=%s), %s → %s",
             len(self.prices_h_),
             len(self.exog_.columns),
             self._has_de_prices,
+            sorted(self._neighbor_price_series_h_.keys()),
             self.prices_h_.index[0].date(),
             self.prices_h_.index[-1].date(),
         )
@@ -389,43 +403,40 @@ class LEARForecaster:
         n_dates = len(complete)
         dates = pd.DatetimeIndex(complete.index)
 
-        # ── 2. DE cross-border features (7 features) ──
-        if "de_price" in exog.columns:
-            de_series = exog["de_price"].dropna()
-            if not de_series.empty:
-                de_local = de_series.index.tz_convert(self.tz)
-                de_df = pd.DataFrame({
-                    "date": de_local.date,
-                    "hour": de_local.hour,
-                    "price": de_series.values,
-                })
-                de_pivot = de_df.pivot_table(
-                    index="date", columns="hour", values="price", aggfunc="mean"
-                )
-                de_pivot = de_pivot.reindex(complete.index)
+        # ── 2. Cross-border price features ──
+        neighbor_price_cols = [c for c in exog.columns if c.endswith("_price")]
+        for price_col in neighbor_price_cols:
+            neighbor_code = price_col.replace("_price", "")
+            nb_series = exog[price_col].dropna()
+            if nb_series.empty:
+                continue
+            nb_local = nb_series.index.tz_convert(self.tz)
+            nb_df = pd.DataFrame({
+                "date": nb_local.date,
+                "hour": nb_local.hour,
+                "price": nb_series.values,
+            })
+            nb_pivot = nb_df.pivot_table(
+                index="date", columns="hour", values="price", aggfunc="mean"
+            )
+            nb_pivot = nb_pivot.reindex(complete.index)
 
-                for lag in [1, 2, 7]:
-                    de_lagged = de_pivot.shift(lag)
-                    # Target hour DE price
-                    if target_hour in de_lagged.columns:
-                        features_list.append(de_lagged[target_hour].values)
-                        feature_names.append(f"de_price_d-{lag}_h{target_hour:02d}")
-                    # DE daily mean
-                    features_list.append(de_lagged.mean(axis=1).values)
-                    feature_names.append(f"de_price_mean_d-{lag}")
+            for lag in [1, 2, 7]:
+                nb_lagged = nb_pivot.shift(lag)
+                if target_hour in nb_lagged.columns:
+                    features_list.append(nb_lagged[target_hour].values)
+                    feature_names.append(f"{neighbor_code}_price_d-{lag}_h{target_hour:02d}")
+                features_list.append(nb_lagged.mean(axis=1).values)
+                feature_names.append(f"{neighbor_code}_price_mean_d-{lag}")
 
-                # CH-DE spread (d-1, target hour)
-                if target_hour in de_pivot.columns and target_hour in complete.columns:
-                    spread = complete.shift(1)[target_hour] - de_pivot.shift(1)[target_hour]
-                    features_list.append(spread.values)
-                    feature_names.append(f"ch_de_spread_d-1_h{target_hour:02d}")
+            if neighbor_code == "de" and target_hour in nb_pivot.columns and target_hour in complete.columns:
+                spread = complete.shift(1)[target_hour] - nb_pivot.shift(1)[target_hour]
+                features_list.append(spread.values)
+                feature_names.append(f"ch_de_spread_d-1_h{target_hour:02d}")
 
-                    # Swiss Market Intelligence: CH-DE congestion binary
-                    # When |spread| > 2 EUR/MWh, borders are congested and
-                    # CH prices decouple from DE (autocorrelation ~0.7)
-                    congestion = (spread.abs() > 2.0).astype(float)
-                    features_list.append(congestion.values)
-                    feature_names.append("ch_de_congestion_d-1")
+                congestion = (spread.abs() > 2.0).astype(float)
+                features_list.append(congestion.values)
+                feature_names.append("ch_de_congestion_d-1")
 
         # ── 3. DE renewable forecasts (day-ahead wind + solar) ──
         for re_col in ["forecast_wind_de_mw", "forecast_solar_de_mw", "forecast_renewable_de_mw"]:
@@ -1323,8 +1334,9 @@ class LEARForecaster:
         if self._fm is not None and self._fm.available:
             # Build covariate dict from exogenous data
             fm_covariates = {}
-            if self._has_de_prices and hasattr(self, "prices_de_h_"):
-                fm_covariates["de_price"] = self.prices_de_h_
+            for code, series in getattr(self, "_neighbor_price_series_h_", {}).items():
+                if len(series) > 48:
+                    fm_covariates[f"{code}_price"] = series
             for col in ["load_mw", "solar_mw", "wind_mw"]:
                 if col in self.exog_.columns:
                     s = self.exog_[col].dropna()
@@ -1587,8 +1599,8 @@ class LEARForecaster:
                     # Momentum, volatility, etc.
                     x[i] = X_full[col_name].dropna().iloc[-1] if not X_full[col_name].dropna().empty else 0
 
-            # ── DE price features ──
-            elif col_name.startswith("de_price_"):
+            # ── Neighbor price features ──
+            elif any(col_name.startswith(f"{code}_price_") for code in ["de", "fr", "at", "it"]):
                 if "_d-" in col_name:
                     parts = col_name.split("_d-")
                     lag = int(parts[1].split("_")[0]) if "_" in parts[1] else int(parts[1])
@@ -1701,10 +1713,10 @@ class LEARForecaster:
                 if len(prices_trunc) >= 168:
                     # Build truncated covariates
                     fm_cov = {}
-                    if self._has_de_prices and hasattr(self, "prices_de_h_"):
-                        de_trunc = self.prices_de_h_[:cutoff]
-                        if len(de_trunc) > 48:
-                            fm_cov["de_price"] = de_trunc
+                    for code, series in getattr(self, "_neighbor_price_series_h_", {}).items():
+                        trunc = series[:cutoff]
+                        if len(trunc) > 48:
+                            fm_cov[f"{code}_price"] = trunc
                     for col in ["load_mw", "solar_mw", "wind_mw"]:
                         if col in self.exog_.columns:
                             s = self.exog_[col][:cutoff].dropna()
