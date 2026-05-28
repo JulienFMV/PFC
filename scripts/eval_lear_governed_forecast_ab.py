@@ -10,6 +10,7 @@ import json
 import math
 import os
 import random
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -65,6 +66,25 @@ def _sha256(path: Path) -> str:
 def _set_seed(seed: int) -> None:
     random.seed(seed)
     np.random.seed(seed)
+    try:
+        import torch
+
+        torch.manual_seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(seed)
+    except Exception:
+        pass
+
+
+def _git_commit() -> str:
+    result = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result.stdout.strip() if result.returncode == 0 else ""
 
 
 def _score(df: pd.DataFrame, forecast_col: str = "forecast", actual_col: str = "actual") -> dict[str, float | int]:
@@ -442,10 +462,12 @@ def _run_variant(
     weather_forecast: pd.DataFrame | None,
     n_days: int,
     horizon: int,
+    random_state: int,
 ) -> tuple[pd.DataFrame, dict[str, object]]:
     model = LEARForecaster(
         use_foundation_model=use_foundation_model,
         use_governed_forecast_features=use_governed_forecast_features,
+        random_state=int(random_state),
     )
     model.fit(
         epex_15min=epex_ch,
@@ -486,7 +508,7 @@ def main() -> None:
     manifest: dict[str, object] = {
         "run_id": run_id,
         "created_utc": datetime.now(timezone.utc).isoformat(),
-        "git_commit": os.popen("git rev-parse HEAD").read().strip(),
+        "git_commit": _git_commit(),
         "seed": int(args.seed),
         "args": {
             **vars(args),
@@ -549,6 +571,7 @@ def main() -> None:
                 weather_forecast,
                 args.n_days,
                 horizon,
+                args.seed,
             )
             variants_bt[label] = bt
             variants_health[label] = health

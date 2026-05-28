@@ -6,10 +6,12 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
+from scipy.stats import binomtest
 
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
@@ -80,9 +82,16 @@ def _replication_label(cutoff_utc: pd.Timestamp) -> str:
 
 
 def _collect_manifest(output_dir: Path, args: argparse.Namespace, cutoffs: list[pd.Timestamp]) -> dict[str, object]:
+    git_result = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
     manifest: dict[str, object] = {
         "created_utc": datetime.now(timezone.utc).isoformat(),
-        "git_commit": __import__("os").popen("git rev-parse HEAD").read().strip(),
+        "git_commit": git_result.stdout.strip() if git_result.returncode == 0 else "",
         "args": {
             **vars(args),
             "cutoffs_utc": [ts.isoformat() for ts in cutoffs],
@@ -106,6 +115,16 @@ def _collect_manifest(output_dir: Path, args: argparse.Namespace, cutoffs: list[
     manifest["vintage_schema_checks"] = vintage_checks
     manifest["output_dir"] = str(output_dir)
     return manifest
+
+
+def _wilson_interval(k: int, n: int, z: float = 1.959963984540054) -> tuple[float, float]:
+    if n <= 0:
+        return 0.0, 0.0
+    phat = k / n
+    denom = 1.0 + (z * z) / n
+    center = (phat + (z * z) / (2.0 * n)) / denom
+    margin = (z / denom) * (((phat * (1.0 - phat)) / n + (z * z) / (4.0 * n * n)) ** 0.5)
+    return max(0.0, center - margin), min(1.0, center + margin)
 
 
 def main() -> None:
@@ -160,6 +179,7 @@ def main() -> None:
                         sliced["weather_forecast"],
                         args.n_days,
                         horizon,
+                        seed,
                     )
                     variants_bt[label] = bt
                     variants_health[label] = health
@@ -225,16 +245,33 @@ def main() -> None:
 
     aggregate_rows: list[dict[str, object]] = []
     for horizon, group in summary_df.groupby("horizon"):
+        n_replications = int(len(group))
+        k_gov = int(group["governed_nominal_significant"].sum())
+        k_fm = int(group["fm_conditioned_nominal_significant"].sum())
+        gov_ci_low, gov_ci_high = _wilson_interval(k_gov, n_replications)
+        fm_ci_low, fm_ci_high = _wilson_interval(k_fm, n_replications)
         aggregate_rows.append(
             {
                 "horizon": int(horizon),
-                "n_replications": int(len(group)),
+                "n_replications": n_replications,
                 "baseline_mae_mean": float(group["baseline_mae"].mean()),
                 "governed_mae_mean": float(group["governed_mae"].mean()),
                 "governed_mae_delta_mean": float((group["governed_mae"] - group["baseline_mae"]).mean()),
                 "governed_mae_delta_median": float((group["governed_mae"] - group["baseline_mae"]).median()),
                 "governed_nominal_significant_rate": float(group["governed_nominal_significant"].mean()),
+                "governed_nominal_significant_count": k_gov,
+                "governed_nominal_significant_wilson_ci_low": gov_ci_low,
+                "governed_nominal_significant_wilson_ci_high": gov_ci_high,
+                "governed_nominal_significant_binom_p": float(
+                    binomtest(k_gov, n_replications, p=0.025, alternative="greater").pvalue
+                ),
                 "fm_conditioned_nominal_significant_rate": float(group["fm_conditioned_nominal_significant"].mean()),
+                "fm_conditioned_nominal_significant_count": k_fm,
+                "fm_conditioned_nominal_significant_wilson_ci_low": fm_ci_low,
+                "fm_conditioned_nominal_significant_wilson_ci_high": fm_ci_high,
+                "fm_conditioned_nominal_significant_binom_p": float(
+                    binomtest(k_fm, n_replications, p=0.025, alternative="greater").pvalue
+                ),
             }
         )
     aggregate = pd.DataFrame(aggregate_rows).sort_values("horizon").reset_index(drop=True)
