@@ -485,6 +485,7 @@ def _run_variant(
         horizon_days=max(1, int(horizon)),
         min_coverage_ratio=float(os.getenv("PFC_CT_MIN_GOVERNED_FORECAST_COVERAGE", "0.98")),
     )
+    governed_health["convergence"] = model.governed_convergence_summary()
     bt = model.backtest(n_days=n_days, horizon=horizon).copy()
     bt["variant"] = label
     return bt, governed_health

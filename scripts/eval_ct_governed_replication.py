@@ -127,6 +127,20 @@ def _wilson_interval(k: int, n: int, z: float = 1.959963984540054) -> tuple[floa
     return max(0.0, center - margin), min(1.0, center + margin)
 
 
+def _convergence_summary(health: dict[str, object]) -> dict[str, object]:
+    summary = health.get("convergence")
+    if isinstance(summary, dict):
+        return summary
+    return {
+        "tracked_cells": 0,
+        "convergence_rate": 1.0,
+        "convergence_compromised": False,
+        "non_converged_cells": [],
+        "retried_cells": [],
+        "model_changed_cells": [],
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Structured Swiss CT governed replications across cutoffs and seeds.")
     parser.add_argument("--horizons", type=str, default="2,3,4,5")
@@ -218,6 +232,8 @@ def main() -> None:
                 out_path = args.output_dir / f"{replication_id}.json"
                 out_path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
                 replications.append(payload)
+                gov_conv = _convergence_summary(variants_health["no_fm_governed"])
+                fm_gov_conv = _convergence_summary(variants_health["fm_governed"])
                 summary_rows.append(
                     {
                         "replication_id": replication_id,
@@ -236,6 +252,12 @@ def main() -> None:
                         "fm_governed_vs_fm_only_ci_high": fm_ci["ci_high"],
                         "governed_nominal_significant": bool(gov_vs_base < 0.05 and gov_ci["ci_high"] < 0.0),
                         "fm_conditioned_nominal_significant": bool(fm_cond < 0.05 and fm_ci["ci_high"] < 0.0),
+                        "governed_convergence_rate": float(gov_conv["convergence_rate"]),
+                        "governed_convergence_compromised": bool(gov_conv["convergence_compromised"]),
+                        "governed_non_converged_cells": "|".join(gov_conv["non_converged_cells"]),
+                        "governed_model_changed_cells": "|".join(gov_conv["model_changed_cells"]),
+                        "fm_governed_convergence_rate": float(fm_gov_conv["convergence_rate"]),
+                        "fm_governed_convergence_compromised": bool(fm_gov_conv["convergence_compromised"]),
                     }
                 )
 
@@ -265,6 +287,9 @@ def main() -> None:
                 "governed_nominal_significant_binom_p": float(
                     binomtest(k_gov, n_replications, p=0.025, alternative="greater").pvalue
                 ),
+                "governed_served_model_convergence_rate_mean": float(group["governed_convergence_rate"].mean()),
+                "governed_served_model_convergence_rate_min": float(group["governed_convergence_rate"].min()),
+                "governed_convergence_compromised_count": int(group["governed_convergence_compromised"].sum()),
                 "fm_conditioned_nominal_significant_rate": float(group["fm_conditioned_nominal_significant"].mean()),
                 "fm_conditioned_nominal_significant_count": k_fm,
                 "fm_conditioned_nominal_significant_wilson_ci_low": fm_ci_low,
@@ -272,6 +297,9 @@ def main() -> None:
                 "fm_conditioned_nominal_significant_binom_p": float(
                     binomtest(k_fm, n_replications, p=0.025, alternative="greater").pvalue
                 ),
+                "fm_governed_served_model_convergence_rate_mean": float(group["fm_governed_convergence_rate"].mean()),
+                "fm_governed_served_model_convergence_rate_min": float(group["fm_governed_convergence_rate"].min()),
+                "fm_governed_convergence_compromised_count": int(group["fm_governed_convergence_compromised"].sum()),
             }
         )
     aggregate = pd.DataFrame(aggregate_rows).sort_values("horizon").reset_index(drop=True)

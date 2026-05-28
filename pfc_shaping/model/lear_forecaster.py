@@ -37,7 +37,7 @@ import lightgbm as lgb
 import numpy as np
 import pandas as pd
 from sklearn.exceptions import ConvergenceWarning
-from sklearn.linear_model import ElasticNet, ElasticNetCV, QuantileRegressor
+from sklearn.linear_model import ElasticNetCV, QuantileRegressor
 from sklearn.neural_network import MLPRegressor
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import TimeSeriesSplit
@@ -1641,12 +1641,16 @@ class LEARForecaster:
     def _elasticnet_retry_configs(self) -> list[tuple[float, int]]:
         base_l1_ratio = float(self.elasticnet_l1_ratio_effective)
         base_max_iter = int(self.max_iter)
-        configs: list[tuple[float, int]] = [(base_l1_ratio, base_max_iter)]
+        configs: list[tuple[float, int]] = [
+            (base_l1_ratio, base_max_iter),
+            (base_l1_ratio, max(base_max_iter, 10000)),
+            (base_l1_ratio, max(base_max_iter, 20000)),
+        ]
         if self.use_governed_forecast_features:
             configs.extend(
                 [
-                    (max(base_l1_ratio, 0.7), max(base_max_iter, 10000)),
-                    (max(base_l1_ratio, 0.9), max(base_max_iter, 20000)),
+                    (max(base_l1_ratio, 0.7), max(base_max_iter, 20000)),
+                    (max(base_l1_ratio, 0.9), max(base_max_iter, 30000)),
                 ]
             )
         deduped: list[tuple[float, int]] = []
@@ -1654,6 +1658,58 @@ class LEARForecaster:
             if config not in deduped:
                 deduped.append(config)
         return deduped
+
+    @staticmethod
+    def _final_model_convergence_from_n_iter(model: ElasticNetCV) -> dict[str, Any]:
+        n_iter = getattr(model, "n_iter_", None)
+        if n_iter is None:
+            return {
+                "status": "missing",
+                "n_iter_max": None,
+                "max_iter": int(model.max_iter),
+                "converged": None,
+            }
+        n_iter_max = int(np.max(np.atleast_1d(n_iter)))
+        max_iter = int(model.max_iter)
+        return {
+            "status": "computed",
+            "n_iter_max": n_iter_max,
+            "max_iter": max_iter,
+            "converged": bool(n_iter_max < max_iter),
+        }
+
+    def governed_convergence_summary(self) -> dict[str, Any]:
+        statuses = self._governed_convergence_status
+        if not statuses:
+            return {
+                "tracked_cells": 0,
+                "convergence_rate": 1.0,
+                "convergence_compromised": False,
+                "non_converged_cells": [],
+                "retried_cells": [],
+                "model_changed_cells": [],
+            }
+        tracked_cells = len(statuses)
+        non_converged_cells = [
+            key for key, payload in statuses.items() if not bool(payload.get("converged"))
+        ]
+        retried_cells = [
+            key for key, payload in statuses.items() if len(payload.get("attempts", [])) > 1
+        ]
+        model_changed_cells = [
+            key
+            for key, payload in statuses.items()
+            if any(bool(attempt.get("model_changed_from_base")) for attempt in payload.get("attempts", []))
+        ]
+        converged_cells = tracked_cells - len(non_converged_cells)
+        return {
+            "tracked_cells": tracked_cells,
+            "convergence_rate": float(converged_cells / tracked_cells) if tracked_cells else 1.0,
+            "convergence_compromised": bool(non_converged_cells),
+            "non_converged_cells": non_converged_cells,
+            "retried_cells": retried_cells,
+            "model_changed_cells": model_changed_cells,
+        }
 
     def _fit_elasticnet_with_retries(
         self,
@@ -1664,25 +1720,9 @@ class LEARForecaster:
         hour: int,
         window: int,
     ) -> ElasticNetCV:
-        def _final_model_emits_convergence_warning(model: ElasticNetCV) -> bool:
-            if not hasattr(model, "alpha_") or not hasattr(model, "l1_ratio_"):
-                return True
-            final_model = ElasticNet(
-                alpha=float(model.alpha_),
-                l1_ratio=float(model.l1_ratio_),
-                max_iter=int(model.max_iter),
-                random_state=self.random_state,
-            )
-            with warnings.catch_warnings(record=True) as final_caught:
-                warnings.simplefilter("always", ConvergenceWarning)
-                final_model.fit(X_train, y_train, sample_weight=sample_weight)
-            return any(
-                issubclass(getattr(warning, "category", Warning), ConvergenceWarning)
-                for warning in final_caught
-            )
-
         attempt_records: list[dict[str, Any]] = []
         last_model: ElasticNetCV | None = None
+        base_l1_ratio = float(self.elasticnet_l1_ratio_effective)
         for attempt_idx, (l1_ratio, max_iter) in enumerate(self._elasticnet_retry_configs(), start=1):
             model = ElasticNetCV(
                 l1_ratio=l1_ratio,
@@ -1698,8 +1738,9 @@ class LEARForecaster:
                 for warning in caught
                 if issubclass(getattr(warning, "category", Warning), ConvergenceWarning)
             ]
-            final_model_warned = bool(convergence_warnings) and _final_model_emits_convergence_warning(model)
-            converged = (not bool(convergence_warnings)) or (not final_model_warned)
+            final_model_status = self._final_model_convergence_from_n_iter(model)
+            final_model_warned = bool(final_model_status.get("converged") is False)
+            converged = (not bool(convergence_warnings)) or (final_model_status.get("converged") is True)
             attempt_records.append(
                 {
                     "attempt": attempt_idx,
@@ -1709,6 +1750,9 @@ class LEARForecaster:
                     "warning_count": int(len(convergence_warnings)),
                     "cv_path_warned": bool(convergence_warnings),
                     "final_model_warned": bool(final_model_warned),
+                    "final_model_status": final_model_status["status"],
+                    "final_model_n_iter_max": final_model_status["n_iter_max"],
+                    "model_changed_from_base": bool(float(l1_ratio) != base_l1_ratio),
                 }
             )
             last_model = model
