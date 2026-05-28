@@ -58,9 +58,11 @@ P&L par 5 €/MWh d'erreur shape), pas par l'ordre alphabétique des features.
     - [x] 05-01-PLAN.md — MSFC enforce_positivity + ArbitrageFreeCalibrator enforce_m_factor_floor + REQUIREMENTS.md NEG-05 reformulation + scaffold tests/test_phase05_negative_prices.py
     - [x] 05-02-PLAN.md — WaterValueCorrection delta-additif (compute_delta_wv) + assembler integration + telemetry + 2 NEG-03 tests
     - [x] 05-03-PLAN.md — ContractCascader spread-additif + master flag PFC_LT_ALLOW_NEGATIVE_PRICES audit-trail + fixture/baseline parquets + 6 tests + PROJECT.md D-FLIP-2
-- [ ] **Phase 5ter: Distribution probabiliste par bloc**
-  - Goal: `pfc_block_distribution(start, end, hours_mask) → (p10, p50, p90)` via Monte-Carlo shape.
+- [x] **Phase 5ter: Distribution probabiliste par bloc** — `6263e3a` (completed 2026-05-28)
+  - Goal: `pfc_block_distribution(pfc_df, calendar_df, uncertainty, block, start, end) → BlockDistribution(p10, p50, p90)`.
   - Permet au trader de calculer une prime de risque (shape inhedgeable).
+  - Livré v1 : agrégation **comonotone** des bandes Uncertainty v2 par pas (quantile de la moyenne = moyenne des quantiles, exact sous comonotonicité, borne conservatrice pour un risque inhedgeable). Réutilise `block_masks.py` (5 blocs) + `Uncertainty v2` (zéro nouvelle calibration). 7 tests synthétiques.
+  - **Follow-up noté** (non livré) : variante diversifiée / block-bootstrap empirique (resample de périodes de livraison entières pour récupérer la vraie corrélation intra-bloc) — candidat Phase 5ter-bis.
 - [x] **Phase 10: PFC FMV Quality Scorecard (5-pillar SOTA replication)** (completed 2026-05-21)
   - Goal: Démontrer que la PFC FMV est SOTA par construction via 5 piliers
     (Hildmann structural + KYOS empirical accuracy + Christoffersen unconditional +
