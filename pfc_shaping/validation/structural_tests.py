@@ -158,6 +158,57 @@ def _period_mask(
     return np.zeros(len(idx_utc), dtype=bool)
 
 
+def _expected_period_points(
+    idx_utc: pd.DatetimeIndex,
+    product_type: str,
+    year: int,
+    sub: int | None,
+) -> int | None:
+    """Expected number of timestamps for a fully covered local delivery period.
+
+    Returns ``None`` when the frequency cannot be inferred robustly or when the
+    product type is unsupported by Pillar 1.1.
+    """
+    if len(idx_utc) < 2:
+        return None
+
+    diffs = idx_utc.to_series().diff().dropna()
+    if diffs.empty:
+        return None
+    step = diffs.mode().iloc[0]
+    if step <= pd.Timedelta(0):
+        return None
+
+    start_month = 1
+    end_month = 12
+    if product_type == "Quarter":
+        if sub is None:
+            return None
+        start_month = (sub - 1) * 3 + 1
+        end_month = start_month + 2
+    elif product_type == "Month":
+        if sub is None:
+            return None
+        start_month = sub
+        end_month = sub
+    elif product_type != "Cal":
+        return None
+
+    start_local = pd.Timestamp(year=year, month=start_month, day=1, tz="Europe/Zurich")
+    if end_month == 12:
+        end_local = pd.Timestamp(year=year + 1, month=1, day=1, tz="Europe/Zurich")
+    else:
+        end_local = pd.Timestamp(year=year, month=end_month + 1, day=1, tz="Europe/Zurich")
+
+    expected_idx = pd.date_range(
+        start_local.tz_convert("UTC"),
+        end_local.tz_convert("UTC"),
+        freq=step,
+        inclusive="left",
+    )
+    return int(len(expected_idx))
+
+
 # ---------------------------------------------------------------------------
 # Pillar 1.1 — Arbitrage-freeness
 # ---------------------------------------------------------------------------
@@ -167,6 +218,7 @@ def test_arb_free(
     pfc: pd.Series,
     forwards: dict[str, float],
     tol: float = 0.01,
+    min_coverage: float = 0.95,
 ) -> TestResult:
     """Pillar 1.1 Hildmann arb-free : `|mean(PFC | period) - forward| < tol €/MWh`.
 
@@ -201,6 +253,7 @@ def test_arb_free(
     max_dev = 0.0
     details: dict[str, Any] = {}
     skipped: list[str] = []
+    partial: list[str] = []
     evaluated: list[str] = []
 
     for key, fwd_price in forwards.items():
@@ -216,6 +269,19 @@ def test_arb_free(
             skipped.append(key)
             continue
 
+        expected_points = _expected_period_points(pfc.index, product_type, year, sub)
+        if expected_points is not None and expected_points > 0:
+            coverage = float(mask.sum()) / float(expected_points)
+            if coverage < min_coverage:
+                partial.append(key)
+                details[key] = {
+                    "coverage": coverage,
+                    "expected_points": expected_points,
+                    "observed_points": int(mask.sum()),
+                    "reason": "partial_period_coverage",
+                }
+                continue
+
         observed_mean = float(pfc.iloc[mask].mean())
         dev = abs(observed_mean - float(fwd_price))
         details[key] = {
@@ -229,6 +295,8 @@ def test_arb_free(
 
     if skipped:
         details["_skipped"] = skipped
+    if partial:
+        details["_partial"] = partial
 
     # WR-06 : coverage-aware gating. Si forwards non-vide mais AUCUNE key
     # n'est évaluable (toutes skipées par mask vide ou parse-error), c'est
@@ -248,6 +316,7 @@ def test_arb_free(
                 "degenerate": True,
                 "n_keys": n_keys,
                 "n_evaluated": 0,
+                "min_coverage": min_coverage,
             },
         )
 

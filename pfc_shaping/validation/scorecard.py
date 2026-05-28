@@ -202,6 +202,8 @@ def build_one(
     """
     # Local imports — évite le coût à l'import time du package validation
     from pfc_shaping.data.calendar_ch import enrich_15min_index
+    from pfc_shaping.calibration.arbitrage_free import ArbitrageFreeCalibrator
+    from pfc_shaping.calibration.cascading import ContractCascader
     from pfc_shaping.lt.model.assembler import PFCAssembler
     from pfc_shaping.lt.model.shape_hourly import ShapeHourly
     from pfc_shaping.lt.model.shape_intraday import ShapeIntraday
@@ -220,6 +222,16 @@ def build_one(
         epex_train, cal_train
     )
     si = ShapeIntraday().fit(epex_train, None, cal_train)
+    cascader = ContractCascader(allow_negative_peak=config.allow_negative_peak)
+    cascader.fit_seasonal_ratios(epex_train)
+    cascader.fit_peak_spreads(epex_train)
+    cascaded_prices = cascader.cascade(forwards_asof)
+    cascaded_prices = cascader.synthesize_peak_prices(cascaded_prices)
+    calibrator = ArbitrageFreeCalibrator(
+        smoothness_weight=1.0,
+        tol=0.01,
+        enforce_m_factor_floor=config.enforce_m_factor_floor,
+    )
     unc: Uncertainty | None = None
     if with_uncertainty:
         unc = Uncertainty(n_boot=500, seed=42).fit(epex_train, cal_train)
@@ -228,13 +240,16 @@ def build_one(
         shape_hourly=sh,
         shape_intraday=si,
         uncertainty=unc,
+        cascader=cascader,
+        calibrator=calibrator,
         enforce_positivity=config.enforce_positivity,
         enforce_m_factor_floor=config.enforce_m_factor_floor,
         enforce_floor=config.enforce_floor,
         allow_negative_peak=config.allow_negative_peak,
     )
     pfc = assembler.build(
-        base_prices=forwards_asof,
+        base_prices=cascaded_prices,
+        quoted_keys=set(forwards_asof.keys()),
         start_date=vintage.strftime("%Y-%m-%d"),
         horizon_days=3 * 365,  # Y+3 pour couvrir M+1..Y+2 horizons
         reference_date=vintage,
