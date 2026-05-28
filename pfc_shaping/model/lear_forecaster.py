@@ -37,7 +37,7 @@ import lightgbm as lgb
 import numpy as np
 import pandas as pd
 from sklearn.exceptions import ConvergenceWarning
-from sklearn.linear_model import ElasticNetCV, QuantileRegressor
+from sklearn.linear_model import ElasticNet, ElasticNetCV, QuantileRegressor
 from sklearn.neural_network import MLPRegressor
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import TimeSeriesSplit
@@ -1664,6 +1664,23 @@ class LEARForecaster:
         hour: int,
         window: int,
     ) -> ElasticNetCV:
+        def _final_model_emits_convergence_warning(model: ElasticNetCV) -> bool:
+            if not hasattr(model, "alpha_") or not hasattr(model, "l1_ratio_"):
+                return True
+            final_model = ElasticNet(
+                alpha=float(model.alpha_),
+                l1_ratio=float(model.l1_ratio_),
+                max_iter=int(model.max_iter),
+                random_state=self.random_state,
+            )
+            with warnings.catch_warnings(record=True) as final_caught:
+                warnings.simplefilter("always", ConvergenceWarning)
+                final_model.fit(X_train, y_train, sample_weight=sample_weight)
+            return any(
+                issubclass(getattr(warning, "category", Warning), ConvergenceWarning)
+                for warning in final_caught
+            )
+
         attempt_records: list[dict[str, Any]] = []
         last_model: ElasticNetCV | None = None
         for attempt_idx, (l1_ratio, max_iter) in enumerate(self._elasticnet_retry_configs(), start=1):
@@ -1681,17 +1698,21 @@ class LEARForecaster:
                 for warning in caught
                 if issubclass(getattr(warning, "category", Warning), ConvergenceWarning)
             ]
+            final_model_warned = bool(convergence_warnings) and _final_model_emits_convergence_warning(model)
+            converged = (not bool(convergence_warnings)) or (not final_model_warned)
             attempt_records.append(
                 {
                     "attempt": attempt_idx,
                     "l1_ratio": float(l1_ratio),
                     "max_iter": int(max_iter),
-                    "converged": not bool(convergence_warnings),
+                    "converged": converged,
                     "warning_count": int(len(convergence_warnings)),
+                    "cv_path_warned": bool(convergence_warnings),
+                    "final_model_warned": bool(final_model_warned),
                 }
             )
             last_model = model
-            if not convergence_warnings:
+            if converged:
                 break
         status_key = f"h{int(hour):02d}_w{int(window)}"
         recovered = len(attempt_records) > 1 and bool(attempt_records[-1]["converged"])
