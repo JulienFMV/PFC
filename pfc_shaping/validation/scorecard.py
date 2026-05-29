@@ -1477,6 +1477,121 @@ def _forwards_for_vintage(
     return dict(zip(sub["key"], sub["price"]))
 
 
+def _seasonal_profile_for_vintage(
+    pfc_v: pd.Series,
+    epex_hist: pd.Series,
+    vintage: pd.Timestamp,
+    hist_window_years: int = 2,
+):
+    """Evaluate seasonal coherence against the history available at that vintage.
+
+    Comparing every vintage to a fixed 2019-2023 signature creates a regime-mix
+    artefact: late-2025 vintages are validated against a historical window they
+    would never have seen at calibration time. We instead compare each vintage
+    to a trailing history slice ending strictly before the vintage.
+    """
+    from pfc_shaping.validation.structural_tests import TestResult, test_seasonal_profile
+
+    hist_end = vintage - pd.Timedelta(hours=1)
+    hist_start = hist_end - pd.DateOffset(years=hist_window_years) + pd.Timedelta(hours=1)
+    hist_slice = epex_hist[(epex_hist.index >= hist_start) & (epex_hist.index <= hist_end)]
+    if hist_slice.empty:
+        return TestResult(
+            passed=False,
+            observed=float("nan"),
+            threshold=0.85,
+            details={
+                "degenerate": True,
+                "reason": "empty_trailing_history",
+                "hist_window_years": hist_window_years,
+                "vintage": vintage,
+            },
+        )
+
+    res = test_seasonal_profile(
+        pfc_v,
+        hist_slice,
+        period_pfc_years=(int(pfc_v.index.min().year), int(pfc_v.index.max().year)),
+        period_hist_years=(
+            int(hist_slice.index.min().year),
+            int(hist_slice.index.max().year),
+        ),
+    )
+    res.details["hist_window_years"] = hist_window_years
+    res.details["hist_start"] = hist_slice.index.min()
+    res.details["hist_end"] = hist_slice.index.max()
+    return res
+
+
+def _aggregate_per_vintage_gate_results(
+    per_vintage_results: list[tuple[pd.Timestamp, Any]],
+    *,
+    threshold: float | tuple[float, float],
+    direction: str,
+):
+    """Aggregate per-vintage structural tests into one gate result.
+
+    `direction="max"` is used for deviation/jump metrics where worst-case is
+    the largest observed value. `direction="min"` is used for correlation-type
+    metrics where worst-case is the smallest observed value.
+    """
+    from pfc_shaping.validation.structural_tests import TestResult
+
+    if direction not in {"max", "min"}:
+        raise ValueError(f"Unsupported direction={direction!r}")
+
+    rows: list[dict[str, Any]] = []
+    valid_obs: list[float] = []
+    n_pass = 0
+    for vintage, res_v in per_vintage_results:
+        obs_v = float(res_v.observed)
+        is_nan = obs_v != obs_v
+        degenerate = bool(res_v.details.get("degenerate", False))
+        rows.append(
+            {
+                "vintage": vintage,
+                "observed": obs_v,
+                "passed": bool(res_v.passed),
+                "degenerate": degenerate,
+                "details": res_v.details,
+            }
+        )
+        if res_v.passed:
+            n_pass += 1
+        if not is_nan and not degenerate:
+            valid_obs.append(obs_v)
+
+    if not rows:
+        return TestResult(
+            passed=False,
+            observed=float("nan"),
+            threshold=threshold,
+            details={"per_vintage": [], "reason": "no_vintages"},
+        )
+
+    agg_obs = (
+        max(valid_obs)
+        if valid_obs and direction == "max"
+        else min(valid_obs)
+        if valid_obs
+        else float("nan")
+    )
+    n_total = len(rows)
+    pass_rate = n_pass / n_total if n_total else 0.0
+    return TestResult(
+        passed=(n_pass == n_total) and not (agg_obs != agg_obs),
+        observed=agg_obs,
+        threshold=threshold,
+        details={
+            "per_vintage": rows,
+            "n_vintages": n_total,
+            "n_pass": n_pass,
+            "pass_rate": pass_rate,
+            "direction": direction,
+        },
+    )
+
+
 def run_scorecard_full(
     epex_source: str = "parquet",
     output_dir: Any = None,
@@ -1614,7 +1729,7 @@ def run_scorecard_full(
 
     _emit("[progress] 96-build loop complete — computing pillars")
 
-    # ---- 5. Pillar 1 (Hildmann SC#1 gate) on Config 4 aggregated ----
+    # ---- 5. Pillar 1 (Hildmann SC#1 gate) on Config 4 ----
     pillar1: dict[str, Any]
     config4 = next(c for c in ABLATION_GRID if c.name == "bowl_on_floors_off")
     pfc_c4_list = [pfc_cache[(config4.name, v)] for v in vintages]
@@ -1640,8 +1755,11 @@ def run_scorecard_full(
     # PASS) en plus du verdict global. C'est plus aligné avec les pratiques
     # KYOS/Volue HPFC validation.
     per_vintage_arb_free: list[dict[str, Any]] = []
+    per_vintage_seasonal: list[tuple[pd.Timestamp, Any]] = []
+    per_vintage_continuity: list[tuple[pd.Timestamp, Any]] = []
     for vintage in vintages:
-        pfc_v = pfc_cache[(config4.name, vintage)]["price_shape"]
+        pfc_v_df = pfc_cache[(config4.name, vintage)]
+        pfc_v = pfc_v_df["price_shape"]
         fwds_v = _forwards_for_vintage(forwards_df, vintage, epex_hist)
         res_v = test_arb_free(pfc_v, fwds_v)
         per_vintage_arb_free.append(
@@ -1656,6 +1774,13 @@ def run_scorecard_full(
                 "degenerate": bool(res_v.details.get("degenerate", False)),
             }
         )
+        per_vintage_seasonal.append(
+            (vintage, _seasonal_profile_for_vintage(pfc_v, epex_hist, vintage))
+        )
+        continuity_series = pfc_v_df["B"] if "B" in pfc_v_df.columns else pfc_v
+        res_cont = test_continuity(continuity_series)
+        res_cont.details["series"] = "B" if "B" in pfc_v_df.columns else "price_shape"
+        per_vintage_continuity.append((vintage, res_cont))
 
     if per_vintage_arb_free:
         valid_devs = [
@@ -1691,11 +1816,21 @@ def run_scorecard_full(
             details={"per_vintage": [], "reason": "no_vintages"},
         )
 
+    seasonal_agg = _aggregate_per_vintage_gate_results(
+        per_vintage_seasonal,
+        threshold=0.85,
+        direction="min",
+    )
+    continuity_agg = _aggregate_per_vintage_gate_results(
+        per_vintage_continuity,
+        threshold=2.0,
+        direction="max",
+    )
     pillar1 = {
         "arb_free": arb_free_agg,
         "holiday_weekend": test_holiday_weekend(pfc_c4_series),
-        "seasonal_profile": test_seasonal_profile(pfc_c4_series, epex_hist),
-        "continuity": test_continuity(pfc_c4_series),
+        "seasonal_profile": seasonal_agg,
+        "continuity": continuity_agg,
     }
     _emit(
         f"[progress] Pillar 1 complete "

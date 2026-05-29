@@ -348,6 +348,67 @@ def test_run_scorecard_pillar_1_now_wired():
         )
 
 
+def test_aggregate_per_vintage_gate_results_uses_worst_case_direction():
+    """Worst-case aggregation must respect metric direction across vintages."""
+    from pfc_shaping.validation.scorecard import _aggregate_per_vintage_gate_results
+    from pfc_shaping.validation.structural_tests import TestResult
+
+    vintages = [
+        pd.Timestamp("2024-01-31 17:00:00", tz="UTC"),
+        pd.Timestamp("2024-02-29 17:00:00", tz="UTC"),
+    ]
+    max_res = _aggregate_per_vintage_gate_results(
+        [
+            (vintages[0], TestResult(True, 0.4, 2.0, {})),
+            (vintages[1], TestResult(True, 1.3, 2.0, {})),
+        ],
+        threshold=2.0,
+        direction="max",
+    )
+    assert max_res.passed
+    assert max_res.observed == 1.3
+    assert max_res.details["n_pass"] == 2
+
+    min_res = _aggregate_per_vintage_gate_results(
+        [
+            (vintages[0], TestResult(True, 0.93, 0.85, {})),
+            (vintages[1], TestResult(False, 0.81, 0.85, {})),
+        ],
+        threshold=0.85,
+        direction="min",
+    )
+    assert not min_res.passed
+    assert min_res.observed == 0.81
+    assert min_res.details["n_pass"] == 1
+
+
+def test_seasonal_profile_for_vintage_uses_trailing_history_window():
+    """Seasonal score should be computed against history available before the vintage."""
+    from pfc_shaping.validation.scorecard import _seasonal_profile_for_vintage
+
+    idx_hist = pd.date_range(
+        "2022-01-01", "2024-01-31 16:00:00", freq="1h", tz="UTC"
+    )
+    hist = pd.Series(
+        80 + 20 * np.cos(2 * np.pi * (idx_hist.month - 1) / 12),
+        index=idx_hist,
+    )
+    idx_pfc = pd.date_range(
+        "2024-01-31 17:00:00", "2027-01-31 17:00:00", freq="1h", inclusive="left", tz="UTC"
+    )
+    pfc = pd.Series(
+        95 + 25 * np.cos(2 * np.pi * (idx_pfc.month - 1) / 12),
+        index=idx_pfc,
+    )
+    vintage = pd.Timestamp("2024-01-31 17:00:00", tz="UTC")
+
+    res = _seasonal_profile_for_vintage(pfc, hist, vintage, hist_window_years=2)
+
+    assert res.passed
+    assert res.observed > 0.95
+    assert res.details["hist_end"] < vintage
+
+
 # ---------------------------------------------------------------------------
 # conftest._pfc_lt_env_hygiene : snapshot/restore les 2 flags PFC_LT_*
 # ---------------------------------------------------------------------------
