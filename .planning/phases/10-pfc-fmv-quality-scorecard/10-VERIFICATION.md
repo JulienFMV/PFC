@@ -1,16 +1,16 @@
 # Phase 10 — PFC FMV Quality Scorecard (5-pillar SOTA replication)
 
-**Generated** : 2026-05-28T15:19:51+00:00
+**Generated** : 2026-05-29T07:12:38+00:00
 **Config target** : bowl_on_floors_off (Config 4)
 **Vintages** : 24 (last business day of each month 2024-01..2025-12)
 **Forwards source** : `real_eex_xlsx`
-**Compute time** : 780.4 s
+**Compute time** : 24.2 s
 
 ---
 
 ## Executive Summary
 
-- **SC#1 Hildmann gate** : 1/4 tests PASS — **FAIL** (✓ Gate-eligible run).
+- **SC#1 Hildmann gate** : 2/4 tests PASS — **FAIL** (✓ Gate-eligible run).
 - **Pillar 2 (Empirical KYOS)** : mean MAE Config 4 across blocs×horizons = 24.67 €/MWh (min 14.46, max 33.93).
 - **Pillar 3 (Christoffersen IC80)** : observed violation freq per bloc range = [0.084, 0.518] (nominal 0.20 ; IC95 deferred Phase 5ter).
 - **Pillar 4 (DM vs 3 baselines)** : Config 4 strictly better (p<0.05) in 61/70 testable cells (5 cells DEGEN excluded).
@@ -35,10 +35,10 @@
 |------|----------|-----------|--------|-----------------|
 | arb_free | 1.275 | 0.01 | ✗ | real_eex_xlsx |
 | holiday_weekend | 0.7749 | [0.65, 0.95] | ✓ | real_eex_xlsx |
-| seasonal_profile | 0.6231 | 0.85 | ✗ | real_eex_xlsx |
-| continuity | 50.06 | 2.0 | ✗ | real_eex_xlsx |
+| seasonal_profile | 0.7815 | 0.85 | ✗ | real_eex_xlsx |
+| continuity | 0.04595 | 2.0 | ✓ | real_eex_xlsx |
 
-**Verdict global** : 1/4 PASS — **FAIL**.
+**Verdict global** : 2/4 PASS — **FAIL**.
 
 ![Pillar 1 seasonal correlation](figures/pillar1_seasonal_correlation_scatter.png)
 
@@ -569,4 +569,4 @@ runtime.
 - **Forwards-as-of-vintage path** : `real_eex_xlsx` (real EEX snapshot).
 - **IC95 deferral** : Phase 5ter. Reference : `pfc_shaping/lt/model/uncertainty.py` lines 51-194 expose `p10/p90 only` (no `level=` param).
 - **Reproducibility contract** : `assert_frame_equal(..., check_exact=False, atol=1e-12, rtol=0)` verified by `tests/test_phase10_reproducibility.py`.
-- **Compute summary** : 96 builds = 780.4 seconds wall time Mac Mini.
+- **Compute summary** : 96 builds = 24.2 seconds wall time Mac Mini.
