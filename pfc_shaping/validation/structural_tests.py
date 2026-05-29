@@ -45,7 +45,7 @@ from typing import Any
 import holidays
 import numpy as np
 import pandas as pd
-from scipy.stats import pearsonr
+from scipy.stats import pearsonr, spearmanr
 
 from pfc_shaping.calibration.cascading import parse_key
 
@@ -515,8 +515,37 @@ def test_seasonal_profile(
             },
         )
 
-    r, p_val = pearsonr(sig_pfc.loc[common].values, sig_hist.loc[common].values)
+    pfc_vals = sig_pfc.loc[common].values
+    hist_vals = sig_hist.loc[common].values
+    r, p_val = pearsonr(pfc_vals, hist_vals)
     r = float(r)
+
+    # Spearman (rank) companion. Pearson can be dragged by one or two outlier
+    # months without the seasonal *ordering* actually disagreeing ; the rank
+    # correlation flags whether the shape divergence is structural or driven by
+    # a few months. Diagnostic only — does NOT gate.
+    rho, rho_p = spearmanr(pfc_vals, hist_vals)
+
+    # Per-month shape divergence on z-scored signatures.
+    # NB: Pearson r is affine-invariant, so z-scoring (or dividing by the mean)
+    # leaves `observed` unchanged — normalising the inputs is a no-op on the
+    # score. The residuals below exist only to expose WHICH months drive the
+    # (dis)agreement in shape; they are not a different metric.
+    def _zscore(x: np.ndarray) -> np.ndarray:
+        sd = float(x.std())
+        return (x - x.mean()) / sd if sd > 0 else np.zeros_like(x)
+
+    z_pfc = _zscore(pfc_vals)
+    z_hist = _zscore(hist_vals)
+    residuals = {
+        int(m): float(zp - zh)
+        for m, zp, zh in zip(common, z_pfc, z_hist)
+    }
+    top_divergent = [
+        int(m)
+        for m, _ in sorted(residuals.items(), key=lambda kv: abs(kv[1]), reverse=True)[:3]
+    ]
+
     return TestResult(
         passed=bool(r > min_corr),
         observed=r,
@@ -524,7 +553,18 @@ def test_seasonal_profile(
         details={
             "pearson_r": r,
             "pearson_pvalue": float(p_val),
+            "spearman_r": float(rho),
+            "spearman_pvalue": float(rho_p),
             "n_months": int(len(common)),
+            "monthly_pfc": {int(m): float(v) for m, v in zip(common, pfc_vals)},
+            "monthly_hist": {int(m): float(v) for m, v in zip(common, hist_vals)},
+            "shape_residuals_z": residuals,
+            "top_divergent_months": top_divergent,
+            "_note": (
+                "Pearson r is affine-invariant; z-score/level normalisation is a "
+                "no-op on `observed`. shape_residuals_z expose month-level shape "
+                "divergence only. spearman_r is a rank-based robustness companion."
+            ),
         },
     )
 

@@ -339,6 +339,42 @@ class TestSeasonalProfileFunction:
         assert res.observed > 0.85
         assert res.details["n_months"] == 6
 
+    def test_shape_diagnostics_and_affine_invariance(self):
+        """details expose spearman + shape residuals ; Pearson est affine-invariant."""
+        from pfc_shaping.validation.structural_tests import test_seasonal_profile
+
+        idx_pfc = _hourly_index_2024_2025_utc()
+        seasonal_pfc = 100 + 30 * np.cos(2 * np.pi * (idx_pfc.month - 1) / 12)
+        pfc = pd.Series(seasonal_pfc, index=idx_pfc)
+
+        idx_hist = pd.date_range(
+            "2019-01-01", "2024-01-01", freq="1h", inclusive="left", tz="UTC"
+        )
+        seasonal_hist = (
+            80
+            + 25 * np.cos(2 * np.pi * (idx_hist.month - 1) / 12)
+            + 4 * np.sin(2 * np.pi * (idx_hist.month - 1) / 12)
+        )
+        epex_hist = pd.Series(seasonal_hist, index=idx_hist)
+
+        res = test_seasonal_profile(pfc, epex_hist)
+        for key in (
+            "spearman_r",
+            "monthly_pfc",
+            "monthly_hist",
+            "shape_residuals_z",
+            "top_divergent_months",
+        ):
+            assert key in res.details
+        assert len(res.details["top_divergent_months"]) <= 3
+
+        # Pearson r is invariant under affine transforms of either signature:
+        # z-scoring the inputs must not change `observed` (normalisation = no-op).
+        pfc_affine = pfc * 0.5 + 17.0
+        hist_affine = epex_hist * 3.0 - 9.0
+        res_affine = test_seasonal_profile(pfc_affine, hist_affine)
+        assert res_affine.observed == pytest.approx(res.observed, abs=1e-9)
+
 
 class TestContinuityFunction:
     """test_continuity — Pillar 1.4 Hildmann jumps aux frontières mensuelles."""

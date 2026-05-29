@@ -1777,6 +1777,12 @@ def run_scorecard_full(
         per_vintage_seasonal.append(
             (vintage, _seasonal_profile_for_vintage(pfc_v, epex_hist, vintage))
         )
+        # Continuity is measured on the backbone `B` (smoothed monthly forward
+        # level, pre-shape) not on `price_shape`: the delivered hourly curve has
+        # a normal 23h->00h diurnal step that would swamp a genuine month-seam
+        # break. Caveat: B is smoothed by construction, so a near-zero result
+        # confirms the smoother works rather than grading the delivered HPFC.
+        # See 10-01-NOTES.md §"Amendements méthodologiques Pillar 1" (B).
         continuity_series = pfc_v_df["B"] if "B" in pfc_v_df.columns else pfc_v
         res_cont = test_continuity(continuity_series)
         res_cont.details["series"] = "B" if "B" in pfc_v_df.columns else "price_shape"

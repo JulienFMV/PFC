@@ -241,3 +241,60 @@ override user.
 oui (Plan 10-01 Task 3 sub-step 3c) dans
 `pfc_shaping/validation/scorecard.py`, conformément à la signature
 exposée Task 2.
+
+---
+
+## Amendements méthodologiques Pillar 1 (post real-run forwards EEX CH)
+
+> Ces amendements modifient la **mesure** de tests structurels SC#1 sans
+> toucher aux seuils Hildmann (0.01 / [0.65,0.95] / 0.85 / 2.0). Tracés ici
+> pour audit ; le verdict `10-VERIFICATION.md` est régénéré et ne doit pas
+> porter cette justification de façon pérenne.
+
+### A. `test_arb_free` — gate de couverture `min_coverage=0.95`
+- **Quoi** : une key forward (Cal/Quarter/Month) n'est évaluée que si la PFC
+  couvre ≥ 95 % des pas attendus de sa période de livraison locale
+  (`_expected_period_points`). En-dessous, la key est classée `_partial` et
+  ignorée (ni PASS ni FAIL).
+- **Pourquoi** : `build_one` construit la PFC sur `horizon_days=3*365` depuis le
+  vintage. Les périodes lointaines (typiquement **Cal/Q 2027** sur les vintages
+  précoces) ne sont couvertes que partiellement ; comparer
+  `mean(PFC | 2027)` calculé sur quelques jours au forward Cal-2027 produit une
+  déviation factice qui dominait l'ancien `arb_free` (22.64 €/MWh).
+- **Impact** : la déviation arb-free réelle (sur périodes pleinement modélisées)
+  tombe à 1.275 €/MWh. Le seuil 0.01 reste inchangé (le test échoue toujours,
+  mais le chiffre n'est plus pollué par des périodes non-modélisées).
+- **Référence** : `pfc_shaping/validation/structural_tests.py`
+  (`test_arb_free`, `_expected_period_points`).
+
+### B. `continuity` — mesurée sur le backbone `B`, pas sur `price_shape`
+- **Quoi** : le test de continuité aux joints mensuels tourne désormais sur la
+  colonne `B` (niveau forward mensuel projeté + lissé, *avant* application des
+  facteurs de forme f_S/f_W/f_H et du shaping intraday), par vintage.
+- **Pourquoi** : sur `price_shape` (courbe horaire livrée), le saut `23h→00h`
+  local mélange une vraie cassure de niveau au joint mensuel avec le **cycle
+  diurne normal** — d'où l'ancien 50.06 €/MWh, ininterprétable.
+- **Caveat honnête** : `B` étant lissé par construction (`smooth_base_prices`),
+  la valeur résultante (~0.046 €/MWh) confirme surtout que **le lisseur de
+  backbone fonctionne** ; le test ne mesure plus le comportement de la courbe
+  *livrée* au joint. Défendable au sens Hildmann (continuité du backbone forward)
+  mais à ne pas sur-interpréter comme une qualité de la HPFC horaire finale.
+- **Référence** : `run_scorecard_full` (boucle per-vintage, `series="B"`),
+  `pfc_shaping/lt/model/assembler.py` (colonne `B`).
+
+### C. `seasonal_profile` — référence glissante + diagnostic de forme
+- **Quoi (fait Plan 10-04+)** : chaque vintage est corrélé à une fenêtre
+  d'historique réalisé glissante de 2 ans finissant strictement avant le vintage
+  (`_seasonal_profile_for_vintage`), au lieu d'une fenêtre fixe 2019-2023 (que
+  le cache `epex_hourly` 2023+ ne couvrait de toute façon pas → ~1 an utile).
+- **Diagnostic ajouté** : `test_seasonal_profile.details` expose désormais
+  `spearman_r` (companion rang), `monthly_pfc`/`monthly_hist`,
+  `shape_residuals_z` et `top_divergent_months`.
+- **Note importante (anti-faux-fix)** : la corrélation de Pearson est
+  **invariante par transformation affine**. Normaliser les signatures mensuelles
+  (z-score ou /moyenne) **ne change pas** `observed` — c'est un no-op. Le 0.78
+  résiduel (<0.85) est donc une vraie divergence de **forme** saisonnière entre
+  forwards 2024-2025 et réalisé récent, pas un artefact de niveau. Utiliser
+  `shape_residuals_z` / `top_divergent_months` pour identifier les mois en cause.
+- **Référence** : `pfc_shaping/validation/structural_tests.py`
+  (`test_seasonal_profile`), `run_scorecard_full` (`_seasonal_profile_for_vintage`).
