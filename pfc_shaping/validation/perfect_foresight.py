@@ -90,6 +90,13 @@ SOLAR_BOWL_HOURS = (11, 12, 13, 14, 15)
 
 PRODUCTION_CONFIG = "bowl_on_floors_off"  # Config 4 production target
 
+#: SOTA intra-day shape: f_H exponential-decay half-life (days). The in-tree
+#: default is 180d; the `sota` estimator path uses 90d — a perfect-foresight
+#: interior optimum for diurnal pattern fidelity (see _sota_estimator and the
+#: §4ter half-life sweep in 10-PERFECT-FORESIGHT-SHAPING.md). Shorter half-lives
+#: degrade via seasonal aliasing.
+SOTA_HALFLIFE_DAYS: float = 90.0
+
 
 # ---------------------------------------------------------------------------
 # Realized settlements (perfect-foresight anchors)
@@ -273,6 +280,7 @@ def _sota_estimator():
     from pfc_shaping.calibration.cascading import ContractCascader
     from pfc_shaping.calibration.robust_peak_spreads import HydroAwarePeakSpreads
     from pfc_shaping.calibration.robust_seasonal_ratios import RegimeAwareSeasonalRatios
+    from pfc_shaping.lt.model.shape_hourly import ShapeHourly
 
     def sota_fit_sr(self, spot_history):
         est = RegimeAwareSeasonalRatios(tz=self.tz).fit(spot_history)
@@ -287,20 +295,41 @@ def _sota_estimator():
         self._base_price_per_month_ = est.base_price_per_month_
         return self
 
+    # SOTA intra-day shape: shorten the f_H exponential-decay half-life from the
+    # default 180d to SOTA_HALFLIFE_DAYS=90d. Validated under perfect foresight
+    # as an INTERIOR optimum for diurnal pattern fidelity (Cal 2025, vintage
+    # 2024-12-31): diurnal cosine 0.9252→0.9324, demeaned RMSE 6.808→6.453,
+    # solar-bowl depth 0.417→0.448 (toward realized 0.558). Shorter half-lives
+    # (45/30d) DEGRADE via seasonal aliasing (a December vintage starves the
+    # summer profile). The peak/off-peak amplitude residual (~20 vs realized 6.4
+    # €/MWh) is INVARIANT to half-life — a 2025 solar-regime shift a past-fit
+    # profile cannot anticipate; addressable only by an exogenous solar feature
+    # (future work, NOT a shaping bug). `_orig_init` is bound via default arg so
+    # the closure captures the genuine original even if entered while already
+    # swapped (defensive, though the RLock already serialises).
+    _captured_init = ShapeHourly.__init__
+
+    def sota_init(self, *args, _orig=_captured_init, **kwargs):
+        kwargs.setdefault("halflife_days", SOTA_HALFLIFE_DAYS)
+        _orig(self, *args, **kwargs)
+
     # Serialise the swap so concurrent callers cannot capture each other's
-    # already-swapped methods as "original". CRITICAL: `original_sr/ps` must be
+    # already-swapped methods as "original". CRITICAL: the `original_*` must be
     # captured *inside* the lock — capturing outside lets thread B read the
     # value that thread A wrote, which would corrupt the restore.
     with _SOTA_SWAP_LOCK:
         original_sr = ContractCascader.fit_seasonal_ratios
         original_ps = ContractCascader.fit_peak_spreads
+        original_init = ShapeHourly.__init__
         ContractCascader.fit_seasonal_ratios = sota_fit_sr
         ContractCascader.fit_peak_spreads = sota_fit_ps
+        ShapeHourly.__init__ = sota_init
         try:
             yield
         finally:
             ContractCascader.fit_seasonal_ratios = original_sr
             ContractCascader.fit_peak_spreads = original_ps
+            ShapeHourly.__init__ = original_init
 
 
 # Backwards-compat alias for the historical private name; prefer `build_curve`.
@@ -572,6 +601,7 @@ __all__ = [
     "PRODUCTION_CONFIG",
     "PerfectForesightResult",
     "SOLAR_BOWL_HOURS",
+    "SOTA_HALFLIFE_DAYS",
     "SUMMER_MONTHS",
     "TZ",
     "WINTER_MONTHS",

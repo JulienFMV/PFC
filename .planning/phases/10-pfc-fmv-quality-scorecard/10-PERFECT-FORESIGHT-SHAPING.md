@@ -283,6 +283,36 @@ cannot race on capture-and-restore and silently leave the cascader swapped
 (which would violate the reproducibility contract for any subsequent caller
 in the same process).
 
+## 4ter. SOTA intra-day shape (f_H half-life)
+
+The intra-day profile factor `f_H` (`ShapeHourly`) is fitted with an
+exponential-decay weighting (recent history counts more), default half-life
+180 d. A perfect-foresight half-life sweep on Cal 2025 (vintage 2024-12-31,
+diurnal scores on the de-levelled hour-of-day profile) shows an **interior
+optimum at 90 d**:
+
+| half-life (d) | diurnal cosine | demeaned RMSE | solar-bowl depth |
+|---:|---:|---:|---:|
+| 180 (default) | 0.9252 | 6.808 | 0.417 |
+| **90 (SOTA)** | **0.9324** | **6.453** | **0.448** |
+| 45 | 0.9255 | 6.768 | 0.448 |
+| 30 | 0.9164 | 7.155 | 0.438 |
+| *realized* | — | — | 0.558 |
+
+90 d improves both pattern fidelity (cosine 0.925→0.932) and amplitude
+(RMSE 6.81→6.45), and deepens the solar bowl toward realized. Shorter
+half-lives (45/30 d) DEGRADE via seasonal aliasing — a December vintage with
+a 30 d window starves the summer profile. Shipped in the `sota` path via
+`SOTA_HALFLIFE_DAYS=90`.
+
+**Key negative result (honest):** the peak/off-peak amplitude residual
+(model ~20 vs realized ~6.4 €/MWh) is **invariant to the half-life** — it is
+a 2025 solar-regime shift (the realized summer midday bowl collapses the
+08–20 average) that *no* profile fitted on lower-solar 2023–24 history can
+anticipate. This is a forward-looking *prediction* limit, not a shaping bug;
+closing it requires an **exogenous solar-penetration feature** (future work),
+not a reweighting of past hours.
+
 ## 5. Recommendations
 
 The diagnostic converts the audit's "no change needed" into a **targeted,

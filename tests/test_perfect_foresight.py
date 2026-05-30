@@ -433,6 +433,27 @@ def test_sota_swap_threadsafe_under_contention():
     assert ContractCascader.fit_peak_spreads is ps_before, "fit_peak_spreads leaked"
 
 
+def test_sota_swap_patches_and_restores_shapehourly_halflife():
+    """The `sota` path must swap ShapeHourly.__init__ to use SOTA_HALFLIFE_DAYS
+    and restore the original on exit (intra-day f_H optimisation)."""
+    from pfc_shaping.lt.model.shape_hourly import ShapeHourly
+    from pfc_shaping.validation.perfect_foresight import (
+        SOTA_HALFLIFE_DAYS,
+        _sota_estimator,
+    )
+
+    assert SOTA_HALFLIFE_DAYS == 90.0
+    init_before = ShapeHourly.__init__
+    # Outside the context: default half-life (180), not the SOTA one.
+    assert ShapeHourly().halflife_days != SOTA_HALFLIFE_DAYS
+    with _sota_estimator():
+        assert ShapeHourly.__init__ is not init_before  # swapped
+        assert ShapeHourly().halflife_days == SOTA_HALFLIFE_DAYS  # SOTA applied
+    # Restored after exit.
+    assert ShapeHourly.__init__ is init_before
+    assert ShapeHourly().halflife_days != SOTA_HALFLIFE_DAYS
+
+
 def test_sota_swap_restores_on_exception():
     """Exception inside the `with` block must still restore both methods."""
     from pfc_shaping.calibration.cascading import ContractCascader
