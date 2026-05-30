@@ -1,0 +1,1887 @@
+{
+  "section_1_schema_and_coverage": {
+    "entso_15min": {
+      "path": "/home/user/PFC/pfc_shaping/data/entso_15min.parquet",
+      "exists": true,
+      "columns": [
+        {
+          "name": "cross_border_mw",
+          "dtype": "float64"
+        },
+        {
+          "name": "nuclear_mw",
+          "dtype": "float64"
+        },
+        {
+          "name": "hydro_ror_mw",
+          "dtype": "float64"
+        },
+        {
+          "name": "hydro_reservoir_mw",
+          "dtype": "float64"
+        },
+        {
+          "name": "hydro_pumped_mw",
+          "dtype": "float64"
+        },
+        {
+          "name": "wind_mw",
+          "dtype": "float64"
+        },
+        {
+          "name": "solar_mw",
+          "dtype": "float64"
+        },
+        {
+          "name": "load_mw",
+          "dtype": "float64"
+        },
+        {
+          "name": "scheduled_net_export_ch_de_mw",
+          "dtype": "float64"
+        },
+        {
+          "name": "flow_net_export_ch_de_mw",
+          "dtype": "float64"
+        },
+        {
+          "name": "ntc_export_ch_de_mw",
+          "dtype": "float64"
+        },
+        {
+          "name": "ntc_import_ch_de_mw",
+          "dtype": "float64"
+        },
+        {
+          "name": "ntc_net_ch_de_mw",
+          "dtype": "float64"
+        },
+        {
+          "name": "ntc_total_ch_de_mw",
+          "dtype": "float64"
+        },
+        {
+          "name": "scheduled_net_export_ch_fr_mw",
+          "dtype": "float64"
+        },
+        {
+          "name": "flow_net_export_ch_fr_mw",
+          "dtype": "float64"
+        },
+        {
+          "name": "ntc_export_ch_fr_mw",
+          "dtype": "float64"
+        },
+        {
+          "name": "ntc_import_ch_fr_mw",
+          "dtype": "float64"
+        },
+        {
+          "name": "ntc_net_ch_fr_mw",
+          "dtype": "float64"
+        },
+        {
+          "name": "ntc_total_ch_fr_mw",
+          "dtype": "float64"
+        },
+        {
+          "name": "scheduled_net_export_ch_at_mw",
+          "dtype": "float64"
+        },
+        {
+          "name": "flow_net_export_ch_at_mw",
+          "dtype": "float64"
+        },
+        {
+          "name": "ntc_export_ch_at_mw",
+          "dtype": "float64"
+        },
+        {
+          "name": "ntc_import_ch_at_mw",
+          "dtype": "float64"
+        },
+        {
+          "name": "ntc_net_ch_at_mw",
+          "dtype": "float64"
+        },
+        {
+          "name": "ntc_total_ch_at_mw",
+          "dtype": "float64"
+        },
+        {
+          "name": "scheduled_net_export_ch_it_mw",
+          "dtype": "float64"
+        },
+        {
+          "name": "flow_net_export_ch_it_mw",
+          "dtype": "float64"
+        },
+        {
+          "name": "ntc_export_ch_it_mw",
+          "dtype": "float64"
+        },
+        {
+          "name": "ntc_import_ch_it_mw",
+          "dtype": "float64"
+        },
+        {
+          "name": "ntc_net_ch_it_mw",
+          "dtype": "float64"
+        },
+        {
+          "name": "ntc_total_ch_it_mw",
+          "dtype": "float64"
+        },
+        {
+          "name": "scheduled_net_export_ch_de_mw_zscore",
+          "dtype": "float64"
+        },
+        {
+          "name": "ntc_total_ch_de_mw_zscore",
+          "dtype": "float64"
+        },
+        {
+          "name": "ntc_net_ch_de_mw_zscore",
+          "dtype": "float64"
+        },
+        {
+          "name": "scheduled_net_export_ch_fr_mw_zscore",
+          "dtype": "float64"
+        },
+        {
+          "name": "ntc_total_ch_fr_mw_zscore",
+          "dtype": "float64"
+        },
+        {
+          "name": "ntc_net_ch_fr_mw_zscore",
+          "dtype": "float64"
+        },
+        {
+          "name": "scheduled_net_export_ch_at_mw_zscore",
+          "dtype": "float64"
+        },
+        {
+          "name": "ntc_total_ch_at_mw_zscore",
+          "dtype": "float64"
+        },
+        {
+          "name": "ntc_net_ch_at_mw_zscore",
+          "dtype": "float64"
+        },
+        {
+          "name": "scheduled_net_export_ch_it_mw_zscore",
+          "dtype": "float64"
+        },
+        {
+          "name": "ntc_total_ch_it_mw_zscore",
+          "dtype": "float64"
+        },
+        {
+          "name": "ntc_net_ch_it_mw_zscore",
+          "dtype": "float64"
+        },
+        {
+          "name": "load_at_mw",
+          "dtype": "float64"
+        },
+        {
+          "name": "solar_at_mw",
+          "dtype": "float64"
+        },
+        {
+          "name": "wind_at_mw",
+          "dtype": "float64"
+        },
+        {
+          "name": "load_de_mw",
+          "dtype": "float64"
+        },
+        {
+          "name": "solar_de_mw",
+          "dtype": "float64"
+        },
+        {
+          "name": "wind_de_mw",
+          "dtype": "float64"
+        },
+        {
+          "name": "residual_load_de_mw",
+          "dtype": "float64"
+        },
+        {
+          "name": "load_fr_mw",
+          "dtype": "float64"
+        },
+        {
+          "name": "solar_fr_mw",
+          "dtype": "float64"
+        },
+        {
+          "name": "wind_fr_mw",
+          "dtype": "float64"
+        },
+        {
+          "name": "load_it_mw",
+          "dtype": "float64"
+        },
+        {
+          "name": "solar_it_mw",
+          "dtype": "float64"
+        },
+        {
+          "name": "wind_it_mw",
+          "dtype": "float64"
+        },
+        {
+          "name": "solar_regime",
+          "dtype": "int64"
+        },
+        {
+          "name": "load_deviation",
+          "dtype": "float64"
+        },
+        {
+          "name": "flow_deviation",
+          "dtype": "float64"
+        },
+        {
+          "name": "ntc_balance_ch_de",
+          "dtype": "float64"
+        },
+        {
+          "name": "ntc_balance_ch_fr",
+          "dtype": "float64"
+        },
+        {
+          "name": "ntc_balance_ch_at",
+          "dtype": "float64"
+        },
+        {
+          "name": "ntc_balance_ch_it",
+          "dtype": "float64"
+        }
+      ],
+      "index_name": null,
+      "index_dtype": "datetime64[ns, UTC]",
+      "n_rows": 186093,
+      "first_ts": "2021-01-01 00:00:00+00:00",
+      "last_ts": "2026-04-23 11:00:00+00:00",
+      "tz": "UTC",
+      "is_monotonic_increasing": true,
+      "duplicate_count": 0,
+      "pct_missing_key_cols": {
+        "solar_mw": 0.0,
+        "wind_mw": 0.0,
+        "load_mw": 0.0,
+        "hydro_ror_mw": 0.0,
+        "hydro_reservoir_mw": 0.0,
+        "hydro_pumped_mw": 0.0
+      },
+      "nan_runs_gt_24h": {
+        "solar_mw": [],
+        "wind_mw": [],
+        "load_mw": [],
+        "hydro_ror_mw": [],
+        "hydro_reservoir_mw": [],
+        "hydro_pumped_mw": []
+      }
+    },
+    "de_renewable_forecast": {
+      "path": "/home/user/PFC/pfc_shaping/data/de_renewable_forecast.parquet",
+      "exists": true,
+      "columns": [
+        {
+          "name": "forecast_wind_de_mw",
+          "dtype": "float64"
+        },
+        {
+          "name": "forecast_solar_de_mw",
+          "dtype": "float64"
+        }
+      ],
+      "index_name": null,
+      "index_dtype": "datetime64[us, UTC]",
+      "n_rows": 112320,
+      "first_ts": "2023-01-01 00:00:00+00:00",
+      "last_ts": "2026-03-15 23:45:00+00:00",
+      "tz": "UTC",
+      "is_monotonic_increasing": true,
+      "duplicate_count": 0,
+      "pct_missing_key_cols": {
+        "forecast_wind_de_mw": 0.0,
+        "forecast_solar_de_mw": 0.0
+      },
+      "nan_runs_gt_24h": {
+        "forecast_wind_de_mw": [],
+        "forecast_solar_de_mw": []
+      }
+    },
+    "epex_hourly": {
+      "path": "/home/user/PFC/data/epex_hourly.parquet",
+      "exists": true,
+      "columns": [
+        {
+          "name": "price_eur_mwh",
+          "dtype": "float64"
+        }
+      ],
+      "index_name": null,
+      "index_dtype": "datetime64[ns, UTC]",
+      "n_rows": 28079,
+      "first_ts": "2023-01-01 00:00:00+00:00",
+      "last_ts": "2026-03-15 22:00:00+00:00",
+      "tz": "UTC",
+      "is_monotonic_increasing": true,
+      "duplicate_count": 0,
+      "pct_missing_key_cols": {
+        "price_eur_mwh": 0.0
+      },
+      "nan_runs_gt_24h": {
+        "price_eur_mwh": []
+      }
+    },
+    "epex_15min": {
+      "path": "/home/user/PFC/pfc_shaping/data/epex_15min.parquet",
+      "exists": true,
+      "columns": [
+        {
+          "name": "price_eur_mwh",
+          "dtype": "float64"
+        },
+        {
+          "name": "spike_flag",
+          "dtype": "bool"
+        }
+      ],
+      "index_name": null,
+      "index_dtype": "datetime64[ns, UTC]",
+      "n_rows": 112016,
+      "first_ts": "2023-01-01 00:00:00+00:00",
+      "last_ts": "2026-03-15 22:00:00+00:00",
+      "tz": "UTC",
+      "is_monotonic_increasing": true,
+      "duplicate_count": 0,
+      "pct_missing_key_cols": {
+        "price_eur_mwh": 0.0
+      },
+      "nan_runs_gt_24h": {
+        "price_eur_mwh": []
+      }
+    },
+    "epex_de_15min": {
+      "path": "/home/user/PFC/pfc_shaping/data/epex_de_15min.parquet",
+      "exists": true,
+      "columns": [
+        {
+          "name": "price_eur_mwh",
+          "dtype": "float64"
+        },
+        {
+          "name": "spike_flag",
+          "dtype": "bool"
+        }
+      ],
+      "index_name": null,
+      "index_dtype": "datetime64[ns, UTC]",
+      "n_rows": 112316,
+      "first_ts": "2023-01-01 00:00:00+00:00",
+      "last_ts": "2026-03-15 22:45:00+00:00",
+      "tz": "UTC",
+      "is_monotonic_increasing": true,
+      "duplicate_count": 0,
+      "pct_missing_key_cols": {
+        "price_eur_mwh": 0.0
+      },
+      "nan_runs_gt_24h": {
+        "price_eur_mwh": []
+      }
+    },
+    "hydro_reservoir": {
+      "path": "/home/user/PFC/pfc_shaping/data/hydro_reservoir.parquet",
+      "exists": true,
+      "columns": [
+        {
+          "name": "fill_gwh",
+          "dtype": "float64"
+        },
+        {
+          "name": "max_capacity_gwh",
+          "dtype": "float64"
+        },
+        {
+          "name": "fill_pct",
+          "dtype": "float64"
+        },
+        {
+          "name": "wallis_gwh",
+          "dtype": "int64"
+        },
+        {
+          "name": "graubuenden_gwh",
+          "dtype": "int64"
+        },
+        {
+          "name": "tessin_gwh",
+          "dtype": "int64"
+        },
+        {
+          "name": "fill_deviation",
+          "dtype": "float64"
+        },
+        {
+          "name": "water_value_proxy",
+          "dtype": "float64"
+        }
+      ],
+      "index_name": "week_start",
+      "index_dtype": "datetime64[ns, UTC]",
+      "n_rows": 1367,
+      "first_ts": "2000-01-03 00:00:00+00:00",
+      "last_ts": "2026-03-09 00:00:00+00:00",
+      "tz": "UTC",
+      "is_monotonic_increasing": true,
+      "duplicate_count": 0,
+      "pct_missing_key_cols": {
+        "fill_pct": 0.0
+      },
+      "nan_runs_gt_24h": {
+        "fill_pct": []
+      }
+    }
+  },
+  "section_2_ch_de_solar_alignment": {
+    "note": "DE realized solar not in inventory; using DE forecast file's forecast_solar_de_mw as best-available DE proxy.",
+    "correlation_per_full_year": {
+      "2023": {
+        "n_hours": 8760,
+        "corr_ch_de_solar": 0.9445731269434409
+      },
+      "2024": {
+        "n_hours": 8784,
+        "corr_ch_de_solar": 0.931996077643335
+      },
+      "2025": {
+        "n_hours": 8760,
+        "corr_ch_de_solar": 0.9422589726476488
+      }
+    },
+    "per_year_month": [
+      {
+        "year": 2023,
+        "month": 1,
+        "n_hours": 744,
+        "corr": 0.7828819384845371
+      },
+      {
+        "year": 2023,
+        "month": 2,
+        "n_hours": 672,
+        "corr": 0.8435552066606005
+      },
+      {
+        "year": 2023,
+        "month": 3,
+        "n_hours": 744,
+        "corr": 0.862442519180905
+      },
+      {
+        "year": 2023,
+        "month": 4,
+        "n_hours": 720,
+        "corr": 0.9121343462613695
+      },
+      {
+        "year": 2023,
+        "month": 5,
+        "n_hours": 744,
+        "corr": 0.9524183984185134
+      },
+      {
+        "year": 2023,
+        "month": 6,
+        "n_hours": 720,
+        "corr": 0.9770452111983412
+      },
+      {
+        "year": 2023,
+        "month": 7,
+        "n_hours": 744,
+        "corr": 0.9376157784600467
+      },
+      {
+        "year": 2023,
+        "month": 8,
+        "n_hours": 744,
+        "corr": 0.9571631595961632
+      },
+      {
+        "year": 2023,
+        "month": 9,
+        "n_hours": 720,
+        "corr": 0.9692859269572872
+      },
+      {
+        "year": 2023,
+        "month": 10,
+        "n_hours": 744,
+        "corr": 0.934899942933602
+      },
+      {
+        "year": 2023,
+        "month": 11,
+        "n_hours": 720,
+        "corr": 0.8793457246588118
+      },
+      {
+        "year": 2023,
+        "month": 12,
+        "n_hours": 744,
+        "corr": 0.8427071782836505
+      },
+      {
+        "year": 2024,
+        "month": 1,
+        "n_hours": 744,
+        "corr": 0.8096449868205178
+      },
+      {
+        "year": 2024,
+        "month": 2,
+        "n_hours": 696,
+        "corr": 0.8773444930908556
+      },
+      {
+        "year": 2024,
+        "month": 3,
+        "n_hours": 744,
+        "corr": 0.8862644171702878
+      },
+      {
+        "year": 2024,
+        "month": 4,
+        "n_hours": 720,
+        "corr": 0.9338468226445493
+      },
+      {
+        "year": 2024,
+        "month": 5,
+        "n_hours": 744,
+        "corr": 0.9238454881358423
+      },
+      {
+        "year": 2024,
+        "month": 6,
+        "n_hours": 720,
+        "corr": 0.9160608915317933
+      },
+      {
+        "year": 2024,
+        "month": 7,
+        "n_hours": 744,
+        "corr": 0.9563070431762479
+      },
+      {
+        "year": 2024,
+        "month": 8,
+        "n_hours": 744,
+        "corr": 0.9615705620614214
+      },
+      {
+        "year": 2024,
+        "month": 9,
+        "n_hours": 720,
+        "corr": 0.9226550322948276
+      },
+      {
+        "year": 2024,
+        "month": 10,
+        "n_hours": 744,
+        "corr": 0.862909643620245
+      },
+      {
+        "year": 2024,
+        "month": 11,
+        "n_hours": 720,
+        "corr": 0.8138304231701874
+      },
+      {
+        "year": 2024,
+        "month": 12,
+        "n_hours": 744,
+        "corr": 0.7841198617959427
+      },
+      {
+        "year": 2025,
+        "month": 1,
+        "n_hours": 744,
+        "corr": 0.8418857727446246
+      },
+      {
+        "year": 2025,
+        "month": 2,
+        "n_hours": 672,
+        "corr": 0.8695088254467739
+      },
+      {
+        "year": 2025,
+        "month": 3,
+        "n_hours": 744,
+        "corr": 0.9388828588336096
+      },
+      {
+        "year": 2025,
+        "month": 4,
+        "n_hours": 720,
+        "corr": 0.9522274121751794
+      },
+      {
+        "year": 2025,
+        "month": 5,
+        "n_hours": 744,
+        "corr": 0.9094373419829828
+      },
+      {
+        "year": 2025,
+        "month": 6,
+        "n_hours": 720,
+        "corr": 0.9637969246462095
+      },
+      {
+        "year": 2025,
+        "month": 7,
+        "n_hours": 744,
+        "corr": 0.9375611436577089
+      },
+      {
+        "year": 2025,
+        "month": 8,
+        "n_hours": 744,
+        "corr": 0.9638213091182738
+      },
+      {
+        "year": 2025,
+        "month": 9,
+        "n_hours": 720,
+        "corr": 0.9435765904196546
+      },
+      {
+        "year": 2025,
+        "month": 10,
+        "n_hours": 744,
+        "corr": 0.8881787304174975
+      },
+      {
+        "year": 2025,
+        "month": 11,
+        "n_hours": 720,
+        "corr": 0.8856558614332274
+      },
+      {
+        "year": 2025,
+        "month": 12,
+        "n_hours": 744,
+        "corr": 0.9178109397601901
+      },
+      {
+        "year": 2026,
+        "month": 1,
+        "n_hours": 744,
+        "corr": 0.8511588692239312
+      },
+      {
+        "year": 2026,
+        "month": 2,
+        "n_hours": 672,
+        "corr": 0.881456019149297
+      },
+      {
+        "year": 2026,
+        "month": 3,
+        "n_hours": 360,
+        "corr": 0.981523548992959
+      }
+    ],
+    "top5_months_by_corr": [
+      {
+        "year": 2026,
+        "month": 3,
+        "n_hours": 360,
+        "corr": 0.981523548992959
+      },
+      {
+        "year": 2023,
+        "month": 6,
+        "n_hours": 720,
+        "corr": 0.9770452111983412
+      },
+      {
+        "year": 2023,
+        "month": 9,
+        "n_hours": 720,
+        "corr": 0.9692859269572872
+      },
+      {
+        "year": 2025,
+        "month": 8,
+        "n_hours": 744,
+        "corr": 0.9638213091182738
+      },
+      {
+        "year": 2025,
+        "month": 6,
+        "n_hours": 720,
+        "corr": 0.9637969246462095
+      }
+    ],
+    "bottom5_months_by_corr": [
+      {
+        "year": 2025,
+        "month": 1,
+        "n_hours": 744,
+        "corr": 0.8418857727446246
+      },
+      {
+        "year": 2024,
+        "month": 11,
+        "n_hours": 720,
+        "corr": 0.8138304231701874
+      },
+      {
+        "year": 2024,
+        "month": 1,
+        "n_hours": 744,
+        "corr": 0.8096449868205178
+      },
+      {
+        "year": 2024,
+        "month": 12,
+        "n_hours": 744,
+        "corr": 0.7841198617959427
+      },
+      {
+        "year": 2023,
+        "month": 1,
+        "n_hours": 744,
+        "corr": 0.7828819384845371
+      }
+    ],
+    "by_quarter": {
+      "Q1": {
+        "n_hours": 8280,
+        "corr": 0.9021062463965758
+      },
+      "Q2": {
+        "n_hours": 6552,
+        "corr": 0.9263789504458676
+      },
+      "Q3": {
+        "n_hours": 6624,
+        "corr": 0.9426529922743861
+      },
+      "Q4": {
+        "n_hours": 6624,
+        "corr": 0.8807860616472672
+      }
+    }
+  },
+  "section_3_de_forecast_semantics": {
+    "columns": [
+      "forecast_wind_de_mw",
+      "forecast_solar_de_mw"
+    ],
+    "has_issue_date_col": false,
+    "index_name": null,
+    "index_freq_guess": "15min",
+    "assumed_semantics": "No issue-date column present. Assumed: single-vintage day-ahead forecast at D-1 ~18:00 CET. Cannot be verified from file alone.",
+    "verifiable": [
+      "timestamp index range",
+      "two numeric forecast columns (wind & solar MW)",
+      "no provenance/horizon column"
+    ],
+    "unverifiable_assumption": "Whether values are stamped at issue-time or are post-hoc revisions. If post-hoc, that is leakage.",
+    "lag_scan_hours": [
+      -24,
+      -23,
+      -22,
+      -21,
+      -20,
+      -19,
+      -18,
+      -17,
+      -16,
+      -15,
+      -14,
+      -13,
+      -12,
+      -11,
+      -10,
+      -9,
+      -8,
+      -7,
+      -6,
+      -5,
+      -4,
+      -3,
+      -2,
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24
+    ],
+    "lag_scan_corr": [
+      0.9121984045662128,
+      0.8920539211552426,
+      0.7968421682638658,
+      0.6445611128496526,
+      0.4594903724114138,
+      0.26575627647667427,
+      0.08352438093687516,
+      -0.07292291246716806,
+      -0.19591291595991328,
+      -0.2840282112025046,
+      -0.34068226495077686,
+      -0.37192634906466493,
+      -0.3836256760860105,
+      -0.37876818180665306,
+      -0.35606524696126135,
+      -0.31059877394483004,
+      -0.23613994412996334,
+      -0.1280198984307163,
+      0.014569334750164935,
+      0.18708083379350993,
+      0.37880018307114444,
+      0.572639616888522,
+      0.7459738101112914,
+      0.8733185381988933,
+      0.9318441514802256,
+      0.9095040217885019,
+      0.8109470194979965,
+      0.6548628002209861,
+      0.46616951644422544,
+      0.2694495463203488,
+      0.08508405581769238,
+      -0.07264934519262094,
+      -0.19623698279816934,
+      -0.28448836173593145,
+      -0.3410418040502546,
+      -0.3721196496214838,
+      -0.38368333960874684,
+      -0.37876760693791944,
+      -0.35616841900735696,
+      -0.3111463560352754,
+      -0.2377240765416518,
+      -0.1314889948565262,
+      0.008184114308677904,
+      0.17671010105339208,
+      0.3635103357413512,
+      0.5518623023014242,
+      0.7198007164387398,
+      0.8427475406035351,
+      0.898802165551422
+    ],
+    "best_lag_hours": 0,
+    "best_lag_corr": 0.9318441514802256,
+    "interpretation": "Best-lag close to 0 with high corr is consistent with realization-stamped data (leakage risk). Forecasts typically show small positive/negative lag depending on longitudinal solar geometry and forecast bias. CH and DE differ by ~1 deg longitude (~4 minutes solar time), so realization-vs-realization peak should be at lag 0; forecast-vs-realization peak should ideally be at lag 0 too if forecasts are well calibrated for the same timestamps."
+  },
+  "section_4_leakage_map": {
+    "vintage_utc": "2024-12-31 17:00:00+00:00",
+    "per_file_slices": {
+      "entso_15min": {
+        "n_total": 186093,
+        "n_before_vintage": 140228,
+        "n_after_vintage": 45865,
+        "ratio_after_vintage": 0.24646279011032118,
+        "first_ts": "2021-01-01 00:00:00+00:00",
+        "last_ts": "2026-04-23 11:00:00+00:00"
+      },
+      "de_renewable_forecast": {
+        "n_total": 112320,
+        "n_before_vintage": 70148,
+        "n_after_vintage": 42172,
+        "ratio_after_vintage": 0.37546296296296294,
+        "first_ts": "2023-01-01 00:00:00+00:00",
+        "last_ts": "2026-03-15 23:45:00+00:00"
+      },
+      "epex_hourly": {
+        "n_total": 28079,
+        "n_before_vintage": 17537,
+        "n_after_vintage": 10542,
+        "ratio_after_vintage": 0.37544072082339114,
+        "first_ts": "2023-01-01 00:00:00+00:00",
+        "last_ts": "2026-03-15 22:00:00+00:00"
+      },
+      "epex_15min": {
+        "n_total": 112016,
+        "n_before_vintage": 69978,
+        "n_after_vintage": 42038,
+        "ratio_after_vintage": 0.37528567347521785,
+        "first_ts": "2023-01-01 00:00:00+00:00",
+        "last_ts": "2026-03-15 22:00:00+00:00"
+      },
+      "epex_de_15min": {
+        "n_total": 112316,
+        "n_before_vintage": 70148,
+        "n_after_vintage": 42168,
+        "ratio_after_vintage": 0.37544072082339114,
+        "first_ts": "2023-01-01 00:00:00+00:00",
+        "last_ts": "2026-03-15 22:45:00+00:00"
+      },
+      "hydro_reservoir": {
+        "n_total": 1367,
+        "n_before_vintage": 1305,
+        "n_after_vintage": 62,
+        "ratio_after_vintage": 0.04535479151426482,
+        "first_ts": "2000-01-03 00:00:00+00:00",
+        "last_ts": "2026-03-09 00:00:00+00:00"
+      }
+    },
+    "de_forecast_values_after_vintage": {
+      "yes_no": "YES",
+      "n_after": 42172,
+      "ratio_after": 0.37546296296296294,
+      "interpretation": "Post-vintage rows are EXPECTED for a forecast (delivers forward). Leakage emerges only if rows were written AFTER vintage with realization-aware revisions. Without an as_of column this is unprovable."
+    },
+    "leakage_trap_example": {
+      "scenario": "At vintage v=2024-12-31 17:00 UTC we want feature `solar_pen_2025_01` for shape correction of Jan-2025 monthly intraday template. Naive code:\n    df = read_parquet('entso_15min.parquet')\n    feat = df.loc['2025-01']['solar_mw'].mean() / df.loc['2025-01']['load_mw'].mean()\nThis pulls REALIZED Jan-2025 values into a 'predicted-at-v' regression — leakage.",
+      "guard": "1. ALWAYS filter: `df = df[df.index < v]` BEFORE feature aggregation.\n2. For forward delivery months, substitute realized with either:\n   (a) climatology = mean of same-month feature over prior years (<v),\n   (b) DE forecast IFF provenance proves it was published <= v,\n   (c) trend extrapolation from <v history.\n3. Add unit-test asserting feature.max_input_ts < v for all training rows."
+    }
+  },
+  "section_5_per_month_features": {
+    "per_month_table": [
+      {
+        "ym": "2021-01",
+        "solar_pen_m": 0.005646604335220506,
+        "wind_pen_m": 0.0027090874662015476,
+        "total_re_pen_m": 0.008355691801422054,
+        "hydro_ror_share_m": 0.17793167516628575
+      },
+      {
+        "ym": "2021-02",
+        "solar_pen_m": 0.02150461179541532,
+        "wind_pen_m": 0.0029697476890369785,
+        "total_re_pen_m": 0.024474359484452295,
+        "hydro_ror_share_m": 0.23182108646815625
+      },
+      {
+        "ym": "2021-03",
+        "solar_pen_m": 0.04640845190917011,
+        "wind_pen_m": 0.004648706475449951,
+        "total_re_pen_m": 0.05105715838462006,
+        "hydro_ror_share_m": 0.20207453100676925
+      },
+      {
+        "ym": "2021-04",
+        "solar_pen_m": 0.0676916352054877,
+        "wind_pen_m": 1.1151255631384093e-07,
+        "total_re_pen_m": 0.06769174671804401,
+        "hydro_ror_share_m": 0.23408181556167118
+      },
+      {
+        "ym": "2021-05",
+        "solar_pen_m": 0.06743187296126335,
+        "wind_pen_m": 0.0030946294022597726,
+        "total_re_pen_m": 0.07052650236352312,
+        "hydro_ror_share_m": 0.31398394773711996
+      },
+      {
+        "ym": "2021-06",
+        "solar_pen_m": 0.0823273504867069,
+        "wind_pen_m": 0.0014641692399715402,
+        "total_re_pen_m": 0.08379151972667843,
+        "hydro_ror_share_m": 0.48538091290171004
+      },
+      {
+        "ym": "2021-07",
+        "solar_pen_m": 0.0782495553884995,
+        "wind_pen_m": 0.002063283232453957,
+        "total_re_pen_m": 0.08031283862095345,
+        "hydro_ror_share_m": 0.4632658967916097
+      },
+      {
+        "ym": "2021-08",
+        "solar_pen_m": 0.06900027454284881,
+        "wind_pen_m": 0.0018804905434053822,
+        "total_re_pen_m": 0.07088076508625418,
+        "hydro_ror_share_m": 0.38947947473192585
+      },
+      {
+        "ym": "2021-09",
+        "solar_pen_m": 0.05964007194387347,
+        "wind_pen_m": 0.0014528897119762164,
+        "total_re_pen_m": 0.06109296165584969,
+        "hydro_ror_share_m": 0.24980913256223303
+      },
+      {
+        "ym": "2021-10",
+        "solar_pen_m": 0.038384945463244086,
+        "wind_pen_m": 0.002694591599481215,
+        "total_re_pen_m": 0.0410795370627253,
+        "hydro_ror_share_m": 0.2068384661271623
+      },
+      {
+        "ym": "2021-11",
+        "solar_pen_m": 0.013688591443915281,
+        "wind_pen_m": 0.001526867120373032,
+        "total_re_pen_m": 0.015215458564288315,
+        "hydro_ror_share_m": 0.1702681338752556
+      },
+      {
+        "ym": "2021-12",
+        "solar_pen_m": 0.007284566158548873,
+        "wind_pen_m": 0.0028890361347107766,
+        "total_re_pen_m": 0.01017360229325965,
+        "hydro_ror_share_m": 0.20010835007810734
+      },
+      {
+        "ym": "2022-01",
+        "solar_pen_m": 0.015433676186697606,
+        "wind_pen_m": 0.002706899891571547,
+        "total_re_pen_m": 0.018140576078269154,
+        "hydro_ror_share_m": 0.1585760905304703
+      },
+      {
+        "ym": "2022-02",
+        "solar_pen_m": 0.03168124519621814,
+        "wind_pen_m": 0.00376028679648096,
+        "total_re_pen_m": 0.0354415319926991,
+        "hydro_ror_share_m": 0.13536173534201804
+      },
+      {
+        "ym": "2022-03",
+        "solar_pen_m": 0.059907493110621095,
+        "wind_pen_m": 0.0015884552573695546,
+        "total_re_pen_m": 0.06149594836799065,
+        "hydro_ror_share_m": 0.1100436705920701
+      },
+      {
+        "ym": "2022-04",
+        "solar_pen_m": 0.07538644702153172,
+        "wind_pen_m": 0.002324300612349604,
+        "total_re_pen_m": 0.07771074763388132,
+        "hydro_ror_share_m": 0.23023929886994635
+      },
+      {
+        "ym": "2022-05",
+        "solar_pen_m": 0.09616753994259605,
+        "wind_pen_m": 0.0018004372889520504,
+        "total_re_pen_m": 0.09796797723154811,
+        "hydro_ror_share_m": 0.36880231396176133
+      },
+      {
+        "ym": "2022-06",
+        "solar_pen_m": 0.10136419960334928,
+        "wind_pen_m": 0.0018115273111648502,
+        "total_re_pen_m": 0.1031757269145141,
+        "hydro_ror_share_m": 0.43286736419633454
+      },
+      {
+        "ym": "2022-07",
+        "solar_pen_m": 0.11623937840148411,
+        "wind_pen_m": 0.0016341204350915333,
+        "total_re_pen_m": 0.11787349883657565,
+        "hydro_ror_share_m": 0.383716525926566
+      },
+      {
+        "ym": "2022-08",
+        "solar_pen_m": 0.10056328926816802,
+        "wind_pen_m": 0.0016642901407663742,
+        "total_re_pen_m": 0.10222757940893439,
+        "hydro_ror_share_m": 0.3138755240626518
+      },
+      {
+        "ym": "2022-09",
+        "solar_pen_m": 0.06765118223385477,
+        "wind_pen_m": 0.0022174906529179783,
+        "total_re_pen_m": 0.06986867288677276,
+        "hydro_ror_share_m": 0.2561541587959606
+      },
+      {
+        "ym": "2022-10",
+        "solar_pen_m": 0.04581251569227377,
+        "wind_pen_m": 0.0025067305673917135,
+        "total_re_pen_m": 0.04831924625966549,
+        "hydro_ror_share_m": 0.2683433728436091
+      },
+      {
+        "ym": "2022-11",
+        "solar_pen_m": 0.023090027236187957,
+        "wind_pen_m": 0.0029147280288256464,
+        "total_re_pen_m": 0.026004755265013606,
+        "hydro_ror_share_m": 0.1658213866676791
+      },
+      {
+        "ym": "2022-12",
+        "solar_pen_m": 0.009811766817384979,
+        "wind_pen_m": 0.002864672125163359,
+        "total_re_pen_m": 0.012676438942548338,
+        "hydro_ror_share_m": 0.16229647103889433
+      },
+      {
+        "ym": "2023-01",
+        "solar_pen_m": 0.012640892478924451,
+        "wind_pen_m": 0.0027402965499377183,
+        "total_re_pen_m": 0.01538118902886217,
+        "hydro_ror_share_m": 0.1944124451356648
+      },
+      {
+        "ym": "2023-02",
+        "solar_pen_m": 0.04139360065817298,
+        "wind_pen_m": 0.0019683968667686537,
+        "total_re_pen_m": 0.04336199752494164,
+        "hydro_ror_share_m": 0.13245892305459267
+      },
+      {
+        "ym": "2023-03",
+        "solar_pen_m": 0.05764797844961248,
+        "wind_pen_m": 0.003433506489544889,
+        "total_re_pen_m": 0.06108148493915737,
+        "hydro_ror_share_m": 0.18554859385476832
+      },
+      {
+        "ym": "2023-04",
+        "solar_pen_m": 0.08858991980485986,
+        "wind_pen_m": 0.0024050293232542883,
+        "total_re_pen_m": 0.09099494912811416,
+        "hydro_ror_share_m": 0.2599532364248041
+      },
+      {
+        "ym": "2023-05",
+        "solar_pen_m": 0.11603846798458832,
+        "wind_pen_m": 0.0020351234303584635,
+        "total_re_pen_m": 0.11807359141494678,
+        "hydro_ror_share_m": 0.4284397392583295
+      },
+      {
+        "ym": "2023-06",
+        "solar_pen_m": 0.15199547205749286,
+        "wind_pen_m": 0.0014991523808209426,
+        "total_re_pen_m": 0.15349462443831383,
+        "hydro_ror_share_m": 0.43358468444539205
+      },
+      {
+        "ym": "2023-07",
+        "solar_pen_m": 0.13283846179708775,
+        "wind_pen_m": 0.002324658192045555,
+        "total_re_pen_m": 0.1351631199891333,
+        "hydro_ror_share_m": 0.47646484093931957
+      },
+      {
+        "ym": "2023-08",
+        "solar_pen_m": 0.11928114049240489,
+        "wind_pen_m": 0.002412253496430912,
+        "total_re_pen_m": 0.1216933939888358,
+        "hydro_ror_share_m": 0.38984278112755344
+      },
+      {
+        "ym": "2023-09",
+        "solar_pen_m": 0.11274802348494488,
+        "wind_pen_m": 0.0018159091718012888,
+        "total_re_pen_m": 0.11456393265674616,
+        "hydro_ror_share_m": 0.3408678765861021
+      },
+      {
+        "ym": "2023-10",
+        "solar_pen_m": 0.07184458339144965,
+        "wind_pen_m": 0.0033817181851899794,
+        "total_re_pen_m": 0.07522630157663963,
+        "hydro_ror_share_m": 0.21419604620964794
+      },
+      {
+        "ym": "2023-11",
+        "solar_pen_m": 0.026279004368960635,
+        "wind_pen_m": 0.005007239506427291,
+        "total_re_pen_m": 0.03128624387538793,
+        "hydro_ror_share_m": 0.24868017211107077
+      },
+      {
+        "ym": "2023-12",
+        "solar_pen_m": 0.01753046135059741,
+        "wind_pen_m": 0.00413961588576675,
+        "total_re_pen_m": 0.02167007723636416,
+        "hydro_ror_share_m": 0.23554803293007784
+      },
+      {
+        "ym": "2024-01",
+        "solar_pen_m": 0.01971707606553562,
+        "wind_pen_m": 0.00366379030221386,
+        "total_re_pen_m": 0.023380866367749477,
+        "hydro_ror_share_m": 0.21566095085723663
+      },
+      {
+        "ym": "2024-02",
+        "solar_pen_m": 0.048789609492429296,
+        "wind_pen_m": 0.0032597595307320847,
+        "total_re_pen_m": 0.05204936902316138,
+        "hydro_ror_share_m": 0.1703684873087765
+      },
+      {
+        "ym": "2024-03",
+        "solar_pen_m": 0.08044698764380034,
+        "wind_pen_m": 0.0029642056622335338,
+        "total_re_pen_m": 0.08341119330603389,
+        "hydro_ror_share_m": 0.2608912420811748
+      },
+      {
+        "ym": "2024-04",
+        "solar_pen_m": 0.11550505868972281,
+        "wind_pen_m": 0.003629835920862005,
+        "total_re_pen_m": 0.11913489461058481,
+        "hydro_ror_share_m": 0.3097664662328071
+      },
+      {
+        "ym": "2024-05",
+        "solar_pen_m": 0.14390773009137306,
+        "wind_pen_m": 0.0021472610649681595,
+        "total_re_pen_m": 0.14605499115634124,
+        "hydro_ror_share_m": 0.4139357984021594
+      },
+      {
+        "ym": "2024-06",
+        "solar_pen_m": 0.14917016533578972,
+        "wind_pen_m": 0.0023962923187435233,
+        "total_re_pen_m": 0.15156645765453325,
+        "hydro_ror_share_m": 0.46187678487143796
+      },
+      {
+        "ym": "2024-07",
+        "solar_pen_m": 0.18855051727091487,
+        "wind_pen_m": 0.0017693502416694803,
+        "total_re_pen_m": 0.19031986751258437,
+        "hydro_ror_share_m": 0.5366968024084663
+      },
+      {
+        "ym": "2024-08",
+        "solar_pen_m": 0.18945958095230703,
+        "wind_pen_m": 0.001699536602434649,
+        "total_re_pen_m": 0.19115911755474171,
+        "hydro_ror_share_m": 0.5021866118699598
+      },
+      {
+        "ym": "2024-09",
+        "solar_pen_m": 0.11511073324736315,
+        "wind_pen_m": 0.003875728638264062,
+        "total_re_pen_m": 0.1189864618856272,
+        "hydro_ror_share_m": 0.3654508670751889
+      },
+      {
+        "ym": "2024-10",
+        "solar_pen_m": 0.06306701705304726,
+        "wind_pen_m": 0.0029155281631090125,
+        "total_re_pen_m": 0.06598254521615626,
+        "hydro_ror_share_m": 0.4044648858208041
+      },
+      {
+        "ym": "2024-11",
+        "solar_pen_m": 0.03597978499263945,
+        "wind_pen_m": 0.002946613246597897,
+        "total_re_pen_m": 0.03892639823923735,
+        "hydro_ror_share_m": 0.2176420049016002
+      },
+      {
+        "ym": "2024-12",
+        "solar_pen_m": 0.02353387231337026,
+        "wind_pen_m": 0.003015577651648769,
+        "total_re_pen_m": 0.02654944996501903,
+        "hydro_ror_share_m": 0.23505459914368995
+      },
+      {
+        "ym": "2025-01",
+        "solar_pen_m": 0.030196650627718882,
+        "wind_pen_m": 0.004006029272844545,
+        "total_re_pen_m": 0.03420267990056343,
+        "hydro_ror_share_m": 0.16966682647999146
+      },
+      {
+        "ym": "2025-02",
+        "solar_pen_m": 0.04558799004505512,
+        "wind_pen_m": 0.0017559031122138104,
+        "total_re_pen_m": 0.04734389315726893,
+        "hydro_ror_share_m": 0.1452802662150811
+      },
+      {
+        "ym": "2025-03",
+        "solar_pen_m": 0.10316062801451852,
+        "wind_pen_m": 0.0017125666856405708,
+        "total_re_pen_m": 0.10487319470015909,
+        "hydro_ror_share_m": 0.12859224469766786
+      },
+      {
+        "ym": "2025-04",
+        "solar_pen_m": 0.16697658524142325,
+        "wind_pen_m": 0.00215817198447851,
+        "total_re_pen_m": 0.16913475722590177,
+        "hydro_ror_share_m": 0.22860675745779704
+      },
+      {
+        "ym": "2025-05",
+        "solar_pen_m": 0.17525529991107314,
+        "wind_pen_m": 0.0018835473580517718,
+        "total_re_pen_m": 0.17713884726912493,
+        "hydro_ror_share_m": 0.3258970826264522
+      },
+      {
+        "ym": "2025-06",
+        "solar_pen_m": 0.20777069199745077,
+        "wind_pen_m": 0.0021703401427573123,
+        "total_re_pen_m": 0.20994103214020804,
+        "hydro_ror_share_m": 0.38303024807329267
+      },
+      {
+        "ym": "2025-07",
+        "solar_pen_m": 0.1906084500209688,
+        "wind_pen_m": 0.0020786669263781867,
+        "total_re_pen_m": 0.192687116947347,
+        "hydro_ror_share_m": 0.36815094588443775
+      },
+      {
+        "ym": "2025-08",
+        "solar_pen_m": 0.18785665581444538,
+        "wind_pen_m": 0.001550546383561165,
+        "total_re_pen_m": 0.18940720219800652,
+        "hydro_ror_share_m": 0.34908629726356855
+      },
+      {
+        "ym": "2025-09",
+        "solar_pen_m": 0.12989929099348171,
+        "wind_pen_m": 0.001958480275067377,
+        "total_re_pen_m": 0.13185777126854908,
+        "hydro_ror_share_m": 0.32469355398549893
+      },
+      {
+        "ym": "2025-10",
+        "solar_pen_m": 0.08226347782873758,
+        "wind_pen_m": 0.004003051466693073,
+        "total_re_pen_m": 0.08626652929543066,
+        "hydro_ror_share_m": 0.21621773522308105
+      },
+      {
+        "ym": "2025-11",
+        "solar_pen_m": 0.04657391998970531,
+        "wind_pen_m": 0.0024625412146270184,
+        "total_re_pen_m": 0.04903646120433233,
+        "hydro_ror_share_m": 0.189232326055007
+      },
+      {
+        "ym": "2025-12",
+        "solar_pen_m": 0.04076418176358493,
+        "wind_pen_m": 0.0014806941952926805,
+        "total_re_pen_m": 0.04224487595887761,
+        "hydro_ror_share_m": 0.15216996067197644
+      },
+      {
+        "ym": "2026-01",
+        "solar_pen_m": 0.030444368201147196,
+        "wind_pen_m": 0.002697858751642033,
+        "total_re_pen_m": 0.033142226952789226,
+        "hydro_ror_share_m": 0.10451099058711946
+      },
+      {
+        "ym": "2026-02",
+        "solar_pen_m": 0.06370866359653682,
+        "wind_pen_m": 0.0034956129083628155,
+        "total_re_pen_m": 0.06720427650489964,
+        "hydro_ror_share_m": 0.14834046908467033
+      },
+      {
+        "ym": "2026-03",
+        "solar_pen_m": 0.13840490354231308,
+        "wind_pen_m": 0.0019907563396401725,
+        "total_re_pen_m": 0.14039565988195324,
+        "hydro_ror_share_m": 0.14185108715443803
+      },
+      {
+        "ym": "2026-04",
+        "solar_pen_m": 0.20685369024158023,
+        "wind_pen_m": 0.001898766445355027,
+        "total_re_pen_m": 0.20875245668693526,
+        "hydro_ror_share_m": 0.18988028994078338
+      }
+    ],
+    "feature_stats": {
+      "solar_pen_m": {
+        "n": 64,
+        "mean": 0.08232435749440142,
+        "std": 0.05631165237961174,
+        "min": 0.005646604335220506,
+        "max": 0.20777069199745077,
+        "slope_per_month": 0.0013343157816357153,
+        "slope_per_year": 0.016011789379628584,
+        "outlier_months": []
+      },
+      "wind_pen_m": {
+        "n": 64,
+        "mean": 0.0024990228362554955,
+        "std": 0.000899604058834409,
+        "min": 1.1151255631384093e-07,
+        "max": 0.005007239506427291,
+        "slope_per_month": 3.4559557196684263e-06,
+        "slope_per_year": 4.147146863602111e-05,
+        "outlier_months": [
+          "2021-04",
+          "2023-11"
+        ]
+      },
+      "total_re_pen_m": {
+        "n": 64,
+        "mean": 0.08482338033065692,
+        "std": 0.05594622607797952,
+        "min": 0.008355691801422054,
+        "max": 0.20994103214020804,
+        "slope_per_month": 0.0013377717373553835,
+        "slope_per_year": 0.016053260848264604,
+        "outlier_months": []
+      },
+      "hydro_ror_share_m": {
+        "n": 64,
+        "mean": 0.2735990826607415,
+        "std": 0.11373140426029475,
+        "min": 0.10451099058711946,
+        "max": 0.5366968024084663,
+        "slope_per_month": -0.000351003114694942,
+        "slope_per_year": -0.0042120373763393035,
+        "outlier_months": []
+      }
+    }
+  },
+  "section_6_collinearity": {
+    "columns": [
+      "solar_pen_m",
+      "wind_pen_m",
+      "total_re_pen_m",
+      "hydro_ror_share_m",
+      "t_idx"
+    ],
+    "matrix": [
+      [
+        1.0,
+        -0.4129,
+        0.9999,
+        0.6211,
+        0.4412
+      ],
+      [
+        -0.4129,
+        1.0,
+        -0.3995,
+        -0.2904,
+        0.0715
+      ],
+      [
+        0.9999,
+        -0.3995,
+        1.0,
+        0.6205,
+        0.4452
+      ],
+      [
+        0.6211,
+        -0.2904,
+        0.6205,
+        1.0,
+        -0.0575
+      ],
+      [
+        0.4412,
+        0.0715,
+        0.4452,
+        -0.0575,
+        1.0
+      ]
+    ],
+    "high_collinearity_pairs": [
+      {
+        "a": "solar_pen_m",
+        "b": "total_re_pen_m",
+        "rho": 0.9999
+      }
+    ],
+    "recommendation": "If total_re_pen vs (solar_pen+wind_pen) is highly collinear, use one only. Trend (t_idx) vs solar_pen also commonly correlated; include a centered time term and drop one of the penetration features."
+  },
+  "section_7_calendar_hygiene": {
+    "entso_15min": {
+      "tz_input": "UTC",
+      "tz_converted_to": "Europe/Zurich",
+      "n_rows_on_ch_fixed_holidays": 2588,
+      "dst_per_year": {
+        "2021": {
+          "march_dst_date": "2021-03-28",
+          "n_rows_on_march_dst_day": 92,
+          "oct_dst_date": "2021-10-31",
+          "n_rows_on_oct_dst_day": 100
+        },
+        "2022": {
+          "march_dst_date": "2022-03-27",
+          "n_rows_on_march_dst_day": 92,
+          "oct_dst_date": "2022-10-30",
+          "n_rows_on_oct_dst_day": 100
+        },
+        "2023": {
+          "march_dst_date": "2023-03-26",
+          "n_rows_on_march_dst_day": 92,
+          "oct_dst_date": "2023-10-29",
+          "n_rows_on_oct_dst_day": 100
+        },
+        "2024": {
+          "march_dst_date": "2024-03-31",
+          "n_rows_on_march_dst_day": 92,
+          "oct_dst_date": "2024-10-27",
+          "n_rows_on_oct_dst_day": 100
+        },
+        "2025": {
+          "march_dst_date": "2025-03-30",
+          "n_rows_on_march_dst_day": 92,
+          "oct_dst_date": "2025-10-26",
+          "n_rows_on_oct_dst_day": 100
+        },
+        "2026": {
+          "march_dst_date": "2026-03-29",
+          "n_rows_on_march_dst_day": 92,
+          "oct_dst_date": "2026-10-25",
+          "n_rows_on_oct_dst_day": 0
+        }
+      },
+      "leap_day_feb29_rows": 96
+    },
+    "de_renewable_forecast": {
+      "tz_input": "UTC",
+      "tz_converted_to": "Europe/Zurich",
+      "n_rows_on_ch_fixed_holidays": 1628,
+      "dst_per_year": {
+        "2023": {
+          "march_dst_date": "2023-03-26",
+          "n_rows_on_march_dst_day": 92,
+          "oct_dst_date": "2023-10-29",
+          "n_rows_on_oct_dst_day": 100
+        },
+        "2024": {
+          "march_dst_date": "2024-03-31",
+          "n_rows_on_march_dst_day": 92,
+          "oct_dst_date": "2024-10-27",
+          "n_rows_on_oct_dst_day": 100
+        },
+        "2025": {
+          "march_dst_date": "2025-03-30",
+          "n_rows_on_march_dst_day": 92,
+          "oct_dst_date": "2025-10-26",
+          "n_rows_on_oct_dst_day": 100
+        },
+        "2026": {
+          "march_dst_date": "2026-03-29",
+          "n_rows_on_march_dst_day": 0,
+          "oct_dst_date": "2026-10-25",
+          "n_rows_on_oct_dst_day": 0
+        }
+      },
+      "leap_day_feb29_rows": 96
+    },
+    "epex_hourly": {
+      "tz_input": "UTC",
+      "tz_converted_to": "Europe/Zurich",
+      "n_rows_on_ch_fixed_holidays": 407,
+      "dst_per_year": {
+        "2023": {
+          "march_dst_date": "2023-03-26",
+          "n_rows_on_march_dst_day": 23,
+          "oct_dst_date": "2023-10-29",
+          "n_rows_on_oct_dst_day": 25
+        },
+        "2024": {
+          "march_dst_date": "2024-03-31",
+          "n_rows_on_march_dst_day": 23,
+          "oct_dst_date": "2024-10-27",
+          "n_rows_on_oct_dst_day": 25
+        },
+        "2025": {
+          "march_dst_date": "2025-03-30",
+          "n_rows_on_march_dst_day": 23,
+          "oct_dst_date": "2025-10-26",
+          "n_rows_on_oct_dst_day": 25
+        },
+        "2026": {
+          "march_dst_date": "2026-03-29",
+          "n_rows_on_march_dst_day": 0,
+          "oct_dst_date": "2026-10-25",
+          "n_rows_on_oct_dst_day": 0
+        }
+      },
+      "leap_day_feb29_rows": 24
+    },
+    "epex_15min": {
+      "tz_input": "UTC",
+      "tz_converted_to": "Europe/Zurich",
+      "n_rows_on_ch_fixed_holidays": 1616,
+      "dst_per_year": {
+        "2023": {
+          "march_dst_date": "2023-03-26",
+          "n_rows_on_march_dst_day": 92,
+          "oct_dst_date": "2023-10-29",
+          "n_rows_on_oct_dst_day": 100
+        },
+        "2024": {
+          "march_dst_date": "2024-03-31",
+          "n_rows_on_march_dst_day": 92,
+          "oct_dst_date": "2024-10-27",
+          "n_rows_on_oct_dst_day": 100
+        },
+        "2025": {
+          "march_dst_date": "2025-03-30",
+          "n_rows_on_march_dst_day": 92,
+          "oct_dst_date": "2025-10-26",
+          "n_rows_on_oct_dst_day": 100
+        },
+        "2026": {
+          "march_dst_date": "2026-03-29",
+          "n_rows_on_march_dst_day": 0,
+          "oct_dst_date": "2026-10-25",
+          "n_rows_on_oct_dst_day": 0
+        }
+      },
+      "leap_day_feb29_rows": 96
+    },
+    "epex_de_15min": {
+      "tz_input": "UTC",
+      "tz_converted_to": "Europe/Zurich",
+      "n_rows_on_ch_fixed_holidays": 1628,
+      "dst_per_year": {
+        "2023": {
+          "march_dst_date": "2023-03-26",
+          "n_rows_on_march_dst_day": 92,
+          "oct_dst_date": "2023-10-29",
+          "n_rows_on_oct_dst_day": 100
+        },
+        "2024": {
+          "march_dst_date": "2024-03-31",
+          "n_rows_on_march_dst_day": 92,
+          "oct_dst_date": "2024-10-27",
+          "n_rows_on_oct_dst_day": 100
+        },
+        "2025": {
+          "march_dst_date": "2025-03-30",
+          "n_rows_on_march_dst_day": 92,
+          "oct_dst_date": "2025-10-26",
+          "n_rows_on_oct_dst_day": 100
+        },
+        "2026": {
+          "march_dst_date": "2026-03-29",
+          "n_rows_on_march_dst_day": 0,
+          "oct_dst_date": "2026-10-25",
+          "n_rows_on_oct_dst_day": 0
+        }
+      },
+      "leap_day_feb29_rows": 96
+    },
+    "hydro_reservoir": {
+      "tz_input": "UTC",
+      "tz_converted_to": "Europe/Zurich",
+      "n_rows_on_ch_fixed_holidays": 20,
+      "dst_per_year": {
+        "2000": {
+          "march_dst_date": "2000-03-26",
+          "n_rows_on_march_dst_day": 0,
+          "oct_dst_date": "2000-10-29",
+          "n_rows_on_oct_dst_day": 0
+        },
+        "2001": {
+          "march_dst_date": "2001-03-25",
+          "n_rows_on_march_dst_day": 0,
+          "oct_dst_date": "2001-10-28",
+          "n_rows_on_oct_dst_day": 0
+        },
+        "2002": {
+          "march_dst_date": "2002-03-31",
+          "n_rows_on_march_dst_day": 0,
+          "oct_dst_date": "2002-10-27",
+          "n_rows_on_oct_dst_day": 0
+        },
+        "2003": {
+          "march_dst_date": "2003-03-30",
+          "n_rows_on_march_dst_day": 0,
+          "oct_dst_date": "2003-10-26",
+          "n_rows_on_oct_dst_day": 0
+        },
+        "2004": {
+          "march_dst_date": "2004-03-28",
+          "n_rows_on_march_dst_day": 0,
+          "oct_dst_date": "2004-10-31",
+          "n_rows_on_oct_dst_day": 0
+        },
+        "2005": {
+          "march_dst_date": "2005-03-27",
+          "n_rows_on_march_dst_day": 0,
+          "oct_dst_date": "2005-10-30",
+          "n_rows_on_oct_dst_day": 0
+        },
+        "2006": {
+          "march_dst_date": "2006-03-26",
+          "n_rows_on_march_dst_day": 0,
+          "oct_dst_date": "2006-10-29",
+          "n_rows_on_oct_dst_day": 0
+        },
+        "2007": {
+          "march_dst_date": "2007-03-25",
+          "n_rows_on_march_dst_day": 0,
+          "oct_dst_date": "2007-10-28",
+          "n_rows_on_oct_dst_day": 0
+        },
+        "2008": {
+          "march_dst_date": "2008-03-30",
+          "n_rows_on_march_dst_day": 0,
+          "oct_dst_date": "2008-10-26",
+          "n_rows_on_oct_dst_day": 0
+        },
+        "2009": {
+          "march_dst_date": "2009-03-29",
+          "n_rows_on_march_dst_day": 0,
+          "oct_dst_date": "2009-10-25",
+          "n_rows_on_oct_dst_day": 0
+        },
+        "2010": {
+          "march_dst_date": "2010-03-28",
+          "n_rows_on_march_dst_day": 0,
+          "oct_dst_date": "2010-10-31",
+          "n_rows_on_oct_dst_day": 0
+        },
+        "2011": {
+          "march_dst_date": "2011-03-27",
+          "n_rows_on_march_dst_day": 0,
+          "oct_dst_date": "2011-10-30",
+          "n_rows_on_oct_dst_day": 0
+        },
+        "2012": {
+          "march_dst_date": "2012-03-25",
+          "n_rows_on_march_dst_day": 0,
+          "oct_dst_date": "2012-10-28",
+          "n_rows_on_oct_dst_day": 0
+        },
+        "2013": {
+          "march_dst_date": "2013-03-31",
+          "n_rows_on_march_dst_day": 0,
+          "oct_dst_date": "2013-10-27",
+          "n_rows_on_oct_dst_day": 0
+        },
+        "2014": {
+          "march_dst_date": "2014-03-30",
+          "n_rows_on_march_dst_day": 0,
+          "oct_dst_date": "2014-10-26",
+          "n_rows_on_oct_dst_day": 0
+        },
+        "2015": {
+          "march_dst_date": "2015-03-29",
+          "n_rows_on_march_dst_day": 0,
+          "oct_dst_date": "2015-10-25",
+          "n_rows_on_oct_dst_day": 0
+        },
+        "2016": {
+          "march_dst_date": "2016-03-27",
+          "n_rows_on_march_dst_day": 0,
+          "oct_dst_date": "2016-10-30",
+          "n_rows_on_oct_dst_day": 0
+        },
+        "2017": {
+          "march_dst_date": "2017-03-26",
+          "n_rows_on_march_dst_day": 0,
+          "oct_dst_date": "2017-10-29",
+          "n_rows_on_oct_dst_day": 0
+        },
+        "2018": {
+          "march_dst_date": "2018-03-25",
+          "n_rows_on_march_dst_day": 0,
+          "oct_dst_date": "2018-10-28",
+          "n_rows_on_oct_dst_day": 0
+        },
+        "2019": {
+          "march_dst_date": "2019-03-31",
+          "n_rows_on_march_dst_day": 0,
+          "oct_dst_date": "2019-10-27",
+          "n_rows_on_oct_dst_day": 0
+        },
+        "2020": {
+          "march_dst_date": "2020-03-29",
+          "n_rows_on_march_dst_day": 0,
+          "oct_dst_date": "2020-10-25",
+          "n_rows_on_oct_dst_day": 0
+        },
+        "2021": {
+          "march_dst_date": "2021-03-28",
+          "n_rows_on_march_dst_day": 0,
+          "oct_dst_date": "2021-10-31",
+          "n_rows_on_oct_dst_day": 0
+        },
+        "2022": {
+          "march_dst_date": "2022-03-27",
+          "n_rows_on_march_dst_day": 0,
+          "oct_dst_date": "2022-10-30",
+          "n_rows_on_oct_dst_day": 0
+        },
+        "2023": {
+          "march_dst_date": "2023-03-26",
+          "n_rows_on_march_dst_day": 0,
+          "oct_dst_date": "2023-10-29",
+          "n_rows_on_oct_dst_day": 0
+        },
+        "2024": {
+          "march_dst_date": "2024-03-31",
+          "n_rows_on_march_dst_day": 0,
+          "oct_dst_date": "2024-10-27",
+          "n_rows_on_oct_dst_day": 0
+        },
+        "2025": {
+          "march_dst_date": "2025-03-30",
+          "n_rows_on_march_dst_day": 0,
+          "oct_dst_date": "2025-10-26",
+          "n_rows_on_oct_dst_day": 0
+        },
+        "2026": {
+          "march_dst_date": "2026-03-29",
+          "n_rows_on_march_dst_day": 0,
+          "oct_dst_date": "2026-10-25",
+          "n_rows_on_oct_dst_day": 0
+        }
+      },
+      "leap_day_feb29_rows": 1
+    }
+  },
+  "section_8_recommendation": {
+    "best_feature": {
+      "choice": "CH solar_pen_m as PRIMARY; DE solar forecast as forward-only proxy.",
+      "why": "CH solar drives CH price shape; wind penetration in CH is small/noisy and is collinear with total_re; total_re alone hides hydro substitution dynamics."
+    },
+    "temporal_granularity": {
+      "choice": "per-month aggregation for the shape correction layer; per-hour for intraday template.",
+      "why": "Matches HPFC monthly granularity, dampens DST/holiday noise, and reduces variance for a regression with limited (~36–48) monthly samples."
+    },
+    "forecast_strategy": {
+      "choice": "For forward delivery months: climatology (3-yr same-month CH solar_pen_m) + a small adjustment from DE day-ahead forecast aggregated to month, ONLY if its provenance can be locked. Otherwise pure climatology + linear trend extrapolated from <v history.",
+      "fallback": "Pure climatology + trend, no DE forecast injection."
+    },
+    "go_no_go": "GO",
+    "rationale_go": "Schema clean, no >24h NaN runs in key CH columns, CH-DE solar hourly corr 2024=0.931996077643335, 2025=0.9422589726476488. Leakage is manageable IF: (a) all training-time aggregations are pre-vintage filtered, (b) forward months are populated via climatology/forecast not realization, (c) DE forecast use is gated until an as_of column is added.",
+    "data_gaps": [
+      "DE forecast file lacks as_of/horizon column.",
+      "DE realized solar absent from inventory; ingestion would strengthen CH-DE coupling estimate.",
+      "Hydro reservoir is weekly; needs explicit monthly alignment rule."
+    ]
+  }
+}
