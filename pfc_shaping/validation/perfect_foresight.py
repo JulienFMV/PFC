@@ -234,9 +234,14 @@ def build_curve(config_name: str, vintage: pd.Timestamp, epex: pd.Series,
         :class:`pfc_shaping.calibration.robust_seasonal_ratios.RegimeAwareSeasonalRatios`
         estimator via a context manager, then restores the baseline. The swap is
         scoped to this single build call; no module-level mutation persists.
+        ``"sota_solar"`` adds, on top of ``"sota"``, the exogenous solar-aware
+        intra-day shape correction (§4quater) by enabling
+        ``PFCAssembler.enable_solar_modulation`` for the scoped build.
     """
-    if estimator not in {"baseline", "sota"}:
-        raise ValueError(f"estimator={estimator!r} must be 'baseline' or 'sota'")
+    if estimator not in {"baseline", "sota", "sota_solar"}:
+        raise ValueError(
+            f"estimator={estimator!r} must be 'baseline', 'sota' or 'sota_solar'"
+        )
     try:
         config = next(c for c in ABLATION_GRID if c.name == config_name)
     except StopIteration as exc:
@@ -244,7 +249,12 @@ def build_curve(config_name: str, vintage: pd.Timestamp, epex: pd.Series,
             f"config_name={config_name!r} not in ABLATION_GRID "
             f"(expected one of {[c.name for c in ABLATION_GRID]})"
         ) from exc
-    with _sota_estimator() if estimator == "sota" else _noop_cm():
+    _estimator_cm = {
+        "baseline": _noop_cm,
+        "sota": _sota_estimator,
+        "sota_solar": _sota_solar_estimator,
+    }[estimator]
+    with _estimator_cm():
         df = build_one(
             config=config,
             vintage=vintage,
@@ -330,6 +340,39 @@ def _sota_estimator():
             ContractCascader.fit_seasonal_ratios = original_sr
             ContractCascader.fit_peak_spreads = original_ps
             ShapeHourly.__init__ = original_init
+
+
+@contextmanager
+def _sota_solar_estimator():
+    """SOTA stack PLUS the exogenous solar-aware intra-day shape layer (§4quater).
+
+    Composes :func:`_sota_estimator` (regime-aware seasonal_ratios + hydro-aware
+    peak_spreads + 90d intra-day half-life) with the solar-penetration f_H
+    correction, by additionally swapping ``PFCAssembler.__init__`` so every
+    assembler built inside the ``with`` block sets ``enable_solar_modulation=True``.
+
+    The solar layer is a pure post-processing step on f_H
+    (:mod:`pfc_shaping.lt.model.solar_modulation`); it is leak-free by
+    construction (every aggregation is filtered to ``< vintage``) and re-normalises
+    to ``mean_h f_H = 1``, so ``f_W`` and the level layers downstream are
+    untouched. The swap is restored on exit, preserving the reproducibility
+    contract for all callers outside the block.
+    """
+    from pfc_shaping.lt.model.assembler import PFCAssembler
+
+    with _sota_estimator():
+        with _SOTA_SWAP_LOCK:
+            original_asm_init = PFCAssembler.__init__
+
+            def solar_asm_init(self, *args, _orig=original_asm_init, **kwargs):
+                kwargs.setdefault("enable_solar_modulation", True)
+                _orig(self, *args, **kwargs)
+
+            PFCAssembler.__init__ = solar_asm_init
+            try:
+                yield
+            finally:
+                PFCAssembler.__init__ = original_asm_init
 
 
 # Backwards-compat alias for the historical private name; prefer `build_curve`.
@@ -494,8 +537,8 @@ def run_perfect_foresight(
     Parameters
     ----------
     estimator
-        ``"baseline"`` or ``"sota"`` — selects the seasonal-ratios estimator.
-        See :func:`build_curve`.
+        ``"baseline"``, ``"sota"`` or ``"sota_solar"`` — selects the shaping
+        estimator stack. See :func:`build_curve`.
     """
     from scipy.stats import pearsonr, spearmanr
 

@@ -363,3 +363,104 @@ require touching the arbitrage-free level machinery.
   break the `atol=1e-12` reproducibility contract; defer to the codebase owner.
 - **Probabilistic axis** (CRPS/energy score) is specified but not yet wired (the
   HPFC here is deterministic); see §2.2 for the extension path.
+
+## §4quater — Solar-aware intra-day shape correction (IMPLEMENTED)
+
+**Status**: implemented 2026-05-30 on `claude/clean-lt-ct-integration`,
+consuming the research specs in
+`solar_research/{method_research,data_probe}.json`.
+
+### What
+
+A leak-free, exogenous **post-processing layer on `f_H`** that targets the
+residual peak/off-peak amplitude gap §4ter traced to the 2025 solar-regime
+shift. Method (A) of `method_research.json`: a multiplicative correction with
+block-pooled per-hour coefficients,
+
+```
+f_H_adj[t] = f_H[t] · (1 + β[saison, type_jour, block(h)] · (solar_pen_m(t) − s̄))
+```
+
+re-normalised per local calendar day so `mean_h f_H_adj = 1` is preserved (the
+`f_W` / level layers downstream are untouched).
+
+* **Feature** — `solar_pen_m = Σ solar_mw / Σ load_mw` (monthly, CH realized from
+  `entso_15min.parquet`). Training months use realized values strictly
+  `< vintage`; forward delivery months are projected from a same-calendar-month
+  climatology + linear trend, capped at the training p99 (no realized-future
+  leakage). NB: the absolute `solar_pen` values drifted vs the research probe
+  (the parquet was re-ingested; current 2024-07 ≈ 0.206 vs probe 0.18855) — the
+  test validates the *formula* against a fresh recompute, not stale constants.
+* **Blocks** — 4 hour-blocks: NIGHT (00–06, 22–23), MORNING_RAMP (07–09),
+  MIDDAY_BOWL (10–15), EVENING_PEAK (16–21). One ridge slope per
+  `(saison, {Ouvrable|Weekend}, block)`, fitted on the de-levelled monthly midday
+  residual `f_H_realized / f_H_baseline − 1` (`f_H_baseline = ShapeHourly.get`).
+* **Leak protection is intrinsic**: every aggregation (feature + β) re-filters to
+  `index < vintage` inside the module, independent of the caller.
+
+### Where (code)
+
+* `pfc_shaping/lt/model/solar_modulation.py` — `SolarPenetrationFeature`,
+  `SolarBlockedFHCorrection`, and the `solar_modulate(...)` assembler hook.
+* `PFCAssembler(..., enable_solar_modulation=False)` — new kwarg; when `True`,
+  `build()` applies `solar_modulate` immediately after `ShapeHourly.apply()` and
+  before the f_H damping / level-anomaly split. **Default OFF ⇒ byte-identical to
+  the pre-solar pipeline** (verified atol = 0, even with `solar_modulate`
+  monkeypatched to raise on the OFF path).
+* `pfc_shaping/validation/scorecard.py` — `build_one` stashes the leak-free
+  `epex_train` on `ShapeHourly._solar_epex_hist` so the layer reuses the same
+  training set the model was fit on (no on-disk EPEX re-read).
+* `pfc_shaping/validation/perfect_foresight.py` — third estimator `sota_solar`
+  via `_sota_solar_estimator()` (SOTA swaps + `enable_solar_modulation=True`,
+  restored on exit).
+* `scripts/run_perfect_foresight.py --ab` — benchmarks baseline / sota /
+  **sota_solar** and writes the CH-physical sub-KPI figure.
+* `tests/test_solar_modulation.py` — 9 pass / 3 skip (skips are the
+  EPEX/forwards-dependent end-to-end tests).
+
+### Verification status
+
+> **Data caveat.** This session ran in a fresh clone where the only market data
+> present is `pfc_shaping/data/entso_15min.parquet`. The realized EPEX history
+> (`data/epex_hourly.parquet`) and the forwards history
+> (`data/forwards_history_phase10.parquet`) are git-ignored and **absent here**,
+> so the full 12-vintage Cal-2025 `--ab` and the exact CH-physical KPI magnitudes
+> were **not measured in this environment** — they must be produced on the FMV
+> poste where those parquets live.
+
+Verified here (entso data + a synthetic EPEX fixture engineered so CH solar
+penetration drives a midday bowl, seed 42):
+
+- `tests/test_solar_modulation.py`: **9 passed, 3 skipped**. Covers block
+  partition, feature-vs-recompute equality + summer≫winter ordering,
+  leak-freeness (max input ts < vintage; no delivery month ≥ vintage in
+  training), projection cap, β = 0 identity (bit-exact, max|Δ| = 0.0), per-day
+  mean-preservation (≤1e-12), `modulate`-before-`fit` guard, `vintage=None`
+  pass-through, and invalid-estimator rejection.
+- **OFF-path reproducibility**: building the `sota` curve is byte-identical
+  (`max|Δ| = 0.0`) even with `solar_modulate` patched to raise — the flag-OFF
+  path never invokes the layer.
+- **Estimator-swap isolation**: `_sota_solar_estimator()` restores
+  `PFCAssembler.__init__` after the scoped build.
+- **Direction + non-degradation**: `sota` vs `sota_solar` curves differ
+  materially while the monthly signature (hence `pf_cal_corr`) is essentially
+  invariant — measured `|Δ pf_cal_corr| ≈ 1.7e-7` on the fixture, and the bowl
+  moves in the deepening direction. (Effect size is muted on this synthetic
+  series; the real CH magnitude needs the production EPEX.)
+
+### Ship targets to confirm on the real `--ab` run (research §5)
+
+| sub-KPI | realized (Cal 2025) | ship threshold |
+|---|---|---|
+| solar-bowl depth | 0.558 | within ±0.05 (≥ 65 % of the gap closed) |
+| peak/off-peak spread (€/MWh) | 6.4 | within ±2 (≥ 85 % of the gap closed) |
+| `pf_cal_corr` | — | ≥ 0.85 on **all 12** vintages (hard gate) |
+
+### Limitations / future work
+
+* The ridge penalty `λ` is a fixed modest default (`1e-3`); the research §4
+  leave-one-year-out CV tuning is **not yet applied**.
+* Bootstrap 90 % CI on the per-fold improvement (research MES_significance) is
+  not yet automated in the `--ab` report.
+* DE renewable forecast still lacks an `as_of` column (`data_probe.json`
+  caveat); v1 deliberately uses CH-realized + climatology only.

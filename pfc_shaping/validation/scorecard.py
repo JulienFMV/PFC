@@ -221,6 +221,13 @@ def build_one(
     sh = ShapeHourly(use_seasonal_hourly=config.use_seasonal_hourly).fit(
         epex_train, cal_train
     )
+    # Stash the leak-free training prices for the optional solar-modulation layer
+    # (Phase 10 §4quater). No-op unless the assembler is built with
+    # enable_solar_modulation=True (the `sota_solar` estimator): the attribute is
+    # read ONLY by solar_modulate(), so baseline/sota/scorecard outputs are
+    # unchanged. epex_train is already filtered to < vintage, so the correction's
+    # training set is identical to ShapeHourly's and needs no on-disk EPEX re-read.
+    sh._solar_epex_hist = epex_train
     si = ShapeIntraday().fit(epex_train, None, cal_train)
     cascader = ContractCascader(allow_negative_peak=config.allow_negative_peak)
     cascader.fit_seasonal_ratios(epex_train)

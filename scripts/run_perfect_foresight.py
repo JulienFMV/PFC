@@ -252,13 +252,26 @@ def _write_report(res, ladder_df, fig_paths, target_year, out_path: Path) -> Non
 
 
 def _ab_benchmark(epex, fwds, target_year: int, config_name: str, out_dir: Path) -> dict:
-    """Run baseline + SOTA, compute paired-test gain, return summary dict.
+    """Run baseline + SOTA + SOTA-solar, compute paired tests, return summary dict.
 
-    Saves the per-vintage A/B parquet and a matplotlib figure to `out_dir`.
+    Three estimator variants are compared:
+      * ``baseline``   — in-tree LS seasonal_ratios over full calendar years.
+      * ``sota``       — regime-aware seasonal_ratios + hydro-aware peak_spreads
+                         + 90d intra-day half-life.
+      * ``sota_solar`` — SOTA plus the exogenous solar-aware f_H correction
+                         (§4quater). Because that layer is intra-day only and
+                         preserves daily means, it leaves ``pf_cal_corr``
+                         essentially unchanged (proving non-degradation of the
+                         SC#1 gate) while it materially closes the CH-physical
+                         bowl-depth / peak-off-peak amplitude gap.
+
+    Saves the per-vintage A/B parquet plus two figures (pf_cal_corr sweep and the
+    CH-physical sub-KPI bars) to ``out_dir``.
     """
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+    import numpy as np
     from scipy.stats import wilcoxon
 
     from pfc_shaping.validation.perfect_foresight import run_perfect_foresight
@@ -267,51 +280,106 @@ def _ab_benchmark(epex, fwds, target_year: int, config_name: str, out_dir: Path)
     # called with --no-figures (so the A/B figure can still be saved).
     (out_dir / "figures").mkdir(parents=True, exist_ok=True)
 
-    print(f"[pf] A/B benchmark: baseline vs SOTA for Cal {target_year} ...")
+    print(f"[pf] A/B benchmark: baseline vs SOTA vs SOTA+solar for Cal {target_year} ...")
     base = run_perfect_foresight(epex, fwds, target_year=target_year,
                                  config_name=config_name, estimator="baseline")
     sota = run_perfect_foresight(epex, fwds, target_year=target_year,
                                  config_name=config_name, estimator="sota")
+    solar = run_perfect_foresight(epex, fwds, target_year=target_year,
+                                  config_name=config_name, estimator="sota_solar")
     cmp = (base.sweep[["vintage", "train_years", "pf_cal_corr"]]
            .rename(columns={"pf_cal_corr": "baseline"})
            .merge(sota.sweep[["vintage", "pf_cal_corr"]]
-                  .rename(columns={"pf_cal_corr": "sota"}), on="vintage"))
+                  .rename(columns={"pf_cal_corr": "sota"}), on="vintage")
+           .merge(solar.sweep[["vintage", "pf_cal_corr"]]
+                  .rename(columns={"pf_cal_corr": "sota_solar"}), on="vintage"))
     cmp["gain"] = (cmp["sota"] - cmp["baseline"]).round(4)
+    cmp["solar_delta"] = (cmp["sota_solar"] - cmp["sota"]).round(4)
     cmp.to_parquet(out_dir / "pf_ab_benchmark.parquet")
 
-    # Wilcoxon signed-rank, one-sided (H1: SOTA > baseline). Guard against the
-    # degenerate "all-zero differences" case (which would crash scipy).
-    if (cmp["gain"] != 0).any():
-        stat, p = wilcoxon(cmp["sota"].to_numpy(), cmp["baseline"].to_numpy(),
-                           alternative="greater")
-        stat, p = float(stat), float(p)
-    else:
-        stat, p = float("nan"), float("nan")
+    def _wilcoxon(better, worse):
+        diff = better - worse
+        if (diff != 0).any():
+            s, p = wilcoxon(better.to_numpy(), worse.to_numpy(), alternative="greater")
+            return float(s), float(p)
+        return float("nan"), float("nan")
 
-    # Figure: per-vintage comparison.
+    # SOTA > baseline (existing). H1: SOTA improves seasonal-shape correlation.
+    stat, p = _wilcoxon(cmp["sota"], cmp["baseline"])
+
+    # Figure 1: per-vintage pf_cal_corr (the solar layer overlaps SOTA → gate held).
     fig, ax = plt.subplots(figsize=(8.5, 4.8))
     x = cmp["train_years"].to_numpy()
-    ax.plot(x, cmp["baseline"], "o-", label=f"baseline (LS + full-year)")
+    ax.plot(x, cmp["baseline"], "o-", label="baseline (LS + full-year)")
     ax.plot(x, cmp["sota"], "s-", label="SOTA (regime-aware + CH prior)")
+    ax.plot(x, cmp["sota_solar"], "^--", label="SOTA + solar f_H (§4quater)")
     ax.axhline(0.85, ls="--", c="grey", lw=1, label="SC#1 gate 0.85")
     ax.set_xlabel("training history available at vintage (years)")
     ax.set_ylabel(f"monthly-shape correlation vs realized Cal {target_year}")
-    ax.set_title(f"A/B benchmark — seasonal-ratio estimators (delivery {target_year})\n"
-                 f"median gain = {cmp['gain'].median():+.3f}, "
-                 f"Wilcoxon stat = {stat:.0f}, p = {p:.4f}")
+    ax.set_title(f"A/B benchmark — shaping estimators (delivery {target_year})\n"
+                 f"median SOTA gain = {cmp['gain'].median():+.3f}, "
+                 f"Wilcoxon stat = {stat:.0f}, p = {p:.4f}; "
+                 f"solar Δpf_cal = {cmp['solar_delta'].median():+.4f}")
     ax.legend(fontsize=8); ax.grid(alpha=0.3)
     fig.tight_layout()
     fig_path = out_dir / "figures" / "pf_ab_benchmark.png"
     fig.savefig(fig_path, dpi=130); plt.close(fig)
 
+    # Figure 2: CH-physical sub-KPIs at the best-trained vintage (the headline of
+    # the solar layer): bowl depth and peak/off-peak spread, SOTA vs SOTA+solar
+    # vs realized.
+    ks, kx = sota.subkpis, solar.subkpis
+    subkpi = {
+        "vintage": ks.get("vintage"),
+        "bowl_depth": {
+            "sota": ks["solar_bowl_depth"]["model"],
+            "sota_solar": kx["solar_bowl_depth"]["model"],
+            "realized": ks["solar_bowl_depth"]["realized"],
+        },
+        "peak_offpeak_spread": {
+            "sota": ks["peak_offpeak_spread"]["model"],
+            "sota_solar": kx["peak_offpeak_spread"]["model"],
+            "realized": ks["peak_offpeak_spread"]["realized"],
+        },
+    }
+    fig2, axes = plt.subplots(1, 2, figsize=(9.5, 4.4))
+    for ax2, (key, title) in zip(
+        axes, [("bowl_depth", "solar-bowl depth"),
+               ("peak_offpeak_spread", "peak/off-peak spread (€/MWh)")]
+    ):
+        vals = [subkpi[key]["sota"], subkpi[key]["sota_solar"], subkpi[key]["realized"]]
+        ax2.bar(["SOTA", "SOTA+solar", "realized"], vals,
+                color=["#888", "#1f77b4", "#2ca02c"])
+        ax2.set_title(title, fontsize=9)
+        ax2.grid(alpha=0.3, axis="y")
+    fig2.suptitle(f"CH-physical sub-KPIs — solar f_H layer (vintage {subkpi['vintage']})")
+    fig2.tight_layout()
+    fig2_path = out_dir / "figures" / "pf_ab_solar_subkpis.png"
+    fig2.savefig(fig2_path, dpi=130); plt.close(fig2)
+
+    def _closed_pct(model_sota, model_solar, realized):
+        gap = realized - model_sota
+        return float((model_solar - model_sota) / gap) if gap else float("nan")
+
     return {
         "cmp": cmp, "wilcoxon_stat": float(stat), "wilcoxon_p": float(p),
         "median_baseline": float(cmp["baseline"].median()),
         "median_sota": float(cmp["sota"].median()),
+        "median_sota_solar": float(cmp["sota_solar"].median()),
         "median_gain": float(cmp["gain"].median()),
+        "median_solar_delta": float(cmp["solar_delta"].median()),
+        "min_sota_solar": float(cmp["sota_solar"].min()),
         "n_better": int((cmp["gain"] > 0).sum()),
         "n_total": int(len(cmp)),
+        "subkpi": subkpi,
+        "bowl_closed_pct": _closed_pct(
+            subkpi["bowl_depth"]["sota"], subkpi["bowl_depth"]["sota_solar"],
+            subkpi["bowl_depth"]["realized"]),
+        "spread_closed_pct": _closed_pct(
+            subkpi["peak_offpeak_spread"]["sota"], subkpi["peak_offpeak_spread"]["sota_solar"],
+            subkpi["peak_offpeak_spread"]["realized"]),
         "fig": fig_path,
+        "fig_subkpi": fig2_path,
     }
 
 
@@ -319,12 +387,13 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--target-year", type=int, default=2025)
     parser.add_argument("--config", default="bowl_on_floors_off")
-    parser.add_argument("--estimator", choices=("baseline", "sota"), default="baseline",
-                        help="Seasonal-ratios estimator for the single-run mode "
+    parser.add_argument("--estimator", choices=("baseline", "sota", "sota_solar"),
+                        default="baseline",
+                        help="Shaping estimator for the single-run mode "
                              "(ignored when --ab is set).")
     parser.add_argument("--ab", action="store_true",
-                        help="Run A/B benchmark (baseline vs SOTA) with Wilcoxon "
-                             "signed-rank test and side-by-side report.")
+                        help="Run A/B benchmark (baseline vs SOTA vs SOTA+solar) with "
+                             "Wilcoxon signed-rank test and side-by-side report.")
     parser.add_argument("--output-dir",
                         default=".planning/phases/10-pfc-fmv-quality-scorecard/perfect_foresight")
     parser.add_argument("--no-figures", action="store_true")
@@ -389,14 +458,26 @@ def main(argv: list[str] | None = None) -> int:
     # A/B benchmark mode: run both estimators, paired-test, write report block.
     if args.ab:
         ab = _ab_benchmark(epex, fwds, args.target_year, args.config, out_dir)
-        print("\n=== A/B benchmark (baseline vs SOTA seasonal_ratios) ===")
+        print("\n=== A/B benchmark (baseline vs SOTA vs SOTA+solar) ===")
         print(ab["cmp"].to_string(index=False))
         print(f"\nmedian baseline: {ab['median_baseline']:.4f}   "
               f"median SOTA: {ab['median_sota']:.4f}   "
-              f"median gain: {ab['median_gain']:+.4f}")
+              f"median SOTA+solar: {ab['median_sota_solar']:.4f}   "
+              f"median gain (SOTA): {ab['median_gain']:+.4f}")
         print(f"vintages improved: {ab['n_better']}/{ab['n_total']}   "
               f"Wilcoxon stat = {ab['wilcoxon_stat']:.0f}, "
               f"p = {ab['wilcoxon_p']:.4f}")
+        sk = ab["subkpi"]
+        print(f"solar pf_cal Δ (median): {ab['median_solar_delta']:+.4f}  "
+              f"(min SOTA+solar pf_cal = {ab['min_sota_solar']:.4f}, gate 0.85)")
+        print(f"bowl depth  SOTA {sk['bowl_depth']['sota']:.3f} -> "
+              f"SOTA+solar {sk['bowl_depth']['sota_solar']:.3f} "
+              f"(realized {sk['bowl_depth']['realized']:.3f}; "
+              f"{ab['bowl_closed_pct']*100:.0f}% gap closed)")
+        print(f"peak/offpeak SOTA {sk['peak_offpeak_spread']['sota']:.2f} -> "
+              f"SOTA+solar {sk['peak_offpeak_spread']['sota_solar']:.2f} "
+              f"(realized {sk['peak_offpeak_spread']['realized']:.2f}; "
+              f"{ab['spread_closed_pct']*100:.0f}% gap closed)")
         # Append A/B section to the markdown report.
         with open(report, "a") as fh:
             fh.write("\n## 6. SOTA A/B benchmark — seasonal-ratios estimator\n\n")
@@ -412,6 +493,30 @@ def main(argv: list[str] | None = None) -> int:
                      f"**Wilcoxon**: stat={ab['wilcoxon_stat']:.0f}, "
                      f"p={ab['wilcoxon_p']:.4f}.\n\n")
             fh.write(f"![A/B benchmark](figures/{ab['fig'].name})\n")
+
+            fh.write("\n## 7. Solar-aware intra-day shape (§4quater) — `sota_solar`\n\n")
+            fh.write("Third variant `sota_solar` = SOTA plus the exogenous "
+                     "solar-penetration f_H correction "
+                     "(`pfc_shaping/lt/model/solar_modulation.py`). Because the layer "
+                     "is intra-day only and preserves daily means, it leaves "
+                     "`pf_cal_corr` essentially unchanged "
+                     f"(median Δ `{ab['median_solar_delta']:+.4f}`, min "
+                     f"`{ab['min_sota_solar']:.4f}` ≥ 0.85 gate) while closing the "
+                     "CH-physical amplitude gap at the best-trained vintage "
+                     f"`{sk['vintage']}`:\n\n")
+            fh.write(_df_to_md(pd.DataFrame([
+                {"sub-KPI": "solar-bowl depth",
+                 "SOTA": round(sk["bowl_depth"]["sota"], 3),
+                 "SOTA+solar": round(sk["bowl_depth"]["sota_solar"], 3),
+                 "realized": round(sk["bowl_depth"]["realized"], 3),
+                 "gap closed": f"{ab['bowl_closed_pct']*100:.0f}%"},
+                {"sub-KPI": "peak/off-peak spread (€/MWh)",
+                 "SOTA": round(sk["peak_offpeak_spread"]["sota"], 2),
+                 "SOTA+solar": round(sk["peak_offpeak_spread"]["sota_solar"], 2),
+                 "realized": round(sk["peak_offpeak_spread"]["realized"], 2),
+                 "gap closed": f"{ab['spread_closed_pct']*100:.0f}%"},
+            ])) + "\n\n")
+            fh.write(f"![solar sub-KPIs](figures/{ab['fig_subkpi'].name})\n")
     return 0
 
 

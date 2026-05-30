@@ -248,6 +248,7 @@ class PFCAssembler:
         enforce_m_factor_floor: bool = False,
         enforce_floor: bool = False,
         allow_negative_peak: bool = True,
+        enable_solar_modulation: bool = False,
     ) -> None:
         self.sh = shape_hourly
         self.si = shape_intraday
@@ -279,6 +280,14 @@ class PFCAssembler:
         self.enforce_m_factor_floor: bool = bool(enforce_m_factor_floor)
         self.enforce_floor: bool = bool(enforce_floor)
         self.allow_negative_peak: bool = bool(allow_negative_peak)
+
+        # Phase 10 §4quater — solar-aware intra-day shape correction (default OFF).
+        # When True, build() applies a multiplicative, exogenous solar-penetration
+        # layer on f_H immediately after ShapeHourly.apply() and re-normalises to
+        # mean_h=1. Default OFF keeps the pre-solar pipeline byte-identical
+        # (Phase-10 atol=1e-12 reproducibility contract). See
+        # pfc_shaping/lt/model/solar_modulation.py.
+        self.enable_solar_modulation: bool = bool(enable_solar_modulation)
 
         # B1/B4 Approach B — forward the four floor kwargs to sub-components.
         # WR-03 (Phase 5 code review): the previous one-way mutation
@@ -493,6 +502,20 @@ class PFCAssembler:
                                 outages_forecast=outages_forecast)
         else:
             f_H = self.sh.apply(idx, cal, reference_date=reference_date)
+
+        # ── Solar-aware intra-day shape correction (Phase 10 §4quater) ──
+        # Pure post-processing layer between ShapeHourly.apply() and the rest of
+        # the assembler (research §6). Multiplies f_H by
+        # (1 + beta[saison, type_jour, block(h)] * (solar_pen_m - baseline)) and
+        # re-normalises per local day to mean_h=1. Default OFF (flag False) ⇒
+        # byte-identical to the pre-solar pipeline. Applied BEFORE the f_H damping /
+        # level-anomaly split below so the SHP-03 invariant (per-cell mean == 1) is
+        # preserved going into that stage. reference_date IS the vintage on the
+        # Phase-10 build path (build_one passes reference_date=vintage), which the
+        # solar layer uses as the strict leak-free training cut-off.
+        if getattr(self, "enable_solar_modulation", False):
+            from pfc_shaping.lt.model.solar_modulation import solar_modulate
+            f_H = solar_modulate(f_H, cal, self.sh, vintage=reference_date)
 
         # Ã¢â€â‚¬Ã¢â€â‚¬ Facteur 15min f_Q Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         f_Q = self.si.apply(idx, cal, entso_forecast, reference_date=reference_date)
