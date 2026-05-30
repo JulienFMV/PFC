@@ -15,6 +15,8 @@ from pfc_shaping.calibration.robust_seasonal_ratios import (
     CH_MONTHLY_PRIOR,
     CH_QUARTERLY_PRIOR,
     RegimeAwareSeasonalRatios,
+    _HOURS_PER_MONTH,
+    _kish_effective_n,
     _regime_weights,
     _renormalise_ratios,
     _weighted_median,
@@ -64,10 +66,17 @@ def test_weighted_median_against_unweighted():
 
 
 def test_weighted_median_shifts_with_weights():
-    """Heavy weight on a lower value pulls the weighted median down."""
+    """Heavy weight on a lower value pulls the interpolated median below 2.
+
+    Uses the linearly-interpolated weighted median (Hazen plotting positions),
+    NOT the lower step-quantile. With weights {10, 1, 1}, ~83% of the mass
+    sits on value 1.0 → the 0.5 quantile lies between 1.0 and 2.0, much closer
+    to 1.0.
+    """
     v = np.array([1.0, 2.0, 3.0])
-    w = np.array([10.0, 1.0, 1.0])  # the 1.0 carries most mass
-    assert _weighted_median(v, w) == 1.0
+    w = np.array([10.0, 1.0, 1.0])
+    m = _weighted_median(v, w)
+    assert 1.0 <= m < 1.5  # interpolated, not exactly 1.0; well below the unweighted median 2.0
 
 
 # ---------------------------------------------------------------------------
@@ -127,25 +136,42 @@ def test_estimator_shrinks_to_prior_with_no_data():
     assert rho > 0.8
 
 
-def test_estimator_regime_downweights_crisis_year():
-    """A crisis year embedded in the training data must be soft-excluded.
+def test_estimator_regime_downweights_crisis_year_with_exogenous_anchor():
+    """Crisis year is soft-excluded ONLY when a long-run anchor is provided.
 
-    Uses realistic price scales (~50-250 EUR/MWh) so the default regime_scale=30
-    parameter is meaningful. The crisis year (200 EUR/MWh) is ~4× the median.
+    Documents the C1 limitation: with the default median-of-window anchor and
+    only 2 years (one normal, one crisis), the median sits between them and
+    BOTH years get equal weight — the regime kernel cannot identify the crisis.
+    The fix is to pass an exogenous ``long_run_anchor`` from literature
+    (Bevilacqua 2022: pre-crisis CH spot ≈ 50–60 EUR/MWh).
     """
-    s_normal = _hourly_2yr({m: 50.0 for m in range(1, 13)},
-                           {2023: 1.0, 2024: 1.0})
     s_crisis = _hourly_2yr({m: 50.0 for m in range(1, 13)},
                            {2023: 4.0, 2024: 1.0})  # 2023 = 200 EUR/MWh (crisis)
-    est_n = RegimeAwareSeasonalRatios().fit(s_normal.to_frame("price_eur_mwh"))
-    est_c = RegimeAwareSeasonalRatios().fit(s_crisis.to_frame("price_eur_mwh"))
-    rw_crisis = est_c.diagnostics_["regime_weights_by_year"]
-    assert rw_crisis[2023] < 0.05, f"crisis year not down-weighted: {rw_crisis}"
-    # The fit should be stable across normal/crisis training (both have a
-    # normal 2024, so 2024 carries the load when 2023 is down-weighted).
-    m_n = est_n.seasonal_ratios_["month"]; m_c = est_c.seasonal_ratios_["month"]
-    diffs = np.array([m_n[k] - m_c[k] for k in m_n])
-    assert np.abs(diffs).max() < 0.5  # crisis didn't blow up the estimate
+
+    # WITHOUT exogenous anchor (degenerate on 2 years): both years get equal weight.
+    est_degenerate = RegimeAwareSeasonalRatios().fit(s_crisis.to_frame("price_eur_mwh"))
+    rw_deg = est_degenerate.diagnostics_["regime_weights_by_year"]
+    assert abs(rw_deg[2023] - rw_deg[2024]) < 1e-6  # equal — C1 manifested
+
+    # WITH exogenous anchor at 50 (pre-crisis long-run CH): crisis soft-excluded.
+    est_fixed = RegimeAwareSeasonalRatios(long_run_anchor=50.0).fit(
+        s_crisis.to_frame("price_eur_mwh"),
+    )
+    rw = est_fixed.diagnostics_["regime_weights_by_year"]
+    assert rw[2024] > 0.95           # at anchor → weight ≈ 1
+    assert rw[2023] < 0.05           # 150 EUR/MWh away → exp(-150/30) ≈ 0.007
+
+
+def test_estimator_diagnostics_expose_kish_ess_and_anchor():
+    """The diagnostics dict surfaces Kish ESS + the anchor used (audit-traceability)."""
+    s = _hourly_2yr({m: 1.0 + 0.1 * (m - 6) for m in range(1, 13)},
+                    {2023: 1.0, 2024: 1.0})
+    est = RegimeAwareSeasonalRatios(long_run_anchor=1.0).fit(s.to_frame("price_eur_mwh"))
+    d = est.diagnostics_
+    assert "n_eff_kish_overall" in d
+    assert "n_eff_kish_by_month" in d
+    assert "long_run_anchor_used" in d
+    assert d["long_run_anchor_used"] == 1.0
 
 
 def test_estimator_returns_drop_in_compatible_shape():
@@ -189,3 +215,59 @@ def test_ch_monthly_prior_winter_higher_than_summer():
     winter = np.mean([CH_MONTHLY_PRIOR[m] for m in (12, 1, 2)])
     summer = np.mean([CH_MONTHLY_PRIOR[m] for m in (6, 7, 8)])
     assert winter > summer + 0.2  # at least 20% premium
+
+
+# ---------------------------------------------------------------------------
+# Regression tests for post-audit fixes
+# ---------------------------------------------------------------------------
+def test_weighted_median_matches_unweighted_median_on_equal_weights():
+    """The fixed (interpolated) weighted median == np.median for equal weights."""
+    v = np.array([1.0, 2.0, 3.0, 4.0])
+    w = np.ones_like(v)
+    assert_allclose(_weighted_median(v, w), 2.5, atol=1e-12)  # interpolated, not lower step
+
+
+def test_kish_effective_n_recovers_n_for_equal_weights():
+    """Kish ESS == n for n equal weights; degrades when weight concentrates."""
+    assert_allclose(_kish_effective_n(np.ones(5)), 5.0, atol=1e-12)
+    # Concentration: 10 of one weight + 1 of another → ESS ≈ 11²/(100+1) = 1.198
+    assert _kish_effective_n(np.array([10.0, 1.0])) < 2.0
+    assert _kish_effective_n(np.array([])) == 0.0
+
+
+def test_renormalise_hour_weighted_matches_cascade_semantics():
+    """Hour-weighted renormalisation: Σ(r·h)/Σh = 1 exactly."""
+    ratios = {1: 1.20, 2: 0.95, 3: 1.05}  # 3 months
+    weights = {1: 744, 2: 672, 3: 743}
+    out = _renormalise_ratios(ratios, weights=weights)
+    hw_mean = sum(out[k] * weights[k] for k in out) / sum(weights.values())
+    assert_allclose(hw_mean, 1.0, atol=1e-12)
+
+
+def test_estimator_uses_full_year_denominator_only():
+    """A partial year must NOT appear in `n_years_full` diagnostics.
+
+    Documents the H1 fix: the year-level denominator is computed only on full
+    calendar years (no winter-skew bias from mid-year vintages).
+    """
+    # 2 full years (2023, 2024) + 1 partial (2025-Jan only)
+    idx = pd.date_range("2023-01-01", "2025-02-01", freq="1h", inclusive="left", tz="UTC")
+    s = pd.Series([50.0] * len(idx), index=idx)
+    est = RegimeAwareSeasonalRatios().fit(s.to_frame("price_eur_mwh"))
+    # Only the full calendar years contribute to year_level_mean.
+    assert est.diagnostics_["n_years_full"] == 2
+    assert set(est.diagnostics_["year_level_mean"].keys()) == {2023, 2024}
+
+
+def test_estimator_clips_negative_per_cell_ratios():
+    """Negative-price months must not produce negative seasonal ratios."""
+    # Build a series where June has overall negative average (extreme synthetic).
+    idx = pd.date_range("2023-01-01", "2024-01-01", freq="1h", inclusive="left", tz="UTC")
+    local = idx.tz_convert(TZ)
+    arr = np.where(local.month == 6, -10.0, 60.0).astype(float)
+    s = pd.Series(arr, index=idx)
+    est = RegimeAwareSeasonalRatios().fit(s.to_frame("price_eur_mwh"))
+    # All published month ratios must be positive (the clip on per-cell empirical
+    # ratio + the positive prior guarantees positivity after the Bayesian mix).
+    for m, r in est.seasonal_ratios_["month"].items():
+        assert r > 0, f"month {m} got non-positive ratio {r}"

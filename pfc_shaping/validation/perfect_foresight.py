@@ -53,6 +53,8 @@ deterministic (no unseeded RNG).
 
 from __future__ import annotations
 
+import threading
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -226,6 +228,8 @@ def build_curve(config_name: str, vintage: pd.Timestamp, epex: pd.Series,
         estimator via a context manager, then restores the baseline. The swap is
         scoped to this single build call; no module-level mutation persists.
     """
+    if estimator not in {"baseline", "sota"}:
+        raise ValueError(f"estimator={estimator!r} must be 'baseline' or 'sota'")
     try:
         config = next(c for c in ABLATION_GRID if c.name == config_name)
     except StopIteration as exc:
@@ -244,7 +248,12 @@ def build_curve(config_name: str, vintage: pd.Timestamp, epex: pd.Series,
     return df["price_shape"].resample("1h").mean()
 
 
-from contextlib import contextmanager
+# Module-level lock that serialises class-attribute monkey-patching in
+# `_sota_estimator`. Without this, concurrent callers race on the
+# capture-and-restore of `ContractCascader.fit_seasonal_ratios` and can leave
+# the cascader permanently swapped — silently violating the Phase 10 atol=1e-12
+# reproducibility contract for any subsequent caller.
+_SOTA_SWAP_LOCK = threading.RLock()
 
 
 @contextmanager
@@ -254,27 +263,44 @@ def _noop_cm():
 
 @contextmanager
 def _sota_estimator():
-    """Temporarily swap `ContractCascader.fit_seasonal_ratios` to the SOTA
-    estimator. The original method is restored on exit so the contract on
-    `cascading.ContractCascader` is preserved for all callers outside the
-    `with` block (including parallel test runs)."""
+    """Temporarily swap both ``ContractCascader.fit_seasonal_ratios`` and
+    ``ContractCascader.fit_peak_spreads`` to their SOTA counterparts.
+
+    The originals are restored on exit so the contract on
+    ``cascading.ContractCascader`` is preserved for all callers outside the
+    ``with`` block (including parallel test runs and the reproducibility-
+    guarded ``run_scorecard_full``)."""
     from pfc_shaping.calibration.cascading import ContractCascader
+    from pfc_shaping.calibration.robust_peak_spreads import HydroAwarePeakSpreads
     from pfc_shaping.calibration.robust_seasonal_ratios import RegimeAwareSeasonalRatios
 
-    original = ContractCascader.fit_seasonal_ratios
-
-    def sota_fit(self, spot_history):
+    def sota_fit_sr(self, spot_history):
         est = RegimeAwareSeasonalRatios(tz=self.tz).fit(spot_history)
         self.seasonal_ratios_ = est.seasonal_ratios_
         self.seasonal_trends_ = est.seasonal_trends_
         self._reference_year_ = est.reference_year_
         return self
 
-    ContractCascader.fit_seasonal_ratios = sota_fit
-    try:
-        yield
-    finally:
-        ContractCascader.fit_seasonal_ratios = original
+    def sota_fit_ps(self, spot_history):
+        est = HydroAwarePeakSpreads(tz=self.tz).fit(spot_history)
+        self.peak_base_spreads_ = est.peak_base_spreads_
+        self._base_price_per_month_ = est.base_price_per_month_
+        return self
+
+    # Serialise the swap so concurrent callers cannot capture each other's
+    # already-swapped methods as "original". CRITICAL: `original_sr/ps` must be
+    # captured *inside* the lock — capturing outside lets thread B read the
+    # value that thread A wrote, which would corrupt the restore.
+    with _SOTA_SWAP_LOCK:
+        original_sr = ContractCascader.fit_seasonal_ratios
+        original_ps = ContractCascader.fit_peak_spreads
+        ContractCascader.fit_seasonal_ratios = sota_fit_sr
+        ContractCascader.fit_peak_spreads = sota_fit_ps
+        try:
+            yield
+        finally:
+            ContractCascader.fit_seasonal_ratios = original_sr
+            ContractCascader.fit_peak_spreads = original_ps
 
 
 # Backwards-compat alias for the historical private name; prefer `build_curve`.

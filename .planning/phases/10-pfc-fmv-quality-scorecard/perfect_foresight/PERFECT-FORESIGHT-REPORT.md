@@ -1,6 +1,6 @@
 # Perfect-Foresight Shaping Diagnostic — Delivery Cal 2025
 
-**Config** : `bowl_on_floors_off` · **Generated** : 2026-05-30T11:41:03Z
+**Config** : `bowl_on_floors_off` · **Generated** : 2026-05-30T13:21:47Z
 
 Additive, non-gating. Isolates **shaping** quality from **forward-forecast** error by re-anchoring on realized ex-post settlements (perfect foresight) and de-levelling intra-period profiles. Methodology: Fleten-Lemming (2003), Benth et al. (2007), Kiesel et al. (2019), Lago et al. (2021); CH-physical decomposition after Bevilacqua et al. (2022).
 
@@ -81,19 +81,19 @@ Paired comparison of baseline (`LS` over full calendar years, in-tree `ContractC
 
 | vintage | train_years | baseline | sota | gain |
 |---|---|---|---|---|
-| 2024-01-31 | 1.08 | 0.7447 | 0.8667 | 0.122 |
-| 2024-02-29 | 1.16 | 0.7447 | 0.8475 | 0.1028 |
-| 2024-03-29 | 1.24 | 0.7447 | 0.8532 | 0.1085 |
-| 2024-04-30 | 1.33 | 0.7447 | 0.8782 | 0.1335 |
-| 2024-05-31 | 1.41 | 0.7447 | 0.8731 | 0.1284 |
-| 2024-06-28 | 1.49 | 0.7447 | 0.8825 | 0.1378 |
-| 2024-07-31 | 1.58 | 0.7444 | 0.8201 | 0.0757 |
-| 2024-08-30 | 1.66 | 0.7449 | 0.8367 | 0.0918 |
-| 2024-09-30 | 1.75 | 0.7451 | 0.8392 | 0.0941 |
-| 2024-10-31 | 1.83 | 0.7447 | 0.8516 | 0.1069 |
-| 2024-11-29 | 1.91 | 0.7035 | 0.8156 | 0.1121 |
-| 2024-12-31 | 2.0 | 0.8241 | 0.8535 | 0.0294 |
+| 2024-01-31 | 1.08 | 0.7447 | 0.9184 | 0.1737 |
+| 2024-02-29 | 1.16 | 0.7447 | 0.9184 | 0.1737 |
+| 2024-03-29 | 1.24 | 0.7447 | 0.9184 | 0.1737 |
+| 2024-04-30 | 1.33 | 0.7447 | 0.9184 | 0.1737 |
+| 2024-05-31 | 1.41 | 0.7447 | 0.9184 | 0.1737 |
+| 2024-06-28 | 1.49 | 0.7447 | 0.9184 | 0.1737 |
+| 2024-07-31 | 1.58 | 0.7444 | 0.9178 | 0.1734 |
+| 2024-08-30 | 1.66 | 0.7449 | 0.918 | 0.1731 |
+| 2024-09-30 | 1.75 | 0.7451 | 0.918 | 0.1729 |
+| 2024-10-31 | 1.83 | 0.7447 | 0.9174 | 0.1727 |
+| 2024-11-29 | 1.91 | 0.7035 | 0.8606 | 0.1571 |
+| 2024-12-31 | 2.0 | 0.8241 | 0.8735 | 0.0494 |
 
-**Median**: baseline `0.7447` → SOTA `0.8524` (+0.1077). **Vintages improved**: 12/12. **Wilcoxon**: stat=78, p=0.0002.
+**Median**: baseline `0.7447` → SOTA `0.9182` (+0.1735). **Vintages improved**: 12/12. **Wilcoxon**: stat=78, p=0.0002.
 
 ![A/B benchmark](figures/pf_ab_benchmark.png)

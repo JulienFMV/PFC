@@ -401,6 +401,65 @@ def test_safe_correlation_skips_nan_paired_months():
     assert -1.0 <= r <= 1.0
 
 
+def test_sota_swap_threadsafe_under_contention():
+    """4 threads racing on `_sota_estimator()` must all restore the original.
+
+    Regression test for the class-attribute capture-and-restore race that the
+    isolation audit identified: without the module-level lock, threads can
+    capture each other's already-swapped methods as "original" and leak the
+    SOTA fitter permanently — silently violating the Phase 10 atol=1e-12
+    reproducibility contract for any subsequent caller in the process.
+    """
+    import threading
+    import time
+
+    from pfc_shaping.calibration.cascading import ContractCascader
+    from pfc_shaping.validation.perfect_foresight import _sota_estimator
+
+    sr_before = ContractCascader.fit_seasonal_ratios
+    ps_before = ContractCascader.fit_peak_spreads
+
+    def worker():
+        with _sota_estimator():
+            time.sleep(0.005)  # encourage interleaving
+
+    threads = [threading.Thread(target=worker) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert ContractCascader.fit_seasonal_ratios is sr_before, "fit_seasonal_ratios leaked"
+    assert ContractCascader.fit_peak_spreads is ps_before, "fit_peak_spreads leaked"
+
+
+def test_sota_swap_restores_on_exception():
+    """Exception inside the `with` block must still restore both methods."""
+    from pfc_shaping.calibration.cascading import ContractCascader
+    from pfc_shaping.validation.perfect_foresight import _sota_estimator
+
+    sr_before = ContractCascader.fit_seasonal_ratios
+    ps_before = ContractCascader.fit_peak_spreads
+    try:
+        with _sota_estimator():
+            assert ContractCascader.fit_seasonal_ratios is not sr_before  # confirmed swapped
+            raise RuntimeError("simulated mid-build failure")
+    except RuntimeError:
+        pass
+    assert ContractCascader.fit_seasonal_ratios is sr_before
+    assert ContractCascader.fit_peak_spreads is ps_before
+
+
+def test_build_curve_rejects_unknown_estimator_string():
+    """A typo in `estimator=` must raise ValueError, not silently fall back."""
+    from pfc_shaping.validation.perfect_foresight import build_curve
+
+    s = _two_year_constant_per_window()
+    v = pd.Timestamp("2024-01-31 17:00", tz="UTC")
+    with pytest.raises(ValueError, match="estimator="):
+        build_curve("bowl_on_floors_off", v, s, {"2024": 50.0}, estimator="SOTA")  # uppercase typo
+
+
 def test_module_all_completeness():
     """`__all__` must list every documented public name."""
     from pfc_shaping.validation import perfect_foresight as pf

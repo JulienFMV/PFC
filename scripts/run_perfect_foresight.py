@@ -264,6 +264,10 @@ def _ab_benchmark(epex, fwds, target_year: int, config_name: str, out_dir: Path)
 
     from pfc_shaping.validation.perfect_foresight import run_perfect_foresight
 
+    # CRITICAL: ensure the figure subdir exists even when the main run was
+    # called with --no-figures (so the A/B figure can still be saved).
+    (out_dir / "figures").mkdir(parents=True, exist_ok=True)
+
     print(f"[pf] A/B benchmark: baseline vs SOTA for Cal {target_year} ...")
     base = run_perfect_foresight(epex, fwds, target_year=target_year,
                                  config_name=config_name, estimator="baseline")
@@ -276,9 +280,14 @@ def _ab_benchmark(epex, fwds, target_year: int, config_name: str, out_dir: Path)
     cmp["gain"] = (cmp["sota"] - cmp["baseline"]).round(4)
     cmp.to_parquet(out_dir / "pf_ab_benchmark.parquet")
 
-    # Wilcoxon signed-rank, one-sided (H1: SOTA > baseline).
-    stat, p = wilcoxon(cmp["sota"].to_numpy(), cmp["baseline"].to_numpy(),
-                       alternative="greater")
+    # Wilcoxon signed-rank, one-sided (H1: SOTA > baseline). Guard against the
+    # degenerate "all-zero differences" case (which would crash scipy).
+    if (cmp["gain"] != 0).any():
+        stat, p = wilcoxon(cmp["sota"].to_numpy(), cmp["baseline"].to_numpy(),
+                           alternative="greater")
+        stat, p = float(stat), float(p)
+    else:
+        stat, p = float("nan"), float("nan")
 
     # Figure: per-vintage comparison.
     fig, ax = plt.subplots(figsize=(8.5, 4.8))
@@ -329,6 +338,13 @@ def main(argv: list[str] | None = None) -> int:
     valid_configs = {c.name for c in ABLATION_GRID}
     if args.config not in valid_configs:
         parser.error(f"--config={args.config!r} must be one of {sorted(valid_configs)}")
+    # --ab runs both estimators internally, so a single-run --estimator value
+    # is redundant. Force baseline for the main report to keep the header and
+    # the A/B section self-consistent (the A/B section runs SOTA itself).
+    if args.ab and args.estimator != "baseline":
+        print(f"[pf] note: --ab overrides --estimator={args.estimator}; "
+              f"main run uses 'baseline', A/B section runs both.")
+        args.estimator = "baseline"
     candidate_vintages = [v for v in list_vintages_2024_2025() if v.year < args.target_year]
     if not candidate_vintages:
         parser.error(
