@@ -1,6 +1,6 @@
 # Perfect-Foresight Shaping Diagnostic — Delivery Cal 2025
 
-**Config** : `bowl_on_floors_off` · **Generated** : 2026-05-30T14:00:07Z
+**Config** : `bowl_on_floors_off`
 
 Additive, non-gating. Isolates **shaping** quality from **forward-forecast** error by re-anchoring on realized ex-post settlements (perfect foresight) and de-levelling intra-period profiles. Methodology: Fleten-Lemming (2003), Benth et al. (2007), Kiesel et al. (2019), Lago et al. (2021); CH-physical decomposition after Bevilacqua et al. (2022).
 

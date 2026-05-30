@@ -193,8 +193,7 @@ def _write_report(res, ladder_df, fig_paths, target_year, out_path: Path) -> Non
     s, d, k, agg = res.sweep, res.diurnal, res.subkpis, res.aggregates
     L = []
     L.append(f"# Perfect-Foresight Shaping Diagnostic — Delivery Cal {target_year}\n")
-    L.append(f"**Config** : `{res.config_name}` · **Generated** : "
-             f"{pd.Timestamp.now(tz='UTC').strftime('%Y-%m-%dT%H:%M:%SZ')}\n")
+    L.append(f"**Config** : `{res.config_name}`\n")
     L.append("Additive, non-gating. Isolates **shaping** quality from **forward-forecast** "
              "error by re-anchoring on realized ex-post settlements (perfect foresight) and "
              "de-levelling intra-period profiles. Methodology: Fleten-Lemming (2003), "
