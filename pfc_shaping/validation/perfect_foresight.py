@@ -209,12 +209,22 @@ def perfect_foresight_anchors(
 # Shape scoring
 # ---------------------------------------------------------------------------
 def build_curve(config_name: str, vintage: pd.Timestamp, epex: pd.Series,
-                anchors: dict[str, float]) -> pd.Series:
+                anchors: dict[str, float],
+                estimator: str = "baseline") -> pd.Series:
     """Build a single PFC and return the hourly `price_shape` series.
 
     Thin wrapper around `build_one` for the perfect-foresight diagnostic. The
     cascader is still trained on `epex[index < vintage]` (no leak); only the
     forwards anchors carry the perfect-foresight information.
+
+    Parameters
+    ----------
+    estimator
+        ``"baseline"`` (default) uses the in-tree `ContractCascader.fit_seasonal_ratios`.
+        ``"sota"`` temporarily swaps in the
+        :class:`pfc_shaping.calibration.robust_seasonal_ratios.RegimeAwareSeasonalRatios`
+        estimator via a context manager, then restores the baseline. The swap is
+        scoped to this single build call; no module-level mutation persists.
     """
     try:
         config = next(c for c in ABLATION_GRID if c.name == config_name)
@@ -223,14 +233,48 @@ def build_curve(config_name: str, vintage: pd.Timestamp, epex: pd.Series,
             f"config_name={config_name!r} not in ABLATION_GRID "
             f"(expected one of {[c.name for c in ABLATION_GRID]})"
         ) from exc
-    df = build_one(
-        config=config,
-        vintage=vintage,
-        epex_hist=epex.to_frame("price_eur_mwh"),
-        forwards_asof=anchors,
-        with_uncertainty=False,
-    )
+    with _sota_estimator() if estimator == "sota" else _noop_cm():
+        df = build_one(
+            config=config,
+            vintage=vintage,
+            epex_hist=epex.to_frame("price_eur_mwh"),
+            forwards_asof=anchors,
+            with_uncertainty=False,
+        )
     return df["price_shape"].resample("1h").mean()
+
+
+from contextlib import contextmanager
+
+
+@contextmanager
+def _noop_cm():
+    yield
+
+
+@contextmanager
+def _sota_estimator():
+    """Temporarily swap `ContractCascader.fit_seasonal_ratios` to the SOTA
+    estimator. The original method is restored on exit so the contract on
+    `cascading.ContractCascader` is preserved for all callers outside the
+    `with` block (including parallel test runs)."""
+    from pfc_shaping.calibration.cascading import ContractCascader
+    from pfc_shaping.calibration.robust_seasonal_ratios import RegimeAwareSeasonalRatios
+
+    original = ContractCascader.fit_seasonal_ratios
+
+    def sota_fit(self, spot_history):
+        est = RegimeAwareSeasonalRatios(tz=self.tz).fit(spot_history)
+        self.seasonal_ratios_ = est.seasonal_ratios_
+        self.seasonal_trends_ = est.seasonal_trends_
+        self._reference_year_ = est.reference_year_
+        return self
+
+    ContractCascader.fit_seasonal_ratios = sota_fit
+    try:
+        yield
+    finally:
+        ContractCascader.fit_seasonal_ratios = original
 
 
 # Backwards-compat alias for the historical private name; prefer `build_curve`.
@@ -382,6 +426,7 @@ def run_perfect_foresight(
     target_year: int = 2025,
     config_name: str = PRODUCTION_CONFIG,
     vintages: list[pd.Timestamp] | None = None,
+    estimator: str = "baseline",
 ) -> PerfectForesightResult:
     """Run the full perfect-foresight shaping diagnostic for one delivery year.
 
@@ -390,6 +435,12 @@ def run_perfect_foresight(
     foresight) and its monthly seasonal shape is compared to realized. The market
     baseline (real per-vintage forwards) is computed for the same months so the
     error decomposes into *forecast* (market->PF gap) and *shaping* (1 - PF corr).
+
+    Parameters
+    ----------
+    estimator
+        ``"baseline"`` or ``"sota"`` — selects the seasonal-ratios estimator.
+        See :func:`build_curve`.
     """
     from scipy.stats import pearsonr, spearmanr
 
@@ -419,7 +470,7 @@ def run_perfect_foresight(
     diurnal_rows: list[dict] = []
     for v in vintages:
         # Perfect-foresight build (anchor realized Cal target_year only).
-        pf_curve = build_curve(config_name, v, epex, {str(target_year): realized_cal})
+        pf_curve = build_curve(config_name, v, epex, {str(target_year): realized_cal}, estimator=estimator)
         pf_sig = monthly_signature(pf_curve, target_year)
         pf_r, pf_rho, n_pairs = _safe_corr(pf_sig, real_sig)
         if n_pairs < 3:
@@ -429,7 +480,7 @@ def run_perfect_foresight(
         mkt_fwds = _forwards_for_vintage(forwards_history, v, epex)
         market_r = float("nan")
         if mkt_fwds:
-            mkt_curve = build_curve(config_name, v, epex, mkt_fwds)
+            mkt_curve = build_curve(config_name, v, epex, mkt_fwds, estimator=estimator)
             mkt_sig = monthly_signature(mkt_curve, target_year)
             market_r, _, _ = _safe_corr(mkt_sig, real_sig)
 
@@ -467,7 +518,7 @@ def run_perfect_foresight(
     subkpis: dict[str, Any] = {}
     if vintages:
         best = max(vintages, key=lambda v: _train_years(epex, v))
-        pf_best = build_curve(config_name, best, epex, {str(target_year): realized_cal})
+        pf_best = build_curve(config_name, best, epex, {str(target_year): realized_cal}, estimator=estimator)
         subkpis = {"vintage": best.strftime("%Y-%m-%d"),
                    **ch_physical_subkpis(pf_best, realized_1h, target_year)}
 

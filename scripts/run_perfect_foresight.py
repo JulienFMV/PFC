@@ -252,10 +252,71 @@ def _write_report(res, ladder_df, fig_paths, target_year, out_path: Path) -> Non
     out_path.write_text("\n".join(L))
 
 
+def _ab_benchmark(epex, fwds, target_year: int, config_name: str, out_dir: Path) -> dict:
+    """Run baseline + SOTA, compute paired-test gain, return summary dict.
+
+    Saves the per-vintage A/B parquet and a matplotlib figure to `out_dir`.
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from scipy.stats import wilcoxon
+
+    from pfc_shaping.validation.perfect_foresight import run_perfect_foresight
+
+    print(f"[pf] A/B benchmark: baseline vs SOTA for Cal {target_year} ...")
+    base = run_perfect_foresight(epex, fwds, target_year=target_year,
+                                 config_name=config_name, estimator="baseline")
+    sota = run_perfect_foresight(epex, fwds, target_year=target_year,
+                                 config_name=config_name, estimator="sota")
+    cmp = (base.sweep[["vintage", "train_years", "pf_cal_corr"]]
+           .rename(columns={"pf_cal_corr": "baseline"})
+           .merge(sota.sweep[["vintage", "pf_cal_corr"]]
+                  .rename(columns={"pf_cal_corr": "sota"}), on="vintage"))
+    cmp["gain"] = (cmp["sota"] - cmp["baseline"]).round(4)
+    cmp.to_parquet(out_dir / "pf_ab_benchmark.parquet")
+
+    # Wilcoxon signed-rank, one-sided (H1: SOTA > baseline).
+    stat, p = wilcoxon(cmp["sota"].to_numpy(), cmp["baseline"].to_numpy(),
+                       alternative="greater")
+
+    # Figure: per-vintage comparison.
+    fig, ax = plt.subplots(figsize=(8.5, 4.8))
+    x = cmp["train_years"].to_numpy()
+    ax.plot(x, cmp["baseline"], "o-", label=f"baseline (LS + full-year)")
+    ax.plot(x, cmp["sota"], "s-", label="SOTA (regime-aware + CH prior)")
+    ax.axhline(0.85, ls="--", c="grey", lw=1, label="SC#1 gate 0.85")
+    ax.set_xlabel("training history available at vintage (years)")
+    ax.set_ylabel(f"monthly-shape correlation vs realized Cal {target_year}")
+    ax.set_title(f"A/B benchmark — seasonal-ratio estimators (delivery {target_year})\n"
+                 f"median gain = {cmp['gain'].median():+.3f}, "
+                 f"Wilcoxon stat = {stat:.0f}, p = {p:.4f}")
+    ax.legend(fontsize=8); ax.grid(alpha=0.3)
+    fig.tight_layout()
+    fig_path = out_dir / "figures" / "pf_ab_benchmark.png"
+    fig.savefig(fig_path, dpi=130); plt.close(fig)
+
+    return {
+        "cmp": cmp, "wilcoxon_stat": float(stat), "wilcoxon_p": float(p),
+        "median_baseline": float(cmp["baseline"].median()),
+        "median_sota": float(cmp["sota"].median()),
+        "median_gain": float(cmp["gain"].median()),
+        "n_better": int((cmp["gain"] > 0).sum()),
+        "n_total": int(len(cmp)),
+        "fig": fig_path,
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--target-year", type=int, default=2025)
     parser.add_argument("--config", default="bowl_on_floors_off")
+    parser.add_argument("--estimator", choices=("baseline", "sota"), default="baseline",
+                        help="Seasonal-ratios estimator for the single-run mode "
+                             "(ignored when --ab is set).")
+    parser.add_argument("--ab", action="store_true",
+                        help="Run A/B benchmark (baseline vs SOTA) with Wilcoxon "
+                             "signed-rank test and side-by-side report.")
     parser.add_argument("--output-dir",
                         default=".planning/phases/10-pfc-fmv-quality-scorecard/perfect_foresight")
     parser.add_argument("--no-figures", action="store_true")
@@ -278,8 +339,12 @@ def main(argv: list[str] | None = None) -> int:
     epex = pd.read_parquet(_REPO_ROOT / EPEX_REL)["price_eur_mwh"]
     fwds = pd.read_parquet(_REPO_ROOT / FORWARDS_REL)
 
-    print(f"[pf] running perfect-foresight diagnostic for Cal {args.target_year} ...")
-    res = run_perfect_foresight(epex, fwds, target_year=args.target_year, config_name=args.config)
+    print(f"[pf] running perfect-foresight diagnostic for Cal {args.target_year} "
+          f"({args.estimator} estimator) ...")
+    res = run_perfect_foresight(
+        epex, fwds, target_year=args.target_year, config_name=args.config,
+        estimator=args.estimator,
+    )
 
     best = max(candidate_vintages,
                key=lambda v: (epex[epex.index < v].index.max() - epex[epex.index < v].index.min()).days)
@@ -305,6 +370,33 @@ def main(argv: list[str] | None = None) -> int:
     print(f"[pf] figures -> {len(fig_paths)} written to {out_dir / 'figures'}")
     print("\n=== granularity ladder ===")
     print(ladder_df.to_string(index=False))
+
+    # A/B benchmark mode: run both estimators, paired-test, write report block.
+    if args.ab:
+        ab = _ab_benchmark(epex, fwds, args.target_year, args.config, out_dir)
+        print("\n=== A/B benchmark (baseline vs SOTA seasonal_ratios) ===")
+        print(ab["cmp"].to_string(index=False))
+        print(f"\nmedian baseline: {ab['median_baseline']:.4f}   "
+              f"median SOTA: {ab['median_sota']:.4f}   "
+              f"median gain: {ab['median_gain']:+.4f}")
+        print(f"vintages improved: {ab['n_better']}/{ab['n_total']}   "
+              f"Wilcoxon stat = {ab['wilcoxon_stat']:.0f}, "
+              f"p = {ab['wilcoxon_p']:.4f}")
+        # Append A/B section to the markdown report.
+        with open(report, "a") as fh:
+            fh.write("\n## 6. SOTA A/B benchmark — seasonal-ratios estimator\n\n")
+            fh.write("Paired comparison of baseline (`LS` over full calendar years, "
+                     "in-tree `ContractCascader.fit_seasonal_ratios`) vs SOTA "
+                     "(regime-aware weighted mean + Bayesian shrinkage to CH-physical "
+                     "prior, `RegimeAwareSeasonalRatios`). Wilcoxon signed-rank "
+                     "(one-sided, H1: SOTA > baseline).\n\n")
+            fh.write(_df_to_md(ab["cmp"]) + "\n\n")
+            fh.write(f"**Median**: baseline `{ab['median_baseline']:.4f}` → "
+                     f"SOTA `{ab['median_sota']:.4f}` ({ab['median_gain']:+.4f}). "
+                     f"**Vintages improved**: {ab['n_better']}/{ab['n_total']}. "
+                     f"**Wilcoxon**: stat={ab['wilcoxon_stat']:.0f}, "
+                     f"p={ab['wilcoxon_p']:.4f}.\n\n")
+            fh.write(f"![A/B benchmark](figures/{ab['fig'].name})\n")
     return 0
 
 
