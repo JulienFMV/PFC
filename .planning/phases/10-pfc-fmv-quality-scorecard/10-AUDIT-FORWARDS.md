@@ -1,9 +1,20 @@
 # Phase 10 — Audit du shaping des forwards (Pilier 1 Hildmann)
 
+> **⚠ SUPERSEDED — 2026-05-30.** Le verdict initial ci-dessous (« aucun
+> changement de modèle justifié ») a été **falsifié** par le perfect-foresight
+> diagnostic construit ensuite : sous foresight parfait du niveau Cal, la
+> corrélation mensuelle ne monte qu'à ~0.745 (et non ~0.95), ce qui prouve que
+> le résidu vient du **profilage** et non du forecast des forwards.
+> Voir `10-PERFECT-FORESIGHT-SHAPING.md` pour la méthodologie, la mesure et le
+> stack SOTA qui en a résulté (regime-aware seasonal_ratios + hydro-aware
+> peak_spreads + intra-day half-life=90d, ship: α=2.0, médian Cal 2025 0.918,
+> 12/12 vintages clear the 0.85 gate). Le document ci-dessous est conservé pour
+> la traçabilité historique.
+
 **Date** : 2026-05-29
 **Périmètre** : reproductibilité et validité du scorecard structurel SC#1 (Pilier 1),
 focus sur le test `seasonal_profile` (échec 0.78 < 0.85) et le test `continuity`.
-**Verdict** : aucun changement de modèle justifié. L'échec du gate seasonal est un
+**Verdict (superseded)** : aucun changement de modèle justifié. L'échec du gate seasonal est un
 artefact de fenêtre de validation, pas un défaut de forme des forwards.
 
 ---
