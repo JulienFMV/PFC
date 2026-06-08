@@ -10,15 +10,22 @@ perfect-foresight residuals (numbers, not priors) and approved at the §5
 plan-gate before large implementation. Pick **ONE** high-value lever and do it
 properly; do not scatter across many.
 
-## 1. Sync first
+## 1. Sync first (worktree-safe)
+All recent LT work lives on `claude/clean-lt-ct-integration` (NOT merged to
+`main`). That branch may already be checked out in another git **worktree** on
+this machine (e.g. `PFC_phase10`), in which case a direct `checkout` will fail —
+that is expected. Do NOT touch other worktrees or their local changes. Instead,
+create your feature branch directly from the up-to-date remote:
 ```
 git fetch origin
-git checkout claude/clean-lt-ct-integration
-git pull --ff-only origin claude/clean-lt-ct-integration
+git checkout -b feat/lt-next-sota origin/claude/clean-lt-ct-integration
+# if it already exists locally: git checkout -B feat/lt-next-sota origin/claude/clean-lt-ct-integration
 git log --oneline -6
 ```
-This branch holds all recent LT work and is NOT merged to `main`. If HEAD differs
-from what you pulled, STOP and resolve before coding.
+You must see `7446a36 Add agent prompt: next SOTA LT/HPFC improvement` in the
+log. This gives you the synced state (all three briefs + §4quater solar) on your
+own branch, with no worktree conflict. If you don't see that commit, STOP and
+report before coding.
 
 ## 2. The LT model (code map — read before editing)
 - `pfc_shaping/lt/model/assembler.py` — `PFCAssembler.build()`:

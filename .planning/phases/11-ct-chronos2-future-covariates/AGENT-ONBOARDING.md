@@ -4,20 +4,24 @@ You are an expert ML/quant engineer joining the **PFC** repository (Swiss/German
 electricity price forecasting). Before writing any code, get completely up to date
 with the project, its conventions, and ALL work done so far. Follow this brief.
 
-## 0. First action — sync to the exact branch
-All recent work lives on the branch **`claude/clean-lt-ct-integration`** (NOT yet
-merged into `main`). Do this first:
+## 0. First action — sync to the exact branch (worktree-safe)
+All recent work lives on **`claude/clean-lt-ct-integration`** (NOT yet merged into
+`main`). That branch may already be checked out in another git **worktree** on
+this machine (e.g. `PFC_phase10`); a direct `checkout` of it from a second
+worktree will fail — that is expected git behaviour. Do NOT touch other worktrees
+or their local/uncommitted changes. Create your own feature branch from the
+up-to-date remote instead:
 
 ```
 git fetch origin
-git checkout claude/clean-lt-ct-integration
-git pull --ff-only origin claude/clean-lt-ct-integration
-git log --oneline -8        # confirm you see commit 8647b1e at the top
+git checkout -b feat/ct-chronos2-future-covariates origin/claude/clean-lt-ct-integration
+# if it already exists: git checkout -B feat/ct-chronos2-future-covariates origin/claude/clean-lt-ct-integration
+git log --oneline -8        # confirm the agent-brief commits are present
 ```
 
-If `git log` does not show `8647b1e Add agent prompt: covariate-informed Chronos-2
-inference (CT)` at HEAD, STOP and resolve the sync before proceeding — everything
-below assumes that state.
+If `git log` does not show the recent agent-brief commits (e.g.
+`8647b1e Add agent prompt: covariate-informed Chronos-2 inference (CT)` or newer),
+STOP and resolve the sync before proceeding — everything below assumes that state.
 
 ## 1. What this project is
 PFC builds price-forward curves and forecasts for the Swiss (CH) power market,
