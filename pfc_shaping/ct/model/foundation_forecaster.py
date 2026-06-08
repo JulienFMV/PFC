@@ -18,6 +18,7 @@ Install:
 from __future__ import annotations
 
 import logging
+import inspect
 from pathlib import Path
 from typing import Optional
 
@@ -64,7 +65,7 @@ class FoundationForecaster:
     """
 
     _LOCAL_FINETUNED_CHRONOS2 = Path(__file__).resolve().parent / "chronos2_finetuned"
-    _LOCAL_CHRONOS2 = Path(__file__).resolve().parents[2] / "models" / "chronos-2"
+    _LOCAL_CHRONOS2 = Path(__file__).resolve().parents[3] / "models" / "chronos-2"
     if _LOCAL_FINETUNED_CHRONOS2.exists():
         CHRONOS2_MODEL = str(_LOCAL_FINETUNED_CHRONOS2)
     elif _LOCAL_CHRONOS2.exists():
@@ -84,6 +85,7 @@ class FoundationForecaster:
         self._pipeline = None
         self._backend = None  # "chronos2" or "bolt"
         self._loaded = False
+        self._bolt_future_covariates_logged = False
 
     @property
     def available(self) -> bool:
@@ -154,6 +156,7 @@ class FoundationForecaster:
         price_history: pd.Series | np.ndarray,
         horizon: int = 24,
         covariates: dict[str, pd.Series] | None = None,
+        future_covariates: dict[str, pd.Series] | None = None,
     ) -> Optional[dict[str, np.ndarray]]:
         """Generate zero-shot probabilistic forecast.
 
@@ -162,6 +165,10 @@ class FoundationForecaster:
             horizon: Number of hours to forecast.
             covariates: Optional dict of covariate series (e.g. DE prices, load).
                         Only used by Chronos-2. Ignored by Bolt.
+            future_covariates: Optional dict of known-future covariates. Values
+                        should contain context + horizon values, or at least the
+                        horizon values when the same name is already present in
+                        covariates. Only used by Chronos-2.
 
         Returns:
             dict with keys 'median', 'q10', 'q90', 'mean' or None.
@@ -170,8 +177,16 @@ class FoundationForecaster:
             return None
 
         if self._backend == "chronos2":
-            return self._forecast_chronos2(price_history, horizon, covariates)
+            return self._forecast_chronos2(
+                price_history,
+                horizon,
+                covariates,
+                future_covariates=future_covariates,
+            )
         else:
+            if future_covariates and not self._bolt_future_covariates_logged:
+                logger.debug("Chronos-Bolt backend ignores future_covariates")
+                self._bolt_future_covariates_logged = True
             return self._forecast_bolt(price_history, horizon)
 
     def _forecast_chronos2(
@@ -179,9 +194,16 @@ class FoundationForecaster:
         price_history: pd.Series | np.ndarray,
         horizon: int,
         covariates: dict[str, pd.Series] | None = None,
+        future_covariates: dict[str, pd.Series] | None = None,
     ) -> Optional[dict[str, np.ndarray]]:
         """Forecast using Chronos-2 with DataFrame API (supports covariates)."""
         try:
+            predict_sig = inspect.signature(self._pipeline.predict_df)
+            supports_future_df = "future_df" in predict_sig.parameters
+            if future_covariates and not supports_future_df:
+                logger.warning("Chronos-2 predict_df does not support future_df; future covariates skipped")
+                future_covariates = None
+
             # Build DataFrame with target + covariates
             prices = self._prepare_series(price_history)
             if len(prices) < 48:
@@ -210,14 +232,67 @@ class FoundationForecaster:
                         padded[-len(vals):] = vals
                         df[name] = pd.Series(padded).ffill().bfill().values
 
-            result_df = self._pipeline.predict_df(
-                df,
-                target="target",
-                timestamp_column="timestamp",
-                id_column="item_id",
-                prediction_length=horizon,
-                quantile_levels=[0.1, 0.5, 0.9],
-            )
+            future_df = None
+            if future_covariates:
+                future_cols: dict[str, np.ndarray] = {}
+                for name, series in future_covariates.items():
+                    vals = self._prepare_series(series)
+                    if len(vals) < horizon:
+                        logger.warning(
+                            "Skipping future covariate %s: %d values < horizon %d",
+                            name,
+                            len(vals),
+                            horizon,
+                        )
+                        continue
+
+                    future_vals = vals[-horizon:]
+                    if not np.all(np.isfinite(future_vals)):
+                        logger.warning("Skipping future covariate %s: non-finite horizon values", name)
+                        continue
+
+                    if name not in df.columns:
+                        if len(vals) >= n + horizon:
+                            past_vals = vals[-(n + horizon):-horizon]
+                            if not np.all(np.isfinite(past_vals)):
+                                past_vals = pd.Series(past_vals).ffill().bfill().values
+                            if not np.all(np.isfinite(past_vals)):
+                                logger.warning("Skipping future covariate %s: non-finite context values", name)
+                                continue
+                            df[name] = past_vals.astype(np.float32)
+                        else:
+                            logger.warning(
+                                "Skipping future covariate %s: no past context column and only %d values",
+                                name,
+                                len(vals),
+                            )
+                            continue
+
+                    future_cols[name] = future_vals.astype(np.float32)
+
+                if future_cols:
+                    future_ts = pd.date_range(
+                        start=ts[-1] + pd.Timedelta(hours=1),
+                        periods=horizon,
+                        freq="h",
+                    )
+                    future_df = pd.DataFrame({
+                        "timestamp": future_ts,
+                        "item_id": "ch_price",
+                        **future_cols,
+                    })
+
+            predict_kwargs = {
+                "target": "target",
+                "timestamp_column": "timestamp",
+                "id_column": "item_id",
+                "prediction_length": horizon,
+                "quantile_levels": [0.1, 0.5, 0.9],
+            }
+            if future_df is not None:
+                predict_kwargs["future_df"] = future_df
+
+            result_df = self._pipeline.predict_df(df, **predict_kwargs)
 
             # Extract quantiles from result DataFrame
             q10_col = [c for c in result_df.columns if str(c) == "0.1"]
@@ -238,7 +313,13 @@ class FoundationForecaster:
                 return None
 
             n_cov = len(covariates) if covariates else 0
-            logger.info("Chronos-2 forecast: %d hours, %d covariates", horizon, n_cov)
+            n_future_cov = 0 if future_df is None else len([c for c in future_df.columns if c not in {"timestamp", "item_id"}])
+            logger.info(
+                "Chronos-2 forecast: %d hours, %d past covariates, %d future covariates",
+                horizon,
+                n_cov,
+                n_future_cov,
+            )
 
             return {
                 "q10": q10, "median": median, "q90": q90,

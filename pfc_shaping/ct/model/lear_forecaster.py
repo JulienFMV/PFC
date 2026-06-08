@@ -132,15 +132,20 @@ class LEARForecaster:
         random_state: int = 42,
         use_foundation_model: bool = True,
         use_extended_physical_ch_features: bool = False,
+        use_future_covariates: bool = False,
+        use_de_renewable_future: bool = False,
     ):
         self.tz = tz
         self.max_iter = max_iter
         self.random_state = random_state
         self.use_foundation_model = use_foundation_model
         self.use_extended_physical_ch_features = use_extended_physical_ch_features
+        self.use_future_covariates = use_future_covariates
+        self.use_de_renewable_future = use_de_renewable_future
         self._fitted = False
         self._fm = FoundationForecaster() if use_foundation_model else None
         self._lgbm_device_type = "gpu"
+        self._de_renewable_forecast_series_h_: dict[str, pd.Series] = {}
 
     def fit(
         self,
@@ -163,6 +168,7 @@ class LEARForecaster:
 
         # Build hourly exogenous matrix
         exog = pd.DataFrame(index=self.prices_h_.index)
+        self._de_renewable_forecast_series_h_ = {}
 
         # Cross-border prices
         self._has_de_prices = False
@@ -246,10 +252,15 @@ class LEARForecaster:
                     if not s.empty:
                         if s.index.tz is None:
                             s.index = s.index.tz_localize("UTC")
-                        exog[col] = s.resample("h").mean()
+                        s_h = s.resample("h").mean()
+                        exog[col] = s_h
+                        self._de_renewable_forecast_series_h_[col] = s_h
             # Total DE renewable forecast
             if "forecast_wind_de_mw" in exog.columns and "forecast_solar_de_mw" in exog.columns:
                 exog["forecast_renewable_de_mw"] = (
+                    exog["forecast_wind_de_mw"].fillna(0) + exog["forecast_solar_de_mw"].fillna(0)
+                )
+                self._de_renewable_forecast_series_h_["forecast_renewable_de_mw"] = (
                     exog["forecast_wind_de_mw"].fillna(0) + exog["forecast_solar_de_mw"].fillna(0)
                 )
             logger.info("  DE renewable forecasts: wind=%.0f MW avg, solar=%.0f MW avg",
@@ -310,6 +321,101 @@ class LEARForecaster:
                 if len(vals) > 10:
                     calib[h] = (float(vals.mean()), float(vals.std()))
         return calib
+
+    def _hourly_utc_range_from_local_start(
+        self,
+        local_start: pd.Timestamp,
+        periods: int,
+    ) -> pd.DatetimeIndex:
+        """Build the real-calendar horizon used only to derive covariate values."""
+        if local_start.tzinfo is None:
+            local_start = local_start.tz_localize(self.tz)
+        else:
+            local_start = local_start.tz_convert(self.tz)
+        return pd.date_range(start=local_start, periods=periods, freq="h").tz_convert("UTC")
+
+    def _build_future_covariates(
+        self,
+        context_index_utc: pd.DatetimeIndex,
+        future_index_utc: pd.DatetimeIndex,
+        cutoff_utc: pd.Timestamp,
+    ) -> dict[str, pd.Series] | None:
+        """Build known-future covariates for Chronos-2.
+
+        Calendar covariates are deterministic. DE renewable forecasts are gated
+        because the parquet has no as_of timestamp and may be realization-stamped;
+        for backtests we only use target timestamps at or after the cutoff.
+        """
+        if not self.use_future_covariates:
+            return None
+        if len(future_index_utc) == 0:
+            return None
+
+        if context_index_utc.tz is None:
+            context_index_utc = context_index_utc.tz_localize("UTC")
+        else:
+            context_index_utc = context_index_utc.tz_convert("UTC")
+        if future_index_utc.tz is None:
+            future_index_utc = future_index_utc.tz_localize("UTC")
+        else:
+            future_index_utc = future_index_utc.tz_convert("UTC")
+        cutoff_utc = pd.Timestamp(cutoff_utc)
+        cutoff_utc = cutoff_utc.tz_localize("UTC") if cutoff_utc.tzinfo is None else cutoff_utc.tz_convert("UTC")
+
+        combined = context_index_utc.append(future_index_utc)
+        local = combined.tz_convert(self.tz)
+        dow = local.dayofweek.to_numpy(dtype=float)
+        hour = local.hour.to_numpy(dtype=float)
+        month = local.month.to_numpy(dtype=float)
+
+        covariates: dict[str, pd.Series] = {
+            "cal_hour_sin": pd.Series(np.sin(2 * np.pi * hour / 24.0), index=combined),
+            "cal_hour_cos": pd.Series(np.cos(2 * np.pi * hour / 24.0), index=combined),
+            "cal_dow_sin": pd.Series(np.sin(2 * np.pi * dow / 7.0), index=combined),
+            "cal_dow_cos": pd.Series(np.cos(2 * np.pi * dow / 7.0), index=combined),
+            "cal_month_sin": pd.Series(np.sin(2 * np.pi * month / 12.0), index=combined),
+            "cal_month_cos": pd.Series(np.cos(2 * np.pi * month / 12.0), index=combined),
+            "cal_is_weekend": pd.Series((dow >= 5).astype(float), index=combined),
+        }
+
+        holiday_ch = np.zeros(len(combined), dtype=float)
+        holiday_de = np.zeros(len(combined), dtype=float)
+        holiday_fr = np.zeros(len(combined), dtype=float)
+        for i, date_value in enumerate(local.date):
+            ch_hols, de_hols, fr_hols = _get_holidays(date_value.year)
+            holiday_ch[i] = 1.0 if date_value in ch_hols else 0.0
+            holiday_de[i] = 1.0 if date_value in de_hols else 0.0
+            holiday_fr[i] = 1.0 if date_value in fr_hols else 0.0
+        covariates["cal_is_holiday_ch"] = pd.Series(holiday_ch, index=combined)
+        covariates["cal_is_holiday_de"] = pd.Series(holiday_de, index=combined)
+        covariates["cal_is_holiday_fr"] = pd.Series(holiday_fr, index=combined)
+
+        if self.use_de_renewable_future:
+            if (future_index_utc < cutoff_utc).any():
+                logger.warning("Skipping DE renewable future covariates: horizon starts before cutoff")
+            elif not self._de_renewable_forecast_series_h_:
+                logger.warning("DE renewable future covariates requested but no forecast series is fitted")
+            else:
+                for col in ["forecast_wind_de_mw", "forecast_solar_de_mw", "forecast_renewable_de_mw"]:
+                    series = self._de_renewable_forecast_series_h_.get(col)
+                    if series is None or series.empty:
+                        continue
+                    if series.index.tz is None:
+                        series = series.copy()
+                        series.index = series.index.tz_localize("UTC")
+                    else:
+                        series = series.tz_convert("UTC")
+                    aligned = series.reindex(combined)
+                    future_values = aligned.iloc[-len(future_index_utc):]
+                    if future_values.isna().any():
+                        logger.warning(
+                            "Skipping DE renewable future covariate %s: incomplete horizon coverage",
+                            col,
+                        )
+                        continue
+                    covariates[col] = aligned.ffill().bfill()
+
+        return covariates
 
     def _build_features(
         self,
@@ -1342,18 +1448,31 @@ class LEARForecaster:
                     s = self.exog_[col].dropna()
                     if len(s) > 48:
                         fm_covariates[col] = s
+            fm_future_covariates = None
+            if self.use_future_covariates:
+                future_index = self._hourly_utc_range_from_local_start(
+                    last_date + timedelta(days=1),
+                    periods=24 * horizon_days,
+                )
+                fm_future_covariates = self._build_future_covariates(
+                    self.prices_h_.index,
+                    future_index,
+                    cutoff_utc=self.prices_h_.index[-1],
+                )
 
             fm_result = self._fm.forecast(
                 self.prices_h_,
                 horizon=24 * horizon_days,
                 covariates=fm_covariates if fm_covariates else None,
+                future_covariates=fm_future_covariates,
             )
             if fm_result is not None:
                 fm_preds = fm_result
                 logger.info(
-                    "Foundation model forecast: %d hours, %d covariates, backend=%s",
+                    "Foundation model forecast: %d hours, %d past covariates, %d future covariates, backend=%s",
                     len(fm_result["median"]),
                     len(fm_covariates),
+                    len(fm_future_covariates) if fm_future_covariates else 0,
                     self._fm.backend,
                 )
 
@@ -1674,6 +1793,7 @@ class LEARForecaster:
         self,
         n_days: int = 30,
         horizon: int = 1,
+        include_fm_attribution: bool = False,
     ) -> pd.DataFrame:
         """Rolling out-of-sample backtest with AR error correction.
 
@@ -1722,11 +1842,23 @@ class LEARForecaster:
                             s = self.exog_[col][:cutoff].dropna()
                             if len(s) > 48:
                                 fm_cov[col] = s
+                    fm_future_cov = None
+                    if self.use_future_covariates:
+                        future_index = self._hourly_utc_range_from_local_start(
+                            pd.Timestamp(test_date, tz=self.tz),
+                            periods=24 * horizon,
+                        )
+                        fm_future_cov = self._build_future_covariates(
+                            prices_trunc.index,
+                            future_index,
+                            cutoff_utc=cutoff,
+                        )
 
                     fm_result = self._fm.forecast(
                         prices_trunc,
                         horizon=24 * horizon,
                         covariates=fm_cov if fm_cov else None,
+                        future_covariates=fm_future_cov,
                     )
                     if fm_result is not None:
                         fm_daily_cache[str(test_date)] = fm_result
@@ -1890,12 +2022,14 @@ class LEARForecaster:
                 # Foundation model blending AFTER all LEAR post-processing
                 # (consistent with predict() order of operations)
                 fm_key = str(test_date)
+                fm_raw = None
                 if fm_key in fm_daily_cache:
                     fm_data = fm_daily_cache[fm_key]
                     fm_idx = (horizon - 1) * 24 + hour
                     if fm_idx < len(fm_data["median"]):
                         fm_price = float(fm_data["median"][fm_idx])
                         if np.isfinite(fm_price):
+                            fm_raw = fm_price
                             # Regime-adaptive FM weight
                             fm_model_name = getattr(self._fm, "CHRONOS2_MODEL", "") if self._fm is not None else ""
                             if "chronos2_finetuned" in str(fm_model_name).lower():
@@ -1920,14 +2054,18 @@ class LEARForecaster:
                     day_errors[hour] = error
                     error_history[hour].append(error)
 
-                    results.append({
+                    row = {
                         "date": str(target_date),
                         "hour": hour,
                         "forecast": forecast,
                         "actual": float(actual),
                         "error": error,
                         "horizon": horizon,
-                    })
+                    }
+                    if include_fm_attribution:
+                        row["fm_used"] = fm_raw is not None
+                        row["fm_raw_price"] = fm_raw
+                    results.append(row)
 
             # Update prev_day_errors for next iteration
             prev2_day_errors = prev_day_errors.copy()

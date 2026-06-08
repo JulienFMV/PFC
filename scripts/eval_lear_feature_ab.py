@@ -33,6 +33,7 @@ DATA_FILES = {
     "epex_ch": ROOT / "pfc_shaping" / "data" / "epex_15min.parquet",
     "epex_de": ROOT / "pfc_shaping" / "data" / "epex_de_15min.parquet",
     "entso": ROOT / "pfc_shaping" / "data" / "entso_15min.parquet",
+    "de_renewable_forecast": ROOT / "pfc_shaping" / "data" / "de_renewable_forecast.parquet",
 }
 
 
@@ -59,12 +60,16 @@ def _set_seed(seed: int) -> None:
 
 def _score(df: pd.DataFrame, forecast_col: str = "forecast", actual_col: str = "actual") -> dict[str, float | int]:
     clean = df[[forecast_col, actual_col]].dropna()
+    if clean.empty:
+        return {"mae": float("nan"), "rmse": float("nan"), "wape": float("nan"), "mape": float("nan"), "corr": float("nan"), "n": 0}
     err = clean[forecast_col] - clean[actual_col]
     abs_err = err.abs()
     ape = abs_err / clean[actual_col].abs().clip(lower=1.0) * 100.0
+    denom = float(clean[actual_col].abs().sum())
     return {
         "mae": float(abs_err.mean()),
         "rmse": float(np.sqrt((err**2).mean())),
+        "wape": float(abs_err.sum() / denom) if denom > 0 else float("nan"),
         "mape": float(ape.mean()),
         "corr": float(clean[forecast_col].corr(clean[actual_col])),
         "n": int(len(clean)),
@@ -111,7 +116,41 @@ def _segment_metrics(bt: pd.DataFrame) -> dict[str, object]:
         row = {"segment": str(segment)}
         row.update(_score(seg_df))
         segment_rows.append(row)
-    return {"by_hour": hour_rows, "by_segment": segment_rows}
+
+    peak_rows = []
+    df["peak_bucket"] = np.where(df["local_ts"].dt.hour.between(7, 19), "peak", "offpeak")
+    for bucket, bucket_df in df.groupby("peak_bucket"):
+        row = {"bucket": str(bucket)}
+        row.update(_score(bucket_df))
+        peak_rows.append(row)
+
+    horizon_rows = []
+    if "horizon" in df.columns:
+        for horizon, horizon_df in df.groupby("horizon"):
+            row = {"horizon": int(horizon)}
+            row.update(_score(horizon_df))
+            horizon_rows.append(row)
+
+    return {
+        "by_hour": hour_rows,
+        "by_segment": segment_rows,
+        "peak_offpeak": peak_rows,
+        "by_horizon_day": horizon_rows,
+    }
+
+
+def _foundation_metrics(bt: pd.DataFrame) -> dict[str, object] | None:
+    if "fm_raw_price" not in bt.columns:
+        return None
+    fm = bt.dropna(subset=["fm_raw_price", "actual"]).copy()
+    if fm.empty:
+        return None
+    fm_eval = fm.copy()
+    fm_eval["forecast"] = fm_eval["fm_raw_price"]
+    return {
+        "overall": _score(fm, forecast_col="fm_raw_price"),
+        "breakdown": _segment_metrics(fm_eval),
+    }
 
 
 def _block_bootstrap_delta(
@@ -161,9 +200,12 @@ def _archive_inputs(run_id: str, manifest: dict[str, object]) -> None:
 def _run_variant(
     label: str,
     physical_features: bool,
+    use_future_covariates: bool,
+    use_de_renewable_future: bool,
     epex_ch: pd.DataFrame,
     epex_de: pd.DataFrame,
     entso: pd.DataFrame,
+    de_renewable_forecast: pd.DataFrame | None,
     n_days: int,
     horizon: int,
     use_foundation_model: bool,
@@ -171,21 +213,42 @@ def _run_variant(
     model = LEARForecaster(
         use_foundation_model=use_foundation_model,
         use_extended_physical_ch_features=physical_features,
+        use_future_covariates=use_future_covariates,
+        use_de_renewable_future=use_de_renewable_future,
     )
-    model.fit(epex_15min=epex_ch, entso_15min=entso, epex_de_15min=epex_de)
-    bt = model.backtest(n_days=n_days, horizon=horizon).copy()
+    model.fit(
+        epex_15min=epex_ch,
+        entso_15min=entso,
+        epex_de_15min=epex_de,
+        de_renewable_forecast=de_renewable_forecast,
+    )
+    bt = model.backtest(n_days=n_days, horizon=horizon, include_fm_attribution=True).copy()
     bt["variant"] = label
     return bt
+
+
+def _parse_horizons(value: str | None, fallback: int) -> list[int]:
+    if not value:
+        return [int(fallback)]
+    horizons = []
+    for part in value.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        horizons.append(int(part))
+    return sorted(set(horizons))
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run reproducible LEAR feature A/B.")
     parser.add_argument("--n-days", type=int, default=30)
     parser.add_argument("--horizon", type=int, default=1)
+    parser.add_argument("--horizons", type=str, default=None, help="Comma-separated D+ horizons, e.g. 1,2,3,4,5,6,7,8,9,10")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--bootstrap", type=int, default=1000)
     parser.add_argument("--block-hours", type=int, default=24)
     parser.add_argument("--use-foundation-model", action="store_true")
+    parser.add_argument("--physical-features", action="store_true")
     parser.add_argument("--archive-inputs", action="store_true")
     parser.add_argument("--output-dir", type=Path, default=ROOT / "pfc_shaping" / "output")
     args = parser.parse_args()
@@ -213,60 +276,78 @@ def main() -> None:
     epex_ch = pd.read_parquet(DATA_FILES["epex_ch"])
     epex_de = pd.read_parquet(DATA_FILES["epex_de"])
     entso = pd.read_parquet(DATA_FILES["entso"])
-
-    baseline = _run_variant(
-        "baseline",
-        False,
-        epex_ch,
-        epex_de,
-        entso,
-        args.n_days,
-        args.horizon,
-        args.use_foundation_model,
-    )
-    experiment = _run_variant(
-        "physical_enriched",
-        True,
-        epex_ch,
-        epex_de,
-        entso,
-        args.n_days,
-        args.horizon,
-        args.use_foundation_model,
+    de_renewable_forecast = (
+        pd.read_parquet(DATA_FILES["de_renewable_forecast"])
+        if DATA_FILES["de_renewable_forecast"].exists()
+        else None
     )
 
-    baseline_path = args.output_dir / f"{run_id}_baseline.parquet"
-    experiment_path = args.output_dir / f"{run_id}_physical_enriched.parquet"
-    baseline.to_parquet(baseline_path, index=False)
-    experiment.to_parquet(experiment_path, index=False)
+    horizons = _parse_horizons(args.horizons, args.horizon)
+    variants = {
+        "A_baseline": (False, False),
+        "B_calendar_future": (True, False),
+        "C_calendar_de_future": (True, True),
+    }
+    backtests: dict[str, pd.DataFrame] = {}
+    for label, (future_flag, de_future_flag) in variants.items():
+        frames = []
+        for horizon in horizons:
+            frames.append(
+                _run_variant(
+                    label,
+                    args.physical_features,
+                    future_flag,
+                    de_future_flag,
+                    epex_ch,
+                    epex_de,
+                    entso,
+                    de_renewable_forecast,
+                    args.n_days,
+                    horizon,
+                    args.use_foundation_model,
+                )
+            )
+        backtests[label] = pd.concat(frames, ignore_index=True)
 
-    baseline_score = _score(baseline)
-    experiment_score = _score(experiment)
+    backtest_paths = {}
+    for label, bt in backtests.items():
+        path = args.output_dir / f"{run_id}_{label}.parquet"
+        bt.to_parquet(path, index=False)
+        backtest_paths[label] = str(path)
+
+    scores = {label: _score(bt) for label, bt in backtests.items()}
+    breakdowns = {label: _segment_metrics(bt) for label, bt in backtests.items()}
+    foundation = {label: _foundation_metrics(bt) for label, bt in backtests.items()}
 
     payload = {
         **manifest,
-        "baseline_backtest": str(baseline_path),
-        "physical_enriched_backtest": str(experiment_path),
-        "baseline": baseline_score,
-        "physical_enriched": experiment_score,
-        "delta": {
-            k: experiment_score[k] - baseline_score[k]
-            for k in ["mae", "rmse", "mape", "corr"]
+        "horizons": horizons,
+        "backtests": backtest_paths,
+        "scores": scores,
+        "delta_vs_A": {
+            label: {
+                k: scores[label][k] - scores["A_baseline"][k]
+                for k in ["mae", "rmse", "wape", "mape", "corr"]
+            }
+            for label in ["B_calendar_future", "C_calendar_de_future"]
         },
-        "bootstrap_delta_mae": _block_bootstrap_delta(
-            baseline,
-            experiment,
-            seed=args.seed,
-            n_boot=args.bootstrap,
-            block_hours=args.block_hours,
-        ),
-        "baseline_breakdown": _segment_metrics(baseline),
-        "physical_enriched_breakdown": _segment_metrics(experiment),
+        "bootstrap_delta_mae_vs_A": {
+            label: _block_bootstrap_delta(
+                backtests["A_baseline"],
+                backtests[label],
+                seed=args.seed,
+                n_boot=args.bootstrap,
+                block_hours=args.block_hours,
+            )
+            for label in ["B_calendar_future", "C_calendar_de_future"]
+        },
+        "breakdowns": breakdowns,
+        "foundation_only": foundation,
     }
 
     output_path = args.output_dir / f"{run_id}.json"
     output_path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
-    print(json.dumps(payload["delta"], indent=2))
+    print(json.dumps(payload["delta_vs_A"], indent=2))
     print(f"output:{output_path.resolve()}")
 
 
