@@ -93,6 +93,7 @@
     <li><a href="#schema">D. Schéma cible Databricks</a></li>
     <li><a href="#zones">E. Codes zones EIC</a></li>
     <li><a href="#checklist">F. Checklist data engineer</a></li>
+    <li><a href="#lt-scenarios">G. Données scénarios électrification LT (Phase 13)</a></li>
   </ol>
 </nav>
 
@@ -260,8 +261,104 @@ PARTITION BY (zone, variable, date(ts_utc))</pre>
   <li>☐ Idempotence : clé d'upsert <code>(zone, variable, ts_utc, as_of_utc)</code> ; horodater <code>ingested_at_utc</code>.</li>
 </ul>
 
+<h2 id="lt-scenarios">G. Données scénarios d'électrification long-terme <span class="tag tagP2">PRIORITÉ 2 — Phase 13</span></h2>
+<p class="lead">Ces données ne viennent <b>pas</b> d'ENTSO-E Transparency mais des <b>scénarios prospectifs</b>.
+Elles pilotent la forme structurelle de la courbe (duck curve 2027 ≠ 2030) : électrification de la demande,
+PV, batteries, VE, pompes à chaleur, nucléaire, interconnexions. Fichier cible :
+<code>data/electrification_scenarios.parquet</code>.</p>
+
+<div class="callout warn">
+  <b>⚠ Vintage-safety (non négociable).</b> Une donnée n'est utilisable à une date de valorisation
+  <code>V</code> que si elle était connue avant : pour un <b>réalisé</b>, <code>measurement_date ≤ V</code> ;
+  pour un <b>scénario</b>, <code>publication_date ≤ V</code>. Ne jamais mélanger réalisé et scénario dans le
+  même enregistrement — distinguer via <code>track</code> (voir schéma).
+</div>
+
+<h3>G1 — Sources officielles</h3>
+<table>
+  <tr><th>Source</th><th>URL</th><th>Rôle</th><th>Contenu clé</th></tr>
+  <tr><td><b>OFEN / BFE — Perspectives énergétiques 2050+</b></td><td><code>bfe.admin.ch/.../perspectives-energetiques-2050-plus</code></td><td><span class="ok">CH — critique (Niveau 1)</span></td><td>scénarios officiels CH, demande, PV, VE, PAC, sortie nucléaire</td></tr>
+  <tr><td><b>ENTSO-E / ENTSOG TYNDP 2024</b></td><td><code>2024.entsos-tyndp-scenarios.eu</code></td><td>Backbone européen (CH/DE/FR/IT/AT)</td><td>scénarios NT/DE/GA ; demande, PV, éolien, batteries, VE, PAC, <b>+ prix CO₂/gaz/charbon, électrolyse, profils horaires</b></td></tr>
+  <tr><td>Pronovo</td><td><code>pronovo.ch</code></td><td>PV CH réalisé (recalibration)</td><td><code>pv_gw</code> + date de mise en service ; fallback Swissolar / OFEN</td></tr>
+  <tr><td>Bundesnetzagentur — MaStR</td><td><code>bundesnetzagentur.de</code></td><td>PV &amp; batteries DE réalisés</td><td><code>pv_gw</code>, <code>battery_power_gw</code>, <code>battery_energy_gwh</code>, dates de mise en service</td></tr>
+  <tr><td>Swissgrid / ENTSO-E / TYNDP</td><td>—</td><td>Interconnexions</td><td><code>ntc_ch_de_gw, ntc_ch_fr_gw, ntc_ch_it_gw, ntc_ch_at_gw</code></td></tr>
+</table>
+
+<h3>G2 — Variables du contrat (déjà définies)</h3>
+<table>
+  <tr><th>Variable</th><th>Unité</th><th>Criticité</th></tr>
+  <tr><td><code>demand_twh</code></td><td>TWh</td><td><span class="ok">Niveau 1 (gate)</span></td></tr>
+  <tr><td><code>pv_gw</code></td><td>GW</td><td><span class="ok">Niveau 1 (gate)</span></td></tr>
+  <tr><td><code>wind_gw</code></td><td>GW</td><td>Niveau 2</td></tr>
+  <tr><td><code>battery_power_gw</code></td><td>GW</td><td>Niveau 2 (remplit le belly midi)</td></tr>
+  <tr><td><code>battery_energy_gwh</code></td><td>GWh</td><td>Niveau 2</td></tr>
+  <tr><td><code>ev_twh</code></td><td>TWh</td><td>Niveau 2 (sinon <code>coef_ev = 0</code>)</td></tr>
+  <tr><td><code>heatpump_twh</code></td><td>TWh</td><td>Niveau 2 (sinon coef PAC neutralisé)</td></tr>
+  <tr><td><code>nuclear_gw</code></td><td>GW</td><td>Niveau 2</td></tr>
+  <tr><td><code>ntc_ch_de_gw, ntc_ch_fr_gw, ntc_ch_it_gw</code></td><td>GW</td><td>Niveau 2</td></tr>
+</table>
+
+<h3>G3 — Variables MANQUANTES à ajouter <span class="tag tagP2">proposé FMV</span></h3>
+<p class="legend">Compléments nécessaires pour ancrer le <b>niveau</b> de prix (pas seulement la forme) et pour
+modéliser correctement le remplissage du « belly » de la duck curve.</p>
+<table>
+  <tr><th>Variable</th><th>Unité</th><th>Source</th><th>Priorité</th><th>Pourquoi</th></tr>
+  <tr><td><code>co2_eur_t</code></td><td>€/t</td><td>TYNDP</td><td><span class="ko">🔴 Haute</span></td><td>Ancrage du niveau aux heures thermal-set (clean spark/dark spread)</td></tr>
+  <tr><td><code>gas_eur_mwh</code></td><td>€/MWh</td><td>TYNDP</td><td><span class="ko">🔴 Haute</span></td><td>Idem — combustible marginal du soir/hiver</td></tr>
+  <tr><td><code>coal_eur_mwh</code></td><td>€/MWh</td><td>TYNDP</td><td><span class="ko">🔴 Haute</span></td><td>Combustible marginal alternatif (merit-order DE)</td></tr>
+  <tr><td><code>electrolysis_twh</code> / <code>p2x_gw</code></td><td>TWh / GW</td><td>TYNDP</td><td><span class="ko">🔴 Haute</span></td><td>2ᵉ mécanisme (avec batteries) qui remplit le creux PV de midi</td></tr>
+  <tr><td><code>peak_demand_gw</code></td><td>GW</td><td>TYNDP / OFEN</td><td>🟠 Moyenne</td><td>Marge d'adéquation hivernale correcte (puissance, pas énergie) + ratios de capacité</td></tr>
+  <tr><td><code>demand_hourly_profile</code></td><td>profil 8760 h</td><td>TYNDP</td><td>🟠 Moyenne</td><td>Déformation horaire par PAC (hiver) et VE (nuit/soir), par scénario</td></tr>
+  <tr><td><code>hydro_inflow_twh</code> / réservoir LT</td><td>TWh</td><td>OFEN / ENTSO-E</td><td>🟠 Moyenne</td><td>Tension hivernale CH + water value structurelle (marché hydro-dominé)</td></tr>
+  <tr><td><code>ntc_ch_at_gw</code></td><td>GW</td><td>Swissgrid / TYNDP</td><td>🟠 Moyenne</td><td>Frontière AT manquante (le backbone liste AT)</td></tr>
+  <tr><td><code>dsm_gw</code> (flexibilité demande)</td><td>GW</td><td>TYNDP</td><td>🟡 Basse</td><td>Remplit aussi le belly ; report de charge</td></tr>
+  <tr><td><code>curtailment_flag</code> / freq. prix négatifs</td><td>—</td><td>dérivé / scénario</td><td>🟡 Basse</td><td>Sature la profondeur du belly à forte pénétration PV</td></tr>
+  <tr><td><code>battery_duration_h</code></td><td>h</td><td><i>dérivé</i></td><td>🟡 Basse</td><td><code>battery_energy_gwh / battery_power_gw</code> — détermine si le creux (≈5 h) est réellement lissé</td></tr>
+</table>
+
+<div class="callout warn">
+  <b>⚠ Corrections à appliquer aux indicateurs (gold).</b> Deux ratios du contrat sont dimensionnellement
+  incohérents (GW ÷ TWh) :
+  <ul style="margin:6px 0">
+    <li><code>pv_capacity_ratio = pv_gw / demand_twh</code> → remplacer par
+        <code>pv_capacity_intensity = pv_gw / peak_demand_gw</code> (sans dimension), ou conserver le
+        <code>pv_penetration</code> énergie/énergie déjà défini.</li>
+    <li><code>nuclear_capacity_ratio = nuclear_gw / demand_twh</code> → remplacer par
+        <code>nuclear_adequacy_ratio = nuclear_gw / peak_demand_gw</code>.</li>
+  </ul>
+  D'où le besoin de <code>peak_demand_gw</code> ci-dessus.
+</div>
+
+<h3>G4 — Schéma cible <code>electrification_scenarios.parquet</code></h3>
+<pre>table: electrification_scenarios
+  publication_date  DATE        -- vintage des scénarios  ← clé vintage-safe
+  measurement_date  DATE        -- vintage des réalisés (NULL si scénario)
+  track             STRING      -- 'scenario' | 'actual'   ← ne jamais mélanger
+  source            STRING      -- 'OFEN','TYNDP','Pronovo','MaStR','Swissgrid','internal'
+  scenario          STRING      -- 'Slow' | 'Central' | 'Fast' (ou NT/DE/GA TYNDP)
+  scenario_edition  STRING      -- 'TYNDP-2024','OFEN-2021',...  (les éditions se succèdent)
+  scenario_weight   DOUBLE      -- ex. 0.25 / 0.50 / 0.25
+  country           STRING      -- 'CH','DE','FR','IT','AT'
+  delivery_year     INT
+  delivery_month    INT
+  variable          STRING      -- 'demand_twh','pv_gw','co2_eur_t',...
+  value             DOUBLE
+  unit              STRING
+  quality_flag      STRING      -- 'official' | 'actual' | 'fallback' | 'internal'
+  ingested_at_utc   TIMESTAMP
+PARTITION BY (country, scenario_edition, delivery_year)</pre>
+
+<h3>G5 — Activation de la Phase 13</h3>
+<p><b>ON</b> si : scénarios OFEN dispo ✅ + demande CH (<code>demand_twh</code>) ✅ + PV CH (<code>pv_gw</code>) ✅
++ métadonnées complètes ✅ + <code>publication_date</code> renseignée ✅.
+<b>OFF</b> si l'une manque, ou si une donnée n'est pas vintage-safe / sans provenance.
+Dataset minimum : horizon <b>2027–2030</b>, Suisse, scénarios Slow/Central/Fast,
+variables <code>demand_twh, pv_gw, battery_power_gw, battery_energy_gwh, ev_twh, heatpump_twh</code>.
+Gouvernance : Comité Risque / Marché FMV.</p>
+
 <footer>
-  Document généré pour l'équipe FMV — spécification d'ingestion ENTSO-E pour la PFC long-terme.
+  Document généré pour l'équipe FMV — spécification d'ingestion ENTSO-E (§A–F) + données scénarios
+  d'électrification long-terme (§G, Phase 13) pour la PFC long-terme.
   Les <code>doc_type</code> (A09, A11, A44, A61, A65, A68, A69, A71, A72, A75, A77, A78, A80) renvoient aux
   types de documents de la plateforme ENTSO-E Transparency, à conserver pour audit.
 </footer>
