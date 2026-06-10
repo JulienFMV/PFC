@@ -30,6 +30,9 @@
         text-transform:uppercase; color:var(--muted)}
   nav.toc a{color:var(--accent); text-decoration:none; margin-right:4px}
   nav.toc a:hover{text-decoration:underline}
+  td a, p a, li a{color:var(--accent); text-decoration:none; word-break:break-word}
+  td a:hover, p a:hover, li a:hover{text-decoration:underline}
+  a.url{font-family:"SFMono-Regular",Consolas,"Roboto Mono",monospace; font-size:12.5px}
   nav.toc ol{margin:0; padding-left:20px; columns:2; column-gap:32px}
   h2{font-size:21px; margin:38px 0 6px; padding-top:10px}
   h2 .tag{font-size:12px; font-weight:600; border-radius:6px; padding:2px 8px; vertical-align:middle; margin-left:8px}
@@ -111,8 +114,8 @@ des fondamentaux physiques (charge, solaire, éolien, hydraulique, échanges) is
 <h2 id="access">2. Accès API &amp; bonnes pratiques</h2>
 <table>
   <tr><th style="width:170px">Élément</th><th>Détail</th></tr>
-  <tr><td>Endpoint</td><td><code>https://web-api.tp.entsoe.eu/api</code> (REST XML). Côté Python, la lib <code>entsoe-py</code> (<code>EntsoePandasClient</code>) encapsule tout.</td></tr>
-  <tr><td>Authentification</td><td>Token gratuit (demande via le portail ENTSO-E, délai ~3 j). Variable d'environnement <code>ENTSOE_API_KEY</code>.</td></tr>
+  <tr><td>Endpoint</td><td><a class="url" href="https://web-api.tp.entsoe.eu/api">https://web-api.tp.entsoe.eu/api</a> (REST XML). Côté Python, la lib <code>entsoe-py</code> (<code>EntsoePandasClient</code>) encapsule tout.</td></tr>
+  <tr><td>Authentification</td><td>Token gratuit (demande via le portail <a class="url" href="https://transparency.entsoe.eu/">https://transparency.entsoe.eu/</a>, délai ~3 j). Variable d'environnement <code>ENTSOE_API_KEY</code>.</td></tr>
   <tr><td>Quotas</td><td>~400 requêtes / minute. <b>Chunker</b> les requêtes par fenêtres (l'API limite souvent à ≤ 1 an par appel pour la génération).</td></tr>
   <tr><td>Robustesse</td><td>Retry + backoff exponentiel (base 5&nbsp;s, 3 essais) ; l'API est régulièrement indisponible. Dégrader gracieusement par frontière/zone manquante.</td></tr>
   <tr><td>Fuseau</td><td>L'API renvoie l'heure locale de la zone → <b>convertir en UTC</b> systématiquement.</td></tr>
@@ -277,11 +280,11 @@ PV, batteries, VE, pompes à chaleur, nucléaire, interconnexions. Fichier cible
 <h3>G1 — Sources officielles</h3>
 <table>
   <tr><th>Source</th><th>URL</th><th>Rôle</th><th>Contenu clé</th></tr>
-  <tr><td><b>OFEN / BFE — Perspectives énergétiques 2050+</b></td><td><code>bfe.admin.ch/.../perspectives-energetiques-2050-plus</code></td><td><span class="ok">CH — critique (Niveau 1)</span></td><td>scénarios officiels CH, demande, PV, VE, PAC, sortie nucléaire</td></tr>
-  <tr><td><b>ENTSO-E / ENTSOG TYNDP 2024</b></td><td><code>2024.entsos-tyndp-scenarios.eu</code></td><td>Backbone européen (CH/DE/FR/IT/AT)</td><td>scénarios NT/DE/GA ; demande, PV, éolien, batteries, VE, PAC, <b>+ prix CO₂/gaz/charbon, électrolyse, profils horaires</b></td></tr>
-  <tr><td>Pronovo</td><td><code>pronovo.ch</code></td><td>PV CH réalisé (recalibration)</td><td><code>pv_gw</code> + date de mise en service ; fallback Swissolar / OFEN</td></tr>
-  <tr><td>Bundesnetzagentur — MaStR</td><td><code>bundesnetzagentur.de</code></td><td>PV &amp; batteries DE réalisés</td><td><code>pv_gw</code>, <code>battery_power_gw</code>, <code>battery_energy_gwh</code>, dates de mise en service</td></tr>
-  <tr><td>Swissgrid / ENTSO-E / TYNDP</td><td>—</td><td>Interconnexions</td><td><code>ntc_ch_de_gw, ntc_ch_fr_gw, ntc_ch_it_gw, ntc_ch_at_gw</code></td></tr>
+  <tr><td><b>OFEN / BFE — Perspectives énergétiques 2050+</b></td><td><a class="url" href="https://www.bfe.admin.ch/bfe/fr/home/politique/perspectives-energetiques-2050-plus.html">https://www.bfe.admin.ch/bfe/fr/home/politique/perspectives-energetiques-2050-plus.html</a></td><td><span class="ok">CH — critique (Niveau 1)</span></td><td>scénarios officiels CH, demande, PV, VE, PAC, sortie nucléaire</td></tr>
+  <tr><td><b>ENTSO-E / ENTSOG TYNDP 2024</b></td><td><a class="url" href="https://2024.entsos-tyndp-scenarios.eu/#download">https://2024.entsos-tyndp-scenarios.eu/#download</a></td><td>Backbone européen (CH/DE/FR/IT/AT)</td><td>scénarios NT/DE/GA ; demande, PV, éolien, batteries, VE, PAC, <b>+ prix CO₂/gaz/charbon, électrolyse, profils horaires</b></td></tr>
+  <tr><td>Pronovo</td><td><a class="url" href="https://pronovo.ch/fr/">https://pronovo.ch/fr/</a></td><td>PV CH réalisé (recalibration)</td><td><code>pv_gw</code> + date de mise en service ; fallback Swissolar / OFEN</td></tr>
+  <tr><td>Bundesnetzagentur — MaStR</td><td><a class="url" href="https://www.marktstammdatenregister.de/MaStR">https://www.marktstammdatenregister.de/MaStR</a></td><td>PV &amp; batteries DE réalisés</td><td><code>pv_gw</code>, <code>battery_power_gw</code>, <code>battery_energy_gwh</code>, dates de mise en service</td></tr>
+  <tr><td>Swissgrid</td><td><a class="url" href="https://www.swissgrid.ch/fr/home/operation/grid-data.html">https://www.swissgrid.ch/fr/home/operation/grid-data.html</a></td><td>Interconnexions (NTC)</td><td><code>ntc_ch_de_gw, ntc_ch_fr_gw, ntc_ch_it_gw, ntc_ch_at_gw</code></td></tr>
 </table>
 
 <h3>G2 — Variables du contrat (déjà définies)</h3>
