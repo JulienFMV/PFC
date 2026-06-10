@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Spec d'ingestion ENTSO-E — PFC long-terme</title>
+<style>
+  :root{
+    --bg:#ffffff; --ink:#1a1f29; --muted:#5b6675; --line:#e3e8ef;
+    --accent:#0b6e99; --accent2:#0a7d55; --warn:#b4690e; --warnbg:#fff6e6;
+    --p1:#e6f3f8; --p2:#eaf6ef; --code:#0f2b3a; --codebg:#f4f7fa;
+    --chip:#eef2f7;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font:16px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  .wrap{max-width:1080px; margin:0 auto; padding:40px 28px 80px}
+  header.title{border-bottom:3px solid var(--accent); padding-bottom:18px; margin-bottom:8px}
+  header.title h1{font-size:28px; margin:0 0 6px}
+  header.title .sub{color:var(--muted); font-size:15px}
+  .meta{display:flex; flex-wrap:wrap; gap:8px; margin:14px 0 4px}
+  .chip{background:var(--chip); border:1px solid var(--line); border-radius:999px;
+        padding:3px 11px; font-size:12.5px; color:var(--muted)}
+  nav.toc{background:#fafbfc; border:1px solid var(--line); border-radius:10px;
+        padding:14px 18px; margin:24px 0 8px; font-size:14.5px}
+  nav.toc b{display:block; margin-bottom:6px; font-size:13px; letter-spacing:.04em;
+        text-transform:uppercase; color:var(--muted)}
+  nav.toc a{color:var(--accent); text-decoration:none; margin-right:4px}
+  nav.toc a:hover{text-decoration:underline}
+  nav.toc ol{margin:0; padding-left:20px; columns:2; column-gap:32px}
+  h2{font-size:21px; margin:38px 0 6px; padding-top:10px}
+  h2 .tag{font-size:12px; font-weight:600; border-radius:6px; padding:2px 8px; vertical-align:middle; margin-left:8px}
+  .tagP1{background:var(--p1); color:var(--accent)}
+  .tagP2{background:var(--p2); color:var(--accent2)}
+  h3{font-size:16.5px; margin:22px 0 4px; color:#28323f}
+  p{margin:8px 0}
+  .lead{color:var(--muted)}
+  table{width:100%; border-collapse:collapse; margin:12px 0 18px; font-size:14px}
+  th,td{border:1px solid var(--line); padding:8px 10px; text-align:left; vertical-align:top}
+  th{background:#f4f7fa; font-weight:600; font-size:13px; color:#33404f}
+  td code, .code-inline{font-family:"SFMono-Regular",Consolas,"Roboto Mono",monospace;
+        font-size:13px; background:var(--codebg); color:var(--code); padding:1px 5px; border-radius:4px}
+  tr:nth-child(even) td{background:#fcfdfe}
+  pre{background:var(--codebg); border:1px solid var(--line); border-left:3px solid var(--accent);
+        border-radius:8px; padding:14px 16px; overflow:auto; font-size:13px;
+        font-family:"SFMono-Regular",Consolas,"Roboto Mono",monospace; color:var(--code)}
+  .callout{border-radius:10px; padding:13px 16px; margin:16px 0; font-size:14.5px}
+  .warn{background:var(--warnbg); border:1px solid #f0d9a8}
+  .warn b{color:var(--warn)}
+  .note{background:#eef6fb; border:1px solid #cfe6f2}
+  .ok{color:var(--accent2); font-weight:600}
+  .ko{color:#b42318; font-weight:600}
+  ul{margin:8px 0; padding-left:22px}
+  li{margin:4px 0}
+  footer{margin-top:50px; border-top:1px solid var(--line); padding-top:16px;
+        color:var(--muted); font-size:13px}
+  .legend{font-size:13px; color:var(--muted); margin:-6px 0 14px}
+  @media print{
+    body{font-size:11.5pt} .wrap{max-width:none;padding:0}
+    nav.toc{break-inside:avoid} table{break-inside:auto} tr{break-inside:avoid}
+    h2{break-after:avoid} pre{break-inside:avoid}
+    a{color:var(--ink); text-decoration:none}
+  }
+  @media (max-width:680px){ nav.toc ol{columns:1} }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="title">
+  <h1>Spécification d'ingestion ENTSO-E</h1>
+  <div class="sub">Données de marché pour le modèle de courbe forward long-terme (PFC LT) — Suisse &amp; voisins</div>
+  <div class="meta">
+    <span class="chip">Destinataire : Data Engineering</span>
+    <span class="chip">Cible : Databricks</span>
+    <span class="chip">Source : ENTSO-E Transparency Platform</span>
+    <span class="chip">Granularité : 15&nbsp;min, UTC</span>
+    <span class="chip">Version : 2026-06</span>
+  </div>
+</header>
+
+<nav class="toc">
+  <b>Sommaire</b>
+  <ol>
+    <li><a href="#ctx">Contexte &amp; conventions</a></li>
+    <li><a href="#access">Accès API &amp; bonnes pratiques</a></li>
+    <li><a href="#A">A. Données déjà ingérées (priorité 1)</a></li>
+    <li><a href="#B">B. Données à ajouter pour le LT (priorité 2)</a></li>
+    <li><a href="#derived">C. Colonnes dérivées (pas d'API)</a></li>
+    <li><a href="#schema">D. Schéma cible Databricks</a></li>
+    <li><a href="#zones">E. Codes zones EIC</a></li>
+    <li><a href="#checklist">F. Checklist data engineer</a></li>
+  </ol>
+</nav>
+
+<h2 id="ctx">1. Contexte &amp; conventions</h2>
+<p class="lead">La PFC LT construit une courbe forward horaire <code>P(t) = B(an) × f_S × f_W × f_H × f_Q × f_WV</code>
+puis une calibration sans-arbitrage. Les facteurs de forme et les régimes de marché sont calibrés sur
+des fondamentaux physiques (charge, solaire, éolien, hydraulique, échanges) issus d'ENTSO-E.</p>
+<ul>
+  <li><b>Granularité</b> : pas de 15&nbsp;min, index <b>UTC</b> (convertir depuis l'heure locale de la zone, gérer le DST : jours à 92/100 pas).</li>
+  <li><b>Unités</b> : MW (puissance). Les séries natives horaires sont ré-échantillonnées en 15&nbsp;min par forward-fill.</li>
+  <li><b>Profondeur historique cible</b> : remonter à <b>2015–2017</b> si possible (les régimes pré-crise / crise 2022 / post-crise sont nécessaires au modèle).</li>
+  <li><b>Anti-fuite (leakage)</b> : toute série de <b>prévision</b> doit porter une colonne <code>as_of</code> (heure de publication), distincte du timestamp cible. Voir l'encadré §B.</li>
+</ul>
+
+<h2 id="access">2. Accès API &amp; bonnes pratiques</h2>
+<table>
+  <tr><th style="width:170px">Élément</th><th>Détail</th></tr>
+  <tr><td>Endpoint</td><td><code>https://web-api.tp.entsoe.eu/api</code> (REST XML). Côté Python, la lib <code>entsoe-py</code> (<code>EntsoePandasClient</code>) encapsule tout.</td></tr>
+  <tr><td>Authentification</td><td>Token gratuit (demande via le portail ENTSO-E, délai ~3 j). Variable d'environnement <code>ENTSOE_API_KEY</code>.</td></tr>
+  <tr><td>Quotas</td><td>~400 requêtes / minute. <b>Chunker</b> les requêtes par fenêtres (l'API limite souvent à ≤ 1 an par appel pour la génération).</td></tr>
+  <tr><td>Robustesse</td><td>Retry + backoff exponentiel (base 5&nbsp;s, 3 essais) ; l'API est régulièrement indisponible. Dégrader gracieusement par frontière/zone manquante.</td></tr>
+  <tr><td>Fuseau</td><td>L'API renvoie l'heure locale de la zone → <b>convertir en UTC</b> systématiquement.</td></tr>
+</table>
+
+<h2 id="A">A. Données actuellement ingérées <span class="tag tagP1">PRIORITÉ 1 — à reproduire</span></h2>
+<p class="legend">Ce bloc reproduit les 64 colonnes du jeu de données de référence actuel. Colonne « API » = appel <code>entsoe-py</code> ; « doc_type » = code ENTSO-E pour la traçabilité.</p>
+
+<h3>A1 — Charge &amp; génération CH</h3>
+<table>
+  <tr><th>Colonne cible</th><th>Appel API</th><th>doc_type</th></tr>
+  <tr><td><code>load_mw</code></td><td><code>query_load("CH")</code> → « Actual Load »</td><td>A65</td></tr>
+  <tr><td><code>solar_mw</code></td><td><code>query_generation("CH")</code> → « Solar »</td><td>A75</td></tr>
+  <tr><td><code>wind_mw</code></td><td><code>query_generation</code> → « Wind Onshore » + « Wind Offshore »</td><td>A75</td></tr>
+  <tr><td><code>nuclear_mw</code></td><td><code>query_generation</code> → « Nuclear »</td><td>A75</td></tr>
+  <tr><td><code>hydro_ror_mw</code></td><td>« Hydro Run-of-river and poundage »</td><td>A75</td></tr>
+  <tr><td><code>hydro_reservoir_mw</code></td><td>« Hydro Water Reservoir »</td><td>A75</td></tr>
+  <tr><td><code>hydro_pumped_mw</code></td><td>« Hydro Pumped Storage »</td><td>A75</td></tr>
+</table>
+
+<h3>A2 — Voisins : charge + renouvelables</h3>
+<p>Pour chaque zone <b>DE-LU, FR, IT-NORD, AT</b> : <code>query_load(zone)</code> et <code>query_generation(zone)</code>.</p>
+<table>
+  <tr><th>Colonnes</th><th>Appel API</th><th>doc_type</th></tr>
+  <tr><td><code>load_de_mw, load_fr_mw, load_it_mw, load_at_mw</code></td><td><code>query_load(zone)</code></td><td>A65</td></tr>
+  <tr><td><code>solar_de_mw, solar_fr_mw, solar_it_mw, solar_at_mw</code></td><td><code>query_generation(zone)</code> → Solar</td><td>A75</td></tr>
+  <tr><td><code>wind_de_mw, wind_fr_mw, wind_it_mw, wind_at_mw</code></td><td><code>query_generation(zone)</code> → Wind</td><td>A75</td></tr>
+  <tr><td><code>residual_load_de_mw</code></td><td><i>dérivé</i> = <code>load_de − solar_de − wind_de</code></td><td>—</td></tr>
+</table>
+
+<h3>A3 — Échanges transfrontaliers CH ↔ {DE, FR, AT, IT}</h3>
+<p><code>&lt;b&gt;</code> ∈ {de, fr, at, it}. Chaque famille est calculée dans les deux sens (CH→b et b→CH).</p>
+<table>
+  <tr><th>Famille de colonnes</th><th>Appel API</th><th>doc_type</th></tr>
+  <tr><td><code>scheduled_net_export_ch_&lt;b&gt;_mw</code></td><td><code>query_scheduled_exchanges(CH,b)</code> et <code>(b,CH)</code></td><td>A09</td></tr>
+  <tr><td><code>flow_net_export_ch_&lt;b&gt;_mw</code></td><td><code>query_crossborder_flows(CH,b)</code> et <code>(b,CH)</code></td><td>A11</td></tr>
+  <tr><td><code>ntc_export_ch_&lt;b&gt;_mw, ntc_import_…, ntc_net_…, ntc_total_…</code></td><td><code>query_net_transfer_capacity_dayahead(CH,b)</code> et <code>(b,CH)</code></td><td>A61</td></tr>
+</table>
+
+<h3>A4 — Indisponibilités nucléaires France</h3>
+<table>
+  <tr><th>Donnée</th><th>Appel API</th><th>doc_type</th></tr>
+  <tr><td>Agrégat outages nucléaire FR</td><td><code>query_unavailability_of_generation_units("FR", …)</code></td><td>A80</td></tr>
+</table>
+
+<h2 id="B">B. Données ENTSO-E à AJOUTER pour le long-terme <span class="tag tagP2">PRIORITÉ 2 — nouveau</span></h2>
+<p class="lead">Endpoints non encore exploités, décisifs pour la PFC long-terme : forme horizon-dépendante,
+évolution de la « duck curve » (électrification), primes de risque.</p>
+
+<div class="callout warn">
+  <b>⚠ Règle anti-fuite (non négociable).</b> Pour <b>toute</b> série de prévision (lignes « forecast » ci-dessous),
+  conserver le triplet <code>(target_timestamp, as_of_timestamp, value)</code> où <code>as_of</code> = heure de publication
+  (jour&nbsp;−1 ≈ 18h CET). C'est exactement ce qui manque au fichier de prévisions renouvelables actuel et qui
+  empêche un backtest « vintage » propre.
+</div>
+
+<table>
+  <tr><th>Donnée</th><th>Appel API <code>entsoe-py</code></th><th>doc_type</th><th>Pourquoi (LT)</th></tr>
+  <tr><td>Prévision de charge day-ahead (CH + voisins)</td><td><code>query_load_forecast</code></td><td>A65</td><td>Covariable « known-future » propre</td></tr>
+  <tr><td>Prévision solaire/éolien day-ahead</td><td><code>query_wind_and_solar_forecast</code></td><td>A69</td><td>Remplace le fichier renouvelable suspect (avec un vrai <code>as_of</code>)</td></tr>
+  <tr><td><b>Capacité installée par type &amp; par an</b></td><td><code>query_installed_generation_capacity</code></td><td>A68</td><td><b>LE driver de l'électrification</b> : trajectoire PV / éolien / nucléaire → duck curve 2027 ≠ 2030</td></tr>
+  <tr><td>Capacité installée par unité</td><td><code>query_installed_generation_capacity_per_unit</code></td><td>A71</td><td>Granularité unité (phase-out nucléaire)</td></tr>
+  <tr><td>Indispo génération (toutes zones)</td><td><code>query_unavailability_of_generation_units</code> / <code>_production_units</code></td><td>A80 / A77</td><td>Offre pilotable disponible</td></tr>
+  <tr><td>Indispo transmission (lignes / NTC)</td><td><code>query_unavailability_transmission</code></td><td>A78</td><td>Capacité d'import en risque</td></tr>
+  <tr><td>Remplissage réservoirs hydro (hebdo)</td><td><code>query_aggregate_water_reservoirs_and_hydro_storage</code></td><td>A72</td><td>Water value / prime hydro (couvre aussi les voisins)</td></tr>
+  <tr><td>NTC long-terme (annuel / mensuel)</td><td><code>query_offered_capacity</code> / <code>…_yearly</code> / <code>…_monthly</code></td><td>A61</td><td>Couplage long-terme, basis transfrontalier</td></tr>
+  <tr><td>Prévision de génération day-ahead (totale)</td><td><code>query_generation_forecast</code></td><td>A71</td><td>Offre prévue</td></tr>
+  <tr><td>Prix day-ahead (source de secours)</td><td><code>query_day_ahead_prices</code></td><td>A44</td><td>Déjà via energy-charts / SMARD ; ENTSO-E = fallback</td></tr>
+</table>
+
+<h2 id="derived">C. Colonnes dérivées — <span class="ko">ne PAS chercher sur l'API</span></h2>
+<p>Ces colonnes du jeu de référence sont des <b>transformations</b> à calculer côté ETL Databricks, pas des appels ENTSO-E :</p>
+<table>
+  <tr><th>Colonne</th><th>Formule</th></tr>
+  <tr><td><code>cross_border_mw</code></td><td>somme des flux nets <code>flow_net_export_ch_*</code></td></tr>
+  <tr><td><code>solar_regime</code></td><td>tertiles mensuels de <code>solar_mw</code> → {0,1,2}</td></tr>
+  <tr><td><code>load_deviation</code></td><td><code>(load − mean_mois) / std_mois</code></td></tr>
+  <tr><td><code>flow_deviation</code></td><td><code>(cross_border − mean_mois) / std_mois</code></td></tr>
+  <tr><td><code>*_zscore</code> (scheduled, ntc_total, ntc_net …)</td><td>z-score mensuel <code>(x − mean_mois) / std_mois</code></td></tr>
+  <tr><td><code>ntc_balance_ch_&lt;b&gt;</code></td><td><code>ntc_export − ntc_import</code> par frontière</td></tr>
+</table>
+
+<h2 id="schema">D. Schéma cible Databricks (recommandé)</h2>
+<p>Privilégier un modèle <b>long / normalisé</b> (extensible) plutôt qu'un wide à 64 colonnes. Une vue pivotée
+reproduit le format wide attendu par le code de modélisation.</p>
+
+<h3>Table 1 — séries temporelles</h3>
+<pre>table: entso_timeseries
+  ts_utc            TIMESTAMP   -- début de pas, UTC
+  zone              STRING      -- 'CH','DE_LU','FR','AT','IT_NORD'
+  variable          STRING      -- 'load','solar','wind','nuclear','hydro_ror',...
+  value             DOUBLE      -- MW
+  resolution_min    INT         -- 15 ou 60
+  doc_type          STRING      -- 'A75','A65',...   (traçabilité ENTSO-E)
+  as_of_utc         TIMESTAMP   -- NULL si réalisé ; rempli si forecast  ← clé anti-leakage
+  ingested_at_utc   TIMESTAMP
+  source            STRING      -- 'entsoe'
+PARTITION BY (zone, variable, date(ts_utc))</pre>
+
+<h3>Table 2 — échanges bilatéraux (flux / NTC / scheduled)</h3>
+<pre>table: entso_exchanges
+  ts_utc            TIMESTAMP
+  from_zone         STRING
+  to_zone           STRING
+  kind              STRING      -- 'scheduled' | 'flow' | 'ntc_dayahead'
+  value_mw          DOUBLE
+  doc_type          STRING
+  as_of_utc         TIMESTAMP
+  ingested_at_utc   TIMESTAMP</pre>
+
+<h3>Table 3 — capacités installées (annuel)</h3>
+<pre>table: entso_capacity
+  year              INT
+  zone              STRING
+  fuel_type         STRING      -- 'Solar','Wind Onshore','Nuclear',...
+  installed_mw      DOUBLE
+  doc_type          STRING      -- 'A68' / 'A71'
+  as_of_utc         TIMESTAMP</pre>
+
+<div class="callout note">
+  Le code de modélisation attend aujourd'hui un <b>wide parquet 15&nbsp;min</b>. Un simple pivot Databricks
+  (<code>zone + variable → colonnes</code> nommées comme en §A) reproduit ce format à l'identique.
+  <b>Garder les deux</b> : long en stockage (source de vérité), wide en vue / feature-store.
+</div>
+
+<h2 id="zones">E. Codes zones EIC</h2>
+<table>
+  <tr><th>Zone</th><th>Code EIC</th><th>Remarque</th></tr>
+  <tr><td>Suisse (CH)</td><td><code>10YCH-SWISSGRIDZ</code></td><td>Swissgrid</td></tr>
+  <tr><td>Allemagne–Luxembourg</td><td><code>10Y1001A1001A82H</code></td><td><b>DE_LU</b> depuis oct. 2018 (≠ ancien DE-AT-LU)</td></tr>
+  <tr><td>France</td><td><code>10YFR-RTE------C</code></td><td>RTE</td></tr>
+  <tr><td>Autriche</td><td><code>10YAT-APG------L</code></td><td>APG</td></tr>
+  <tr><td>Italie Nord</td><td><code>10Y1001A1001A73I</code></td><td>Zone de marché IT-NORD (frontière CH)</td></tr>
+</table>
+
+<h2 id="checklist">F. Checklist data engineer</h2>
+<ul>
+  <li>☐ Token <code>ENTSOE_API_KEY</code> obtenu et stocké en secret (pas en clair).</li>
+  <li>☐ Reproduire le bloc <b>A (priorité 1)</b> → 64 colonnes du jeu de référence (CH + 4 voisins + échanges + outages FR).</li>
+  <li>☐ Ajouter le bloc <b>B (priorité 2)</b>, avec colonne <code>as_of</code> sur toutes les prévisions.</li>
+  <li>☐ Calculer les colonnes dérivées (<b>C</b>) côté ETL, jamais via l'API.</li>
+  <li>☐ Profondeur historique ≥ 2017 (idéalement 2015) pour couvrir les régimes.</li>
+  <li>☐ Tout en <b>UTC</b>, pas de 15&nbsp;min, gestion DST (jours 92/100 pas).</li>
+  <li>☐ Retry + backoff ; chunking ≤ 1 an / requête ; dégradation gracieuse par zone.</li>
+  <li>☐ Schéma long + vue wide pivotée (§D).</li>
+  <li>☐ Idempotence : clé d'upsert <code>(zone, variable, ts_utc, as_of_utc)</code> ; horodater <code>ingested_at_utc</code>.</li>
+</ul>
+
+<footer>
+  Document généré pour l'équipe FMV — spécification d'ingestion ENTSO-E pour la PFC long-terme.
+  Les <code>doc_type</code> (A09, A11, A44, A61, A65, A68, A69, A71, A72, A75, A77, A78, A80) renvoient aux
+  types de documents de la plateforme ENTSO-E Transparency, à conserver pour audit.
+</footer>
+
+</div>
+</body>
+</html>
