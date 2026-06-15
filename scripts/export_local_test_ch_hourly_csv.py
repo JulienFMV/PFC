@@ -5,8 +5,10 @@ from __future__ import annotations
 import argparse
 import math
 import sys
+from functools import lru_cache
 from pathlib import Path
 
+import holidays
 import numpy as np
 import pandas as pd
 
@@ -39,6 +41,32 @@ SCENARIO_PRICE_COLUMNS = {
     "central": "price_central_eur_mwh",
     "fast": "price_fast_eur_mwh",
 }
+
+
+@lru_cache(maxsize=None)
+def _ch_market_shape_holidays(year: int) -> frozenset:
+    """Holidays that can materially affect CH spot shape.
+
+    This is deliberately broader than the national-only EEX Peak calendar.
+    CH spot is coupled to neighbouring markets; days such as 1 May can behave
+    like holidays even when they are not CH-national or Valais holidays.
+    """
+    y = int(year)
+    dates: set = set()
+    for subdiv in (None, "VS", "ZH", "TI", "GE", "BE", "VD", "BS", "BL", "AG", "SG"):
+        dates |= set(holidays.Switzerland(years=y, subdiv=subdiv).keys())
+    dates |= set(holidays.Germany(years=y).keys())
+    dates |= set(holidays.France(years=y).keys())
+    dates |= set(holidays.Italy(years=y).keys())
+    dates |= set(holidays.Austria(years=y).keys())
+    return frozenset(dates)
+
+
+def _is_ch_nonworking_day(ts: pd.Timestamp) -> bool:
+    local = pd.Timestamp(ts)
+    if local.tzinfo is not None:
+        local = local.tz_convert(LOCAL_TZ)
+    return local.weekday() >= 5 or local.date() in _ch_market_shape_holidays(int(local.year))
 
 
 def _normalize_date(value: str | pd.Timestamp) -> pd.Timestamp:
@@ -249,7 +277,7 @@ def _swiss_hydro_base_delta(ts: pd.Timestamp, *, intensity: float) -> float:
     """Common CH hydro/PV shape overlay in EUR/MWh before product de-meaning."""
     hour = int(ts.hour)
     season = _season_name(int(ts.month))
-    weekend = ts.weekday() >= 5
+    weekend = _is_ch_nonworking_day(ts)
     delta = 0.0
 
     if season == "winter":
@@ -301,7 +329,7 @@ def _scenario_spread_delta(ts: pd.Timestamp, scenario: str, *, intensity: float)
 
     hour = int(ts.hour)
     season = _season_name(int(ts.month))
-    weekend = ts.weekday() >= 5
+    weekend = _is_ch_nonworking_day(ts)
     delta = 0.0
 
     if 10 <= hour <= 15:
@@ -328,7 +356,7 @@ def _negative_capture_delta(ts: pd.Timestamp, scenario: str, *, intensity: float
     scenario_factor = {"slow": 0.15, "central": 0.55, "fast": 1.00}[scenario]
     year_factor = {2028: 0.70, 2029: 0.90, 2030: 1.10}.get(int(ts.year), 1.10)
     month_factor = 1.00 if int(ts.month) in {5, 6, 7, 8} else 0.75
-    day_factor = 1.00 if ts.weekday() >= 5 else 0.35
+    day_factor = 1.00 if _is_ch_nonworking_day(ts) else 0.35
     hour_factor = 1.00 if int(ts.hour) in {12, 13, 14} else 0.65
     raw = -28.0 * scenario_factor * year_factor * month_factor * day_factor * hour_factor
     return float(np.clip(raw * float(intensity), -35.0, 0.0))
@@ -443,7 +471,7 @@ def _negative_capture_weight(ts: pd.Timestamp) -> float:
     year_weight = {2028: 0.55, 2029: 0.80, 2030: 1.00}.get(year, 1.00)
     month_weight = 1.00 if month in {5, 6, 7, 8} else 0.65
     hour_weight = {10: 0.45, 11: 0.75, 12: 1.00, 13: 1.00, 14: 0.90, 15: 0.55}[hour]
-    day_weight = 1.00 if ts.weekday() >= 5 else 0.35
+    day_weight = 1.00 if _is_ch_nonworking_day(ts) else 0.35
     return float(year_weight * month_weight * hour_weight * day_weight)
 
 
@@ -458,7 +486,7 @@ def _negative_capture_compensation_weight(ts: pd.Timestamp) -> float:
         weight += 0.35
     if month in {11, 12, 1, 2, 3} and hour in {6, 7, 8, 17, 18, 19, 20, 21, 22}:
         weight += 0.35
-    if ts.weekday() < 5 and 17 <= hour <= 21:
+    if not _is_ch_nonworking_day(ts) and 17 <= hour <= 21:
         weight += 0.25
     return float(weight)
 
@@ -587,7 +615,7 @@ def apply_post_calibration_negative_rebalancer(
 
 
 def _peak_shape_up_weight(ts: pd.Timestamp) -> float:
-    if ts.weekday() >= 5:
+    if _is_ch_nonworking_day(ts):
         return 0.0
     hour = int(ts.hour)
     if hour in {17, 18, 19}:
@@ -604,7 +632,7 @@ def _peak_shape_down_weight(ts: pd.Timestamp) -> float:
     weight = 0.0
     if hour in {20, 21, 22, 23, 0, 1, 2, 3, 4, 5}:
         weight += 1.00
-    if ts.weekday() >= 5:
+    if _is_ch_nonworking_day(ts):
         weight += 0.45
     return float(weight)
 

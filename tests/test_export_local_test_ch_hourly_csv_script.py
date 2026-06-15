@@ -4,6 +4,10 @@ import pytest
 import pandas as pd
 
 from scripts.export_local_test_ch_hourly_csv import (
+    _is_ch_nonworking_day,
+    _negative_capture_weight,
+    _peak_shape_down_weight,
+    _peak_shape_up_weight,
     apply_post_calibration_negative_rebalancer,
     apply_post_calibration_peak_shape_rebalancer,
     apply_local_test_structural_shape_upgrade,
@@ -340,3 +344,17 @@ def test_post_calibration_peak_shape_rebalancer_preserves_mean_and_lifts_peak():
     assert rebalanced.loc[peak, "price_weighted_mean_eur_mwh"].mean() > 80.0
     assert rebalanced.loc[~peak, "price_weighted_mean_eur_mwh"].mean() < 80.0
     assert not audit.empty
+
+
+def test_ch_holidays_are_nonworking_for_local_test_shape_overlays():
+    national_day = pd.Timestamp("2030-08-01 12:00", tz="Europe/Zurich")
+    labour_day = pd.Timestamp("2030-05-01 12:00", tz="Europe/Zurich")
+    nearby_workday = pd.Timestamp("2030-05-02 12:00", tz="Europe/Zurich")
+
+    assert _is_ch_nonworking_day(national_day)
+    assert _is_ch_nonworking_day(labour_day)
+    assert not _is_ch_nonworking_day(nearby_workday)
+    assert _negative_capture_weight(labour_day) > _negative_capture_weight(nearby_workday)
+    assert _peak_shape_up_weight(national_day) == 0.0
+    assert _peak_shape_up_weight(labour_day) == 0.0
+    assert _peak_shape_down_weight(labour_day) > 0.0
