@@ -53,6 +53,7 @@ prod_stderr.log
 
 # Output parquet (generated, not source)
 pfc_shaping/output/*.parquet
+output/*.parquet
 
 # Secrets — NE JAMAIS COMMITTER
 .env

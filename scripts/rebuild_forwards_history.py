@@ -5,7 +5,7 @@ Phase 2 LT — rebuild data/eex_forwards_history.parquet from the two
 canonical EEX desk files:
 
     Price_Report_EEX_Yearly.xlsx              # snapshot DE/CH/AT/IT/FR
-    Price_Report_EEX_CH_DE_Historique2019.xlsx # depth CH/DE since 2019
+    Price_Report_EEX_CH_DE_Hist.xlsx          # depth CH/DE history
 
 The two files are ingested in priority order so that, when both contain
 the same (date, product, load_type, market), the *Yearly* mark wins
@@ -31,7 +31,7 @@ Force a specific path:
 
     python scripts/rebuild_forwards_history.py `
       --yearly  "H:\\...\\Price_Report_EEX_Yearly.xlsx" `
-      --history "H:\\...\\Price_Report_EEX_CH_DE_Historique2019.xlsx"
+      --history "H:\\...\\Price_Report_EEX_CH_DE_Hist.xlsx"
 
 Skip the Yearly file (history-only refresh) or vice versa:
 
@@ -68,6 +68,8 @@ DEFAULT_YEARLY_PATHS = [
     Path(r"\\fmvfs1\data\Energy\GeCom\MARCHE & NEGOCE\Prix\EEX - ER\Price_Report_EEX_Yearly.xlsx"),
 ]
 DEFAULT_HISTORY_PATHS = [
+    Path(r"H:\Energy\GeCom\MARCHE & NEGOCE\Prix\EEX - ER\Price_Report_EEX_CH_DE_Hist.xlsx"),
+    Path(r"\\fmvfs1\data\Energy\GeCom\MARCHE & NEGOCE\Prix\EEX - ER\Price_Report_EEX_CH_DE_Hist.xlsx"),
     Path(r"H:\Energy\GeCom\MARCHE & NEGOCE\Prix\EEX - ER\Price_Report_EEX_CH_DE_Historique2019.xlsx"),
     Path(r"\\fmvfs1\data\Energy\GeCom\MARCHE & NEGOCE\Prix\EEX - ER\Price_Report_EEX_CH_DE_Historique2019.xlsx"),
 ]
@@ -211,7 +213,7 @@ def main() -> int:
         "--history",
         type=Path,
         default=None,
-        help="Path to Price_Report_EEX_CH_DE_Historique2019.xlsx (default: probe H: and UNC).",
+        help="Path to Price_Report_EEX_CH_DE_Hist.xlsx (default: probe H: and UNC, fallback to Historique2019).",
     )
     parser.add_argument(
         "--skip-yearly",

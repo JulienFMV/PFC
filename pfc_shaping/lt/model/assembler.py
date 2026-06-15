@@ -249,6 +249,12 @@ class PFCAssembler:
         enforce_floor: bool = False,
         allow_negative_peak: bool = True,
         enable_solar_modulation: bool = False,
+        enable_intraday_amplitude_shrinkage: bool = False,
+        enable_electrification_shape: bool = False,
+        electrification_scenario: str | None = None,
+        electrification_scenario_path: str | Path | None = None,
+        require_electrification_scenarios: bool = False,
+        require_production_electrification_scenarios: bool = False,
     ) -> None:
         self.sh = shape_hourly
         self.si = shape_intraday
@@ -288,6 +294,16 @@ class PFCAssembler:
         # (Phase-10 atol=1e-12 reproducibility contract). See
         # pfc_shaping/lt/model/solar_modulation.py.
         self.enable_solar_modulation: bool = bool(enable_solar_modulation)
+        self.enable_intraday_amplitude_shrinkage: bool = bool(
+            enable_intraday_amplitude_shrinkage
+        )
+        self.enable_electrification_shape: bool = bool(enable_electrification_shape)
+        self.electrification_scenario = electrification_scenario or "central"
+        self.electrification_scenario_path = electrification_scenario_path
+        self.require_electrification_scenarios: bool = bool(require_electrification_scenarios)
+        self.require_production_electrification_scenarios: bool = bool(
+            require_production_electrification_scenarios
+        )
 
         # B1/B4 Approach B — forward the four floor kwargs to sub-components.
         # WR-03 (Phase 5 code review): the previous one-way mutation
@@ -518,6 +534,22 @@ class PFCAssembler:
             f_H = solar_modulate(f_H, cal, self.sh, vintage=reference_date)
 
         # Ã¢â€â‚¬Ã¢â€â‚¬ Facteur 15min f_Q Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+        if getattr(self, "enable_electrification_shape", False):
+            from pfc_shaping.lt.model.electrification_shape import electrification_modulate
+
+            f_H = electrification_modulate(
+                f_H,
+                cal,
+                self.sh,
+                vintage=reference_date,
+                scenario=self.electrification_scenario,
+                scenario_path=self.electrification_scenario_path,
+                require_scenario_data=self.require_electrification_scenarios,
+                require_production_scenario_data=self.require_production_electrification_scenarios,
+                country=country,
+                tz=local_tz,
+            )
+
         f_Q = self.si.apply(idx, cal, entso_forecast, reference_date=reference_date)
 
         # Ã¢â€â‚¬Ã¢â€â‚¬ Facteur Water Value f_WV Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
@@ -578,6 +610,20 @@ class PFCAssembler:
             B = smooth_base_prices(idx, base_prices, B, enforce_positivity=self.enforce_positivity)
         except Exception as exc:
             logger.warning("MSFC smoothing failed, using flat B: %s", exc)
+
+        if getattr(self, "enable_intraday_amplitude_shrinkage", False):
+            from pfc_shaping.lt.model.intraday_amplitude import (
+                compress_intraday_peak_amplitude,
+            )
+
+            peak_spreads = getattr(self.cascader, "peak_base_spreads_", None)
+            f_H = compress_intraday_peak_amplitude(
+                f_H,
+                cal,
+                B,
+                peak_spreads,
+                tz=local_tz,
+            )
 
         #Ã¢â€â‚¬Ã¢â€â‚¬ Prix brut (avant calibration) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         f_bridge = self._near_term_bridge_factor(idx, months_ahead, days_ahead, country=country)
@@ -643,6 +689,17 @@ class PFCAssembler:
         )
 
         # Ã¢â€â‚¬Ã¢â€â‚¬ Assemblage DataFrame Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+        if getattr(self, "enable_intraday_amplitude_shrinkage", False):
+            from pfc_shaping.lt.model.intraday_amplitude import compress_price_peak_amplitude
+
+            peak_spreads = getattr(self.cascader, "peak_base_spreads_", None)
+            price_shape = compress_price_peak_amplitude(
+                price_shape,
+                cal,
+                peak_spreads,
+                tz=local_tz,
+            )
+
         df = pd.DataFrame(
             {
                 "price_shape": price_shape,

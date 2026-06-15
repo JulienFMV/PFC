@@ -24,6 +24,7 @@ databricks:
     renewables:     "generation_15min"     # production solaire + éolienne
     eex_forwards:   "eex_forwards_euler"   # forwards calibrés par EULER
     hydro_reservoir_levels: "hydro_reservoir_weekly" # niveaux réservoirs SFOE/BFE
+    electrification_scenarios: "electrification_scenarios" # LT PV/battery/EV/heat-pump scenario inventory
 
 # ── energy-charts.info (Fraunhofer ISE) ────────────────────
 # API publique, sans authentification.

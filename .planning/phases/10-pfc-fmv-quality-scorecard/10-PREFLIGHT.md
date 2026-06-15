@@ -1,8 +1,8 @@
 # Plan 10-04 — Preflight Go/No-Go [C6 REVIEWS]
 
-**Generated** : 2026-05-28T14:18:44Z
+**Generated** : 2026-06-08T13:56:28Z
 **Script** : scripts/preflight_phase10.py
-**Verdict** : **go**
+**Verdict** : **no-go**
 
 ## Python environment
 - sys.executable : `C:\Users\jbattaglia\.conda\ppa_env\python.exe`
@@ -11,9 +11,9 @@
 
 ## Check 1 — Data freshness
 - epex_hourly.parquet present : True
-- epex_hourly.parquet : mtime 2026-05-28T14:15:21Z, age 0.0 days, threshold ≤ 14 days
+- epex_hourly.parquet : mtime 2026-06-08T11:38:17Z, age 0.1 days, threshold ≤ 14 days
 - forwards_history_phase10.parquet present : True
-- forwards_history_phase10.parquet : mtime 2026-05-28T13:52:58Z, age 0.02 days, threshold ≤ 14 days
+- forwards_history_phase10.parquet : mtime 2026-06-08T13:54:20Z, age 0.0 days, threshold ≤ 14 days
 - **Status** : PASS (PASS)
 
 ## Check 2 — Forwards path
@@ -23,17 +23,18 @@
 - **Status** : PASS (PASS)
 
 ## Check 3 — Disk space
-- Free space at output_dir mount : 1718.9 GB
-- Threshold ≥ 5.0 GB → PASS
+- Free space at output_dir mount : 2.14 GB
+- Threshold ≥ 5.0 GB → FAIL
 - Budget output total : ~2.5 GB (96 PFC caches × 25 MB + KPIs + figures)
-- **Status** : PASS (PASS)
+- **Status** : FAIL (FAIL)
+- Reason : free space 2.1 GB < 5.0 GB threshold
 
 ## Check 4 — Runtime benchmark
-- Micro-run (Config 4, vintage 2024-06-28, no uncertainty) : 5.89 sec
-- Extrapolation full 96-build × 1.4 (Pillar 3 overhead) : 791.0 sec = 0.22 h
+- Micro-run (Config 4, vintage 2024-06-28, no uncertainty) : 9.61 sec
+- Extrapolation full 96-build × 1.4 (Pillar 3 overhead) : 1291.2 sec = 0.36 h
 - Budget hard cap : 2.5h ; soft target : 2.0h
 - **Status** : PASS (PASS)
 
 ## Final Verdict
-- **go**
-- Next step : `/gsd:execute-plan 10-04 Task 1` (cost confirmation human-verify)
+- **no-go**
+- Next step : addresser le(s) check(s) FAIL avant re-run preflight : disk_space: free space 2.1 GB < 5.0 GB threshold

@@ -12,6 +12,7 @@ entsoe-py==0.7.11
 requests==2.32.5
 yfinance==1.2.0
 openpyxl==3.1.5
+pyxlsb==1.0.10
 duckdb>=1.1
 # Optional: foundation model ensemble (zero-shot forecasting)
 # pip install torch chronos-forecasting

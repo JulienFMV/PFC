@@ -237,10 +237,16 @@ def build_curve(config_name: str, vintage: pd.Timestamp, epex: pd.Series,
         ``"sota_solar"`` adds, on top of ``"sota"``, the exogenous solar-aware
         intra-day shape correction (§4quater) by enabling
         ``PFCAssembler.enable_solar_modulation`` for the scoped build.
+        ``"sota_amp"`` adds the Phase 12 intraday peak/offpeak amplitude
+        compression by enabling ``PFCAssembler.enable_intraday_amplitude_shrinkage``.
+        ``"sota_electrification"`` adds the Phase 13 scenario-driven LT
+        electrification shape layer by enabling
+        ``PFCAssembler.enable_electrification_shape``.
     """
-    if estimator not in {"baseline", "sota", "sota_solar"}:
+    if estimator not in {"baseline", "sota", "sota_solar", "sota_amp", "sota_electrification"}:
         raise ValueError(
-            f"estimator={estimator!r} must be 'baseline', 'sota' or 'sota_solar'"
+            f"estimator={estimator!r} must be 'baseline', 'sota', 'sota_solar', "
+            "'sota_amp' or 'sota_electrification'"
         )
     try:
         config = next(c for c in ABLATION_GRID if c.name == config_name)
@@ -253,6 +259,8 @@ def build_curve(config_name: str, vintage: pd.Timestamp, epex: pd.Series,
         "baseline": _noop_cm,
         "sota": _sota_estimator,
         "sota_solar": _sota_solar_estimator,
+        "sota_amp": _sota_amp_estimator,
+        "sota_electrification": _sota_electrification_estimator,
     }[estimator]
     with _estimator_cm():
         df = build_one(
@@ -369,6 +377,47 @@ def _sota_solar_estimator():
                 _orig(self, *args, **kwargs)
 
             PFCAssembler.__init__ = solar_asm_init
+            try:
+                yield
+            finally:
+                PFCAssembler.__init__ = original_asm_init
+
+
+@contextmanager
+def _sota_amp_estimator():
+    """SOTA stack plus Phase 12 intraday peak/offpeak amplitude compression."""
+    from pfc_shaping.lt.model.assembler import PFCAssembler
+
+    with _sota_estimator():
+        with _SOTA_SWAP_LOCK:
+            original_asm_init = PFCAssembler.__init__
+
+            def amp_asm_init(self, *args, _orig=original_asm_init, **kwargs):
+                kwargs.setdefault("enable_intraday_amplitude_shrinkage", True)
+                _orig(self, *args, **kwargs)
+
+            PFCAssembler.__init__ = amp_asm_init
+            try:
+                yield
+            finally:
+                PFCAssembler.__init__ = original_asm_init
+
+
+@contextmanager
+def _sota_electrification_estimator():
+    """SOTA stack plus Phase 13 scenario-driven electrification shape."""
+    from pfc_shaping.lt.model.assembler import PFCAssembler
+
+    with _sota_estimator():
+        with _SOTA_SWAP_LOCK:
+            original_asm_init = PFCAssembler.__init__
+
+            def electrification_asm_init(self, *args, _orig=original_asm_init, **kwargs):
+                kwargs.setdefault("enable_electrification_shape", True)
+                kwargs.setdefault("electrification_scenario", "central")
+                _orig(self, *args, **kwargs)
+
+            PFCAssembler.__init__ = electrification_asm_init
             try:
                 yield
             finally:
@@ -537,8 +586,9 @@ def run_perfect_foresight(
     Parameters
     ----------
     estimator
-        ``"baseline"``, ``"sota"`` or ``"sota_solar"`` — selects the shaping
-        estimator stack. See :func:`build_curve`.
+        ``"baseline"``, ``"sota"``, ``"sota_solar"``, ``"sota_amp"`` or
+        ``"sota_electrification"`` selects the shaping estimator stack. See
+        :func:`build_curve`.
     """
     from scipy.stats import pearsonr, spearmanr
 

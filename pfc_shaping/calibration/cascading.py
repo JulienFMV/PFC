@@ -289,9 +289,15 @@ class ContractCascader:
         allow_negative_peak: When True (default), use spread-additive peak synthesis.
     """
 
-    def __init__(self, tz: str = "Europe/Zurich", allow_negative_peak: bool = True) -> None:
+    def __init__(
+        self,
+        tz: str = "Europe/Zurich",
+        allow_negative_peak: bool = True,
+        disable_trend_for_annual_only: bool = False,
+    ) -> None:
         self.tz = tz
         self.allow_negative_peak = bool(allow_negative_peak)
+        self.disable_trend_for_annual_only = bool(disable_trend_for_annual_only)
         self.seasonal_ratios_: dict[str, dict[int, float]] | None = None
 
     # ------------------------------------------------------------------
@@ -887,10 +893,14 @@ class ContractCascader:
             if ptype == "Cal"
         ]
 
+        annual_only_years: set[int] = set()
         for year, year_price in years:
-            ratios = self._get_ratios(target_year=year)
             q_keys = [quarter_key(year, q) for q in range(1, 5)]
             existing_qs = [k for k in q_keys if k in result]
+            annual_only = len(existing_qs) == 0
+            ratios = self._get_ratios(
+                target_year=None if (annual_only and self.disable_trend_for_annual_only) else year
+            )
 
             if len(existing_qs) == 4:
                 continue
@@ -900,6 +910,7 @@ class ContractCascader:
                     year, year_price, result, ratios["quarter"]
                 )
             else:
+                annual_only_years.add(year)
                 self._cascade_year_full(
                     year, year_price, result, ratios["quarter"]
                 )
@@ -914,7 +925,9 @@ class ContractCascader:
         ]
 
         for year, q, q_price in quarters:
-            ratios = self._get_ratios(target_year=year)
+            ratios = self._get_ratios(
+                target_year=None if (year in annual_only_years and self.disable_trend_for_annual_only) else year
+            )
             months = QUARTER_MONTHS[q]
             m_keys = [month_key(year, m) for m in months]
             existing_ms = [k for k in m_keys if k in result]
