@@ -432,6 +432,266 @@ def apply_local_test_structural_shape_upgrade(
     return out, pd.DataFrame(audit_rows).sort_values(["scenario", "product"]).reset_index(drop=True)
 
 
+def _negative_capture_weight(ts: pd.Timestamp) -> float:
+    """Rank hours where negative prices are economically plausible in CH LT."""
+    year = int(ts.year)
+    month = int(ts.month)
+    hour = int(ts.hour)
+    if year < 2028 or month not in {4, 5, 6, 7, 8, 9} or hour not in {10, 11, 12, 13, 14, 15}:
+        return 0.0
+
+    year_weight = {2028: 0.55, 2029: 0.80, 2030: 1.00}.get(year, 1.00)
+    month_weight = 1.00 if month in {5, 6, 7, 8} else 0.65
+    hour_weight = {10: 0.45, 11: 0.75, 12: 1.00, 13: 1.00, 14: 0.90, 15: 0.55}[hour]
+    day_weight = 1.00 if ts.weekday() >= 5 else 0.35
+    return float(year_weight * month_weight * hour_weight * day_weight)
+
+
+def _negative_capture_compensation_weight(ts: pd.Timestamp) -> float:
+    """Rank same-bucket hours that can absorb a mean-preserving uplift."""
+    hour = int(ts.hour)
+    month = int(ts.month)
+    weight = 0.0
+    if 17 <= hour <= 21:
+        weight += 1.00
+    if 7 <= hour <= 9:
+        weight += 0.35
+    if month in {11, 12, 1, 2, 3} and hour in {6, 7, 8, 17, 18, 19, 20, 21, 22}:
+        weight += 0.35
+    if ts.weekday() < 5 and 17 <= hour <= 21:
+        weight += 0.25
+    return float(weight)
+
+
+def apply_post_calibration_negative_rebalancer(
+    hourly: pd.DataFrame,
+    *,
+    forward_prices: dict[str, float],
+    weights: dict[str, float],
+    intensity: float = 1.0,
+    negative_price_floor: float = -30.0,
+    max_weighted_negative_hours: int = 0,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Create bounded negative-price tails after EEX calibration.
+
+    The rebalancer is local/test only.  It moves value inside each quote-aware
+    EEX bucket from high-PV midday hours to compensation hours, with exactly
+    zero mean delta per scenario and bucket before final rounding.
+    """
+    if intensity < 0.0 or not np.isfinite(float(intensity)):
+        raise ValueError("post-calibration negative rebalancer intensity must be finite and non-negative")
+    out = hourly.copy()
+    ts_ch = _parse_timestamp_ch(out["timestamp_ch"], out.get("utc_offset_ch"))
+    products, calibration_targets = _calibration_buckets(ts_ch, forward_prices)
+    if products.isna().any():
+        missing = int(products.isna().sum())
+        raise ValueError(f"cannot apply post-calibration negative rebalancer: {missing} rows have no EEX bucket")
+
+    scenario_depth = {
+        "slow": 0.0,
+        "central": 0.0,
+        "fast": 14.0,
+    }
+    scenario_up_cap = {
+        "slow": 0.0,
+        "central": 0.0,
+        "fast": 22.0,
+    }
+    low_weight = pd.Series([_negative_capture_weight(ts) for ts in ts_ch], index=out.index, dtype=float)
+    comp_weight = pd.Series([_negative_capture_compensation_weight(ts) for ts in ts_ch], index=out.index, dtype=float)
+    audit_rows: list[dict[str, object]] = []
+
+    for scenario, column in SCENARIO_PRICE_COLUMNS.items():
+        depth = float(scenario_depth[scenario]) * float(intensity)
+        if depth <= 0.0:
+            continue
+        base = out[column].astype(float).copy()
+        stressed = base.copy()
+        for product, idx in products.groupby(products).groups.items():
+            if product is None or product not in calibration_targets:
+                continue
+            idx = pd.Index(idx)
+            low = low_weight.loc[idx].copy()
+            if float(low.sum()) <= 0.0:
+                continue
+            low = low / float(low.max())
+            down = -(depth * low)
+            candidate = base.loc[idx] + down
+            breach = candidate < float(negative_price_floor)
+            if bool(breach.any()):
+                allowed_down = float(negative_price_floor) - base.loc[idx]
+                down = down.where(~breach, allowed_down)
+            total_down = float(-down.sum())
+            if total_down <= 0.0:
+                continue
+
+            comp = comp_weight.loc[idx].copy()
+            comp = comp.where(low <= 0.0, 0.0)
+            if float(comp.sum()) <= 0.0:
+                comp = pd.Series(1.0, index=idx, dtype=float).where(low <= 0.0, 0.0)
+            if float(comp.sum()) <= 0.0:
+                comp = pd.Series(1.0, index=idx, dtype=float)
+            up = comp / float(comp.sum()) * total_down
+            max_up = float(up.max())
+            cap = float(scenario_up_cap[scenario])
+            if max_up > cap > 0.0:
+                scale = cap / max_up
+                down = down * scale
+                total_down = float(-down.sum())
+                up = comp / float(comp.sum()) * total_down
+
+            delta = pd.Series(0.0, index=idx, dtype=float)
+            delta = delta.add(down, fill_value=0.0).add(up, fill_value=0.0)
+            delta = delta - float(delta.mean())
+            stressed.loc[idx] = base.loc[idx] + delta
+            min_price = float(stressed.loc[idx].min())
+            if min_price < float(negative_price_floor) - 1e-9:
+                raise ValueError(
+                    f"post-calibration negative rebalancer breached floor for {scenario}/{product}: "
+                    f"min={min_price:.6f}, floor={float(negative_price_floor):.6f}"
+                )
+            audit_rows.append(
+                {
+                    "scenario": scenario,
+                    "product": product,
+                    "target_eex_base_eur_mwh": float(calibration_targets[str(product)]),
+                    "pre_mean_eur_mwh": float(base.loc[idx].mean()),
+                    "post_mean_eur_mwh": float(stressed.loc[idx].mean()),
+                    "max_down_eur_mwh": float(delta.min()),
+                    "max_up_eur_mwh": float(delta.max()),
+                    "min_price_eur_mwh": min_price,
+                    "negative_hours": int((stressed.loc[idx] < 0.0).sum()),
+                    "rows": len(idx),
+                }
+            )
+        out[column] = stressed.astype(float)
+
+    labels = tuple(SCENARIO_PRICE_COLUMNS)
+    matrix = np.column_stack([out[SCENARIO_PRICE_COLUMNS[label]].to_numpy(dtype=float) for label in labels])
+    w = np.array([weights[label] for label in labels], dtype=float)
+    out["price_weighted_mean_eur_mwh"] = matrix @ w
+    weighted_negative_hours = int((out["price_weighted_mean_eur_mwh"] < 0.0).sum())
+    if weighted_negative_hours > int(max_weighted_negative_hours):
+        raise ValueError(
+            "post-calibration negative rebalancer produced too many weighted-mean negative hours: "
+            f"{weighted_negative_hours} > {int(max_weighted_negative_hours)}"
+        )
+    out["structural_p10_eur_mwh"] = [_weighted_quantile_row(row, w, 0.10) for row in matrix]
+    out["structural_p50_eur_mwh"] = [_weighted_quantile_row(row, w, 0.50) for row in matrix]
+    out["structural_p90_eur_mwh"] = [_weighted_quantile_row(row, w, 0.90) for row in matrix]
+    out["structural_width_eur_mwh"] = out["structural_p90_eur_mwh"] - out["structural_p10_eur_mwh"]
+    for column in PRICE_COLUMNS:
+        if column in out.columns:
+            out[column] = out[column].astype(float).round(6)
+    return out, pd.DataFrame(audit_rows).sort_values(["scenario", "product"]).reset_index(drop=True)
+
+
+def _peak_shape_up_weight(ts: pd.Timestamp) -> float:
+    if ts.weekday() >= 5:
+        return 0.0
+    hour = int(ts.hour)
+    if hour in {17, 18, 19}:
+        return 1.00
+    if hour in {8, 9}:
+        return 0.55
+    if hour == 10:
+        return 0.25
+    return 0.0
+
+
+def _peak_shape_down_weight(ts: pd.Timestamp) -> float:
+    hour = int(ts.hour)
+    weight = 0.0
+    if hour in {20, 21, 22, 23, 0, 1, 2, 3, 4, 5}:
+        weight += 1.00
+    if ts.weekday() >= 5:
+        weight += 0.45
+    return float(weight)
+
+
+def apply_post_calibration_peak_shape_rebalancer(
+    hourly: pd.DataFrame,
+    *,
+    forward_prices: dict[str, float],
+    weights: dict[str, float],
+    intensity: float = 1.0,
+    negative_price_floor: float = -30.0,
+    max_weighted_negative_hours: int = 0,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Move value from offpeak/night into weekday peak shoulders by EEX bucket."""
+    if intensity < 0.0 or not np.isfinite(float(intensity)):
+        raise ValueError("post-calibration peak shape intensity must be finite and non-negative")
+    out = hourly.copy()
+    ts_ch = _parse_timestamp_ch(out["timestamp_ch"], out.get("utc_offset_ch"))
+    products, calibration_targets = _calibration_buckets(ts_ch, forward_prices)
+    up_weight = pd.Series([_peak_shape_up_weight(ts) for ts in ts_ch], index=out.index, dtype=float)
+    down_weight = pd.Series([_peak_shape_down_weight(ts) for ts in ts_ch], index=out.index, dtype=float)
+    audit_rows: list[dict[str, object]] = []
+    target_total_by_scenario = {"slow": 2.0, "central": 3.0, "fast": 4.0}
+
+    for scenario, column in SCENARIO_PRICE_COLUMNS.items():
+        base = out[column].astype(float).copy()
+        stressed = base.copy()
+        target_total = float(target_total_by_scenario[scenario]) * float(intensity)
+        if target_total <= 0.0:
+            continue
+        for product, idx in products.groupby(products).groups.items():
+            if product is None or product not in calibration_targets:
+                continue
+            idx = pd.Index(idx)
+            up = up_weight.loc[idx]
+            down = down_weight.loc[idx].where(up_weight.loc[idx] <= 0.0, 0.0)
+            if float(up.sum()) <= 0.0 or float(down.sum()) <= 0.0:
+                continue
+            up_delta = up / float(up.max()) * target_total
+            total_up = float(up_delta.sum())
+            down_delta = -(down / float(down.sum()) * total_up)
+            delta = pd.Series(0.0, index=idx, dtype=float).add(up_delta, fill_value=0.0).add(
+                down_delta, fill_value=0.0
+            )
+            delta = delta - float(delta.mean())
+            stressed.loc[idx] = base.loc[idx] + delta
+            min_price = float(stressed.loc[idx].min())
+            if min_price < float(negative_price_floor) - 1e-9:
+                raise ValueError(
+                    f"post-calibration peak shape rebalancer breached floor for {scenario}/{product}: "
+                    f"min={min_price:.6f}, floor={float(negative_price_floor):.6f}"
+                )
+            audit_rows.append(
+                {
+                    "scenario": scenario,
+                    "product": product,
+                    "target_eex_base_eur_mwh": float(calibration_targets[str(product)]),
+                    "pre_mean_eur_mwh": float(base.loc[idx].mean()),
+                    "post_mean_eur_mwh": float(stressed.loc[idx].mean()),
+                    "max_down_eur_mwh": float(delta.min()),
+                    "max_up_eur_mwh": float(delta.max()),
+                    "min_price_eur_mwh": min_price,
+                    "rows": len(idx),
+                }
+            )
+        out[column] = stressed.astype(float)
+
+    labels = tuple(SCENARIO_PRICE_COLUMNS)
+    matrix = np.column_stack([out[SCENARIO_PRICE_COLUMNS[label]].to_numpy(dtype=float) for label in labels])
+    w = np.array([weights[label] for label in labels], dtype=float)
+    out["price_weighted_mean_eur_mwh"] = matrix @ w
+    weighted_negative_hours = int((out["price_weighted_mean_eur_mwh"] < 0.0).sum())
+    if weighted_negative_hours > int(max_weighted_negative_hours):
+        raise ValueError(
+            "post-calibration peak shape rebalancer produced too many weighted-mean negative hours: "
+            f"{weighted_negative_hours} > {int(max_weighted_negative_hours)}"
+        )
+    out["structural_p10_eur_mwh"] = [_weighted_quantile_row(row, w, 0.10) for row in matrix]
+    out["structural_p50_eur_mwh"] = [_weighted_quantile_row(row, w, 0.50) for row in matrix]
+    out["structural_p90_eur_mwh"] = [_weighted_quantile_row(row, w, 0.90) for row in matrix]
+    out["structural_width_eur_mwh"] = out["structural_p90_eur_mwh"] - out["structural_p10_eur_mwh"]
+    for column in PRICE_COLUMNS:
+        if column in out.columns:
+            out[column] = out[column].astype(float).round(6)
+    return out, pd.DataFrame(audit_rows).sort_values(["scenario", "product"]).reset_index(drop=True)
+
+
 def _md_table(frame: pd.DataFrame) -> str:
     if frame.empty:
         return "_none_"
@@ -465,6 +725,10 @@ def _write_report(
     shape_upgrade_enabled: bool = False,
     shape_upgrade_audit: pd.DataFrame | None = None,
     negative_price_capture_enabled: bool = False,
+    post_calibration_negative_rebalancer_enabled: bool = False,
+    post_calibration_negative_rebalancer_audit: pd.DataFrame | None = None,
+    post_calibration_peak_shape_rebalancer_enabled: bool = False,
+    post_calibration_peak_shape_rebalancer_audit: pd.DataFrame | None = None,
     disable_cascade_trend_for_annual_only: bool = False,
 ) -> None:
     price = hourly["price_weighted_mean_eur_mwh"]
@@ -481,6 +745,14 @@ def _write_report(
         f"* required EEX CH forward date: `{required_forward_date or 'not enforced'}`",
         f"* local/test structural shape upgrade: `{'ON' if shape_upgrade_enabled else 'OFF'}`",
         f"* local/test negative price capture: `{'ON' if negative_price_capture_enabled else 'OFF'}`",
+        (
+            "* local/test post-calibration negative rebalancer: "
+            f"`{'ON' if post_calibration_negative_rebalancer_enabled else 'OFF'}`"
+        ),
+        (
+            "* local/test post-calibration peak shape rebalancer: "
+            f"`{'ON' if post_calibration_peak_shape_rebalancer_enabled else 'OFF'}`"
+        ),
         f"* disable cascade trend for annual-only years: `{'ON' if disable_cascade_trend_for_annual_only else 'OFF'}`",
         f"* rows: `{len(hourly)}`",
         "",
@@ -514,12 +786,30 @@ def _write_report(
         "",
         _md_table(shape_upgrade_audit if shape_upgrade_audit is not None else pd.DataFrame()),
         "",
+        "## Local/Test Post-Calibration Negative Rebalancer Audit",
+        "",
+        _md_table(
+            post_calibration_negative_rebalancer_audit
+            if post_calibration_negative_rebalancer_audit is not None
+            else pd.DataFrame()
+        ),
+        "",
+        "## Local/Test Post-Calibration Peak Shape Rebalancer Audit",
+        "",
+        _md_table(
+            post_calibration_peak_shape_rebalancer_audit
+            if post_calibration_peak_shape_rebalancer_audit is not None
+            else pd.DataFrame()
+        ),
+        "",
         "## Limitations",
         "",
         "* Hourly values are arithmetic averages of the calibrated 15-minute local/test PFC.",
         "* The curve is calibrated to the required EEX CH forward snapshot for the run date.",
         "* The structural shape upgrade is local/test only and remains disabled unless explicitly requested.",
         "* Negative-price capture, when enabled, is local/test only and bounded by an explicit floor.",
+        "* The post-calibration negative rebalancer, when enabled, is local/test only and mean-preserving by EEX bucket.",
+        "* The post-calibration peak shape rebalancer, when enabled, is local/test only and mean-preserving by EEX bucket.",
         "* This is not production FMV output; production governance remains NO-GO.",
         "",
     ]
@@ -593,6 +883,40 @@ def main(argv: list[str] | None = None) -> int:
         default=-30.0,
         help="Local/test hard floor for generated negative prices.",
     )
+    parser.add_argument(
+        "--enable-post-calibration-negative-rebalancer",
+        action="store_true",
+        help=(
+            "Enable a local/test post-EEX-calibration rebalancer that creates bounded "
+            "negative-price tails while preserving each quote-aware EEX bucket mean."
+        ),
+    )
+    parser.add_argument(
+        "--post-calibration-negative-rebalancer-intensity",
+        type=float,
+        default=1.0,
+        help="Multiplier for the local/test post-calibration negative rebalancer.",
+    )
+    parser.add_argument(
+        "--max-weighted-negative-hours",
+        type=int,
+        default=0,
+        help="Maximum allowed negative hours in price_weighted_mean_eur_mwh after post-calibration rebalancing.",
+    )
+    parser.add_argument(
+        "--enable-post-calibration-peak-shape-rebalancer",
+        action="store_true",
+        help=(
+            "Enable a local/test post-EEX-calibration rebalancer that shifts value "
+            "from offpeak/night into weekday peak shoulders while preserving EEX bucket means."
+        ),
+    )
+    parser.add_argument(
+        "--post-calibration-peak-shape-intensity",
+        type=float,
+        default=1.0,
+        help="Multiplier for the local/test post-calibration peak shape rebalancer.",
+    )
     parser.add_argument("--skip-build", action="store_true")
     parser.add_argument("--fan-chart-output", default=None)
     args = parser.parse_args(argv)
@@ -662,6 +986,28 @@ def main(argv: list[str] | None = None) -> int:
             negative_price_floor=args.negative_price_floor,
         )
     hourly, calibration = calibrate_hourly_to_eex(hourly, forward_prices=forward_prices)
+    post_negative_audit = None
+    post_peak_audit = None
+    if args.enable_post_calibration_negative_rebalancer:
+        hourly, post_negative_audit = apply_post_calibration_negative_rebalancer(
+            hourly,
+            forward_prices=forward_prices,
+            weights=weights,
+            intensity=args.post_calibration_negative_rebalancer_intensity,
+            negative_price_floor=args.negative_price_floor,
+            max_weighted_negative_hours=args.max_weighted_negative_hours,
+        )
+        hourly, calibration = calibrate_hourly_to_eex(hourly, forward_prices=forward_prices)
+    if args.enable_post_calibration_peak_shape_rebalancer:
+        hourly, post_peak_audit = apply_post_calibration_peak_shape_rebalancer(
+            hourly,
+            forward_prices=forward_prices,
+            weights=weights,
+            intensity=args.post_calibration_peak_shape_intensity,
+            negative_price_floor=args.negative_price_floor,
+            max_weighted_negative_hours=args.max_weighted_negative_hours,
+        )
+        hourly, calibration = calibrate_hourly_to_eex(hourly, forward_prices=forward_prices)
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     hourly.to_csv(output, index=False)
@@ -678,6 +1024,10 @@ def main(argv: list[str] | None = None) -> int:
         shape_upgrade_enabled=bool(args.enable_structural_shape_upgrade),
         shape_upgrade_audit=shape_upgrade_audit,
         negative_price_capture_enabled=bool(args.enable_negative_price_capture),
+        post_calibration_negative_rebalancer_enabled=bool(args.enable_post_calibration_negative_rebalancer),
+        post_calibration_negative_rebalancer_audit=post_negative_audit,
+        post_calibration_peak_shape_rebalancer_enabled=bool(args.enable_post_calibration_peak_shape_rebalancer),
+        post_calibration_peak_shape_rebalancer_audit=post_peak_audit,
         disable_cascade_trend_for_annual_only=bool(args.disable_cascade_trend_for_annual_only),
     )
     print(f"[hourly-csv] rows={len(hourly)}")

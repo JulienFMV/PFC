@@ -4,6 +4,8 @@ import pytest
 import pandas as pd
 
 from scripts.export_local_test_ch_hourly_csv import (
+    apply_post_calibration_negative_rebalancer,
+    apply_post_calibration_peak_shape_rebalancer,
     apply_local_test_structural_shape_upgrade,
     calibrate_hourly_to_eex,
     previous_business_day,
@@ -240,3 +242,101 @@ def test_negative_price_capture_is_explicit_and_mean_preserving():
     for column in ["price_slow_eur_mwh", "price_central_eur_mwh", "price_fast_eur_mwh"]:
         assert upgraded[column].mean() == pytest.approx(8.0)
     assert int(audit["negative_hours"].sum()) > 0
+
+
+def test_post_calibration_negative_rebalancer_preserves_eex_bucket_means():
+    timestamps = pd.date_range("2030-07-01", periods=24 * 14, freq="h", tz="Europe/Zurich")
+    hourly = pd.DataFrame(
+        {
+            "timestamp_ch": timestamps.strftime("%Y-%m-%d %H:%M:%S%z"),
+            "timestamp_utc": timestamps.tz_convert("UTC").strftime("%Y-%m-%d %H:%M:%S%z"),
+            "price_slow_eur_mwh": [16.0] * len(timestamps),
+            "price_central_eur_mwh": [8.0] * len(timestamps),
+            "price_fast_eur_mwh": [5.0] * len(timestamps),
+            "price_weighted_mean_eur_mwh": [9.25] * len(timestamps),
+            "structural_p10_eur_mwh": [5.0] * len(timestamps),
+            "structural_p50_eur_mwh": [8.0] * len(timestamps),
+            "structural_p90_eur_mwh": [16.0] * len(timestamps),
+            "structural_width_eur_mwh": [11.0] * len(timestamps),
+        }
+    )
+
+    rebalanced, audit = apply_post_calibration_negative_rebalancer(
+        hourly,
+        forward_prices={"2030": 9.25},
+        weights={"slow": 0.25, "central": 0.5, "fast": 0.25},
+        intensity=1.0,
+        negative_price_floor=-30.0,
+        max_weighted_negative_hours=0,
+    )
+
+    assert rebalanced["price_slow_eur_mwh"].mean() == pytest.approx(16.0)
+    assert rebalanced["price_central_eur_mwh"].mean() == pytest.approx(8.0)
+    assert rebalanced["price_fast_eur_mwh"].mean() == pytest.approx(5.0)
+    assert rebalanced["price_weighted_mean_eur_mwh"].mean() == pytest.approx(9.25)
+    assert rebalanced["price_fast_eur_mwh"].min() < 0.0
+    assert rebalanced["structural_p10_eur_mwh"].min() < 0.0
+    assert int((rebalanced["price_weighted_mean_eur_mwh"] < 0.0).sum()) == 0
+    assert int(audit["negative_hours"].sum()) > 0
+
+
+def test_post_calibration_negative_rebalancer_respects_floor():
+    timestamps = pd.date_range("2030-07-01", periods=24 * 7, freq="h", tz="Europe/Zurich")
+    hourly = pd.DataFrame(
+        {
+            "timestamp_ch": timestamps.strftime("%Y-%m-%d %H:%M:%S%z"),
+            "timestamp_utc": timestamps.tz_convert("UTC").strftime("%Y-%m-%d %H:%M:%S%z"),
+            "price_slow_eur_mwh": [10.0] * len(timestamps),
+            "price_central_eur_mwh": [4.0] * len(timestamps),
+            "price_fast_eur_mwh": [2.0] * len(timestamps),
+            "price_weighted_mean_eur_mwh": [5.0] * len(timestamps),
+            "structural_p10_eur_mwh": [2.0] * len(timestamps),
+            "structural_p50_eur_mwh": [4.0] * len(timestamps),
+            "structural_p90_eur_mwh": [10.0] * len(timestamps),
+            "structural_width_eur_mwh": [8.0] * len(timestamps),
+        }
+    )
+
+    rebalanced, _ = apply_post_calibration_negative_rebalancer(
+        hourly,
+        forward_prices={"2030": 5.0},
+        weights={"slow": 0.25, "central": 0.5, "fast": 0.25},
+        intensity=5.0,
+        negative_price_floor=-6.0,
+        max_weighted_negative_hours=999,
+    )
+
+    assert rebalanced["price_fast_eur_mwh"].min() >= -6.000001
+
+
+def test_post_calibration_peak_shape_rebalancer_preserves_mean_and_lifts_peak():
+    timestamps = pd.date_range("2030-07-01", periods=24 * 14, freq="h", tz="Europe/Zurich")
+    hourly = pd.DataFrame(
+        {
+            "timestamp_ch": timestamps.strftime("%Y-%m-%d %H:%M:%S%z"),
+            "timestamp_utc": timestamps.tz_convert("UTC").strftime("%Y-%m-%d %H:%M:%S%z"),
+            "price_slow_eur_mwh": [80.0] * len(timestamps),
+            "price_central_eur_mwh": [80.0] * len(timestamps),
+            "price_fast_eur_mwh": [80.0] * len(timestamps),
+            "price_weighted_mean_eur_mwh": [80.0] * len(timestamps),
+            "structural_p10_eur_mwh": [80.0] * len(timestamps),
+            "structural_p50_eur_mwh": [80.0] * len(timestamps),
+            "structural_p90_eur_mwh": [80.0] * len(timestamps),
+            "structural_width_eur_mwh": [0.0] * len(timestamps),
+        }
+    )
+    peak = (timestamps.weekday < 5) & (timestamps.hour >= 8) & (timestamps.hour <= 19)
+
+    rebalanced, audit = apply_post_calibration_peak_shape_rebalancer(
+        hourly,
+        forward_prices={"2030": 80.0},
+        weights={"slow": 0.25, "central": 0.5, "fast": 0.25},
+        intensity=1.0,
+        negative_price_floor=-30.0,
+        max_weighted_negative_hours=0,
+    )
+
+    assert rebalanced["price_weighted_mean_eur_mwh"].mean() == pytest.approx(80.0)
+    assert rebalanced.loc[peak, "price_weighted_mean_eur_mwh"].mean() > 80.0
+    assert rebalanced.loc[~peak, "price_weighted_mean_eur_mwh"].mean() < 80.0
+    assert not audit.empty
