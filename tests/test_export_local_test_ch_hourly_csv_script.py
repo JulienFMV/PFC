@@ -4,6 +4,8 @@ import pytest
 import pandas as pd
 
 from scripts.export_local_test_ch_hourly_csv import (
+    _ch_market_holiday_pressure,
+    _ch_market_nonworking_pressure,
     _is_ch_nonworking_day,
     _negative_capture_weight,
     _peak_shape_down_weight,
@@ -349,12 +351,21 @@ def test_post_calibration_peak_shape_rebalancer_preserves_mean_and_lifts_peak():
 def test_ch_holidays_are_nonworking_for_local_test_shape_overlays():
     national_day = pd.Timestamp("2030-08-01 12:00", tz="Europe/Zurich")
     labour_day = pd.Timestamp("2030-05-01 12:00", tz="Europe/Zurich")
+    cantonal_day = pd.Timestamp("2030-03-19 12:00", tz="Europe/Zurich")
     nearby_workday = pd.Timestamp("2030-05-02 12:00", tz="Europe/Zurich")
+    cantonal_peak = pd.Timestamp("2030-03-19 18:00", tz="Europe/Zurich")
+    nearby_peak = pd.Timestamp("2030-05-02 18:00", tz="Europe/Zurich")
 
     assert _is_ch_nonworking_day(national_day)
     assert _is_ch_nonworking_day(labour_day)
     assert not _is_ch_nonworking_day(nearby_workday)
+    assert _ch_market_holiday_pressure(labour_day) >= 1.0
+    assert _ch_market_holiday_pressure(national_day) >= 1.0
+    assert 0.0 < _ch_market_holiday_pressure(cantonal_day) < _ch_market_holiday_pressure(labour_day)
+    assert _ch_market_nonworking_pressure(nearby_workday) == 0.0
     assert _negative_capture_weight(labour_day) > _negative_capture_weight(nearby_workday)
+    assert _negative_capture_weight(cantonal_day) == 0.0
     assert _peak_shape_up_weight(national_day) == 0.0
     assert _peak_shape_up_weight(labour_day) == 0.0
+    assert _peak_shape_up_weight(cantonal_peak) < _peak_shape_up_weight(nearby_peak)
     assert _peak_shape_down_weight(labour_day) > 0.0

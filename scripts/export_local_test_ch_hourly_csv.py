@@ -44,29 +44,58 @@ SCENARIO_PRICE_COLUMNS = {
 
 
 @lru_cache(maxsize=None)
-def _ch_market_shape_holidays(year: int) -> frozenset:
-    """Holidays that can materially affect CH spot shape.
+def _ch_market_holiday_components(year: int) -> dict[object, float]:
+    """Weighted holidays that can materially affect CH spot shape.
 
     This is deliberately broader than the national-only EEX Peak calendar.
     CH spot is coupled to neighbouring markets; days such as 1 May can behave
     like holidays even when they are not CH-national or Valais holidays.
     """
     y = int(year)
-    dates: set = set()
-    for subdiv in (None, "VS", "ZH", "TI", "GE", "BE", "VD", "BS", "BL", "AG", "SG"):
-        dates |= set(holidays.Switzerland(years=y, subdiv=subdiv).keys())
-    dates |= set(holidays.Germany(years=y).keys())
-    dates |= set(holidays.France(years=y).keys())
-    dates |= set(holidays.Italy(years=y).keys())
-    dates |= set(holidays.Austria(years=y).keys())
-    return frozenset(dates)
+    weights: dict[object, float] = {}
+
+    def add_dates(dates: set, weight: float) -> None:
+        for d in dates:
+            weights[d] = weights.get(d, 0.0) + float(weight)
+
+    add_dates(set(holidays.Switzerland(years=y).keys()), 1.00)
+    for subdiv, weight in {
+        "ZH": 0.35,
+        "VD": 0.30,
+        "GE": 0.30,
+        "TI": 0.30,
+        "BE": 0.25,
+        "BS": 0.25,
+        "BL": 0.20,
+        "AG": 0.20,
+        "SG": 0.20,
+        "VS": 0.20,
+    }.items():
+        add_dates(set(holidays.Switzerland(years=y, subdiv=subdiv).keys()), weight)
+    add_dates(set(holidays.Germany(years=y).keys()), 0.55)
+    add_dates(set(holidays.France(years=y).keys()), 0.45)
+    add_dates(set(holidays.Italy(years=y).keys()), 0.35)
+    add_dates(set(holidays.Austria(years=y).keys()), 0.20)
+    return weights
 
 
-def _is_ch_nonworking_day(ts: pd.Timestamp) -> bool:
+def _ch_market_holiday_pressure(ts: pd.Timestamp) -> float:
     local = pd.Timestamp(ts)
     if local.tzinfo is not None:
         local = local.tz_convert(LOCAL_TZ)
-    return local.weekday() >= 5 or local.date() in _ch_market_shape_holidays(int(local.year))
+    return float(min(1.25, _ch_market_holiday_components(int(local.year)).get(local.date(), 0.0)))
+
+
+def _ch_market_nonworking_pressure(ts: pd.Timestamp) -> float:
+    local = pd.Timestamp(ts)
+    if local.tzinfo is not None:
+        local = local.tz_convert(LOCAL_TZ)
+    weekend_pressure = 1.0 if local.weekday() >= 5 else 0.0
+    return float(max(weekend_pressure, _ch_market_holiday_pressure(local)))
+
+
+def _is_ch_nonworking_day(ts: pd.Timestamp) -> bool:
+    return _ch_market_nonworking_pressure(ts) >= 0.50
 
 
 def _normalize_date(value: str | pd.Timestamp) -> pd.Timestamp:
@@ -277,7 +306,7 @@ def _swiss_hydro_base_delta(ts: pd.Timestamp, *, intensity: float) -> float:
     """Common CH hydro/PV shape overlay in EUR/MWh before product de-meaning."""
     hour = int(ts.hour)
     season = _season_name(int(ts.month))
-    weekend = _is_ch_nonworking_day(ts)
+    nonworking_pressure = min(1.0, _ch_market_nonworking_pressure(ts))
     delta = 0.0
 
     if season == "winter":
@@ -296,8 +325,8 @@ def _swiss_hydro_base_delta(ts: pd.Timestamp, *, intensity: float) -> float:
             delta += 4.5
         elif 7 <= hour <= 9:
             delta += 2.0
-        if weekend and 10 <= hour <= 16:
-            delta -= 2.0
+        if 10 <= hour <= 16:
+            delta -= 2.0 * nonworking_pressure
     elif season == "summer":
         if 10 <= hour <= 16:
             delta -= 7.5
@@ -305,8 +334,8 @@ def _swiss_hydro_base_delta(ts: pd.Timestamp, *, intensity: float) -> float:
             delta += 5.5
         elif 7 <= hour <= 9:
             delta += 1.5
-        if weekend and 10 <= hour <= 16:
-            delta -= 2.5
+        if 10 <= hour <= 16:
+            delta -= 2.5 * nonworking_pressure
     else:
         if 10 <= hour <= 15:
             delta -= 3.5
@@ -315,8 +344,8 @@ def _swiss_hydro_base_delta(ts: pd.Timestamp, *, intensity: float) -> float:
         elif 7 <= hour <= 9:
             delta += 2.5
 
-    if weekend and 18 <= hour <= 21:
-        delta -= 1.0
+    if 18 <= hour <= 21:
+        delta -= 1.0 * nonworking_pressure
 
     return float(np.clip(delta * float(intensity), -12.0, 12.0))
 
@@ -329,13 +358,13 @@ def _scenario_spread_delta(ts: pd.Timestamp, scenario: str, *, intensity: float)
 
     hour = int(ts.hour)
     season = _season_name(int(ts.month))
-    weekend = _is_ch_nonworking_day(ts)
+    nonworking_pressure = min(1.0, _ch_market_nonworking_pressure(ts))
     delta = 0.0
 
     if 10 <= hour <= 15:
         delta += {"winter": -1.5, "spring": -6.0, "summer": -7.0, "autumn": -4.5}[season] * score
-        if weekend and season in {"spring", "summer"}:
-            delta += -1.5 * score
+        if season in {"spring", "summer"}:
+            delta += -1.5 * score * nonworking_pressure
     if 6 <= hour <= 8:
         delta += {"winter": 3.0, "spring": 1.8, "summer": 1.2, "autumn": 2.2}[season] * score
     if 17 <= hour <= 21:
@@ -356,7 +385,7 @@ def _negative_capture_delta(ts: pd.Timestamp, scenario: str, *, intensity: float
     scenario_factor = {"slow": 0.15, "central": 0.55, "fast": 1.00}[scenario]
     year_factor = {2028: 0.70, 2029: 0.90, 2030: 1.10}.get(int(ts.year), 1.10)
     month_factor = 1.00 if int(ts.month) in {5, 6, 7, 8} else 0.75
-    day_factor = 1.00 if _is_ch_nonworking_day(ts) else 0.35
+    day_factor = 0.35 + 0.65 * min(1.0, _ch_market_nonworking_pressure(ts))
     hour_factor = 1.00 if int(ts.hour) in {12, 13, 14} else 0.65
     raw = -28.0 * scenario_factor * year_factor * month_factor * day_factor * hour_factor
     return float(np.clip(raw * float(intensity), -35.0, 0.0))
@@ -471,7 +500,7 @@ def _negative_capture_weight(ts: pd.Timestamp) -> float:
     year_weight = {2028: 0.55, 2029: 0.80, 2030: 1.00}.get(year, 1.00)
     month_weight = 1.00 if month in {5, 6, 7, 8} else 0.65
     hour_weight = {10: 0.45, 11: 0.75, 12: 1.00, 13: 1.00, 14: 0.90, 15: 0.55}[hour]
-    day_weight = 1.00 if _is_ch_nonworking_day(ts) else 0.35
+    day_weight = 0.35 + 0.65 * min(1.0, _ch_market_nonworking_pressure(ts))
     return float(year_weight * month_weight * hour_weight * day_weight)
 
 
@@ -486,8 +515,8 @@ def _negative_capture_compensation_weight(ts: pd.Timestamp) -> float:
         weight += 0.35
     if month in {11, 12, 1, 2, 3} and hour in {6, 7, 8, 17, 18, 19, 20, 21, 22}:
         weight += 0.35
-    if not _is_ch_nonworking_day(ts) and 17 <= hour <= 21:
-        weight += 0.25
+    if 17 <= hour <= 21:
+        weight += 0.25 * max(0.0, 1.0 - min(1.0, _ch_market_nonworking_pressure(ts)))
     return float(weight)
 
 
@@ -615,15 +644,14 @@ def apply_post_calibration_negative_rebalancer(
 
 
 def _peak_shape_up_weight(ts: pd.Timestamp) -> float:
-    if _is_ch_nonworking_day(ts):
-        return 0.0
+    workday_pressure = max(0.0, 1.0 - min(1.0, _ch_market_nonworking_pressure(ts)))
     hour = int(ts.hour)
     if hour in {17, 18, 19}:
-        return 1.00
+        return 1.00 * workday_pressure
     if hour in {8, 9}:
-        return 0.55
+        return 0.55 * workday_pressure
     if hour == 10:
-        return 0.25
+        return 0.25 * workday_pressure
     return 0.0
 
 
@@ -632,8 +660,7 @@ def _peak_shape_down_weight(ts: pd.Timestamp) -> float:
     weight = 0.0
     if hour in {20, 21, 22, 23, 0, 1, 2, 3, 4, 5}:
         weight += 1.00
-    if _is_ch_nonworking_day(ts):
-        weight += 0.45
+    weight += 0.45 * min(1.0, _ch_market_nonworking_pressure(ts))
     return float(weight)
 
 
