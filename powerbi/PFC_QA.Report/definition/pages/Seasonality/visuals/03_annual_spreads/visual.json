@@ -1,51 +1,15 @@
 {
-  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.9.0/schema.json",
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.10.0/schema.json",
   "name": "annual_spreads",
   "position": {
     "x": 20,
     "y": 410,
     "z": 0,
-    "width": 620,
-    "height": 260
+    "height": 260,
+    "width": 620
   },
   "visual": {
     "visualType": "tableEx",
-    "visualContainerObjects": {
-      "title": [
-        {
-          "properties": {
-            "show": {
-              "expr": {
-                "Literal": {
-                  "Value": "true"
-                }
-              }
-            },
-            "text": {
-              "expr": {
-                "Literal": {
-                  "Value": "'Annual spreads and negative tails'"
-                }
-              }
-            },
-            "fontSize": {
-              "expr": {
-                "Literal": {
-                  "Value": "11D"
-                }
-              }
-            },
-            "bold": {
-              "expr": {
-                "Literal": {
-                  "Value": "true"
-                }
-              }
-            }
-          }
-        }
-      ]
-    },
     "query": {
       "queryState": {
         "Values": {
@@ -151,6 +115,144 @@
           ]
         }
       }
+    },
+    "visualContainerObjects": {
+      "title": [
+        {
+          "properties": {
+            "show": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            },
+            "text": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Annual spreads and negative tails'"
+                }
+              }
+            },
+            "fontSize": {
+              "expr": {
+                "Literal": {
+                  "Value": "11D"
+                }
+              }
+            },
+            "bold": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            }
+          }
+        }
+      ]
     }
+  },
+  "filterConfig": {
+    "filters": [
+      {
+        "name": "eff3a2b5a03ddbc5a12a",
+        "field": {
+          "Column": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "Annual_Shape"
+              }
+            },
+            "Property": "year"
+          }
+        },
+        "type": "Advanced"
+      },
+      {
+        "name": "abeb0db07110987bde0d",
+        "field": {
+          "Column": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "Annual_Shape"
+              }
+            },
+            "Property": "winter_summer_spread_eur_mwh"
+          }
+        },
+        "type": "Advanced"
+      },
+      {
+        "name": "4ecae83980d3c841e763",
+        "field": {
+          "Column": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "Annual_Shape"
+              }
+            },
+            "Property": "peak_minus_offpeak_eur_mwh"
+          }
+        },
+        "type": "Advanced"
+      },
+      {
+        "name": "580a7bf0a66033761516",
+        "field": {
+          "Column": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "Annual_Shape"
+              }
+            },
+            "Property": "evening_minus_midday_eur_mwh"
+          }
+        },
+        "type": "Advanced"
+      },
+      {
+        "name": "d18b1cce34299c7d98b8",
+        "field": {
+          "Column": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "Annual_Shape"
+              }
+            },
+            "Property": "weekend_minus_weekday_eur_mwh"
+          }
+        },
+        "type": "Advanced"
+      },
+      {
+        "name": "2740ddb86da716066e6b",
+        "field": {
+          "Column": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "Annual_Shape"
+              }
+            },
+            "Property": "negative_hours_fast"
+          }
+        },
+        "type": "Advanced"
+      },
+      {
+        "name": "d23ca53674002e30e2bc",
+        "field": {
+          "Column": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "Annual_Shape"
+              }
+            },
+            "Property": "negative_hours_p10"
+          }
+        },
+        "type": "Advanced"
+      }
+    ]
   }
 }

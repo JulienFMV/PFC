@@ -24,6 +24,9 @@ from pfc_shaping.lt.model.holiday_pressure import (  # noqa: E402
     ch_market_nonworking_pressure as _ch_market_nonworking_pressure,
     is_ch_nonworking_day as _is_ch_nonworking_day,
 )
+from pfc_shaping.lt.model.quote_aware_monthly_smoothing import (  # noqa: E402
+    apply_quote_aware_monthly_smoothing,
+)
 from scripts.build_local_test_ch_pfc import main as build_local_test_ch_pfc
 
 LOCAL_TZ = "Europe/Zurich"
@@ -898,6 +901,8 @@ def _write_report(
     post_calibration_negative_rebalancer_audit: pd.DataFrame | None = None,
     post_calibration_peak_shape_rebalancer_enabled: bool = False,
     post_calibration_peak_shape_rebalancer_audit: pd.DataFrame | None = None,
+    quote_aware_monthly_smoothing_enabled: bool = False,
+    quote_aware_monthly_smoothing_audit: pd.DataFrame | None = None,
     eex_peak_calibration_enabled: bool = False,
     eex_peak_calibration_audit: pd.DataFrame | None = None,
     disable_cascade_trend_for_annual_only: bool = False,
@@ -923,6 +928,10 @@ def _write_report(
         (
             "* local/test post-calibration peak shape rebalancer: "
             f"`{'ON' if post_calibration_peak_shape_rebalancer_enabled else 'OFF'}`"
+        ),
+        (
+            "* local/test quote-aware monthly smoothing: "
+            f"`{'ON' if quote_aware_monthly_smoothing_enabled else 'OFF'}`"
         ),
         f"* local/test EEX BASE+PEAK calibration: `{'ON' if eex_peak_calibration_enabled else 'OFF'}`",
         f"* disable cascade trend for annual-only years: `{'ON' if disable_cascade_trend_for_annual_only else 'OFF'}`",
@@ -974,6 +983,14 @@ def _write_report(
             else pd.DataFrame()
         ),
         "",
+        "## Local/Test Quote-Aware Monthly Smoothing Audit",
+        "",
+        _md_table(
+            quote_aware_monthly_smoothing_audit
+            if quote_aware_monthly_smoothing_audit is not None
+            else pd.DataFrame()
+        ),
+        "",
         "## Local/Test EEX BASE+PEAK Calibration Audit",
         "",
         _md_table(
@@ -990,6 +1007,7 @@ def _write_report(
         "* Negative-price capture, when enabled, is local/test only and bounded by an explicit floor.",
         "* The post-calibration negative rebalancer, when enabled, is local/test only and mean-preserving by EEX bucket.",
         "* The post-calibration peak shape rebalancer, when enabled, is local/test only and mean-preserving by EEX bucket.",
+        "* The quote-aware monthly smoothing, when enabled, is local/test only and preserves EEX BASE/PEAK buckets.",
         "* The EEX BASE+PEAK calibration, when enabled, is local/test only and uses quoted PEAK products from the same snapshot.",
         "* This is not production FMV output; production governance remains NO-GO.",
         "",
@@ -1106,6 +1124,32 @@ def main(argv: list[str] | None = None) -> int:
             "from the same forward snapshot. Disabled by default."
         ),
     )
+    parser.add_argument(
+        "--enable-quote-aware-monthly-smoothing",
+        action="store_true",
+        help=(
+            "Enable local/test constrained smoothing of implicit monthly means while preserving "
+            "quote-aware EEX BASE and PEAK buckets. Disabled by default."
+        ),
+    )
+    parser.add_argument(
+        "--quote-aware-monthly-smoothing-intensity",
+        type=float,
+        default=1.0,
+        help="Multiplier for local/test quote-aware monthly smoothing.",
+    )
+    parser.add_argument(
+        "--quote-aware-monthly-smoothing-lambda",
+        type=float,
+        default=8.0,
+        help="Curvature penalty for local/test quote-aware monthly smoothing.",
+    )
+    parser.add_argument(
+        "--max-unquoted-month-delta-eur-mwh",
+        type=float,
+        default=18.0,
+        help="Maximum absolute monthly delta introduced by quote-aware monthly smoothing.",
+    )
     parser.add_argument("--skip-build", action="store_true")
     parser.add_argument("--fan-chart-output", default=None)
     args = parser.parse_args(argv)
@@ -1211,6 +1255,32 @@ def main(argv: list[str] | None = None) -> int:
             negative_price_floor=args.negative_price_floor,
             max_weighted_negative_hours=args.max_weighted_negative_hours,
         )
+    quote_monthly_audit = None
+    if args.enable_quote_aware_monthly_smoothing:
+        ts_ch = _parse_timestamp_ch(hourly["timestamp_ch"], hourly.get("utc_offset_ch"))
+        hourly, quote_monthly_audit = apply_quote_aware_monthly_smoothing(
+            hourly,
+            ts_ch=ts_ch,
+            base_forward_prices=forward_prices,
+            peak_forward_prices=peak_forward_prices,
+            peak_mask=_eex_peak_mask(ts_ch, country="CH"),
+            weights=weights,
+            intensity=args.quote_aware_monthly_smoothing_intensity,
+            smoothness_lambda=args.quote_aware_monthly_smoothing_lambda,
+            max_unquoted_month_delta_eur_mwh=args.max_unquoted_month_delta_eur_mwh,
+            negative_price_floor=args.negative_price_floor,
+            max_weighted_negative_hours=args.max_weighted_negative_hours,
+        )
+        hourly, calibration = calibrate_hourly_to_eex(hourly, forward_prices=forward_prices)
+        if args.enable_eex_peak_calibration:
+            hourly, eex_peak_audit = calibrate_hourly_to_eex_base_peak(
+                hourly,
+                base_forward_prices=forward_prices,
+                peak_forward_prices=peak_forward_prices,
+                weights=weights,
+                negative_price_floor=args.negative_price_floor,
+                max_weighted_negative_hours=args.max_weighted_negative_hours,
+            )
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     hourly.to_csv(output, index=False)
@@ -1231,6 +1301,8 @@ def main(argv: list[str] | None = None) -> int:
         post_calibration_negative_rebalancer_audit=post_negative_audit,
         post_calibration_peak_shape_rebalancer_enabled=bool(args.enable_post_calibration_peak_shape_rebalancer),
         post_calibration_peak_shape_rebalancer_audit=post_peak_audit,
+        quote_aware_monthly_smoothing_enabled=bool(args.enable_quote_aware_monthly_smoothing),
+        quote_aware_monthly_smoothing_audit=quote_monthly_audit,
         eex_peak_calibration_enabled=bool(args.enable_eex_peak_calibration),
         eex_peak_calibration_audit=eex_peak_audit,
         disable_cascade_trend_for_annual_only=bool(args.disable_cascade_trend_for_annual_only),

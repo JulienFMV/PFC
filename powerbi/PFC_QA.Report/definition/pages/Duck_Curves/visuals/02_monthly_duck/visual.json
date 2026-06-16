@@ -105,5 +105,51 @@
         }
       ]
     }
+  },
+  "filterConfig": {
+    "filters": [
+      {
+        "name": "6737470cdcadb771e7b1",
+        "field": {
+          "Column": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "Duck_Month_Hour"
+              }
+            },
+            "Property": "hour"
+          }
+        },
+        "type": "Advanced"
+      },
+      {
+        "name": "860b4e04b0152710ba42",
+        "field": {
+          "Column": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "Duck_Month_Hour"
+              }
+            },
+            "Property": "month_code"
+          }
+        },
+        "type": "Categorical"
+      },
+      {
+        "name": "40cd95db0ea40b1d82d5",
+        "field": {
+          "Measure": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "Duck_Month_Hour"
+              }
+            },
+            "Property": "Duck Month Avg Weighted Price"
+          }
+        },
+        "type": "Advanced"
+      }
+    ]
   }
 }

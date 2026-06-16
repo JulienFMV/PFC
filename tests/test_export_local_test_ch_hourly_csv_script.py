@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 import pandas as pd
 
+import scripts.export_local_test_ch_hourly_csv as export_script
 from scripts.export_local_test_ch_hourly_csv import (
     _ch_market_holiday_pressure,
     _ch_market_nonworking_pressure,
@@ -186,6 +187,66 @@ def test_latest_eex_prices_anchor_snapshot_on_latest_base(tmp_path):
     assert latest == pd.Timestamp("2026-06-15")
     assert prices["BASE"]["2030"] == 68.80
     assert prices["PEAK"]["2030"] == 70.38
+
+
+def test_quote_aware_monthly_smoothing_flag_off_does_not_call_smoother(tmp_path, monkeypatch):
+    fan_path = tmp_path / "fan.parquet"
+    out_path = tmp_path / "hourly.csv"
+    report_path = tmp_path / "report.md"
+    forwards_path = tmp_path / "forwards.parquet"
+    index = pd.date_range("2026-06-30 22:00", periods=96, freq="15min", tz="UTC")
+    pd.DataFrame(
+        {
+            "curve_slow": [90.0] * len(index),
+            "curve_central": [100.0] * len(index),
+            "curve_fast": [110.0] * len(index),
+            "weighted_mean": [100.0] * len(index),
+            "structural_p10": [90.0] * len(index),
+            "structural_p50": [100.0] * len(index),
+            "structural_p90": [110.0] * len(index),
+            "structural_width": [20.0] * len(index),
+        },
+        index=index,
+    ).to_parquet(fan_path)
+    pd.DataFrame(
+        {
+            "date": [pd.Timestamp("2026-06-15"), pd.Timestamp("2026-06-15")],
+            "product": ["2026-07", "2026-07"],
+            "load_type": ["BASE", "PEAK"],
+            "product_type": ["Month", "Month"],
+            "price": [93.91, 88.56],
+            "market": ["CH", "CH"],
+            "source": ["TEST", "TEST"],
+        }
+    ).to_parquet(forwards_path, index=False)
+
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError("quote-aware monthly smoothing must be flag-gated")
+
+    monkeypatch.setattr(export_script, "apply_quote_aware_monthly_smoothing", fail_if_called)
+
+    rc = export_script.main(
+        [
+            "--skip-build",
+            "--allow-stale-forwards",
+            "--local-start-date",
+            "2026-07-01",
+            "--local-end-date",
+            "2026-07-01",
+            "--fan-chart-output",
+            str(fan_path),
+            "--forwards",
+            str(forwards_path),
+            "--output",
+            str(out_path),
+            "--report",
+            str(report_path),
+        ]
+    )
+
+    assert rc == 0
+    assert out_path.exists()
+    assert "quote-aware monthly smoothing: `OFF`" in report_path.read_text(encoding="utf-8")
 
 
 def test_eex_peak_mask_excludes_ch_national_holidays():

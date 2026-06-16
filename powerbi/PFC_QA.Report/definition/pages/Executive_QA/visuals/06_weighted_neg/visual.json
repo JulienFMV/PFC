@@ -1,15 +1,37 @@
 {
-  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.9.0/schema.json",
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.10.0/schema.json",
   "name": "weighted_neg",
   "position": {
-    "x": 420,
-    "y": 125,
+    "x": 420.18237082066872,
+    "y": 125.47112462006079,
     "z": 0,
-    "width": 190,
-    "height": 95
+    "height": 117.68996960486322,
+    "width": 189.66565349544075
   },
   "visual": {
     "visualType": "cardVisual",
+    "query": {
+      "queryState": {
+        "Data": {
+          "projections": [
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "HFC_Hourly"
+                    }
+                  },
+                  "Property": "Weighted Negative Hours"
+                }
+              },
+              "queryRef": "HFC_Hourly.Weighted Negative Hours",
+              "nativeQueryRef": "Weighted Negative Hours"
+            }
+          ]
+        }
+      }
+    },
     "visualContainerObjects": {
       "title": [
         {
@@ -45,28 +67,24 @@
           }
         }
       ]
-    },
-    "query": {
-      "queryState": {
-        "Data": {
-          "projections": [
-            {
-              "field": {
-                "Measure": {
-                  "Expression": {
-                    "SourceRef": {
-                      "Entity": "HFC_Hourly"
-                    }
-                  },
-                  "Property": "Weighted Negative Hours"
-                }
-              },
-              "queryRef": "HFC_Hourly.Weighted Negative Hours",
-              "nativeQueryRef": "Weighted Negative Hours"
-            }
-          ]
-        }
-      }
     }
+  },
+  "filterConfig": {
+    "filters": [
+      {
+        "name": "053bf9342aaa2012120d",
+        "field": {
+          "Measure": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "HFC_Hourly"
+              }
+            },
+            "Property": "Weighted Negative Hours"
+          }
+        },
+        "type": "Advanced"
+      }
+    ]
   }
 }

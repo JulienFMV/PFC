@@ -1,15 +1,37 @@
 {
-  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.9.0/schema.json",
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.10.0/schema.json",
   "name": "eex_base",
   "position": {
-    "x": 850,
-    "y": 540,
+    "x": 829.66565349544078,
+    "y": 522.31003039513678,
     "z": 0,
-    "width": 190,
-    "height": 95
+    "height": 118.66261398176292,
+    "width": 189.66565349544075
   },
   "visual": {
     "visualType": "cardVisual",
+    "query": {
+      "queryState": {
+        "Data": {
+          "projections": [
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "EEX_Residuals"
+                    }
+                  },
+                  "Property": "EEX Max BASE Residual Text"
+                }
+              },
+              "queryRef": "EEX_Residuals.EEX Max BASE Residual Text",
+              "nativeQueryRef": "EEX Max BASE Residual Text"
+            }
+          ]
+        }
+      }
+    },
     "visualContainerObjects": {
       "title": [
         {
@@ -45,28 +67,24 @@
           }
         }
       ]
-    },
-    "query": {
-      "queryState": {
-        "Data": {
-          "projections": [
-            {
-              "field": {
-                "Measure": {
-                  "Expression": {
-                    "SourceRef": {
-                      "Entity": "EEX_Residuals"
-                    }
-                  },
-                  "Property": "EEX Max BASE Residual Text"
-                }
-              },
-              "queryRef": "EEX_Residuals.EEX Max BASE Residual Text",
-              "nativeQueryRef": "EEX Max BASE Residual Text"
-            }
-          ]
-        }
-      }
     }
+  },
+  "filterConfig": {
+    "filters": [
+      {
+        "name": "64804ae1aa709575d4e3",
+        "field": {
+          "Measure": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "EEX_Residuals"
+              }
+            },
+            "Property": "EEX Max BASE Residual Text"
+          }
+        },
+        "type": "Advanced"
+      }
+    ]
   }
 }

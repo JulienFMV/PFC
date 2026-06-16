@@ -1,15 +1,37 @@
 {
-  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.9.0/schema.json",
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.10.0/schema.json",
   "name": "peak_spread",
   "position": {
-    "x": 20,
-    "y": 235,
+    "x": 20.425531914893618,
+    "y": 243.16109422492403,
     "z": 0,
-    "width": 190,
-    "height": 95
+    "height": 116.71732522796353,
+    "width": 189.66565349544075
   },
   "visual": {
     "visualType": "cardVisual",
+    "query": {
+      "queryState": {
+        "Data": {
+          "projections": [
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "HFC_Hourly"
+                    }
+                  },
+                  "Property": "Peak Offpeak Spread"
+                }
+              },
+              "queryRef": "HFC_Hourly.Peak Offpeak Spread",
+              "nativeQueryRef": "Peak Offpeak Spread"
+            }
+          ]
+        }
+      }
+    },
     "visualContainerObjects": {
       "title": [
         {
@@ -45,28 +67,24 @@
           }
         }
       ]
-    },
-    "query": {
-      "queryState": {
-        "Data": {
-          "projections": [
-            {
-              "field": {
-                "Measure": {
-                  "Expression": {
-                    "SourceRef": {
-                      "Entity": "HFC_Hourly"
-                    }
-                  },
-                  "Property": "Peak Offpeak Spread"
-                }
-              },
-              "queryRef": "HFC_Hourly.Peak Offpeak Spread",
-              "nativeQueryRef": "Peak Offpeak Spread"
-            }
-          ]
-        }
-      }
     }
+  },
+  "filterConfig": {
+    "filters": [
+      {
+        "name": "80e4bdca1073d01dd6a9",
+        "field": {
+          "Measure": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "HFC_Hourly"
+              }
+            },
+            "Property": "Peak Offpeak Spread"
+          }
+        },
+        "type": "Advanced"
+      }
+    ]
   }
 }
