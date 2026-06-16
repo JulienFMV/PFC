@@ -1,9 +1,10 @@
-"""Quote-aware monthly completion smoothing for local/test LT HFC curves.
+"""Quote-aware completion smoothing for local/test LT HFC curves.
 
-The smoother operates on monthly additive deltas and projects them onto the
-null-space of EEX bucket constraints.  It is designed for local/test HFC QA:
-quoted Month/Quarter/Cal BASE and PEAK means stay unchanged, while unquoted
-monthly completions inside coarser products become less jagged.
+The smoother first solves monthly additive targets in the null-space of EEX
+bucket constraints.  It then turns those monthly targets into a continuous
+hourly profile and projects that profile back onto the exact BASE/PEAK EEX
+constraints.  This keeps quoted Month/Quarter/Cal means unchanged while
+avoiding artificial month-end steps in unquoted completions.
 """
 
 from __future__ import annotations
@@ -48,15 +49,15 @@ def apply_quote_aware_monthly_smoothing(
     negative_price_floor: float = -30.0,
     max_weighted_negative_hours: int = 0,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Smooth implicit monthly means without changing EEX bucket means.
+    """Smooth implicit monthly completions without changing EEX bucket means.
 
-    The function adds one constant delta per delivery month to all scenario
-    price columns.  Deltas are solved per delivery year, not independently per
-    EEX bucket, so the objective can smooth transitions across Quarter/Cal
-    bucket boundaries.  The constraints still force zero total energy in every
+    Deltas are solved per delivery year, not independently per EEX bucket, so
+    the objective can smooth transitions across Quarter/Cal bucket boundaries.
+    The solved monthly deltas are used as targets for a continuous hourly
+    profile.  A final Euclidean projection enforces zero total energy in every
     quote-aware BASE bucket and, when PEAK products are provided, zero total
-    PEAK energy in every PEAK bucket.  Directly quoted months are fixed by
-    construction because they are their own finest EEX buckets.
+    PEAK energy in every PEAK bucket.  Directly quoted months are excluded from
+    the free profile and remain pointwise unchanged.
     """
 
     if intensity < 0.0 or not np.isfinite(float(intensity)):
@@ -96,6 +97,10 @@ def apply_quote_aware_monthly_smoothing(
     weighted_before = out["price_weighted_mean_eur_mwh"].astype(float)
     audit_rows: list[dict[str, object]] = []
     monthly_delta = pd.Series(0.0, index=pd.Index(sorted(month_key.unique()), name="month"), dtype=float)
+    row_delta = pd.Series(0.0, index=out.index, dtype=float)
+    direct_month_quotes = {str(key) for key in base_forward_prices if _is_month_product(str(key))}
+    if peak_forward_prices:
+        direct_month_quotes.update(str(key) for key in peak_forward_prices if _is_month_product(str(key)))
 
     years = sorted(int(year) for year in ts.dt.year.dropna().unique())
     for year in years:
@@ -151,22 +156,64 @@ def apply_quote_aware_monthly_smoothing(
 
         for pos, month in enumerate(months):
             monthly_delta.loc[month] += float(delta[pos])
+
+        fixed_months = {month for month in months if str(month) in direct_month_quotes}
+        year_step_delta = pd.Series(
+            [float(delta[months.get_loc(month)]) for month in month_key.loc[year_idx]],
+            index=year_idx,
+            dtype=float,
+        )
+        peak_in_year = year_idx.intersection(peak_buckets.index) if not peak_buckets.empty else pd.Index([])
+        year_peak_buckets = peak_buckets.loc[peak_in_year] if len(peak_in_year) else None
+        year_row_delta = _continuous_projected_row_delta(
+            ts=ts.loc[year_idx],
+            month_key=month_key.loc[year_idx],
+            monthly_delta=pd.Series(delta, index=months, dtype=float),
+            step_delta=year_step_delta,
+            fixed_months=fixed_months,
+            base_buckets=base_buckets.loc[year_idx],
+            peak_buckets=year_peak_buckets,
+        )
+        row_delta.loc[year_idx] = year_row_delta
+
+        actual_month_delta = year_row_delta.groupby(month_key.loc[year_idx]).mean()
+        base_projected_residuals = _bucket_sum_residuals(year_row_delta, base_buckets.loc[year_idx])
+        peak_projected_residuals = (
+            _bucket_sum_residuals(year_row_delta.loc[peak_in_year], peak_buckets.loc[peak_in_year])
+            if len(peak_in_year)
+            else np.array([], dtype=float)
+        )
+        max_projected_base_residual = (
+            float(np.max(np.abs(base_projected_residuals))) if len(base_projected_residuals) else 0.0
+        )
+        max_projected_peak_residual = (
+            float(np.max(np.abs(peak_projected_residuals))) if len(peak_projected_residuals) else 0.0
+        )
+        max_projected_residual = max(max_projected_base_residual, max_projected_peak_residual)
+        if max_projected_residual > 1e-7:
+            raise ValueError(f"monthly smoothing projected residual too large for {year}: {max_projected_residual}")
+
+        for pos, month in enumerate(months):
+            applied_delta = float(actual_month_delta.get(month, 0.0))
             audit_rows.append(
                 {
                     "bucket": base_bucket_by_month.get(month, ""),
                     "year": int(month.year),
                     "month": int(month.month),
-                    "is_direct_month_quote": str(month) in {str(key) for key in base_forward_prices},
+                    "is_direct_month_quote": str(month) in direct_month_quotes,
                     "mean_before_eur_mwh": float(old_means[pos]),
-                    "delta_eur_mwh": float(delta[pos]),
-                    "mean_after_eur_mwh": float(old_means[pos] + delta[pos]),
+                    "target_delta_eur_mwh": float(delta[pos]),
+                    "delta_eur_mwh": applied_delta,
+                    "mean_after_eur_mwh": float(old_means[pos] + applied_delta),
                     "base_constraint_residual_mwh": float(residual[0]),
                     "max_peak_constraint_residual_mwh": max_peak_residual,
                     "max_constraint_residual_mwh": max_residual,
+                    "max_projected_base_residual_mwh": max_projected_base_residual,
+                    "max_projected_peak_residual_mwh": max_projected_peak_residual,
+                    "max_projected_constraint_residual_mwh": max_projected_residual,
                 }
             )
 
-    row_delta = pd.Series([monthly_delta.loc[month] for month in month_key], index=out.index, dtype=float)
     for col in SCENARIO_PRICE_COLUMNS.values():
         out[col] = out[col].astype(float) + row_delta
     out = _recompute_weighted_fan_columns(out, weights)
@@ -227,6 +274,154 @@ def _solve_bucket_delta(
     except np.linalg.LinAlgError:
         solution = np.linalg.lstsq(kkt, kkt_rhs, rcond=None)[0]
     return solution[:n]
+
+
+def _continuous_projected_row_delta(
+    *,
+    ts: pd.Series,
+    month_key: pd.Series,
+    monthly_delta: pd.Series,
+    step_delta: pd.Series,
+    fixed_months: set[pd.Period],
+    base_buckets: pd.Series,
+    peak_buckets: pd.Series | None,
+) -> pd.Series:
+    """Build a smooth hourly correction and enforce exact bucket sums."""
+
+    if float(np.abs(monthly_delta).sum()) <= 1e-12:
+        return pd.Series(0.0, index=ts.index, dtype=float)
+    raw = _smoothstep_monthly_profile(ts=ts, month_key=month_key, monthly_delta=monthly_delta)
+    fixed_mask = month_key.isin(fixed_months).to_numpy(dtype=bool)
+    raw.loc[fixed_mask] = 0.0
+    free_index = raw.index[~fixed_mask]
+    if len(free_index) == 0:
+        if float(np.abs(step_delta).sum()) > 1e-8:
+            raise ValueError("monthly smoothing has no free rows for a non-zero correction")
+        return pd.Series(0.0, index=ts.index, dtype=float)
+
+    rows: list[np.ndarray] = []
+    rhs: list[float] = []
+    free_pos = pd.Series(np.arange(len(free_index), dtype=int), index=free_index)
+
+    def add_bucket_constraints(buckets: pd.Series) -> None:
+        for _, bucket_idx in buckets.groupby(buckets, dropna=True).groups.items():
+            bucket_idx = pd.Index(bucket_idx)
+            target = float(step_delta.loc[bucket_idx.intersection(step_delta.index)].sum())
+            bucket_free = bucket_idx.intersection(free_index)
+            if len(bucket_free) == 0:
+                if abs(target) > 1e-8:
+                    raise ValueError("monthly smoothing fixed rows cannot satisfy a non-zero bucket target")
+                continue
+            row = np.zeros(len(free_index), dtype=float)
+            row[free_pos.loc[bucket_free].to_numpy(dtype=int)] = 1.0
+            rows.append(row)
+            rhs.append(target)
+
+    add_bucket_constraints(base_buckets)
+    if peak_buckets is not None and not peak_buckets.empty:
+        add_bucket_constraints(peak_buckets)
+
+    projected = raw.copy()
+    if rows:
+        a, b = _independent_constraint_rows_with_rhs(np.vstack(rows), np.asarray(rhs, dtype=float))
+        free_values = raw.loc[free_index].to_numpy(dtype=float)
+        projected.loc[free_index] = _project_values_to_constraints(free_values, a, b)
+    projected.loc[fixed_mask] = 0.0
+    return projected.astype(float)
+
+
+def _smoothstep_monthly_profile(
+    *,
+    ts: pd.Series,
+    month_key: pd.Series,
+    monthly_delta: pd.Series,
+) -> pd.Series:
+    centers: list[float] = []
+    values: list[float] = []
+    for month in monthly_delta.index:
+        idx = month_key.index[month_key == month]
+        if len(idx) == 0:
+            continue
+        ns = pd.Series(ts.loc[idx]).astype("int64").to_numpy(dtype=float)
+        centers.append(float(ns.mean()))
+        values.append(float(monthly_delta.loc[month]))
+    if not centers:
+        return pd.Series(0.0, index=ts.index, dtype=float)
+    if len(centers) == 1:
+        return pd.Series(values[0], index=ts.index, dtype=float)
+
+    x = np.asarray(centers, dtype=float)
+    y = np.asarray(values, dtype=float)
+    order = np.argsort(x)
+    x = x[order]
+    y = y[order]
+    t = pd.Series(ts).astype("int64").to_numpy(dtype=float)
+    out = np.empty(len(t), dtype=float)
+    out[t <= x[0]] = y[0]
+    out[t >= x[-1]] = y[-1]
+    middle = (t > x[0]) & (t < x[-1])
+    interval = np.searchsorted(x, t[middle], side="right") - 1
+    interval = np.clip(interval, 0, len(x) - 2)
+    left = x[interval]
+    right = x[interval + 1]
+    u = (t[middle] - left) / (right - left)
+    smooth = u * u * (3.0 - 2.0 * u)
+    out[middle] = y[interval] * (1.0 - smooth) + y[interval + 1] * smooth
+    return pd.Series(out, index=ts.index, dtype=float)
+
+
+def _project_values_to_constraints(values: np.ndarray, constraints: np.ndarray, rhs: np.ndarray) -> np.ndarray:
+    if constraints.size == 0:
+        return values
+    residual = constraints @ values - rhs
+    gram = constraints @ constraints.T
+    try:
+        multipliers = np.linalg.solve(gram, residual)
+    except np.linalg.LinAlgError:
+        multipliers = np.linalg.lstsq(gram, residual, rcond=None)[0]
+    return values - constraints.T @ multipliers
+
+
+def _independent_constraint_rows_with_rhs(
+    matrix: np.ndarray,
+    rhs: np.ndarray,
+    *,
+    tol: float = 1e-10,
+) -> tuple[np.ndarray, np.ndarray]:
+    rows: list[np.ndarray] = []
+    values: list[float] = []
+    current = np.empty((0, matrix.shape[1]), dtype=float)
+    rank = 0
+    for row, value in zip(matrix, rhs, strict=True):
+        if not np.isfinite(row).all() or float(np.linalg.norm(row)) <= tol:
+            continue
+        candidate = np.vstack([current, row])
+        candidate_rank = int(np.linalg.matrix_rank(candidate, tol=tol))
+        if candidate_rank > rank:
+            rows.append(row)
+            values.append(float(value))
+            current = candidate
+            rank = candidate_rank
+    if not rows:
+        return np.empty((0, matrix.shape[1]), dtype=float), np.empty(0, dtype=float)
+    return np.vstack(rows), np.asarray(values, dtype=float)
+
+
+def _bucket_sum_residuals(row_delta: pd.Series, buckets: pd.Series) -> np.ndarray:
+    residuals: list[float] = []
+    for _, bucket_idx in buckets.groupby(buckets, dropna=True).groups.items():
+        idx = pd.Index(bucket_idx).intersection(row_delta.index)
+        if len(idx):
+            residuals.append(float(row_delta.loc[idx].sum()))
+    return np.asarray(residuals, dtype=float)
+
+
+def _is_month_product(product: str) -> bool:
+    try:
+        pd.Period(product, freq="M")
+    except ValueError:
+        return False
+    return len(product) == 7 and product[4] == "-"
 
 
 def _independent_constraint_rows(matrix: np.ndarray, *, tol: float = 1e-10) -> np.ndarray:
