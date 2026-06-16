@@ -1,0 +1,156 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.9.0/schema.json",
+  "name": "neg_table",
+  "position": {
+    "x": 670,
+    "y": 40,
+    "z": 0,
+    "width": 570,
+    "height": 520
+  },
+  "visual": {
+    "visualType": "tableEx",
+    "visualContainerObjects": {
+      "title": [
+        {
+          "properties": {
+            "show": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            },
+            "text": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Low-price diagnostics'"
+                }
+              }
+            },
+            "fontSize": {
+              "expr": {
+                "Literal": {
+                  "Value": "11D"
+                }
+              }
+            },
+            "bold": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "query": {
+      "queryState": {
+        "Values": {
+          "projections": [
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Negative_Low_Hours"
+                    }
+                  },
+                  "Property": "year"
+                }
+              },
+              "queryRef": "Negative_Low_Hours.year",
+              "nativeQueryRef": "year"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Negative_Low_Hours"
+                    }
+                  },
+                  "Property": "month"
+                }
+              },
+              "queryRef": "Negative_Low_Hours.month",
+              "nativeQueryRef": "month"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Negative_Low_Hours"
+                    }
+                  },
+                  "Property": "hour"
+                }
+              },
+              "queryRef": "Negative_Low_Hours.hour",
+              "nativeQueryRef": "hour"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Negative_Low_Hours"
+                    }
+                  },
+                  "Property": "fast_negative_hours"
+                }
+              },
+              "queryRef": "Negative_Low_Hours.fast_negative_hours",
+              "nativeQueryRef": "fast_negative_hours"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Negative_Low_Hours"
+                    }
+                  },
+                  "Property": "p10_negative_hours"
+                }
+              },
+              "queryRef": "Negative_Low_Hours.p10_negative_hours",
+              "nativeQueryRef": "p10_negative_hours"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Negative_Low_Hours"
+                    }
+                  },
+                  "Property": "min_fast_eur_mwh"
+                }
+              },
+              "queryRef": "Negative_Low_Hours.min_fast_eur_mwh",
+              "nativeQueryRef": "min_fast_eur_mwh"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Negative_Low_Hours"
+                    }
+                  },
+                  "Property": "min_p10_eur_mwh"
+                }
+              },
+              "queryRef": "Negative_Low_Hours.min_p10_eur_mwh",
+              "nativeQueryRef": "min_p10_eur_mwh"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

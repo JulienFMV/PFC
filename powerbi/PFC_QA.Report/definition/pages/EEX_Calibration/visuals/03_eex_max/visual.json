@@ -1,0 +1,72 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.9.0/schema.json",
+  "name": "eex_max",
+  "position": {
+    "x": 850,
+    "y": 430,
+    "z": 0,
+    "width": 190,
+    "height": 95
+  },
+  "visual": {
+    "visualType": "cardVisual",
+    "visualContainerObjects": {
+      "title": [
+        {
+          "properties": {
+            "show": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            },
+            "text": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Max EEX residual'"
+                }
+              }
+            },
+            "fontSize": {
+              "expr": {
+                "Literal": {
+                  "Value": "11D"
+                }
+              }
+            },
+            "bold": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "query": {
+      "queryState": {
+        "Data": {
+          "projections": [
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "EEX_Residuals"
+                    }
+                  },
+                  "Property": "EEX Max Abs Residual Text"
+                }
+              },
+              "queryRef": "EEX_Residuals.EEX Max Abs Residual Text",
+              "nativeQueryRef": "EEX Max Abs Residual Text"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

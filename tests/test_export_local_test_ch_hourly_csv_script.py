@@ -6,6 +6,8 @@ import pandas as pd
 from scripts.export_local_test_ch_hourly_csv import (
     _ch_market_holiday_pressure,
     _ch_market_nonworking_pressure,
+    _eex_peak_mask,
+    _latest_eex_prices_by_load_type,
     _is_ch_nonworking_day,
     _negative_capture_weight,
     _peak_shape_down_weight,
@@ -14,6 +16,7 @@ from scripts.export_local_test_ch_hourly_csv import (
     apply_post_calibration_peak_shape_rebalancer,
     apply_local_test_structural_shape_upgrade,
     calibrate_hourly_to_eex,
+    calibrate_hourly_to_eex_base_peak,
     previous_business_day,
     require_forward_date,
     to_hourly_csv_frame,
@@ -159,6 +162,120 @@ def test_calibrate_hourly_to_eex_rejects_non_positive_scale_factor():
 
     with pytest.raises(ValueError, match="non-positive/non-finite scale factor"):
         calibrate_hourly_to_eex(hourly, forward_prices={"2028": -10.0})
+
+
+def test_latest_eex_prices_anchor_snapshot_on_latest_base(tmp_path):
+    path = tmp_path / "forwards.parquet"
+    pd.DataFrame(
+        {
+            "market": ["CH", "CH", "CH"],
+            "load_type": ["BASE", "PEAK", "PEAK"],
+            "date": [
+                pd.Timestamp("2026-06-15"),
+                pd.Timestamp("2026-06-15"),
+                pd.Timestamp("2026-06-16"),
+            ],
+            "product": ["2030", "2030", "2030"],
+            "price": [68.80, 70.38, 71.00],
+        }
+    ).to_parquet(path, index=False)
+
+    latest, prices = _latest_eex_prices_by_load_type(path, market="CH")
+
+    assert latest == pd.Timestamp("2026-06-15")
+    assert prices["BASE"]["2030"] == 68.80
+    assert prices["PEAK"]["2030"] == 70.38
+
+
+def test_eex_peak_mask_excludes_ch_national_holidays():
+    timestamps = pd.Series(
+        pd.DatetimeIndex(
+            [
+                "2030-08-01 10:00",  # Swiss National Day, Thursday
+                "2030-08-02 10:00",  # regular Friday
+                "2030-08-03 10:00",  # Saturday
+                "2030-08-02 20:00",  # outside EEX peak window
+            ],
+            tz="Europe/Zurich",
+        )
+    )
+
+    mask = _eex_peak_mask(timestamps)
+
+    assert mask.tolist() == [False, True, False, False]
+
+
+def test_calibrate_hourly_to_eex_base_peak_matches_base_and_peak_quotes():
+    timestamps = pd.date_range("2030-07-01", periods=24 * 14, freq="h", tz="Europe/Zurich")
+    hourly = pd.DataFrame(
+        {
+            "timestamp_ch": timestamps.strftime("%Y-%m-%d %H:%M:%S%z"),
+            "timestamp_utc": timestamps.tz_convert("UTC").strftime("%Y-%m-%d %H:%M:%S%z"),
+            "price_slow_eur_mwh": [80.0] * len(timestamps),
+            "price_central_eur_mwh": [80.0] * len(timestamps),
+            "price_fast_eur_mwh": [80.0] * len(timestamps),
+            "price_weighted_mean_eur_mwh": [80.0] * len(timestamps),
+            "structural_p10_eur_mwh": [80.0] * len(timestamps),
+            "structural_p50_eur_mwh": [80.0] * len(timestamps),
+            "structural_p90_eur_mwh": [80.0] * len(timestamps),
+            "structural_width_eur_mwh": [0.0] * len(timestamps),
+        }
+    )
+    peak = _eex_peak_mask(pd.Series(timestamps))
+
+    calibrated, audit = calibrate_hourly_to_eex_base_peak(
+        hourly,
+        base_forward_prices={"2030": 80.0},
+        peak_forward_prices={"2030": 90.0},
+        weights={"slow": 0.25, "central": 0.5, "fast": 0.25},
+        negative_price_floor=-30.0,
+    )
+
+    assert calibrated["price_weighted_mean_eur_mwh"].mean() == pytest.approx(80.0, abs=1e-6)
+    assert calibrated.loc[peak, "price_weighted_mean_eur_mwh"].mean() == pytest.approx(90.0, abs=1e-6)
+    assert calibrated.loc[~peak, "price_weighted_mean_eur_mwh"].mean() < 80.0
+    assert calibrated["structural_width_eur_mwh"].max() == pytest.approx(0.0, abs=1e-9)
+    assert audit.loc[0, "base_residual_eur_mwh"] == pytest.approx(0.0, abs=1e-9)
+    assert audit.loc[0, "peak_residual_eur_mwh"] == pytest.approx(0.0, abs=1e-9)
+
+
+def test_eex_peak_calibration_after_peak_rebalancer_forces_contract_quote():
+    timestamps = pd.date_range("2030-07-01", periods=24 * 14, freq="h", tz="Europe/Zurich")
+    hourly = pd.DataFrame(
+        {
+            "timestamp_ch": timestamps.strftime("%Y-%m-%d %H:%M:%S%z"),
+            "timestamp_utc": timestamps.tz_convert("UTC").strftime("%Y-%m-%d %H:%M:%S%z"),
+            "price_slow_eur_mwh": [80.0] * len(timestamps),
+            "price_central_eur_mwh": [80.0] * len(timestamps),
+            "price_fast_eur_mwh": [80.0] * len(timestamps),
+            "price_weighted_mean_eur_mwh": [80.0] * len(timestamps),
+            "structural_p10_eur_mwh": [80.0] * len(timestamps),
+            "structural_p50_eur_mwh": [80.0] * len(timestamps),
+            "structural_p90_eur_mwh": [80.0] * len(timestamps),
+            "structural_width_eur_mwh": [0.0] * len(timestamps),
+        }
+    )
+    weights = {"slow": 0.25, "central": 0.5, "fast": 0.25}
+    rebalanced, _ = apply_post_calibration_peak_shape_rebalancer(
+        hourly,
+        forward_prices={"2030": 80.0},
+        weights=weights,
+        intensity=1.0,
+        negative_price_floor=-30.0,
+        max_weighted_negative_hours=0,
+    )
+    peak = _eex_peak_mask(pd.Series(timestamps))
+
+    calibrated, _ = calibrate_hourly_to_eex_base_peak(
+        rebalanced,
+        base_forward_prices={"2030": 80.0},
+        peak_forward_prices={"2030": 88.0},
+        weights=weights,
+        negative_price_floor=-30.0,
+    )
+
+    assert calibrated["price_weighted_mean_eur_mwh"].mean() == pytest.approx(80.0, abs=1e-6)
+    assert calibrated.loc[peak, "price_weighted_mean_eur_mwh"].mean() == pytest.approx(88.0, abs=1e-6)
 
 
 def test_previous_business_day_skips_weekends():

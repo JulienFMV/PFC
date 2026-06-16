@@ -1,0 +1,142 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.9.0/schema.json",
+  "name": "eex_table",
+  "position": {
+    "x": 20,
+    "y": 30,
+    "z": 0,
+    "width": 760,
+    "height": 620
+  },
+  "visual": {
+    "visualType": "tableEx",
+    "visualContainerObjects": {
+      "title": [
+        {
+          "properties": {
+            "show": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            },
+            "text": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Quoted EEX BASE/PEAK residuals'"
+                }
+              }
+            },
+            "fontSize": {
+              "expr": {
+                "Literal": {
+                  "Value": "11D"
+                }
+              }
+            },
+            "bold": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "query": {
+      "queryState": {
+        "Values": {
+          "projections": [
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "EEX_Residuals"
+                    }
+                  },
+                  "Property": "load_type"
+                }
+              },
+              "queryRef": "EEX_Residuals.load_type",
+              "nativeQueryRef": "load_type"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "EEX_Residuals"
+                    }
+                  },
+                  "Property": "product"
+                }
+              },
+              "queryRef": "EEX_Residuals.product",
+              "nativeQueryRef": "product"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "EEX_Residuals"
+                    }
+                  },
+                  "Property": "target_eex_eur_mwh"
+                }
+              },
+              "queryRef": "EEX_Residuals.target_eex_eur_mwh",
+              "nativeQueryRef": "target_eex_eur_mwh"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "EEX_Residuals"
+                    }
+                  },
+                  "Property": "csv_mean_eur_mwh"
+                }
+              },
+              "queryRef": "EEX_Residuals.csv_mean_eur_mwh",
+              "nativeQueryRef": "csv_mean_eur_mwh"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "EEX_Residuals"
+                    }
+                  },
+                  "Property": "abs_error_eur_mwh"
+                }
+              },
+              "queryRef": "EEX_Residuals.abs_error_eur_mwh",
+              "nativeQueryRef": "abs_error_eur_mwh"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "EEX_Residuals"
+                    }
+                  },
+                  "Property": "rows"
+                }
+              },
+              "queryRef": "EEX_Residuals.rows",
+              "nativeQueryRef": "rows"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

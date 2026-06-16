@@ -17,7 +17,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from scripts.export_local_test_ch_hourly_csv import _parse_timestamp_ch
+from scripts.export_local_test_ch_hourly_csv import _eex_peak_mask, _parse_timestamp_ch
 
 PRICE = "price_weighted_mean_eur_mwh"
 LOCAL_TZ = "Europe/Zurich"
@@ -41,11 +41,15 @@ def _load_hourly_csv(path: Path, *, price_column: str = PRICE) -> pd.DataFrame:
 
 def _latest_forwards(path: Path, *, market: str) -> tuple[pd.Timestamp, pd.DataFrame]:
     df = pd.read_parquet(path)
-    sub = df[(df["market"].astype(str) == market) & (df["load_type"].astype(str) == "BASE")].copy()
+    sub = df[df["market"].astype(str) == market].copy()
     if sub.empty:
-        raise ValueError(f"no BASE forwards for market={market!r} in {path}")
+        raise ValueError(f"no forwards for market={market!r} in {path}")
     sub["date"] = pd.to_datetime(sub["date"])
-    latest = pd.Timestamp(sub["date"].max())
+    sub["load_type"] = sub["load_type"].astype(str).str.upper()
+    base = sub[sub["load_type"] == "BASE"].copy()
+    if base.empty:
+        raise ValueError(f"no BASE forwards for market={market!r} in {path}")
+    latest = pd.Timestamp(base["date"].max())
     snap = sub[sub["date"] == latest].copy()
     snap["product"] = snap["product"].astype(str)
     snap["price"] = snap["price"].astype(float)
@@ -75,22 +79,26 @@ def quoted_product_residuals(
     rows: list[dict[str, object]] = []
     for _, row in forwards.sort_values("product").iterrows():
         product = str(row["product"])
+        load_type = str(row.get("load_type", "BASE")).upper()
         mask = _product_mask(hourly, product)
+        if load_type == "PEAK":
+            mask = mask & _eex_peak_mask(hourly["ts"], country="CH")
         if not bool(mask.any()):
             continue
         mean = float(hourly.loc[mask, price_column].mean())
         target = float(row["price"])
         rows.append(
             {
+                "load_type": load_type,
                 "product": product,
-                "target_eex_base_eur_mwh": target,
+                "target_eex_eur_mwh": target,
                 "curve_mean_eur_mwh": mean,
                 "residual_eur_mwh": mean - target,
                 "abs_residual_eur_mwh": abs(mean - target),
                 "rows": int(mask.sum()),
             }
         )
-    return pd.DataFrame(rows)
+    return pd.DataFrame(rows).sort_values(["load_type", "product"]).reset_index(drop=True)
 
 
 def monthly_means(
@@ -344,10 +352,13 @@ def audit(
 ) -> dict[str, pd.DataFrame | pd.Timestamp]:
     hourly = _load_hourly_csv(csv_path, price_column=price_column)
     latest, forwards = _latest_forwards(forwards_path, market=market)
+    base_forwards = forwards[forwards["load_type"] == "BASE"].copy()
+    if base_forwards.empty:
+        raise ValueError(f"no BASE forwards for market={market!r} in {forwards_path}")
     monthly = monthly_means(hourly, price_column=price_column)
     hour_month = hourly_month_matrix(hourly, price_column=price_column)
     residuals = quoted_product_residuals(hourly, forwards, price_column=price_column)
-    seasonal = seasonal_coherence_checks(monthly, forwards)
+    seasonal = seasonal_coherence_checks(monthly, base_forwards)
     component_checks = None
     if component_parquet is not None:
         component_checks = component_jan_oct_checks(component_monthly_means(component_parquet))

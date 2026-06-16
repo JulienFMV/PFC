@@ -1,0 +1,156 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.9.0/schema.json",
+  "name": "annual_spreads",
+  "position": {
+    "x": 20,
+    "y": 410,
+    "z": 0,
+    "width": 620,
+    "height": 260
+  },
+  "visual": {
+    "visualType": "tableEx",
+    "visualContainerObjects": {
+      "title": [
+        {
+          "properties": {
+            "show": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            },
+            "text": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Annual spreads and negative tails'"
+                }
+              }
+            },
+            "fontSize": {
+              "expr": {
+                "Literal": {
+                  "Value": "11D"
+                }
+              }
+            },
+            "bold": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "query": {
+      "queryState": {
+        "Values": {
+          "projections": [
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Annual_Shape"
+                    }
+                  },
+                  "Property": "year"
+                }
+              },
+              "queryRef": "Annual_Shape.year",
+              "nativeQueryRef": "year"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Annual_Shape"
+                    }
+                  },
+                  "Property": "winter_summer_spread_eur_mwh"
+                }
+              },
+              "queryRef": "Annual_Shape.winter_summer_spread_eur_mwh",
+              "nativeQueryRef": "winter_summer_spread_eur_mwh"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Annual_Shape"
+                    }
+                  },
+                  "Property": "peak_minus_offpeak_eur_mwh"
+                }
+              },
+              "queryRef": "Annual_Shape.peak_minus_offpeak_eur_mwh",
+              "nativeQueryRef": "peak_minus_offpeak_eur_mwh"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Annual_Shape"
+                    }
+                  },
+                  "Property": "evening_minus_midday_eur_mwh"
+                }
+              },
+              "queryRef": "Annual_Shape.evening_minus_midday_eur_mwh",
+              "nativeQueryRef": "evening_minus_midday_eur_mwh"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Annual_Shape"
+                    }
+                  },
+                  "Property": "weekend_minus_weekday_eur_mwh"
+                }
+              },
+              "queryRef": "Annual_Shape.weekend_minus_weekday_eur_mwh",
+              "nativeQueryRef": "weekend_minus_weekday_eur_mwh"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Annual_Shape"
+                    }
+                  },
+                  "Property": "negative_hours_fast"
+                }
+              },
+              "queryRef": "Annual_Shape.negative_hours_fast",
+              "nativeQueryRef": "negative_hours_fast"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Annual_Shape"
+                    }
+                  },
+                  "Property": "negative_hours_p10"
+                }
+              },
+              "queryRef": "Annual_Shape.negative_hours_p10",
+              "nativeQueryRef": "negative_hours_p10"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

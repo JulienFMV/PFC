@@ -190,14 +190,32 @@ def to_hourly_csv_frame(fan_15min: pd.DataFrame, *, local_start_date: str, local
     return out
 
 
-def _latest_eex_base_prices(path: Path, *, market: str = "CH") -> tuple[pd.Timestamp, dict[str, float]]:
+def _latest_eex_prices_by_load_type(
+    path: Path,
+    *,
+    market: str = "CH",
+) -> tuple[pd.Timestamp, dict[str, dict[str, float]]]:
     frame = pd.read_parquet(path)
-    sub = frame[(frame["market"].astype(str) == market) & (frame["load_type"].astype(str) == "BASE")].copy()
+    sub = frame[frame["market"].astype(str) == market].copy()
     if sub.empty:
+        raise ValueError(f"no EEX prices for market={market}")
+    base = sub[sub["load_type"].astype(str).str.upper() == "BASE"].copy()
+    if base.empty:
         raise ValueError(f"no EEX BASE prices for market={market}")
-    latest = pd.Timestamp(sub["date"].max())
+    latest = pd.Timestamp(base["date"].max())
     snap = sub[sub["date"] == latest]
-    return latest, dict(zip(snap["product"].astype(str), snap["price"].astype(float)))
+    prices: dict[str, dict[str, float]] = {}
+    for load_type, group in snap.groupby(snap["load_type"].astype(str).str.upper()):
+        prices[str(load_type)] = dict(zip(group["product"].astype(str), group["price"].astype(float)))
+    return latest, prices
+
+
+def _latest_eex_base_prices(path: Path, *, market: str = "CH") -> tuple[pd.Timestamp, dict[str, float]]:
+    latest, prices = _latest_eex_prices_by_load_type(path, market=market)
+    sub = prices.get("BASE", {})
+    if not sub:
+        raise ValueError(f"no EEX BASE prices for market={market}")
+    return latest, sub
 
 
 def require_forward_date(
@@ -278,6 +296,153 @@ def calibrate_hourly_to_eex(
         if column in out.columns:
             out[column] = out[column].astype(float).round(6)
     return out, pd.DataFrame(rows).sort_values("product").reset_index(drop=True)
+
+
+def _eex_peak_mask(ts_ch: pd.Series, *, country: str = "CH") -> pd.Series:
+    """Return EEX contractual peak hours for local CH timestamps.
+
+    This is deliberately narrower than the CH spot-shaping holiday pressure:
+    EEX peak excludes national holidays, not cantonal/neighbor holiday effects.
+    """
+    ts = pd.Series(ts_ch, copy=False)
+    if ts.empty:
+        return pd.Series(dtype=bool, index=ts.index)
+    years = sorted(int(year) for year in ts.dt.year.dropna().unique())
+    holiday_set: set[object] = set()
+    for year in years:
+        if country == "DE":
+            holiday_set |= set(holidays.Germany(years=year).keys())
+        else:
+            holiday_set |= set(holidays.Switzerland(years=year).keys())
+    return (
+        (ts.dt.weekday < 5)
+        & (ts.dt.hour >= 8)
+        & (ts.dt.hour < 20)
+        & (~ts.dt.date.isin(holiday_set))
+    )
+
+
+def _price_level_columns(frame: pd.DataFrame) -> list[str]:
+    return [column for column in PRICE_COLUMNS if column in frame.columns and column != "structural_width_eur_mwh"]
+
+
+def _recompute_weighted_fan_columns(hourly: pd.DataFrame, weights: dict[str, float]) -> pd.DataFrame:
+    out = hourly.copy()
+    labels = tuple(SCENARIO_PRICE_COLUMNS)
+    matrix = np.column_stack([out[SCENARIO_PRICE_COLUMNS[label]].to_numpy(dtype=float) for label in labels])
+    w = np.array([weights[label] for label in labels], dtype=float)
+    out["price_weighted_mean_eur_mwh"] = matrix @ w
+    out["structural_p10_eur_mwh"] = [_weighted_quantile_row(row, w, 0.10) for row in matrix]
+    out["structural_p50_eur_mwh"] = [_weighted_quantile_row(row, w, 0.50) for row in matrix]
+    out["structural_p90_eur_mwh"] = [_weighted_quantile_row(row, w, 0.90) for row in matrix]
+    out["structural_width_eur_mwh"] = out["structural_p90_eur_mwh"] - out["structural_p10_eur_mwh"]
+    return out
+
+
+def calibrate_hourly_to_eex_base_peak(
+    hourly: pd.DataFrame,
+    *,
+    base_forward_prices: dict[str, float],
+    peak_forward_prices: dict[str, float],
+    weights: dict[str, float],
+    negative_price_floor: float = -30.0,
+    max_weighted_negative_hours: int = 0,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Force direct EEX PEAK quotes while preserving BASE bucket means.
+
+    The adjustment is additive and energy-conserving inside each quote-aware
+    BASE bucket. PEAK targets are selected with the same Month > Quarter > Cal
+    logic but only over contractual EEX peak hours.
+    """
+    if not peak_forward_prices:
+        raise ValueError("EEX BASE+PEAK calibration requested but no PEAK prices are available")
+    out = hourly.copy()
+    ts_ch = _parse_timestamp_ch(out["timestamp_ch"], out.get("utc_offset_ch"))
+    base_products, base_targets = _calibration_buckets(ts_ch, base_forward_prices)
+    peak_mask = _eex_peak_mask(ts_ch, country="CH")
+    peak_products, peak_targets = _calibration_buckets(ts_ch.loc[peak_mask], peak_forward_prices)
+    if not peak_targets:
+        raise ValueError("EEX BASE+PEAK calibration requested but no PEAK targets cover the delivery window")
+
+    price_columns = _price_level_columns(out)
+    rows: list[dict[str, object]] = []
+    for base_product, base_idx in base_products.groupby(base_products, dropna=True).groups.items():
+        if base_product is None or base_product not in base_targets:
+            continue
+        base_idx = pd.Index(base_idx)
+        product_peak_idx = base_idx.intersection(peak_products.index)
+        product_offpeak_idx = base_idx.difference(product_peak_idx)
+        if len(product_peak_idx) == 0:
+            continue
+        if len(product_offpeak_idx) == 0:
+            raise ValueError(f"cannot preserve BASE for {base_product}: no offpeak hours")
+
+        total_peak_energy_delta = 0.0
+        peak_adjustments: list[tuple[pd.Index, str, float, float, float]] = []
+        for peak_product, peak_idx in peak_products.loc[product_peak_idx].groupby(
+            peak_products.loc[product_peak_idx],
+            dropna=True,
+        ).groups.items():
+            if peak_product is None or peak_product not in peak_targets:
+                continue
+            peak_idx = pd.Index(peak_idx)
+            current_peak = float(out.loc[peak_idx, "price_weighted_mean_eur_mwh"].mean())
+            target_peak = float(peak_targets[str(peak_product)])
+            if not np.isfinite(current_peak):
+                raise ValueError(f"cannot calibrate PEAK {peak_product}: non-finite current mean")
+            peak_delta = target_peak - current_peak
+            for column in price_columns:
+                out.loc[peak_idx, column] = out.loc[peak_idx, column].astype(float) + peak_delta
+            total_peak_energy_delta += peak_delta * len(peak_idx)
+            peak_adjustments.append((peak_idx, str(peak_product), target_peak, current_peak, peak_delta))
+
+        if not peak_adjustments:
+            continue
+        offpeak_delta = -total_peak_energy_delta / len(product_offpeak_idx)
+        for column in price_columns:
+            out.loc[product_offpeak_idx, column] = out.loc[product_offpeak_idx, column].astype(float) + offpeak_delta
+
+        out = _recompute_weighted_fan_columns(out, weights)
+        min_price = float(out.loc[base_idx, _price_level_columns(out)].min().min())
+        if min_price < float(negative_price_floor) - 1e-9:
+            raise ValueError(
+                f"EEX BASE+PEAK calibration breached floor for {base_product}: "
+                f"min={min_price:.6f}, floor={float(negative_price_floor):.6f}"
+            )
+        weighted_negative_hours = int((out["price_weighted_mean_eur_mwh"] < 0.0).sum())
+        if weighted_negative_hours > int(max_weighted_negative_hours):
+            raise ValueError(
+                "EEX BASE+PEAK calibration produced too many weighted-mean negative hours: "
+                f"{weighted_negative_hours} > {int(max_weighted_negative_hours)}"
+            )
+
+        post_base = float(out.loc[base_idx, "price_weighted_mean_eur_mwh"].mean())
+        for peak_idx, peak_product, target_peak, pre_peak, peak_delta in peak_adjustments:
+            post_peak = float(out.loc[peak_idx, "price_weighted_mean_eur_mwh"].mean())
+            rows.append(
+                {
+                    "base_product": str(base_product),
+                    "peak_product": peak_product,
+                    "target_eex_base_eur_mwh": float(base_targets[str(base_product)]),
+                    "post_base_mean_eur_mwh": post_base,
+                    "base_residual_eur_mwh": post_base - float(base_targets[str(base_product)]),
+                    "target_eex_peak_eur_mwh": target_peak,
+                    "pre_peak_mean_eur_mwh": pre_peak,
+                    "post_peak_mean_eur_mwh": post_peak,
+                    "peak_residual_eur_mwh": post_peak - target_peak,
+                    "peak_delta_eur_mwh": peak_delta,
+                    "offpeak_delta_eur_mwh": offpeak_delta,
+                    "peak_hours": len(peak_idx),
+                    "offpeak_hours": len(product_offpeak_idx),
+                    "min_price_eur_mwh": min_price,
+                }
+            )
+
+    out = _recompute_weighted_fan_columns(out, weights)
+    for column in PRICE_COLUMNS:
+        if column in out.columns:
+            out[column] = out[column].astype(float).round(6)
+    return out, pd.DataFrame(rows).sort_values(["base_product", "peak_product"]).reset_index(drop=True)
 
 
 def _season_name(month: int) -> str:
@@ -784,6 +949,8 @@ def _write_report(
     post_calibration_negative_rebalancer_audit: pd.DataFrame | None = None,
     post_calibration_peak_shape_rebalancer_enabled: bool = False,
     post_calibration_peak_shape_rebalancer_audit: pd.DataFrame | None = None,
+    eex_peak_calibration_enabled: bool = False,
+    eex_peak_calibration_audit: pd.DataFrame | None = None,
     disable_cascade_trend_for_annual_only: bool = False,
 ) -> None:
     price = hourly["price_weighted_mean_eur_mwh"]
@@ -808,6 +975,7 @@ def _write_report(
             "* local/test post-calibration peak shape rebalancer: "
             f"`{'ON' if post_calibration_peak_shape_rebalancer_enabled else 'OFF'}`"
         ),
+        f"* local/test EEX BASE+PEAK calibration: `{'ON' if eex_peak_calibration_enabled else 'OFF'}`",
         f"* disable cascade trend for annual-only years: `{'ON' if disable_cascade_trend_for_annual_only else 'OFF'}`",
         f"* rows: `{len(hourly)}`",
         "",
@@ -857,6 +1025,14 @@ def _write_report(
             else pd.DataFrame()
         ),
         "",
+        "## Local/Test EEX BASE+PEAK Calibration Audit",
+        "",
+        _md_table(
+            eex_peak_calibration_audit
+            if eex_peak_calibration_audit is not None
+            else pd.DataFrame()
+        ),
+        "",
         "## Limitations",
         "",
         "* Hourly values are arithmetic averages of the calibrated 15-minute local/test PFC.",
@@ -865,6 +1041,7 @@ def _write_report(
         "* Negative-price capture, when enabled, is local/test only and bounded by an explicit floor.",
         "* The post-calibration negative rebalancer, when enabled, is local/test only and mean-preserving by EEX bucket.",
         "* The post-calibration peak shape rebalancer, when enabled, is local/test only and mean-preserving by EEX bucket.",
+        "* The EEX BASE+PEAK calibration, when enabled, is local/test only and uses quoted PEAK products from the same snapshot.",
         "* This is not production FMV output; production governance remains NO-GO.",
         "",
     ]
@@ -972,6 +1149,14 @@ def main(argv: list[str] | None = None) -> int:
         default=1.0,
         help="Multiplier for the local/test post-calibration peak shape rebalancer.",
     )
+    parser.add_argument(
+        "--enable-eex-peak-calibration",
+        action="store_true",
+        help=(
+            "Enable final local/test EEX BASE+PEAK calibration using quoted CH PEAK products "
+            "from the same forward snapshot. Disabled by default."
+        ),
+    )
     parser.add_argument("--skip-build", action="store_true")
     parser.add_argument("--fan-chart-output", default=None)
     args = parser.parse_args(argv)
@@ -1014,7 +1199,11 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     fan = pd.read_parquet(fan_output)
-    latest_forward_date, forward_prices = _latest_eex_base_prices(Path(args.forwards), market="CH")
+    latest_forward_date, forward_prices_by_load_type = _latest_eex_prices_by_load_type(Path(args.forwards), market="CH")
+    forward_prices = forward_prices_by_load_type.get("BASE", {})
+    if not forward_prices:
+        raise ValueError("no EEX CH BASE prices in latest forward snapshot")
+    peak_forward_prices = forward_prices_by_load_type.get("PEAK", {})
     weights = _parse_weights(args.weights)
     required_forward = None
     if not args.allow_stale_forwards:
@@ -1063,6 +1252,16 @@ def main(argv: list[str] | None = None) -> int:
             max_weighted_negative_hours=args.max_weighted_negative_hours,
         )
         hourly, calibration = calibrate_hourly_to_eex(hourly, forward_prices=forward_prices)
+    eex_peak_audit = None
+    if args.enable_eex_peak_calibration:
+        hourly, eex_peak_audit = calibrate_hourly_to_eex_base_peak(
+            hourly,
+            base_forward_prices=forward_prices,
+            peak_forward_prices=peak_forward_prices,
+            weights=weights,
+            negative_price_floor=args.negative_price_floor,
+            max_weighted_negative_hours=args.max_weighted_negative_hours,
+        )
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     hourly.to_csv(output, index=False)
@@ -1083,6 +1282,8 @@ def main(argv: list[str] | None = None) -> int:
         post_calibration_negative_rebalancer_audit=post_negative_audit,
         post_calibration_peak_shape_rebalancer_enabled=bool(args.enable_post_calibration_peak_shape_rebalancer),
         post_calibration_peak_shape_rebalancer_audit=post_peak_audit,
+        eex_peak_calibration_enabled=bool(args.enable_eex_peak_calibration),
+        eex_peak_calibration_audit=eex_peak_audit,
         disable_cascade_trend_for_annual_only=bool(args.disable_cascade_trend_for_annual_only),
     )
     print(f"[hourly-csv] rows={len(hourly)}")

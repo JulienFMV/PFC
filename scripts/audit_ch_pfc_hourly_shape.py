@@ -12,7 +12,8 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from scripts.export_local_test_ch_hourly_csv import (
-    _latest_eex_base_prices,
+    _eex_peak_mask,
+    _latest_eex_prices_by_load_type,
     _parse_timestamp_ch,
 )
 from pfc_shaping.calibration.eex_contract_selection import calibration_buckets
@@ -46,7 +47,7 @@ def _load_csv(path: Path) -> pd.DataFrame:
     return df
 
 
-def _product_residuals(df: pd.DataFrame, forward_prices: dict[str, float]) -> pd.DataFrame:
+def _product_residuals(df: pd.DataFrame, forward_prices: dict[str, float], *, load_type: str) -> pd.DataFrame:
     products, targets = calibration_buckets(df["ts"], forward_prices)
     rows = []
     for product, idx in products.groupby(products).groups.items():
@@ -56,8 +57,9 @@ def _product_residuals(df: pd.DataFrame, forward_prices: dict[str, float]) -> pd
         target = float(targets[str(product)])
         rows.append(
             {
+                "load_type": load_type,
                 "product": product,
-                "target_eex_base_eur_mwh": target,
+                "target_eex_eur_mwh": target,
                 "csv_mean_eur_mwh": mean,
                 "abs_error_eur_mwh": abs(mean - target),
                 "rows": len(idx),
@@ -66,10 +68,26 @@ def _product_residuals(df: pd.DataFrame, forward_prices: dict[str, float]) -> pd
     return pd.DataFrame(rows).sort_values("product").reset_index(drop=True)
 
 
+def _peak_product_residuals(df: pd.DataFrame, forward_prices: dict[str, float]) -> pd.DataFrame:
+    peak_mask = _eex_peak_mask(df["ts"], country="CH")
+    if not bool(peak_mask.any()) or not forward_prices:
+        return pd.DataFrame()
+    peak_df = df.loc[peak_mask].copy()
+    residuals = _product_residuals(peak_df, forward_prices, load_type="PEAK")
+    return residuals
+
+
 def audit(csv_path: Path, forwards_path: Path) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, float]]:
     df = _load_csv(csv_path)
-    _, forward_prices = _latest_eex_base_prices(forwards_path, market="CH")
-    residuals = _product_residuals(df, forward_prices)
+    _, prices_by_load_type = _latest_eex_prices_by_load_type(forwards_path, market="CH")
+    base_prices = prices_by_load_type.get("BASE", {})
+    if not base_prices:
+        raise ValueError("no EEX CH BASE prices in latest forward snapshot")
+    base_residuals = _product_residuals(df, base_prices, load_type="BASE")
+    peak_residuals = _peak_product_residuals(df, prices_by_load_type.get("PEAK", {}))
+    residuals = pd.concat([base_residuals, peak_residuals], ignore_index=True)
+    if not residuals.empty:
+        residuals = residuals.sort_values(["load_type", "product"]).reset_index(drop=True)
 
     numeric_cols = [c for c in df.columns if c.endswith("_eur_mwh")]
     finite_ok = bool(np.isfinite(df[numeric_cols].to_numpy(dtype=float)).all())
@@ -115,6 +133,16 @@ def audit(csv_path: Path, forwards_path: Path) -> tuple[pd.DataFrame, pd.DataFra
     annual = pd.DataFrame(rows)
 
     max_eex_error = float(residuals["abs_error_eur_mwh"].max()) if not residuals.empty else float("inf")
+    max_eex_base_error = (
+        float(residuals.loc[residuals["load_type"] == "BASE", "abs_error_eur_mwh"].max())
+        if not residuals.empty and bool((residuals["load_type"] == "BASE").any())
+        else float("inf")
+    )
+    max_eex_peak_error = (
+        float(residuals.loc[residuals["load_type"] == "PEAK", "abs_error_eur_mwh"].max())
+        if not residuals.empty and bool((residuals["load_type"] == "PEAK").any())
+        else 0.0
+    )
     width_mean = float(df["structural_width_eur_mwh"].mean())
     width_p95 = float(df["structural_width_eur_mwh"].quantile(0.95))
     duck_2030 = float(annual.loc[annual["year"] == 2030, "evening_minus_midday_eur_mwh"].iloc[0])
@@ -148,6 +176,8 @@ def audit(csv_path: Path, forwards_path: Path) -> tuple[pd.DataFrame, pd.DataFra
         "ramp_abs_p99_eur_mwh": ramp_p99,
         "ramp_abs_max_eur_mwh": ramp_max,
         "boundary_jump_abs_p95_eur_mwh": boundary_p95,
+        "max_eex_base_error_eur_mwh": max_eex_base_error,
+        "max_eex_peak_error_eur_mwh": max_eex_peak_error,
     }
     return annual, residuals, metrics
 

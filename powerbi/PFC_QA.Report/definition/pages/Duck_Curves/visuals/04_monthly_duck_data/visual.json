@@ -1,0 +1,142 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.9.0/schema.json",
+  "name": "monthly_duck_data",
+  "position": {
+    "x": 20,
+    "y": 470,
+    "z": 0,
+    "width": 600,
+    "height": 190
+  },
+  "visual": {
+    "visualType": "tableEx",
+    "visualContainerObjects": {
+      "title": [
+        {
+          "properties": {
+            "show": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            },
+            "text": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Monthly duck data'"
+                }
+              }
+            },
+            "fontSize": {
+              "expr": {
+                "Literal": {
+                  "Value": "11D"
+                }
+              }
+            },
+            "bold": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "query": {
+      "queryState": {
+        "Values": {
+          "projections": [
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Duck_Month_Hour"
+                    }
+                  },
+                  "Property": "year"
+                }
+              },
+              "queryRef": "Duck_Month_Hour.year",
+              "nativeQueryRef": "year"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Duck_Month_Hour"
+                    }
+                  },
+                  "Property": "month_code"
+                }
+              },
+              "queryRef": "Duck_Month_Hour.month_code",
+              "nativeQueryRef": "month_code"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Duck_Month_Hour"
+                    }
+                  },
+                  "Property": "hour_code"
+                }
+              },
+              "queryRef": "Duck_Month_Hour.hour_code",
+              "nativeQueryRef": "hour_code"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Duck_Month_Hour"
+                    }
+                  },
+                  "Property": "price_weighted_mean_eur_mwh"
+                }
+              },
+              "queryRef": "Duck_Month_Hour.price_weighted_mean_eur_mwh",
+              "nativeQueryRef": "price_weighted_mean_eur_mwh"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Duck_Month_Hour"
+                    }
+                  },
+                  "Property": "price_fast_eur_mwh"
+                }
+              },
+              "queryRef": "Duck_Month_Hour.price_fast_eur_mwh",
+              "nativeQueryRef": "price_fast_eur_mwh"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Duck_Month_Hour"
+                    }
+                  },
+                  "Property": "structural_p10_eur_mwh"
+                }
+              },
+              "queryRef": "Duck_Month_Hour.structural_p10_eur_mwh",
+              "nativeQueryRef": "structural_p10_eur_mwh"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,94 @@
+Avg Price Weighted :=
+AVERAGE ( HFC_Hourly[price_weighted_mean_eur_mwh] )
+
+Avg Price Central :=
+AVERAGE ( HFC_Hourly[price_central_eur_mwh] )
+
+Avg Price Fast :=
+AVERAGE ( HFC_Hourly[price_fast_eur_mwh] )
+
+Avg Price Slow :=
+AVERAGE ( HFC_Hourly[price_slow_eur_mwh] )
+
+Min Weighted Price :=
+MIN ( HFC_Hourly[price_weighted_mean_eur_mwh] )
+
+Weighted Negative Hours :=
+CALCULATE (
+    COUNTROWS ( HFC_Hourly ),
+    HFC_Hourly[price_weighted_mean_eur_mwh] < 0
+)
+
+Fast Negative Hours :=
+CALCULATE (
+    COUNTROWS ( HFC_Hourly ),
+    HFC_Hourly[price_fast_eur_mwh] < 0
+)
+
+P10 Negative Hours :=
+CALCULATE (
+    COUNTROWS ( HFC_Hourly ),
+    HFC_Hourly[structural_p10_eur_mwh] < 0
+)
+
+EEX Max Abs Residual :=
+MAX ( EEX_Residuals[abs_error_eur_mwh] )
+
+EEX Max BASE Residual :=
+CALCULATE (
+    MAX ( EEX_Residuals[abs_error_eur_mwh] ),
+    EEX_Residuals[load_type] = "BASE"
+)
+
+EEX Max PEAK Residual :=
+CALCULATE (
+    MAX ( EEX_Residuals[abs_error_eur_mwh] ),
+    EEX_Residuals[load_type] = "PEAK"
+)
+
+Peak Avg Price :=
+CALCULATE (
+    [Avg Price Weighted],
+    HFC_Hourly[is_eex_peak] = TRUE ()
+)
+
+Offpeak Avg Price :=
+CALCULATE (
+    [Avg Price Weighted],
+    HFC_Hourly[is_eex_peak] = FALSE ()
+)
+
+Peak Offpeak Spread :=
+[Peak Avg Price] - [Offpeak Avg Price]
+
+Midday Avg Price :=
+CALCULATE (
+    [Avg Price Weighted],
+    HFC_Hourly[hour] >= 11,
+    HFC_Hourly[hour] <= 15
+)
+
+Evening Avg Price :=
+CALCULATE (
+    [Avg Price Weighted],
+    HFC_Hourly[hour] >= 17,
+    HFC_Hourly[hour] <= 21
+)
+
+Evening Midday Spread :=
+[Evening Avg Price] - [Midday Avg Price]
+
+Weekend Avg Price :=
+CALCULATE (
+    [Avg Price Weighted],
+    HFC_Hourly[is_weekend] = TRUE ()
+)
+
+Weekday Avg Price :=
+CALCULATE (
+    [Avg Price Weighted],
+    HFC_Hourly[is_weekend] = FALSE ()
+)
+
+Weekend Weekday Spread :=
+[Weekend Avg Price] - [Weekday Avg Price]

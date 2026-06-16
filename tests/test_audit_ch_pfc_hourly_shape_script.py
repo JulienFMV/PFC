@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 
 from scripts.audit_ch_pfc_hourly_shape import audit
+from scripts.export_local_test_ch_hourly_csv import _eex_peak_mask
 
 
 def test_audit_scores_well_shaped_hourly_csv(tmp_path):
@@ -88,3 +89,44 @@ def test_audit_uses_quote_aware_residual_buckets(tmp_path):
 
     assert set(residuals["product"]) == {"2030-Q1", "2030-RESIDUAL"}
     assert metrics["max_eex_error_eur_mwh"] < 1e-5
+
+
+def test_audit_reports_peak_residuals_when_peak_quotes_exist(tmp_path):
+    ts = pd.date_range("2030-07-01", periods=24 * 14, freq="h", tz="Europe/Zurich")
+    peak = _eex_peak_mask(pd.Series(ts))
+    base_target = 80.0
+    peak_target = 90.0
+    offpeak_target = (base_target * len(ts) - peak_target * int(peak.sum())) / int((~peak).sum())
+    price = pd.Series(offpeak_target, index=ts)
+    price.loc[peak.to_numpy()] = peak_target
+    csv = tmp_path / "pfc.csv"
+    pd.DataFrame(
+        {
+            "timestamp_ch": ts.strftime("%Y-%m-%d %H:%M:%S%z"),
+            "timestamp_utc": ts.tz_convert("UTC").strftime("%Y-%m-%d %H:%M:%S%z"),
+            "price_slow_eur_mwh": price - 5.0,
+            "price_central_eur_mwh": price,
+            "price_fast_eur_mwh": price + 5.0,
+            "price_weighted_mean_eur_mwh": price,
+            "structural_p10_eur_mwh": price - 5.0,
+            "structural_p50_eur_mwh": price,
+            "structural_p90_eur_mwh": price + 5.0,
+            "structural_width_eur_mwh": [10.0] * len(ts),
+        }
+    ).to_csv(csv, index=False)
+    fw = tmp_path / "forwards.parquet"
+    pd.DataFrame(
+        {
+            "market": ["CH", "CH"],
+            "load_type": ["BASE", "PEAK"],
+            "date": [pd.Timestamp("2026-06-15"), pd.Timestamp("2026-06-15")],
+            "product": ["2030", "2030"],
+            "price": [base_target, peak_target],
+        }
+    ).to_parquet(fw, index=False)
+
+    _, residuals, metrics = audit(csv, fw)
+
+    assert set(residuals["load_type"]) == {"BASE", "PEAK"}
+    assert metrics["max_eex_base_error_eur_mwh"] < 1e-9
+    assert metrics["max_eex_peak_error_eur_mwh"] < 1e-9

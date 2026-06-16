@@ -65,3 +65,9 @@ AutogluonModels/
 
 # GSD local install — machine-specific paths, regenerated per-machine via npx
 .claude/
+
+# Power BI QA project generated/runtime files
+powerbi/data/
+powerbi/**/.pbi/
+powerbi/**/*.bak_*/
+*.bak_*

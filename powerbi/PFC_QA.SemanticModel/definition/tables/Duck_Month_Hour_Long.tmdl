@@ -1,0 +1,69 @@
+table Duck_Month_Hour_Long
+	lineageTag: 9226bbf3-962e-460c-ada0-83715bb77032
+
+	measure 'Duck Month Long Avg Price' = AVERAGE ( Duck_Month_Hour_Long[price_eur_mwh] )
+		formatString: 0.00
+		lineageTag: 267b0ca0-d3a4-4543-815e-cd72f9f11533
+
+	column year
+		dataType: int64
+		formatString: 0
+		lineageTag: b0471ab7-3a4f-4c67-967d-0092f408606a
+		summarizeBy: none
+		sourceColumn: year
+
+	column month
+		dataType: int64
+		formatString: 0
+		lineageTag: 8100fc4e-e95f-4ddb-9243-90a749bbfdf7
+		summarizeBy: none
+		sourceColumn: month
+
+	column month_code
+		dataType: string
+		lineageTag: d7c837f6-9b13-45f6-a1b4-1e567b079fa7
+		summarizeBy: none
+		sourceColumn: month_code
+
+	column hour
+		dataType: int64
+		formatString: 0
+		lineageTag: 6f4812a7-8921-46d1-a0ba-ba4234a8c488
+		summarizeBy: none
+		sourceColumn: hour
+
+	column hour_code
+		dataType: string
+		lineageTag: e36dbc20-964d-43aa-b6da-9f9f993c5c61
+		summarizeBy: none
+		sourceColumn: hour_code
+
+	column series
+		dataType: string
+		lineageTag: 1e1e1191-6cca-4979-8eba-db0797407902
+		summarizeBy: none
+		sourceColumn: series
+
+	column price_eur_mwh
+		dataType: double
+		formatString: 0.00
+		lineageTag: 8c6b6bfd-f72c-4a61-8632-3823153d16d1
+		summarizeBy: none
+		sourceColumn: price_eur_mwh
+
+	column series_label
+		dataType: string
+		lineageTag: 28929334-2646-45fe-bb35-0575476afe41
+		summarizeBy: none
+		sourceColumn: series_label
+
+	partition Duck_Month_Hour_Long = m
+		mode: import
+		source =
+				let
+				    Source = Csv.Document(File.Contents("\\fmvfs2\Data\Energy\GeCom\CONTROLLING RISK\Analyses diverses\Python - JB\PFC_LT\powerbi\data\duck_month_hour_long.csv"), [Delimiter=",", Columns=8, Encoding=65001, QuoteStyle=QuoteStyle.Csv]),
+				    Promoted = Table.PromoteHeaders(Source, [PromoteAllScalars=true]),
+				    Typed = Table.TransformColumnTypes(Promoted, {{"year", Int64.Type}, {"month", Int64.Type}, {"month_code", type text}, {"hour", Int64.Type}, {"hour_code", type text}, {"series", type text}, {"price_eur_mwh", type number}, {"series_label", type text}})
+				in
+				    Typed
+

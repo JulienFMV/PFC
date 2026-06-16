@@ -1,0 +1,128 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.9.0/schema.json",
+  "name": "annual_shape",
+  "position": {
+    "x": 670,
+    "y": 40,
+    "z": 0,
+    "width": 570,
+    "height": 350
+  },
+  "visual": {
+    "visualType": "tableEx",
+    "visualContainerObjects": {
+      "title": [
+        {
+          "properties": {
+            "show": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            },
+            "text": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Annual shape KPIs'"
+                }
+              }
+            },
+            "fontSize": {
+              "expr": {
+                "Literal": {
+                  "Value": "11D"
+                }
+              }
+            },
+            "bold": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "query": {
+      "queryState": {
+        "Values": {
+          "projections": [
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Annual_Shape"
+                    }
+                  },
+                  "Property": "year"
+                }
+              },
+              "queryRef": "Annual_Shape.year",
+              "nativeQueryRef": "year"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Annual_Shape"
+                    }
+                  },
+                  "Property": "mean_eur_mwh"
+                }
+              },
+              "queryRef": "Annual_Shape.mean_eur_mwh",
+              "nativeQueryRef": "mean_eur_mwh"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Annual_Shape"
+                    }
+                  },
+                  "Property": "evening_minus_midday_eur_mwh"
+                }
+              },
+              "queryRef": "Annual_Shape.evening_minus_midday_eur_mwh",
+              "nativeQueryRef": "evening_minus_midday_eur_mwh"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Annual_Shape"
+                    }
+                  },
+                  "Property": "weekend_minus_weekday_eur_mwh"
+                }
+              },
+              "queryRef": "Annual_Shape.weekend_minus_weekday_eur_mwh",
+              "nativeQueryRef": "weekend_minus_weekday_eur_mwh"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Annual_Shape"
+                    }
+                  },
+                  "Property": "structural_width_p95_eur_mwh"
+                }
+              },
+              "queryRef": "Annual_Shape.structural_width_p95_eur_mwh",
+              "nativeQueryRef": "structural_width_p95_eur_mwh"
+            }
+          ]
+        }
+      }
+    }
+  }
+}
