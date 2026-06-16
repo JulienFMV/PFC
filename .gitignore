@@ -57,6 +57,7 @@ output/*.parquet
 output/*.csv
 output/*.xlsx
 output/*.png
+output/hfc_diagnostics/
 
 # Secrets — NE JAMAIS COMMITTER
 .env
