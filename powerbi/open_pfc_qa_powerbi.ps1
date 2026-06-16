@@ -1,5 +1,5 @@
 param(
-    [string]$RepoRoot = "H:\Energy\GeCom\CONTROLLING RISK\Analyses diverses\Python - JB\PFC_LT"
+    [string]$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 )
 
 $ErrorActionPreference = "Stop"

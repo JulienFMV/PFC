@@ -1,7 +1,7 @@
 let
-    RepoRoot = "H:\Energy\GeCom\CONTROLLING RISK\Analyses diverses\Python - JB\PFC_LT\",
+    RepoRootNormalized = if Text.EndsWith(RepoRoot, "\") then RepoRoot else RepoRoot & "\",
     Source = Csv.Document(
-        File.Contents(RepoRoot & "powerbi\data\duck_month_hour.csv"),
+        File.Contents(RepoRootNormalized & "powerbi\data\duck_month_hour.csv"),
         [Delimiter=",", Encoding=65001, QuoteStyle=QuoteStyle.Csv]
     ),
     Promoted = Table.PromoteHeaders(Source, [PromoteAllScalars=true]),

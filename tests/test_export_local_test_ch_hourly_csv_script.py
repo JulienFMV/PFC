@@ -21,6 +21,7 @@ from scripts.export_local_test_ch_hourly_csv import (
     require_forward_date,
     to_hourly_csv_frame,
 )
+from pfc_shaping.lt.model.holiday_pressure import ch_market_nonworking_pressure
 
 
 def test_to_hourly_csv_frame_filters_local_window_and_averages():
@@ -486,3 +487,4 @@ def test_ch_holidays_are_nonworking_for_local_test_shape_overlays():
     assert _peak_shape_up_weight(labour_day) == 0.0
     assert _peak_shape_up_weight(cantonal_peak) < _peak_shape_up_weight(nearby_peak)
     assert _peak_shape_down_weight(labour_day) > 0.0
+    assert ch_market_nonworking_pressure(labour_day) == _ch_market_nonworking_pressure(labour_day)

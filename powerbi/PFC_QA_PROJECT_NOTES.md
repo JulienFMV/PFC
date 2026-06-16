@@ -9,7 +9,7 @@ C:\Program Files\WindowsApps\Microsoft.MicrosoftPowerBIDesktop_2.155.756.0_x64__
 Le fichier projet utilisateur est:
 
 ```text
-H:\Energy\GeCom\CONTROLLING RISK\Analyses diverses\Python - JB\PFC_LT\powerbi\PFC_QA.pbip
+powerbi\PFC_QA.pbip
 ```
 
 Le projet est utilisable depuis Codex pour:
@@ -18,6 +18,10 @@ Le projet est utilisable depuis Codex pour:
 - maintenir les requetes Power Query `.pq`
 - maintenir les mesures DAX
 - documenter le layout attendu
+
+Les scripts PowerShell detectent la racine du repo depuis leur propre dossier.
+Les requetes Power Query standalone passent par `queries/RepoRoot.pq`; le
+modele TMDL est regenere avec le chemin local au moment du build.
 
 L'edition visuelle finale reste a faire dans Power BI Desktop, car le format
 des pages du rapport est fortement lie a l'application Desktop.

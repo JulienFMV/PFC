@@ -2,17 +2,17 @@
 
 Ce dossier contient le pack Power BI local pour auditer la derniere HFC/PFC CH.
 
-Le rapport doit lire le fichier generique:
+Le rapport lit le fichier generique:
 
 ```text
-H:\Energy\GeCom\CONTROLLING RISK\Analyses diverses\Python - JB\PFC_LT\output\ch_hfc_hourly.csv
+output\ch_hfc_hourly.csv
 ```
 
 Pour de meilleures performances, le script Python genere aussi des tables CSV
 pre-agregees dans:
 
 ```text
-H:\Energy\GeCom\CONTROLLING RISK\Analyses diverses\Python - JB\PFC_LT\powerbi\data\
+powerbi\data\
 ```
 
 ## Regeneration des donnees Power BI
@@ -20,7 +20,7 @@ H:\Energy\GeCom\CONTROLLING RISK\Analyses diverses\Python - JB\PFC_LT\powerbi\da
 Depuis la racine du repo:
 
 ```powershell
-python scripts\build_powerbi_exports.py
+powershell -NoProfile -ExecutionPolicy Bypass -File .\powerbi\build_and_open_pfc_qa.ps1
 ```
 
 Tables produites:
@@ -37,17 +37,25 @@ Tables produites:
 | `eex_residuals.csv` | residus EEX BASE et PEAK |
 | `summary_metrics.csv` | score et gates principaux |
 
-## Creation du rapport Power BI Desktop
+## Creation manuelle du rapport Power BI Desktop
+
+La voie normale est d'utiliser `build_and_open_pfc_qa.ps1`, qui regenere les
+exports CSV, le modele TMDL et le layout PBIR avec le chemin local du repo.
+
+Les fichiers `queries/*.pq` sont des templates manuels. Ils utilisent la
+requete/parametre `RepoRoot.pq`; remplacer le placeholder
+`<SET_REPO_ROOT_HERE>\` dans ce seul fichier si les requetes sont importees
+manuellement.
 
 1. Ouvrir Power BI Desktop.
 2. `Get data` > `Blank query`.
 3. Ouvrir `Advanced Editor`.
-4. Copier le contenu d'un fichier `queries/*.pq`.
-5. Renommer la requete avec le nom du fichier, par exemple `HFC_Hourly`.
-6. Repeter pour les tables utiles: `HFC_Hourly`, `EEX_Residuals`,
+4. Creer d'abord la requete `RepoRoot` avec `queries/RepoRoot.pq`.
+5. Copier ensuite le contenu d'un fichier `queries/*.pq`.
+6. Renommer la requete avec le nom du fichier, par exemple `HFC_Hourly`.
+7. Repeter pour les tables utiles: `HFC_Hourly`, `EEX_Residuals`,
    `Duck_Month_Hour`, `Duck_Season_Hour`, `Annual_Shape`,
    `Negative_Low_Hours`, `Summary_Metrics`.
-7. Adapter `RepoRoot` si le repo est deplace.
 8. Fermer et appliquer.
 9. Coller les mesures DAX de `measures/PFC_Measures.dax`.
 

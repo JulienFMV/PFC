@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import math
 import sys
-from functools import lru_cache
 from pathlib import Path
 
 import holidays
@@ -18,6 +17,12 @@ from pfc_shaping.calibration.eex_contract_selection import (  # noqa: E402
     calibration_buckets,
     finest_product_for_timestamp,
     quarter_product,
+)
+from pfc_shaping.lt.model.holiday_pressure import (  # noqa: E402
+    ch_market_holiday_components as _ch_market_holiday_components,
+    ch_market_holiday_pressure as _ch_market_holiday_pressure,
+    ch_market_nonworking_pressure as _ch_market_nonworking_pressure,
+    is_ch_nonworking_day as _is_ch_nonworking_day,
 )
 from scripts.build_local_test_ch_pfc import main as build_local_test_ch_pfc
 
@@ -41,62 +46,6 @@ SCENARIO_PRICE_COLUMNS = {
     "central": "price_central_eur_mwh",
     "fast": "price_fast_eur_mwh",
 }
-
-
-@lru_cache(maxsize=None)
-def _ch_market_holiday_components(year: int) -> dict[object, float]:
-    """Weighted holidays that can materially affect CH spot shape.
-
-    This is deliberately broader than the national-only EEX Peak calendar.
-    CH spot is coupled to neighbouring markets; days such as 1 May can behave
-    like holidays even when they are not CH-national or Valais holidays.
-    """
-    y = int(year)
-    weights: dict[object, float] = {}
-
-    def add_dates(dates: set, weight: float) -> None:
-        for d in dates:
-            weights[d] = weights.get(d, 0.0) + float(weight)
-
-    add_dates(set(holidays.Switzerland(years=y).keys()), 1.00)
-    for subdiv, weight in {
-        "ZH": 0.35,
-        "VD": 0.30,
-        "GE": 0.30,
-        "TI": 0.30,
-        "BE": 0.25,
-        "BS": 0.25,
-        "BL": 0.20,
-        "AG": 0.20,
-        "SG": 0.20,
-        "VS": 0.20,
-    }.items():
-        add_dates(set(holidays.Switzerland(years=y, subdiv=subdiv).keys()), weight)
-    add_dates(set(holidays.Germany(years=y).keys()), 0.55)
-    add_dates(set(holidays.France(years=y).keys()), 0.45)
-    add_dates(set(holidays.Italy(years=y).keys()), 0.35)
-    add_dates(set(holidays.Austria(years=y).keys()), 0.20)
-    return weights
-
-
-def _ch_market_holiday_pressure(ts: pd.Timestamp) -> float:
-    local = pd.Timestamp(ts)
-    if local.tzinfo is not None:
-        local = local.tz_convert(LOCAL_TZ)
-    return float(min(1.25, _ch_market_holiday_components(int(local.year)).get(local.date(), 0.0)))
-
-
-def _ch_market_nonworking_pressure(ts: pd.Timestamp) -> float:
-    local = pd.Timestamp(ts)
-    if local.tzinfo is not None:
-        local = local.tz_convert(LOCAL_TZ)
-    weekend_pressure = 1.0 if local.weekday() >= 5 else 0.0
-    return float(max(weekend_pressure, _ch_market_holiday_pressure(local)))
-
-
-def _is_ch_nonworking_day(ts: pd.Timestamp) -> bool:
-    return _ch_market_nonworking_pressure(ts) >= 0.50
-
 
 def _normalize_date(value: str | pd.Timestamp) -> pd.Timestamp:
     return pd.Timestamp(value).tz_localize(None).normalize()

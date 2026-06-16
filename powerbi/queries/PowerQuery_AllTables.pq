@@ -1,6 +1,6 @@
 let
-    RepoRoot = "H:\Energy\GeCom\CONTROLLING RISK\Analyses diverses\Python - JB\PFC_LT\",
-    DataRoot = RepoRoot & "powerbi\data\",
+    RepoRootNormalized = if Text.EndsWith(RepoRoot, "\") then RepoRoot else RepoRoot & "\",
+    DataRoot = RepoRootNormalized & "powerbi\data\",
 
     LoadCsv = (fileName as text) as table =>
         let
