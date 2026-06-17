@@ -1,5 +1,6 @@
 param(
-    [string]$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+    [string]$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path,
+    [string]$Csv = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -11,7 +12,12 @@ if (-not (Test-Path -LiteralPath $script)) {
 
 Push-Location $RepoRoot
 try {
-    python $script --output-dir "powerbi\data"
+    if ([string]::IsNullOrWhiteSpace($Csv)) {
+        python $script --output-dir "powerbi\data"
+    }
+    else {
+        python $script --csv $Csv --output-dir "powerbi\data"
+    }
 }
 finally {
     Pop-Location

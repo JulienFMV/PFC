@@ -1,10 +1,11 @@
 param(
-    [string]$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+    [string]$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path,
+    [string]$Csv = ""
 )
 
 $ErrorActionPreference = "Stop"
 
-& (Join-Path $RepoRoot "powerbi\refresh_powerbi_data.ps1") -RepoRoot $RepoRoot
+& (Join-Path $RepoRoot "powerbi\refresh_powerbi_data.ps1") -RepoRoot $RepoRoot -Csv $Csv
 
 Push-Location $RepoRoot
 try {

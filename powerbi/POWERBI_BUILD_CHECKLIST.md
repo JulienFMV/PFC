@@ -78,10 +78,17 @@ Les requetes Power Query typées sont dans `powerbi\queries\*.pq`.
 
 ## Refresh quotidien
 
-Apres regeneration de `output\ch_hfc_hourly.csv`, lancer:
+Apres regeneration d'un fichier `output\ch_hfc_hourly*.csv`, lancer:
 
 ```powershell
 .\powerbi\refresh_powerbi_data.ps1
+```
+
+Le refresh choisit automatiquement le plus recent CSV horaire matching
+`output\ch_hfc_hourly*.csv`. Pour forcer un fichier precis:
+
+```powershell
+.\powerbi\refresh_powerbi_data.ps1 -Csv output\ch_hfc_hourly_YYYYMMDD_....csv
 ```
 
 Puis ouvrir Power BI et cliquer `Refresh`.

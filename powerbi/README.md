@@ -2,14 +2,15 @@
 
 Ce dossier contient le pack Power BI local pour auditer la derniere HFC/PFC CH.
 
-Le rapport lit le fichier generique:
+Le refresh Power BI prend automatiquement le plus recent CSV horaire matching:
 
 ```text
-output\ch_hfc_hourly.csv
+output\ch_hfc_hourly*.csv
 ```
 
-Pour de meilleures performances, le script Python genere aussi des tables CSV
-pre-agregees dans:
+Le script filtre les candidats sur le schema horaire attendu afin d'ignorer les
+CSV auxiliaires de diagnostic. Il genere ensuite des tables CSV pre-agregees
+dans:
 
 ```text
 powerbi\data\
@@ -21,6 +22,12 @@ Depuis la racine du repo:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\powerbi\build_and_open_pfc_qa.ps1
+```
+
+Pour forcer un fichier precis:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\powerbi\build_and_open_pfc_qa.ps1 -Csv output\ch_hfc_hourly_YYYYMMDD_....csv
 ```
 
 Tables produites:

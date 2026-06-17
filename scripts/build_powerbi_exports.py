@@ -37,6 +37,48 @@ DISPLAY_PRICE_COLUMNS = [
     "structural_width_eur_mwh",
 ]
 
+LATEST_HFC_GLOB = "ch_hfc_hourly*.csv"
+REQUIRED_HOURLY_COLUMNS = {
+    "timestamp_ch",
+    "timestamp_utc",
+    "price_slow_eur_mwh",
+    "price_central_eur_mwh",
+    "price_fast_eur_mwh",
+    "price_weighted_mean_eur_mwh",
+    "structural_p10_eur_mwh",
+    "structural_p50_eur_mwh",
+    "structural_p90_eur_mwh",
+    "structural_width_eur_mwh",
+}
+
+
+def _has_hourly_schema(path: Path) -> bool:
+    try:
+        columns = set(pd.read_csv(path, nrows=0).columns)
+    except Exception:
+        return False
+    return REQUIRED_HOURLY_COLUMNS.issubset(columns)
+
+
+def resolve_csv_path(value: str | None) -> Path:
+    if value:
+        return Path(value)
+
+    output_dir = Path("output")
+    candidates = sorted(
+        (path for path in output_dir.glob(LATEST_HFC_GLOB) if path.is_file()),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    for path in candidates:
+        if _has_hourly_schema(path):
+            return path
+    searched = output_dir / LATEST_HFC_GLOB
+    raise FileNotFoundError(
+        f"No hourly HFC CSV matching {searched} with the expected Power BI schema. "
+        "Pass --csv explicitly to use another file."
+    )
+
 
 def _season(month: int) -> str:
     if month in (12, 1, 2):
@@ -265,12 +307,21 @@ def build_exports(csv_path: Path, forwards_path: Path, spot_path: Path, output_d
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--csv", default="output/ch_hfc_hourly.csv")
+    parser.add_argument(
+        "--csv",
+        default=None,
+        help=(
+            "Hourly HFC CSV to export. Defaults to the newest output/ch_hfc_hourly*.csv "
+            "with the expected hourly schema."
+        ),
+    )
     parser.add_argument("--forwards", default="data/eex_forwards_history.parquet")
     parser.add_argument("--spot", default="data/epex_hourly.parquet")
     parser.add_argument("--output-dir", default="powerbi/data")
     args = parser.parse_args(argv)
-    build_exports(Path(args.csv), Path(args.forwards), Path(args.spot), Path(args.output_dir))
+    csv_path = resolve_csv_path(args.csv)
+    build_exports(csv_path, Path(args.forwards), Path(args.spot), Path(args.output_dir))
+    print(f"[powerbi] source csv -> {csv_path}")
     print(f"[powerbi] exports -> {args.output_dir}")
     return 0
 
