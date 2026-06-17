@@ -33,10 +33,12 @@ Force a specific path:
       --yearly  "H:\\...\\Price_Report_EEX_Yearly.xlsx" `
       --history "H:\\...\\Price_Report_EEX_CH_DE_Hist.xlsx"
 
-Skip the Yearly file (history-only refresh) or vice versa:
+Partial rebuilds are allowed for diagnostics when writing to a temporary
+``--out-parquet``.  Overwriting the canonical repo parquet with only one source
+is blocked by default because it silently drops history or market coverage.
 
-    python scripts/rebuild_forwards_history.py --skip-yearly
-    python scripts/rebuild_forwards_history.py --skip-history
+    python scripts/rebuild_forwards_history.py --skip-yearly --out-parquet output/history_only.parquet
+    python scripts/rebuild_forwards_history.py --skip-history --out-parquet output/yearly_only.parquet
 """
 
 from __future__ import annotations
@@ -79,6 +81,33 @@ DEFAULT_OUT_PARQUET = REPO_ROOT / "data" / "eex_forwards_history.parquet"
 # Historique2019 carries only CH/DE on its real (non-empty) sheets.
 YEARLY_MARKETS = ["CH", "DE", "FR", "AT", "IT"]
 HISTORY_MARKETS = ["CH", "DE"]
+
+
+def _same_path(left: Path, right: Path) -> bool:
+    try:
+        return str(left.resolve()).casefold() == str(right.resolve()).casefold()
+    except OSError:
+        return str(left.absolute()).casefold() == str(right.absolute()).casefold()
+
+
+def _guard_partial_default_overwrite(
+    *,
+    skip_yearly: bool,
+    skip_history: bool,
+    out_parquet: Path,
+    allow_partial_overwrite: bool,
+) -> None:
+    if allow_partial_overwrite or not (skip_yearly or skip_history):
+        return
+    if not _same_path(out_parquet, DEFAULT_OUT_PARQUET):
+        return
+    skipped = "--skip-yearly" if skip_yearly else "--skip-history"
+    raise ValueError(
+        f"Refusing {skipped} overwrite of canonical {DEFAULT_OUT_PARQUET}. "
+        "A partial rebuild would drop either market coverage or historical depth. "
+        "Run without skip flags for the production cache, write partial diagnostics "
+        "to --out-parquet, or pass --allow-partial-overwrite explicitly."
+    )
 
 
 def _first_existing(paths: list[Path]) -> Path | None:
@@ -231,7 +260,22 @@ def main() -> int:
         default=DEFAULT_OUT_PARQUET,
         help=f"Destination Parquet (default: {DEFAULT_OUT_PARQUET}).",
     )
+    parser.add_argument(
+        "--allow-partial-overwrite",
+        action="store_true",
+        help=(
+            "Allow --skip-yearly/--skip-history to overwrite the canonical parquet. "
+            "Use only for intentional diagnostics with documented data loss."
+        ),
+    )
     args = parser.parse_args()
+
+    _guard_partial_default_overwrite(
+        skip_yearly=bool(args.skip_yearly),
+        skip_history=bool(args.skip_history),
+        out_parquet=args.out_parquet,
+        allow_partial_overwrite=bool(args.allow_partial_overwrite),
+    )
 
     yearly = None if args.skip_yearly else (args.yearly or _first_existing(DEFAULT_YEARLY_PATHS))
     history = None if args.skip_history else (args.history or _first_existing(DEFAULT_HISTORY_PATHS))

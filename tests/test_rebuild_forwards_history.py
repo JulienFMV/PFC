@@ -20,8 +20,10 @@ import pandas as pd
 import pytest
 
 from scripts.rebuild_forwards_history import (
+    DEFAULT_OUT_PARQUET,
     HISTORY_MARKETS,
     YEARLY_MARKETS,
+    _guard_partial_default_overwrite,
     rebuild,
 )
 
@@ -155,6 +157,25 @@ def test_rebuild_raises_when_both_skipped(tmp_path: Path) -> None:
     out = tmp_path / "no_input.parquet"
     with pytest.raises(ValueError, match="At least one"):
         rebuild(yearly=None, history=None, out_parquet=out)
+
+
+def test_guard_blocks_partial_rebuild_to_canonical_parquet() -> None:
+    with pytest.raises(ValueError, match="Refusing --skip-history overwrite"):
+        _guard_partial_default_overwrite(
+            skip_yearly=False,
+            skip_history=True,
+            out_parquet=DEFAULT_OUT_PARQUET,
+            allow_partial_overwrite=False,
+        )
+
+
+def test_guard_allows_partial_rebuild_to_temporary_parquet(tmp_path: Path) -> None:
+    _guard_partial_default_overwrite(
+        skip_yearly=False,
+        skip_history=True,
+        out_parquet=tmp_path / "yearly_only.parquet",
+        allow_partial_overwrite=False,
+    )
 
 
 def test_rebuild_handles_empty_neighbor_sheets(
