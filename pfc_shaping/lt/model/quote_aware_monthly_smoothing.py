@@ -68,6 +68,8 @@ def apply_quote_aware_monthly_smoothing(
         raise ValueError("max unquoted monthly delta must be finite and non-negative")
 
     out = hourly.copy()
+    if float(intensity) == 0.0 or float(smoothness_lambda) == 0.0 or float(max_unquoted_month_delta_eur_mwh) == 0.0:
+        return out, pd.DataFrame()
     if len(ts_ch) != len(out):
         raise ValueError(f"monthly smoothing timestamp length mismatch: {len(ts_ch)} != {len(out)}")
     ts = pd.Series(np.asarray(ts_ch), index=out.index)
@@ -95,12 +97,12 @@ def apply_quote_aware_monthly_smoothing(
 
     month_key = pd.Series(pd.PeriodIndex(ts.dt.strftime("%Y-%m"), freq="M"), index=out.index)
     weighted_before = out["price_weighted_mean_eur_mwh"].astype(float)
-    audit_rows: list[dict[str, object]] = []
+    audit_inputs: list[dict[str, object]] = []
     monthly_delta = pd.Series(0.0, index=pd.Index(sorted(month_key.unique()), name="month"), dtype=float)
-    row_delta = pd.Series(0.0, index=out.index, dtype=float)
     direct_month_quotes = {str(key) for key in base_forward_prices if _is_month_product(str(key))}
     if peak_forward_prices:
         direct_month_quotes.update(str(key) for key in peak_forward_prices if _is_month_product(str(key)))
+    fixed_months_all = {month for month in monthly_delta.index if str(month) in direct_month_quotes}
 
     years = sorted(int(year) for year in ts.dt.year.dropna().unique())
     for year in years:
@@ -158,24 +160,46 @@ def apply_quote_aware_monthly_smoothing(
             monthly_delta.loc[month] += float(delta[pos])
 
         fixed_months = {month for month in months if str(month) in direct_month_quotes}
-        year_step_delta = pd.Series(
-            [float(delta[months.get_loc(month)]) for month in month_key.loc[year_idx]],
-            index=year_idx,
-            dtype=float,
-        )
         peak_in_year = year_idx.intersection(peak_buckets.index) if not peak_buckets.empty else pd.Index([])
-        year_peak_buckets = peak_buckets.loc[peak_in_year] if len(peak_in_year) else None
-        year_row_delta = _continuous_projected_row_delta(
-            ts=ts.loc[year_idx],
-            month_key=month_key.loc[year_idx],
-            monthly_delta=pd.Series(delta, index=months, dtype=float),
-            step_delta=year_step_delta,
-            fixed_months=fixed_months,
-            base_buckets=base_buckets.loc[year_idx],
-            peak_buckets=year_peak_buckets,
+        audit_inputs.append(
+            {
+                "year": year,
+                "year_idx": year_idx,
+                "months": months,
+                "old_means": old_means,
+                "delta": delta,
+                "base_bucket_by_month": base_bucket_by_month,
+                "base_constraint_residual_mwh": float(residual[0]),
+                "max_peak_constraint_residual_mwh": max_peak_residual,
+                "max_constraint_residual_mwh": max_residual,
+                "peak_in_year": peak_in_year,
+                "fixed_months": fixed_months,
+            }
         )
-        row_delta.loc[year_idx] = year_row_delta
 
+    if float(np.abs(monthly_delta).sum()) <= 1e-12:
+        row_delta = pd.Series(0.0, index=out.index, dtype=float)
+    else:
+        step_delta = pd.Series([float(monthly_delta.loc[month]) for month in month_key], index=out.index, dtype=float)
+        row_delta = _continuous_projected_row_delta(
+            ts=ts,
+            month_key=month_key,
+            monthly_delta=monthly_delta,
+            step_delta=step_delta,
+            fixed_months=fixed_months_all,
+            base_buckets=base_buckets,
+            peak_buckets=peak_buckets if not peak_buckets.empty else None,
+        )
+
+    audit_rows: list[dict[str, object]] = []
+    for info in audit_inputs:
+        year = int(info["year"])
+        year_idx = pd.Index(info["year_idx"])
+        months = pd.Index(info["months"])
+        old_means = np.asarray(info["old_means"], dtype=float)
+        delta = np.asarray(info["delta"], dtype=float)
+        peak_in_year = pd.Index(info["peak_in_year"])
+        year_row_delta = row_delta.loc[year_idx]
         actual_month_delta = year_row_delta.groupby(month_key.loc[year_idx]).mean()
         base_projected_residuals = _bucket_sum_residuals(year_row_delta, base_buckets.loc[year_idx])
         peak_projected_residuals = (
@@ -193,6 +217,7 @@ def apply_quote_aware_monthly_smoothing(
         if max_projected_residual > 1e-7:
             raise ValueError(f"monthly smoothing projected residual too large for {year}: {max_projected_residual}")
 
+        base_bucket_by_month = dict(info["base_bucket_by_month"])
         for pos, month in enumerate(months):
             applied_delta = float(actual_month_delta.get(month, 0.0))
             audit_rows.append(
@@ -205,9 +230,9 @@ def apply_quote_aware_monthly_smoothing(
                     "target_delta_eur_mwh": float(delta[pos]),
                     "delta_eur_mwh": applied_delta,
                     "mean_after_eur_mwh": float(old_means[pos] + applied_delta),
-                    "base_constraint_residual_mwh": float(residual[0]),
-                    "max_peak_constraint_residual_mwh": max_peak_residual,
-                    "max_constraint_residual_mwh": max_residual,
+                    "base_constraint_residual_mwh": float(info["base_constraint_residual_mwh"]),
+                    "max_peak_constraint_residual_mwh": float(info["max_peak_constraint_residual_mwh"]),
+                    "max_constraint_residual_mwh": float(info["max_constraint_residual_mwh"]),
                     "max_projected_base_residual_mwh": max_projected_base_residual,
                     "max_projected_peak_residual_mwh": max_projected_peak_residual,
                     "max_projected_constraint_residual_mwh": max_projected_residual,

@@ -126,6 +126,66 @@ def test_quote_aware_monthly_smoothing_reduces_month_boundary_jumps() -> None:
     assert audit["max_projected_constraint_residual_mwh"].abs().max() < 1e-7
 
 
+def test_quote_aware_monthly_smoothing_reduces_inter_year_delta_jump() -> None:
+    timestamps = pd.date_range("2028-01-01", "2029-12-31 23:00", freq="h", tz="Europe/Zurich")
+    hourly = _hourly_frame(
+        timestamps,
+        {1: 120.0, 2: 100.0, 3: 80.0, 4: 60.0, 5: 50.0, 6: 45.0, 7: 55.0, 8: 60.0, 9: 75.0, 10: 90.0, 11: 110.0, 12: 115.0},
+    )
+    year_2029 = timestamps.year == 2029
+    value_cols = [
+        "price_slow_eur_mwh",
+        "price_central_eur_mwh",
+        "price_fast_eur_mwh",
+        "price_weighted_mean_eur_mwh",
+        "structural_p10_eur_mwh",
+        "structural_p50_eur_mwh",
+        "structural_p90_eur_mwh",
+    ]
+    hourly.loc[year_2029, value_cols] = hourly.loc[year_2029, value_cols] - 10.0
+    peak = _eex_peak_mask(pd.Series(timestamps))
+    base_targets = {
+        "2028": float(hourly.loc[timestamps.year == 2028, "price_weighted_mean_eur_mwh"].mean()),
+        "2029": float(hourly.loc[timestamps.year == 2029, "price_weighted_mean_eur_mwh"].mean()),
+    }
+    peak_targets = {
+        "2028": float(hourly.loc[(timestamps.year == 2028) & peak.to_numpy(), "price_weighted_mean_eur_mwh"].mean()),
+        "2029": float(hourly.loc[(timestamps.year == 2029) & peak.to_numpy(), "price_weighted_mean_eur_mwh"].mean()),
+    }
+
+    smoothed, audit = apply_quote_aware_monthly_smoothing(
+        hourly,
+        ts_ch=pd.Series(timestamps),
+        base_forward_prices=base_targets,
+        peak_forward_prices=peak_targets,
+        peak_mask=peak,
+        weights={"slow": 0.25, "central": 0.5, "fast": 0.25},
+        intensity=1.0,
+        smoothness_lambda=25.0,
+        negative_price_floor=-30.0,
+    )
+    target_delta = audit.set_index(["year", "month"])["target_delta_eur_mwh"].to_dict()
+    stepped_delta = pd.Series(
+        [float(target_delta[(int(ts.year), int(ts.month))]) for ts in timestamps],
+        index=hourly.index,
+        dtype=float,
+    )
+    smoothed_delta = smoothed["price_weighted_mean_eur_mwh"] - hourly["price_weighted_mean_eur_mwh"]
+    year_boundary_pos = int(np.flatnonzero((timestamps.year == 2029) & (timestamps.month == 1))[0])
+
+    stepped_jump = abs(float(stepped_delta.iloc[year_boundary_pos] - stepped_delta.iloc[year_boundary_pos - 1]))
+    smoothed_jump = abs(float(smoothed_delta.iloc[year_boundary_pos] - smoothed_delta.iloc[year_boundary_pos - 1]))
+
+    assert smoothed_jump < stepped_jump * 0.10
+    assert smoothed["price_weighted_mean_eur_mwh"].groupby(timestamps.year).mean().loc[2028] == pytest.approx(
+        base_targets["2028"], abs=1e-6
+    )
+    assert smoothed["price_weighted_mean_eur_mwh"].groupby(timestamps.year).mean().loc[2029] == pytest.approx(
+        base_targets["2029"], abs=1e-6
+    )
+    assert audit["max_projected_constraint_residual_mwh"].abs().max() < 1e-7
+
+
 @pytest.mark.parametrize(
     ("intensity", "smoothness_lambda", "max_delta"),
     [
@@ -156,16 +216,8 @@ def test_quote_aware_monthly_smoothing_zero_controls_are_noop(
         negative_price_floor=-30.0,
     )
 
-    for column in [
-        "price_slow_eur_mwh",
-        "price_central_eur_mwh",
-        "price_fast_eur_mwh",
-        "price_weighted_mean_eur_mwh",
-    ]:
-        pd.testing.assert_series_equal(smoothed[column], hourly[column], check_names=False)
-    if not audit.empty:
-        assert audit["target_delta_eur_mwh"].abs().max() == pytest.approx(0.0)
-        assert audit["delta_eur_mwh"].abs().max() == pytest.approx(0.0)
+    pd.testing.assert_frame_equal(smoothed, hourly)
+    assert audit.empty
 
 
 def test_quote_aware_monthly_smoothing_keeps_direct_month_quotes_unchanged() -> None:
