@@ -64,6 +64,15 @@ _BASELINE_5BISA_PATH = FIXTURES_DIR / "baseline_pfc_seed42.parquet"
 _FORWARDS_PHASE05_PATH = FIXTURES_DIR / "forwards_phase05_seed42.parquet"
 
 
+def _normalize_datetime_index_unit(frame: pd.DataFrame) -> pd.DataFrame:
+    """Normalize pandas 3 ``datetime64[us]`` indexes to fixture-stable ``ns``."""
+    if not isinstance(frame.index, pd.DatetimeIndex) or not hasattr(frame.index, "as_unit"):
+        return frame
+    out = frame.copy()
+    out.index = frame.index.as_unit("ns")
+    return out
+
+
 def _make_idx_year(year: int, tz: str = "UTC") -> pd.DatetimeIndex:
     """Return a 15-min UTC DatetimeIndex covering the full calendar year."""
     return pd.date_range(
@@ -1077,7 +1086,7 @@ def test_phase05_baseline_regression():
     from tests.fixtures._generate_phase05_fixture import build_phase05_baseline_pfc
     import os
 
-    baseline = pd.read_parquet(str(_PHASE05_BASELINE_PATH))
+    baseline = _normalize_datetime_index_unit(pd.read_parquet(str(_PHASE05_BASELINE_PATH)))
 
     # Build with same env vars as the committed baseline
     saved = {}
@@ -1086,7 +1095,7 @@ def test_phase05_baseline_regression():
     os.environ["PFC_LT_USE_SEASONAL_HOURLY_SHAPE"] = "1"
     os.environ["PFC_LT_ALLOW_NEGATIVE_PRICES"] = "1"
     try:
-        rebuilt = build_phase05_baseline_pfc(seed=42)
+        rebuilt = _normalize_datetime_index_unit(build_phase05_baseline_pfc(seed=42))
     finally:
         for var, val in saved.items():
             if val is None:
@@ -1140,7 +1149,7 @@ def test_phase05_baseline_5bisA_via_enforce_true():
     import random
     from tests.fixtures._generate_baseline import build_pfc
 
-    baseline_5bisA = pd.read_parquet(str(_BASELINE_5BISA_PATH))
+    baseline_5bisA = _normalize_datetime_index_unit(pd.read_parquet(str(_BASELINE_5BISA_PATH)))
 
     # Ensure PFC_LT_ALLOW_NEGATIVE_PRICES=0 for rollback audit-trail
     saved_flag = os.environ.get("PFC_LT_ALLOW_NEGATIVE_PRICES")
@@ -1202,7 +1211,7 @@ def test_phase05_baseline_5bisA_via_enforce_true():
     # assembler's 14 columns. Compare only the common columns (drop delta_wv for this
     # comparison — it is 0.0 on the enforce_floor=True legacy path anyway).
     common_cols = [c for c in baseline_5bisA.columns if c in rebuilt.columns]
-    rebuilt_common = rebuilt[common_cols]
+    rebuilt_common = _normalize_datetime_index_unit(rebuilt[common_cols])
     try:
         pd.testing.assert_frame_equal(
             rebuilt_common,
