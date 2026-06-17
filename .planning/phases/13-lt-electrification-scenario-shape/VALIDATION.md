@@ -41,6 +41,21 @@ versioned `data/electrification_scenarios.parquet` or explicit scenario path.
 Set `require_electrification_scenarios=True` on `PFCAssembler`, or use the
 inventory validator script, when missing scenario data must fail the run.
 
+## 2026-06-17 Production Status Clarification
+
+The local-test CH PFC runs and slow/central/fast bracket diagnostics below are
+not a production approval. They validate local mechanics and governance gates
+only. The current candidate inventory still contains proxy, partial, internal,
+or neutralized flags in the audited paths, so governed production remains
+blocked until an approved production inventory replaces those rows.
+
+Strict production gates remain the source of truth:
+`assert_production_scenario_inventory`, `require_production_scenario_data`, and
+the governance validator reject proxy, partial, internal-midpoint, neutralized,
+or incomplete country/scenario/year coverage. A local-test gate passing must not
+be interpreted as permission to enable `enable_electrification_shape` in
+production.
+
 ## Commands Run
 
 ```powershell
@@ -275,15 +290,18 @@ structural 2027/2030 uplift because no official scenario inventory is loaded.
 * local-day mean of `f_H` is preserved to `< 1e-12`.
 * signed `f_H` values keep their sign under modulation.
 * DST short-day input means are preserved rather than forced to 1.0.
-* weighted structural fan chart quantiles are ordered and weighted mean is correct.
+* structural scenario bracket low/central/high is ordered and weighted mean is
+  correct; the bracket is not labelled as calibrated p10/p50/p90 probability
+  quantiles.
 * 2030 slow/central/fast scenario divergence is wider than 2027 on the targeted
   midday block in a controlled fixture.
 * enriched OFEN `WWB` and `ZERO_Basis` rows are mapped to governed
   `slow/central/fast` without silent zero filling; `central` is explicitly marked
   as an internal midpoint.
 * multi-scenario fan chart output contains `curve_slow`, `curve_central`,
-  `curve_fast`, `weighted_mean`, `structural_p10`, `structural_p50`,
-  `structural_p90`, and ordered structural width.
+  `curve_fast`, `weighted_mean`, `structural_scenario_low`,
+  `structural_scenario_central`, `structural_scenario_high`, and ordered
+  structural scenario spread.
 * canonical Phase 13 model paths can be materialized locally from the governed
   proxy inventory and validated strictly before use.
 * final-production gate rejects local proxy/internal scenario rows and missing

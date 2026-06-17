@@ -522,15 +522,17 @@ def structural_fan_chart(
     scenario_curves: Mapping[str, pd.Series],
     *,
     weights: Mapping[str, float] | None = None,
-    quantiles: Sequence[float] = (0.10, 0.50, 0.90),
 ) -> pd.DataFrame:
-    """Build a weighted structural fan chart from scenario-specific curves.
+    """Build an honest structural scenario bracket from scenario-specific curves.
 
     Returns a DataFrame indexed like the input curves with:
 
     * `weighted_mean`
-    * one `qXX` column per requested quantile
-    * `structural_width`, defined as q90-q10 when both are requested
+    * `scenario_low`, `scenario_central`, `scenario_high`
+    * `scenario_spread`, defined as high-low
+
+    The slow/central/fast scenario set is a governed bracket, not a calibrated
+    probability distribution. Do not label these three points as p10/p50/p90.
     """
     if not scenario_curves:
         raise ValueError("scenario_curves must contain at least one scenario")
@@ -545,13 +547,13 @@ def structural_fan_chart(
 
     out = pd.DataFrame(index=first_index)
     out["weighted_mean"] = matrix @ w
-    for q in quantiles:
-        if q < 0.0 or q > 1.0:
-            raise ValueError(f"quantile must be in [0, 1], got {q!r}")
-        col = f"q{int(round(q * 100)):02d}"
-        out[col] = [_weighted_quantile(row, w, float(q)) for row in matrix]
-    if "q10" in out and "q90" in out:
-        out["structural_width"] = out["q90"] - out["q10"]
+    out["scenario_low"] = np.nanmin(matrix, axis=1)
+    if "central" in scenario_curves:
+        out["scenario_central"] = scenario_curves["central"].to_numpy(dtype=float)
+    else:
+        out["scenario_central"] = out["weighted_mean"]
+    out["scenario_high"] = np.nanmax(matrix, axis=1)
+    out["scenario_spread"] = out["scenario_high"] - out["scenario_low"]
     return out
 
 

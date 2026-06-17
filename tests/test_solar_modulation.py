@@ -31,6 +31,8 @@ from pfc_shaping.lt.model.solar_modulation import (
     SolarPenetrationFeature,
     DEFAULT_ENTSO_PATH,
     DEFAULT_EPEX_PATH,
+    SOLAR_MODULATION_EXPERIMENTAL,
+    SOLAR_MODULATION_PRODUCTION_DEFAULT,
 )
 
 _REPO = Path(__file__).resolve().parents[1]
@@ -191,8 +193,11 @@ def test_solar_modulate_none_vintage_passthrough(synthetic_year):
 # --------------------------------------------------------------------------- #
 @requires_epex
 def test_fit_coefficient_signs():
-    """Summer midday beta is negative (bowl deepens with solar) and dominates night."""
+    """Real-data beta diagnostics explain why solar modulation remains gated off."""
     from pfc_shaping.lt.model.shape_hourly import ShapeHourly
+
+    assert SOLAR_MODULATION_EXPERIMENTAL is True
+    assert SOLAR_MODULATION_PRODUCTION_DEFAULT is False
 
     epex = pd.read_parquet(_EPEX)
     epex = epex.rename(columns={epex.columns[0]: "price_eur_mwh"})
@@ -205,14 +210,45 @@ def test_fit_coefficient_signs():
     b_mid = corr.beta_for("Ete", "Ouvrable", 12)
     b_night = corr.beta_for("Ete", "Ouvrable", 3)
     assert b_mid < 0.0
-    assert abs(b_night) < abs(b_mid)
+    assert b_mid == pytest.approx(-0.22941175107181738)
+    assert b_night == pytest.approx(0.23406562575625295)
+    assert abs(b_night) >= abs(b_mid)
 
 
 # --------------------------------------------------------------------------- #
 # End-to-end on the best Cal-2025 vintage
 # --------------------------------------------------------------------------- #
 @requires_fwds
-def test_end_to_end_bowl_and_spread_move_toward_realized():
+def test_flag_off_explicit_is_byte_identical_to_default_sota(monkeypatch):
+    from pfc_shaping.lt.model.assembler import PFCAssembler
+    from pfc_shaping.validation.perfect_foresight import build_curve
+    from pfc_shaping.validation.scorecard import list_vintages_2024_2025
+
+    target = 2025
+    config = "bowl_on_floors_off"
+    epex = pd.read_parquet(_EPEX)["price_eur_mwh"]
+    best = max(
+        [v for v in list_vintages_2024_2025() if v.year < target],
+        key=lambda v: (epex[epex.index < v].index.max() - epex[epex.index < v].index.min()).days,
+    )
+    anchors = {str(target): float(epex[epex.index.year == target].mean())}
+
+    default_curve = build_curve(config, best, epex, anchors, estimator="sota")
+
+    original_init = PFCAssembler.__init__
+
+    def explicit_off_init(self, *args, _orig=original_init, **kwargs):
+        kwargs.setdefault("enable_solar_modulation", False)
+        _orig(self, *args, **kwargs)
+
+    monkeypatch.setattr(PFCAssembler, "__init__", explicit_off_init)
+    explicit_off_curve = build_curve(config, best, epex, anchors, estimator="sota")
+
+    pd.testing.assert_series_equal(default_curve, explicit_off_curve, check_exact=True)
+
+
+@requires_fwds
+def test_end_to_end_flag_on_diagnostic_justifies_gate_off():
     from pfc_shaping.validation.perfect_foresight import build_curve, ch_physical_subkpis
     from pfc_shaping.validation.scorecard import list_vintages_2024_2025
 
@@ -230,17 +266,23 @@ def test_end_to_end_bowl_and_spread_move_toward_realized():
     ks = ch_physical_subkpis(c_sota, epex, target)
     kx = ch_physical_subkpis(c_solar, epex, target)
 
+    assert SOLAR_MODULATION_EXPERIMENTAL is True
+    assert SOLAR_MODULATION_PRODUCTION_DEFAULT is False
+
     bd_real = ks["solar_bowl_depth"]["realized"]
-    # Bowl deepens toward realized.
-    assert kx["solar_bowl_depth"]["model"] > ks["solar_bowl_depth"]["model"]
-    assert abs(kx["solar_bowl_depth"]["model"] - bd_real) < abs(
+    # Flag-ON currently attenuates the bowl and moves away from realized.
+    assert ks["solar_bowl_depth"]["model"] == pytest.approx(0.4489976894015696)
+    assert kx["solar_bowl_depth"]["model"] == pytest.approx(0.4368587661387824)
+    assert bd_real == pytest.approx(0.5577099885126977)
+    assert kx["solar_bowl_depth"]["model"] < ks["solar_bowl_depth"]["model"]
+    assert abs(kx["solar_bowl_depth"]["model"] - bd_real) > abs(
         ks["solar_bowl_depth"]["model"] - bd_real
     )
-    # Peak/off-peak spread moves toward realized.
+    # Peak/off-peak spread also moves slightly away from realized.
     sp_real = ks["peak_offpeak_spread"]["realized"]
-    assert abs(kx["peak_offpeak_spread"]["model"] - sp_real) <= abs(
+    assert abs(kx["peak_offpeak_spread"]["model"] - sp_real) > abs(
         ks["peak_offpeak_spread"]["model"] - sp_real
-    ) + 1e-9
+    )
 
 
 @requires_fwds

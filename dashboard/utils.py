@@ -774,7 +774,7 @@ def load_model_quality() -> dict[str, float] | None:
     if not eval_path.exists():
         return None
     try:
-        lines = eval_path.read_text().strip().splitlines()
+        lines = eval_path.read_text(encoding="utf-8").strip().splitlines()
         metrics: dict[str, float] = {}
         in_block = False
         for line in lines:

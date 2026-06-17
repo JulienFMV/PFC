@@ -197,7 +197,7 @@ def check_quality_gates() -> bool:
     logger.info("=" * 60)
 
     cfg_path = ROOT / "pfc_shaping" / "config.yaml"
-    with cfg_path.open() as f:
+    with cfg_path.open(encoding="utf-8") as f:
         config = yaml.safe_load(f)
 
     quality = config.get("quality", {})

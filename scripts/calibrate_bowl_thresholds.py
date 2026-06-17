@@ -313,7 +313,10 @@ def main() -> None:
     }
 
     # Write to REPORT_PATH (sort_keys=True + trailing newline for git-friendly stable diffs)
-    REPORT_PATH.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
+    REPORT_PATH.write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
 
     print(
         f"Wave 0 calibrated: ratio={ratio:.4f}, sc1_threshold={sc1_threshold:.4f}, "

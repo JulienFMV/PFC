@@ -89,7 +89,7 @@ _BASELINE_BOWL = _FIXTURE_DIR / "baseline_pfc_seed42_bowl.parquet"  # generated 
 # Loaded from committed _bowl_calibration_report.json (NOT in-comment values).
 # ---------------------------------------------------------------------------
 _CALIBRATION_REPORT_PATH = _FIXTURE_DIR / "_bowl_calibration_report.json"
-_calibration_report = json.loads(_CALIBRATION_REPORT_PATH.read_text())
+_calibration_report = json.loads(_CALIBRATION_REPORT_PATH.read_text(encoding="utf-8"))
 
 # SC1_PTP_THRESHOLD: minimum ratio np.ptp(factors_on) / np.ptp(factors_off) required
 # to pass SC #1 (Plan 05C-01 Lever-1-only gain). Plan 05C-03 Task 3 re-runs calibration

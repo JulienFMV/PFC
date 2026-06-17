@@ -66,6 +66,8 @@ __all__ = [
     "DEFAULT_ENTSO_PATH",
     "DEFAULT_EPEX_PATH",
     "DEFAULT_RIDGE_LAMBDA",
+    "SOLAR_MODULATION_EXPERIMENTAL",
+    "SOLAR_MODULATION_PRODUCTION_DEFAULT",
 ]
 
 # Repo root: pfc_shaping/lt/model/solar_modulation.py -> parents[3] == repo root.
@@ -95,6 +97,11 @@ for _h in range(24):
 # modest absolute floor added to the design Gram scalar, which mainly damps
 # blocks/cells with little penetration spread (e.g. NIGHT) towards beta = 0.
 DEFAULT_RIDGE_LAMBDA = 1e-3
+
+# The empirical estimator is kept available for diagnostics/A-B work, but the
+# real-data audit showed that it currently degrades the Cal-2025 bowl metric.
+SOLAR_MODULATION_EXPERIMENTAL = True
+SOLAR_MODULATION_PRODUCTION_DEFAULT = False
 
 # Weekend / holiday day-types collapse to a single "Weekend" response group for
 # beta pooling (research §2 temporal_treatment: the sun does not know the

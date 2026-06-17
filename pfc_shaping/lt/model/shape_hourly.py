@@ -526,11 +526,10 @@ class ShapeHourly:
         if self.trend_per_hour_:
             idx_zh = timestamps.tz_convert("Europe/Zurich")
             day_key = pd.Index([f"{t.year}-{t.month:02d}-{t.day:02d}" for t in idx_zh])
+            result = result.clip(lower=0.4, upper=2.0)
             daily_mean = result.groupby(day_key).transform("mean")
             daily_mean = daily_mean.replace(0, 1.0)
             result = result / daily_mean
-            # Re-clip after normalization
-            result = result.clip(lower=0.4, upper=2.0)
 
         if result.isna().any():
             fallback = np.ones(24) if self.global_factors_ is None else self.global_factors_

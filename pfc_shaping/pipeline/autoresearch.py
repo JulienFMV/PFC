@@ -589,14 +589,14 @@ class AutoResearchLoop:
             },
             "history": self.history[-100:],  # Keep last 100 iterations
         }
-        self.state_path.write_text(json.dumps(state, indent=2, default=str))
+        self.state_path.write_text(json.dumps(state, indent=2, default=str), encoding="utf-8")
         logger.info("Autoresearch state saved: %s", self.state_path)
 
     def load_state(self) -> None:
         """Load agent state from JSON."""
         if not self.state_path or not self.state_path.exists():
             return
-        state = json.loads(self.state_path.read_text())
+        state = json.loads(self.state_path.read_text(encoding="utf-8"))
         for name, agent_state in state.get("agents", {}).items():
             if name in self.agents:
                 self.agents[name].params.values.update(agent_state["params"])

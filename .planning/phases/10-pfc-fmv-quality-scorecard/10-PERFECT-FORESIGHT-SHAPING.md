@@ -368,7 +368,10 @@ require touching the arbitrage-free level machinery.
 
 **Status**: implemented 2026-05-30 on `claude/clean-lt-ct-integration`,
 consuming the research specs in
-`solar_research/{method_research,data_probe}.json`.
+`solar_research/{method_research,data_probe}.json`. Re-audited 2026-06-17:
+the layer is **EXPERIMENTAL** and remains **OFF on the production path**. The
+current empirical estimator degrades the realized Cal-2025 bowl on the live
+dataset and must be recalibrated before any production enablement.
 
 ### What
 
@@ -419,6 +422,17 @@ re-normalised per local calendar day so `mean_h f_H_adj = 1` is preserved (the
   EPEX/forwards-dependent end-to-end tests).
 
 ### Verification status
+
+**2026-06-17 audit update (supersedes the synthetic-only direction claim below):**
+with `data/epex_hourly.parquet` bootstrapped on the FMV workstation, the real
+Cal-2025 flag-ON diagnostic is negative. Summer weekday `beta_mid=-0.2294117511`
+but `beta_night=+0.2340656258`, so `|night| >= |midday|`. Best-vintage
+solar-bowl depth moves away from realized: SOTA `0.4489976894`,
+SOTA+solar `0.4368587661`, realized `0.5577099885`; peak/offpeak spread also
+moves slightly away from realized. A runtime check with NIGHT betas forced to
+zero and uncapped projection still produced bowl `0.4388501999`. Therefore
+`enable_solar_modulation=False` remains the production setting; `sota_solar` is
+diagnostic/experimental only until recalibrated.
 
 > **Data caveat.** This session ran in a fresh clone where the only market data
 > present is `pfc_shaping/data/entso_15min.parquet`. The realized EPEX history

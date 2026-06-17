@@ -76,6 +76,35 @@ def _minimal_fitted_sh(
     return sh
 
 
+def test_shape_hourly_apply_clip_then_renormalizes_local_day_mean():
+    """A clipped trend day still has mean_h(f_H)=1 after apply()."""
+    from pfc_shaping.data.calendar_ch import enrich_15min_index
+
+    sh = ShapeHourly()
+    sh.factors_[("Hiver", "Ouvrable")] = np.ones(24)
+    sh.trend_per_hour_[("Hiver", "Ouvrable")] = np.array([10.0] * 12 + [-10.0] * 12)
+
+    timestamps = pd.date_range(
+        "2025-01-14 23:00",
+        periods=24,
+        freq="h",
+        tz="UTC",
+    )
+    calendar = enrich_15min_index(timestamps)
+    calendar["saison"] = "Hiver"
+    calendar["type_jour"] = "Ouvrable"
+
+    result = sh.apply(
+        timestamps,
+        calendar,
+        reference_date=pd.Timestamp("2024-01-15", tz="UTC"),
+    )
+
+    assert result.max() > 1.5
+    assert result.min() < 0.4
+    assert abs(float(result.mean()) - 1.0) < 1e-12
+
+
 # ===========================================================================
 # Task 1: save() sidecar tests
 # ===========================================================================
@@ -1080,7 +1109,7 @@ class TestAssemblerNoTryExceptTypeError:
         """The try/except TypeError pattern around self.sh.apply is gone from assembler.py."""
         import ast
         import pathlib
-        src = pathlib.Path("pfc_shaping/lt/model/assembler.py").read_text()
+        src = pathlib.Path("pfc_shaping/lt/model/assembler.py").read_text(encoding="utf-8")
         tree = ast.parse(src)
 
         # Walk AST and collect all ExceptHandler nodes that catch TypeError

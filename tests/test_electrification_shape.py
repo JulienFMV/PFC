@@ -373,7 +373,7 @@ def test_managed_charging_reduces_ev_evening_uplift():
     assert _block_means(managed_out, cal)["evening"] < _block_means(unmanaged_out, cal)["evening"]
 
 
-def test_structural_fan_chart_weighted_quantiles_are_ordered():
+def test_structural_fan_chart_scenario_bracket_is_ordered():
     idx = pd.date_range("2030-01-01", periods=3, freq="1h", tz="UTC")
     curves = {
         "slow": pd.Series([1.0, 2.0, 3.0], index=idx),
@@ -383,9 +383,15 @@ def test_structural_fan_chart_weighted_quantiles_are_ordered():
 
     fan = structural_fan_chart(curves, weights={"slow": 0.25, "central": 0.5, "fast": 0.25})
 
-    assert list(fan.columns) == ["weighted_mean", "q10", "q50", "q90", "structural_width"]
-    assert np.all(fan["q10"] <= fan["q50"])
-    assert np.all(fan["q50"] <= fan["q90"])
+    assert list(fan.columns) == [
+        "weighted_mean",
+        "scenario_low",
+        "scenario_central",
+        "scenario_high",
+        "scenario_spread",
+    ]
+    assert np.all(fan["scenario_low"] <= fan["scenario_central"])
+    assert np.all(fan["scenario_central"] <= fan["scenario_high"])
     assert float(fan["weighted_mean"].iloc[0]) == pytest.approx(2.25)
 
 
@@ -419,8 +425,8 @@ def test_scenario_divergence_widens_from_2027_to_2030():
     h_2030 = cal_2030["heure_hce"].astype(int)
     midday_2027 = (h_2027 >= 10) & (h_2027 <= 15)
     midday_2030 = (h_2030 >= 10) & (h_2030 <= 15)
-    assert float(fan_2030.loc[midday_2030.to_numpy(), "structural_width"].mean()) > float(
-        fan_2027.loc[midday_2027.to_numpy(), "structural_width"].mean()
+    assert float(fan_2030.loc[midday_2030.to_numpy(), "scenario_spread"].mean()) > float(
+        fan_2027.loc[midday_2027.to_numpy(), "scenario_spread"].mean()
     )
     assert idx_2027.tz is not None
     assert idx_2030.tz is not None

@@ -104,12 +104,12 @@ def test_build_weighted_fan_chart_writes_ordered_structural_columns():
         "curve_central",
         "curve_fast",
         "weighted_mean",
-        "structural_p10",
-        "structural_p50",
-        "structural_p90",
-        "structural_width",
+        "structural_scenario_low",
+        "structural_scenario_central",
+        "structural_scenario_high",
+        "structural_scenario_spread",
     ]
     assert float(fan["weighted_mean"].iloc[0]) == pytest.approx(65.0)
-    assert np.all(fan["structural_p10"] <= fan["structural_p50"])
-    assert np.all(fan["structural_p50"] <= fan["structural_p90"])
-    assert float(fan["structural_width"].mean()) > 0.0
+    assert np.all(fan["structural_scenario_low"] <= fan["structural_scenario_central"])
+    assert np.all(fan["structural_scenario_central"] <= fan["structural_scenario_high"])
+    assert float(fan["structural_scenario_spread"].mean()) > 0.0

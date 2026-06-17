@@ -282,13 +282,17 @@ def build_weighted_fan_chart(
     for label, frame in pfc_by_scenario.items():
         out[f"curve_{label}"] = frame["price_shape"].astype(float)
     out["weighted_mean"] = fan["weighted_mean"]
-    out["structural_p10"] = fan["q10"]
-    out["structural_p50"] = fan["q50"]
-    out["structural_p90"] = fan["q90"]
-    out["structural_width"] = fan["structural_width"]
-    bad = out["structural_p10"].notna() & out["structural_p90"].notna() & (out["structural_p10"] > out["structural_p90"])
+    out["structural_scenario_low"] = fan["scenario_low"]
+    out["structural_scenario_central"] = fan["scenario_central"]
+    out["structural_scenario_high"] = fan["scenario_high"]
+    out["structural_scenario_spread"] = fan["scenario_spread"]
+    bad = (
+        out["structural_scenario_low"].notna()
+        & out["structural_scenario_high"].notna()
+        & (out["structural_scenario_low"] > out["structural_scenario_high"])
+    )
     if bad.any():
-        raise ValueError("structural fan chart violates p10 <= p90")
+        raise ValueError("structural scenario bracket violates low <= high")
     if not np.isfinite(out.to_numpy(dtype=float)).all():
         raise ValueError("structural fan chart contains non-finite values")
     return out
@@ -373,11 +377,11 @@ def _write_summary(
             {
                 "rows": len(fan),
                 "weighted_mean": float(fan["weighted_mean"].mean()),
-                "structural_p10_mean": float(fan["structural_p10"].mean()),
-                "structural_p90_mean": float(fan["structural_p90"].mean()),
-                "structural_width_mean": float(fan["structural_width"].mean()),
-                "structural_width_p95": float(fan["structural_width"].quantile(0.95)),
-                "max_width": float(fan["structural_width"].max()),
+                "scenario_low_mean": float(fan["structural_scenario_low"].mean()),
+                "scenario_high_mean": float(fan["structural_scenario_high"].mean()),
+                "scenario_spread_mean": float(fan["structural_scenario_spread"].mean()),
+                "scenario_spread_p95": float(fan["structural_scenario_spread"].quantile(0.95)),
+                "max_scenario_spread": float(fan["structural_scenario_spread"].max()),
             }
         ]
     )
@@ -527,7 +531,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[multi-pfc] {scenario} -> {path}")
     print(f"[multi-pfc] fan chart -> {fan_chart_path}")
     print(f"[multi-pfc] summary -> {args.summary}")
-    print(f"[multi-pfc] weighted_mean={fan['weighted_mean'].mean():.2f} width_mean={fan['structural_width'].mean():.2f}")
+    print(
+        f"[multi-pfc] weighted_mean={fan['weighted_mean'].mean():.2f} "
+        f"scenario_spread_mean={fan['structural_scenario_spread'].mean():.2f}"
+    )
     return 0
 
 

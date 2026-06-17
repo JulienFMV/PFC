@@ -62,7 +62,7 @@ def test_expand_inventory_clamps_single_year_for_local_test(tmp_path):
     assert expanded.loc[expanded["delivery_year"] == 2031, "quality_flag"].str.contains("interpolated").all()
 
 
-def test_build_fan_has_ordered_quantiles():
+def test_build_fan_has_ordered_scenario_bracket():
     index = pd.date_range("2030-01-01", periods=2, freq="15min", tz="UTC")
     curves = {
         "slow": pd.DataFrame({"price_shape": [40.0, 42.0]}, index=index),
@@ -72,6 +72,6 @@ def test_build_fan_has_ordered_quantiles():
 
     fan = _build_fan(curves, {"slow": 0.25, "central": 0.5, "fast": 0.25})
 
-    assert (fan["structural_p10"] <= fan["structural_p50"]).all()
-    assert (fan["structural_p50"] <= fan["structural_p90"]).all()
-    assert (fan["structural_width"] > 0).all()
+    assert (fan["structural_scenario_low"] <= fan["structural_scenario_central"]).all()
+    assert (fan["structural_scenario_central"] <= fan["structural_scenario_high"]).all()
+    assert (fan["structural_scenario_spread"] > 0).all()

@@ -31,7 +31,7 @@ def run_eval(shape_hourly_cls, label: str, **kwargs):
 
     epex = load_epex()
     cfg_path = ROOT / "pfc_shaping" / "config.yaml"
-    with cfg_path.open() as f:
+    with cfg_path.open(encoding="utf-8") as f:
         config = yaml.safe_load(f)
     model_cfg = config.get("model", {})
 

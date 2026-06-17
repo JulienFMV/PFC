@@ -84,14 +84,14 @@ def _build_fan(pfc_by_scenario: dict[str, pd.DataFrame], weights: dict[str, floa
     for scenario, frame in pfc_by_scenario.items():
         out[f"curve_{scenario}"] = frame["price_shape"].astype(float)
     out["weighted_mean"] = fan["weighted_mean"]
-    out["structural_p10"] = fan["q10"]
-    out["structural_p50"] = fan["q50"]
-    out["structural_p90"] = fan["q90"]
-    out["structural_width"] = fan["structural_width"]
+    out["structural_scenario_low"] = fan["scenario_low"]
+    out["structural_scenario_central"] = fan["scenario_central"]
+    out["structural_scenario_high"] = fan["scenario_high"]
+    out["structural_scenario_spread"] = fan["scenario_spread"]
     if not np.isfinite(out.to_numpy(dtype=float)).all():
         raise ValueError("fan chart contains non-finite values")
-    if (out["structural_p10"] > out["structural_p90"]).any():
-        raise ValueError("fan chart violates p10 <= p90")
+    if (out["structural_scenario_low"] > out["structural_scenario_high"]).any():
+        raise ValueError("fan chart violates low <= high")
     return out
 
 
@@ -119,9 +119,9 @@ def _write_summary(
             {
                 "rows": len(fan),
                 "weighted_mean": float(fan["weighted_mean"].mean()),
-                "structural_width_mean": float(fan["structural_width"].mean()),
-                "structural_width_p95": float(fan["structural_width"].quantile(0.95)),
-                "structural_width_max": float(fan["structural_width"].max()),
+                "scenario_spread_mean": float(fan["structural_scenario_spread"].mean()),
+                "scenario_spread_p95": float(fan["structural_scenario_spread"].quantile(0.95)),
+                "scenario_spread_max": float(fan["structural_scenario_spread"].max()),
             }
         ]
     )
@@ -311,7 +311,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[local-test-pfc] {scenario} -> {path}")
     print(f"[local-test-pfc] fan chart -> {fan_path}")
     print(f"[local-test-pfc] summary -> {args.summary}")
-    print(f"[local-test-pfc] weighted_mean={fan['weighted_mean'].mean():.2f} width_mean={fan['structural_width'].mean():.4f}")
+    print(
+        f"[local-test-pfc] weighted_mean={fan['weighted_mean'].mean():.2f} "
+        f"scenario_spread_mean={fan['structural_scenario_spread'].mean():.4f}"
+    )
     return 0
 
 
