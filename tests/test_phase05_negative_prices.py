@@ -419,7 +419,8 @@ def test_water_value_delta_sign_invariant():
     f_wv_scarcity = pd.Series(1.20, index=idx, name="f_WV")
     with patch.object(WaterValueCorrection, "apply", return_value=f_wv_scarcity):
         delta_scarce = wv.compute_delta_wv(
-            B_negative, fill_df=None, calendar_df=pd.DataFrame(index=idx)
+            B_negative, fill_df=None, calendar_df=pd.DataFrame(index=idx),
+            preserve_block_means=False,
         )
     assert abs(float(delta_scarce.mean()) - 2.0) < 0.05, (
         f"Scarcity case: expected delta_wv ≈ +2.0 EUR/MWh, got {delta_scarce.mean():.4f}. "
@@ -432,7 +433,8 @@ def test_water_value_delta_sign_invariant():
     f_wv_abundance = pd.Series(0.80, index=idx, name="f_WV")
     with patch.object(WaterValueCorrection, "apply", return_value=f_wv_abundance):
         delta_abund = wv.compute_delta_wv(
-            B_negative, fill_df=None, calendar_df=pd.DataFrame(index=idx)
+            B_negative, fill_df=None, calendar_df=pd.DataFrame(index=idx),
+            preserve_block_means=False,
         )
     assert abs(float(delta_abund.mean()) - (-2.0)) < 0.05, (
         f"Abundance case: expected delta_wv ≈ -2.0 EUR/MWh, got {delta_abund.mean():.4f}. "
@@ -447,7 +449,8 @@ def test_water_value_delta_sign_invariant():
     )
     with patch.object(WaterValueCorrection, "apply", return_value=f_wv_scarcity):
         delta_mixed = wv.compute_delta_wv(
-            B_mixed, fill_df=None, calendar_df=pd.DataFrame(index=idx)
+            B_mixed, fill_df=None, calendar_df=pd.DataFrame(index=idx),
+            preserve_block_means=False,
         )
     # All values of delta_mixed should be ≈ +2.0 regardless of whether B was +10 or -10
     assert abs(float(delta_mixed.mean()) - 2.0) < 0.05, (
@@ -530,8 +533,8 @@ def test_assembler_delta_additive():
     ref_date = pd.Timestamp("2026-05-18", tz="UTC")
     base_prices = {"2027": 50.0, "2027-07": 30.0}
 
-    # Mock wv.apply to return a non-neutral f_wv so delta_wv is non-zero
-    f_wv_mock_val = 1.10  # scarcity: delta = (0.10) * |B|
+    # Mock wv.apply to return a non-neutral f_wv path so the monthly-neutralized
+    # delta_wv is non-zero intra-month while preserving the delivery-month mean.
 
     asm_logger = "pfc_shaping.lt.model.assembler"
     with patch.object(
@@ -540,7 +543,9 @@ def test_assembler_delta_additive():
     ) as mock_apply:
         # Return a Series with the right index for each apply() call
         def side_effect(timestamps, calendar_df_arg, hydro_forecast_arg=None):
-            return pd.Series(f_wv_mock_val, index=timestamps, name="f_WV")
+            vals = np.ones(len(timestamps), dtype=float)
+            vals[: len(vals) // 2] = 1.10
+            return pd.Series(vals, index=timestamps, name="f_WV")
         mock_apply.side_effect = side_effect
 
         import logging as _logging

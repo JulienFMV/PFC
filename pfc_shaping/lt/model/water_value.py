@@ -18,8 +18,8 @@ Modèle :
 
     où :
         fill_deviation = (fill_actual - fill_historical_mean) / fill_historical_std
-        season_sensitivity = facteur saisonnier qui amplifie l'effet en hiver
-                            (Hiver: -0.8, Printemps: -0.3, Été: -0.1, Automne: -0.5)
+        season_sensitivity = intensité saisonnière qui amplifie l'effet en hiver
+                            (Hiver: 0.8, Printemps: 0.3, Été: 0.1, Automne: 0.5)
         β_WV = coefficient calibré sur l'historique (typiquement -0.02 à -0.05)
 
     Le signe négatif signifie : réservoirs pleins → prix plus bas
@@ -43,13 +43,13 @@ from sklearn.linear_model import LinearRegression
 
 logger = logging.getLogger(__name__)
 
-# Sensibilités saisonnières par défaut (avant calibration)
-# Le signe négatif signifie : fill_deviation positif → prix plus bas
+# Sensibilités saisonnières par défaut (avant calibration).
+# Intensités positives: le signe directionnel vient de beta_wv_ (<0).
 DEFAULT_SEASON_SENSITIVITY = {
-    "Hiver": -0.8,
-    "Printemps": -0.3,
-    "Ete": -0.1,
-    "Automne": -0.5,
+    "Hiver": 0.8,
+    "Printemps": 0.3,
+    "Ete": 0.1,
+    "Automne": 0.5,
 }
 
 # Bornes du coefficient β_WV pour éviter les valeurs aberrantes
@@ -250,7 +250,7 @@ class WaterValueCorrection:
             if abs(self.beta_wv_) > 1e-6:
                 self.season_sensitivity_ = {
                     s: float(
-                        np.clip(raw_sensitivities[s] / abs(self.beta_wv_), -2.0, 0.0)
+                        np.clip(raw_sensitivities[s] / self.beta_wv_, -2.0, 2.0)
                     )
                     for s in saisons
                 }
@@ -385,7 +385,7 @@ class WaterValueCorrection:
         beta = self.beta_wv_ if abs(self.beta_wv_) > 1e-8 else -0.03
 
         fill_dev_vals = fill_dev_aligned["fill_deviation"].fillna(0.0)
-        season_sens = saison.map(sensitivity).fillna(-0.3).astype(float)
+        season_sens = saison.map(sensitivity).fillna(0.3).astype(float)
         idx_zurich = timestamps.tz_convert("Europe/Zurich")
         months_ahead = (
             (idx_zurich.year - idx_zurich[0].year) * 12
@@ -449,6 +449,7 @@ class WaterValueCorrection:
         *,
         fill_df: "pd.DataFrame | None",
         calendar_df: pd.DataFrame,
+        preserve_block_means: bool = True,
     ) -> pd.Series:
         """Return the delta-additive WaterValue correction in €/MWh.
 
@@ -512,6 +513,16 @@ class WaterValueCorrection:
             )
         f_wv = self.apply(B_smooth.index, calendar_df, fill_df)
         delta = (f_wv - 1.0) * B_smooth.abs()
+        if preserve_block_means and len(delta) > 0:
+            idx = delta.index
+            if isinstance(idx, pd.DatetimeIndex):
+                idx_local = idx.tz_convert("Europe/Zurich") if idx.tz is not None else idx
+                month_key = pd.MultiIndex.from_arrays(
+                    [idx_local.year, idx_local.month],
+                    names=["delivery_year", "delivery_month"],
+                )
+                month_mean = delta.groupby(month_key).transform("mean")
+                delta = delta - month_mean.to_numpy()
         delta.name = "delta_wv"
         return delta
 
