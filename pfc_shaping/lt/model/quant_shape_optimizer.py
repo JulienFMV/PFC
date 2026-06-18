@@ -51,6 +51,59 @@ def second_difference_penalty(n: int) -> sp.csr_matrix:
     return d2.T @ d2
 
 
+def _calendar_month_period(index: pd.DatetimeIndex) -> pd.PeriodIndex:
+    local_index = index.tz_localize(None) if index.tz is not None else index
+    return local_index.to_period("M")
+
+
+def monthly_mean_second_difference_penalty(index: pd.Index) -> sp.csr_matrix:
+    """Return a sparse penalty on second differences of calendar-month means."""
+
+    if not isinstance(index, pd.DatetimeIndex):
+        raise TypeError("monthly mean smoothness requires a DatetimeIndex prior")
+    n = len(index)
+    if n < 3:
+        return sp.csr_matrix((n, n), dtype=float)
+    period = _calendar_month_period(index)
+    month_codes, _ = pd.factorize(period, sort=False)
+    n_months = int(month_codes.max()) + 1 if len(month_codes) else 0
+    if n_months < 3:
+        return sp.csr_matrix((n, n), dtype=float)
+    month_counts = np.bincount(month_codes, minlength=n_months).astype(float)
+    rows = np.arange(n, dtype=int)
+    data = 1.0 / month_counts[month_codes]
+    month_mean = sp.csr_matrix((data, (month_codes, rows)), shape=(n_months, n))
+    d2 = sp.diags(
+        diagonals=[np.ones(n_months - 2), -2.0 * np.ones(n_months - 2), np.ones(n_months - 2)],
+        offsets=[0, 1, 2],
+        shape=(n_months - 2, n_months),
+        format="csr",
+    )
+    operator = d2 @ month_mean
+    return operator.T @ operator
+
+
+def monthly_boundary_jump_penalty(index: pd.Index) -> sp.csr_matrix:
+    """Return a sparse penalty on jumps at calendar-month boundaries."""
+
+    if not isinstance(index, pd.DatetimeIndex):
+        raise TypeError("monthly boundary smoothness requires a DatetimeIndex prior")
+    n = len(index)
+    if n < 2:
+        return sp.csr_matrix((n, n), dtype=float)
+    period = _calendar_month_period(index)
+    boundary_positions = np.flatnonzero(period[1:].to_numpy() != period[:-1].to_numpy()) + 1
+    if len(boundary_positions) == 0:
+        return sp.csr_matrix((n, n), dtype=float)
+    row_ids = np.repeat(np.arange(len(boundary_positions)), 2)
+    col_ids = np.empty(2 * len(boundary_positions), dtype=int)
+    col_ids[0::2] = boundary_positions - 1
+    col_ids[1::2] = boundary_positions
+    data = np.tile(np.array([-1.0, 1.0], dtype=float), len(boundary_positions))
+    operator = sp.csr_matrix((data, (row_ids, col_ids)), shape=(len(boundary_positions), n))
+    return operator.T @ operator
+
+
 def _independent_constraint_rows(a: np.ndarray, rank: int) -> np.ndarray:
     if rank <= 0:
         return np.array([], dtype=int)
@@ -68,6 +121,8 @@ class QuantShapeOptimizer:
         *,
         lambda_prior: float = 1.0,
         lambda_smooth_h: float = 0.0,
+        lambda_smooth_m: float = 0.0,
+        lambda_seam: float = 0.0,
         epsilon_ridge: float = 1e-10,
         feasibility_tol: float = 1e-9,
         stationarity_tol: float = 1e-7,
@@ -76,10 +131,16 @@ class QuantShapeOptimizer:
             raise ValueError("lambda_prior must be positive and finite")
         if lambda_smooth_h < 0.0 or not np.isfinite(lambda_smooth_h):
             raise ValueError("lambda_smooth_h must be non-negative and finite")
+        if lambda_smooth_m < 0.0 or not np.isfinite(lambda_smooth_m):
+            raise ValueError("lambda_smooth_m must be non-negative and finite")
+        if lambda_seam < 0.0 or not np.isfinite(lambda_seam):
+            raise ValueError("lambda_seam must be non-negative and finite")
         if epsilon_ridge < 0.0 or not np.isfinite(epsilon_ridge):
             raise ValueError("epsilon_ridge must be non-negative and finite")
         self.lambda_prior = float(lambda_prior)
         self.lambda_smooth_h = float(lambda_smooth_h)
+        self.lambda_smooth_m = float(lambda_smooth_m)
+        self.lambda_seam = float(lambda_seam)
         self.epsilon_ridge = float(epsilon_ridge)
         self.feasibility_tol = float(feasibility_tol)
         self.stationarity_tol = float(stationarity_tol)
@@ -119,6 +180,10 @@ class QuantShapeOptimizer:
         hessian = 2.0 * self.lambda_prior * sp.diags(w, format="csr")
         if self.lambda_smooth_h > 0.0:
             hessian = hessian + 2.0 * self.lambda_smooth_h * second_difference_penalty(n)
+        if self.lambda_smooth_m > 0.0:
+            hessian = hessian + 2.0 * self.lambda_smooth_m * monthly_mean_second_difference_penalty(prior.index)
+        if self.lambda_seam > 0.0:
+            hessian = hessian + 2.0 * self.lambda_seam * monthly_boundary_jump_penalty(prior.index)
         if self.epsilon_ridge > 0.0:
             hessian = hessian + 2.0 * self.epsilon_ridge * sp.eye(n, format="csr")
         linear = -2.0 * self.lambda_prior * w * p0
@@ -177,6 +242,8 @@ class QuantShapeOptimizer:
             lambdas={
                 "lambda_prior": self.lambda_prior,
                 "lambda_smooth_h": self.lambda_smooth_h,
+                "lambda_smooth_m": self.lambda_smooth_m,
+                "lambda_seam": self.lambda_seam,
                 "epsilon_ridge": self.epsilon_ridge,
             },
             feasibility=feasibility,
