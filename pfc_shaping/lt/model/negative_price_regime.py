@@ -65,7 +65,7 @@ def build_physical_paths(
             raise ValueError("risk premium must cover every base curve timestamp")
         label = "production"
     paths = eps.add(p_curve - rp, axis=0)
-    return ScenarioBundle(paths=paths, measure="P", base_curve=p_curve, risk_premium=risk_premium, label=label)
+    return ScenarioBundle(paths=paths, measure="P", base_curve=p_curve, risk_premium=rp, label=label)
 
 
 def build_risk_neutral_paths(p_curve: pd.Series, residuals: pd.DataFrame) -> ScenarioBundle:
