@@ -28,6 +28,9 @@ from pfc_shaping.lt.model.quote_aware_monthly_smoothing import (  # noqa: E402
     apply_quote_aware_monthly_smoothing,
 )
 from pfc_shaping.lt.model.quant_shape_optimizer import QuantShapeOptimizer  # noqa: E402
+from pfc_shaping.lt.model.seam_nullspace_smoothing import (  # noqa: E402
+    apply_seam_nullspace_smoothing,
+)
 from pfc_shaping.lt.model.shape_constraints import (  # noqa: E402
     build_base_peak_offpeak_constraint_system,
 )
@@ -1637,6 +1640,8 @@ def _write_report(
     annual_residual_anchor_audit: pd.DataFrame | None = None,
     final_quant_annual_smoothness_enabled: bool = False,
     final_quant_annual_smoothness_audit: pd.DataFrame | None = None,
+    seam_nullspace_smoothing_enabled: bool = False,
+    seam_nullspace_smoothing_audit: pd.DataFrame | None = None,
     neighbor_monthly_anchor_enabled: bool = False,
     neighbor_monthly_anchor_audit: pd.DataFrame | None = None,
     eex_peak_calibration_enabled: bool = False,
@@ -1681,6 +1686,10 @@ def _write_report(
         (
             "* local/test final quant annual-only smoothness calibration: "
             f"`{'ON' if final_quant_annual_smoothness_enabled else 'OFF'}`"
+        ),
+        (
+            "* local/test final seam nullspace smoothing: "
+            f"`{'ON' if seam_nullspace_smoothing_enabled else 'OFF'}`"
         ),
         (
             "* local/test neighbor monthly spread anchor: "
@@ -1768,6 +1777,14 @@ def _write_report(
             else pd.DataFrame()
         ),
         "",
+        "## Local/Test Final Seam Nullspace Smoothing Audit",
+        "",
+        _md_table(
+            seam_nullspace_smoothing_audit
+            if seam_nullspace_smoothing_audit is not None
+            else pd.DataFrame()
+        ),
+        "",
         "## Local/Test Neighbor Monthly Spread Anchor Audit",
         "",
         _md_table(
@@ -1796,6 +1813,7 @@ def _write_report(
         "* The final monthly path smoothing, when enabled, is local/test only and preserves EEX BASE/PEAK buckets.",
         "* The neighbor annual residual shape anchor, when enabled, is local/test only and preserves EEX BASE buckets.",
         "* The final quant annual-only smoothness calibration, when enabled, is local/test only and preserves annual BASE/PEAK buckets.",
+        "* The final seam nullspace smoothing, when enabled, is local/test only and preserves active BASE/PEAK bucket means.",
         "* The neighbor monthly spread anchor, when enabled, is local/test only and preserves EEX BASE/PEAK buckets.",
         "* The EEX BASE+PEAK calibration, when enabled, is local/test only and uses quoted PEAK products from the same snapshot.",
         "* This is not production FMV output; production governance remains NO-GO.",
@@ -2057,6 +2075,44 @@ def main(argv: list[str] | None = None) -> int:
         default=10000.0,
         help="Month-boundary curvature lambda for local/test annual-only quant smoothing.",
     )
+    parser.add_argument(
+        "--enable-final-seam-nullspace-smoothing",
+        action="store_true",
+        help=(
+            "Enable local/test additive seam smoothing projected into the nullspace of active "
+            "BASE/PEAK EEX constraints."
+        ),
+    )
+    parser.add_argument(
+        "--final-seam-window-hours",
+        type=int,
+        default=168,
+        help="Half-window in hours used around month-boundary seams.",
+    )
+    parser.add_argument(
+        "--final-seam-target-jump-eur-mwh",
+        type=float,
+        default=18.0,
+        help="Target absolute month-boundary jump after local/test seam smoothing.",
+    )
+    parser.add_argument(
+        "--final-seam-min-jump-eur-mwh",
+        type=float,
+        default=20.0,
+        help="Only month-boundary jumps above this threshold are smoothed.",
+    )
+    parser.add_argument(
+        "--final-seam-max-delta-eur-mwh",
+        type=float,
+        default=12.0,
+        help="Maximum absolute additive correction from final seam nullspace smoothing.",
+    )
+    parser.add_argument(
+        "--final-seam-intensity",
+        type=float,
+        default=1.0,
+        help="Multiplier for the final local/test seam nullspace smoothing correction.",
+    )
     parser.add_argument("--skip-build", action="store_true")
     parser.add_argument("--fan-chart-output", default=None)
     parser.add_argument(
@@ -2198,6 +2254,7 @@ def main(argv: list[str] | None = None) -> int:
     annual_residual_audit = None
     neighbor_monthly_audit = None
     final_quant_annual_audit = None
+    seam_nullspace_audit = None
     if args.enable_quote_aware_monthly_smoothing:
         ts_ch = _parse_timestamp_ch(hourly["timestamp_ch"], hourly.get("utc_offset_ch"))
         hourly, quote_monthly_audit = apply_quote_aware_monthly_smoothing(
@@ -2339,6 +2396,22 @@ def main(argv: list[str] | None = None) -> int:
             negative_price_floor=args.negative_price_floor,
             max_weighted_negative_hours=args.max_weighted_negative_hours,
         )
+    if args.enable_final_seam_nullspace_smoothing:
+        ts_ch = _parse_timestamp_ch(hourly["timestamp_ch"], hourly.get("utc_offset_ch"))
+        hourly, seam_nullspace_audit = apply_seam_nullspace_smoothing(
+            hourly,
+            ts_ch=ts_ch,
+            base_forward_prices=forward_prices,
+            peak_forward_prices=peak_forward_prices,
+            weights=weights,
+            seam_window_hours=args.final_seam_window_hours,
+            target_boundary_jump_eur_mwh=args.final_seam_target_jump_eur_mwh,
+            min_boundary_jump_eur_mwh=args.final_seam_min_jump_eur_mwh,
+            max_abs_delta_eur_mwh=args.final_seam_max_delta_eur_mwh,
+            intensity=args.final_seam_intensity,
+            negative_price_floor=args.negative_price_floor,
+            max_weighted_negative_hours=args.max_weighted_negative_hours,
+        )
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     hourly.to_csv(output, index=False)
@@ -2368,6 +2441,8 @@ def main(argv: list[str] | None = None) -> int:
         annual_residual_anchor_audit=annual_residual_audit,
         final_quant_annual_smoothness_enabled=bool(args.enable_final_quant_annual_smoothness),
         final_quant_annual_smoothness_audit=final_quant_annual_audit,
+        seam_nullspace_smoothing_enabled=bool(args.enable_final_seam_nullspace_smoothing),
+        seam_nullspace_smoothing_audit=seam_nullspace_audit,
         neighbor_monthly_anchor_enabled=bool(args.enable_neighbor_monthly_spread_anchor),
         neighbor_monthly_anchor_audit=neighbor_monthly_audit,
         eex_peak_calibration_enabled=bool(args.enable_eex_peak_calibration),
