@@ -24,6 +24,9 @@ from pfc_shaping.lt.model.holiday_pressure import (  # noqa: E402
     ch_market_nonworking_pressure as _ch_market_nonworking_pressure,
     is_ch_nonworking_day as _is_ch_nonworking_day,
 )
+from pfc_shaping.lt.model.cross_year_seasonal_shape import (  # noqa: E402
+    apply_cross_year_seasonal_shape_optimizer,
+)
 from pfc_shaping.lt.model.quote_aware_monthly_smoothing import (  # noqa: E402
     apply_quote_aware_monthly_smoothing,
 )
@@ -441,6 +444,117 @@ def _historical_month_deviations(
     dev = pd.DataFrame(rows)
     med = dev.groupby(["quarter", "month"])["deviation"].median()
     return {(int(q), int(m)): float(value) for (q, m), value in med.items()}
+
+
+def _historical_annual_month_deviations(
+    forwards_path: Path,
+    *,
+    market: str,
+    load_type: str,
+    min_date: pd.Timestamp | None = None,
+) -> dict[int, float]:
+    """Median historical monthly deviations from same-delivery Calendar."""
+    if not forwards_path.exists():
+        return {}
+    df = pd.read_parquet(forwards_path)
+    if df.empty:
+        return {}
+    dates = pd.to_datetime(df["date"]).dt.tz_localize(None).dt.normalize()
+    sub = df[
+        (df["market"].astype(str).str.upper() == str(market).upper())
+        & (df["load_type"].astype(str).str.upper() == str(load_type).upper())
+    ].copy()
+    sub["date"] = dates.loc[sub.index]
+    if min_date is not None:
+        sub = sub[sub["date"] >= pd.Timestamp(min_date).tz_localize(None).normalize()]
+    if sub.empty:
+        return {}
+    rows: list[dict[str, float]] = []
+    cal_rows = sub[sub["product_type"].astype(str).str.lower().isin(["cal", "year", "calendar"])]
+    for (date, product), cal_row in cal_rows.groupby(["date", "product"]):
+        product = str(product)
+        if not product.isdigit():
+            continue
+        year = int(product)
+        cal_price = float(cal_row["price"].iloc[-1])
+        same_date = sub[sub["date"].eq(date)]
+        for month in range(1, 13):
+            month_product = _month_key(year, month)
+            month_row = same_date[same_date["product"].astype(str).eq(month_product)]
+            if month_row.empty:
+                continue
+            rows.append(
+                {
+                    "month": month,
+                    "deviation": float(month_row["price"].iloc[-1]) - cal_price,
+                }
+            )
+    if not rows:
+        return {}
+    dev = pd.DataFrame(rows)
+    med = dev.groupby("month")["deviation"].median()
+    return {int(month): float(value) for month, value in med.items()}
+
+
+def _frontier_monthly_shape_guide(
+    forwards_path: Path,
+    *,
+    markets: list[str],
+    load_type: str,
+    years: list[int],
+    min_date: pd.Timestamp | None = None,
+) -> dict[str, float]:
+    """Build a multi-market monthly guide from current quotes plus history."""
+    market_guides: list[dict[str, float]] = []
+    for market in markets:
+        market = str(market).upper().strip()
+        if not market:
+            continue
+        try:
+            _, prices_by_load = _latest_eex_prices_by_load_type(forwards_path, market=market)
+        except ValueError:
+            continue
+        prices = prices_by_load.get(str(load_type).upper(), {})
+        if not prices:
+            continue
+        quarter_dev = _historical_month_deviations(
+            forwards_path,
+            market=market,
+            load_type=load_type,
+            min_date=min_date,
+        )
+        annual_dev = _historical_annual_month_deviations(
+            forwards_path,
+            market=market,
+            load_type=load_type,
+            min_date=min_date,
+        )
+        guide: dict[str, float] = {}
+        for year in years:
+            for month in range(1, 13):
+                month_key = _month_key(year, month)
+                if month_key in prices:
+                    guide[month_key] = float(prices[month_key])
+                    continue
+                quarter = ((month - 1) // 3) + 1
+                quarter_key = f"{year}-Q{quarter}"
+                if quarter_key in prices and (quarter, month) in quarter_dev:
+                    guide[month_key] = float(prices[quarter_key]) + float(quarter_dev[(quarter, month)])
+                    continue
+                cal_key = str(year)
+                if cal_key in prices and month in annual_dev:
+                    guide[month_key] = float(prices[cal_key]) + float(annual_dev[month])
+        if guide:
+            market_guides.append(guide)
+    if not market_guides:
+        return {}
+    keys = sorted(set().union(*(guide.keys() for guide in market_guides)))
+    out: dict[str, float] = {}
+    for key in keys:
+        values = [guide[key] for guide in market_guides if key in guide]
+        if values:
+            out[key] = float(np.median(values))
+    return out
 
 
 def apply_neighbor_monthly_spread_anchor(
@@ -1640,6 +1754,8 @@ def _write_report(
     annual_residual_anchor_audit: pd.DataFrame | None = None,
     final_quant_annual_smoothness_enabled: bool = False,
     final_quant_annual_smoothness_audit: pd.DataFrame | None = None,
+    cross_year_seasonal_shape_enabled: bool = False,
+    cross_year_seasonal_shape_audit: pd.DataFrame | None = None,
     seam_nullspace_smoothing_enabled: bool = False,
     seam_nullspace_smoothing_audit: pd.DataFrame | None = None,
     neighbor_monthly_anchor_enabled: bool = False,
@@ -1686,6 +1802,10 @@ def _write_report(
         (
             "* local/test final quant annual-only smoothness calibration: "
             f"`{'ON' if final_quant_annual_smoothness_enabled else 'OFF'}`"
+        ),
+        (
+            "* local/test cross-year seasonal shape optimizer: "
+            f"`{'ON' if cross_year_seasonal_shape_enabled else 'OFF'}`"
         ),
         (
             "* local/test final seam nullspace smoothing: "
@@ -1774,6 +1894,14 @@ def _write_report(
         _md_table(
             final_quant_annual_smoothness_audit
             if final_quant_annual_smoothness_audit is not None
+            else pd.DataFrame()
+        ),
+        "",
+        "## Local/Test Cross-Year Seasonal Shape Optimizer Audit",
+        "",
+        _md_table(
+            cross_year_seasonal_shape_audit
+            if cross_year_seasonal_shape_audit is not None
             else pd.DataFrame()
         ),
         "",
@@ -2076,6 +2204,61 @@ def main(argv: list[str] | None = None) -> int:
         help="Month-boundary curvature lambda for local/test annual-only quant smoothing.",
     )
     parser.add_argument(
+        "--enable-cross-year-seasonal-shape-optimizer",
+        action="store_true",
+        help=(
+            "Enable local/test multi-year monthly seasonal reconciliation for synthetic "
+            "annual/residual buckets while preserving active BASE/PEAK constraints."
+        ),
+    )
+    parser.add_argument(
+        "--cross-year-shape-markets",
+        default="DE,AT,FR,IT",
+        help="Comma-separated neighbor markets used to build the cross-year monthly shape guide.",
+    )
+    parser.add_argument(
+        "--cross-year-shape-lambda-prior",
+        type=float,
+        default=1.0,
+        help="Distance-to-prior lambda for local/test cross-year seasonal shaping.",
+    )
+    parser.add_argument(
+        "--cross-year-shape-lambda-month-smooth",
+        type=float,
+        default=1.0,
+        help="Monthly curvature lambda for local/test cross-year seasonal shaping.",
+    )
+    parser.add_argument(
+        "--cross-year-shape-lambda-guide",
+        type=float,
+        default=2.0,
+        help="Neighbor/historical guide lambda for local/test cross-year seasonal shaping.",
+    )
+    parser.add_argument(
+        "--cross-year-shape-lambda-cross-month",
+        type=float,
+        default=8.0,
+        help="Same-month parent-spread lambda for local/test cross-year seasonal shaping.",
+    )
+    parser.add_argument(
+        "--cross-year-shape-lambda-cross-slope",
+        type=float,
+        default=20.0,
+        help="Apr-Dec seasonal-slope stability lambda for local/test cross-year seasonal shaping.",
+    )
+    parser.add_argument(
+        "--cross-year-shape-max-month-delta-eur-mwh",
+        type=float,
+        default=12.0,
+        help="Maximum absolute monthly delta from local/test cross-year seasonal shaping.",
+    )
+    parser.add_argument(
+        "--cross-year-shape-intensity",
+        type=float,
+        default=1.0,
+        help="Multiplier for local/test cross-year seasonal shaping.",
+    )
+    parser.add_argument(
         "--enable-final-seam-nullspace-smoothing",
         action="store_true",
         help=(
@@ -2169,6 +2352,7 @@ def main(argv: list[str] | None = None) -> int:
     peak_forward_prices = forward_prices_by_load_type.get("PEAK", {})
     neighbor_prices_by_load_type: dict[str, dict[str, float]] = {}
     historical_neighbor_deviations: dict[str, dict[tuple[int, int], float]] = {}
+    cross_year_shape_guide: dict[str, float] = {}
     if args.enable_neighbor_monthly_spread_anchor or args.enable_neighbor_annual_residual_shape_anchor:
         _, neighbor_prices_by_load_type = _latest_eex_prices_by_load_type(
             Path(args.forwards),
@@ -2190,6 +2374,20 @@ def main(argv: list[str] | None = None) -> int:
                 min_date=min_hist_date,
             ),
         }
+    if args.enable_cross_year_seasonal_shape_optimizer:
+        cross_year_markets = [
+            market.strip().upper()
+            for market in str(args.cross_year_shape_markets).split(",")
+            if market.strip()
+        ]
+        min_hist_date = pd.Timestamp(latest_forward_date).tz_localize(None).normalize() - pd.DateOffset(years=6)
+        cross_year_shape_guide = _frontier_monthly_shape_guide(
+            Path(args.forwards),
+            markets=cross_year_markets,
+            load_type="BASE",
+            years=list(range(int(local_start.year), int(local_end_15min.year) + 1)),
+            min_date=min_hist_date,
+        )
     weights = _parse_weights(args.weights)
     required_forward = None
     if not args.allow_stale_forwards:
@@ -2254,6 +2452,7 @@ def main(argv: list[str] | None = None) -> int:
     annual_residual_audit = None
     neighbor_monthly_audit = None
     final_quant_annual_audit = None
+    cross_year_shape_audit = None
     seam_nullspace_audit = None
     if args.enable_quote_aware_monthly_smoothing:
         ts_ch = _parse_timestamp_ch(hourly["timestamp_ch"], hourly.get("utc_offset_ch"))
@@ -2396,6 +2595,36 @@ def main(argv: list[str] | None = None) -> int:
             negative_price_floor=args.negative_price_floor,
             max_weighted_negative_hours=args.max_weighted_negative_hours,
         )
+    if args.enable_cross_year_seasonal_shape_optimizer:
+        ts_ch = _parse_timestamp_ch(hourly["timestamp_ch"], hourly.get("utc_offset_ch"))
+        hourly, cross_year_shape_audit = apply_cross_year_seasonal_shape_optimizer(
+            hourly,
+            ts_ch=ts_ch,
+            base_forward_prices=forward_prices,
+            peak_forward_prices=peak_forward_prices,
+            peak_mask=_eex_peak_mask(ts_ch, country="CH"),
+            guide_month_prices=cross_year_shape_guide,
+            weights=weights,
+            intensity=args.cross_year_shape_intensity,
+            lambda_prior=args.cross_year_shape_lambda_prior,
+            lambda_month_smooth=args.cross_year_shape_lambda_month_smooth,
+            lambda_guide=args.cross_year_shape_lambda_guide,
+            lambda_cross_month=args.cross_year_shape_lambda_cross_month,
+            lambda_cross_slope=args.cross_year_shape_lambda_cross_slope,
+            max_month_delta_eur_mwh=args.cross_year_shape_max_month_delta_eur_mwh,
+            negative_price_floor=args.negative_price_floor,
+            max_weighted_negative_hours=args.max_weighted_negative_hours,
+        )
+        hourly, calibration = calibrate_hourly_to_eex(hourly, forward_prices=forward_prices)
+        if args.enable_eex_peak_calibration:
+            hourly, eex_peak_audit = calibrate_hourly_to_eex_base_peak(
+                hourly,
+                base_forward_prices=forward_prices,
+                peak_forward_prices=peak_forward_prices,
+                weights=weights,
+                negative_price_floor=args.negative_price_floor,
+                max_weighted_negative_hours=args.max_weighted_negative_hours,
+            )
     if args.enable_final_seam_nullspace_smoothing:
         ts_ch = _parse_timestamp_ch(hourly["timestamp_ch"], hourly.get("utc_offset_ch"))
         hourly, seam_nullspace_audit = apply_seam_nullspace_smoothing(
@@ -2441,6 +2670,8 @@ def main(argv: list[str] | None = None) -> int:
         annual_residual_anchor_audit=annual_residual_audit,
         final_quant_annual_smoothness_enabled=bool(args.enable_final_quant_annual_smoothness),
         final_quant_annual_smoothness_audit=final_quant_annual_audit,
+        cross_year_seasonal_shape_enabled=bool(args.enable_cross_year_seasonal_shape_optimizer),
+        cross_year_seasonal_shape_audit=cross_year_shape_audit,
         seam_nullspace_smoothing_enabled=bool(args.enable_final_seam_nullspace_smoothing),
         seam_nullspace_smoothing_audit=seam_nullspace_audit,
         neighbor_monthly_anchor_enabled=bool(args.enable_neighbor_monthly_spread_anchor),
