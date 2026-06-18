@@ -57,7 +57,14 @@ output/*.parquet
 output/*.csv
 output/*.xlsx
 output/*.png
+output/**
 output/hfc_diagnostics/
+
+# Generated LT audit/report artifacts
+.planning/phases/*/CH-HFC-*.md
+.planning/phases/*/CH_HFC_*.md
+.planning/phases/*/LOCAL_TEST_CH_PFC_*-BUILD.md
+.planning/phases/*/LOCAL_TEST_CH_PFC_*-GOVERNANCE.md
 
 # Secrets — NE JAMAIS COMMITTER
 .env

@@ -313,8 +313,11 @@ def monthly_path_checks(
     monthly: pd.DataFrame,
     hourly: pd.DataFrame,
     ch_forwards: pd.DataFrame,
+    neighbor_forwards: pd.DataFrame | None = None,
+    *,
+    neighbor_market: str = "DE",
 ) -> pd.DataFrame:
-    """Audit month-to-month smoothness inside synthetic EEX buckets."""
+    """Audit synthetic month paths and seam jumps around synthetic EEX buckets."""
     base_prices = {
         str(row["product"]): float(row["price"])
         for _, row in ch_forwards[ch_forwards["load_type"].astype(str).str.upper() == "BASE"].iterrows()
@@ -331,6 +334,21 @@ def monthly_path_checks(
     )
     path = monthly.merge(bucket_by_month, on=["year", "month"], how="left").sort_values(["year", "month"])
     rows: list[dict[str, object]] = []
+    neighbor_months: dict[tuple[int, int], float] = {}
+    if neighbor_forwards is not None and not neighbor_forwards.empty:
+        nb_base = neighbor_forwards[neighbor_forwards["load_type"].astype(str).str.upper() == "BASE"].copy()
+        for _, row in nb_base.iterrows():
+            product = str(row["product"])
+            try:
+                period = pd.Period(product, freq="M")
+            except ValueError:
+                continue
+            if len(product) == 7 and product[4] == "-":
+                neighbor_months[(int(period.year), int(period.month))] = float(row["price"])
+
+    def synthetic_or_unquoted(bucket: str) -> bool:
+        return bucket.endswith("-RESIDUAL") or bucket.isdigit() or "-Q" in bucket
+
     for year, group in path.groupby("year", sort=True):
         group = group.reset_index(drop=True)
         for idx in range(1, len(group)):
@@ -361,6 +379,60 @@ def monthly_path_checks(
                     "to_mean_eur_mwh": float(curr["mean_eur_mwh"]),
                     "delta_eur_mwh": delta,
                     "check_type": "adjacent_delta",
+                    "severity": severity,
+                    "reason": reason,
+                }
+            )
+        for idx in range(1, len(group)):
+            prev = group.iloc[idx - 1]
+            curr = group.iloc[idx]
+            prev_bucket = str(prev["bucket"])
+            curr_bucket = str(curr["bucket"])
+            if prev_bucket == curr_bucket:
+                continue
+            if not (synthetic_or_unquoted(prev_bucket) or synthetic_or_unquoted(curr_bucket)):
+                continue
+            delta = float(curr["mean_eur_mwh"] - prev["mean_eur_mwh"])
+            year_i = int(curr["year"])
+            prev_month = int(prev["month"])
+            curr_month = int(curr["month"])
+            neighbor_delta = np.nan
+            excess_vs_neighbor = np.nan
+            nb_prev = neighbor_months.get((year_i, prev_month))
+            nb_curr = neighbor_months.get((year_i, curr_month))
+            if nb_prev is not None and nb_curr is not None:
+                neighbor_delta = float(nb_curr - nb_prev)
+                excess_vs_neighbor = float(abs(delta - neighbor_delta))
+            severity = "ok"
+            reason = "inter-bucket monthly seam plausible"
+            if np.isfinite(excess_vs_neighbor):
+                if abs(delta) > 30.0 and excess_vs_neighbor > 12.0:
+                    severity = "critical"
+                    reason = "inter-bucket monthly seam is materially wider than neighbor market"
+                elif abs(delta) > 22.0 and excess_vs_neighbor > 8.0:
+                    severity = "warning"
+                    reason = "inter-bucket monthly seam is wider than neighbor market"
+            elif abs(delta) > 35.0:
+                severity = "critical"
+                reason = "large unverified inter-bucket monthly seam"
+            elif abs(delta) > 25.0:
+                severity = "warning"
+                reason = "elevated unverified inter-bucket monthly seam"
+            rows.append(
+                {
+                    "year": year_i,
+                    "bucket": f"{prev_bucket}->{curr_bucket}",
+                    "from_bucket": prev_bucket,
+                    "to_bucket": curr_bucket,
+                    "from_month": prev_month,
+                    "to_month": curr_month,
+                    "from_mean_eur_mwh": float(prev["mean_eur_mwh"]),
+                    "to_mean_eur_mwh": float(curr["mean_eur_mwh"]),
+                    "delta_eur_mwh": delta,
+                    "neighbor_market": neighbor_market,
+                    "neighbor_delta_eur_mwh": neighbor_delta,
+                    "excess_vs_neighbor_eur_mwh": excess_vs_neighbor,
+                    "check_type": "inter_bucket_seam",
                     "severity": severity,
                     "reason": reason,
                 }
@@ -589,7 +661,8 @@ def write_report(
         "",
         "## Monthly Path Checks",
         "",
-        "These checks only evaluate adjacent months inside synthetic annual/residual buckets.",
+        "These checks evaluate adjacent months inside synthetic annual/residual buckets and "
+        "month-to-month seams crossing into or out of synthetic/unquoted buckets.",
         "",
         _md_table(monthly_path_checks_frame),
         "",
@@ -630,7 +703,8 @@ def write_report(
             "",
             "* `critical` means annual-only synthetic monthly completion contradicts the expected Swiss winter premium.",
             "* Monthly split flags are evaluated on unquoted CH months only; quoted EEX monthly products remain market signals.",
-            "* Monthly path flags catch sharp adjacent jumps and local reversals inside annual/residual synthetic buckets.",
+            "* Monthly path flags catch sharp adjacent jumps and local reversals inside annual/residual synthetic buckets, "
+            "plus cross-bucket monthly seams that are materially wider than the neighbor market guide.",
             "* Calendar flags catch implausible weekend premiums and week-to-week jumps inside a generated month.",
             "* This is a model-quality gate, not a market override: if quoted monthly/quarterly EEX products imply the inversion, the gate should not force a correction.",
             "* The current local/test curve should be considered seasonally suspect if any critical flag remains.",
@@ -659,7 +733,7 @@ def audit(
     hour_month = hourly_month_matrix(hourly, price_column=price_column)
     residuals = quoted_product_residuals(hourly, forwards, price_column=price_column)
     seasonal = seasonal_coherence_checks(monthly, base_forwards)
-    monthly_path = monthly_path_checks(monthly, hourly, forwards)
+    neighbor_forwards = pd.DataFrame()
     try:
         _, neighbor_forwards = _latest_forwards(forwards_path, market=neighbor_market)
         monthly_splits = monthly_split_checks(
@@ -671,6 +745,13 @@ def audit(
         )
     except ValueError:
         monthly_splits = pd.DataFrame()
+    monthly_path = monthly_path_checks(
+        monthly,
+        hourly,
+        forwards,
+        neighbor_forwards if not neighbor_forwards.empty else None,
+        neighbor_market=neighbor_market,
+    )
     calendar_checks = calendar_coherence_checks(hourly, price_column=price_column)
     component_checks = None
     if component_parquet is not None:

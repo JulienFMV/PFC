@@ -13,6 +13,7 @@ from scripts.export_local_test_ch_hourly_csv import (
     _negative_capture_weight,
     _peak_shape_down_weight,
     _peak_shape_up_weight,
+    apply_neighbor_annual_residual_shape_anchor,
     apply_neighbor_monthly_spread_anchor,
     apply_synthetic_monthly_path_smoothing,
     apply_post_calibration_negative_rebalancer,
@@ -639,6 +640,85 @@ def test_neighbor_monthly_spread_anchor_follows_guide_and_preserves_buckets():
     assert anchored.loc[anchored_peak, "price_weighted_mean_eur_mwh"].mean() == pytest.approx(125.0, abs=1e-6)
     assert set(audit["load_type"]) == {"BASE", "PEAK"}
     assert set(audit["source"]) == {"neighbor_current"}
+
+
+def test_neighbor_annual_residual_shape_anchor_recenters_neighbor_shape_without_level_leakage():
+    timestamps = pd.date_range("2030-01-01", "2030-12-31 23:00", freq="h", tz="Europe/Zurich")
+    month = pd.Series(timestamps.month)
+    residual_mask = month >= 4
+    q1_target = 100.0
+    residual_target = 70.0
+    q1_hours = int((month <= 3).sum())
+    residual_hours = int(residual_mask.sum())
+    annual_target = (q1_target * q1_hours + residual_target * residual_hours) / len(timestamps)
+
+    initial = pd.Series(90.0, index=range(len(timestamps)))
+    initial.loc[month <= 3] = q1_target
+    initial.loc[(month >= 4) & (month <= 6)] = 50.0
+    initial.loc[month >= 7] = 85.0
+    hourly = pd.DataFrame(
+        {
+            "timestamp_ch": timestamps.strftime("%Y-%m-%d %H:%M:%S%z"),
+            "timestamp_utc": timestamps.tz_convert("UTC").strftime("%Y-%m-%d %H:%M:%S%z"),
+            "price_slow_eur_mwh": initial.to_numpy(),
+            "price_central_eur_mwh": initial.to_numpy(),
+            "price_fast_eur_mwh": initial.to_numpy(),
+            "price_weighted_mean_eur_mwh": initial.to_numpy(),
+            "structural_p10_eur_mwh": initial.to_numpy(),
+            "structural_p50_eur_mwh": initial.to_numpy(),
+            "structural_p90_eur_mwh": initial.to_numpy(),
+            "structural_width_eur_mwh": [0.0] * len(timestamps),
+        }
+    )
+    neighbor_months = {
+        f"2030-{m:02d}": price
+        for m, price in {
+            4: 60.0,
+            5: 64.0,
+            6: 67.0,
+            7: 69.0,
+            8: 72.0,
+            9: 74.0,
+            10: 78.0,
+            11: 83.0,
+            12: 86.0,
+        }.items()
+    }
+
+    anchored, audit = apply_neighbor_annual_residual_shape_anchor(
+        hourly,
+        ts_ch=pd.Series(timestamps, index=hourly.index),
+        base_forward_prices={"2030": annual_target, "2030-Q1": q1_target},
+        neighbor_base_forward_prices=neighbor_months,
+        historical_base_deviations={},
+        neighbor_current_weight=1.0,
+        weights={"slow": 0.25, "central": 0.5, "fast": 0.25},
+        intensity=1.0,
+        max_month_delta_eur_mwh=100.0,
+        negative_price_floor=-30.0,
+        max_weighted_negative_hours=0,
+    )
+
+    anchored_month = pd.Series(timestamps.month, index=anchored.index)
+    monthly = anchored.groupby(anchored_month)["price_weighted_mean_eur_mwh"].mean()
+    residual_mean = anchored.loc[anchored_month >= 4, "price_weighted_mean_eur_mwh"].mean()
+    raw_neighbor = pd.Series({int(key[-2:]): value for key, value in neighbor_months.items()})
+    month_counts = anchored_month[anchored_month >= 4].value_counts().sort_index()
+    raw_neighbor_mean = (raw_neighbor * month_counts).sum() / month_counts.sum()
+    expected_targets = raw_neighbor - raw_neighbor_mean + residual_target
+
+    assert set(audit["product"]) == {"2030-RESIDUAL"}
+    assert set(audit["source"]) == {"neighbor_month"}
+    assert monthly.loc[1] == pytest.approx(q1_target, abs=1e-9)
+    assert monthly.loc[2] == pytest.approx(q1_target, abs=1e-9)
+    assert monthly.loc[3] == pytest.approx(q1_target, abs=1e-9)
+    assert residual_mean == pytest.approx(residual_target, abs=1e-6)
+    assert monthly.loc[4] == pytest.approx(expected_targets.loc[4], abs=1e-6)
+    assert monthly.loc[12] == pytest.approx(expected_targets.loc[12], abs=1e-6)
+    assert (monthly.loc[4] - raw_neighbor.loc[4]) == pytest.approx(
+        monthly.loc[12] - raw_neighbor.loc[12],
+        abs=1e-6,
+    )
 
 
 def test_post_calibration_negative_rebalancer_respects_floor():
