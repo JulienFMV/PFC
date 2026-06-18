@@ -248,3 +248,96 @@ package init.
 - Benchmarked `project_neighbor_deviations` at n in {500,1000,2000,4000} to confirm the
   dense `n x n` scaling and extrapolate to LT horizons.
 - Confirmed no `pfc_shaping.ct` imports and no production/script wiring of the new modules.
+
+---
+
+## Addendum (2026-06-18b) - graduate-level review of commit `2aeff68` (seam smoothness)
+
+Context: follow-up commits on `fix/lt-audit-remediation`:
+`a52eefb` (matrix-free cross-border projection), `6ee36b0` (legacy residual-anchor patch),
+`2aeff68` (add `lambda_smooth_m` + `lambda_seam` and a continuity test).
+
+### Status changes
+- **P1-1 RESOLVED.** `a52eefb` rewrites the projector matrix-free
+  (`projected = values - (1/w) * Aᵀ (A W⁻¹ Aᵀ)⁺ A values`); no `n x n` is formed. The
+  `+50 EUR/MWh` invariance test still passes. Confirmed correct.
+- **P1-0 mechanism DELIVERED but not yet trustworthy.** `lambda_smooth_m` (curvature of
+  monthly means) and `lambda_seam` (jump at month boundaries) exist, default OFF, are PSD
+  (`opᵀop`), preserve exact repricing, and the new `test_lt_quant_curve_continuity.py`
+  proves they collapse a ~10 EUR/MWh flat-delta cliff to < 0.1 while holding month means.
+  33 quant tests pass. However the seam term is theoretically mis-specified and tz-fragile
+  (Q1, Q2 below), so the "production behaviour" axis remains NOT aligned.
+
+### New findings (quant level)
+
+**Q1 (important). `lambda_seam` penalizes the first difference (level gap), not curvature,
+so it over-flattens legitimate cross-boundary trends.** Smooth-forward theory
+(Fleten-Lemming; Benth-Koekebakker-Ollmar maximum smoothness) minimizes the integral of the
+squared *second* derivative subject to averaging constraints - this removes spurious cliffs
+*without* penalizing genuine slope. A first-difference penalty at the seam cannot distinguish
+a flat-delta cliff from a real seasonal ramp and suppresses both. Empirical proof, linear
+monthly targets {Jan 10, Feb 20, Mar 30}, exact repricing in both runs:
+
+| | curvature-only (`lambda_smooth_h`) | full (+`lambda_seam`=1000) |
+|---|---:|---:|
+| Feb-end -> Mar-start values | 23.97 -> 26.04 (natural ramp) | 24.99 -> 25.03 (flattened) |
+| max month-boundary step | 2.06 | 0.03 |
+
+The seam penalty converts a true +10/month trend into an artificial month-end plateau, with
+compensating curvature pushed inside the month. Recommendation: prefer curvature continuity
+across seams (the global `lambda_smooth_h` second difference already spans boundaries); if
+extra seam emphasis is wanted, up-weight the curvature stencil rows that straddle a boundary
+rather than adding a level-gap term. If `lambda_seam` is kept, bound it and add a
+trend-preservation test.
+
+**Q2 (latent correctness). Month bucketing follows the display timezone of `prior.index`;
+it is only correct for a CH-local index, and is off by the UTC offset for a UTC index - the
+canonical internal form.** `_calendar_month_period` does `index.tz_localize(None)`, i.e.
+it buckets by whatever wall-clock the index carries. EEX CH delivery months are local. The
+CH February boundary is `2030-01-31 23:00 UTC`. A Zurich-indexed prior places the seam there
+(correct); a **UTC-indexed prior places it at `2030-02-01 00:00 UTC`** - one hour late (two
+in summer) - and the smoothed "monthly mean" then aggregates a UTC month that does not match
+the hard constraint's local-month bucket. `shape_constraints.validate_utc_index` mandates UTC
+as the canonical form, so the natural usage is exactly the broken one; the continuity test
+passes only because it uses a Zurich index throughout. Fix: localize the penalty calendar to
+the same market tz/`country` the constraint builder uses (`tz_convert`, not `tz_localize`),
+and assert the convention.
+
+**Q3 (calibration/design). `lambda_smooth_h` and `lambda_seam` overlap near seams and are
+uncalibrated; the seam term dominates.** In the probe, `lambda_seam` drove the boundary step
+from the natural 2.06 to 0.03 - i.e. it, not the curvature term, sets near-seam shape. With
+relative weights unset, near-seam behaviour is determined by an arbitrary ratio. Calibration
+(L-curve / backtest) must set `lambda_smooth_h : lambda_smooth_m : lambda_seam` jointly, not
+independently.
+
+**Q4 (minor). The monthly-mean second difference assumes equal month spacing.** The stencil
+`[1,-2,1]` on consecutive month means treats 28- and 31-day months as evenly spaced
+(~10% curvature distortion for February). A divided-difference (centroid-spacing) weighting
+is the rigorous form. Second order; document or refine.
+
+**Q5 (minor). Endpoint effect.** Second-difference penalties have a linear null space, so the
+first and last months are less constrained by smoothing; with `lambda_prior << lambda_smooth`
+the endpoints can drift. Pin them via the prior weight or an explicit endpoint condition.
+
+**Q6 (test scope).** `test_lt_quant_curve_continuity.py` is a good existence proof but narrow:
+a symmetric box, a flat prior, all-quoted months, and `lambda`s (1000) that swamp the prior.
+It does not test (a) trend preservation (the Q1 failure), (b) residual/unquoted-month
+interaction, (c) absence of new intra-month spikes, or (d) a UTC-indexed prior (the Q2 bug).
+Add these before calibration.
+
+Non-issue checked: arithmetic vs energy-weighted month mean is *not* a problem here because
+`interval_hours` enforces a uniform cadence, under which the two coincide; it would only
+matter if mixed cadence were ever allowed.
+
+### Scope caution (outside the audited commit)
+`6ee36b0` adds "preserve residual anchor after smoothing" to
+`scripts/export_local_test_ch_hourly_csv.py` - continued investment in the legacy
+residual-anchor script that plan WP0/Section 6 explicitly says to stop expanding. Not part of
+the new quant path, but it is the anti-pattern the redesign was created to retire; keep new
+shape logic in the `pfc_shaping/lt/model` modules.
+
+### Verdict (unchanged axis, refined)
+Science: aligned. Implementation: now has the right *class* of tool, but the seam term is
+mis-specified vs theory (Q1) and tz-fragile (Q2). Production behaviour: still NOT aligned -
+the mechanism is available and tested, not yet correct-by-construction or calibrated. Close
+Q1/Q2, add the Q6 tests, then calibrate `lambda_*` on a backtest before any CLI wiring.
