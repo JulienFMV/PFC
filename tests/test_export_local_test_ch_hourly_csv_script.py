@@ -241,6 +241,7 @@ def test_quote_aware_monthly_smoothing_flag_off_does_not_call_smoother(tmp_path,
             str(out_path),
             "--report",
             str(report_path),
+            "--skip-powerbi-refresh",
         ]
     )
 

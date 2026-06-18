@@ -84,6 +84,9 @@ Apres regeneration d'un fichier `output\ch_hfc_hourly*.csv`, lancer:
 .\powerbi\refresh_powerbi_data.ps1
 ```
 
+Note: `scripts/export_local_test_ch_hourly_csv.py` lance ce refresh
+automatiquement apres generation du CSV, sauf avec `--skip-powerbi-refresh`.
+
 Le refresh choisit automatiquement le plus recent CSV horaire matching
 `output\ch_hfc_hourly*.csv`. Pour forcer un fichier precis:
 

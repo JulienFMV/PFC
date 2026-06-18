@@ -1152,6 +1152,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--skip-build", action="store_true")
     parser.add_argument("--fan-chart-output", default=None)
+    parser.add_argument(
+        "--skip-powerbi-refresh",
+        action="store_true",
+        help="Do not rebuild the Power BI CSV sidecars after writing the hourly CSV.",
+    )
+    parser.add_argument("--powerbi-output-dir", default="powerbi/data")
+    parser.add_argument("--powerbi-spot", default="data/epex_hourly.parquet")
     args = parser.parse_args(argv)
 
     local_start, local_end_15min = _local_window(args.local_start_date, args.local_end_date)
@@ -1310,6 +1317,13 @@ def main(argv: list[str] | None = None) -> int:
     print(f"[hourly-csv] rows={len(hourly)}")
     print(f"[hourly-csv] output -> {output}")
     print(f"[hourly-csv] report -> {args.report}")
+    if not args.skip_powerbi_refresh:
+        from scripts.build_powerbi_exports import build_exports
+
+        powerbi_output = Path(args.powerbi_output_dir)
+        build_exports(output, Path(args.forwards), Path(args.powerbi_spot), powerbi_output)
+        print(f"[powerbi] source csv -> {output}")
+        print(f"[powerbi] exports -> {powerbi_output}")
     return 0
 
 

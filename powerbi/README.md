@@ -24,6 +24,11 @@ Depuis la racine du repo:
 powershell -NoProfile -ExecutionPolicy Bypass -File .\powerbi\build_and_open_pfc_qa.ps1
 ```
 
+Le script de generation horaire `scripts/export_local_test_ch_hourly_csv.py`
+regenere aussi automatiquement les tables `powerbi\data\` apres avoir ecrit son
+CSV. Utiliser `--skip-powerbi-refresh` uniquement pour les tests ou diagnostics
+isoles.
+
 Pour forcer un fichier precis:
 
 ```powershell
