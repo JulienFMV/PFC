@@ -16,31 +16,32 @@ executed in a clean venv, and the scalability claim was benchmarked. No PR was o
 
 ## 1. Verdict
 
-**CONDITIONAL PASS (foundation layer).**
+**Scientifically directionally aligned; implementation partially aligned; production
+behaviour NOT yet aligned.** (Gate label: CONDITIONAL PASS, foundation layer.)
 
-The code that exists is genuinely high quality: correct convex-QP/KKT math, a clean
-average-price constraint engine, a mathematically sound zero-mean cross-border projector,
-a correct P-vs-Q separation in the scenario layer, and disciplined point-in-time data
-contracts. All 30 new quant tests pass and the historical LT suite is green, so the work
-does not regress existing behaviour. The remediations the internal expert agents reported
-(sparse QP solver, PEAK-quote representation, negative-run axis, manifest validation,
-cross-border level-leakage) are all present and verifiable in the code.
-
-Two qualifications keep this from an unconditional pass:
-
-1. **One material defect (P1):** the cross-border projector materializes dense `n x n`
-   matrices. It is correct at the `n = 4` test sizes but is memory-infeasible at any real
-   LT horizon - the *same* dense-matrix failure class the team already fixed in the QP
-   optimizer, missed in `cross_border_shape.py`. It must be made matrix-free before the
-   module is run on a production curve.
-2. **Scope:** this is the primitives foundation, not the redesign. The prior model
-   (`shape_priors.py`), the global optimizer's shape penalties (month-path smoothness,
-   seam, calendar), the backtest, the CLI runners, the full run manifest, and the Power BI
-   binding are not implemented. Nothing is wired into a production path yet, so current
-   production risk is zero - and the plan's Definition of Done is far from met.
+- **Science / direction - aligned.** The chosen method - a smoothed optimization under
+  hard EEX averaging constraints, cross-border-as-shape, foundation-model-as-benchmark,
+  structural negatives - matches Fleten-Lemming, Kiesel-Paraschiv, Keles, PriceFM, and
+  Eurelectric. The plan is faithful to the literature.
+- **Implementation - partially aligned.** The constraint engine, sparse KKT solver, and
+  leakage-safe primitives exist and are mathematically correct (30 new tests pass, the
+  historical LT suite is green, the reported remediations are all verifiable). But the
+  *core mechanism the literature is actually about* - the smoothness / seam / calendar
+  penalties and the prior estimator - is not built or not active, and there is one
+  scalability defect (dense cross-border projector).
+- **Production behaviour - NOT yet aligned.** With `lambda_smooth_h = 0` by default and no
+  month-mean / seam penalty implemented, the optimizer currently reduces to a *projection*:
+  it applies a **flat, piecewise-constant level shift per quoted bucket** ("flat monthly
+  deltas"). Such a solve can reprice every EEX average exactly and still produce
+  artificial discontinuities - steps at quoted-bucket boundaries (i.e. at month-end
+  midnights) and intra-day breaks inherited from a blocky prior. This is precisely the
+  artifact that triggered the redesign, and it is exactly what the smooth-forward
+  literature forbids. **No test in the suite can currently detect it.** See finding P1-0.
 
 The internal "10/10 from two expert agents" is defensible **within the primitives
-perimeter**; it should not be read as the redesign being complete or production-ready.
+perimeter** but must not be read as the redesign being complete: on its central objective -
+producing a smooth, economically defensible intra-curve - the delivered behaviour is not
+yet aligned.
 
 ## 2. Score
 
@@ -74,6 +75,55 @@ Nothing is wired into production; there is no live curve to corrupt. The math th
 present is correct. No showstopper.
 
 ### P1 - must fix before the module is used on a real horizon
+
+**P1-0. (HEADLINE) The deterministic solve currently produces flat per-bucket monthly
+deltas, so EEX-consistent curves can still carry artificial midnight / seam breaks - the
+exact failure the redesign targets, and the suite cannot detect it.**
+
+With `lambda_smooth_h = 0` (default) and no `lambda_smooth_m` / `lambda_seam` /
+`lambda_calendar` implemented, `QuantShapeOptimizer.solve` reduces to the W-weighted
+projection of the prior onto the constraints:
+
+```text
+min ||p - p_prior||^2_W   s.t.   A p = q
+=>  p = p_prior + W^-1 A^T lambda,   A W^-1 A^T lambda = q - A p_prior
+```
+
+For disjoint duration-weighted average buckets with `W = I`, this is a **piecewise-constant
+level shift**: `p_t = p_prior,t + c_b` for every hour `t` in bucket `b`, with
+`c_b = q_b - mean_b(p_prior)`. Consequences:
+
+1. The correction is **flat inside each bucket** ("deltas mensuels plats") and
+   **discontinuous across bucket boundaries**. The step at a boundary is
+   `c_{b+1} - c_b = (quoted spread) - (prior spread)`. Because the prior never matches the
+   quoted month spread exactly, **every quoted-month boundary - i.e. a month-end midnight -
+   carries a step.** Matching EEX averages provides *zero* protection against this; it is
+   structural to a projection-only solve.
+2. Inside a bucket the curve is exactly the prior shape, so any intra-day / midnight steps
+   in a blocky (peak/offpeak/hour-cell) prior survive untouched.
+
+Hence a curve can reprice every EEX BASE/PEAK average to `1e-9` and show a clean monthly
+path, yet still break at midnights - the reported symptom. The smooth-forward literature
+explicitly rejects this: Fleten-Lemming (and Benth et al. maximum smoothness,
+Kiesel-Paraschiv) define the curve as the **smoothest** function (minimize the integral of
+squared curvature) consistent with the averaging constraints, precisely to turn these
+boundary level-differences into smooth ramps and remove the "swell"/break. A projection-only
+solve is the pre-literature "match averages, keep prior shape" approach the redesign was
+created to replace (cf. plan Anti-Pattern: "fix the chart by manually anchoring").
+
+The architecture already supports the fix (the KKT solve smooths in the null space of the
+quotes), so the work is: (a) implement and **activate** `lambda_smooth_h > 0` plus a
+month-mean second-difference term and/or a seam term; (b) **calibrate** the lambdas (the
+open P1 from the plan audit - they are currently free and default to no smoothing); and
+(c) add a **continuity / smoothness acceptance test**. Today no test asserts continuity:
+`test_lt_quant_optimizer_kkt.py` checks only repricing and KKT residuals, so this artifact
+is not merely unfixed, it is **undetected**. Add a test that bounds the curve's first/second
+differences at and around quoted-bucket boundaries (above the prior's intrinsic step), and a
+flag-level seam gate, before any pipeline wiring.
+
+This is the top finding: it is the redesign's central objective, it outranks the
+scalability defect below (which sits on a module not yet on the critical path), and it is
+why the verdict's "production behaviour" axis is NOT aligned.
 
 **P1-1. Cross-border projector builds dense `n x n` matrices - infeasible at production
 scale.** In `pfc_shaping/lt/model/cross_border_shape.py::project_neighbor_deviations`:
@@ -148,12 +198,10 @@ collapse onto the Q curve.
 weight already guarantees a unique solution), but it is a (tiny) systematic pull; either
 fold the ridge into the prior weight or document that it is a pure tie-breaker.
 
-**P2-7. Deterministic optimizer lacks the shape-shaping penalties.** `QuantShapeOptimizer`
-implements only the prior term and an optional hourly second-difference smoother. The
-month-path smoothness, seam, and calendar penalties from plan Section 4.1 - the terms that
-actually defend against the "economically wrong month path" that triggered the redesign -
-are not yet present. This is expected for a primitives commit but should be the next
-priority, not deferred behind cross-border/scenario work.
+**P2-7. (PROMOTED to P1-0)** The deterministic optimizer's missing/inactive shape-shaping
+penalties (month smoothness, seam, calendar) were originally filed here as a scope item.
+They are in fact the production-behaviour blocker and are now the headline finding P1-0;
+this entry is retained only as a cross-reference.
 
 **P2-8. Missing test files named in the plan matrix.** `test_lt_quant_dst_time_index.py`,
 `test_lt_quant_flag_off_identity.py`, `test_lt_quant_backtest_protocol.py`,
@@ -168,17 +216,21 @@ package init.
 
 ## 5. Recommended next steps (in order)
 
-1. Make `project_neighbor_deviations` matrix-free (P1-1) and add a realistic-`n`
+1. **Close P1-0 first - it is the redesign's reason to exist.** Implement and activate the
+   month-mean / seam smoothness penalties (and `lambda_smooth_h > 0`) in the null space of
+   the quotes; calibrate the lambdas (plan-audit P1); and add a **continuity / seam
+   acceptance test** that bounds first/second differences at quoted-bucket boundaries so a
+   flat-delta staircase with midnight breaks fails CI. Build `shape_priors.py` alongside,
+   ensuring the prior is itself continuous across day/midnight boundaries.
+2. Make `project_neighbor_deviations` matrix-free (P1-1) and add a realistic-`n`
    memory/time budget test.
-2. Implement `shape_priors.py` and the deterministic optimizer's month/seam/calendar
-   penalties (P2-7) - this is the core of the redesign's stated purpose.
-3. Add the missing test files (P2-8), especially DST and flag-off identity, before any
-   pipeline wiring.
+3. Add the remaining missing test files (P2-8), especially DST and flag-off identity,
+   before any pipeline wiring.
 4. Promote the manifest skeleton to the full Section 9 schema (P2-1) as governance work
    begins.
-5. Keep the primitives unwired from production until the prior model + optimizer penalties
-   + a backtest exist; the plan's Definition of Done and the prior plan audit's P1 set
-   remain the gate.
+5. Keep the primitives unwired from production until the prior model + active smoothness
+   penalties + a continuity gate + a backtest exist; the plan's Definition of Done and the
+   prior plan audit's P1 set remain the gate.
 
 ---
 
