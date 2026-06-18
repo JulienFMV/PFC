@@ -5,7 +5,11 @@ import pandas as pd
 import pytest
 
 from pfc_shaping.lt.model.quant_shape_optimizer import QuantShapeOptimizer
-from pfc_shaping.lt.model.shape_constraints import ConstraintRow, ConstraintSystem
+from pfc_shaping.lt.model.shape_constraints import (
+    ConstraintRow,
+    ConstraintSystem,
+    build_base_constraint_system,
+)
 
 
 def _monthly_constraint_system(
@@ -105,6 +109,54 @@ def test_monthly_penalties_use_market_timezone_for_utc_prior_index() -> None:
     )
 
     np.testing.assert_allclose(utc_result.curve.to_numpy(), local_result.curve.to_numpy(), atol=1e-8)
+
+
+def test_smoothness_penalties_cover_quoted_quarter_to_annual_residual_seam() -> None:
+    local_index = pd.date_range(
+        "2030-01-01",
+        "2030-12-31 23:00",
+        freq="h",
+        tz="Europe/Zurich",
+    )
+    q1_target = 100.0
+    residual_target = 70.0
+    q1_mask = local_index.month <= 3
+    residual_mask = local_index.month >= 4
+    annual_target = (
+        q1_target * int(q1_mask.sum()) + residual_target * int(residual_mask.sum())
+    ) / len(local_index)
+    constraints = build_base_constraint_system(
+        local_index.tz_convert("UTC"),
+        {"2030": annual_target, "2030-Q1": q1_target},
+        country="CH",
+    )
+    prior = pd.Series(0.0, index=local_index)
+
+    projection_only = QuantShapeOptimizer(epsilon_ridge=1e-9).solve(prior, constraints)
+    smooth = QuantShapeOptimizer(
+        lambda_smooth_h=10.0,
+        lambda_smooth_m=1000.0,
+        lambda_seam=1000.0,
+        epsilon_ridge=1e-9,
+    ).solve(prior, constraints)
+    residual_start = local_index.get_loc(
+        pd.Timestamp("2030-04-01 00:00", tz="Europe/Zurich")
+    )
+    projection_jump = abs(
+        float(
+            projection_only.curve.iloc[residual_start]
+            - projection_only.curve.iloc[residual_start - 1]
+        )
+    )
+    smooth_jump = abs(
+        float(smooth.curve.iloc[residual_start] - smooth.curve.iloc[residual_start - 1])
+    )
+
+    assert [row.name for row in constraints.rows] == ["BASE:2030-Q1", "BASE:2030-RESIDUAL"]
+    assert projection_jump > 29.0
+    assert smooth_jump < 3.0
+    np.testing.assert_allclose(float(smooth.curve[q1_mask].mean()), q1_target, atol=1e-8)
+    np.testing.assert_allclose(float(smooth.curve[residual_mask].mean()), residual_target, atol=1e-8)
 
 
 def test_monthly_smoothness_requires_datetime_index() -> None:
