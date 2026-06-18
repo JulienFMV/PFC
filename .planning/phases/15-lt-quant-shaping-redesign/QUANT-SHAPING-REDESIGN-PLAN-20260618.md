@@ -4,6 +4,7 @@ Status: expert-audited redesign plan candidate
 Branch context: `fix/lt-audit-remediation` at local HEAD `559bf3f` before this planning phase  
 Scope: long-term CH electricity HFC/PFC shaping with cross-border DE/FR/AT/IT_NORD priors, EEX calibration, monthly/hourly consistency, probabilistic tail diagnostics, Power BI QA  
 Production status: `NO GO`
+External audit status: `CONDITIONAL PASS` at 7.5/10 before the P1 remediation patch in this document
 
 ## 1. Executive Decision
 
@@ -55,6 +56,12 @@ Source hygiene:
 - Recent ML/foundation-model references are benchmark and feature-design references only.
 - All external references used in an implementation PR must be recorded with URL/DOI, version where applicable, and access date.
 
+Open data dependencies on the critical path:
+
+- `data/cross_border_regime_dataset.parquet` is greenfield. Before implementation starts, define its acquisition plan: source systems, licensing, point-in-time/vintage strategy, expected effort, fallback bridge, and owner.
+- `data/eex_forwards_history.parquet` exists, but snapshot density and per-valuation-date CH product coverage must be audited before the rolling backtest protocol can claim statistical power.
+- The implementation phase may start only after both dependencies have owners and evidence artifacts: `lt_quant_forward_history_coverage.csv` and `cross_border_regime_data_acquisition.md`.
+
 ## 3. Hard Principles
 
 1. No-arbitrage comes first. Every quoted EEX BASE and PEAK product used in the run must reprice exactly within tolerance.
@@ -102,7 +109,70 @@ Where:
 - `q` is the hard target vector for accepted products.
 - `p_prior` is an interpretable prior built from CH spot history, CH forward history, neighbor-market shape, and structural drivers.
 - `S p` extracts cross-bucket month-to-month seams such as Q1 to residual.
+- `s_market` is the seam target vector calibrated from the cross-border prior and historical forward-snapshot seam distribution after CH-level demeaning. It must be reported with source components, sample window, and confidence band.
 - `C p` extracts calendar features: weekend/weekday, holiday/non-holiday, peak/offpeak, block prices, week-to-week deltas.
+
+The implementation must expose the explicit mapping:
+
+```text
+H = 2 * (
+      lambda_prior    * W
+    + lambda_smooth_m  * M' D2_m' D2_m M
+    + lambda_smooth_h  * D2_h' D2_h
+    + lambda_seam      * S' S
+    + lambda_calendar  * C' C
+    + epsilon_ridge    * I_free
+)
+
+f = -2 * (
+      lambda_prior   * W p_prior
+    + lambda_seam    * S' s_market
+    + lambda_calendar* C' c_prior
+)
+```
+
+Where `M` maps hourly/15-minute prices to month means, `D2_m` and `D2_h` are second-difference operators in month and delivery-time space, and all rows must be scaled to comparable EUR/MWh units before lambdas are applied.
+
+### 4.1a Regularization Weight Calibration
+
+The `lambda_*` weights are model parameters, not tuning knobs. They control the monthly path and therefore require a governed calibration protocol before implementation.
+
+Required protocol:
+
+1. Normalize each penalty term to an energy-weighted per-MWh scale so one lambda does not dominate through row count or units.
+2. Fit candidate weights on rolling training folds using the WP6 backtest protocol.
+3. Select weights by a pre-declared method: L-curve plus rolling cross-validation on primary business blocks, or a documented discrepancy-principle target.
+4. Produce `lambda_sensitivity_report.csv` showing month means, seams, critical block prices, EEX residuals, and objective components under at least low/base/high perturbations of each lambda.
+5. Any manual lambda override requires market desk and independent quant-validator sign-off with expiry.
+
+Acceptance:
+
+- selected lambdas must be stable enough that a +/-25% perturbation of any single lambda does not change any unconstrained monthly mean by more than `3 EUR/MWh` unless the run is marked `CONDITIONAL`;
+- seam and critical block results must not change sign under the same perturbation;
+- lambda values and normalization constants must be written to the run manifest.
+
+### 4.1b Reduced-Hessian Uniqueness
+
+The solve is valid only if the reduced Hessian is positive definite on the feasible null space:
+
+```text
+N' H N >> 0
+```
+
+Where `N` spans `null(A)`.
+
+Sufficient condition:
+
+- `W` must be strictly positive on every free interval; or
+- `epsilon_ridge * I_free` must be added on all free intervals.
+
+Ridge rule:
+
+- choose the smallest `epsilon_ridge` such that `lambda_min(N' H N) >= 1e-10` after scaling;
+- report `epsilon_ridge`, `lambda_min`, and condition number in `kkt_report.json`;
+- ridge impact gate: solving with and without the ridge, where numerically possible, must not change any reported monthly mean by more than `0.10 EUR/MWh` or any critical block by more than `0.25 EUR/MWh`.
+
+If this uniqueness check fails, the run is `NO GO`.
 
 Implementation may solve directly in `p`, but the audit formulation must also be expressible as:
 
@@ -127,6 +197,8 @@ or
 
 Rules:
 
+- rank must be computed by SVD with tolerance `rank_tol = max(A.shape) * eps * sigma_max * 100`, after energy-normalized row scaling;
+- the projector residual gate `||(I - A A+) q||_inf <= 1e-9` is the production numerical feasibility gate;
 - consistent redundant quotes may be reduced to an independent basis for solving, but every original quote must be repriced and reported after the solve;
 - inconsistent overlapping quotes must fail hard before optimization;
 - any quote excluded by hierarchy, staleness, missing coverage, or inconsistency must be listed in `excluded_quote_set.csv` and the run manifest;
@@ -137,11 +209,18 @@ Rules:
 An EEX product may be accepted only if one of the following holds:
 
 1. the optimization universe contains the full delivery interval of the product; or
-2. the elapsed part has auditable realized/locked energy and the remaining target is computed as:
+2. the elapsed part has auditable realized/locked settled value and the remaining target is computed as:
 
 ```text
-q_remaining = (q_full * H_full - E_elapsed) / H_remaining
+q_remaining = (q_full * H_full - V_elapsed) / H_remaining
+H_full = H_elapsed + H_remaining
 ```
+
+Where:
+
+- `H_*` are delivery-hour weights under the canonical UTC interval universe;
+- `V_elapsed` is settled value in `EUR/MWh * h`, computed from the named settlement/fixing index and the elapsed delivery hours;
+- physical MWh energy must not be confused with settled value.
 
 If neither condition holds, the product is excluded and the run fails if the remaining quote set no longer gives enough no-arbitrage coverage.
 
@@ -170,7 +249,8 @@ Each optimizer run must output:
 
 - primal residuals for every hard EEX constraint;
 - stationarity residual `||H p + f + A' lambda||_inf`;
-- rank, condition number, scaling report, and solver status;
+- rank, condition number, row scaling/preconditioning report, and solver status;
+- energy-normalized average-price constraint rows so dual/shadow values are comparable across Cal, Quarter, Month, Peak, and OffPeak products;
 - dual/shadow values for constraints, especially if a quote forces a visually sharp seam;
 - decomposition of each monthly mean into EEX level, prior shape, cross-border contribution, and smoothing correction;
 - no hidden post-calibration patch that changes curve shape without audit rows.
@@ -179,13 +259,27 @@ Each optimizer run must output:
 
 The deterministic curve `p_t` is not the full physical distribution of future spot prices.
 
-If scenarios or fan quantiles are generated, define either:
+The implementation must declare the measure:
+
+- `Q`-measure scenarios may be used for valuation and may have scenario mean constrained to forwards.
+- `P`-measure physical scenarios may be used for negative-price probabilities, realized spot validation, and physical risk. They must include an explicit risk-premium bridge if compared or reconciled to the forward curve.
+
+Default production rule:
+
+```text
+X^P_s,t = p_t - rp_t + epsilon^P_s,t
+X^Q_s,t = p_t       + epsilon^Q_s,t
+```
+
+Where `rp_t` is the forward-spot risk premium term structure. If `rp_t` is unavailable, physical scenario outputs must be labeled `diagnostic`, not production valuation.
+
+Scenario paths are primitive. Quantiles are derived from paths, not the reverse:
 
 ```text
 X_s,t = p_t + epsilon_s,t
 ```
 
-or non-crossing marginal quantiles:
+Reported marginal quantiles:
 
 ```text
 Q_alpha,t, alpha in {0.05, 0.10, 0.50, 0.90, 0.95}
@@ -198,6 +292,18 @@ Rules:
 - block distributions must be computed from coherent scenario paths `A_block X_s`, not by summing hourly marginal quantiles;
 - non-crossing quantiles are required where quantiles are reported;
 - probabilistic validation is separate from deterministic EEX repricing.
+
+Scenario-to-quote reconciliation:
+
+- `Q` scenario paths must be reconciled by an affine moment-matching operator in the null space of hard EEX constraints;
+- reconciliation must preserve scenario rank order as far as possible and must not create quantile crossing after marginals are recomputed;
+- the reconciliation report must show pre/post `E_s[A_b X_s]`, tail probabilities `P(price < 0)`, `P(price < -10)`, `P(price < -30)`, run-length stats, and block VWAP tails;
+- if reconciliation changes any main tail probability by more than `2 percentage points` or any negative-block VWAP P5 by more than `3 EUR/MWh`, the probabilistic layer is `CONDITIONAL` and requires validator approval.
+
+Hard market bounds:
+
+- deterministic and scenario paths must respect the applicable EPEX/EUROPEX day-ahead price limits for the delivery period;
+- until a versioned market-rule table is implemented, use the documented EPEX floor/ceiling as a configuration input and mark missing/unknown limits as `NO GO`.
 
 ## 5. Prior Model
 
@@ -248,7 +354,7 @@ dev_M = P_null_CH_bucket(neighbor_shape_M)
 A_CH_bucket dev_M = 0
 ```
 
-For each relevant CH constrained bucket, load type, and time aggregation, the neighbor deviation must have weighted mean zero. Adding a constant `+50 EUR/MWh` to every DE/FR/AT/IT_NORD input curve must not change the CH PFC, unless a separate explicit spread-level component is approved, versioned, and reported.
+For each relevant CH constrained bucket, every free aggregation bucket, each reported residual month, load type, and the global reporting horizon, the neighbor deviation must have weighted mean zero. Adding a constant `+50 EUR/MWh` to every DE/FR/AT/IT_NORD input curve must not change the CH PFC, unless a separate explicit spread-level component is approved, versioned, and reported.
 
 Where weights depend on:
 
@@ -260,6 +366,14 @@ Where weights depend on:
 - load/temperature regime;
 - renewable generation regime;
 - product liquidity and freshness.
+
+Weight parameterization:
+
+- weights must be generated by a low-dimensional model, not a free `(market, regime, month, hour)` table;
+- default constraint: `w_M >= 0` and `sum_M w_M <= 1`, with residual shrinkage mass assigned to CH history;
+- negative neighbor weights are forbidden in v1 unless explicitly justified as a spread hedge and signed off by the validator;
+- weights must be shrunk toward CH-history-only when data coverage, liquidity, or regime confidence is weak;
+- `cross_border_weight_stability.csv` must report rolling out-of-sample weights and flag any market weight moving by more than `25 percentage points` between adjacent calibration windows.
 
 Minimum governance rule:
 
@@ -278,6 +392,19 @@ Production requires a `cross_border_regime_dataset` covering every CH border thr
 - data vintage and availability timestamp.
 
 Without this dataset, or a desk-approved fallback bridge with expiry date, cross-border production approval is `NO GO`.
+
+Minimum explicit regimes:
+
+| Regime | Required numeric definition before implementation |
+|---|---|
+| winter FR stress | FR load/temperature quantile, nuclear availability proxy, CH-FR spread state |
+| spring hydro refill/snowmelt | CH reservoir anomaly, snowmelt/run-of-river proxy, month window |
+| summer PV low-load/export | residual load quantile, PV generation/capacity proxy, export/congestion flag |
+| autumn reservoir refill | reservoir trajectory and hydro opportunity-cost proxy |
+| drought year | hydro anomaly and temperature/load stress thresholds |
+| high-renewables negative-price | solar/wind residual-load quantile, low-demand holiday/weekend flag |
+
+Future-horizon regime assignment must be scenario-based or climatological and must be written to `cross_border_regime_checks.csv`. It cannot use future realized spot/flow data.
 
 ### 5.3 Forward-History Prior
 
@@ -317,6 +444,13 @@ Swiss hydro must be modeled explicitly because it is a first-order CH shape driv
 - publication lag and `available_at` timestamp.
 
 Missing hydro data is a production `NO GO` unless the desk approves a dated fallback prior.
+
+Hydro-to-price mapping:
+
+- hydro features may enter `p_prior` only through documented additive shape components or through the existing governed `water_value` module;
+- sign convention must be explicit: a higher scarcity/water-value pressure must increase scarcity-hour prices and must not mechanically depress the hours it is intended to support;
+- add a regression test tied to the previously fixed water-value sign bug (`1a0e641 fix(lt): correct water value sign and block drift`): increasing the water-value pressure in a synthetic winter scarcity case must raise the defined scarcity block and preserve EEX hard means after projection;
+- the run artifact `hydro_water_value_audit.csv` must report feature values, coefficient/sign, affected blocks, and post-projection EEX residuals.
 
 ## 6. Implementation Architecture
 
@@ -521,7 +655,7 @@ Recommended first implementation:
 
 Tests:
 
-- flag-OFF byte identity against current production path;
+- flag-OFF numeric identity against current production path: stable sorted index, same price columns, same dtypes where relevant, and `atol=1e-12` on numeric price columns; timestamped manifests and run ids are excluded from the identity comparison;
 - optimizer ON exact repricing;
 - synthetic known-solution test;
 - directly quoted products unchanged by smoothing;
@@ -544,13 +678,14 @@ Acceptance:
 
 Goal: replace manual negative-price allowlists with a calibrated structural probabilistic regime.
 
-Deterministic `p_t` and the physical distribution must remain separate. Negative-price diagnostics may influence soft priors and scenario generation, but hard EEX repricing applies to the deterministic expectation/scenario mean.
+Deterministic `p_t`, risk-neutral scenario paths, and physical scenario paths must remain separate. Negative-price diagnostics may influence soft priors and scenario generation, but hard EEX repricing applies to deterministic `p_t` and, when used for valuation, to the risk-neutral scenario mean.
 
 Scenario model:
 
 - estimate probability and severity of negative hours conditional on month, hour, weekday, solar/load/wind, neighbor regimes, and historical volatility;
 - generate non-crossing marginal quantiles plus coherent scenario paths `X_s,t`;
-- impose `E_s[A_b X_s] = q_b` for every hard EEX product if scenarios are used for valuation;
+- impose `E_s[A_b X^Q_s] = q_b` for every hard EEX product if scenarios are used for valuation;
+- keep `X^P_s` physical-tail probabilities separate from risk-neutral valuation paths unless a documented risk-premium bridge is applied;
 - compute block distributions from scenario paths, not from summed hourly quantiles.
 
 Tests:
@@ -564,6 +699,7 @@ Tests:
 - co-occurrence of CH/DE/FR negative episodes tested;
 - tail dependence under congestion/NTC regimes tested;
 - stress cases cover solar buildout, battery/flexibility uncertainty, low-demand holidays, hydro/flexibility constraints, and market price limits.
+- scenario reconciliation preserves tail calibration within the 4.6 thresholds.
 
 Acceptance:
 
@@ -588,8 +724,11 @@ Rolling backtest protocol:
 - for every valuation date `T`, use only data with `available_at <= T`;
 - build N+1, N+2, and N+3 delivery horizons where quote coverage exists;
 - compare against fixed benchmarks listed below;
-- report confidence intervals by block via bootstrap over valuation dates and delivery periods;
-- use Diebold-Mariano or conditional predictive ability tests where sample size permits;
+- report confidence intervals by block via block bootstrap over valuation dates and delivery periods;
+- use HAC/Newey-West long-run variance and Harvey-Leybourne-Newbold corrected Diebold-Mariano tests for overlapping multi-horizon errors, or Giacomini-White conditional predictive ability tests with stated assumptions;
+- pre-register the primary endpoint set before running the validation: critical business block x horizon x metric cells;
+- apply a multiple-testing correction, default Romano-Wolf stepdown or equivalent family-wise error control, across primary endpoint cells;
+- define "statistically material degradation" as degradation significant at family-wise alpha `5%` and economically larger than the desk materiality threshold recorded in the manifest;
 - require non-degradation on critical business blocks unless a signed desk waiver exists.
 
 Benchmarks:
@@ -598,6 +737,9 @@ Benchmarks:
 - residual-anchor diagnostic candidate, labeled diagnostic only;
 - EEX flat-bucket naive curve;
 - CH-history-only prior;
+- last available forward curve carried forward / no-change benchmark;
+- seasonal climatology deterministic benchmark;
+- climatological probabilistic benchmark for CRPS/pinball skill;
 - desk curve if available and frozen before evaluation.
 
 Business blocks:
@@ -619,6 +761,22 @@ Metrics:
 - negative-hour count and severity calibration;
 - economic P&L proxy for profile deals;
 - CH-DE, CH-FR, CH-AT, CH-IT_NORD spread MAE, spread sign accuracy, spread quantiles by regime, congestion-condition behavior, and neighbor-envelope breaches.
+
+Level-neutralized block error definition:
+
+For valuation date `T`, delivery block `B`, curve `p`, realized spot `y`, and accepted forward level bucket `F(B)` covering the block:
+
+```text
+shape_error_B = mean_B(p - A_F(B) p) - mean_B(y - A_F(B) y)
+```
+
+Where `A_F(B)` is the quoted/accepted forward aggregation level used to remove broad level/risk-premium effects. If no accepted forward bucket covers `B`, the metric is not computed and the missing coverage is reported. This metric is the primary shape validation metric; raw spot MAE is diagnostic only.
+
+Seam target calibration:
+
+- `s_market` and the seam excess threshold must be calibrated from historical forward snapshots and cross-border residual-shape priors;
+- the current `12 EUR/MWh` critical threshold is provisional until `seam_threshold_calibration.csv` is produced;
+- production requires a history-calibrated threshold or an explicit desk waiver.
 
 Probabilistic validation metrics:
 
@@ -664,15 +822,18 @@ Governance RACI:
 | Role | Responsibility | Required sign-off |
 |---|---|---|
 | Model owner | implementation, model documentation, run evidence pack | before validation |
-| Independent quant validator | mathematical audit, backtest review, no-leakage review | before external audit |
+| Independent quant validator | mathematical audit, backtest review, no-leakage review; organizationally independent from the model owner | before external audit |
 | Market desk approver | market plausibility, waiver approvals, thresholds requiring expert judgment | before production |
 | Production owner | run orchestration, rollback, data freshness, scheduling | before production |
 | Power BI owner | semantic-model binding, refresh traceability, dashboard QA | before production |
+| External auditor commissioner | commissions the external audit and accepts/rejects the external report | before production |
+| Challenger-model owner | maintains benchmark/challenger curves and evidence that the new model beats or explains them | before validation |
 
 Waivers:
 
 - every waiver must state scope, reason, evidence, approver, expiry date, and rollback condition;
 - no waiver may override EEX hard residuals, future-data leakage, or stale Power BI binding;
+- every `CONDITIONAL` verdict must reference a waiver id from `waiver_register.csv`;
 - waivers expire after at most 90 calendar days or at the next material model/data change.
 
 ## 8. Production Acceptance Gates
@@ -692,7 +853,7 @@ These gates are deliberately numeric. They may be tightened after backtest calib
 | Full CLI runtime | complete audited candidate run `<= 30 min` on desk machine, or documented batch SLA | P1 |
 | Reproducibility flag OFF | numeric identity `atol=1e-12` on price columns and stable sorted index | P0 |
 | Reproducibility optimizer ON | deterministic hash equality for fixed inputs excluding timestamped manifests | P1 |
-| Seam excess vs cross-border prior | critical if absolute excess `> 12 EUR/MWh`; thresholds recalibrated by history before production | P1 |
+| Seam excess vs cross-border prior | production threshold must come from `seam_threshold_calibration.csv`; provisional diagnostic threshold `12 EUR/MWh` cannot be used for production approval | P1 |
 | Negative price expected count | within regime-calibrated 5%-95% band or approved stress case | P1 |
 | Negative price run length | within regime-calibrated 5%-95% band or approved stress case | P1 |
 | Backtest coverage | at least 36 valuation dates and all critical blocks with >= 24 observations | P1 |
@@ -710,6 +871,7 @@ These gates are deliberately numeric. They may be tightened after backtest calib
   "git_sha": "string",
   "git_branch": "string",
   "git_dirty": true,
+  "model_semver": "MAJOR.MINOR.PATCH",
   "command_line": "string",
   "config_hash_sha256": "string",
   "python_version": "string",
@@ -725,7 +887,9 @@ These gates are deliberately numeric. They may be tightened after backtest calib
   "rank_report_path": "string",
   "kkt_report_path": "string",
   "optimizer_status": {"status": "converged", "primal_inf": 0.0, "stationarity_inf": 0.0},
+  "backtest_evidence_run_id": "string",
   "qa_verdict": "PASS|CONDITIONAL|NO_GO",
+  "waiver_ids": ["WAIVER-YYYY-NNN"],
   "powerbi": {"dataset_id": "string", "report_id": "string", "refresh_timestamp": "timestamp"},
   "artifact_hashes": [{"path": "string", "sha256": "string"}]
 }
@@ -746,6 +910,9 @@ output/<run_id>/kkt_report.json
 output/<run_id>/eex_constraint_residuals.csv
 output/<run_id>/data_coverage_gaps.csv
 output/<run_id>/cross_border_regime_checks.csv
+output/<run_id>/lambda_sensitivity_report.csv
+output/<run_id>/seam_threshold_calibration.csv
+output/<run_id>/hydro_water_value_audit.csv
 output/<run_id>/monthly_prior_decomposition.csv
 output/<run_id>/cross_border_weights.csv
 output/<run_id>/monthly_path_and_seam_checks.csv
@@ -753,6 +920,7 @@ output/<run_id>/calendar_checks.csv
 output/<run_id>/negative_price_regime_checks.csv
 output/<run_id>/probabilistic_validation.csv
 output/<run_id>/block_pricing_backtest.csv
+output/<run_id>/waiver_register.csv
 output/<run_id>/qa_verdict.md
 output/<run_id>/diagnostics/*.png
 ```
@@ -783,7 +951,7 @@ The redesign is done only when all items pass:
 1. Full pipeline run, not direct post-processing, produces the candidate.
 2. EEX BASE and PEAK hard constraints pass for every active product.
 3. No future data leakage in priors or validation.
-4. Flag-OFF path is byte-identical to pre-redesign production path.
+4. Flag-OFF path is numerically identical to the pre-redesign production path at `atol=1e-12` on price columns with a stable sorted index; timestamped manifests and run ids are excluded.
 5. Cross-border model uses DE/FR/AT/IT_NORD or documented IT proxy where data quality permits, with no absolute-level leakage.
 6. Monthly paths and seams are explainable by quotes or priors.
 7. Negative prices are calibrated as a structural distributional feature.

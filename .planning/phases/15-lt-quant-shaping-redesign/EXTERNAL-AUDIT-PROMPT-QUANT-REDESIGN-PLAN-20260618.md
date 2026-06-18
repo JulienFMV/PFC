@@ -14,6 +14,12 @@ Plan under review:
 .planning/phases/15-lt-quant-shaping-redesign/QUANT-SHAPING-REDESIGN-PLAN-20260618.md
 ```
 
+Prior external audit report to read for context:
+
+```text
+.planning/phases/15-lt-quant-shaping-redesign/EXTERNAL-AUDIT-REPORT-QUANT-REDESIGN-PLAN-20260618.md
+```
+
 Domain:
 
 - Swiss long-term electricity forward curve generation;
@@ -28,6 +34,8 @@ Current production status in the plan: `NO GO`.
 The redesign was triggered by a visually and quantitatively suspect LT PFC candidate. Earlier local fixes preserved EEX calibration but still relied on diagnostic overlays and gates. The user rejected further patching and requested a scientifically defensible quant redesign aligned with HPFC/PFC literature and European market structure.
 
 The plan should therefore be judged on whether it is a rigorous implementation and validation blueprint, not on whether it already implements code.
+
+Important: an earlier external audit gave the plan `CONDITIONAL PASS` and `7.5/10`, with P1 findings on lambda calibration, reduced-Hessian uniqueness, cross-border leakage scope, P-vs-Q probabilistic measure separation, scenario-to-quote reconciliation, statistical testing, and undefined objects such as `s_market` and level-neutralized block error. The current plan has been patched to close those P1s. Your audit should verify whether those remediations are sufficient.
 
 ## Required Audit Work
 
