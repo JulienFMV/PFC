@@ -220,3 +220,42 @@ def test_monthly_path_audit_flags_inter_bucket_seam_vs_neighbor(tmp_path):
     assert seam["to_bucket"] == "2030-RESIDUAL"
     assert seam["delta_eur_mwh"] == -40.0
     assert seam["neighbor_delta_eur_mwh"] == -10.0
+
+
+def test_monthly_path_audit_does_not_fail_directly_quoted_ch_seam_vs_neighbor(tmp_path):
+    rows = []
+    for month, price in [(1, 120.0), (2, 115.0), (3, 100.0), (4, 70.0), (5, 72.0), (6, 74.0)]:
+        for day in [1, 2]:
+            for hour in range(24):
+                ts = pd.Timestamp(year=2030, month=month, day=day, hour=hour)
+                rows.append(
+                    {
+                        "timestamp_ch": ts.strftime("%d.%m.%Y %H:%M"),
+                        "utc_offset_ch": "UTC+01:00" if month <= 3 else "UTC+02:00",
+                        "timestamp_utc": ts.strftime("%d.%m.%Y %H:%M"),
+                        "price_weighted_mean_eur_mwh": price,
+                    }
+                )
+    csv = tmp_path / "curve.csv"
+    pd.DataFrame(rows).to_csv(csv, index=False)
+
+    forwards = tmp_path / "forwards.parquet"
+    pd.DataFrame(
+        {
+            "market": ["CH", "CH", "DE", "DE"],
+            "load_type": ["BASE"] * 4,
+            "date": [pd.Timestamp("2026-06-12")] * 4,
+            "product": ["2030-Q1", "2030-Q2", "2030-03", "2030-04"],
+            "price": [111.666667, 72.0, 90.0, 85.0],
+        }
+    ).to_parquet(forwards, index=False)
+
+    result = audit(csv, forwards)
+
+    path = result["monthly_path_checks"]
+    seam = path[path["check_type"] == "inter_bucket_seam"].iloc[0]
+    assert seam["from_bucket"] == "2030-Q1"
+    assert seam["to_bucket"] == "2030-Q2"
+    assert seam["delta_eur_mwh"] == -30.0
+    assert seam["severity"] == "ok"
+    assert seam["reason"] == "inter-bucket seam is constrained by CH quoted/implied forwards"

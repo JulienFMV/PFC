@@ -324,7 +324,7 @@ def monthly_path_checks(
     }
     if not base_prices:
         return pd.DataFrame()
-    buckets, _ = calibration_buckets(hourly["ts"], base_prices)
+    buckets, bucket_targets = calibration_buckets(hourly["ts"], base_prices)
     bucket_frame = hourly[["year", "month"]].copy()
     bucket_frame["bucket"] = buckets.to_numpy()
     bucket_by_month = (
@@ -348,6 +348,9 @@ def monthly_path_checks(
 
     def synthetic_or_unquoted(bucket: str) -> bool:
         return bucket.endswith("-RESIDUAL") or bucket.isdigit() or "-Q" in bucket
+
+    def quote_constrained(bucket: str) -> bool:
+        return bucket in base_prices or bucket.endswith("-RESIDUAL")
 
     for year, group in path.groupby("year", sort=True):
         group = group.reset_index(drop=True)
@@ -398,6 +401,7 @@ def monthly_path_checks(
             curr_month = int(curr["month"])
             neighbor_delta = np.nan
             excess_vs_neighbor = np.nan
+            residual_edge_deviation = np.nan
             nb_prev = neighbor_months.get((year_i, prev_month))
             nb_curr = neighbor_months.get((year_i, curr_month))
             if nb_prev is not None and nb_curr is not None:
@@ -405,7 +409,22 @@ def monthly_path_checks(
                 excess_vs_neighbor = float(abs(delta - neighbor_delta))
             severity = "ok"
             reason = "inter-bucket monthly seam plausible"
-            if np.isfinite(excess_vs_neighbor):
+            if quote_constrained(prev_bucket) and quote_constrained(curr_bucket):
+                residual_bucket = curr_bucket if curr_bucket.endswith("-RESIDUAL") else prev_bucket if prev_bucket.endswith("-RESIDUAL") else ""
+                if residual_bucket:
+                    residual_target = bucket_targets.get(residual_bucket)
+                    if residual_target is not None:
+                        residual_month_mean = float(curr["mean_eur_mwh"] if curr_bucket == residual_bucket else prev["mean_eur_mwh"])
+                        residual_edge_deviation = float(residual_month_mean - residual_target)
+                        if abs(residual_edge_deviation) > 15.0:
+                            severity = "critical"
+                            reason = "edge month is materially away from CH residual target"
+                        elif abs(residual_edge_deviation) > 10.0:
+                            severity = "warning"
+                            reason = "edge month is away from CH residual target"
+                if severity == "ok":
+                    reason = "inter-bucket seam is constrained by CH quoted/implied forwards"
+            elif np.isfinite(excess_vs_neighbor):
                 if abs(delta) > 30.0 and excess_vs_neighbor > 12.0:
                     severity = "critical"
                     reason = "inter-bucket monthly seam is materially wider than neighbor market"
@@ -432,6 +451,7 @@ def monthly_path_checks(
                     "neighbor_market": neighbor_market,
                     "neighbor_delta_eur_mwh": neighbor_delta,
                     "excess_vs_neighbor_eur_mwh": excess_vs_neighbor,
+                    "residual_edge_deviation_eur_mwh": residual_edge_deviation,
                     "check_type": "inter_bucket_seam",
                     "severity": severity,
                     "reason": reason,

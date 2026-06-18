@@ -2150,6 +2150,31 @@ def main(argv: list[str] | None = None) -> int:
                 negative_price_floor=args.negative_price_floor,
                 max_weighted_negative_hours=args.max_weighted_negative_hours,
             )
+        if args.enable_neighbor_annual_residual_shape_anchor:
+            ts_ch = _parse_timestamp_ch(hourly["timestamp_ch"], hourly.get("utc_offset_ch"))
+            hourly, annual_residual_audit = apply_neighbor_annual_residual_shape_anchor(
+                hourly,
+                ts_ch=ts_ch,
+                base_forward_prices=forward_prices,
+                neighbor_base_forward_prices=neighbor_prices_by_load_type.get("BASE", {}),
+                historical_base_deviations=historical_neighbor_deviations.get("BASE", {}),
+                neighbor_current_weight=args.neighbor_monthly_current_weight,
+                weights=weights,
+                intensity=args.neighbor_annual_residual_anchor_intensity,
+                max_month_delta_eur_mwh=args.neighbor_annual_residual_max_delta_eur_mwh,
+                negative_price_floor=args.negative_price_floor,
+                max_weighted_negative_hours=args.max_weighted_negative_hours,
+            )
+            hourly, calibration = calibrate_hourly_to_eex(hourly, forward_prices=forward_prices)
+            if args.enable_eex_peak_calibration:
+                hourly, eex_peak_audit = calibrate_hourly_to_eex_base_peak(
+                    hourly,
+                    base_forward_prices=forward_prices,
+                    peak_forward_prices=peak_forward_prices,
+                    weights=weights,
+                    negative_price_floor=args.negative_price_floor,
+                    max_weighted_negative_hours=args.max_weighted_negative_hours,
+                )
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     hourly.to_csv(output, index=False)
