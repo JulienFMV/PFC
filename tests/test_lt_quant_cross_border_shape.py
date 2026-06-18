@@ -58,6 +58,34 @@ def test_projection_is_level_shift_invariant_with_partial_constraints() -> None:
     pd.testing.assert_frame_equal(base, plus_50)
 
 
+def test_projection_scales_to_hourly_year_without_dense_projector() -> None:
+    index = pd.date_range("2030-01-01", periods=8760, freq="h", tz="Europe/Zurich")
+    hours = np.arange(len(index), dtype=float)
+    deviations = pd.DataFrame(
+        {
+            "DE": 80.0 + 10.0 * np.sin(2.0 * np.pi * hours / 8760.0),
+            "FR": 65.0 + 6.0 * np.cos(2.0 * np.pi * hours / 720.0),
+        },
+        index=index,
+    )
+    constraint_rows = []
+    for month in range(1, 13):
+        constraint_rows.append((index.month == month).astype(float))
+    spec = BucketProjectionSpec(
+        bucket_names=tuple(f"2030-{month:02d}" for month in range(1, 13)),
+        step_weights=np.ones(len(index), dtype=float),
+        constraint_matrix=np.vstack(constraint_rows),
+        tolerance=1e-9,
+    )
+
+    result = project_neighbor_deviations(deviations, spec)
+
+    residual = spec.constraint_matrix @ result.to_numpy(dtype=float)
+    assert float(np.max(np.abs(residual))) < 1e-9
+    shifted = project_neighbor_deviations(deviations + 50.0, spec)
+    pd.testing.assert_frame_equal(result, shifted)
+
+
 def test_simplex_shrink_neighbor_weights_keeps_weights_non_negative_and_sums_to_one() -> None:
     scores = pd.DataFrame({"DE": [0.7], "FR": [0.2], "IT": [0.1]})
     config = NeighborWeightConfig(shrinkage_strength=0.5)

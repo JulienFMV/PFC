@@ -54,11 +54,12 @@ def project_neighbor_deviations(
     a, w = _validate_projection(spec, len(neighbor_curves))
     level_row = w.reshape(1, -1)
     a_projection = np.vstack([a, level_row])
-    winv = np.diag(1.0 / w)
-    middle = a_projection @ winv @ a_projection.T
-    projector = np.eye(len(neighbor_curves)) - winv @ a_projection.T @ np.linalg.pinv(middle) @ a_projection
+    inverse_weights = 1.0 / w
+    middle = (a_projection * inverse_weights.reshape(1, -1)) @ a_projection.T
     values = neighbor_curves.to_numpy(dtype=float)
-    projected = projector @ values
+    multipliers = np.linalg.pinv(middle) @ (a_projection @ values)
+    correction = inverse_weights.reshape(-1, 1) * (a_projection.T @ multipliers)
+    projected = values - correction
     residual = a_projection @ projected
     max_abs = float(np.max(np.abs(residual))) if residual.size else 0.0
     if max_abs > float(spec.tolerance):
