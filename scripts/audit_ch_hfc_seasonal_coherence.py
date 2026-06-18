@@ -497,6 +497,159 @@ def monthly_path_checks(
     return pd.DataFrame(rows)
 
 
+def _month_bucket_frame(hourly: pd.DataFrame, base_prices: dict[str, float]) -> tuple[pd.DataFrame, dict[str, float]]:
+    buckets, bucket_targets = calibration_buckets(hourly["ts"], base_prices)
+    bucket_frame = hourly[["year", "month"]].copy()
+    bucket_frame["bucket"] = buckets.to_numpy()
+    bucket_by_month = (
+        bucket_frame.groupby(["year", "month"])["bucket"]
+        .agg(lambda s: str(s.mode().iloc[0]) if not s.mode().empty else "")
+        .reset_index()
+    )
+    return bucket_by_month, bucket_targets
+
+
+def cross_year_month_shape_checks(
+    monthly: pd.DataFrame,
+    hourly: pd.DataFrame,
+    ch_forwards: pd.DataFrame,
+) -> pd.DataFrame:
+    """Audit cross-year month consistency against implied parent bucket levels.
+
+    This catches a defect that within-year path checks miss: two adjacent
+    synthetic buckets can both preserve their EEX means while assigning the
+    parent spread to implausible parts of the seasonal shape.
+    """
+    base_prices = {
+        str(row["product"]): float(row["price"])
+        for _, row in ch_forwards[ch_forwards["load_type"].astype(str).str.upper() == "BASE"].iterrows()
+    }
+    if not base_prices:
+        return pd.DataFrame()
+    bucket_by_month, bucket_targets = _month_bucket_frame(hourly, base_prices)
+    path = monthly.merge(bucket_by_month, on=["year", "month"], how="left").sort_values(["year", "month"])
+    by_key = {
+        (int(row["year"]), int(row["month"])): row
+        for _, row in path.iterrows()
+        if str(row.get("bucket", ""))
+    }
+
+    def comparable(bucket: str) -> bool:
+        return bool(bucket) and (bucket.endswith("-RESIDUAL") or bucket.isdigit())
+
+    def row_for(year: int, month: int) -> pd.Series | None:
+        return by_key.get((int(year), int(month)))
+
+    rows: list[dict[str, object]] = []
+    years = sorted(int(year) for year in path["year"].unique())
+    for from_year, to_year in zip(years, years[1:]):
+        common_months = sorted(
+            set(path.loc[path["year"] == from_year, "month"].astype(int))
+            & set(path.loc[path["year"] == to_year, "month"].astype(int))
+        )
+        for month in common_months:
+            left = row_for(from_year, month)
+            right = row_for(to_year, month)
+            if left is None or right is None:
+                continue
+            from_bucket = str(left["bucket"])
+            to_bucket = str(right["bucket"])
+            if not (comparable(from_bucket) and comparable(to_bucket)):
+                continue
+            if from_bucket not in bucket_targets or to_bucket not in bucket_targets:
+                continue
+            parent_spread = float(bucket_targets[to_bucket] - bucket_targets[from_bucket])
+            same_month_spread = float(right["mean_eur_mwh"] - left["mean_eur_mwh"])
+            spread_error = float(same_month_spread - parent_spread)
+            severity = "ok"
+            reason = "same-month cross-year spread is coherent with parent bucket spread"
+            if abs(parent_spread) > 2.0 and same_month_spread * parent_spread < 0.0 and abs(spread_error) > 5.0:
+                severity = "critical"
+                reason = "same-month cross-year spread has opposite sign to parent bucket spread"
+            elif abs(spread_error) > 12.0:
+                severity = "critical"
+                reason = "same-month cross-year spread is materially inconsistent with parent bucket spread"
+            elif abs(parent_spread) > 1.5 and abs(same_month_spread) < 0.25:
+                severity = "warning"
+                reason = "same-month values are near-cloned despite a non-zero parent bucket spread"
+            elif abs(spread_error) > 8.0:
+                severity = "warning"
+                reason = "same-month cross-year spread is wide versus parent bucket spread"
+            rows.append(
+                {
+                    "from_year": int(from_year),
+                    "to_year": int(to_year),
+                    "month": int(month),
+                    "from_bucket": from_bucket,
+                    "to_bucket": to_bucket,
+                    "from_parent_target_eur_mwh": float(bucket_targets[from_bucket]),
+                    "to_parent_target_eur_mwh": float(bucket_targets[to_bucket]),
+                    "parent_spread_eur_mwh": parent_spread,
+                    "from_month_mean_eur_mwh": float(left["mean_eur_mwh"]),
+                    "to_month_mean_eur_mwh": float(right["mean_eur_mwh"]),
+                    "same_month_spread_eur_mwh": same_month_spread,
+                    "spread_error_eur_mwh": spread_error,
+                    "check_type": "same_month_parent_spread",
+                    "severity": severity,
+                    "reason": reason,
+                }
+            )
+
+        spring_month = 4
+        winter_month = 12
+        left_spring = row_for(from_year, spring_month)
+        left_winter = row_for(from_year, winter_month)
+        right_spring = row_for(to_year, spring_month)
+        right_winter = row_for(to_year, winter_month)
+        if left_spring is None or left_winter is None or right_spring is None or right_winter is None:
+            continue
+        from_bucket_spring = str(left_spring["bucket"])
+        from_bucket_winter = str(left_winter["bucket"])
+        to_bucket_spring = str(right_spring["bucket"])
+        to_bucket_winter = str(right_winter["bucket"])
+        if (
+            from_bucket_spring != from_bucket_winter
+            or to_bucket_spring != to_bucket_winter
+            or not comparable(from_bucket_spring)
+            or not comparable(to_bucket_spring)
+        ):
+            continue
+        from_slope = float(left_winter["mean_eur_mwh"] - left_spring["mean_eur_mwh"])
+        to_slope = float(right_winter["mean_eur_mwh"] - right_spring["mean_eur_mwh"])
+        slope_delta = float(to_slope - from_slope)
+        severity = "ok"
+        reason = "cross-year Apr-Dec seasonal slope is coherent"
+        if abs(slope_delta) > 12.0:
+            severity = "critical"
+            reason = "cross-year Apr-Dec seasonal slope changes materially without a quoted monthly signal"
+        elif abs(slope_delta) > 8.0:
+            severity = "warning"
+            reason = "cross-year Apr-Dec seasonal slope changes sharply"
+        rows.append(
+            {
+                "from_year": int(from_year),
+                "to_year": int(to_year),
+                "month": "04-12",
+                "from_bucket": from_bucket_spring,
+                "to_bucket": to_bucket_spring,
+                "from_parent_target_eur_mwh": float(bucket_targets.get(from_bucket_spring, np.nan)),
+                "to_parent_target_eur_mwh": float(bucket_targets.get(to_bucket_spring, np.nan)),
+                "parent_spread_eur_mwh": float(
+                    bucket_targets.get(to_bucket_spring, np.nan) - bucket_targets.get(from_bucket_spring, np.nan)
+                ),
+                "from_month_mean_eur_mwh": float(left_spring["mean_eur_mwh"]),
+                "to_month_mean_eur_mwh": float(right_spring["mean_eur_mwh"]),
+                "from_winter_minus_spring_eur_mwh": from_slope,
+                "to_winter_minus_spring_eur_mwh": to_slope,
+                "slope_delta_eur_mwh": slope_delta,
+                "check_type": "seasonal_slope_delta",
+                "severity": severity,
+                "reason": reason,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
 def _month_value(months: pd.DataFrame, year: int, month: int) -> float | None:
     sub = months[(months["year"] == year) & (months["month"] == month)]
     if sub.empty:
@@ -629,6 +782,7 @@ def write_report(
     monthly_split_checks_frame: pd.DataFrame,
     calendar_checks: pd.DataFrame,
     monthly_path_checks_frame: pd.DataFrame,
+    cross_year_checks: pd.DataFrame,
     monthly: pd.DataFrame,
     hour_month: pd.DataFrame,
     component_checks: pd.DataFrame | None,
@@ -637,8 +791,9 @@ def write_report(
     split_critical, split_warnings = _severity_counts(monthly_split_checks_frame)
     calendar_critical, calendar_warnings = _severity_counts(calendar_checks)
     path_critical, path_warnings = _severity_counts(monthly_path_checks_frame)
-    critical = seasonal_critical + split_critical + calendar_critical + path_critical
-    warnings = seasonal_warnings + split_warnings + calendar_warnings + path_warnings
+    cross_year_critical, cross_year_warnings = _severity_counts(cross_year_checks)
+    critical = seasonal_critical + split_critical + calendar_critical + path_critical + cross_year_critical
+    warnings = seasonal_warnings + split_warnings + calendar_warnings + path_warnings + cross_year_warnings
     max_quoted_residual = (
         float(quoted_residuals["abs_residual_eur_mwh"].max()) if not quoted_residuals.empty else float("nan")
     )
@@ -666,6 +821,8 @@ def write_report(
         f"| calendar warning flags | {calendar_warnings} |",
         f"| monthly path critical flags | {path_critical} |",
         f"| monthly path warning flags | {path_warnings} |",
+        f"| cross-year month shape critical flags | {cross_year_critical} |",
+        f"| cross-year month shape warning flags | {cross_year_warnings} |",
         f"| max quoted-product residual EUR/MWh | {max_quoted_residual:.6f} |",
         f"| years with January below October | {len(jan_oct_rows)} |",
         "",
@@ -685,6 +842,13 @@ def write_report(
         "month-to-month seams crossing into or out of synthetic/unquoted buckets.",
         "",
         _md_table(monthly_path_checks_frame),
+        "",
+        "## Cross-Year Month Shape Checks",
+        "",
+        "These checks compare homologous months and Apr-Dec seasonal slopes across adjacent synthetic "
+        "BASE buckets, using the implied parent bucket targets as the economic reference.",
+        "",
+        _md_table(cross_year_checks),
         "",
         "## Calendar Coherence Checks",
         "",
@@ -725,6 +889,8 @@ def write_report(
             "* Monthly split flags are evaluated on unquoted CH months only; quoted EEX monthly products remain market signals.",
             "* Monthly path flags catch sharp adjacent jumps and local reversals inside annual/residual synthetic buckets, "
             "plus cross-bucket monthly seams that are materially wider than the neighbor market guide.",
+            "* Cross-year month shape flags catch cases where adjacent synthetic buckets preserve EEX means but allocate "
+            "the parent spread to implausible months or seasonal slopes.",
             "* Calendar flags catch implausible weekend premiums and week-to-week jumps inside a generated month.",
             "* This is a model-quality gate, not a market override: if quoted monthly/quarterly EEX products imply the inversion, the gate should not force a correction.",
             "* The current local/test curve should be considered seasonally suspect if any critical flag remains.",
@@ -772,6 +938,7 @@ def audit(
         neighbor_forwards if not neighbor_forwards.empty else None,
         neighbor_market=neighbor_market,
     )
+    cross_year = cross_year_month_shape_checks(monthly, hourly, forwards)
     calendar_checks = calendar_coherence_checks(hourly, price_column=price_column)
     component_checks = None
     if component_parquet is not None:
@@ -781,6 +948,7 @@ def audit(
         "quoted_residuals": residuals,
         "seasonal_checks": seasonal,
         "monthly_path_checks": monthly_path,
+        "cross_year_month_shape_checks": cross_year,
         "monthly_split_checks": monthly_splits,
         "calendar_checks": calendar_checks,
         "monthly": monthly,
@@ -802,6 +970,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--hour-month-output", default=None)
     parser.add_argument("--monthly-split-output", default=None)
     parser.add_argument("--monthly-path-output", default=None)
+    parser.add_argument("--cross-year-output", default=None)
     parser.add_argument("--calendar-output", default=None)
     parser.add_argument("--fail-on-critical", action="store_true")
     args = parser.parse_args(argv)
@@ -817,6 +986,7 @@ def main(argv: list[str] | None = None) -> int:
     monthly = result["monthly"]
     hour_month = result["hour_month"]
     monthly_path = result["monthly_path_checks"]
+    cross_year = result["cross_year_month_shape_checks"]
     monthly_splits = result["monthly_split_checks"]
     calendar_checks = result["calendar_checks"]
     if args.monthly_output:
@@ -831,6 +1001,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.monthly_path_output:
         Path(args.monthly_path_output).parent.mkdir(parents=True, exist_ok=True)
         monthly_path.to_csv(args.monthly_path_output, index=False)
+    if args.cross_year_output:
+        Path(args.cross_year_output).parent.mkdir(parents=True, exist_ok=True)
+        cross_year.to_csv(args.cross_year_output, index=False)
     if args.calendar_output:
         Path(args.calendar_output).parent.mkdir(parents=True, exist_ok=True)
         calendar_checks.to_csv(args.calendar_output, index=False)
@@ -845,6 +1018,7 @@ def main(argv: list[str] | None = None) -> int:
         monthly_split_checks_frame=monthly_splits,  # type: ignore[arg-type]
         calendar_checks=calendar_checks,  # type: ignore[arg-type]
         monthly_path_checks_frame=monthly_path,  # type: ignore[arg-type]
+        cross_year_checks=cross_year,  # type: ignore[arg-type]
         monthly=monthly,  # type: ignore[arg-type]
         hour_month=hour_month,  # type: ignore[arg-type]
         component_checks=result["component_checks"],  # type: ignore[arg-type]
@@ -852,11 +1026,11 @@ def main(argv: list[str] | None = None) -> int:
     seasonal = result["seasonal_checks"]  # type: ignore[assignment]
     critical = sum(
         _severity_counts(frame)[0]
-        for frame in [seasonal, monthly_splits, monthly_path, calendar_checks]  # type: ignore[list-item]
+        for frame in [seasonal, monthly_splits, monthly_path, cross_year, calendar_checks]  # type: ignore[list-item]
     )
     warning = sum(
         _severity_counts(frame)[1]
-        for frame in [seasonal, monthly_splits, monthly_path, calendar_checks]  # type: ignore[list-item]
+        for frame in [seasonal, monthly_splits, monthly_path, cross_year, calendar_checks]  # type: ignore[list-item]
     )
     print(f"[seasonal-audit] critical={critical} warning={warning}")
     print(f"[seasonal-audit] report -> {args.report}")

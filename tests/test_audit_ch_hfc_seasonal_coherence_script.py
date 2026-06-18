@@ -1,8 +1,32 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pandas as pd
 
 from scripts.audit_ch_hfc_seasonal_coherence import audit
+
+
+def _offset_for_month(month: int) -> str:
+    return "UTC+02:00" if 4 <= int(month) <= 10 else "UTC+01:00"
+
+
+def _write_monthly_curve(tmp_path, monthly_values: dict[tuple[int, int], float]) -> Path:
+    rows = []
+    for (year, month), price in sorted(monthly_values.items()):
+        for hour in range(24):
+            ts = pd.Timestamp(year=year, month=month, day=1, hour=hour)
+            rows.append(
+                {
+                    "timestamp_ch": ts.strftime("%d.%m.%Y %H:%M"),
+                    "utc_offset_ch": _offset_for_month(month),
+                    "timestamp_utc": ts.strftime("%d.%m.%Y %H:%M"),
+                    "price_weighted_mean_eur_mwh": price,
+                }
+            )
+    csv = tmp_path / "curve.csv"
+    pd.DataFrame(rows).to_csv(csv, index=False)
+    return csv
 
 
 def test_seasonal_audit_flags_annual_only_january_below_october(tmp_path):
@@ -259,3 +283,97 @@ def test_monthly_path_audit_does_not_fail_directly_quoted_ch_seam_vs_neighbor(tm
     assert seam["delta_eur_mwh"] == -30.0
     assert seam["severity"] == "ok"
     assert seam["reason"] == "inter-bucket seam is constrained by CH quoted/implied forwards"
+
+
+def test_cross_year_month_shape_flags_residual_vs_next_annual_incoherence(tmp_path):
+    values = {}
+    values.update({(2028, 1): 117.0, (2028, 2): 115.0, (2028, 3): 98.0})
+    values.update(
+        {
+            (2028, 4): 62.0,
+            (2028, 5): 61.0,
+            (2028, 6): 62.0,
+            (2028, 7): 66.0,
+            (2028, 8): 65.0,
+            (2028, 9): 72.0,
+            (2028, 10): 78.0,
+            (2028, 11): 85.0,
+            (2028, 12): 85.0,
+        }
+    )
+    values.update(
+        {
+            (2029, 1): 82.0,
+            (2029, 2): 75.0,
+            (2029, 3): 68.0,
+            (2029, 4): 62.05,
+            (2029, 5): 58.0,
+            (2029, 6): 57.0,
+            (2029, 7): 59.0,
+            (2029, 8): 64.0,
+            (2029, 9): 72.0,
+            (2029, 10): 81.0,
+            (2029, 11): 90.0,
+            (2029, 12): 99.0,
+        }
+    )
+    csv = _write_monthly_curve(tmp_path, values)
+
+    forwards = tmp_path / "forwards.parquet"
+    pd.DataFrame(
+        {
+            "market": ["CH", "CH", "CH"],
+            "load_type": ["BASE", "BASE", "BASE"],
+            "date": [pd.Timestamp("2026-06-17")] * 3,
+            "product": ["2028", "2028-Q1", "2029"],
+            "price": [80.40, 109.97, 72.41],
+        }
+    ).to_parquet(forwards, index=False)
+
+    result = audit(csv, forwards)
+
+    checks = result["cross_year_month_shape_checks"]
+    assert "critical" in set(checks["severity"])
+    slope = checks[checks["check_type"] == "seasonal_slope_delta"].iloc[0]
+    assert slope["severity"] == "critical"
+    april = checks[(checks["check_type"] == "same_month_parent_spread") & (checks["month"] == 4)].iloc[0]
+    assert april["severity"] == "warning"
+    assert april["reason"] == "same-month values are near-cloned despite a non-zero parent bucket spread"
+
+
+def test_cross_year_month_shape_accepts_parallel_parent_spread(tmp_path):
+    values = {}
+    values.update({(2028, 1): 117.0, (2028, 2): 115.0, (2028, 3): 98.0})
+    residual_2028 = {
+        4: 62.0,
+        5: 61.0,
+        6: 62.0,
+        7: 66.0,
+        8: 65.0,
+        9: 72.0,
+        10: 78.0,
+        11: 85.0,
+        12: 85.0,
+    }
+    values.update({(2028, month): value for month, value in residual_2028.items()})
+    parent_spread = 2.0
+    values.update({(2029, month): value + parent_spread for month, value in residual_2028.items()})
+    values.update({(2029, 1): 119.0, (2029, 2): 117.0, (2029, 3): 100.0})
+    csv = _write_monthly_curve(tmp_path, values)
+
+    forwards = tmp_path / "forwards.parquet"
+    pd.DataFrame(
+        {
+            "market": ["CH", "CH", "CH"],
+            "load_type": ["BASE", "BASE", "BASE"],
+            "date": [pd.Timestamp("2026-06-17")] * 3,
+            "product": ["2028", "2028-Q1", "2029"],
+            "price": [80.40, 109.97, 72.62],
+        }
+    ).to_parquet(forwards, index=False)
+
+    result = audit(csv, forwards)
+
+    checks = result["cross_year_month_shape_checks"]
+    assert not checks.empty
+    assert set(checks["severity"]) == {"ok"}

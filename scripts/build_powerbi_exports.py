@@ -228,10 +228,12 @@ def build_exports(csv_path: Path, forwards_path: Path, spot_path: Path, output_d
     seasonal_result = audit_seasonal(csv_path, forwards_path)
     seasonal_checks = seasonal_result["seasonal_checks"]
     monthly_path_checks = seasonal_result["monthly_path_checks"]
+    cross_year_checks = seasonal_result["cross_year_month_shape_checks"]
     monthly_split_checks = seasonal_result["monthly_split_checks"]
     calendar_checks = seasonal_result["calendar_checks"]
     seasonal_checks.to_csv(output_dir / "seasonal_coherence.csv", index=False)
     monthly_path_checks.to_csv(output_dir / "monthly_path_diagnostics.csv", index=False)
+    cross_year_checks.to_csv(output_dir / "cross_year_month_shape_diagnostics.csv", index=False)
     monthly_split_checks.to_csv(output_dir / "monthly_split_diagnostics.csv", index=False)
     calendar_checks.to_csv(output_dir / "calendar_coherence.csv", index=False)
 
@@ -331,6 +333,8 @@ def build_exports(csv_path: Path, forwards_path: Path, spot_path: Path, output_d
         {"metric": "monthly_split_warning_flags", "value": severity_count(monthly_split_checks, "warning")},
         {"metric": "monthly_path_critical_flags", "value": severity_count(monthly_path_checks, "critical")},
         {"metric": "monthly_path_warning_flags", "value": severity_count(monthly_path_checks, "warning")},
+        {"metric": "cross_year_month_shape_critical_flags", "value": severity_count(cross_year_checks, "critical")},
+        {"metric": "cross_year_month_shape_warning_flags", "value": severity_count(cross_year_checks, "warning")},
         {"metric": "calendar_critical_flags", "value": severity_count(calendar_checks, "critical")},
         {"metric": "calendar_warning_flags", "value": severity_count(calendar_checks, "warning")},
     ]
