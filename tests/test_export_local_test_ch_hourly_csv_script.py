@@ -13,6 +13,8 @@ from scripts.export_local_test_ch_hourly_csv import (
     _negative_capture_weight,
     _peak_shape_down_weight,
     _peak_shape_up_weight,
+    apply_neighbor_monthly_spread_anchor,
+    apply_synthetic_monthly_path_smoothing,
     apply_post_calibration_negative_rebalancer,
     apply_post_calibration_peak_shape_rebalancer,
     apply_local_test_structural_shape_upgrade,
@@ -268,6 +270,75 @@ def test_eex_peak_mask_excludes_ch_national_holidays():
     assert mask.tolist() == [False, True, False, False]
 
 
+def test_eex_peak_mask_supports_neighbor_holiday_calendars():
+    timestamps = pd.Series(
+        pd.DatetimeIndex(
+            [
+                "2028-07-14 10:00",  # FR national holiday, regular Friday elsewhere
+                "2028-07-15 10:00",
+            ],
+            tz="Europe/Zurich",
+        )
+    )
+
+    fr_mask = _eex_peak_mask(timestamps, country="FR")
+    at_mask = _eex_peak_mask(timestamps, country="AT")
+
+    assert fr_mask.tolist() == [False, False]
+    assert at_mask.tolist() == [True, False]
+
+
+def test_eex_peak_mask_rejects_unsupported_country():
+    timestamps = pd.Series(pd.date_range("2028-07-14 10:00", periods=1, freq="h", tz="Europe/Zurich"))
+
+    with pytest.raises(ValueError, match="unsupported EEX peak holiday country"):
+        _eex_peak_mask(timestamps, country="XX")
+
+
+def test_synthetic_monthly_path_smoothing_reduces_jump_and_preserves_bucket_mean():
+    timestamps = []
+    prices = []
+    for month, price in [(1, 100.0), (2, 102.0), (3, 70.0)]:
+        for day in [1, 2]:
+            for hour in range(24):
+                timestamps.append(pd.Timestamp(year=2030, month=month, day=day, hour=hour, tz="Europe/Zurich"))
+                prices.append(price)
+    ts = pd.Series(pd.DatetimeIndex(timestamps))
+    hourly = pd.DataFrame(
+        {
+            "timestamp_ch": ts.dt.strftime("%d.%m.%Y %H:%M"),
+            "utc_offset_ch": "UTC+01:00",
+            "timestamp_utc": ts.dt.tz_convert("UTC").dt.strftime("%d.%m.%Y %H:%M"),
+            "price_slow_eur_mwh": prices,
+            "price_central_eur_mwh": prices,
+            "price_fast_eur_mwh": prices,
+            "price_weighted_mean_eur_mwh": prices,
+            "structural_p10_eur_mwh": prices,
+            "structural_p50_eur_mwh": prices,
+            "structural_p90_eur_mwh": prices,
+            "structural_width_eur_mwh": [0.0] * len(prices),
+        }
+    )
+    before_mean = float(hourly["price_weighted_mean_eur_mwh"].mean())
+
+    smoothed, audit = apply_synthetic_monthly_path_smoothing(
+        hourly,
+        ts_ch=ts,
+        base_forward_prices={"2030": before_mean},
+        peak_forward_prices={},
+        weights={"slow": 0.25, "central": 0.5, "fast": 0.25},
+        intensity=1.0,
+        smoothness_lambda=20.0,
+        max_month_delta_eur_mwh=20.0,
+        negative_price_floor=-30.0,
+    )
+
+    after_monthly = smoothed.assign(month=ts.dt.month).groupby("month")["price_weighted_mean_eur_mwh"].mean()
+    assert audit["product"].unique().tolist() == ["2030"]
+    assert smoothed["price_weighted_mean_eur_mwh"].mean() == pytest.approx(before_mean, abs=1e-6)
+    assert abs(after_monthly.loc[3] - after_monthly.loc[2]) < 32.0
+
+
 def test_calibrate_hourly_to_eex_base_peak_matches_base_and_peak_quotes():
     timestamps = pd.date_range("2030-07-01", periods=24 * 14, freq="h", tz="Europe/Zurich")
     hourly = pd.DataFrame(
@@ -464,6 +535,110 @@ def test_post_calibration_negative_rebalancer_preserves_eex_bucket_means():
     assert rebalanced["structural_p10_eur_mwh"].min() < 0.0
     assert int((rebalanced["price_weighted_mean_eur_mwh"] < 0.0).sum()) == 0
     assert int(audit["negative_hours"].sum()) > 0
+
+
+def test_weighted_negative_capture_is_opt_in_and_mean_preserving():
+    timestamps = pd.date_range("2030-07-01", periods=24 * 14, freq="h", tz="Europe/Zurich")
+    hourly = pd.DataFrame(
+        {
+            "timestamp_ch": timestamps.strftime("%Y-%m-%d %H:%M:%S%z"),
+            "timestamp_utc": timestamps.tz_convert("UTC").strftime("%Y-%m-%d %H:%M:%S%z"),
+            "price_slow_eur_mwh": [10.0] * len(timestamps),
+            "price_central_eur_mwh": [2.0] * len(timestamps),
+            "price_fast_eur_mwh": [1.0] * len(timestamps),
+            "price_weighted_mean_eur_mwh": [3.75] * len(timestamps),
+            "structural_p10_eur_mwh": [1.0] * len(timestamps),
+            "structural_p50_eur_mwh": [2.0] * len(timestamps),
+            "structural_p90_eur_mwh": [10.0] * len(timestamps),
+            "structural_width_eur_mwh": [9.0] * len(timestamps),
+        }
+    )
+
+    rebalanced, audit = apply_post_calibration_negative_rebalancer(
+        hourly,
+        forward_prices={"2030": 3.75},
+        weights={"slow": 0.25, "central": 0.5, "fast": 0.25},
+        intensity=1.0,
+        weighted_negative_capture_intensity=1.0,
+        negative_price_floor=-30.0,
+        max_weighted_negative_hours=999,
+    )
+
+    assert rebalanced["price_slow_eur_mwh"].mean() == pytest.approx(10.0)
+    assert rebalanced["price_central_eur_mwh"].mean() == pytest.approx(2.0)
+    assert rebalanced["price_fast_eur_mwh"].mean() == pytest.approx(1.0)
+    assert rebalanced["price_weighted_mean_eur_mwh"].mean() == pytest.approx(3.75)
+    assert rebalanced["price_central_eur_mwh"].min() < 0.0
+    assert rebalanced["price_weighted_mean_eur_mwh"].min() < 0.0
+    assert int((rebalanced["price_weighted_mean_eur_mwh"] < 0.0).sum()) > 0
+    assert {"central", "fast"}.issubset(set(audit["scenario"]))
+
+
+def test_neighbor_monthly_spread_anchor_follows_guide_and_preserves_buckets():
+    timestamps = pd.date_range("2027-01-01", "2027-03-31 23:00", freq="h", tz="Europe/Zurich")
+    hourly = pd.DataFrame(
+        {
+            "timestamp_ch": timestamps.strftime("%Y-%m-%d %H:%M:%S%z"),
+            "timestamp_utc": timestamps.tz_convert("UTC").strftime("%Y-%m-%d %H:%M:%S%z"),
+            "price_slow_eur_mwh": [120.0] * len(timestamps),
+            "price_central_eur_mwh": [120.0] * len(timestamps),
+            "price_fast_eur_mwh": [120.0] * len(timestamps),
+            "price_weighted_mean_eur_mwh": [120.0] * len(timestamps),
+            "structural_p10_eur_mwh": [120.0] * len(timestamps),
+            "structural_p50_eur_mwh": [120.0] * len(timestamps),
+            "structural_p90_eur_mwh": [120.0] * len(timestamps),
+            "structural_width_eur_mwh": [0.0] * len(timestamps),
+        }
+    )
+    ts_ch = pd.Series(timestamps, index=hourly.index)
+    peak_mask = _eex_peak_mask(ts_ch, country="CH")
+    peak_idx = peak_mask[peak_mask].index
+    for col in [
+        "price_slow_eur_mwh",
+        "price_central_eur_mwh",
+        "price_fast_eur_mwh",
+        "price_weighted_mean_eur_mwh",
+        "structural_p10_eur_mwh",
+        "structural_p50_eur_mwh",
+        "structural_p90_eur_mwh",
+    ]:
+        hourly.loc[peak_idx, col] = 125.0
+
+    anchored, audit = apply_neighbor_monthly_spread_anchor(
+        hourly,
+        ts_ch=ts_ch,
+        base_forward_prices={"2027-Q1": 120.0},
+        peak_forward_prices={"2027-Q1": 125.0},
+        neighbor_base_forward_prices={
+            "2027-Q1": 100.0,
+            "2027-01": 112.0,
+            "2027-02": 100.0,
+            "2027-03": 88.0,
+        },
+        neighbor_peak_forward_prices={
+            "2027-Q1": 105.0,
+            "2027-01": 128.0,
+            "2027-02": 108.0,
+            "2027-03": 79.0,
+        },
+        weights={"slow": 0.25, "central": 0.5, "fast": 0.25},
+        max_weighted_negative_hours=0,
+    )
+
+    anchored_ts = pd.Series(timestamps, index=anchored.index)
+    anchored_peak = _eex_peak_mask(anchored_ts, country="CH")
+    month = anchored_ts.dt.month
+    monthly_base = anchored.groupby(month)["price_weighted_mean_eur_mwh"].mean()
+    monthly_peak = anchored.loc[anchored_peak].groupby(month.loc[anchored_peak])[
+        "price_weighted_mean_eur_mwh"
+    ].mean()
+
+    assert monthly_base.loc[1] > monthly_base.loc[2] > monthly_base.loc[3]
+    assert monthly_peak.loc[1] > monthly_peak.loc[2] > monthly_peak.loc[3]
+    assert anchored["price_weighted_mean_eur_mwh"].mean() == pytest.approx(120.0, abs=1e-6)
+    assert anchored.loc[anchored_peak, "price_weighted_mean_eur_mwh"].mean() == pytest.approx(125.0, abs=1e-6)
+    assert set(audit["load_type"]) == {"BASE", "PEAK"}
+    assert set(audit["source"]) == {"neighbor_current"}
 
 
 def test_post_calibration_negative_rebalancer_respects_floor():

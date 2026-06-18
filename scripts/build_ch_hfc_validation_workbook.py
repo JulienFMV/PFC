@@ -183,6 +183,9 @@ def _write_report(path: Path, *, workbook: Path, csv_path: Path, metrics: dict[s
         "| `Structural_Width` | structural width by year/month/hour |",
         "| `Negative_Low_Hours` | negative and very-low hour diagnostics |",
         "| `Seasonal_Coherence` | January/October and winter/autumn consistency flags |",
+        "| `Monthly_Path_Checks` | adjacent jumps and reversals inside synthetic monthly paths |",
+        "| `Monthly_Split_Checks` | unquoted CH month splits checked against neighbor market shape |",
+        "| `Calendar_Coherence` | weekend/weekday and week-to-week month diagnostics |",
         "| `Quoted_EEX_Products` | residuals against every quoted overlapping EEX product |",
         "| `Charts` | prebuilt charts for quick review |",
         "",
@@ -347,9 +350,18 @@ def build_workbook(
     annual, residuals, audit_metrics = audit(csv_path, forwards_path)
     seasonal_result = seasonal_audit(csv_path, forwards_path)
     seasonal_checks = seasonal_result["seasonal_checks"]
+    monthly_path_checks = seasonal_result["monthly_path_checks"]
+    monthly_split_checks = seasonal_result["monthly_split_checks"]
+    calendar_checks = seasonal_result["calendar_checks"]
     quoted_residuals = seasonal_result["quoted_residuals"]
     seasonal_critical = int((seasonal_checks["severity"] == "critical").sum()) if not seasonal_checks.empty else 0
     seasonal_warning = int((seasonal_checks["severity"] == "warning").sum()) if not seasonal_checks.empty else 0
+    split_critical = int((monthly_split_checks["severity"] == "critical").sum()) if not monthly_split_checks.empty else 0
+    split_warning = int((monthly_split_checks["severity"] == "warning").sum()) if not monthly_split_checks.empty else 0
+    path_critical = int((monthly_path_checks["severity"] == "critical").sum()) if not monthly_path_checks.empty else 0
+    path_warning = int((monthly_path_checks["severity"] == "warning").sum()) if not monthly_path_checks.empty else 0
+    calendar_critical = int((calendar_checks["severity"] == "critical").sum()) if not calendar_checks.empty else 0
+    calendar_warning = int((calendar_checks["severity"] == "warning").sum()) if not calendar_checks.empty else 0
     raw_cols = [
         "timestamp_ch",
         "utc_offset_ch",
@@ -381,6 +393,12 @@ def build_workbook(
                 {"item": "shape_audit_score", "value": audit_metrics["score_10"]},
                 {"item": "seasonal_critical_flags", "value": seasonal_critical},
                 {"item": "seasonal_warning_flags", "value": seasonal_warning},
+                {"item": "monthly_split_critical_flags", "value": split_critical},
+                {"item": "monthly_split_warning_flags", "value": split_warning},
+                {"item": "monthly_path_critical_flags", "value": path_critical},
+                {"item": "monthly_path_warning_flags", "value": path_warning},
+                {"item": "calendar_critical_flags", "value": calendar_critical},
+                {"item": "calendar_warning_flags", "value": calendar_warning},
                 {"item": "production_approval", "value": "NO"},
                 {"item": "timestamp_format", "value": "dd.mm.yyyy hh:mm"},
             ]
@@ -394,6 +412,9 @@ def build_workbook(
         _structural_width(df).to_excel(writer, sheet_name="Structural_Width", index=False)
         _negative_hours(df).to_excel(writer, sheet_name="Negative_Low_Hours", index=False)
         seasonal_checks.to_excel(writer, sheet_name="Seasonal_Coherence", index=False)
+        monthly_path_checks.to_excel(writer, sheet_name="Monthly_Path_Checks", index=False)
+        monthly_split_checks.to_excel(writer, sheet_name="Monthly_Split_Checks", index=False)
+        calendar_checks.to_excel(writer, sheet_name="Calendar_Coherence", index=False)
         quoted_residuals.to_excel(writer, sheet_name="Quoted_EEX_Products", index=False)
         annual.to_excel(writer, sheet_name="Annual_Audit", index=False)
         residuals.to_excel(writer, sheet_name="Audit_EEX_Residuals", index=False)

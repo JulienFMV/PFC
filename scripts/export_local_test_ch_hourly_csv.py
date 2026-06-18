@@ -262,10 +262,19 @@ def _eex_peak_mask(ts_ch: pd.Series, *, country: str = "CH") -> pd.Series:
     years = sorted(int(year) for year in ts.dt.year.dropna().unique())
     holiday_set: set[object] = set()
     for year in years:
-        if country == "DE":
+        country_u = str(country).upper()
+        if country_u == "DE":
             holiday_set |= set(holidays.Germany(years=year).keys())
-        else:
+        elif country_u == "AT":
+            holiday_set |= set(holidays.Austria(years=year).keys())
+        elif country_u == "FR":
+            holiday_set |= set(holidays.France(years=year).keys())
+        elif country_u == "IT":
+            holiday_set |= set(holidays.Italy(years=year).keys())
+        elif country_u == "CH":
             holiday_set |= set(holidays.Switzerland(years=year).keys())
+        else:
+            raise ValueError(f"unsupported EEX peak holiday country: {country!r}")
     return (
         (ts.dt.weekday < 5)
         & (ts.dt.hour >= 8)
@@ -289,6 +298,613 @@ def _recompute_weighted_fan_columns(hourly: pd.DataFrame, weights: dict[str, flo
     out["structural_p90_eur_mwh"] = [_weighted_quantile_row(row, w, 0.90) for row in matrix]
     out["structural_width_eur_mwh"] = out["structural_p90_eur_mwh"] - out["structural_p10_eur_mwh"]
     return out
+
+
+def _quarter_month_numbers(product: str) -> list[int]:
+    if "-Q" not in str(product) or str(product).endswith("-RESIDUAL"):
+        return []
+    try:
+        year_s, quarter_s = str(product).split("-Q", 1)
+        int(year_s)
+        quarter = int(quarter_s)
+    except ValueError:
+        return []
+    if quarter < 1 or quarter > 4:
+        return []
+    first = (quarter - 1) * 3 + 1
+    return [first, first + 1, first + 2]
+
+
+def _quarter_year(product: str) -> int | None:
+    if "-Q" not in str(product):
+        return None
+    try:
+        return int(str(product).split("-Q", 1)[0])
+    except ValueError:
+        return None
+
+
+def _month_key(year: int, month: int) -> str:
+    return f"{int(year)}-{int(month):02d}"
+
+
+def _guided_month_targets(
+    *,
+    parent_product: str,
+    parent_target: float,
+    months: list[int],
+    month_counts: dict[int, int],
+    primary_prices: dict[str, float],
+    historical_deviations: dict[tuple[int, int], float] | None = None,
+    primary_weight: float = 0.65,
+) -> tuple[dict[int, float], str] | None:
+    """Return month targets shaped by a guide but levelled to ``parent_target``."""
+    year = _quarter_year(parent_product)
+    if year is None:
+        return None
+    quarter = ((months[0] - 1) // 3) + 1
+
+    def recenter(raw_targets: dict[int, float]) -> dict[int, float]:
+        total = float(sum(month_counts[month] for month in months))
+        avg = sum(float(raw_targets[month]) * float(month_counts[month]) for month in months) / total
+        shift = float(parent_target) - avg
+        return {month: float(raw_targets[month]) + shift for month in months}
+
+    def targets_from_prices(
+        *,
+        guide_year: int,
+        prices: dict[str, float],
+    ) -> dict[int, float] | None:
+        guide_parent = f"{guide_year}-Q{quarter}"
+        guide_months = {_month_key(guide_year, month): prices.get(_month_key(guide_year, month)) for month in months}
+        if guide_parent not in prices or any(value is None for value in guide_months.values()):
+            return None
+        return recenter({month: float(guide_months[_month_key(guide_year, month)]) for month in months})
+
+    current = targets_from_prices(guide_year=year, prices=primary_prices)
+    historical = None
+    if historical_deviations:
+        raw = {
+            month: float(parent_target) + float(historical_deviations[(quarter, month)])
+            for month in months
+            if (quarter, month) in historical_deviations
+        }
+        if len(raw) == len(months):
+            historical = recenter(raw)
+
+    if current is not None and historical is not None:
+        w = min(1.0, max(0.0, float(primary_weight)))
+        blended = {
+            month: w * float(current[month]) + (1.0 - w) * float(historical[month])
+            for month in months
+        }
+        return recenter(blended), f"neighbor_current_{w:.2f}_historical_{1.0 - w:.2f}"
+    if current is not None:
+        return current, "neighbor_current"
+    if historical is not None:
+        return historical, "historical"
+    return None
+
+
+def _historical_month_deviations(
+    forwards_path: Path,
+    *,
+    market: str,
+    load_type: str,
+    min_date: pd.Timestamp | None = None,
+) -> dict[tuple[int, int], float]:
+    """Median historical monthly deviations from the quoted quarter."""
+    if not forwards_path.exists():
+        return {}
+    df = pd.read_parquet(forwards_path)
+    if df.empty:
+        return {}
+    dates = pd.to_datetime(df["date"]).dt.tz_localize(None).dt.normalize()
+    sub = df[
+        (df["market"].astype(str).str.upper() == str(market).upper())
+        & (df["load_type"].astype(str).str.upper() == str(load_type).upper())
+    ].copy()
+    sub["date"] = dates.loc[sub.index]
+    if min_date is not None:
+        sub = sub[sub["date"] >= pd.Timestamp(min_date).tz_localize(None).normalize()]
+    if sub.empty:
+        return {}
+    rows: list[dict[str, float]] = []
+    for (date, product), quarter_row in sub[sub["product_type"].eq("Quarter")].groupby(["date", "product"]):
+        product = str(product)
+        months = _quarter_month_numbers(product)
+        year = _quarter_year(product)
+        if not months or year is None:
+            continue
+        quarter_price = float(quarter_row["price"].iloc[-1])
+        same_date = sub[sub["date"].eq(date)]
+        for month in months:
+            month_product = _month_key(year, month)
+            month_row = same_date[same_date["product"].astype(str).eq(month_product)]
+            if month_row.empty:
+                break
+        else:
+            quarter = ((months[0] - 1) // 3) + 1
+            for month in months:
+                month_product = _month_key(year, month)
+                month_price = float(same_date[same_date["product"].astype(str).eq(month_product)]["price"].iloc[-1])
+                rows.append({"quarter": quarter, "month": month, "deviation": month_price - quarter_price})
+    if not rows:
+        return {}
+    dev = pd.DataFrame(rows)
+    med = dev.groupby(["quarter", "month"])["deviation"].median()
+    return {(int(q), int(m)): float(value) for (q, m), value in med.items()}
+
+
+def apply_neighbor_monthly_spread_anchor(
+    hourly: pd.DataFrame,
+    *,
+    ts_ch: pd.Series,
+    base_forward_prices: dict[str, float],
+    peak_forward_prices: dict[str, float],
+    neighbor_base_forward_prices: dict[str, float],
+    neighbor_peak_forward_prices: dict[str, float],
+    historical_base_deviations: dict[tuple[int, int], float] | None = None,
+    historical_peak_deviations: dict[tuple[int, int], float] | None = None,
+    neighbor_current_weight: float = 0.65,
+    weights: dict[str, float],
+    intensity: float = 1.0,
+    max_month_delta_eur_mwh: float = 20.0,
+    negative_price_floor: float = -30.0,
+    max_weighted_negative_hours: int = 0,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Anchor unquoted CH monthly splits to neighbor/current or historical shapes.
+
+    The overlay is additive and local/test only. BASE adjustments are constant
+    across all hours in the month. PEAK adjustments are applied to EEX peak
+    hours and compensated on offpeak hours in the same month, so monthly BASE
+    energy is unchanged while PEAK month shape can move.
+    """
+    if intensity < 0.0 or not np.isfinite(float(intensity)):
+        raise ValueError("neighbor monthly anchor intensity must be finite and non-negative")
+    if max_month_delta_eur_mwh < 0.0 or not np.isfinite(float(max_month_delta_eur_mwh)):
+        raise ValueError("neighbor monthly max delta must be finite and non-negative")
+    out = hourly.copy()
+    if float(intensity) == 0.0:
+        return out, pd.DataFrame()
+    ts = pd.Series(np.asarray(ts_ch), index=out.index)
+    month = ts.dt.month.astype(int)
+    year = ts.dt.year.astype(int)
+    peak_mask = _eex_peak_mask(ts, country="CH")
+    scenario_cols = list(SCENARIO_PRICE_COLUMNS.values())
+    audit_rows: list[dict[str, object]] = []
+
+    def apply_base_anchor() -> None:
+        base_buckets, base_targets = _calibration_buckets(ts, base_forward_prices)
+        for product, idx in base_buckets.groupby(base_buckets, dropna=True).groups.items():
+            product = str(product)
+            months = _quarter_month_numbers(product)
+            parent_year = _quarter_year(product)
+            if not months or parent_year is None or product not in base_targets:
+                continue
+            idx = pd.Index(idx)
+            month_counts = {m: int(((year.loc[idx] == parent_year) & (month.loc[idx] == m)).sum()) for m in months}
+            if any(count <= 0 for count in month_counts.values()):
+                continue
+            guide = _guided_month_targets(
+                parent_product=product,
+                parent_target=float(base_targets[product]),
+                months=months,
+                month_counts=month_counts,
+                primary_prices=neighbor_base_forward_prices,
+                historical_deviations=historical_base_deviations,
+                primary_weight=neighbor_current_weight,
+            )
+            if guide is None:
+                continue
+            targets, source = guide
+            for m in months:
+                m_idx = idx[(year.loc[idx].to_numpy(dtype=int) == parent_year) & (month.loc[idx].to_numpy(dtype=int) == m)]
+                current = float(out.loc[m_idx, "price_weighted_mean_eur_mwh"].mean())
+                raw_delta = float(targets[m]) - current
+                delta = float(raw_delta) * float(intensity)
+                if abs(delta) > float(max_month_delta_eur_mwh):
+                    delta = math.copysign(float(max_month_delta_eur_mwh), delta)
+                for col in scenario_cols:
+                    out.loc[m_idx, col] = out.loc[m_idx, col].astype(float) + delta
+                audit_rows.append(
+                    {
+                        "load_type": "BASE",
+                        "product": product,
+                        "month": _month_key(parent_year, m),
+                        "source": source,
+                        "current_mean_eur_mwh": current,
+                        "guide_target_eur_mwh": float(targets[m]),
+                        "delta_eur_mwh": delta,
+                        "rows": len(m_idx),
+                    }
+                )
+
+    def apply_peak_anchor() -> None:
+        if not peak_forward_prices:
+            return
+        peak_ts = ts.loc[peak_mask]
+        if peak_ts.empty:
+            return
+        peak_buckets, peak_targets = _calibration_buckets(peak_ts, peak_forward_prices)
+        for product, peak_idx in peak_buckets.groupby(peak_buckets, dropna=True).groups.items():
+            product = str(product)
+            months = _quarter_month_numbers(product)
+            parent_year = _quarter_year(product)
+            if not months or parent_year is None or product not in peak_targets:
+                continue
+            peak_idx = pd.Index(peak_idx)
+            month_counts = {m: int(((year.loc[peak_idx] == parent_year) & (month.loc[peak_idx] == m)).sum()) for m in months}
+            if any(count <= 0 for count in month_counts.values()):
+                continue
+            guide = _guided_month_targets(
+                parent_product=product,
+                parent_target=float(peak_targets[product]),
+                months=months,
+                month_counts=month_counts,
+                primary_prices=neighbor_peak_forward_prices,
+                historical_deviations=historical_peak_deviations,
+                primary_weight=neighbor_current_weight,
+            )
+            if guide is None:
+                continue
+            targets, source = guide
+            for m in months:
+                m_peak_idx = peak_idx[
+                    (year.loc[peak_idx].to_numpy(dtype=int) == parent_year)
+                    & (month.loc[peak_idx].to_numpy(dtype=int) == m)
+                ]
+                m_all_idx = out.index[(year == parent_year) & (month == m)]
+                m_offpeak_idx = pd.Index(m_all_idx).difference(m_peak_idx)
+                if len(m_peak_idx) == 0 or len(m_offpeak_idx) == 0:
+                    continue
+                current = float(out.loc[m_peak_idx, "price_weighted_mean_eur_mwh"].mean())
+                raw_delta = float(targets[m]) - current
+                peak_delta = float(raw_delta) * float(intensity)
+                if abs(peak_delta) > float(max_month_delta_eur_mwh):
+                    peak_delta = math.copysign(float(max_month_delta_eur_mwh), peak_delta)
+                offpeak_delta = -peak_delta * float(len(m_peak_idx)) / float(len(m_offpeak_idx))
+                for col in scenario_cols:
+                    out.loc[m_peak_idx, col] = out.loc[m_peak_idx, col].astype(float) + peak_delta
+                    out.loc[m_offpeak_idx, col] = out.loc[m_offpeak_idx, col].astype(float) + offpeak_delta
+                audit_rows.append(
+                    {
+                        "load_type": "PEAK",
+                        "product": product,
+                        "month": _month_key(parent_year, m),
+                        "source": source,
+                        "current_mean_eur_mwh": current,
+                        "guide_target_eur_mwh": float(targets[m]),
+                        "delta_eur_mwh": peak_delta,
+                        "offpeak_compensation_delta_eur_mwh": offpeak_delta,
+                        "rows": len(m_peak_idx),
+                    }
+                )
+
+    apply_base_anchor()
+    out = _recompute_weighted_fan_columns(out, weights)
+    apply_peak_anchor()
+    out = _recompute_weighted_fan_columns(out, weights)
+    min_price = float(out[[*scenario_cols, "price_weighted_mean_eur_mwh"]].min().min())
+    if min_price < float(negative_price_floor) - 1e-9:
+        raise ValueError(
+            f"neighbor monthly anchor breached negative price floor: min={min_price:.6f}, "
+            f"floor={float(negative_price_floor):.6f}"
+        )
+    weighted_negative_hours = int((out["price_weighted_mean_eur_mwh"] < 0.0).sum())
+    if weighted_negative_hours > int(max_weighted_negative_hours):
+        raise ValueError(
+            "neighbor monthly anchor produced too many weighted-mean negative hours: "
+            f"{weighted_negative_hours} > {int(max_weighted_negative_hours)}"
+        )
+    for column in PRICE_COLUMNS:
+        if column in out.columns:
+            out[column] = out[column].astype(float).round(6)
+    audit = pd.DataFrame(audit_rows)
+    if not audit.empty:
+        audit = audit.sort_values(["load_type", "product", "month"]).reset_index(drop=True)
+    return out, audit
+
+
+def apply_synthetic_monthly_path_smoothing(
+    hourly: pd.DataFrame,
+    *,
+    ts_ch: pd.Series,
+    base_forward_prices: dict[str, float],
+    peak_forward_prices: dict[str, float],
+    weights: dict[str, float],
+    intensity: float = 1.0,
+    smoothness_lambda: float = 12.0,
+    max_month_delta_eur_mwh: float = 12.0,
+    negative_price_floor: float = -30.0,
+    max_weighted_negative_hours: int = 0,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Smooth monthly means inside annual/residual synthetic buckets only."""
+    if intensity < 0.0 or not np.isfinite(float(intensity)):
+        raise ValueError("synthetic monthly path smoothing intensity must be finite and non-negative")
+    if smoothness_lambda < 0.0 or not np.isfinite(float(smoothness_lambda)):
+        raise ValueError("synthetic monthly path smoothing lambda must be finite and non-negative")
+    if max_month_delta_eur_mwh < 0.0 or not np.isfinite(float(max_month_delta_eur_mwh)):
+        raise ValueError("synthetic monthly path max delta must be finite and non-negative")
+    out = hourly.copy()
+    if float(intensity) == 0.0 or float(smoothness_lambda) == 0.0 or float(max_month_delta_eur_mwh) == 0.0:
+        return out, pd.DataFrame()
+    ts = pd.Series(np.asarray(ts_ch), index=out.index)
+    base_buckets, base_targets = _calibration_buckets(ts, base_forward_prices)
+    if base_buckets.isna().any():
+        missing = int(base_buckets.isna().sum())
+        raise ValueError(f"synthetic monthly path smoothing found {missing} rows without an EEX BASE bucket")
+    peak_mask = _eex_peak_mask(ts, country="CH")
+    peak_buckets = pd.Series(dtype=object)
+    if peak_forward_prices and bool(peak_mask.any()):
+        peak_buckets, _ = _calibration_buckets(ts.loc[peak_mask], peak_forward_prices)
+    month = ts.dt.month.astype(int)
+    year = ts.dt.year.astype(int)
+    scenario_cols = list(SCENARIO_PRICE_COLUMNS.values())
+    audit_rows: list[dict[str, object]] = []
+
+    for product, idx in base_buckets.groupby(base_buckets, dropna=True).groups.items():
+        product = str(product)
+        synthetic = product.endswith("-RESIDUAL") or product.isdigit()
+        if not synthetic or product not in base_targets:
+            continue
+        idx = pd.Index(idx)
+        months = sorted(int(value) for value in month.loc[idx].unique())
+        if len(months) < 3:
+            continue
+        old_means = np.array(
+            [float(out.loc[idx[month.loc[idx].to_numpy(dtype=int) == m], "price_weighted_mean_eur_mwh"].mean()) for m in months],
+            dtype=float,
+        )
+        constraints: list[np.ndarray] = [
+            np.array([float((month.loc[idx] == m).sum()) for m in months], dtype=float)
+        ]
+        peak_in_bucket = idx.intersection(peak_buckets.index) if not peak_buckets.empty else pd.Index([])
+        if len(peak_in_bucket) > 0:
+            for _, peak_idx in peak_buckets.loc[peak_in_bucket].groupby(peak_buckets.loc[peak_in_bucket], dropna=True).groups.items():
+                peak_idx = pd.Index(peak_idx)
+                coeff = np.array([float((month.loc[peak_idx] == m).sum()) for m in months], dtype=float)
+                if coeff.sum() > 0.0:
+                    constraints.append(coeff)
+        delta = _solve_month_path_delta(
+            old_means,
+            constraints=np.vstack(constraints),
+            smoothness_lambda=float(smoothness_lambda),
+        )
+        delta = delta * float(intensity)
+        max_abs = float(np.max(np.abs(delta))) if len(delta) else 0.0
+        if max_abs > float(max_month_delta_eur_mwh):
+            delta = delta * (float(max_month_delta_eur_mwh) / max_abs)
+        for pos, m in enumerate(months):
+            m_idx = idx[month.loc[idx].to_numpy(dtype=int) == m]
+            for col in scenario_cols:
+                out.loc[m_idx, col] = out.loc[m_idx, col].astype(float) + float(delta[pos])
+            audit_rows.append(
+                {
+                    "product": product,
+                    "year": int(year.loc[m_idx].mode().iloc[0]) if len(m_idx) else None,
+                    "month": int(m),
+                    "mean_before_eur_mwh": float(old_means[pos]),
+                    "delta_eur_mwh": float(delta[pos]),
+                    "mean_after_eur_mwh": float(old_means[pos] + delta[pos]),
+                    "rows": int(len(m_idx)),
+                }
+            )
+
+    out = _recompute_weighted_fan_columns(out, weights)
+    min_price = float(out[[*scenario_cols, "price_weighted_mean_eur_mwh"]].min().min())
+    if min_price < float(negative_price_floor) - 1e-9:
+        raise ValueError(
+            f"synthetic monthly path smoothing breached negative price floor: min={min_price:.6f}, "
+            f"floor={float(negative_price_floor):.6f}"
+        )
+    weighted_negative_hours = int((out["price_weighted_mean_eur_mwh"] < 0.0).sum())
+    if weighted_negative_hours > int(max_weighted_negative_hours):
+        raise ValueError(
+            "synthetic monthly path smoothing produced too many weighted-mean negative hours: "
+            f"{weighted_negative_hours} > {int(max_weighted_negative_hours)}"
+        )
+    for column in PRICE_COLUMNS:
+        if column in out.columns:
+            out[column] = out[column].astype(float).round(6)
+    audit = pd.DataFrame(audit_rows)
+    if not audit.empty:
+        audit = audit.sort_values(["product", "month"]).reset_index(drop=True)
+    return out, audit
+
+
+def apply_neighbor_annual_residual_shape_anchor(
+    hourly: pd.DataFrame,
+    *,
+    ts_ch: pd.Series,
+    base_forward_prices: dict[str, float],
+    neighbor_base_forward_prices: dict[str, float],
+    historical_base_deviations: dict[tuple[int, int], float] | None = None,
+    neighbor_current_weight: float = 0.65,
+    weights: dict[str, float],
+    intensity: float = 1.0,
+    max_month_delta_eur_mwh: float = 25.0,
+    negative_price_floor: float = -30.0,
+    max_weighted_negative_hours: int = 0,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Anchor annual residual monthly shape to neighbor forward structure.
+
+    This handles products like ``2028-RESIDUAL`` created when a Calendar quote
+    overlaps finer quoted products, e.g. CH Cal 2028 plus CH Q1 2028.
+    Absolute levels are never copied from the neighbor.  We use neighbor
+    month/quarter deviations and re-center them exactly to the CH residual
+    bucket target.
+    """
+    if intensity < 0.0 or not np.isfinite(float(intensity)):
+        raise ValueError("annual residual anchor intensity must be finite and non-negative")
+    if max_month_delta_eur_mwh < 0.0 or not np.isfinite(float(max_month_delta_eur_mwh)):
+        raise ValueError("annual residual anchor max delta must be finite and non-negative")
+    out = hourly.copy()
+    if float(intensity) == 0.0:
+        return out, pd.DataFrame()
+    ts = pd.Series(np.asarray(ts_ch), index=out.index)
+    base_buckets, base_targets = _calibration_buckets(ts, base_forward_prices)
+    if base_buckets.isna().any():
+        missing = int(base_buckets.isna().sum())
+        raise ValueError(f"annual residual anchor found {missing} rows without an EEX BASE bucket")
+    month = ts.dt.month.astype(int)
+    year = ts.dt.year.astype(int)
+    scenario_cols = list(SCENARIO_PRICE_COLUMNS.values())
+    audit_rows: list[dict[str, object]] = []
+
+    for product, idx in base_buckets.groupby(base_buckets, dropna=True).groups.items():
+        product = str(product)
+        if not product.endswith("-RESIDUAL"):
+            continue
+        parent_year_text = product.removesuffix("-RESIDUAL")
+        if not parent_year_text.isdigit() or product not in base_targets:
+            continue
+        parent_year = int(parent_year_text)
+        idx = pd.Index(idx)
+        months = sorted(int(value) for value in month.loc[idx].unique())
+        if len(months) < 4:
+            continue
+        counts = {m: int((month.loc[idx] == m).sum()) for m in months}
+        guide = _annual_residual_month_targets(
+            parent_year=parent_year,
+            parent_target=float(base_targets[product]),
+            months=months,
+            month_counts=counts,
+            neighbor_base_forward_prices=neighbor_base_forward_prices,
+            historical_base_deviations=historical_base_deviations,
+            neighbor_current_weight=neighbor_current_weight,
+        )
+        if guide is None:
+            continue
+        targets, source = guide
+        for m in months:
+            m_idx = idx[(year.loc[idx].to_numpy(dtype=int) == parent_year) & (month.loc[idx].to_numpy(dtype=int) == m)]
+            if len(m_idx) == 0:
+                continue
+            current = float(out.loc[m_idx, "price_weighted_mean_eur_mwh"].mean())
+            raw_delta = float(targets[m]) - current
+            delta = raw_delta * float(intensity)
+            if abs(delta) > float(max_month_delta_eur_mwh):
+                delta = math.copysign(float(max_month_delta_eur_mwh), delta)
+            for col in scenario_cols:
+                out.loc[m_idx, col] = out.loc[m_idx, col].astype(float) + delta
+            audit_rows.append(
+                {
+                    "product": product,
+                    "year": parent_year,
+                    "month": int(m),
+                    "source": source,
+                    "current_mean_eur_mwh": current,
+                    "guide_target_eur_mwh": float(targets[m]),
+                    "delta_eur_mwh": delta,
+                    "rows": int(len(m_idx)),
+                }
+            )
+
+    out = _recompute_weighted_fan_columns(out, weights)
+    min_price = float(out[[*scenario_cols, "price_weighted_mean_eur_mwh"]].min().min())
+    if min_price < float(negative_price_floor) - 1e-9:
+        raise ValueError(
+            f"annual residual anchor breached negative price floor: min={min_price:.6f}, "
+            f"floor={float(negative_price_floor):.6f}"
+        )
+    weighted_negative_hours = int((out["price_weighted_mean_eur_mwh"] < 0.0).sum())
+    if weighted_negative_hours > int(max_weighted_negative_hours):
+        raise ValueError(
+            "annual residual anchor produced too many weighted-mean negative hours: "
+            f"{weighted_negative_hours} > {int(max_weighted_negative_hours)}"
+        )
+    for column in PRICE_COLUMNS:
+        if column in out.columns:
+            out[column] = out[column].astype(float).round(6)
+    audit = pd.DataFrame(audit_rows)
+    if not audit.empty:
+        audit = audit.sort_values(["product", "month"]).reset_index(drop=True)
+    return out, audit
+
+
+def _annual_residual_month_targets(
+    *,
+    parent_year: int,
+    parent_target: float,
+    months: list[int],
+    month_counts: dict[int, int],
+    neighbor_base_forward_prices: dict[str, float],
+    historical_base_deviations: dict[tuple[int, int], float] | None,
+    neighbor_current_weight: float,
+) -> tuple[dict[int, float], str] | None:
+    raw: dict[int, float] = {}
+    sources: set[str] = set()
+    for m in months:
+        month_key = _month_key(parent_year, m)
+        quarter = ((m - 1) // 3) + 1
+        quarter_key = f"{parent_year}-Q{quarter}"
+        if month_key in neighbor_base_forward_prices:
+            raw[m] = float(neighbor_base_forward_prices[month_key])
+            sources.add("neighbor_month")
+            continue
+        quarter_price = neighbor_base_forward_prices.get(quarter_key)
+        if quarter_price is None:
+            return None
+        hist_dev = 0.0
+        if historical_base_deviations:
+            hist_dev = float(historical_base_deviations.get((quarter, m), 0.0))
+        weight = min(max(float(neighbor_current_weight), 0.0), 1.0)
+        raw[m] = float(quarter_price) + (1.0 - weight) * hist_dev
+        sources.add("neighbor_quarter_hist_month")
+    total = sum(month_counts[m] for m in months)
+    if total <= 0:
+        return None
+    raw_mean = sum(raw[m] * month_counts[m] for m in months) / float(total)
+    targets = {m: float(raw[m] - raw_mean + parent_target) for m in months}
+    return targets, "+".join(sorted(sources))
+
+
+def _solve_month_path_delta(
+    monthly_means: np.ndarray,
+    *,
+    constraints: np.ndarray,
+    smoothness_lambda: float,
+) -> np.ndarray:
+    n = int(len(monthly_means))
+    if n < 3:
+        return np.zeros(n, dtype=float)
+    d2 = np.zeros((n - 2, n), dtype=float)
+    for i in range(n - 2):
+        d2[i, i] = 1.0
+        d2[i, i + 1] = -2.0
+        d2[i, i + 2] = 1.0
+    penalty = d2.T @ d2
+    hessian = np.eye(n, dtype=float) + float(smoothness_lambda) * penalty
+    rhs = -float(smoothness_lambda) * penalty @ monthly_means.astype(float)
+    a = _independent_rows(np.asarray(constraints, dtype=float))
+    if a.size == 0:
+        return np.linalg.solve(hessian, rhs)
+    kkt = np.block([[hessian, a.T], [a, np.zeros((a.shape[0], a.shape[0]), dtype=float)]])
+    kkt_rhs = np.concatenate([rhs, np.zeros(a.shape[0], dtype=float)])
+    try:
+        solution = np.linalg.solve(kkt, kkt_rhs)
+    except np.linalg.LinAlgError:
+        solution = np.linalg.lstsq(kkt, kkt_rhs, rcond=None)[0]
+    return solution[:n]
+
+
+def _independent_rows(matrix: np.ndarray, *, tol: float = 1e-10) -> np.ndarray:
+    rows: list[np.ndarray] = []
+    current = np.empty((0, matrix.shape[1]), dtype=float)
+    rank = 0
+    for row in matrix:
+        if not np.isfinite(row).all() or float(np.linalg.norm(row)) <= tol:
+            continue
+        candidate = np.vstack([current, row])
+        candidate_rank = int(np.linalg.matrix_rank(candidate, tol=tol))
+        if candidate_rank > rank:
+            rows.append(row)
+            current = candidate
+            rank = candidate_rank
+    if not rows:
+        return np.empty((0, matrix.shape[1]), dtype=float)
+    return np.vstack(rows)
 
 
 def calibrate_hourly_to_eex_base_peak(
@@ -643,6 +1259,7 @@ def apply_post_calibration_negative_rebalancer(
     forward_prices: dict[str, float],
     weights: dict[str, float],
     intensity: float = 1.0,
+    weighted_negative_capture_intensity: float = 0.0,
     negative_price_floor: float = -30.0,
     max_weighted_negative_hours: int = 0,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -654,6 +1271,8 @@ def apply_post_calibration_negative_rebalancer(
     """
     if intensity < 0.0 or not np.isfinite(float(intensity)):
         raise ValueError("post-calibration negative rebalancer intensity must be finite and non-negative")
+    if weighted_negative_capture_intensity < 0.0 or not np.isfinite(float(weighted_negative_capture_intensity)):
+        raise ValueError("weighted negative capture intensity must be finite and non-negative")
     out = hourly.copy()
     ts_ch = _parse_timestamp_ch(out["timestamp_ch"], out.get("utc_offset_ch"))
     products, calibration_targets = _calibration_buckets(ts_ch, forward_prices)
@@ -663,12 +1282,12 @@ def apply_post_calibration_negative_rebalancer(
 
     scenario_depth = {
         "slow": 0.0,
-        "central": 0.0,
+        "central": 7.0 * float(weighted_negative_capture_intensity),
         "fast": 14.0,
     }
     scenario_up_cap = {
         "slow": 0.0,
-        "central": 0.0,
+        "central": 14.0,
         "fast": 22.0,
     }
     low_weight = pd.Series([_negative_capture_weight(ts) for ts in ts_ch], index=out.index, dtype=float)
@@ -898,11 +1517,18 @@ def _write_report(
     shape_upgrade_audit: pd.DataFrame | None = None,
     negative_price_capture_enabled: bool = False,
     post_calibration_negative_rebalancer_enabled: bool = False,
+    weighted_negative_capture_intensity: float = 0.0,
     post_calibration_negative_rebalancer_audit: pd.DataFrame | None = None,
     post_calibration_peak_shape_rebalancer_enabled: bool = False,
     post_calibration_peak_shape_rebalancer_audit: pd.DataFrame | None = None,
     quote_aware_monthly_smoothing_enabled: bool = False,
     quote_aware_monthly_smoothing_audit: pd.DataFrame | None = None,
+    final_monthly_path_smoothing_enabled: bool = False,
+    final_monthly_path_smoothing_audit: pd.DataFrame | None = None,
+    annual_residual_anchor_enabled: bool = False,
+    annual_residual_anchor_audit: pd.DataFrame | None = None,
+    neighbor_monthly_anchor_enabled: bool = False,
+    neighbor_monthly_anchor_audit: pd.DataFrame | None = None,
     eex_peak_calibration_enabled: bool = False,
     eex_peak_calibration_audit: pd.DataFrame | None = None,
     disable_cascade_trend_for_annual_only: bool = False,
@@ -925,6 +1551,7 @@ def _write_report(
             "* local/test post-calibration negative rebalancer: "
             f"`{'ON' if post_calibration_negative_rebalancer_enabled else 'OFF'}`"
         ),
+        f"* local/test weighted negative capture intensity: `{weighted_negative_capture_intensity:.6f}`",
         (
             "* local/test post-calibration peak shape rebalancer: "
             f"`{'ON' if post_calibration_peak_shape_rebalancer_enabled else 'OFF'}`"
@@ -932,6 +1559,18 @@ def _write_report(
         (
             "* local/test quote-aware monthly smoothing: "
             f"`{'ON' if quote_aware_monthly_smoothing_enabled else 'OFF'}`"
+        ),
+        (
+            "* local/test final monthly path smoothing: "
+            f"`{'ON' if final_monthly_path_smoothing_enabled else 'OFF'}`"
+        ),
+        (
+            "* local/test neighbor annual residual shape anchor: "
+            f"`{'ON' if annual_residual_anchor_enabled else 'OFF'}`"
+        ),
+        (
+            "* local/test neighbor monthly spread anchor: "
+            f"`{'ON' if neighbor_monthly_anchor_enabled else 'OFF'}`"
         ),
         f"* local/test EEX BASE+PEAK calibration: `{'ON' if eex_peak_calibration_enabled else 'OFF'}`",
         f"* disable cascade trend for annual-only years: `{'ON' if disable_cascade_trend_for_annual_only else 'OFF'}`",
@@ -991,6 +1630,30 @@ def _write_report(
             else pd.DataFrame()
         ),
         "",
+        "## Local/Test Final Monthly Path Smoothing Audit",
+        "",
+        _md_table(
+            final_monthly_path_smoothing_audit
+            if final_monthly_path_smoothing_audit is not None
+            else pd.DataFrame()
+        ),
+        "",
+        "## Local/Test Neighbor Annual Residual Shape Anchor Audit",
+        "",
+        _md_table(
+            annual_residual_anchor_audit
+            if annual_residual_anchor_audit is not None
+            else pd.DataFrame()
+        ),
+        "",
+        "## Local/Test Neighbor Monthly Spread Anchor Audit",
+        "",
+        _md_table(
+            neighbor_monthly_anchor_audit
+            if neighbor_monthly_anchor_audit is not None
+            else pd.DataFrame()
+        ),
+        "",
         "## Local/Test EEX BASE+PEAK Calibration Audit",
         "",
         _md_table(
@@ -1008,6 +1671,9 @@ def _write_report(
         "* The post-calibration negative rebalancer, when enabled, is local/test only and mean-preserving by EEX bucket.",
         "* The post-calibration peak shape rebalancer, when enabled, is local/test only and mean-preserving by EEX bucket.",
         "* The quote-aware monthly smoothing, when enabled, is local/test only and preserves EEX BASE/PEAK buckets.",
+        "* The final monthly path smoothing, when enabled, is local/test only and preserves EEX BASE/PEAK buckets.",
+        "* The neighbor annual residual shape anchor, when enabled, is local/test only and preserves EEX BASE buckets.",
+        "* The neighbor monthly spread anchor, when enabled, is local/test only and preserves EEX BASE/PEAK buckets.",
         "* The EEX BASE+PEAK calibration, when enabled, is local/test only and uses quoted PEAK products from the same snapshot.",
         "* This is not production FMV output; production governance remains NO-GO.",
         "",
@@ -1097,6 +1763,16 @@ def main(argv: list[str] | None = None) -> int:
         help="Multiplier for the local/test post-calibration negative rebalancer.",
     )
     parser.add_argument(
+        "--weighted-negative-capture-intensity",
+        type=float,
+        default=0.0,
+        help=(
+            "Opt-in local/test central-scenario negative capture intensity. "
+            "A positive value can create bounded negative prices in "
+            "price_weighted_mean_eur_mwh while preserving EEX bucket means."
+        ),
+    )
+    parser.add_argument(
         "--max-weighted-negative-hours",
         type=int,
         default=0,
@@ -1149,6 +1825,88 @@ def main(argv: list[str] | None = None) -> int:
         type=float,
         default=18.0,
         help="Maximum absolute monthly delta introduced by quote-aware monthly smoothing.",
+    )
+    parser.add_argument(
+        "--enable-neighbor-monthly-spread-anchor",
+        action="store_true",
+        help=(
+            "Enable local/test CH monthly split anchoring to a neighbor market "
+            "for unquoted quarterly months while preserving CH EEX BASE/PEAK buckets."
+        ),
+    )
+    parser.add_argument(
+        "--neighbor-monthly-market",
+        default="DE",
+        help="Neighbor market used for monthly spread anchoring (default: DE).",
+    )
+    parser.add_argument(
+        "--neighbor-monthly-anchor-intensity",
+        type=float,
+        default=1.0,
+        help="Multiplier for local/test neighbor monthly split anchoring.",
+    )
+    parser.add_argument(
+        "--neighbor-monthly-current-weight",
+        type=float,
+        default=0.65,
+        help="Blend weight on current neighbor monthly deviations; remaining weight uses historical CH deviations.",
+    )
+    parser.add_argument(
+        "--neighbor-monthly-historical-market",
+        default="CH",
+        help="Market used for historical month-quarter deviations in neighbor monthly anchoring.",
+    )
+    parser.add_argument(
+        "--neighbor-monthly-max-delta-eur-mwh",
+        type=float,
+        default=20.0,
+        help="Maximum absolute hourly/monthly delta from neighbor monthly split anchoring.",
+    )
+    parser.add_argument(
+        "--enable-neighbor-annual-residual-shape-anchor",
+        action="store_true",
+        help=(
+            "Enable local/test anchoring of annual residual buckets (e.g. YYYY-RESIDUAL) "
+            "to neighbor market quarter/month shape while preserving CH residual mean."
+        ),
+    )
+    parser.add_argument(
+        "--neighbor-annual-residual-anchor-intensity",
+        type=float,
+        default=1.0,
+        help="Multiplier for local/test neighbor annual residual shape anchoring.",
+    )
+    parser.add_argument(
+        "--neighbor-annual-residual-max-delta-eur-mwh",
+        type=float,
+        default=30.0,
+        help="Maximum absolute hourly/monthly delta from neighbor annual residual anchoring.",
+    )
+    parser.add_argument(
+        "--enable-final-monthly-path-smoothing",
+        action="store_true",
+        help=(
+            "Enable a final local/test quote-aware monthly path smoothing pass after neighbor anchoring "
+            "to reduce synthetic annual/residual month-to-month zigzags."
+        ),
+    )
+    parser.add_argument(
+        "--final-monthly-path-smoothing-intensity",
+        type=float,
+        default=1.0,
+        help="Multiplier for the final local/test monthly path smoothing pass.",
+    )
+    parser.add_argument(
+        "--final-monthly-path-smoothing-lambda",
+        type=float,
+        default=12.0,
+        help="Curvature penalty for the final local/test monthly path smoothing pass.",
+    )
+    parser.add_argument(
+        "--final-monthly-path-max-delta-eur-mwh",
+        type=float,
+        default=12.0,
+        help="Maximum absolute hourly/monthly delta from the final monthly path smoothing pass.",
     )
     parser.add_argument("--skip-build", action="store_true")
     parser.add_argument("--fan-chart-output", default=None)
@@ -1204,6 +1962,29 @@ def main(argv: list[str] | None = None) -> int:
     if not forward_prices:
         raise ValueError("no EEX CH BASE prices in latest forward snapshot")
     peak_forward_prices = forward_prices_by_load_type.get("PEAK", {})
+    neighbor_prices_by_load_type: dict[str, dict[str, float]] = {}
+    historical_neighbor_deviations: dict[str, dict[tuple[int, int], float]] = {}
+    if args.enable_neighbor_monthly_spread_anchor or args.enable_neighbor_annual_residual_shape_anchor:
+        _, neighbor_prices_by_load_type = _latest_eex_prices_by_load_type(
+            Path(args.forwards),
+            market=str(args.neighbor_monthly_market).upper(),
+        )
+        min_hist_date = pd.Timestamp(latest_forward_date).tz_localize(None).normalize() - pd.DateOffset(years=6)
+        historical_market = str(args.neighbor_monthly_historical_market).upper()
+        historical_neighbor_deviations = {
+            "BASE": _historical_month_deviations(
+                Path(args.forwards),
+                market=historical_market,
+                load_type="BASE",
+                min_date=min_hist_date,
+            ),
+            "PEAK": _historical_month_deviations(
+                Path(args.forwards),
+                market=historical_market,
+                load_type="PEAK",
+                min_date=min_hist_date,
+            ),
+        }
     weights = _parse_weights(args.weights)
     required_forward = None
     if not args.allow_stale_forwards:
@@ -1238,6 +2019,7 @@ def main(argv: list[str] | None = None) -> int:
             forward_prices=forward_prices,
             weights=weights,
             intensity=args.post_calibration_negative_rebalancer_intensity,
+            weighted_negative_capture_intensity=args.weighted_negative_capture_intensity,
             negative_price_floor=args.negative_price_floor,
             max_weighted_negative_hours=args.max_weighted_negative_hours,
         )
@@ -1263,6 +2045,9 @@ def main(argv: list[str] | None = None) -> int:
             max_weighted_negative_hours=args.max_weighted_negative_hours,
         )
     quote_monthly_audit = None
+    final_monthly_path_audit = None
+    annual_residual_audit = None
+    neighbor_monthly_audit = None
     if args.enable_quote_aware_monthly_smoothing:
         ts_ch = _parse_timestamp_ch(hourly["timestamp_ch"], hourly.get("utc_offset_ch"))
         hourly, quote_monthly_audit = apply_quote_aware_monthly_smoothing(
@@ -1275,6 +2060,83 @@ def main(argv: list[str] | None = None) -> int:
             intensity=args.quote_aware_monthly_smoothing_intensity,
             smoothness_lambda=args.quote_aware_monthly_smoothing_lambda,
             max_unquoted_month_delta_eur_mwh=args.max_unquoted_month_delta_eur_mwh,
+            negative_price_floor=args.negative_price_floor,
+            max_weighted_negative_hours=args.max_weighted_negative_hours,
+        )
+        hourly, calibration = calibrate_hourly_to_eex(hourly, forward_prices=forward_prices)
+        if args.enable_eex_peak_calibration:
+            hourly, eex_peak_audit = calibrate_hourly_to_eex_base_peak(
+                hourly,
+                base_forward_prices=forward_prices,
+                peak_forward_prices=peak_forward_prices,
+                weights=weights,
+                negative_price_floor=args.negative_price_floor,
+                max_weighted_negative_hours=args.max_weighted_negative_hours,
+            )
+    if args.enable_neighbor_monthly_spread_anchor:
+        ts_ch = _parse_timestamp_ch(hourly["timestamp_ch"], hourly.get("utc_offset_ch"))
+        hourly, neighbor_monthly_audit = apply_neighbor_monthly_spread_anchor(
+            hourly,
+            ts_ch=ts_ch,
+            base_forward_prices=forward_prices,
+            peak_forward_prices=peak_forward_prices,
+            neighbor_base_forward_prices=neighbor_prices_by_load_type.get("BASE", {}),
+            neighbor_peak_forward_prices=neighbor_prices_by_load_type.get("PEAK", {}),
+            historical_base_deviations=historical_neighbor_deviations.get("BASE", {}),
+            historical_peak_deviations=historical_neighbor_deviations.get("PEAK", {}),
+            neighbor_current_weight=args.neighbor_monthly_current_weight,
+            weights=weights,
+            intensity=args.neighbor_monthly_anchor_intensity,
+            max_month_delta_eur_mwh=args.neighbor_monthly_max_delta_eur_mwh,
+            negative_price_floor=args.negative_price_floor,
+            max_weighted_negative_hours=args.max_weighted_negative_hours,
+        )
+        hourly, calibration = calibrate_hourly_to_eex(hourly, forward_prices=forward_prices)
+        if args.enable_eex_peak_calibration:
+            hourly, eex_peak_audit = calibrate_hourly_to_eex_base_peak(
+                hourly,
+                base_forward_prices=forward_prices,
+                peak_forward_prices=peak_forward_prices,
+                weights=weights,
+                negative_price_floor=args.negative_price_floor,
+                max_weighted_negative_hours=args.max_weighted_negative_hours,
+            )
+    if args.enable_neighbor_annual_residual_shape_anchor:
+        ts_ch = _parse_timestamp_ch(hourly["timestamp_ch"], hourly.get("utc_offset_ch"))
+        hourly, annual_residual_audit = apply_neighbor_annual_residual_shape_anchor(
+            hourly,
+            ts_ch=ts_ch,
+            base_forward_prices=forward_prices,
+            neighbor_base_forward_prices=neighbor_prices_by_load_type.get("BASE", {}),
+            historical_base_deviations=historical_neighbor_deviations.get("BASE", {}),
+            neighbor_current_weight=args.neighbor_monthly_current_weight,
+            weights=weights,
+            intensity=args.neighbor_annual_residual_anchor_intensity,
+            max_month_delta_eur_mwh=args.neighbor_annual_residual_max_delta_eur_mwh,
+            negative_price_floor=args.negative_price_floor,
+            max_weighted_negative_hours=args.max_weighted_negative_hours,
+        )
+        hourly, calibration = calibrate_hourly_to_eex(hourly, forward_prices=forward_prices)
+        if args.enable_eex_peak_calibration:
+            hourly, eex_peak_audit = calibrate_hourly_to_eex_base_peak(
+                hourly,
+                base_forward_prices=forward_prices,
+                peak_forward_prices=peak_forward_prices,
+                weights=weights,
+                negative_price_floor=args.negative_price_floor,
+                max_weighted_negative_hours=args.max_weighted_negative_hours,
+            )
+    if args.enable_final_monthly_path_smoothing:
+        ts_ch = _parse_timestamp_ch(hourly["timestamp_ch"], hourly.get("utc_offset_ch"))
+        hourly, final_monthly_path_audit = apply_synthetic_monthly_path_smoothing(
+            hourly,
+            ts_ch=ts_ch,
+            base_forward_prices=forward_prices,
+            peak_forward_prices=peak_forward_prices,
+            weights=weights,
+            intensity=args.final_monthly_path_smoothing_intensity,
+            smoothness_lambda=args.final_monthly_path_smoothing_lambda,
+            max_month_delta_eur_mwh=args.final_monthly_path_max_delta_eur_mwh,
             negative_price_floor=args.negative_price_floor,
             max_weighted_negative_hours=args.max_weighted_negative_hours,
         )
@@ -1305,11 +2167,18 @@ def main(argv: list[str] | None = None) -> int:
         shape_upgrade_audit=shape_upgrade_audit,
         negative_price_capture_enabled=bool(args.enable_negative_price_capture),
         post_calibration_negative_rebalancer_enabled=bool(args.enable_post_calibration_negative_rebalancer),
+        weighted_negative_capture_intensity=float(args.weighted_negative_capture_intensity),
         post_calibration_negative_rebalancer_audit=post_negative_audit,
         post_calibration_peak_shape_rebalancer_enabled=bool(args.enable_post_calibration_peak_shape_rebalancer),
         post_calibration_peak_shape_rebalancer_audit=post_peak_audit,
         quote_aware_monthly_smoothing_enabled=bool(args.enable_quote_aware_monthly_smoothing),
         quote_aware_monthly_smoothing_audit=quote_monthly_audit,
+        final_monthly_path_smoothing_enabled=bool(args.enable_final_monthly_path_smoothing),
+        final_monthly_path_smoothing_audit=final_monthly_path_audit,
+        annual_residual_anchor_enabled=bool(args.enable_neighbor_annual_residual_shape_anchor),
+        annual_residual_anchor_audit=annual_residual_audit,
+        neighbor_monthly_anchor_enabled=bool(args.enable_neighbor_monthly_spread_anchor),
+        neighbor_monthly_anchor_audit=neighbor_monthly_audit,
         eex_peak_calibration_enabled=bool(args.enable_eex_peak_calibration),
         eex_peak_calibration_audit=eex_peak_audit,
         disable_cascade_trend_for_annual_only=bool(args.disable_cascade_trend_for_annual_only),

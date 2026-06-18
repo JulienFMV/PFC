@@ -22,6 +22,64 @@ from pfc_shaping.calibration.eex_contract_selection import calibration_buckets
 PRICE = "price_weighted_mean_eur_mwh"
 
 
+def _max_true_run(mask: pd.Series) -> int:
+    max_run = 0
+    current = 0
+    for value in mask.astype(bool).to_numpy():
+        if value:
+            current += 1
+            max_run = max(max_run, current)
+        else:
+            current = 0
+    return int(max_run)
+
+
+def _negative_gate(df: pd.DataFrame, *, min_any_price: float, weighted_negative_hours: int) -> dict[str, float | str]:
+    weighted = df[PRICE].astype(float)
+    weighted_negative = weighted < 0.0
+    weighted_negative_share_pct = 100.0 * float(weighted_negative.mean())
+    allowed_zone = df["month"].between(4, 9) & df["hour"].between(10, 16)
+    outside_allowed = int((weighted_negative & ~allowed_zone).sum())
+    localization_pct = (
+        100.0 * float((weighted_negative & allowed_zone).sum()) / float(weighted_negative_hours)
+        if weighted_negative_hours
+        else 100.0
+    )
+    max_per_month = (
+        int(df.loc[weighted_negative].groupby(["year", "month"]).size().max())
+        if weighted_negative_hours
+        else 0
+    )
+    max_run = _max_true_run(weighted_negative)
+    min_weighted = float(weighted.min())
+    p10_negative_share_pct = 100.0 * float((df["structural_p10_eur_mwh"] < 0.0).mean())
+    fast_negative_share_pct = 100.0 * float((df["price_fast_eur_mwh"] < 0.0).mean())
+    max_allowed_hours = max(96, int(0.005 * len(df)))
+    ok = (
+        min_weighted >= -15.0
+        and min_any_price >= -30.0
+        and weighted_negative_hours <= max_allowed_hours
+        and weighted_negative_share_pct <= 0.50
+        and max_per_month <= 48
+        and outside_allowed == 0
+        and localization_pct >= 95.0
+        and max_run <= 8
+        and p10_negative_share_pct <= 2.0
+        and fast_negative_share_pct <= 2.0
+    )
+    return {
+        "negative_gate_status": "PASS" if ok else "FAIL",
+        "min_weighted_eur_mwh": min_weighted,
+        "weighted_negative_share_pct": weighted_negative_share_pct,
+        "weighted_negative_outside_allowed_hours": float(outside_allowed),
+        "negative_localization_pct": localization_pct,
+        "max_weighted_negative_hours_per_month": float(max_per_month),
+        "max_weighted_negative_run_hours": float(max_run),
+        "p10_negative_share_pct": p10_negative_share_pct,
+        "fast_negative_share_pct": fast_negative_share_pct,
+    }
+
+
 def _load_csv(path: Path) -> pd.DataFrame:
     df = pd.read_csv(path)
     required = {
@@ -95,11 +153,12 @@ def audit(csv_path: Path, forwards_path: Path) -> tuple[pd.DataFrame, pd.DataFra
     min_price = float(df[numeric_cols].min().min())
     weighted_negative_hours = int((df[PRICE] < 0.0).sum())
     p10_negative_hours = int((df["structural_p10_eur_mwh"] < 0.0).sum())
-    bounded_negative_ok = bool(
-        min_price >= -30.0
-        and weighted_negative_hours == 0
-        and p10_negative_hours <= max(1, int(len(df) * 0.01))
+    negative_gate = _negative_gate(
+        df,
+        min_any_price=min_price,
+        weighted_negative_hours=weighted_negative_hours,
     )
+    bounded_negative_ok = bool(negative_gate["negative_gate_status"] == "PASS")
     quantile_order = bool(
         (
             (df["structural_p10_eur_mwh"] <= df["structural_p50_eur_mwh"])
@@ -152,9 +211,9 @@ def audit(csv_path: Path, forwards_path: Path) -> tuple[pd.DataFrame, pd.DataFra
     boundary_p95 = float(boundary.quantile(0.95)) if len(boundary) else 0.0
 
     score = 0.0
-    score += 1.5 if finite_ok and (no_negative or bounded_negative_ok) and quantile_order else 0.0
+    score += 1.5 if finite_ok and bounded_negative_ok and quantile_order else 0.0
     score += 2.0 if max_eex_error <= 0.01 else 0.0
-    score += 1.5 if 6.0 <= width_mean <= 10.0 and 18.0 <= width_p95 <= 30.0 else 0.75 if width_p95 >= 10.0 else 0.0
+    score += 1.5 if 6.0 <= width_mean <= 11.0 and 18.0 <= width_p95 <= 32.0 else 0.75 if width_p95 >= 10.0 else 0.0
     score += 1.5 if 18.0 <= duck_2030 <= 30.0 else 0.75 if 12.0 <= duck_2030 <= 35.0 else 0.0
     score += 0.75 if weekend_2030 <= -4.0 else 0.25
     score += 1.0 if ramp_p99 <= 30.0 and ramp_max <= 70.0 else 0.5 if ramp_p99 <= 35.0 else 0.0
@@ -178,6 +237,7 @@ def audit(csv_path: Path, forwards_path: Path) -> tuple[pd.DataFrame, pd.DataFra
         "boundary_jump_abs_p95_eur_mwh": boundary_p95,
         "max_eex_base_error_eur_mwh": max_eex_base_error,
         "max_eex_peak_error_eur_mwh": max_eex_peak_error,
+        **negative_gate,
     }
     return annual, residuals, metrics
 

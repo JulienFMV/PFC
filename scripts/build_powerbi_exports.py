@@ -11,6 +11,7 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from scripts.audit_ch_hfc_vs_spot_shape import audit as audit_vs_spot  # noqa: E402
+from scripts.audit_ch_hfc_seasonal_coherence import audit as audit_seasonal  # noqa: E402
 from scripts.audit_ch_pfc_hourly_shape import audit as audit_shape  # noqa: E402
 from scripts.export_local_test_ch_hourly_csv import _eex_peak_mask, _parse_timestamp_ch  # noqa: E402
 
@@ -224,6 +225,21 @@ def build_exports(csv_path: Path, forwards_path: Path, spot_path: Path, output_d
     negative.to_csv(output_dir / "negative_low_hours.csv", index=False)
 
     annual, residuals, shape_metrics = audit_shape(csv_path, forwards_path)
+    seasonal_result = audit_seasonal(csv_path, forwards_path)
+    seasonal_checks = seasonal_result["seasonal_checks"]
+    monthly_path_checks = seasonal_result["monthly_path_checks"]
+    monthly_split_checks = seasonal_result["monthly_split_checks"]
+    calendar_checks = seasonal_result["calendar_checks"]
+    seasonal_checks.to_csv(output_dir / "seasonal_coherence.csv", index=False)
+    monthly_path_checks.to_csv(output_dir / "monthly_path_diagnostics.csv", index=False)
+    monthly_split_checks.to_csv(output_dir / "monthly_split_diagnostics.csv", index=False)
+    calendar_checks.to_csv(output_dir / "calendar_coherence.csv", index=False)
+
+    def severity_count(frame: pd.DataFrame, severity: str) -> int:
+        if frame.empty or "severity" not in frame:
+            return 0
+        return int((frame["severity"] == severity).sum())
+
     derived_annual = []
     for year, group in hourly.groupby("year", sort=True):
         winter = group.loc[group["season"] == "Winter", "price_weighted_mean_eur_mwh"].mean()
@@ -280,6 +296,20 @@ def build_exports(csv_path: Path, forwards_path: Path, spot_path: Path, output_d
         {"metric": "max_eex_base_error_eur_mwh", "value": shape_metrics["max_eex_base_error_eur_mwh"]},
         {"metric": "max_eex_peak_error_eur_mwh", "value": shape_metrics["max_eex_peak_error_eur_mwh"]},
         {"metric": "weighted_negative_hours", "value": shape_metrics["weighted_negative_hours"]},
+        {"metric": "negative_gate_status", "value": shape_metrics.get("negative_gate_status", "UNKNOWN")},
+        {
+            "metric": "weighted_negative_share_pct",
+            "value": shape_metrics.get("weighted_negative_share_pct", 0.0),
+        },
+        {
+            "metric": "weighted_negative_outside_allowed_hours",
+            "value": shape_metrics.get("weighted_negative_outside_allowed_hours", 0.0),
+        },
+        {
+            "metric": "negative_localization_pct",
+            "value": shape_metrics.get("negative_localization_pct", 100.0),
+        },
+        {"metric": "min_weighted_eur_mwh", "value": shape_metrics.get("min_weighted_eur_mwh", 0.0)},
         {"metric": "p10_negative_hours", "value": shape_metrics["p10_negative_hours"]},
         {"metric": "min_price_eur_mwh", "value": shape_metrics["min_price_eur_mwh"]},
         {
@@ -295,6 +325,14 @@ def build_exports(csv_path: Path, forwards_path: Path, spot_path: Path, output_d
             "value": spot_summary["latest_hfc_winter_summer_spread_eur_mwh"],
         },
         {"metric": "latest_hfc_shape_corr_vs_spot", "value": spot_summary["latest_hfc_shape_corr_vs_spot"]},
+        {"metric": "seasonal_critical_flags", "value": severity_count(seasonal_checks, "critical")},
+        {"metric": "seasonal_warning_flags", "value": severity_count(seasonal_checks, "warning")},
+        {"metric": "monthly_split_critical_flags", "value": severity_count(monthly_split_checks, "critical")},
+        {"metric": "monthly_split_warning_flags", "value": severity_count(monthly_split_checks, "warning")},
+        {"metric": "monthly_path_critical_flags", "value": severity_count(monthly_path_checks, "critical")},
+        {"metric": "monthly_path_warning_flags", "value": severity_count(monthly_path_checks, "warning")},
+        {"metric": "calendar_critical_flags", "value": severity_count(calendar_checks, "critical")},
+        {"metric": "calendar_warning_flags", "value": severity_count(calendar_checks, "warning")},
     ]
     summary = pd.DataFrame(
         [

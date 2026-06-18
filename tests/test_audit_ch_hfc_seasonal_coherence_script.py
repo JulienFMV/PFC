@@ -71,3 +71,113 @@ def test_seasonal_audit_keeps_quoted_quarter_inversion_as_market_signal(tmp_path
     seasonal = result["seasonal_checks"]
     assert seasonal.loc[seasonal["year"] == 2030, "forward_coverage"].iloc[0] == "full_quarter"
     assert seasonal.loc[seasonal["year"] == 2030, "severity"].iloc[0] == "ok"
+
+
+def test_monthly_split_audit_flags_unquoted_ch_months_inverted_vs_neighbor(tmp_path):
+    rows = []
+    for month, price in [(1, 80.0), (2, 100.0), (3, 120.0)]:
+        for day in [1, 2]:
+            for hour in range(24):
+                ts = pd.Timestamp(year=2030, month=month, day=day, hour=hour)
+                rows.append(
+                    {
+                        "timestamp_ch": ts.strftime("%d.%m.%Y %H:%M"),
+                        "utc_offset_ch": "UTC+01:00",
+                        "timestamp_utc": ts.strftime("%d.%m.%Y %H:%M"),
+                        "price_weighted_mean_eur_mwh": price,
+                    }
+                )
+    csv = tmp_path / "curve.csv"
+    pd.DataFrame(rows).to_csv(csv, index=False)
+
+    forwards = tmp_path / "forwards.parquet"
+    pd.DataFrame(
+        {
+            "market": ["CH", "DE", "DE", "DE", "DE"],
+            "load_type": ["BASE"] * 5,
+            "date": [pd.Timestamp("2026-06-12")] * 5,
+            "product": ["2030-Q1", "2030-Q1", "2030-01", "2030-02", "2030-03"],
+            "price": [100.0, 100.0, 120.0, 100.0, 80.0],
+        }
+    ).to_parquet(forwards, index=False)
+
+    result = audit(csv, forwards)
+
+    splits = result["monthly_split_checks"]
+    q1_base = splits[(splits["year"] == 2030) & (splits["quarter"] == 1) & (splits["load_type"] == "BASE")]
+    assert q1_base["severity"].iloc[0] == "critical"
+    assert q1_base["split_corr"].iloc[0] < 0.0
+
+
+def test_calendar_audit_flags_weekend_premium(tmp_path):
+    rows = []
+    for day in range(1, 8):
+        ts_day = pd.Timestamp(year=2030, month=1, day=day)
+        price = 120.0 if ts_day.weekday() >= 5 else 90.0
+        for hour in range(24):
+            ts = ts_day + pd.Timedelta(hours=hour)
+            rows.append(
+                {
+                    "timestamp_ch": ts.strftime("%d.%m.%Y %H:%M"),
+                    "utc_offset_ch": "UTC+01:00",
+                    "timestamp_utc": ts.strftime("%d.%m.%Y %H:%M"),
+                    "price_weighted_mean_eur_mwh": price,
+                }
+            )
+    csv = tmp_path / "curve.csv"
+    pd.DataFrame(rows).to_csv(csv, index=False)
+
+    forwards = tmp_path / "forwards.parquet"
+    pd.DataFrame(
+        {
+            "market": ["CH"],
+            "load_type": ["BASE"],
+            "date": [pd.Timestamp("2026-06-12")],
+            "product": ["2030"],
+            "price": [100.0],
+        }
+    ).to_parquet(forwards, index=False)
+
+    result = audit(csv, forwards)
+
+    calendar = result["calendar_checks"]
+    jan = calendar[(calendar["year"] == 2030) & (calendar["month"] == 1)]
+    assert jan["severity"].iloc[0] == "critical"
+    assert jan["weekend_minus_weekday_eur_mwh"].iloc[0] == 30.0
+
+
+def test_monthly_path_audit_flags_jump_inside_annual_synthetic_bucket(tmp_path):
+    rows = []
+    for month, price in [(1, 100.0), (2, 102.0), (3, 70.0)]:
+        for day in [1, 2]:
+            for hour in range(24):
+                ts = pd.Timestamp(year=2030, month=month, day=day, hour=hour)
+                rows.append(
+                    {
+                        "timestamp_ch": ts.strftime("%d.%m.%Y %H:%M"),
+                        "utc_offset_ch": "UTC+01:00",
+                        "timestamp_utc": ts.strftime("%d.%m.%Y %H:%M"),
+                        "price_weighted_mean_eur_mwh": price,
+                    }
+                )
+    csv = tmp_path / "curve.csv"
+    pd.DataFrame(rows).to_csv(csv, index=False)
+
+    forwards = tmp_path / "forwards.parquet"
+    pd.DataFrame(
+        {
+            "market": ["CH"],
+            "load_type": ["BASE"],
+            "date": [pd.Timestamp("2026-06-12")],
+            "product": ["2030"],
+            "price": [90.0],
+        }
+    ).to_parquet(forwards, index=False)
+
+    result = audit(csv, forwards)
+
+    path = result["monthly_path_checks"]
+    assert "critical" in set(path["severity"])
+    critical = path[path["severity"] == "critical"].iloc[0]
+    assert critical["check_type"] == "adjacent_delta"
+    assert critical["delta_eur_mwh"] == -32.0

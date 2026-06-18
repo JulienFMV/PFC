@@ -17,6 +17,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from pfc_shaping.calibration.eex_contract_selection import calibration_buckets
 from scripts.export_local_test_ch_hourly_csv import _eex_peak_mask, _parse_timestamp_ch
 
 PRICE = "price_weighted_mean_eur_mwh"
@@ -147,6 +148,263 @@ def _coverage_for_year(forwards: pd.DataFrame, year: int) -> str:
     return "unquoted"
 
 
+def _quarter_months(year: int, quarter: int) -> list[int]:
+    first = (int(quarter) - 1) * 3 + 1
+    return [first, first + 1, first + 2]
+
+
+def _month_counts(hourly: pd.DataFrame, *, year: int, months: list[int], peak_only: bool = False) -> dict[int, int]:
+    frame = hourly[(hourly["year"] == int(year)) & (hourly["month"].isin(months))]
+    if peak_only:
+        frame = frame[_eex_peak_mask(frame["ts"], country="CH")]
+    return {month: int((frame["month"] == month).sum()) for month in months}
+
+
+def _weighted_parent_mean(values: dict[int, float], counts: dict[int, int]) -> float | None:
+    total = sum(int(counts.get(month, 0)) for month in values)
+    if total <= 0:
+        return None
+    return float(sum(float(values[month]) * int(counts.get(month, 0)) for month in values) / total)
+
+
+def monthly_split_checks(
+    hourly: pd.DataFrame,
+    ch_forwards: pd.DataFrame,
+    neighbor_forwards: pd.DataFrame,
+    *,
+    price_column: str = PRICE,
+    neighbor_market: str = "DE",
+) -> pd.DataFrame:
+    """Compare unquoted CH monthly splits with neighbor monthly market shape."""
+    rows: list[dict[str, object]] = []
+    ch_products_by_load = {
+        str(load_type).upper(): set(group["product"].astype(str))
+        for load_type, group in ch_forwards.groupby("load_type")
+    }
+    by_neighbor = {
+        (str(row["load_type"]).upper(), str(row["product"])): float(row["price"])
+        for _, row in neighbor_forwards.iterrows()
+    }
+    for year in sorted(hourly["year"].unique()):
+        for quarter in range(1, 5):
+            months = _quarter_months(int(year), quarter)
+            if not bool(((hourly["year"] == int(year)) & (hourly["month"].isin(months))).any()):
+                continue
+            for load_type in ["BASE", "PEAK"]:
+                ch_products = ch_products_by_load.get(load_type, set())
+                direct_ch_months = {f"{int(year)}-{month:02d}" for month in months} & ch_products
+                if len(direct_ch_months) == len(months):
+                    continue
+                parent = f"{int(year)}-Q{quarter}"
+                parent_key = (load_type, parent)
+                month_keys = {month: (load_type, f"{int(year)}-{month:02d}") for month in months}
+                if parent_key not in by_neighbor or any(key not in by_neighbor for key in month_keys.values()):
+                    continue
+                peak_only = load_type == "PEAK"
+                counts = _month_counts(hourly, year=int(year), months=months, peak_only=peak_only)
+                if any(counts[month] <= 0 for month in months):
+                    continue
+                frame = hourly[(hourly["year"] == int(year)) & (hourly["month"].isin(months))]
+                if peak_only:
+                    frame = frame[_eex_peak_mask(frame["ts"], country="CH")]
+                ch_month = frame.groupby("month")[price_column].mean().to_dict()
+                ch_parent = _weighted_parent_mean({m: float(ch_month[m]) for m in months}, counts)
+                neighbor_month = {m: by_neighbor[month_keys[m]] for m in months}
+                neighbor_parent = _weighted_parent_mean(neighbor_month, counts)
+                if ch_parent is None or neighbor_parent is None:
+                    continue
+                ch_dev = np.array([float(ch_month[m]) - ch_parent for m in months], dtype=float)
+                nb_dev = np.array([float(neighbor_month[m]) - neighbor_parent for m in months], dtype=float)
+                corr = float(np.corrcoef(ch_dev, nb_dev)[0, 1]) if np.std(ch_dev) > 1e-9 and np.std(nb_dev) > 1e-9 else np.nan
+                nb_range = float(np.max(nb_dev) - np.min(nb_dev))
+                ch_range = float(np.max(ch_dev) - np.min(ch_dev))
+                amplitude_ratio = ch_range / nb_range if nb_range > 1e-9 else np.nan
+                max_abs_dev_diff = float(np.max(np.abs(ch_dev - nb_dev)))
+                level_leak = (
+                    float(np.median([abs(float(ch_month[m]) - float(neighbor_month[m])) for m in months])) < 0.02
+                    and abs(float(ch_parent) - float(neighbor_parent)) > 0.5
+                )
+                severity = "ok"
+                reason = "neighbor monthly split plausible"
+                if level_leak:
+                    severity = "critical"
+                    reason = "unquoted CH monthly levels appear copied from neighbor levels"
+                elif np.isfinite(corr) and corr < 0.20:
+                    severity = "critical"
+                    reason = "CH monthly split is weakly aligned with neighbor shape"
+                elif max_abs_dev_diff > 45.0:
+                    severity = "critical"
+                    reason = "CH monthly deviations are too far from neighbor deviations"
+                elif nb_range >= 5.0 and np.isfinite(amplitude_ratio) and (amplitude_ratio < 0.33 or amplitude_ratio > 3.0):
+                    severity = "critical"
+                    reason = "CH monthly split amplitude is outside robust neighbor range"
+                elif np.isfinite(corr) and corr < 0.45:
+                    severity = "warning"
+                    reason = "CH monthly split correlation vs neighbor is low"
+                elif max_abs_dev_diff > 35.0:
+                    severity = "warning"
+                    reason = "CH monthly deviations are wide vs neighbor deviations"
+                elif nb_range >= 5.0 and np.isfinite(amplitude_ratio) and (amplitude_ratio < 0.50 or amplitude_ratio > 2.5):
+                    severity = "warning"
+                    reason = "CH monthly split amplitude is marginal vs neighbor"
+                rows.append(
+                    {
+                        "year": int(year),
+                        "quarter": int(quarter),
+                        "load_type": load_type,
+                        "neighbor_market": neighbor_market,
+                        "ch_parent_mean_eur_mwh": float(ch_parent),
+                        "neighbor_parent_mean_eur_mwh": float(neighbor_parent),
+                        "split_corr": corr,
+                        "ch_range_eur_mwh": ch_range,
+                        "neighbor_range_eur_mwh": nb_range,
+                        "amplitude_ratio": amplitude_ratio,
+                        "max_abs_dev_diff_eur_mwh": max_abs_dev_diff,
+                        "level_leak": bool(level_leak),
+                        "severity": severity,
+                        "reason": reason,
+                        **{f"ch_m{m}_dev_eur_mwh": float(ch_dev[pos]) for pos, m in enumerate(months)},
+                        **{f"neighbor_m{m}_dev_eur_mwh": float(nb_dev[pos]) for pos, m in enumerate(months)},
+                    }
+                )
+    return pd.DataFrame(rows)
+
+
+def calendar_coherence_checks(hourly: pd.DataFrame, *, price_column: str = PRICE) -> pd.DataFrame:
+    """Audit month-level week/weekend shape and week-to-week roughness."""
+    rows: list[dict[str, object]] = []
+    frame = hourly.copy()
+    iso = frame["ts"].dt.isocalendar()
+    frame["iso_year"] = iso.year.astype(int)
+    frame["iso_week"] = iso.week.astype(int)
+    for (year, month), group in frame.groupby(["year", "month"]):
+        weekday_mean = float(group.loc[group["weekday"] < 5, price_column].mean())
+        weekend_mean = float(group.loc[group["weekday"] >= 5, price_column].mean())
+        weekend_minus_weekday = weekend_mean - weekday_mean
+        weekly = group.groupby(["iso_year", "iso_week"])[price_column].mean().sort_index()
+        max_week_to_week = float(weekly.diff().abs().max()) if len(weekly) > 1 else 0.0
+        severity = "ok"
+        reason = "calendar shape plausible"
+        if weekend_minus_weekday > 10.0:
+            severity = "critical"
+            reason = "weekend premium over weekday is implausibly high"
+        elif weekend_minus_weekday > 5.0:
+            severity = "warning"
+            reason = "weekend premium over weekday is high"
+        elif max_week_to_week > 35.0:
+            severity = "warning"
+            reason = "large week-to-week mean jump inside month"
+        rows.append(
+            {
+                "year": int(year),
+                "month": int(month),
+                "weekday_mean_eur_mwh": weekday_mean,
+                "weekend_mean_eur_mwh": weekend_mean,
+                "weekend_minus_weekday_eur_mwh": weekend_minus_weekday,
+                "max_week_to_week_delta_eur_mwh": max_week_to_week,
+                "severity": severity,
+                "reason": reason,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def monthly_path_checks(
+    monthly: pd.DataFrame,
+    hourly: pd.DataFrame,
+    ch_forwards: pd.DataFrame,
+) -> pd.DataFrame:
+    """Audit month-to-month smoothness inside synthetic EEX buckets."""
+    base_prices = {
+        str(row["product"]): float(row["price"])
+        for _, row in ch_forwards[ch_forwards["load_type"].astype(str).str.upper() == "BASE"].iterrows()
+    }
+    if not base_prices:
+        return pd.DataFrame()
+    buckets, _ = calibration_buckets(hourly["ts"], base_prices)
+    bucket_frame = hourly[["year", "month"]].copy()
+    bucket_frame["bucket"] = buckets.to_numpy()
+    bucket_by_month = (
+        bucket_frame.groupby(["year", "month"])["bucket"]
+        .agg(lambda s: str(s.mode().iloc[0]) if not s.mode().empty else "")
+        .reset_index()
+    )
+    path = monthly.merge(bucket_by_month, on=["year", "month"], how="left").sort_values(["year", "month"])
+    rows: list[dict[str, object]] = []
+    for year, group in path.groupby("year", sort=True):
+        group = group.reset_index(drop=True)
+        for idx in range(1, len(group)):
+            prev = group.iloc[idx - 1]
+            curr = group.iloc[idx]
+            if str(prev["bucket"]) != str(curr["bucket"]):
+                continue
+            bucket = str(curr["bucket"])
+            synthetic = bucket.endswith("-RESIDUAL") or bucket.isdigit()
+            if not synthetic:
+                continue
+            delta = float(curr["mean_eur_mwh"] - prev["mean_eur_mwh"])
+            severity = "ok"
+            reason = "month-to-month path plausible"
+            if abs(delta) > 25.0:
+                severity = "critical"
+                reason = "large adjacent monthly jump inside synthetic bucket"
+            elif abs(delta) > 18.0:
+                severity = "warning"
+                reason = "elevated adjacent monthly jump inside synthetic bucket"
+            rows.append(
+                {
+                    "year": int(year),
+                    "bucket": bucket,
+                    "from_month": int(prev["month"]),
+                    "to_month": int(curr["month"]),
+                    "from_mean_eur_mwh": float(prev["mean_eur_mwh"]),
+                    "to_mean_eur_mwh": float(curr["mean_eur_mwh"]),
+                    "delta_eur_mwh": delta,
+                    "check_type": "adjacent_delta",
+                    "severity": severity,
+                    "reason": reason,
+                }
+            )
+        for idx in range(1, len(group) - 1):
+            prev = group.iloc[idx - 1]
+            curr = group.iloc[idx]
+            nxt = group.iloc[idx + 1]
+            if len({str(prev["bucket"]), str(curr["bucket"]), str(nxt["bucket"])}) != 1:
+                continue
+            bucket = str(curr["bucket"])
+            synthetic = bucket.endswith("-RESIDUAL") or bucket.isdigit()
+            if not synthetic:
+                continue
+            left = float(curr["mean_eur_mwh"] - prev["mean_eur_mwh"])
+            right = float(nxt["mean_eur_mwh"] - curr["mean_eur_mwh"])
+            if left * right >= 0.0:
+                continue
+            reversal = abs(left) + abs(right)
+            severity = "ok"
+            reason = "month-to-month reversal plausible"
+            if reversal > 42.0 and min(abs(left), abs(right)) > 12.0:
+                severity = "critical"
+                reason = "sharp local monthly reversal inside synthetic bucket"
+            elif reversal > 30.0 and min(abs(left), abs(right)) > 10.0:
+                severity = "warning"
+                reason = "elevated local monthly reversal inside synthetic bucket"
+            rows.append(
+                {
+                    "year": int(year),
+                    "bucket": bucket,
+                    "from_month": int(prev["month"]),
+                    "to_month": int(nxt["month"]),
+                    "from_mean_eur_mwh": float(prev["mean_eur_mwh"]),
+                    "to_mean_eur_mwh": float(nxt["mean_eur_mwh"]),
+                    "delta_eur_mwh": reversal,
+                    "check_type": "local_reversal",
+                    "severity": severity,
+                    "reason": reason,
+                }
+            )
+    return pd.DataFrame(rows)
+
+
 def _month_value(months: pd.DataFrame, year: int, month: int) -> float | None:
     sub = months[(months["year"] == year) & (months["month"] == month)]
     if sub.empty:
@@ -261,20 +519,34 @@ def _md_table(frame: pd.DataFrame, *, max_rows: int | None = None) -> str:
     return "\n".join(lines)
 
 
+def _severity_counts(frame: pd.DataFrame) -> tuple[int, int]:
+    if frame.empty or "severity" not in frame:
+        return 0, 0
+    return int((frame["severity"] == "critical").sum()), int((frame["severity"] == "warning").sum())
+
+
 def write_report(
     path: Path,
     *,
     csv_path: Path,
     forwards_path: Path,
     latest_forward_date: pd.Timestamp,
+    neighbor_market: str,
     quoted_residuals: pd.DataFrame,
     seasonal_checks: pd.DataFrame,
+    monthly_split_checks_frame: pd.DataFrame,
+    calendar_checks: pd.DataFrame,
+    monthly_path_checks_frame: pd.DataFrame,
     monthly: pd.DataFrame,
     hour_month: pd.DataFrame,
     component_checks: pd.DataFrame | None,
 ) -> None:
-    critical = int((seasonal_checks["severity"] == "critical").sum()) if not seasonal_checks.empty else 0
-    warnings = int((seasonal_checks["severity"] == "warning").sum()) if not seasonal_checks.empty else 0
+    seasonal_critical, seasonal_warnings = _severity_counts(seasonal_checks)
+    split_critical, split_warnings = _severity_counts(monthly_split_checks_frame)
+    calendar_critical, calendar_warnings = _severity_counts(calendar_checks)
+    path_critical, path_warnings = _severity_counts(monthly_path_checks_frame)
+    critical = seasonal_critical + split_critical + calendar_critical + path_critical
+    warnings = seasonal_warnings + split_warnings + calendar_warnings + path_warnings
     max_quoted_residual = (
         float(quoted_residuals["abs_residual_eur_mwh"].max()) if not quoted_residuals.empty else float("nan")
     )
@@ -292,14 +564,38 @@ def write_report(
         "",
         "| metric | value |",
         "|---|---:|",
-        f"| critical seasonal flags | {critical} |",
-        f"| warning seasonal flags | {warnings} |",
+        f"| total critical flags | {critical} |",
+        f"| total warning flags | {warnings} |",
+        f"| seasonal critical flags | {seasonal_critical} |",
+        f"| seasonal warning flags | {seasonal_warnings} |",
+        f"| monthly split critical flags | {split_critical} |",
+        f"| monthly split warning flags | {split_warnings} |",
+        f"| calendar critical flags | {calendar_critical} |",
+        f"| calendar warning flags | {calendar_warnings} |",
+        f"| monthly path critical flags | {path_critical} |",
+        f"| monthly path warning flags | {path_warnings} |",
         f"| max quoted-product residual EUR/MWh | {max_quoted_residual:.6f} |",
         f"| years with January below October | {len(jan_oct_rows)} |",
         "",
         "## Seasonal Checks",
         "",
         _md_table(seasonal_checks),
+        "",
+        "## Unquoted Monthly Split Checks",
+        "",
+        f"Neighbor market guide: `{neighbor_market}`. The test compares CH month-vs-parent deviations, not absolute levels.",
+        "",
+        _md_table(monthly_split_checks_frame),
+        "",
+        "## Monthly Path Checks",
+        "",
+        "These checks only evaluate adjacent months inside synthetic annual/residual buckets.",
+        "",
+        _md_table(monthly_path_checks_frame),
+        "",
+        "## Calendar Coherence Checks",
+        "",
+        _md_table(calendar_checks),
         "",
         "## Quoted EEX Product Residuals",
         "",
@@ -333,6 +629,9 @@ def write_report(
             "## Gate Interpretation",
             "",
             "* `critical` means annual-only synthetic monthly completion contradicts the expected Swiss winter premium.",
+            "* Monthly split flags are evaluated on unquoted CH months only; quoted EEX monthly products remain market signals.",
+            "* Monthly path flags catch sharp adjacent jumps and local reversals inside annual/residual synthetic buckets.",
+            "* Calendar flags catch implausible weekend premiums and week-to-week jumps inside a generated month.",
             "* This is a model-quality gate, not a market override: if quoted monthly/quarterly EEX products imply the inversion, the gate should not force a correction.",
             "* The current local/test curve should be considered seasonally suspect if any critical flag remains.",
             "",
@@ -348,6 +647,7 @@ def audit(
     *,
     component_parquet: Path | None = None,
     market: str = "CH",
+    neighbor_market: str = "DE",
     price_column: str = PRICE,
 ) -> dict[str, pd.DataFrame | pd.Timestamp]:
     hourly = _load_hourly_csv(csv_path, price_column=price_column)
@@ -359,6 +659,19 @@ def audit(
     hour_month = hourly_month_matrix(hourly, price_column=price_column)
     residuals = quoted_product_residuals(hourly, forwards, price_column=price_column)
     seasonal = seasonal_coherence_checks(monthly, base_forwards)
+    monthly_path = monthly_path_checks(monthly, hourly, forwards)
+    try:
+        _, neighbor_forwards = _latest_forwards(forwards_path, market=neighbor_market)
+        monthly_splits = monthly_split_checks(
+            hourly,
+            forwards,
+            neighbor_forwards,
+            price_column=price_column,
+            neighbor_market=neighbor_market,
+        )
+    except ValueError:
+        monthly_splits = pd.DataFrame()
+    calendar_checks = calendar_coherence_checks(hourly, price_column=price_column)
     component_checks = None
     if component_parquet is not None:
         component_checks = component_jan_oct_checks(component_monthly_means(component_parquet))
@@ -366,6 +679,9 @@ def audit(
         "latest_forward_date": latest,
         "quoted_residuals": residuals,
         "seasonal_checks": seasonal,
+        "monthly_path_checks": monthly_path,
+        "monthly_split_checks": monthly_splits,
+        "calendar_checks": calendar_checks,
         "monthly": monthly,
         "hour_month": hour_month,
         "component_checks": component_checks if component_checks is not None else pd.DataFrame(),
@@ -378,10 +694,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--forwards", default="data/eex_forwards_history.parquet")
     parser.add_argument("--component-parquet", default=None)
     parser.add_argument("--market", default="CH")
+    parser.add_argument("--neighbor-market", default="DE")
     parser.add_argument("--price-column", default=PRICE)
     parser.add_argument("--report", required=True)
     parser.add_argument("--monthly-output", default=None)
     parser.add_argument("--hour-month-output", default=None)
+    parser.add_argument("--monthly-split-output", default=None)
+    parser.add_argument("--monthly-path-output", default=None)
+    parser.add_argument("--calendar-output", default=None)
     parser.add_argument("--fail-on-critical", action="store_true")
     args = parser.parse_args(argv)
 
@@ -390,30 +710,53 @@ def main(argv: list[str] | None = None) -> int:
         Path(args.forwards),
         component_parquet=Path(args.component_parquet) if args.component_parquet else None,
         market=args.market,
+        neighbor_market=args.neighbor_market,
         price_column=args.price_column,
     )
     monthly = result["monthly"]
     hour_month = result["hour_month"]
+    monthly_path = result["monthly_path_checks"]
+    monthly_splits = result["monthly_split_checks"]
+    calendar_checks = result["calendar_checks"]
     if args.monthly_output:
         Path(args.monthly_output).parent.mkdir(parents=True, exist_ok=True)
         monthly.to_csv(args.monthly_output, index=False)
     if args.hour_month_output:
         Path(args.hour_month_output).parent.mkdir(parents=True, exist_ok=True)
         hour_month.to_csv(args.hour_month_output, index=False)
+    if args.monthly_split_output:
+        Path(args.monthly_split_output).parent.mkdir(parents=True, exist_ok=True)
+        monthly_splits.to_csv(args.monthly_split_output, index=False)
+    if args.monthly_path_output:
+        Path(args.monthly_path_output).parent.mkdir(parents=True, exist_ok=True)
+        monthly_path.to_csv(args.monthly_path_output, index=False)
+    if args.calendar_output:
+        Path(args.calendar_output).parent.mkdir(parents=True, exist_ok=True)
+        calendar_checks.to_csv(args.calendar_output, index=False)
     write_report(
         Path(args.report),
         csv_path=Path(args.csv),
         forwards_path=Path(args.forwards),
         latest_forward_date=result["latest_forward_date"],  # type: ignore[arg-type]
+        neighbor_market=args.neighbor_market,
         quoted_residuals=result["quoted_residuals"],  # type: ignore[arg-type]
         seasonal_checks=result["seasonal_checks"],  # type: ignore[arg-type]
+        monthly_split_checks_frame=monthly_splits,  # type: ignore[arg-type]
+        calendar_checks=calendar_checks,  # type: ignore[arg-type]
+        monthly_path_checks_frame=monthly_path,  # type: ignore[arg-type]
         monthly=monthly,  # type: ignore[arg-type]
         hour_month=hour_month,  # type: ignore[arg-type]
         component_checks=result["component_checks"],  # type: ignore[arg-type]
     )
     seasonal = result["seasonal_checks"]  # type: ignore[assignment]
-    critical = int((seasonal["severity"] == "critical").sum()) if not seasonal.empty else 0
-    warning = int((seasonal["severity"] == "warning").sum()) if not seasonal.empty else 0
+    critical = sum(
+        _severity_counts(frame)[0]
+        for frame in [seasonal, monthly_splits, monthly_path, calendar_checks]  # type: ignore[list-item]
+    )
+    warning = sum(
+        _severity_counts(frame)[1]
+        for frame in [seasonal, monthly_splits, monthly_path, calendar_checks]  # type: ignore[list-item]
+    )
     print(f"[seasonal-audit] critical={critical} warning={warning}")
     print(f"[seasonal-audit] report -> {args.report}")
     if args.fail_on_critical and critical:

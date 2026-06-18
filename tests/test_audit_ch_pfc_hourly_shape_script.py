@@ -130,3 +130,76 @@ def test_audit_reports_peak_residuals_when_peak_quotes_exist(tmp_path):
     assert set(residuals["load_type"]) == {"BASE", "PEAK"}
     assert metrics["max_eex_base_error_eur_mwh"] < 1e-9
     assert metrics["max_eex_peak_error_eur_mwh"] < 1e-9
+
+
+def test_audit_accepts_bounded_localized_weighted_negatives(tmp_path):
+    ts = pd.date_range("2030-01-01", "2030-12-31 23:00", freq="h", tz="Europe/Zurich")
+    price = pd.Series(65.0, index=ts)
+    allowed = (price.index.month.isin([6, 8])) & (price.index.hour.isin([12, 13])) & (price.index.day <= 6)
+    price.loc[allowed] = -2.0
+    csv = tmp_path / "pfc.csv"
+    pd.DataFrame(
+        {
+            "timestamp_ch": ts.strftime("%Y-%m-%d %H:%M:%S%z"),
+            "timestamp_utc": ts.tz_convert("UTC").strftime("%Y-%m-%d %H:%M:%S%z"),
+            "price_slow_eur_mwh": price + 8.0,
+            "price_central_eur_mwh": price,
+            "price_fast_eur_mwh": price - 4.0,
+            "price_weighted_mean_eur_mwh": price,
+            "structural_p10_eur_mwh": price - 4.0,
+            "structural_p50_eur_mwh": price,
+            "structural_p90_eur_mwh": price + 8.0,
+            "structural_width_eur_mwh": [12.0] * len(ts),
+        }
+    ).to_csv(csv, index=False)
+    fw = tmp_path / "forwards.parquet"
+    pd.DataFrame(
+            {
+                "market": ["CH"],
+                "load_type": ["BASE"],
+                "date": [pd.Timestamp("2026-06-15")],
+                "product": ["2030"],
+                "price": [float(price.mean())],
+            }
+    ).to_parquet(fw, index=False)
+
+    _, _, metrics = audit(csv, fw)
+
+    assert metrics["negative_gate_status"] == "PASS"
+    assert metrics["weighted_negative_outside_allowed_hours"] == 0.0
+
+
+def test_audit_rejects_weighted_negatives_outside_solar_belly(tmp_path):
+    ts = pd.date_range("2030-01-01", periods=24 * 14, freq="h", tz="Europe/Zurich")
+    price = pd.Series(80.0, index=ts)
+    price.loc[(price.index.hour == 2) & (price.index.day <= 3)] = -1.0
+    csv = tmp_path / "pfc.csv"
+    pd.DataFrame(
+        {
+            "timestamp_ch": ts.strftime("%Y-%m-%d %H:%M:%S%z"),
+            "timestamp_utc": ts.tz_convert("UTC").strftime("%Y-%m-%d %H:%M:%S%z"),
+            "price_slow_eur_mwh": price + 8.0,
+            "price_central_eur_mwh": price,
+            "price_fast_eur_mwh": price - 4.0,
+            "price_weighted_mean_eur_mwh": price,
+            "structural_p10_eur_mwh": price - 4.0,
+            "structural_p50_eur_mwh": price,
+            "structural_p90_eur_mwh": price + 8.0,
+            "structural_width_eur_mwh": [12.0] * len(ts),
+        }
+    ).to_csv(csv, index=False)
+    fw = tmp_path / "forwards.parquet"
+    pd.DataFrame(
+        {
+            "market": ["CH"],
+            "load_type": ["BASE"],
+            "date": [pd.Timestamp("2026-06-15")],
+            "product": ["2030-01"],
+            "price": [float(price.mean())],
+        }
+    ).to_parquet(fw, index=False)
+
+    _, _, metrics = audit(csv, fw)
+
+    assert metrics["negative_gate_status"] == "FAIL"
+    assert metrics["weighted_negative_outside_allowed_hours"] > 0.0
