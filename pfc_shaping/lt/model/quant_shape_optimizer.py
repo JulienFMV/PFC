@@ -32,7 +32,7 @@ class KKTReport:
 @dataclass(frozen=True)
 class QuantShapeResult:
     curve: pd.Series
-    lambdas: dict[str, float]
+    lambdas: dict[str, float | str]
     feasibility: FeasibilityReport
     kkt: KKTReport
     constraint_residuals: pd.DataFrame
@@ -51,20 +51,22 @@ def second_difference_penalty(n: int) -> sp.csr_matrix:
     return d2.T @ d2
 
 
-def _calendar_month_period(index: pd.DatetimeIndex) -> pd.PeriodIndex:
-    local_index = index.tz_localize(None) if index.tz is not None else index
+def _calendar_month_period(index: pd.DatetimeIndex, *, timezone: str) -> pd.PeriodIndex:
+    if index.tz is None:
+        raise ValueError("monthly smoothness requires a timezone-aware DatetimeIndex")
+    local_index = index.tz_convert(timezone).tz_localize(None)
     return local_index.to_period("M")
 
 
-def monthly_mean_second_difference_penalty(index: pd.Index) -> sp.csr_matrix:
-    """Return a sparse penalty on second differences of calendar-month means."""
+def monthly_mean_second_difference_penalty(index: pd.Index, *, timezone: str = "Europe/Zurich") -> sp.csr_matrix:
+    """Return a sparse penalty on second differences of market-local month means."""
 
     if not isinstance(index, pd.DatetimeIndex):
         raise TypeError("monthly mean smoothness requires a DatetimeIndex prior")
     n = len(index)
     if n < 3:
         return sp.csr_matrix((n, n), dtype=float)
-    period = _calendar_month_period(index)
+    period = _calendar_month_period(index, timezone=timezone)
     month_codes, _ = pd.factorize(period, sort=False)
     n_months = int(month_codes.max()) + 1 if len(month_codes) else 0
     if n_months < 3:
@@ -83,24 +85,26 @@ def monthly_mean_second_difference_penalty(index: pd.Index) -> sp.csr_matrix:
     return operator.T @ operator
 
 
-def monthly_boundary_jump_penalty(index: pd.Index) -> sp.csr_matrix:
-    """Return a sparse penalty on jumps at calendar-month boundaries."""
+def monthly_boundary_curvature_penalty(index: pd.Index, *, timezone: str = "Europe/Zurich") -> sp.csr_matrix:
+    """Return a sparse penalty on curvature stencils crossing market-local month seams."""
 
     if not isinstance(index, pd.DatetimeIndex):
         raise TypeError("monthly boundary smoothness requires a DatetimeIndex prior")
     n = len(index)
-    if n < 2:
+    if n < 3:
         return sp.csr_matrix((n, n), dtype=float)
-    period = _calendar_month_period(index)
-    boundary_positions = np.flatnonzero(period[1:].to_numpy() != period[:-1].to_numpy()) + 1
-    if len(boundary_positions) == 0:
+    period = _calendar_month_period(index, timezone=timezone).to_numpy()
+    stencil_starts = [
+        start
+        for start in range(n - 2)
+        if period[start] != period[start + 1] or period[start + 1] != period[start + 2]
+    ]
+    if not stencil_starts:
         return sp.csr_matrix((n, n), dtype=float)
-    row_ids = np.repeat(np.arange(len(boundary_positions)), 2)
-    col_ids = np.empty(2 * len(boundary_positions), dtype=int)
-    col_ids[0::2] = boundary_positions - 1
-    col_ids[1::2] = boundary_positions
-    data = np.tile(np.array([-1.0, 1.0], dtype=float), len(boundary_positions))
-    operator = sp.csr_matrix((data, (row_ids, col_ids)), shape=(len(boundary_positions), n))
+    row_ids = np.repeat(np.arange(len(stencil_starts)), 3)
+    col_ids = np.concatenate([np.arange(start, start + 3) for start in stencil_starts])
+    data = np.tile(np.array([1.0, -2.0, 1.0], dtype=float), len(stencil_starts))
+    operator = sp.csr_matrix((data, (row_ids, col_ids)), shape=(len(stencil_starts), n))
     return operator.T @ operator
 
 
@@ -123,6 +127,7 @@ class QuantShapeOptimizer:
         lambda_smooth_h: float = 0.0,
         lambda_smooth_m: float = 0.0,
         lambda_seam: float = 0.0,
+        calendar_timezone: str = "Europe/Zurich",
         epsilon_ridge: float = 1e-10,
         feasibility_tol: float = 1e-9,
         stationarity_tol: float = 1e-7,
@@ -141,6 +146,7 @@ class QuantShapeOptimizer:
         self.lambda_smooth_h = float(lambda_smooth_h)
         self.lambda_smooth_m = float(lambda_smooth_m)
         self.lambda_seam = float(lambda_seam)
+        self.calendar_timezone = str(calendar_timezone)
         self.epsilon_ridge = float(epsilon_ridge)
         self.feasibility_tol = float(feasibility_tol)
         self.stationarity_tol = float(stationarity_tol)
@@ -181,9 +187,15 @@ class QuantShapeOptimizer:
         if self.lambda_smooth_h > 0.0:
             hessian = hessian + 2.0 * self.lambda_smooth_h * second_difference_penalty(n)
         if self.lambda_smooth_m > 0.0:
-            hessian = hessian + 2.0 * self.lambda_smooth_m * monthly_mean_second_difference_penalty(prior.index)
+            hessian = hessian + 2.0 * self.lambda_smooth_m * monthly_mean_second_difference_penalty(
+                prior.index,
+                timezone=self.calendar_timezone,
+            )
         if self.lambda_seam > 0.0:
-            hessian = hessian + 2.0 * self.lambda_seam * monthly_boundary_jump_penalty(prior.index)
+            hessian = hessian + 2.0 * self.lambda_seam * monthly_boundary_curvature_penalty(
+                prior.index,
+                timezone=self.calendar_timezone,
+            )
         if self.epsilon_ridge > 0.0:
             hessian = hessian + 2.0 * self.epsilon_ridge * sp.eye(n, format="csr")
         linear = -2.0 * self.lambda_prior * w * p0
@@ -244,6 +256,7 @@ class QuantShapeOptimizer:
                 "lambda_smooth_h": self.lambda_smooth_h,
                 "lambda_smooth_m": self.lambda_smooth_m,
                 "lambda_seam": self.lambda_seam,
+                "calendar_timezone": self.calendar_timezone,
                 "epsilon_ridge": self.epsilon_ridge,
             },
             feasibility=feasibility,
