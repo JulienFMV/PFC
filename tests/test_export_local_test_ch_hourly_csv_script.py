@@ -13,6 +13,7 @@ from scripts.export_local_test_ch_hourly_csv import (
     _negative_capture_weight,
     _peak_shape_down_weight,
     _peak_shape_up_weight,
+    apply_final_quant_annual_smoothness_calibration,
     apply_neighbor_annual_residual_shape_anchor,
     apply_neighbor_monthly_spread_anchor,
     apply_synthetic_monthly_path_smoothing,
@@ -719,6 +720,50 @@ def test_neighbor_annual_residual_shape_anchor_recenters_neighbor_shape_without_
         monthly.loc[12] - raw_neighbor.loc[12],
         abs=1e-6,
     )
+
+
+def test_final_quant_annual_smoothness_reduces_annual_only_month_cliff():
+    timestamps = pd.date_range("2030-01-01", "2030-12-31 23:00", freq="h", tz="Europe/Zurich")
+    month = pd.Series(timestamps.month, index=range(len(timestamps)))
+    initial = pd.Series(90.0, index=range(len(timestamps)))
+    initial.loc[month == 2] = 40.0
+    target = float(initial.mean())
+    hourly = pd.DataFrame(
+        {
+            "timestamp_ch": timestamps.strftime("%Y-%m-%d %H:%M:%S%z"),
+            "timestamp_utc": timestamps.tz_convert("UTC").strftime("%Y-%m-%d %H:%M:%S%z"),
+            "price_slow_eur_mwh": initial.to_numpy(),
+            "price_central_eur_mwh": initial.to_numpy(),
+            "price_fast_eur_mwh": initial.to_numpy(),
+            "price_weighted_mean_eur_mwh": initial.to_numpy(),
+            "structural_p10_eur_mwh": initial.to_numpy(),
+            "structural_p50_eur_mwh": initial.to_numpy(),
+            "structural_p90_eur_mwh": initial.to_numpy(),
+            "structural_width_eur_mwh": [0.0] * len(timestamps),
+        }
+    )
+
+    smoothed, audit = apply_final_quant_annual_smoothness_calibration(
+        hourly,
+        ts_ch=pd.Series(timestamps, index=hourly.index),
+        base_forward_prices={"2030": target},
+        peak_forward_prices={},
+        weights={"slow": 0.25, "central": 0.5, "fast": 0.25},
+        lambda_smooth_h=0.0,
+        lambda_smooth_m=10000.0,
+        lambda_seam=10000.0,
+        negative_price_floor=-30.0,
+        max_weighted_negative_hours=0,
+    )
+
+    smoothed_month = pd.Series(timestamps.month, index=smoothed.index)
+    before_monthly = hourly.groupby(month)["price_weighted_mean_eur_mwh"].mean()
+    after_monthly = smoothed.groupby(smoothed_month)["price_weighted_mean_eur_mwh"].mean()
+
+    assert set(audit["product"]) == {"2030"}
+    assert float(smoothed["price_weighted_mean_eur_mwh"].mean()) == pytest.approx(target, abs=1e-6)
+    assert after_monthly.loc[2] > before_monthly.loc[2]
+    assert (after_monthly.max() - after_monthly.min()) < (before_monthly.max() - before_monthly.min())
 
 
 def test_post_calibration_negative_rebalancer_respects_floor():

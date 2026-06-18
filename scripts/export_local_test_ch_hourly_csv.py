@@ -27,6 +27,10 @@ from pfc_shaping.lt.model.holiday_pressure import (  # noqa: E402
 from pfc_shaping.lt.model.quote_aware_monthly_smoothing import (  # noqa: E402
     apply_quote_aware_monthly_smoothing,
 )
+from pfc_shaping.lt.model.quant_shape_optimizer import QuantShapeOptimizer  # noqa: E402
+from pfc_shaping.lt.model.shape_constraints import (  # noqa: E402
+    build_base_peak_offpeak_constraint_system,
+)
 from scripts.build_local_test_ch_pfc import main as build_local_test_ch_pfc
 
 LOCAL_TZ = "Europe/Zurich"
@@ -823,6 +827,110 @@ def apply_neighbor_annual_residual_shape_anchor(
     return out, audit
 
 
+def apply_final_quant_annual_smoothness_calibration(
+    hourly: pd.DataFrame,
+    *,
+    ts_ch: pd.Series,
+    base_forward_prices: dict[str, float],
+    peak_forward_prices: dict[str, float],
+    weights: dict[str, float],
+    lambda_smooth_h: float = 0.0,
+    lambda_smooth_m: float = 10000.0,
+    lambda_seam: float = 10000.0,
+    negative_price_floor: float = -30.0,
+    max_weighted_negative_hours: int = 0,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Smooth complete annual-only synthetic years with hard BASE/PEAK constraints."""
+
+    for name, value in {
+        "lambda_smooth_h": lambda_smooth_h,
+        "lambda_smooth_m": lambda_smooth_m,
+        "lambda_seam": lambda_seam,
+    }.items():
+        if float(value) < 0.0 or not np.isfinite(float(value)):
+            raise ValueError(f"{name} must be finite and non-negative")
+    out = hourly.copy()
+    if float(lambda_smooth_h) == 0.0 and float(lambda_smooth_m) == 0.0 and float(lambda_seam) == 0.0:
+        return out, pd.DataFrame()
+    ts = pd.Series(np.asarray(ts_ch), index=out.index)
+    base_buckets, base_targets = _calibration_buckets(ts, base_forward_prices)
+    if base_buckets.isna().any():
+        missing = int(base_buckets.isna().sum())
+        raise ValueError(f"quant annual smoothness found {missing} rows without an EEX BASE bucket")
+    month = ts.dt.month.astype(int)
+    scenario_cols = list(SCENARIO_PRICE_COLUMNS.values())
+    audit_rows: list[dict[str, object]] = []
+
+    for product, idx in base_buckets.groupby(base_buckets, dropna=True).groups.items():
+        product = str(product)
+        if not product.isdigit() or product not in base_targets:
+            continue
+        idx = pd.Index(idx)
+        months = sorted(int(value) for value in month.loc[idx].unique())
+        if months != list(range(1, 13)):
+            continue
+        year_index = pd.DatetimeIndex(ts.loc[idx]).tz_convert("Europe/Zurich")
+        constraints = build_base_peak_offpeak_constraint_system(
+            year_index.tz_convert("UTC"),
+            {product: float(base_targets[product])},
+            {product: float(peak_forward_prices[product])} if product in peak_forward_prices else {},
+            country="CH",
+        )
+        if not constraints.rows:
+            continue
+        for scenario, col in SCENARIO_PRICE_COLUMNS.items():
+            prior = pd.Series(out.loc[idx, col].to_numpy(dtype=float), index=year_index, name=col)
+            result = QuantShapeOptimizer(
+                lambda_smooth_h=float(lambda_smooth_h),
+                lambda_smooth_m=float(lambda_smooth_m),
+                lambda_seam=float(lambda_seam),
+                epsilon_ridge=1e-9,
+                feasibility_tol=1e-6,
+                stationarity_tol=1e-6,
+            ).solve(prior, constraints)
+            delta = result.curve.to_numpy(dtype=float) - prior.to_numpy(dtype=float)
+            out.loc[idx, col] = result.curve.to_numpy(dtype=float)
+            residuals = result.constraint_residuals
+            audit_rows.append(
+                {
+                    "product": product,
+                    "scenario": scenario,
+                    "lambda_smooth_h": float(lambda_smooth_h),
+                    "lambda_smooth_m": float(lambda_smooth_m),
+                    "lambda_seam": float(lambda_seam),
+                    "prior_rmse_eur_mwh": float(np.sqrt(np.mean(delta * delta))),
+                    "max_abs_delta_eur_mwh": float(np.max(np.abs(delta))) if len(delta) else 0.0,
+                    "max_constraint_abs_error_eur_mwh": (
+                        float(residuals["abs_error"].max()) if not residuals.empty else 0.0
+                    ),
+                    "kkt_primal_inf": float(result.kkt.primal_inf),
+                    "kkt_stationarity_inf": float(result.kkt.stationarity_inf),
+                    "rows": int(len(idx)),
+                }
+            )
+
+    out = _recompute_weighted_fan_columns(out, weights)
+    min_price = float(out[[*scenario_cols, "price_weighted_mean_eur_mwh"]].min().min())
+    if min_price < float(negative_price_floor) - 1e-9:
+        raise ValueError(
+            f"quant annual smoothness breached negative price floor: min={min_price:.6f}, "
+            f"floor={float(negative_price_floor):.6f}"
+        )
+    weighted_negative_hours = int((out["price_weighted_mean_eur_mwh"] < 0.0).sum())
+    if weighted_negative_hours > int(max_weighted_negative_hours):
+        raise ValueError(
+            "quant annual smoothness produced too many weighted-mean negative hours: "
+            f"{weighted_negative_hours} > {int(max_weighted_negative_hours)}"
+        )
+    for column in PRICE_COLUMNS:
+        if column in out.columns:
+            out[column] = out[column].astype(float).round(6)
+    audit = pd.DataFrame(audit_rows)
+    if not audit.empty:
+        audit = audit.sort_values(["product", "scenario"]).reset_index(drop=True)
+    return out, audit
+
+
 def _annual_residual_month_targets(
     *,
     parent_year: int,
@@ -1527,6 +1635,8 @@ def _write_report(
     final_monthly_path_smoothing_audit: pd.DataFrame | None = None,
     annual_residual_anchor_enabled: bool = False,
     annual_residual_anchor_audit: pd.DataFrame | None = None,
+    final_quant_annual_smoothness_enabled: bool = False,
+    final_quant_annual_smoothness_audit: pd.DataFrame | None = None,
     neighbor_monthly_anchor_enabled: bool = False,
     neighbor_monthly_anchor_audit: pd.DataFrame | None = None,
     eex_peak_calibration_enabled: bool = False,
@@ -1567,6 +1677,10 @@ def _write_report(
         (
             "* local/test neighbor annual residual shape anchor: "
             f"`{'ON' if annual_residual_anchor_enabled else 'OFF'}`"
+        ),
+        (
+            "* local/test final quant annual-only smoothness calibration: "
+            f"`{'ON' if final_quant_annual_smoothness_enabled else 'OFF'}`"
         ),
         (
             "* local/test neighbor monthly spread anchor: "
@@ -1646,6 +1760,14 @@ def _write_report(
             else pd.DataFrame()
         ),
         "",
+        "## Local/Test Final Quant Annual-Only Smoothness Calibration Audit",
+        "",
+        _md_table(
+            final_quant_annual_smoothness_audit
+            if final_quant_annual_smoothness_audit is not None
+            else pd.DataFrame()
+        ),
+        "",
         "## Local/Test Neighbor Monthly Spread Anchor Audit",
         "",
         _md_table(
@@ -1673,6 +1795,7 @@ def _write_report(
         "* The quote-aware monthly smoothing, when enabled, is local/test only and preserves EEX BASE/PEAK buckets.",
         "* The final monthly path smoothing, when enabled, is local/test only and preserves EEX BASE/PEAK buckets.",
         "* The neighbor annual residual shape anchor, when enabled, is local/test only and preserves EEX BASE buckets.",
+        "* The final quant annual-only smoothness calibration, when enabled, is local/test only and preserves annual BASE/PEAK buckets.",
         "* The neighbor monthly spread anchor, when enabled, is local/test only and preserves EEX BASE/PEAK buckets.",
         "* The EEX BASE+PEAK calibration, when enabled, is local/test only and uses quoted PEAK products from the same snapshot.",
         "* This is not production FMV output; production governance remains NO-GO.",
@@ -1908,6 +2031,32 @@ def main(argv: list[str] | None = None) -> int:
         default=12.0,
         help="Maximum absolute hourly/monthly delta from the final monthly path smoothing pass.",
     )
+    parser.add_argument(
+        "--enable-final-quant-annual-smoothness",
+        action="store_true",
+        help=(
+            "Enable local/test QuantShapeOptimizer smoothing for complete annual-only synthetic years "
+            "while preserving annual BASE/PEAK constraints."
+        ),
+    )
+    parser.add_argument(
+        "--final-quant-lambda-smooth-h",
+        type=float,
+        default=0.0,
+        help="Hourly curvature lambda for local/test annual-only quant smoothing.",
+    )
+    parser.add_argument(
+        "--final-quant-lambda-smooth-m",
+        type=float,
+        default=10000.0,
+        help="Monthly mean curvature lambda for local/test annual-only quant smoothing.",
+    )
+    parser.add_argument(
+        "--final-quant-lambda-seam",
+        type=float,
+        default=10000.0,
+        help="Month-boundary curvature lambda for local/test annual-only quant smoothing.",
+    )
     parser.add_argument("--skip-build", action="store_true")
     parser.add_argument("--fan-chart-output", default=None)
     parser.add_argument(
@@ -2048,6 +2197,7 @@ def main(argv: list[str] | None = None) -> int:
     final_monthly_path_audit = None
     annual_residual_audit = None
     neighbor_monthly_audit = None
+    final_quant_annual_audit = None
     if args.enable_quote_aware_monthly_smoothing:
         ts_ch = _parse_timestamp_ch(hourly["timestamp_ch"], hourly.get("utc_offset_ch"))
         hourly, quote_monthly_audit = apply_quote_aware_monthly_smoothing(
@@ -2175,6 +2325,20 @@ def main(argv: list[str] | None = None) -> int:
                     negative_price_floor=args.negative_price_floor,
                     max_weighted_negative_hours=args.max_weighted_negative_hours,
                 )
+    if args.enable_final_quant_annual_smoothness:
+        ts_ch = _parse_timestamp_ch(hourly["timestamp_ch"], hourly.get("utc_offset_ch"))
+        hourly, final_quant_annual_audit = apply_final_quant_annual_smoothness_calibration(
+            hourly,
+            ts_ch=ts_ch,
+            base_forward_prices=forward_prices,
+            peak_forward_prices=peak_forward_prices,
+            weights=weights,
+            lambda_smooth_h=args.final_quant_lambda_smooth_h,
+            lambda_smooth_m=args.final_quant_lambda_smooth_m,
+            lambda_seam=args.final_quant_lambda_seam,
+            negative_price_floor=args.negative_price_floor,
+            max_weighted_negative_hours=args.max_weighted_negative_hours,
+        )
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     hourly.to_csv(output, index=False)
@@ -2202,6 +2366,8 @@ def main(argv: list[str] | None = None) -> int:
         final_monthly_path_smoothing_audit=final_monthly_path_audit,
         annual_residual_anchor_enabled=bool(args.enable_neighbor_annual_residual_shape_anchor),
         annual_residual_anchor_audit=annual_residual_audit,
+        final_quant_annual_smoothness_enabled=bool(args.enable_final_quant_annual_smoothness),
+        final_quant_annual_smoothness_audit=final_quant_annual_audit,
         neighbor_monthly_anchor_enabled=bool(args.enable_neighbor_monthly_spread_anchor),
         neighbor_monthly_anchor_audit=neighbor_monthly_audit,
         eex_peak_calibration_enabled=bool(args.enable_eex_peak_calibration),
