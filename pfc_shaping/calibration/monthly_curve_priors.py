@@ -117,6 +117,7 @@ def build_neighbor_panel_shape_prior(
     neighbor_markets: Sequence[str] = ("DE", "FR", "AT", "IT"),
     load_type: str = "BASE",
     neighbor_shrinkage: float = 0.5,
+    run_timestamp: pd.Timestamp | None = None,
 ) -> MonthlyShapePrior:
     """Build a robust zero-mean shape prior from neighboring EEX quotes."""
 
@@ -135,6 +136,11 @@ def build_neighbor_panel_shape_prior(
         quarter_count = int((evidence == "quarter").sum())
         calendar_count = int((evidence == "calendar").sum())
         block_count = int(((evidence == "quarter") | (evidence == "calendar")).sum())
+        horizon_counts = _evidence_counts_by_horizon(
+            evidence,
+            constraints.delivery_grid.months,
+            run_timestamp=run_timestamp,
+        )
         if usable == 0:
             diagnostic_rows.append(
                 _market_diag(
@@ -146,6 +152,7 @@ def build_neighbor_panel_shape_prior(
                     horizon_months=len(constraints.delivery_grid.months),
                     quarter_quotes=quarter_count,
                     calendar_quotes=calendar_count,
+                    **horizon_counts,
                 )
             )
             continue
@@ -161,6 +168,7 @@ def build_neighbor_panel_shape_prior(
                 horizon_months=len(constraints.delivery_grid.months),
                 quarter_quotes=quarter_count,
                 calendar_quotes=calendar_count,
+                **horizon_counts,
             )
         )
 
@@ -193,11 +201,11 @@ def build_neighbor_panel_shape_prior(
     elif len(monthly_markets) >= 2:
         keep = 1.0 - min(1.0, max(0.0, float(neighbor_shrinkage))) * 0.5
         combined = combined * keep
-        status = "PARTIAL_PANEL_MULTI_MARKET"
+        status = "PARTIAL_MONTHLY_PANEL"
     elif len(monthly_markets) == 1:
         keep = 1.0 - min(1.0, max(0.0, float(neighbor_shrinkage)))
         combined = combined * keep
-        status = "DE_SINGLE_MARKET" if monthly_markets[0] == "DE" else "SINGLE_MARKET"
+        status = "DE_SINGLE_MARKET_MONTHLY" if monthly_markets[0] == "DE" else "SINGLE_MARKET_MONTHLY"
     elif block_markets:
         keep = 1.0 - min(1.0, max(0.0, float(neighbor_shrinkage)))
         combined = combined * keep
@@ -208,6 +216,13 @@ def build_neighbor_panel_shape_prior(
     shape = recenter_shape_by_parent(combined, constraints)
     diagnostics = pd.DataFrame(diagnostic_rows)
     diagnostics["prior_status"] = status
+    prior_far_status = _far_horizon_monthly_evidence_status(diagnostics)
+    diagnostics["prior_far_horizon_monthly_evidence"] = prior_far_status
+    diagnostics["market_far_horizon_monthly_evidence"] = diagnostics.apply(
+        _market_far_horizon_monthly_evidence_status,
+        axis=1,
+    )
+    diagnostics["far_horizon_monthly_evidence"] = prior_far_status
     return MonthlyShapePrior(shape, diagnostics, contributions, status)
 
 
@@ -660,9 +675,10 @@ def _market_diag(
     horizon_months: int = 0,
     quarter_quotes: int = 0,
     calendar_quotes: int = 0,
+    **extra: object,
 ) -> dict[str, object]:
     quote_share = float(direct_month_quotes) / float(horizon_months) if int(horizon_months) > 0 else 0.0
-    return {
+    row = {
         "market": market,
         "status": status,
         "covered_months": int(covered_months),
@@ -673,6 +689,85 @@ def _market_diag(
         "quarter_quotes": int(quarter_quotes),
         "calendar_quotes": int(calendar_quotes),
     }
+    row.update(extra)
+    return row
+
+
+def _evidence_counts_by_horizon(
+    evidence: pd.Series,
+    months: pd.PeriodIndex,
+    *,
+    run_timestamp: pd.Timestamp | None,
+) -> dict[str, int | str]:
+    buckets = ("h+0", "h+1", "h+2", "h+3+")
+    out: dict[str, int | str] = {}
+    if run_timestamp is None:
+        out["horizon_reference"] = "UNSPECIFIED"
+        for bucket in buckets:
+            out[f"direct_month_quotes_{bucket}"] = 0
+            out[f"block_shape_months_{bucket}"] = 0
+            out[f"covered_months_{bucket}"] = 0
+        return out
+
+    out["horizon_reference"] = str(pd.Timestamp(run_timestamp).tz_localize(None).normalize().date())
+    run_year = int(pd.Timestamp(run_timestamp).tz_localize(None).year)
+    for bucket in buckets:
+        month_mask = [_horizon_bucket(int(month.year) - run_year) == bucket for month in months]
+        if not any(month_mask):
+            out[f"direct_month_quotes_{bucket}"] = 0
+            out[f"block_shape_months_{bucket}"] = 0
+            out[f"covered_months_{bucket}"] = 0
+            continue
+        bucket_evidence = evidence.loc[months[month_mask]]
+        out[f"direct_month_quotes_{bucket}"] = int(bucket_evidence.eq("month").sum())
+        out[f"block_shape_months_{bucket}"] = int(bucket_evidence.isin(["quarter", "calendar"]).sum())
+        out[f"covered_months_{bucket}"] = int(bucket_evidence.isin(["month", "quarter", "calendar"]).sum())
+    return out
+
+
+def _far_horizon_monthly_evidence_status(diagnostics: pd.DataFrame) -> str:
+    if diagnostics.empty:
+        return "UNSUPPORTED"
+    required = {"direct_month_quotes_h+2", "direct_month_quotes_h+3+"}
+    if not required <= set(diagnostics.columns):
+        return "UNSPECIFIED_HORIZON"
+    far_direct = int(
+        pd.to_numeric(diagnostics["direct_month_quotes_h+2"], errors="coerce").fillna(0).sum()
+        + pd.to_numeric(diagnostics["direct_month_quotes_h+3+"], errors="coerce").fillna(0).sum()
+    )
+    if far_direct <= 0:
+        return "NO_FAR_HORIZON_MONTHLY_EVIDENCE"
+    markets = diagnostics[
+        (
+            pd.to_numeric(diagnostics["direct_month_quotes_h+2"], errors="coerce").fillna(0)
+            + pd.to_numeric(diagnostics["direct_month_quotes_h+3+"], errors="coerce").fillna(0)
+        )
+        > 0
+    ]["market"].astype(str).str.upper().tolist()
+    if markets == ["DE"]:
+        return "DE_FAR_HORIZON_MONTHLY_EVIDENCE"
+    if "DE" in markets:
+        return "MULTI_MARKET_FAR_HORIZON_MONTHLY_WITH_DE"
+    return "NON_DE_FAR_HORIZON_MONTHLY_EVIDENCE"
+
+
+def _market_far_horizon_monthly_evidence_status(row: pd.Series) -> str:
+    direct = _safe_int(row.get("direct_month_quotes_h+2", 0)) + _safe_int(row.get("direct_month_quotes_h+3+", 0))
+    if direct <= 0:
+        return "NO_FAR_HORIZON_MONTHLY_EVIDENCE"
+    market = str(row.get("market", "")).upper()
+    if market == "DE":
+        return "DE_FAR_HORIZON_MONTHLY_EVIDENCE"
+    return "MARKET_FAR_HORIZON_MONTHLY_EVIDENCE"
+
+
+def _safe_int(value: object) -> int:
+    try:
+        if pd.isna(value):
+            return 0
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _horizon_bucket(horizon: int) -> str:
@@ -688,10 +783,16 @@ def _horizon_bucket(horizon: int) -> str:
 def _fused_status(statuses: list[str]) -> str:
     if "PANEL_MULTI_MARKET" in statuses:
         return "PANEL_MULTI_MARKET"
+    if "PARTIAL_MONTHLY_PANEL" in statuses:
+        return "PARTIAL_MONTHLY_PANEL"
     if "PARTIAL_PANEL_MULTI_MARKET" in statuses:
         return "PARTIAL_PANEL_MULTI_MARKET"
+    if "DE_SINGLE_MARKET_MONTHLY" in statuses:
+        return "DE_SINGLE_MARKET_MONTHLY"
     if "DE_SINGLE_MARKET" in statuses:
         return "DE_SINGLE_MARKET"
+    if "SINGLE_MARKET_MONTHLY" in statuses:
+        return "SINGLE_MARKET_MONTHLY"
     if "PANEL_BLOCK_SHAPE" in statuses:
         return "PANEL_BLOCK_SHAPE"
     if "HISTORY_FORWARD" in statuses or "PARTIAL_HISTORY_FORWARD" in statuses:

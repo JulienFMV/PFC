@@ -842,6 +842,7 @@ def _build_shape_prior(
         neighbor_prices,
         neighbor_markets=settings.neighbor_markets,
         neighbor_shrinkage=config.neighbor_shrinkage,
+        run_timestamp=masked.origin_date,
     )
     history = build_history_shape_prior(
         constraints,

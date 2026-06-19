@@ -49,6 +49,7 @@ def main() -> None:
     )
 
     own_quotes = _latest_quotes(history, args.market, "BASE")
+    run_timestamp = max(q.snapshot_date for q in own_quotes if q.snapshot_date is not None)
     constraints = build_monthly_constraint_system(
         months,
         own_quotes,
@@ -66,13 +67,14 @@ def main() -> None:
         neighbor_prices,
         neighbor_markets=neighbor_markets,
         neighbor_shrinkage=float(args.neighbor_shrinkage),
+        run_timestamp=run_timestamp,
     )
     structural = build_structural_monthly_shape_prior_from_history(
         constraints,
         history,
         market=args.market,
         load_type="BASE",
-        run_timestamp=max(q.snapshot_date for q in own_quotes if q.snapshot_date is not None),
+        run_timestamp=run_timestamp,
         min_snapshots=int(args.min_structural_snapshots),
         lookback_years=int(args.history_lookback_years),
         fallback_to_template=bool(args.allow_template_structural_fallback),
@@ -83,7 +85,7 @@ def main() -> None:
         history,
         market=args.market,
         load_type="BASE",
-        run_timestamp=max(q.snapshot_date for q in own_quotes if q.snapshot_date is not None),
+        run_timestamp=run_timestamp,
         min_snapshots=int(args.min_history_snapshots),
         lookback_years=int(args.history_lookback_years),
     )
@@ -123,6 +125,7 @@ def main() -> None:
         historical=historical,
         structural=structural,
         config=config,
+        run_timestamp=run_timestamp,
         args=args,
     )
     _assert_proof(
@@ -152,7 +155,7 @@ def main() -> None:
             "start": args.start,
             "end": args.end,
             "forwards": str(args.forwards),
-            "latest_snapshot": str(max(q.snapshot_date for q in own_quotes if q.snapshot_date is not None)),
+            "latest_snapshot": str(run_timestamp),
             "neighbor_markets": neighbor_markets,
             "panel_status": panel.status,
             "history_status": historical.status,
@@ -213,6 +216,7 @@ def _neighbor_level_leakage_check(
     historical,
     structural,
     config: MonthlyCurveConfig,
+    run_timestamp: pd.Timestamp,
     args: argparse.Namespace,
 ) -> float:
     shifted = {
@@ -227,12 +231,14 @@ def _neighbor_level_leakage_check(
         neighbor_prices,
         neighbor_markets=neighbor_markets,
         neighbor_shrinkage=float(args.neighbor_shrinkage),
+        run_timestamp=run_timestamp,
     )
     shifted_panel = build_neighbor_panel_shape_prior(
         constraints,
         shifted,
         neighbor_markets=neighbor_markets,
         neighbor_shrinkage=float(args.neighbor_shrinkage),
+        run_timestamp=run_timestamp,
     )
     base_fused = build_fused_shape_prior(
         constraints,

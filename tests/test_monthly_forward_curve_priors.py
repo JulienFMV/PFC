@@ -64,7 +64,7 @@ def test_neighbor_panel_prior_is_invariant_to_absolute_neighbor_level_shift():
         neighbor_shrinkage=0.25,
     )
 
-    assert prior.status == "DE_SINGLE_MARKET"
+    assert prior.status == "DE_SINGLE_MARKET_MONTHLY"
     assert float((prior.shape - shifted_prior.shape).abs().max()) <= 1e-10
     _assert_zero_mean_by_parent(prior.shape, constraints)
 
@@ -129,11 +129,55 @@ def test_neighbor_panel_partial_monthly_support_is_not_reported_as_full_panel():
     )
     fused = build_fused_shape_prior(constraints, panel_prior=prior)
 
-    assert prior.status == "PARTIAL_PANEL_MULTI_MARKET"
-    assert fused.status == "PARTIAL_PANEL_MULTI_MARKET"
+    assert prior.status == "PARTIAL_MONTHLY_PANEL"
+    assert fused.status == "PARTIAL_MONTHLY_PANEL"
     assert prior.diagnostics["direct_month_quote_share"].max() < 1.0
     assert set(prior.diagnostics["status"]) == {"MONTH_SHAPE_USED"}
     _assert_zero_mean_by_parent(prior.shape, constraints)
+
+
+def test_neighbor_panel_reports_de_far_horizon_monthly_evidence_explicitly():
+    constraints = _constraints_2028_residual()
+    months = constraints.delivery_grid.months
+    de_prices = {str(month): 100.0 + float(month.month) for month in months}
+
+    prior = build_neighbor_panel_shape_prior(
+        constraints,
+        {"DE": de_prices},
+        neighbor_markets=("DE", "FR"),
+        neighbor_shrinkage=0.25,
+        run_timestamp=pd.Timestamp("2026-06-17"),
+    )
+
+    de_diag = prior.diagnostics[prior.diagnostics["market"].eq("DE")].iloc[0]
+    fr_diag = prior.diagnostics[prior.diagnostics["market"].eq("FR")].iloc[0]
+    assert prior.status == "DE_SINGLE_MARKET_MONTHLY"
+    assert de_diag["direct_month_quotes_h+2"] == 12
+    assert de_diag["prior_far_horizon_monthly_evidence"] == "DE_FAR_HORIZON_MONTHLY_EVIDENCE"
+    assert de_diag["market_far_horizon_monthly_evidence"] == "DE_FAR_HORIZON_MONTHLY_EVIDENCE"
+    assert fr_diag["market_far_horizon_monthly_evidence"] == "NO_FAR_HORIZON_MONTHLY_EVIDENCE"
+    _assert_zero_mean_by_parent(prior.shape, constraints)
+
+
+def test_neighbor_panel_block_shape_does_not_claim_far_horizon_monthly_evidence():
+    constraints = _constraints_2028_residual()
+    prices = {
+        "DE": {"2028": 80.0, "2028-Q1": 100.0},
+        "FR": {"2028": 82.0, "2028-Q1": 101.0},
+    }
+
+    prior = build_neighbor_panel_shape_prior(
+        constraints,
+        prices,
+        neighbor_markets=("DE", "FR"),
+        neighbor_shrinkage=0.25,
+        run_timestamp=pd.Timestamp("2026-06-17"),
+    )
+
+    assert prior.status == "PANEL_BLOCK_SHAPE"
+    assert set(prior.diagnostics["prior_far_horizon_monthly_evidence"]) == {"NO_FAR_HORIZON_MONTHLY_EVIDENCE"}
+    assert set(prior.diagnostics["market_far_horizon_monthly_evidence"]) == {"NO_FAR_HORIZON_MONTHLY_EVIDENCE"}
+    assert int(prior.diagnostics["direct_month_quotes_h+2"].sum()) == 0
 
 
 def test_history_shape_prior_computes_month_vs_calendar_deviations():
