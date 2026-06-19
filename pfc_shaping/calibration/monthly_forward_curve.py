@@ -384,6 +384,12 @@ def _product_periods(product: str) -> pd.PeriodIndex:
     return pd.PeriodIndex([f"{year}-{month:02d}" for month in range(1, 13)], freq="M")
 
 
+def product_periods(product: str) -> pd.PeriodIndex:
+    """Return the full monthly delivery set covered by an EEX product key."""
+
+    return _product_periods(product)
+
+
 def _raise_on_partial_product_grid(product: str, delivery_months: pd.PeriodIndex) -> None:
     product_months = _product_periods(product)
     product_set = set(product_months)
