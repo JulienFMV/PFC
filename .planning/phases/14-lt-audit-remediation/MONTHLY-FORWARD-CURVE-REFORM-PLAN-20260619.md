@@ -1326,10 +1326,19 @@ Initial release:
 Promotion criteria:
 
 - 2028-2030 visual artifacts generated and linked to `audit_gates.csv` rows;
-- `monthly_shape_regression_2028_2030` is `PASS`;
+- `monthly_shape_regression_2028_2030` is `PASS` for calibrated, supportable
+  populations, or `UNSUPPORTED` only for explicitly documented far-horizon
+  populations where `historical_thresholds.csv` proves insufficient monthly
+  market evidence;
 - EEX residuals exact;
 - gates `0 critical`;
-- required gates have `0 unsupported`;
+- required gates have `0 unsupported` on near-horizon / historically
+  calibrable populations;
+- far-horizon `UNSUPPORTED` may be accepted only when all of the following
+  hold: threshold generation was attempted point-in-time, the threshold row
+  proves insufficient sample rather than pipeline failure, known-bad fixtures
+  still fail, hard numerical gates still `PASS`, and the audit manifest names
+  the residual model risk;
 - analyst commentary may explain a `CRITICAL` or `UNSUPPORTED` status, but may
   not convert it to `PASS`;
 - performance overhead < 5 seconds for monthly solve;
@@ -1422,7 +1431,12 @@ Block merge if any item fails:
 - Lambda calibration report exists for the selected defaults.
 - Run manifest proves point-in-time data usage.
 - Same-month cross-year rank and comparable-block gates have no critical flags.
-- Required gates have no `UNSUPPORTED` status.
+- Required gates have no `UNSUPPORTED` status on near-horizon / historically
+  calibrable populations.
+- Far-horizon `UNSUPPORTED` is accepted only when it is backed by an attempted
+  point-in-time threshold calibration, explicit insufficient-sample evidence,
+  and a named promotion risk entry. It must not hide a `CRITICAL` on known-bad
+  fixtures.
 - Any analyst override is explicit, named and traceable, but cannot change gate
   status.
 
@@ -1522,6 +1536,8 @@ This plan is 10/10 only if external auditors agree that:
 - it defines objective weights and thresholds through masked point-in-time
   calibration/backtest, not taste;
 - it has known-bad and known-coherent fixtures;
-- it fails closed on required `CRITICAL` or `UNSUPPORTED` gates;
+- it fails closed on required `CRITICAL` gates and on `UNSUPPORTED` gates for
+  calibrable populations, while explicitly documenting far-horizon
+  `UNSUPPORTED` where the market history cannot support P90/P97.5 thresholds;
 - it emits reproducible manifests and machine-readable evidence for PNG,
   workbook and Power BI views.

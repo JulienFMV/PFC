@@ -81,4 +81,9 @@ The gates fail closed instead of reporting `PASS` without sufficient evidence.
   `production_export_path_parity` remain to be implemented as Phase F gates.
 - Power BI sidecar integration for the new `audit_gates.csv` rows remains to be
   wired.
-- Production approval remains blocked while required gates are `UNSUPPORTED`.
+- Production approval remains blocked while required near-horizon or otherwise
+  historically calibrable gates are `UNSUPPORTED`.
+- Far-horizon `UNSUPPORTED` should not be treated as an automatic permanent
+  blocker if point-in-time threshold calibration proves insufficient monthly
+  market evidence. It must be documented as residual model risk and must not
+  hide any `CRITICAL` on hard gates or known-bad fixtures.
