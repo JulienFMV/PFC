@@ -8,6 +8,13 @@ and does not claim Phase F governance gates are complete.
 
 ## Changes
 
+- Added a frozen synthetic parity fixture:
+  `tests/fixtures/monthly_curve_phase_e_parity_baseline.json`.
+- The fixture pins:
+  - OFF-path legacy final-calibration contract signature and hash;
+  - solver-mode non-overlapping final-calibration contract signature and hash;
+  - monthly authority `monthly_solution_hash`, `active_constraints_hash`,
+    `quoted_keys` and synthetic monthly keys for direct-vs-history parity.
 - Added an explicit OFF-path regression test proving the final calibrator keeps
   the legacy monthly contract construction when `skip_legacy_level_cascade` is
   false.
@@ -24,6 +31,35 @@ and does not claim Phase F governance gates are complete.
 - Added `forward_snapshot_date` and `solver_config_hash` to the monthly solver
   manifest.
 
+## Frozen Parity Fixture
+
+The frozen fixture is intentionally compact and synthetic. It represents:
+
+- CH hard quotes: `2028`, `2028-Q1`, `2029`;
+- DE current monthly evidence for `2028`;
+- snapshot date: `2026-06-17`;
+- solver settings used by the direct/history parity test.
+
+The OFF legacy signature proves that disabling the solver still creates the
+legacy month-by-month final calibration contracts:
+
+```text
+2028-01<2028-Q1> ... 2028-12<2028>
+```
+
+The ON solver signature proves that enabling the solver uses only original CH
+hard quotes as final calibration authority:
+
+```text
+2028-Q1<monthly_solver:2028-Q1>
+2028-RESIDUAL<monthly_solver:2028>
+```
+
+The direct/history monthly authority hash check covers the two integration
+styles used by production-style current inputs and the local export/build path.
+Any intentional behavioral change must update this fixture explicitly; otherwise
+the test fails.
+
 ## Verified
 
 Commands run:
@@ -38,6 +74,7 @@ python scripts/run_monthly_curve_sparse_year_proof.py --forwards data/eex_forwar
 Results:
 
 - Monthly integration: `10 passed`
+- Monthly integration after frozen fixture patch: `10 passed`
 - Monthly solver/calibration family: `56 passed`
 - Export/import LT-CT guard: `43 passed, 1 skipped`
 - Sparse-year proof:

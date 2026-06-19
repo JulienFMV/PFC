@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import hashlib
+import json
+from pathlib import Path
+
 import pytest
 import pandas as pd
 
@@ -18,6 +22,43 @@ from scripts.export_local_test_ch_hourly_csv import main as export_hourly_main
 class Contract:
     def __init__(self, **kwargs):
         self.__dict__.update(kwargs)
+
+
+FIXTURE_PATH = Path(__file__).parent / "fixtures" / "monthly_curve_phase_e_parity_baseline.json"
+
+
+def _load_parity_fixture() -> dict[str, object]:
+    return json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
+
+
+def _sha256_json(payload: object) -> str:
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    ).hexdigest()
+
+
+def _contract_signature(contracts: list[Contract]) -> list[dict[str, object]]:
+    return [
+        {
+            "name": str(contract.name),
+            "price": round(float(contract.price), 10),
+            "start": str(pd.Timestamp(contract.start)),
+            "end": str(pd.Timestamp(contract.end)),
+            "product_type": str(getattr(contract, "product_type", "")),
+            "is_hard": bool(getattr(contract, "is_hard", True)),
+            "penalty_weight": round(float(getattr(contract, "penalty_weight", 1.0)), 10),
+        }
+        for contract in contracts
+    ]
+
+
+def _boundaries(year: int, start_month: int, end_month: int, tz: str):
+    start = pd.Timestamp(year=year, month=start_month, day=1, tz=tz).tz_convert("UTC")
+    if end_month == 12:
+        end = pd.Timestamp(year=year + 1, month=1, day=1, tz=tz).tz_convert("UTC")
+    else:
+        end = pd.Timestamp(year=year, month=end_month + 1, day=1, tz=tz).tz_convert("UTC")
+    return start, end
 
 
 def _history() -> pd.DataFrame:
@@ -105,6 +146,8 @@ def test_monthly_authority_hash_parity_and_quoted_keys_exclude_synthetic_months(
 
 
 def test_monthly_authority_direct_and_history_paths_hash_equal(tmp_path) -> None:
+    fixture = _load_parity_fixture()
+    expected = fixture["monthly_authority"]
     history = _history()
     forwards_path = tmp_path / "forwards.parquet"
     history.to_parquet(forwards_path)
@@ -140,6 +183,10 @@ def test_monthly_authority_direct_and_history_paths_hash_equal(tmp_path) -> None
 
     assert direct.monthly_solution_hash == from_history.monthly_solution_hash
     assert direct.active_constraints_hash == from_history.active_constraints_hash
+    assert direct.monthly_solution_hash == expected["monthly_solution_hash"]
+    assert direct.active_constraints_hash == expected["active_constraints_hash"]
+    assert sorted(direct.quoted_keys) == expected["quoted_keys"]
+    assert sorted(direct.synthetic_monthly_keys) == expected["synthetic_monthly_keys"]
     pd.testing.assert_series_equal(direct.result.monthly_curve, from_history.result.monthly_curve)
 
 
@@ -166,14 +213,7 @@ def test_final_calibrator_keeps_genuinely_quoted_month() -> None:
 
 
 def test_solver_mode_final_calibration_uses_non_overlapping_average_contracts() -> None:
-    def boundaries(year: int, start_month: int, end_month: int, tz: str):
-        start = pd.Timestamp(year=year, month=start_month, day=1, tz=tz).tz_convert("UTC")
-        if end_month == 12:
-            end = pd.Timestamp(year=year + 1, month=1, day=1, tz=tz).tz_convert("UTC")
-        else:
-            end = pd.Timestamp(year=year, month=end_month + 1, day=1, tz=tz).tz_convert("UTC")
-        return start, end
-
+    fixture = _load_parity_fixture()
     assembler = object.__new__(PFCAssembler)
     assembler.skip_legacy_level_cascade = True
     idx = pd.date_range("2028-01-01", "2029-01-01", freq="h", inclusive="left", tz="UTC")
@@ -186,9 +226,10 @@ def test_solver_mode_final_calibration_uses_non_overlapping_average_contracts() 
         },
         quoted_keys={"2028", "2028-Q1"},
         futures_contract_cls=Contract,
-        period_boundaries_fn=boundaries,
+        period_boundaries_fn=_boundaries,
         country="CH",
     )
+    signature = _contract_signature(contracts)
 
     assert [contract.name for contract in contracts] == [
         "2028-Q1<monthly_solver:2028-Q1>",
@@ -196,17 +237,12 @@ def test_solver_mode_final_calibration_uses_non_overlapping_average_contracts() 
     ]
     assert contracts[0].price == pytest.approx(110.0)
     assert contracts[1].price < 80.0
+    assert signature == fixture["on_solver_contracts"]
+    assert _sha256_json(signature) == fixture["on_solver_contract_signature_hash"]
 
 
 def test_flag_off_final_calibration_keeps_legacy_monthly_contracts() -> None:
-    def boundaries(year: int, start_month: int, end_month: int, tz: str):
-        start = pd.Timestamp(year=year, month=start_month, day=1, tz=tz).tz_convert("UTC")
-        if end_month == 12:
-            end = pd.Timestamp(year=year + 1, month=1, day=1, tz=tz).tz_convert("UTC")
-        else:
-            end = pd.Timestamp(year=year, month=end_month + 1, day=1, tz=tz).tz_convert("UTC")
-        return start, end
-
+    fixture = _load_parity_fixture()
     assembler = object.__new__(PFCAssembler)
     assembler.skip_legacy_level_cascade = False
     assembler.peak_source_policy = "same_first"
@@ -217,9 +253,10 @@ def test_flag_off_final_calibration_keeps_legacy_monthly_contracts() -> None:
         base_prices={"2028": 80.0, "2028-Q1": 110.0},
         quoted_keys={"2028", "2028-Q1"},
         futures_contract_cls=Contract,
-        period_boundaries_fn=boundaries,
+        period_boundaries_fn=_boundaries,
         country="CH",
     )
+    signature = _contract_signature(contracts)
 
     assert len(contracts) == 12
     assert [contract.name for contract in contracts[:3]] == [
@@ -228,6 +265,8 @@ def test_flag_off_final_calibration_keeps_legacy_monthly_contracts() -> None:
         "2028-03<2028-Q1>",
     ]
     assert contracts[-1].name == "2028-12<2028>"
+    assert signature == fixture["off_legacy_contracts"]
+    assert _sha256_json(signature) == fixture["off_legacy_contract_signature_hash"]
 
 
 def test_solver_mode_final_calibration_ignores_peak_keys_case_insensitively() -> None:
