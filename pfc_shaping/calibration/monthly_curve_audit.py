@@ -38,6 +38,7 @@ THRESHOLD_COLUMNS = [
 
 _SAME_MONTH_METRIC = "same_month_shape_delta_abs_eur_mwh"
 _COMPARABLE_BLOCK_METRIC = "comparable_block_shape_delta_abs_eur_mwh"
+_CALENDAR_SPREAD_DECOMPOSITION_METRIC = "calendar_spread_decomposition_residual_abs_eur_mwh"
 
 
 def audit_monthly_curve_shape(
@@ -88,6 +89,15 @@ def audit_monthly_curve_shape(
                 year_a=year_a,
                 year_b=year_b,
                 historical_thresholds=historical_thresholds,
+            )
+        )
+        rows.append(
+            _calendar_spread_seasonal_decomposition_row(
+                curve,
+                constraints,
+                year_a=year_a,
+                year_b=year_b,
+                tolerance=repricing_tolerance,
             )
         )
     rows.append(_monthly_shape_regression_row(rows))
@@ -889,11 +899,106 @@ def _residual_comparable_block_rows(
     return rows
 
 
+def _calendar_spread_seasonal_decomposition_row(
+    curve: pd.Series,
+    constraints: MonthlyConstraintSystem,
+    *,
+    year_a: int,
+    year_b: int,
+    tolerance: float,
+) -> dict[str, object]:
+    cal_a = _quote_target(constraints, str(year_a))
+    cal_b = _quote_target(constraints, str(year_b))
+    calendar_spread = np.nan if cal_a is None or cal_b is None else float(cal_a) - float(cal_b)
+    months_a = pd.period_range(f"{year_a}-01", f"{year_a}-12", freq="M")
+    months_b = pd.period_range(f"{year_b}-01", f"{year_b}-12", freq="M")
+    missing = [str(month) for month in list(months_a) + list(months_b) if month not in curve.index]
+    if cal_a is None or cal_b is None or missing:
+        reason = "calendar quote missing" if cal_a is None or cal_b is None else f"missing months={missing}"
+        return _gate_row(
+            gate_id="calendar_spread_seasonal_decomposition",
+            status="UNSUPPORTED",
+            severity="P2",
+            year=year_a,
+            month=None,
+            product=f"{year_a}_vs_{year_b}",
+            parent_block_id=f"{year_a}|{year_b}",
+            parent_block_type="calendar_spread_decomposition",
+            parent_hours=np.nan,
+            parent_mean=float(cal_a) if cal_a is not None else np.nan,
+            month_price=np.nan,
+            month_deviation=np.nan,
+            metric_name=_CALENDAR_SPREAD_DECOMPOSITION_METRIC,
+            metric_value=np.nan,
+            threshold_warning=float(tolerance),
+            threshold_critical=float(tolerance),
+            threshold_source="hard_calendar_spread_identity",
+            n_history=np.nan,
+            n_neighbors=np.nan,
+            evidence=reason,
+            remediation_hint="Provide calendar targets and a complete monthly curve for both years.",
+            year_b=year_b,
+            calendar_spread=calendar_spread,
+            weighted_month_spread=np.nan,
+        )
+
+    weights_a = month_delivery_hours(months_a, timezone=constraints.delivery_grid.timezone).to_numpy()
+    weights_b = month_delivery_hours(months_b, timezone=constraints.delivery_grid.timezone).to_numpy()
+    curve_mean_a = float(np.average(curve.loc[months_a].astype(float).to_numpy(), weights=weights_a))
+    curve_mean_b = float(np.average(curve.loc[months_b].astype(float).to_numpy(), weights=weights_b))
+    weighted_month_spread = curve_mean_a - curve_mean_b
+    residual = weighted_month_spread - float(calendar_spread)
+    metric = abs(float(residual))
+    status = "PASS" if metric <= float(tolerance) else "CRITICAL"
+    severity = "INFO" if status == "PASS" else "P1"
+    return _gate_row(
+        gate_id="calendar_spread_seasonal_decomposition",
+        status=status,
+        severity=severity,
+        year=year_a,
+        month=None,
+        product=f"{year_a}_vs_{year_b}",
+        parent_block_id=f"{year_a}|{year_b}",
+        parent_block_type="calendar_spread_decomposition",
+        parent_hours=float(weights_a.sum()),
+        parent_mean=float(cal_a),
+        month_price=np.nan,
+        month_deviation=np.nan,
+        metric_name=_CALENDAR_SPREAD_DECOMPOSITION_METRIC,
+        metric_value=metric,
+        threshold_warning=float(tolerance),
+        threshold_critical=float(tolerance),
+        threshold_source="hard_calendar_spread_identity",
+        n_history=np.nan,
+        n_neighbors=np.nan,
+        evidence=(
+            f"calendar_spread={float(calendar_spread):.10f}, "
+            f"weighted_month_spread={weighted_month_spread:.10f}, residual={residual:.3e}"
+        ),
+        remediation_hint="Investigate calendar repricing or downstream monthly level mutation.",
+        year_b=year_b,
+        parent_hours_b=float(weights_b.sum()),
+        parent_mean_b=float(cal_b),
+        calendar_spread=float(calendar_spread),
+        weighted_month_spread=weighted_month_spread,
+        calendar_curve_mean_a=curve_mean_a,
+        calendar_curve_mean_b=curve_mean_b,
+        calendar_target_a=float(cal_a),
+        calendar_target_b=float(cal_b),
+        parent_mix_adjustment=0.0,
+    )
+
+
 def _monthly_shape_regression_row(rows: Sequence[dict[str, object]]) -> dict[str, object]:
     targeted = [
         row
         for row in rows
-        if row.get("gate_id") in {"same_month_rank_consistency", "residual_vs_implied_comparable_block"}
+        if row.get("gate_id")
+        in {
+            "same_month_rank_consistency",
+            "residual_vs_implied_comparable_block",
+            "calendar_spread_seasonal_decomposition",
+        }
         and 2028 <= _safe_int(row.get("year"), default=0) <= 2030
     ]
     statuses = [str(row.get("status", "")) for row in targeted]

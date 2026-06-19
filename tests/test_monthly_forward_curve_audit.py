@@ -28,6 +28,9 @@ def test_monthly_audit_passes_solver_candidate_without_critical_flags():
     assert "CRITICAL" not in set(audit["status"])
     assert audit.loc[audit["gate_id"].eq("hard_monthly_curve_repricing"), "status"].eq("PASS").all()
     assert audit.loc[audit["gate_id"].eq("neighbor_level_leakage"), "status"].iloc[0] == "PASS"
+    calendar_gate = audit[audit["gate_id"].eq("calendar_spread_seasonal_decomposition")].iloc[0]
+    assert calendar_gate["status"] == "PASS"
+    assert calendar_gate["metric_value"] <= 1e-8
     assert audit.loc[audit["gate_id"].eq("monthly_shape_regression_2028_2030"), "status"].iloc[0] == "PASS"
 
 
@@ -138,7 +141,10 @@ def test_monthly_audit_flags_calendar_repricing_break():
         audit["gate_id"].eq("hard_monthly_curve_repricing")
         & audit["product"].eq("2029")
     ].iloc[0]
+    calendar_gate = audit[audit["gate_id"].eq("calendar_spread_seasonal_decomposition")].iloc[0]
     assert broken["status"] == "CRITICAL"
+    assert calendar_gate["status"] == "CRITICAL"
+    assert calendar_gate["metric_name"] == "calendar_spread_decomposition_residual_abs_eur_mwh"
 
 
 def test_historical_threshold_builder_emits_pass_rows_from_point_in_time_history():

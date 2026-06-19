@@ -29,8 +29,15 @@ default.
   - Does not compare Apr-Dec residual level directly with a full calendar
     level.
   - Requires historical P90/P97.5 thresholds; otherwise `UNSUPPORTED`.
+- `calendar_spread_seasonal_decomposition`
+  - Verifies the calendar spread equals the duration-weighted spread implied
+    by the two solved monthly calendars.
+  - Uses the same actual month-hour weights as the constraint system.
+  - This is a hard algebraic identity gate: `PASS <= 1e-8`, otherwise
+    `CRITICAL`.
 - `monthly_shape_regression_2028_2030`
-  - Aggregates targeted 2028-2030 same-month and comparable-block rows.
+  - Aggregates targeted 2028-2030 same-month, comparable-block and calendar
+    decomposition rows.
   - `CRITICAL` if any targeted row is critical; `UNSUPPORTED` if required
     threshold evidence is missing.
 - `point_in_time_data_contract`
@@ -70,6 +77,8 @@ python scripts/run_monthly_curve_sparse_year_proof.py --forwards data/eex_forwar
 $files = Get-ChildItem tests -Filter 'test_monthly_forward_curve_*.py' | ForEach-Object { $_.FullName }; pytest @files tests/test_monthly_curve_lambda_calibration.py tests/test_lt_ct_imports.py -q
 python scripts/build_monthly_curve_historical_thresholds.py --forwards data/eex_forwards_history.parquet --output output/monthly_curve_calibration/historical_thresholds.csv --run-timestamp 2026-06-17 --lookback-years 6 --min-required-n 24
 python scripts/run_monthly_curve_sparse_year_proof.py --forwards data/eex_forwards_history.parquet --output-dir output/monthly_curve_sparse_year_proof --historical-thresholds output/monthly_curve_calibration/historical_thresholds.csv --no-plot
+python scripts/check_monthly_curve_promotion.py --audit-gates output/monthly_curve_sparse_year_proof/audit_gates.csv --historical-thresholds output/monthly_curve_sparse_year_proof/historical_thresholds.csv --manifest output/monthly_curve_sparse_year_proof/manifest.json --run-timestamp 2026-06-17
+python scripts/check_monthly_curve_promotion.py --audit-gates output/monthly_curve_sparse_year_proof/audit_gates.csv --historical-thresholds output/monthly_curve_sparse_year_proof/historical_thresholds.csv --manifest output/monthly_curve_sparse_year_proof/manifest.json --run-timestamp 2026-06-17 --require-governance-gates lambda_calibration_artifact_present,production_export_path_parity
 ```
 
 Results:
@@ -99,8 +108,14 @@ Results:
     `gate_summary={'PASS': 21, 'UNSUPPORTED': 10}`
   - after point-in-time governance row:
     `gate_summary={'PASS': 22, 'UNSUPPORTED': 10}`
+  - after calendar-spread decomposition row:
+    `gate_summary={'PASS': 23, 'UNSUPPORTED': 10}`
   - `same_month_rank_consistency`: `12 PASS`
   - `residual_vs_implied_comparable_block`: `9 UNSUPPORTED`
+- Promotion checker:
+  - standard sparse evidence: `PROMOTION_EVIDENCE_PASS`
+  - strict governance mode: `BLOCKED` with two expected blockers until lambda
+    artifact and prod/export parity hashes are supplied
 
 The `UNSUPPORTED` sparse-proof shape gates are intentional at this stage:
 historical P90/P97.5 threshold artifacts are not yet calibrated for promotion.
@@ -119,9 +134,8 @@ truth for residual Apr-Dec versus full-calendar comparisons.
 - The same-month gate currently uses absolute comparable-parent shape delta
   against calibrated thresholds. Full conditional rank/z-score logic remains a
   later Phase F extension.
-- `calendar_spread_seasonal_decomposition` and
-  `historical_quantile_shape_outlier` remain to be implemented as Phase F
-  gates.
+- `historical_quantile_shape_outlier` remains to be implemented as a Phase F
+  gate.
 - `lambda_calibration_artifact_present` and `production_export_path_parity`
   row builders exist, but full candidate approval must pass their hashes from
   the selected lambda artifact and the prod/export parity fixture or manifests.
