@@ -8,6 +8,7 @@ from pfc_shaping.calibration.monthly_curve_priors import (
     build_history_shape_prior,
     build_neighbor_panel_shape_prior,
     build_structural_monthly_shape_prior,
+    build_structural_monthly_shape_prior_from_history,
     quote_coverage_by_horizon,
     recenter_shape_by_parent,
 )
@@ -91,6 +92,50 @@ def test_neighbor_panel_prior_uses_robust_median_not_outlier_market():
     _assert_zero_mean_by_parent(prior.shape, constraints)
 
 
+def test_neighbor_panel_block_only_support_is_not_reported_as_multi_market_monthly_panel():
+    constraints = _constraints_2029_calendar()
+    prices = {
+        "DE": {"2029": 80.0, "2029-Q1": 100.0},
+        "FR": {"2029": 85.0, "2029-Q1": 105.0},
+        "AT": {"2029": 75.0, "2029-Q1": 95.0},
+    }
+
+    prior = build_neighbor_panel_shape_prior(
+        constraints,
+        prices,
+        neighbor_markets=("DE", "FR", "AT"),
+        neighbor_shrinkage=0.5,
+    )
+
+    assert prior.status == "PANEL_BLOCK_SHAPE"
+    assert set(prior.diagnostics["status"]) == {"BLOCK_SHAPE_USED"}
+    assert prior.diagnostics["direct_month_quotes"].sum() == 0
+    assert prior.diagnostics["block_shape_months"].sum() > 0
+    _assert_zero_mean_by_parent(prior.shape, constraints)
+
+
+def test_neighbor_panel_partial_monthly_support_is_not_reported_as_full_panel():
+    constraints = _constraints_2029_calendar()
+    prices = {
+        "DE": {"2029": 80.0, "2029-01": 101.0, "2029-02": 100.0, "2029-03": 95.0},
+        "FR": {"2029": 83.0, "2029-01": 103.0, "2029-02": 102.0, "2029-03": 97.0},
+    }
+
+    prior = build_neighbor_panel_shape_prior(
+        constraints,
+        prices,
+        neighbor_markets=("DE", "FR"),
+        neighbor_shrinkage=0.5,
+    )
+    fused = build_fused_shape_prior(constraints, panel_prior=prior)
+
+    assert prior.status == "PARTIAL_PANEL_MULTI_MARKET"
+    assert fused.status == "PARTIAL_PANEL_MULTI_MARKET"
+    assert prior.diagnostics["direct_month_quote_share"].max() < 1.0
+    assert set(prior.diagnostics["status"]) == {"MONTH_SHAPE_USED"}
+    _assert_zero_mean_by_parent(prior.shape, constraints)
+
+
 def test_history_shape_prior_computes_month_vs_calendar_deviations():
     constraints = _constraints_2029_calendar()
     deviations = {month: 12.0 - month for month in range(1, 13)}
@@ -133,16 +178,47 @@ def test_history_shape_prior_fails_closed_when_snapshot_support_is_insufficient(
     assert float(prior.shape.abs().max()) == pytest.approx(0.0)
 
 
-def test_structural_and_fused_prior_keep_zero_mean_and_status_label():
+def test_template_structural_and_fused_prior_keep_zero_mean_and_status_label():
     constraints = _constraints_2028_residual()
 
     structural = build_structural_monthly_shape_prior(constraints, amplitude_eur_mwh=15.0)
     fused = build_fused_shape_prior(constraints, structural_prior=structural)
 
-    assert structural.status == "STRUCTURAL_ONLY"
-    assert fused.status == "STRUCTURAL_ONLY"
+    assert structural.status == "STRUCTURAL_TEMPLATE"
+    assert fused.status == "STRUCTURAL_TEMPLATE"
     _assert_zero_mean_by_parent(structural.shape, constraints)
     _assert_zero_mean_by_parent(fused.shape, constraints)
+
+
+def test_structural_prior_can_be_derived_from_forward_history():
+    constraints = _constraints_2029_calendar()
+    rows = []
+    deviations = {month: 6.0 - month for month in range(1, 13)}
+    for snap in pd.date_range("2026-01-01", periods=3, freq="MS"):
+        hist_year = 2027
+        rows.append(_history_row(str(snap.date()), str(hist_year), 80.0))
+        for month, deviation in deviations.items():
+            rows.append(_history_row(str(snap.date()), f"{hist_year}-{month:02d}", 80.0 + deviation))
+    history = pd.DataFrame(rows)
+
+    structural = build_structural_monthly_shape_prior_from_history(
+        constraints,
+        history,
+        run_timestamp=pd.Timestamp("2026-12-31"),
+        min_snapshots=3,
+    )
+    expected = recenter_shape_by_parent(
+        pd.Series(
+            {pd.Period(f"2029-{month:02d}", freq="M"): deviation for month, deviation in deviations.items()}
+        ),
+        constraints,
+    )
+
+    assert structural.status == "STRUCTURAL_FORWARD_CLIMATOLOGY"
+    assert structural.shape.loc[pd.Period("2029-01", freq="M")] == pytest.approx(
+        expected.loc[pd.Period("2029-01", freq="M")]
+    )
+    _assert_zero_mean_by_parent(structural.shape, constraints)
 
 
 def test_quote_coverage_by_horizon_counts_monthly_quotes_only():

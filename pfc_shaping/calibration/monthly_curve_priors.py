@@ -134,6 +134,7 @@ def build_neighbor_panel_shape_prior(
         month_count = int((evidence == "month").sum())
         quarter_count = int((evidence == "quarter").sum())
         calendar_count = int((evidence == "calendar").sum())
+        block_count = int(((evidence == "quarter") | (evidence == "calendar")).sum())
         if usable == 0:
             diagnostic_rows.append(
                 _market_diag(
@@ -141,18 +142,23 @@ def build_neighbor_panel_shape_prior(
                     status="UNUSABLE_PARENT_COVERAGE",
                     covered_months=0,
                     direct_month_quotes=month_count,
+                    block_shape_months=block_count,
+                    horizon_months=len(constraints.delivery_grid.months),
                     quarter_quotes=quarter_count,
                     calendar_quotes=calendar_count,
                 )
             )
             continue
         market_shapes[market] = shape
+        status = "MONTH_SHAPE_USED" if month_count > 0 else "BLOCK_SHAPE_USED"
         diagnostic_rows.append(
             _market_diag(
                 market,
-                status="USED",
+                status=status,
                 covered_months=usable,
                 direct_month_quotes=month_count,
+                block_shape_months=block_count,
+                horizon_months=len(constraints.delivery_grid.months),
                 quarter_quotes=quarter_count,
                 calendar_quotes=calendar_count,
             )
@@ -163,14 +169,41 @@ def build_neighbor_panel_shape_prior(
         zero = pd.Series(0.0, index=constraints.delivery_grid.months, name="shape_deviation_eur_mwh")
         return MonthlyShapePrior(zero, pd.DataFrame(diagnostic_rows), contributions, "UNSUPPORTED")
 
-    combined = contributions.median(axis=1, skipna=True).fillna(0.0)
     usable_markets = [col for col in contributions.columns if contributions[col].notna().any()]
-    if len(usable_markets) == 1:
+    monthly_markets = [
+        str(row["market"])
+        for row in diagnostic_rows
+        if row.get("status") == "MONTH_SHAPE_USED" and str(row["market"]) in usable_markets
+    ]
+    block_markets = [
+        str(row["market"])
+        for row in diagnostic_rows
+        if row.get("status") == "BLOCK_SHAPE_USED" and str(row["market"]) in usable_markets
+    ]
+    combined = contributions.median(axis=1, skipna=True).fillna(0.0)
+    full_monthly_markets = [
+        str(row["market"])
+        for row in diagnostic_rows
+        if row.get("status") == "MONTH_SHAPE_USED"
+        and int(row.get("direct_month_quotes", 0)) >= len(constraints.delivery_grid.months)
+        and str(row["market"]) in usable_markets
+    ]
+    if len(full_monthly_markets) >= 2:
+        status = "PANEL_MULTI_MARKET"
+    elif len(monthly_markets) >= 2:
+        keep = 1.0 - min(1.0, max(0.0, float(neighbor_shrinkage))) * 0.5
+        combined = combined * keep
+        status = "PARTIAL_PANEL_MULTI_MARKET"
+    elif len(monthly_markets) == 1:
         keep = 1.0 - min(1.0, max(0.0, float(neighbor_shrinkage)))
         combined = combined * keep
-        status = "DE_SINGLE_MARKET" if usable_markets[0] == "DE" else "SINGLE_MARKET"
+        status = "DE_SINGLE_MARKET" if monthly_markets[0] == "DE" else "SINGLE_MARKET"
+    elif block_markets:
+        keep = 1.0 - min(1.0, max(0.0, float(neighbor_shrinkage)))
+        combined = combined * keep
+        status = "PANEL_BLOCK_SHAPE"
     else:
-        status = "PANEL_MULTI_MARKET"
+        status = "UNSUPPORTED"
 
     shape = recenter_shape_by_parent(combined, constraints)
     diagnostics = pd.DataFrame(diagnostic_rows)
@@ -253,7 +286,7 @@ def build_structural_monthly_shape_prior(
     monthly_ratios: Mapping[int, float] | None = None,
     amplitude_eur_mwh: float = 20.0,
 ) -> MonthlyShapePrior:
-    """Build a CH structural/climatological shape prior in zero-mean space."""
+    """Build an explicit template structural prior in zero-mean space."""
 
     ratios = dict(monthly_ratios or DEFAULT_CH_STRUCTURAL_MONTHLY_RATIOS)
     raw = {
@@ -266,10 +299,121 @@ def build_structural_monthly_shape_prior(
             "month": [str(month) for month in constraints.delivery_grid.months],
             "month_number": [int(month.month) for month in constraints.delivery_grid.months],
             "ratio": [float(ratios.get(int(month.month), 1.0)) for month in constraints.delivery_grid.months],
-            "status": "STRUCTURAL_ONLY",
+            "status": "STRUCTURAL_TEMPLATE",
         }
     )
-    return MonthlyShapePrior(shape, diagnostics, pd.DataFrame(index=constraints.delivery_grid.months), "STRUCTURAL_ONLY")
+    return MonthlyShapePrior(
+        shape,
+        diagnostics,
+        pd.DataFrame(index=constraints.delivery_grid.months),
+        "STRUCTURAL_TEMPLATE",
+    )
+
+
+def build_structural_monthly_shape_prior_from_history(
+    constraints: MonthlyConstraintSystem,
+    eex_history: pd.DataFrame,
+    *,
+    market: str = "CH",
+    load_type: str = "BASE",
+    run_timestamp: pd.Timestamp | None = None,
+    min_snapshots: int = 24,
+    lookback_years: int | None = None,
+    fallback_to_template: bool = False,
+    fallback_amplitude_eur_mwh: float = 20.0,
+) -> MonthlyShapePrior:
+    """Derive CH structural monthly shape from forward month-vs-CAL history."""
+
+    months = constraints.delivery_grid.months
+    if eex_history.empty:
+        if fallback_to_template:
+            return build_structural_monthly_shape_prior(
+                constraints,
+                amplitude_eur_mwh=fallback_amplitude_eur_mwh,
+            )
+        return _unsupported_prior(months, "UNSUPPORTED")
+    _require_columns(eex_history, {"date", "product", "load_type", "market", "price"})
+    hist = _prepare_history(
+        eex_history,
+        market=market,
+        load_type=load_type,
+        run_timestamp=run_timestamp,
+        lookback_years=lookback_years,
+    )
+    rows: list[dict[str, object]] = []
+    if not hist.empty:
+        snapshot_prices = {
+            date: dict(zip(group["product"].astype(str), group["price"].astype(float)))
+            for date, group in hist.groupby("date", sort=True)
+        }
+        for prices in snapshot_prices.values():
+            for year in _candidate_years(prices):
+                cal_key = str(year)
+                if cal_key not in prices:
+                    continue
+                cal_price = float(prices[cal_key])
+                for month_number in range(1, 13):
+                    month_key = f"{year}-{month_number:02d}"
+                    if month_key not in prices:
+                        continue
+                    rows.append(
+                        {
+                            "month_number": month_number,
+                            "deviation": float(prices[month_key]) - cal_price,
+                        }
+                    )
+    if not rows:
+        if fallback_to_template:
+            return build_structural_monthly_shape_prior(
+                constraints,
+                amplitude_eur_mwh=fallback_amplitude_eur_mwh,
+            )
+        return _unsupported_prior(months, "UNSUPPORTED")
+
+    observations = pd.DataFrame(rows)
+    grouped = observations.groupby("month_number")["deviation"]
+    medians = grouped.median()
+    counts = grouped.size()
+    if any(int(counts.get(month_number, 0)) < int(min_snapshots) for month_number in range(1, 13)):
+        if fallback_to_template:
+            return build_structural_monthly_shape_prior(
+                constraints,
+                amplitude_eur_mwh=fallback_amplitude_eur_mwh,
+            )
+        diagnostics = pd.DataFrame(
+            {
+                "month_number": list(range(1, 13)),
+                "n_history": [int(counts.get(month_number, 0)) for month_number in range(1, 13)],
+                "status": "UNSUPPORTED",
+            }
+        )
+        return MonthlyShapePrior(
+            pd.Series(0.0, index=months, name="shape_deviation_eur_mwh"),
+            diagnostics,
+            pd.DataFrame(index=months),
+            "UNSUPPORTED",
+        )
+
+    raw = {
+        month: float(medians.loc[int(month.month)])
+        for month in constraints.delivery_grid.months
+    }
+    shape = recenter_shape_by_parent(pd.Series(raw), constraints)
+    diagnostics = pd.DataFrame(
+        {
+            "month": [str(month) for month in constraints.delivery_grid.months],
+            "month_number": [int(month.month) for month in constraints.delivery_grid.months],
+            "median_deviation": [float(medians.loc[int(month.month)]) for month in constraints.delivery_grid.months],
+            "n_history": [int(counts.loc[int(month.month)]) for month in constraints.delivery_grid.months],
+            "status": "USED",
+        }
+    )
+    return MonthlyShapePrior(
+        shape,
+        diagnostics,
+        pd.DataFrame(index=constraints.delivery_grid.months),
+        "STRUCTURAL_FORWARD_CLIMATOLOGY",
+    )
 
 
 def build_fused_shape_prior(
@@ -512,14 +656,20 @@ def _market_diag(
     status: str,
     covered_months: int = 0,
     direct_month_quotes: int = 0,
+    block_shape_months: int = 0,
+    horizon_months: int = 0,
     quarter_quotes: int = 0,
     calendar_quotes: int = 0,
 ) -> dict[str, object]:
+    quote_share = float(direct_month_quotes) / float(horizon_months) if int(horizon_months) > 0 else 0.0
     return {
         "market": market,
         "status": status,
         "covered_months": int(covered_months),
         "direct_month_quotes": int(direct_month_quotes),
+        "direct_month_quote_share": quote_share,
+        "block_shape_months": int(block_shape_months),
+        "horizon_months": int(horizon_months),
         "quarter_quotes": int(quarter_quotes),
         "calendar_quotes": int(calendar_quotes),
     }
@@ -538,12 +688,18 @@ def _horizon_bucket(horizon: int) -> str:
 def _fused_status(statuses: list[str]) -> str:
     if "PANEL_MULTI_MARKET" in statuses:
         return "PANEL_MULTI_MARKET"
+    if "PARTIAL_PANEL_MULTI_MARKET" in statuses:
+        return "PARTIAL_PANEL_MULTI_MARKET"
     if "DE_SINGLE_MARKET" in statuses:
         return "DE_SINGLE_MARKET"
+    if "PANEL_BLOCK_SHAPE" in statuses:
+        return "PANEL_BLOCK_SHAPE"
     if "HISTORY_FORWARD" in statuses or "PARTIAL_HISTORY_FORWARD" in statuses:
         return "HISTORY_FORWARD"
-    if "STRUCTURAL_ONLY" in statuses:
-        return "STRUCTURAL_ONLY"
+    if "STRUCTURAL_FORWARD_CLIMATOLOGY" in statuses:
+        return "STRUCTURAL_FORWARD_CLIMATOLOGY"
+    if "STRUCTURAL_TEMPLATE" in statuses:
+        return "STRUCTURAL_TEMPLATE"
     return "UNSUPPORTED"
 
 

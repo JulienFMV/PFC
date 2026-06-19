@@ -23,7 +23,7 @@ from pfc_shaping.calibration.monthly_curve_priors import (
     build_fused_shape_prior,
     build_history_shape_prior,
     build_neighbor_panel_shape_prior,
-    build_structural_monthly_shape_prior,
+    build_structural_monthly_shape_prior_from_history,
     quote_coverage_by_horizon,
 )
 from pfc_shaping.calibration.monthly_forward_curve import (
@@ -67,9 +67,16 @@ def main() -> None:
         neighbor_markets=neighbor_markets,
         neighbor_shrinkage=float(args.neighbor_shrinkage),
     )
-    structural = build_structural_monthly_shape_prior(
+    structural = build_structural_monthly_shape_prior_from_history(
         constraints,
-        amplitude_eur_mwh=float(args.structural_amplitude_eur_mwh),
+        history,
+        market=args.market,
+        load_type="BASE",
+        run_timestamp=max(q.snapshot_date for q in own_quotes if q.snapshot_date is not None),
+        min_snapshots=int(args.min_structural_snapshots),
+        lookback_years=int(args.history_lookback_years),
+        fallback_to_template=bool(args.allow_template_structural_fallback),
+        fallback_amplitude_eur_mwh=float(args.structural_amplitude_eur_mwh),
     )
     historical = build_history_shape_prior(
         constraints,
@@ -109,6 +116,21 @@ def main() -> None:
     monthly = _monthly_curve_frame(result.monthly_curve, constraints)
     checks = _sparse_year_checks(monthly, constraints, year_a=2028, year_b=2029)
     audit_gates = audit_monthly_curve_shape(result.monthly_curve, constraints, year_pairs=[(2028, 2029)])
+    leakage_max_abs = _neighbor_level_leakage_check(
+        constraints=constraints,
+        neighbor_prices=neighbor_prices,
+        neighbor_markets=neighbor_markets,
+        historical=historical,
+        structural=structural,
+        config=config,
+        args=args,
+    )
+    _assert_proof(
+        result=result,
+        audit_gates=audit_gates,
+        leakage_max_abs=leakage_max_abs,
+        args=args,
+    )
     coverage = quote_coverage_by_horizon(history)
     _write_outputs(
         output_dir=output_dir,
@@ -135,6 +157,8 @@ def main() -> None:
             "panel_status": panel.status,
             "history_status": historical.status,
             "fused_status": fused.status,
+            "structural_status": structural.status,
+            "neighbor_level_leakage_max_abs": leakage_max_abs,
             "solver_kkt": result.kkt,
             "gate_summary": audit_gates["status"].value_counts().to_dict(),
             "config": config.__dict__,
@@ -147,8 +171,12 @@ def main() -> None:
     pivot = monthly.pivot(index="month", columns="year", values="price_eur_mwh").round(2)
     print(pivot.to_string())
     print(f"max_abs_constraint_residual={result.kkt['max_abs_constraint_residual']:.3e}")
+    print(f"neighbor_level_leakage_max_abs={leakage_max_abs:.3e}")
     print(f"gate_summary={audit_gates['status'].value_counts().to_dict()}")
-    print(f"panel_status={panel.status} history_status={historical.status} fused_status={fused.status}")
+    print(
+        f"panel_status={panel.status} history_status={historical.status} "
+        f"structural_status={structural.status} fused_status={fused.status}"
+    )
     print(f"wrote {output_dir}")
 
 
@@ -175,6 +203,92 @@ def _latest_quotes(history: pd.DataFrame, market: str, load_type: str) -> tuple[
         )
         for row in snap.itertuples(index=False)
     )
+
+
+def _neighbor_level_leakage_check(
+    *,
+    constraints,
+    neighbor_prices: dict[str, dict[str, float]],
+    neighbor_markets: tuple[str, ...],
+    historical,
+    structural,
+    config: MonthlyCurveConfig,
+    args: argparse.Namespace,
+) -> float:
+    shifted = {
+        market: {
+            product: float(price) + float(args.leakage_shift_eur_mwh)
+            for product, price in prices.items()
+        }
+        for market, prices in neighbor_prices.items()
+    }
+    base_panel = build_neighbor_panel_shape_prior(
+        constraints,
+        neighbor_prices,
+        neighbor_markets=neighbor_markets,
+        neighbor_shrinkage=float(args.neighbor_shrinkage),
+    )
+    shifted_panel = build_neighbor_panel_shape_prior(
+        constraints,
+        shifted,
+        neighbor_markets=neighbor_markets,
+        neighbor_shrinkage=float(args.neighbor_shrinkage),
+    )
+    base_fused = build_fused_shape_prior(
+        constraints,
+        panel_prior=base_panel,
+        history_prior=historical,
+        structural_prior=structural,
+        weights={
+            "panel": float(args.panel_weight),
+            "history": float(args.history_weight),
+            "structural": float(args.structural_weight),
+        },
+    )
+    shifted_fused = build_fused_shape_prior(
+        constraints,
+        panel_prior=shifted_panel,
+        history_prior=historical,
+        structural_prior=structural,
+        weights={
+            "panel": float(args.panel_weight),
+            "history": float(args.history_weight),
+            "structural": float(args.structural_weight),
+        },
+    )
+    base = solve_monthly_forward_curve_from_constraints(
+        constraints,
+        config=config,
+        shape_prior=base_fused,
+    )
+    shifted_result = solve_monthly_forward_curve_from_constraints(
+        constraints,
+        config=config,
+        shape_prior=shifted_fused,
+    )
+    return float((base.monthly_curve - shifted_result.monthly_curve).abs().max())
+
+
+def _assert_proof(
+    *,
+    result,
+    audit_gates: pd.DataFrame,
+    leakage_max_abs: float,
+    args: argparse.Namespace,
+) -> None:
+    repricing = float(result.kkt["max_abs_constraint_residual"])
+    if repricing > float(args.repricing_tolerance):
+        raise SystemExit(
+            f"proof failed: repricing residual {repricing:.3e} > {float(args.repricing_tolerance):.3e}"
+        )
+    if leakage_max_abs > float(args.leakage_tolerance):
+        raise SystemExit(
+            f"proof failed: neighbor level leakage {leakage_max_abs:.3e} > {float(args.leakage_tolerance):.3e}"
+        )
+    critical = audit_gates[audit_gates["status"].astype(str).eq("CRITICAL")]
+    if not critical.empty and not bool(args.allow_critical_gates):
+        products = ", ".join(critical["product"].astype(str).head(5).tolist())
+        raise SystemExit(f"proof failed: critical audit gates present: {products}")
 
 
 def _monthly_curve_frame(curve: pd.Series, constraints) -> pd.DataFrame:
@@ -309,11 +423,17 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--lambda-shape", type=float, default=4.0)
     parser.add_argument("--neighbor-shrinkage", type=float, default=0.5)
     parser.add_argument("--structural-amplitude-eur-mwh", type=float, default=20.0)
+    parser.add_argument("--min-structural-snapshots", type=int, default=24)
+    parser.add_argument("--allow-template-structural-fallback", action="store_true")
     parser.add_argument("--panel-weight", type=float, default=1.0)
     parser.add_argument("--history-weight", type=float, default=0.25)
     parser.add_argument("--structural-weight", type=float, default=0.5)
     parser.add_argument("--min-history-snapshots", type=int, default=24)
     parser.add_argument("--history-lookback-years", type=int, default=6)
+    parser.add_argument("--repricing-tolerance", type=float, default=1e-8)
+    parser.add_argument("--leakage-shift-eur-mwh", type=float, default=1000.0)
+    parser.add_argument("--leakage-tolerance", type=float, default=1e-8)
+    parser.add_argument("--allow-critical-gates", action="store_true")
     parser.add_argument("--no-plot", action="store_true")
     return parser.parse_args()
 
