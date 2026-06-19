@@ -119,10 +119,14 @@ def delivery_months_for_window(
         start = start.tz_localize("UTC")
     else:
         start = start.tz_convert("UTC")
-    end = start + pd.Timedelta(days=max(int(horizon_days), 1))
-    local = pd.date_range(start, end, freq="MS", tz="UTC").tz_convert(timezone)
-    endpoints = pd.DatetimeIndex([start.tz_convert(timezone), end.tz_convert(timezone)]).append(local)
-    months = pd.PeriodIndex(endpoints.year.astype(str) + "-" + endpoints.month.astype(str).str.zfill(2), freq="M")
+    end_exclusive = start + pd.Timedelta(days=max(int(horizon_days), 1))
+    last_included = end_exclusive - pd.Timedelta(nanoseconds=1)
+    start_local = start.tz_convert(timezone)
+    last_local = last_included.tz_convert(timezone)
+    first_month = pd.Timestamp(start_local.year, start_local.month, 1, tz=timezone)
+    last_month = pd.Timestamp(last_local.year, last_local.month, 1, tz=timezone)
+    month_starts = pd.date_range(first_month, last_month, freq="MS", tz=timezone)
+    months = pd.PeriodIndex(month_starts.strftime("%Y-%m"), freq="M")
     return pd.PeriodIndex(sorted(months.unique()), freq="M")
 
 
@@ -382,7 +386,9 @@ def _manifest(
         "market": market,
         "run_timestamp": str(pd.Timestamp(run_timestamp)),
         "solver_config": dict(settings),
+        "solver_config_hash": _sha256_json(dict(settings)),
         "source_hashes": dict(source_hashes),
+        "forward_snapshot_date": str(pd.Timestamp(run_timestamp).date()),
         "active_constraints_hash": _hash_frame(constraints.rows),
         "monthly_solution_hash": _sha256_json(monthly_payload),
         "panel_status": panel_status,

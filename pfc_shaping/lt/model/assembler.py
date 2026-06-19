@@ -1006,7 +1006,8 @@ class PFCAssembler:
         quote_products = []
         delivery_months: set[pd.Period] = set()
         for key in sorted(quoted_keys):
-            if key not in base_prices or str(key).endswith("-Peak") or str(key).endswith("-Offpeak"):
+            suffix = str(key).rsplit("-", 1)[-1].lower()
+            if key not in base_prices or suffix in {"peak", "offpeak"}:
                 continue
             try:
                 months = product_periods(str(key))

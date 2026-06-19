@@ -381,7 +381,6 @@ def run_long_term_phase(
             own_base_prices=base_prices_ch,
             all_market_base_prices=neighbor_prices,
             eex_history=history,
-            run_timestamp=pd.Timestamp.utcnow().tz_localize(None).normalize(),
             settings=settings,
             timezone="Europe/Zurich",
             original_forward_prices=base_prices_ch,
