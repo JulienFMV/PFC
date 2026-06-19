@@ -50,6 +50,8 @@ SCORING_COLUMNS = [
     "withheld_product",
     "withheld_load_type",
     "withheld_tenor",
+    "withheld_horizon_years",
+    "withheld_horizon_bucket",
     "product_start",
     "product_end",
     "target_price",
@@ -591,6 +593,8 @@ def summarize_calibration(
         "baseline_mae": None if not np.isfinite(baseline_mae) else float(baseline_mae),
         "selected_mae": None if not np.isfinite(best_mae) else float(best_mae),
         "selection_reason": selection_reason,
+        "train_deploy_gap": _train_deploy_gap_summary(scoring),
+        "by_tenor_horizon": _tenor_horizon_metric_table(scoring),
         "by_config": by_config,
     }
 
@@ -624,6 +628,10 @@ def build_calibration_manifest(
         "row_counts_by_snapshot": row_counts,
         "origins_evaluated": int(scoring["origin_date"].nunique()) if not scoring.empty else 0,
         "withheld_products_by_market_load_type_tenor": _counter_to_nested_counts(withheld_counts),
+        "withheld_products_by_tenor_horizon": _scoring_count_table(
+            scoring,
+            keys=("withheld_tenor", "withheld_horizon_bucket"),
+        ),
         "excluded_cases_by_reason": dict(excluded_reasons),
         "final_status": str(summary["final_status"]),
         "production_approved": False,
@@ -663,6 +671,7 @@ def build_candidate_config(
             "baseline_config_hash": summary.get("baseline_config_hash"),
             "baseline_mae": summary.get("baseline_mae"),
             "selected_mae": summary.get("selected_mae"),
+            "by_tenor_horizon": summary.get("by_tenor_horizon", []),
         },
         "known_bad_known_coherent_gate_summary": {
             "available": False,
@@ -686,6 +695,22 @@ def product_tenor(product: str) -> str:
     return "unsupported"
 
 
+def product_horizon_years(origin_date: pd.Timestamp, product: str) -> int:
+    periods = product_periods(product)
+    origin = pd.Timestamp(origin_date).tz_localize(None).normalize()
+    return int(periods[0].year) - int(origin.year)
+
+
+def horizon_bucket(horizon_years: int) -> str:
+    if horizon_years <= 0:
+        return "h+0"
+    if horizon_years == 1:
+        return "h+1"
+    if horizon_years == 2:
+        return "h+2"
+    return "h+3+"
+
+
 def file_sha256(path: Path) -> str:
     h = hashlib.sha256()
     with path.open("rb") as fh:
@@ -705,6 +730,8 @@ def _score_one_case(
 ) -> dict[str, object]:
     monthly_config = _monthly_config(config)
     months = _delivery_months_for_withheld(withheld)
+    horizon_years = product_horizon_years(withheld.origin_date, withheld.product)
+    horizon = horizon_bucket(horizon_years)
     try:
         constraints = build_monthly_constraint_system(
             months,
@@ -749,6 +776,8 @@ def _score_one_case(
             "withheld_product": withheld.product,
             "withheld_load_type": withheld.load_type,
             "withheld_tenor": withheld.tenor,
+            "withheld_horizon_years": horizon_years,
+            "withheld_horizon_bucket": horizon,
             "product_start": str(product_periods(withheld.product)[0]),
             "product_end": str(product_periods(withheld.product)[-1]),
             "target_price": float(withheld.price),
@@ -776,6 +805,8 @@ def _score_one_case(
             "withheld_product": withheld.product,
             "withheld_load_type": withheld.load_type,
             "withheld_tenor": withheld.tenor,
+            "withheld_horizon_years": horizon_years,
+            "withheld_horizon_bucket": horizon,
             "product_start": str(product_periods(withheld.product)[0]),
             "product_end": str(product_periods(withheld.product)[-1]),
             "target_price": float(withheld.price),
@@ -963,6 +994,66 @@ def _config_metric_table(scoring: pd.DataFrame) -> list[dict[str, object]]:
             }
         )
     return rows
+
+
+def _tenor_horizon_metric_table(scoring: pd.DataFrame) -> list[dict[str, object]]:
+    required = {"withheld_tenor", "withheld_horizon_bucket", "abs_error", "config_hash"}
+    if scoring.empty or not required <= set(scoring.columns):
+        return []
+    rows: list[dict[str, object]] = []
+    for (tenor, horizon), group in scoring.groupby(["withheld_tenor", "withheld_horizon_bucket"], sort=True):
+        valid = pd.to_numeric(group["abs_error"], errors="coerce").dropna()
+        rows.append(
+            {
+                "withheld_tenor": str(tenor),
+                "withheld_horizon_bucket": str(horizon),
+                "n_rows": int(len(group)),
+                "n_origins": int(group["origin_date"].nunique()) if "origin_date" in group.columns else 0,
+                "n_products": int(group["withheld_product"].nunique()) if "withheld_product" in group.columns else 0,
+                "mean_abs_error": None if valid.empty else float(valid.mean()),
+                "median_abs_error": None if valid.empty else float(valid.median()),
+                "min_abs_error": None if valid.empty else float(valid.min()),
+                "max_abs_error": None if valid.empty else float(valid.max()),
+                "n_configs": int(group["config_hash"].nunique()),
+            }
+        )
+    return rows
+
+
+def _train_deploy_gap_summary(scoring: pd.DataFrame) -> dict[str, object]:
+    if scoring.empty or "withheld_horizon_bucket" not in scoring.columns:
+        return {
+            "status": "UNSUPPORTED_NO_SCORING",
+            "message": "No withheld-product scoring is available.",
+        }
+    counts = _scoring_count_table(scoring, keys=("withheld_tenor", "withheld_horizon_bucket"))
+    far_rows = scoring[scoring["withheld_horizon_bucket"].astype(str).isin(["h+2", "h+3+"])]
+    far_monthly_rows = far_rows[far_rows["withheld_tenor"].astype(str).eq("monthly")]
+    if far_monthly_rows.empty:
+        return {
+            "status": "UNSUPPORTED_NO_FAR_HORIZON_MONTHLY_TRUTH",
+            "message": (
+                "Withheld monthly/quarterly quote tests validate near-tenor reconstruction only; "
+                "the sparse h+2/h+3 deployment zone has no direct withheld monthly truth in this run."
+            ),
+            "counts": counts,
+            "far_horizon_non_monthly_rows": int(len(far_rows)),
+        }
+    return {
+        "status": "PARTIAL_FAR_HORIZON_EVIDENCE",
+        "message": "Some far-horizon withheld monthly products were scored; inspect by_tenor_horizon before promotion.",
+        "counts": counts,
+        "far_horizon_monthly_rows": int(len(far_monthly_rows)),
+    }
+
+
+def _scoring_count_table(scoring: pd.DataFrame, *, keys: tuple[str, ...]) -> dict[str, int]:
+    if scoring.empty or not set(keys) <= set(scoring.columns):
+        return {}
+    return {
+        "|".join(str(part) for part in idx if str(part) != ""): int(count)
+        for idx, count in scoring.groupby(list(keys), sort=True).size().items()
+    }
 
 
 def _selection_reason(

@@ -12,9 +12,11 @@ from pfc_shaping.calibration.monthly_curve_lambda_calibration import (
     build_candidate_config,
     config_hash,
     history_before_origin,
+    horizon_bucket,
     load_lambda_grid,
     mask_quote_sets,
     normalize_history,
+    product_horizon_years,
     quote_key,
     quote_set_for_origin,
     run_lambda_calibration,
@@ -151,9 +153,12 @@ def test_scoring_of_synthetic_withheld_product_is_point_in_time_and_near_exact()
 
     assert set(artifacts.scoring.columns) >= {"target_price", "predicted_price", "abs_error"}
     assert artifacts.scoring["abs_error"].max() < 0.002
+    assert set(artifacts.scoring["withheld_horizon_bucket"]) == {"h+1"}
     assert artifacts.scoring["sample_size"].min() == 2
     assert artifacts.summary["production_approved"] is False
     assert artifacts.manifest["production_approved"] is False
+    assert artifacts.summary["by_tenor_horizon"]
+    assert artifacts.summary["train_deploy_gap"]["status"] == "UNSUPPORTED_NO_FAR_HORIZON_MONTHLY_TRUTH"
 
 
 def test_fail_closed_if_history_is_insufficient():
@@ -201,6 +206,33 @@ def test_summary_does_not_pass_when_critical_gate_count_is_present():
     )
 
     assert not str(summary["final_status"]).startswith("PASS")
+
+
+def test_train_deploy_gap_requires_far_horizon_monthly_truth_not_only_quarters():
+    scoring = pd.DataFrame(
+        {
+            "config_hash": ["abc"],
+            "origin_date": ["2026-03-01"],
+            "withheld_tenor": ["quarterly"],
+            "withheld_horizon_bucket": ["h+2"],
+            "withheld_product": ["2028-Q1"],
+            "constraint_residual_max": [0.0],
+            "critical_gate_count": [0],
+            "abs_error": [1.0],
+            "status": ["PASS"],
+        }
+    )
+
+    summary = summarize_calibration(
+        scoring,
+        configs=[MonthlyCurveConfig()],
+        settings=LambdaCalibrationSettings(min_valid_origins=1, min_withheld_monthly=0, min_withheld_quarterly=1),
+        withheld_counts=Counter({("CH", "BASE", "quarterly"): 1}),
+        excluded_reasons=Counter(),
+    )
+
+    assert summary["train_deploy_gap"]["status"] == "UNSUPPORTED_NO_FAR_HORIZON_MONTHLY_TRUTH"
+    assert summary["train_deploy_gap"]["far_horizon_non_monthly_rows"] == 1
 
 
 def test_summary_fails_on_hard_constraint_violation():
@@ -267,6 +299,14 @@ grid:
 
     assert artifacts.candidate_config is not None
     assert artifacts.candidate_config["production_approved"] is False
+    assert artifacts.candidate_config["baseline_comparison"]["by_tenor_horizon"]
+
+
+def test_product_horizon_bucket_helpers_expose_train_deploy_gap():
+    assert product_horizon_years(pd.Timestamp("2026-06-17"), "2026-07") == 0
+    assert horizon_bucket(product_horizon_years(pd.Timestamp("2026-06-17"), "2027-Q1")) == "h+1"
+    assert horizon_bucket(product_horizon_years(pd.Timestamp("2026-06-17"), "2028-Q1")) == "h+2"
+    assert horizon_bucket(product_horizon_years(pd.Timestamp("2026-06-17"), "2030")) == "h+3+"
 
 
 def test_build_candidate_config_returns_none_for_fail_status():
