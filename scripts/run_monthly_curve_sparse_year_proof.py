@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from pfc_shaping.calibration.monthly_curve_audit import audit_monthly_curve_shape
 from pfc_shaping.calibration.monthly_curve_priors import (
     build_fused_shape_prior,
     build_history_shape_prior,
@@ -107,6 +108,7 @@ def main() -> None:
 
     monthly = _monthly_curve_frame(result.monthly_curve, constraints)
     checks = _sparse_year_checks(monthly, constraints, year_a=2028, year_b=2029)
+    audit_gates = audit_monthly_curve_shape(result.monthly_curve, constraints, year_pairs=[(2028, 2029)])
     coverage = quote_coverage_by_horizon(history)
     _write_outputs(
         output_dir=output_dir,
@@ -120,6 +122,7 @@ def main() -> None:
         history_diagnostics=historical.diagnostics,
         fused_diagnostics=fused.diagnostics,
         checks=checks,
+        audit_gates=audit_gates,
         coverage=coverage,
         manifest={
             "script": Path(__file__).as_posix(),
@@ -133,6 +136,7 @@ def main() -> None:
             "history_status": historical.status,
             "fused_status": fused.status,
             "solver_kkt": result.kkt,
+            "gate_summary": audit_gates["status"].value_counts().to_dict(),
             "config": config.__dict__,
             "production_approved": False,
         },
@@ -143,6 +147,7 @@ def main() -> None:
     pivot = monthly.pivot(index="month", columns="year", values="price_eur_mwh").round(2)
     print(pivot.to_string())
     print(f"max_abs_constraint_residual={result.kkt['max_abs_constraint_residual']:.3e}")
+    print(f"gate_summary={audit_gates['status'].value_counts().to_dict()}")
     print(f"panel_status={panel.status} history_status={historical.status} fused_status={fused.status}")
     print(f"wrote {output_dir}")
 
@@ -250,6 +255,7 @@ def _write_outputs(
     history_diagnostics: pd.DataFrame,
     fused_diagnostics: pd.DataFrame,
     checks: pd.DataFrame,
+    audit_gates: pd.DataFrame,
     coverage: pd.DataFrame,
     manifest: dict[str, object],
 ) -> None:
@@ -263,6 +269,7 @@ def _write_outputs(
     history_diagnostics.to_csv(output_dir / "history_prior_diagnostics.csv", index=False)
     fused_diagnostics.to_csv(output_dir / "fused_prior_diagnostics.csv", index=False)
     checks.to_csv(output_dir / "sparse_year_checks.csv", index=False)
+    audit_gates.to_csv(output_dir / "audit_gates.csv", index=False)
     coverage.to_csv(output_dir / "monthly_quote_coverage_by_horizon.csv", index=False)
     (output_dir / "manifest.json").write_text(
         json.dumps(manifest, indent=2, sort_keys=True, default=str),
