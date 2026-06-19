@@ -22,6 +22,7 @@ from pfc_shaping.calibration.monthly_curve_audit import (
     audit_monthly_curve_shape,
     build_monthly_curve_governance_gates,
 )
+from pfc_shaping.calibration.monthly_curve_lambda_calibration import config_hash
 from pfc_shaping.calibration.monthly_curve_priors import (
     build_fused_shape_prior,
     build_history_shape_prior,
@@ -34,6 +35,10 @@ from pfc_shaping.calibration.monthly_forward_curve import (
     MonthlyCurveConfig,
     build_monthly_constraint_system,
     solve_monthly_forward_curve_from_constraints,
+)
+from pfc_shaping.pipeline.monthly_curve_authority import (
+    _hash_frame as _monthly_authority_hash_frame,
+    _sha256_json as _monthly_authority_sha256_json,
 )
 
 
@@ -117,6 +122,10 @@ def main() -> None:
         config=config,
         shape_prior=fused,
     )
+    active_config_hash = str(args.active_config_hash or config_hash(config))
+    selected_config_hash = _selected_config_hash(args)
+    monthly_solution_hash = _monthly_solution_hash(result)
+    active_constraints_hash = _monthly_authority_hash_frame(constraints.rows)
 
     monthly = _monthly_curve_frame(result.monthly_curve, constraints)
     checks = _sparse_year_checks(monthly, constraints, year_a=2028, year_b=2029)
@@ -143,7 +152,8 @@ def main() -> None:
         neighbor_level_leakage_max_abs=leakage_max_abs,
         leakage_tolerance=float(args.leakage_tolerance),
     )
-    governance_gates = build_monthly_curve_governance_gates(
+    governance_gates = _build_sparse_proof_governance_gates(
+        args=args,
         run_timestamp=run_timestamp,
         own_quotes=own_quotes,
         neighbor_quotes=tuple(
@@ -152,6 +162,10 @@ def main() -> None:
             for quote in _latest_quotes(history, market, "BASE")
         ),
         eex_history=history,
+        active_config_hash=active_config_hash
+        if (bool(args.require_lambda_artifact) or selected_config_hash or args.active_config_hash)
+        else None,
+        selected_config_hash=selected_config_hash,
     )
     audit_gates = pd.concat([audit_gates, governance_gates], ignore_index=True)
     _assert_proof(
@@ -190,6 +204,14 @@ def main() -> None:
             "structural_status": structural.status,
             "neighbor_level_leakage_max_abs": leakage_max_abs,
             "historical_thresholds": str(args.historical_thresholds) if args.historical_thresholds else "",
+            "active_config_hash": active_config_hash,
+            "selected_config_hash": selected_config_hash,
+            "monthly_solution_hash": monthly_solution_hash,
+            "active_constraints_hash": active_constraints_hash,
+            "production_monthly_solution_hash": str(args.production_monthly_solution_hash or ""),
+            "export_monthly_solution_hash": str(args.export_monthly_solution_hash or ""),
+            "production_active_constraints_hash": str(args.production_active_constraints_hash or ""),
+            "export_active_constraints_hash": str(args.export_active_constraints_hash or ""),
             "solver_kkt": result.kkt,
             "gate_summary": audit_gates["status"].value_counts().to_dict(),
             "config": config.__dict__,
@@ -301,6 +323,32 @@ def _neighbor_level_leakage_check(
         shape_prior=shifted_fused,
     )
     return float((base.monthly_curve - shifted_result.monthly_curve).abs().max())
+
+
+def _build_sparse_proof_governance_gates(
+    *,
+    args: argparse.Namespace,
+    run_timestamp: pd.Timestamp,
+    own_quotes: tuple[MarketQuote, ...],
+    neighbor_quotes: tuple[MarketQuote, ...],
+    eex_history: pd.DataFrame,
+    active_config_hash: str | None,
+    selected_config_hash: str | None,
+) -> pd.DataFrame:
+    return build_monthly_curve_governance_gates(
+        run_timestamp=run_timestamp,
+        own_quotes=own_quotes,
+        neighbor_quotes=neighbor_quotes,
+        eex_history=eex_history,
+        active_config_hash=active_config_hash,
+        selected_config_hash=selected_config_hash,
+        production_monthly_solution_hash=_optional_text(args.production_monthly_solution_hash),
+        export_monthly_solution_hash=_optional_text(args.export_monthly_solution_hash),
+        production_active_constraints_hash=_optional_text(args.production_active_constraints_hash),
+        export_active_constraints_hash=_optional_text(args.export_active_constraints_hash),
+        require_lambda_artifact=bool(args.require_lambda_artifact),
+        require_path_parity=bool(args.require_path_parity),
+    )
 
 
 def _assert_proof(
@@ -428,6 +476,36 @@ def _write_outputs(
     )
 
 
+def _monthly_solution_hash(result) -> str:
+    monthly_payload = {str(k): round(float(v), 10) for k, v in result.monthly_curve.sort_index().items()}
+    return _monthly_authority_sha256_json(monthly_payload)
+
+
+def _selected_config_hash(args: argparse.Namespace) -> str | None:
+    if args.selected_config_hash:
+        return str(args.selected_config_hash)
+    if args.selected_config_artifact is None:
+        return None
+    path = Path(args.selected_config_artifact)
+    if not path.exists():
+        raise ValueError(f"selected config artifact not found: {path}")
+    if path.suffix.lower() == ".json":
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    else:
+        import yaml
+
+        payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    selected = payload.get("config_hash")
+    if not selected:
+        raise ValueError(f"selected config artifact missing config_hash: {path}")
+    return str(selected)
+
+
+def _optional_text(value: object) -> str | None:
+    text = str(value or "")
+    return text or None
+
+
 def _plot_monthly(path: Path, monthly: pd.DataFrame) -> None:
     import matplotlib.pyplot as plt
 
@@ -471,6 +549,15 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--leakage-shift-eur-mwh", type=float, default=1000.0)
     parser.add_argument("--leakage-tolerance", type=float, default=1e-8)
     parser.add_argument("--historical-thresholds", type=Path, default=None)
+    parser.add_argument("--require-lambda-artifact", action="store_true")
+    parser.add_argument("--active-config-hash", default="")
+    parser.add_argument("--selected-config-hash", default="")
+    parser.add_argument("--selected-config-artifact", type=Path, default=None)
+    parser.add_argument("--require-path-parity", action="store_true")
+    parser.add_argument("--production-monthly-solution-hash", default="")
+    parser.add_argument("--export-monthly-solution-hash", default="")
+    parser.add_argument("--production-active-constraints-hash", default="")
+    parser.add_argument("--export-active-constraints-hash", default="")
     parser.add_argument("--allow-critical-gates", action="store_true")
     parser.add_argument("--no-plot", action="store_true")
     return parser.parse_args()

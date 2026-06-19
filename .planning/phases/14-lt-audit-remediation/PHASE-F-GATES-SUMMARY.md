@@ -49,11 +49,17 @@ default.
   - Row builder added for strict promotion/audit packages.
   - Compares active config hash with selected lambda artifact hash.
   - Missing or mismatched hashes are `CRITICAL` when the row is requested.
+  - `run_monthly_curve_sparse_year_proof.py` can now emit this row via
+    `--require-lambda-artifact`, using either `--selected-config-hash` or
+    `--selected-config-artifact`.
 - `production_export_path_parity`
   - Row builder added for strict promotion/audit packages.
   - Compares production/export `monthly_solution_hash` and
     `active_constraints_hash`.
   - Missing or mismatched hashes are `CRITICAL` when the row is requested.
+  - `run_monthly_curve_sparse_year_proof.py` can now emit this row via
+    `--require-path-parity`, using explicit production/export solution and
+    constraint hashes.
 
 All emitted rows follow the Phase F machine-readable schema:
 
@@ -79,6 +85,10 @@ python scripts/build_monthly_curve_historical_thresholds.py --forwards data/eex_
 python scripts/run_monthly_curve_sparse_year_proof.py --forwards data/eex_forwards_history.parquet --output-dir output/monthly_curve_sparse_year_proof --historical-thresholds output/monthly_curve_calibration/historical_thresholds.csv --no-plot
 python scripts/check_monthly_curve_promotion.py --audit-gates output/monthly_curve_sparse_year_proof/audit_gates.csv --historical-thresholds output/monthly_curve_sparse_year_proof/historical_thresholds.csv --manifest output/monthly_curve_sparse_year_proof/manifest.json --run-timestamp 2026-06-17
 python scripts/check_monthly_curve_promotion.py --audit-gates output/monthly_curve_sparse_year_proof/audit_gates.csv --historical-thresholds output/monthly_curve_sparse_year_proof/historical_thresholds.csv --manifest output/monthly_curve_sparse_year_proof/manifest.json --run-timestamp 2026-06-17 --require-governance-gates lambda_calibration_artifact_present,production_export_path_parity
+python scripts/run_monthly_curve_sparse_year_proof.py --forwards data/eex_forwards_history.parquet --output-dir output/monthly_curve_sparse_year_proof_strict_missing --historical-thresholds output/monthly_curve_calibration/historical_thresholds.csv --require-lambda-artifact --require-path-parity --allow-critical-gates --no-plot
+python scripts/run_monthly_curve_sparse_year_proof.py --forwards data/eex_forwards_history.parquet --output-dir output/monthly_curve_sparse_year_proof_strict_pass --historical-thresholds output/monthly_curve_calibration/historical_thresholds.csv --require-lambda-artifact --selected-config-hash <active_config_hash> --require-path-parity --production-monthly-solution-hash <hash> --export-monthly-solution-hash <hash> --production-active-constraints-hash <hash> --export-active-constraints-hash <hash> --no-plot
+pytest tests/test_run_monthly_curve_sparse_year_proof_script.py -q
+$files = Get-ChildItem tests -Filter 'test_monthly_forward_curve_*.py' | ForEach-Object { $_.FullName }; pytest @files tests/test_monthly_curve_lambda_calibration.py tests/test_monthly_curve_promotion.py tests/test_run_monthly_curve_sparse_year_proof_script.py tests/test_lt_ct_imports.py -q
 ```
 
 Results:
@@ -116,6 +126,16 @@ Results:
   - standard sparse evidence: `PROMOTION_EVIDENCE_PASS`
   - strict governance mode: `BLOCKED` with two expected blockers until lambda
     artifact and prod/export parity hashes are supplied
+- Strict sparse-proof governance emission:
+  - missing required governance proofs:
+    `gate_summary={'PASS': 23, 'UNSUPPORTED': 10, 'CRITICAL': 2}`
+  - supplied matching config/parity hashes:
+    `gate_summary={'PASS': 25, 'UNSUPPORTED': 10}`
+  - checker with required governance gates passes only for the supplied-hash
+    package.
+- Sparse proof governance wiring unit test: `2 passed`
+- Monthly family plus LT/CT import guard after strict wiring:
+  `92 passed, 1 skipped`
 
 The `UNSUPPORTED` sparse-proof shape gates are intentional at this stage:
 historical P90/P97.5 threshold artifacts are not yet calibrated for promotion.
@@ -137,8 +157,9 @@ truth for residual Apr-Dec versus full-calendar comparisons.
 - `historical_quantile_shape_outlier` remains to be implemented as a Phase F
   gate.
 - `lambda_calibration_artifact_present` and `production_export_path_parity`
-  row builders exist, but full candidate approval must pass their hashes from
-  the selected lambda artifact and the prod/export parity fixture or manifests.
+  are emitted by the sparse proof when requested, but full candidate approval
+  must still pass hashes from the selected lambda artifact and the real
+  prod/export path manifests, not proof-local placeholder hashes.
 - Power BI sidecar integration for the new `audit_gates.csv` rows remains to be
   wired.
 - Production approval remains blocked while required near-horizon or otherwise
