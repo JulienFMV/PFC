@@ -32,7 +32,7 @@ _YEAR_RE = re.compile(r"^(?P<year>\d{4})$")
 
 @dataclass(frozen=True)
 class MonthlyCurveConfig:
-    lambda_prior: float = 0.0
+    lambda_prior: float = 1e-6
     lambda_smooth_month: float = 1.0
     lambda_smooth_yoy: float = 0.25
     lambda_shape: float = 1.0
@@ -104,6 +104,17 @@ class MonthlyConstraintSystem:
 
     def feasibility_report(self, *, tolerance: float = 1e-9) -> FeasibilityReport:
         return self.constraints.feasibility_report(tolerance=tolerance)
+
+
+@dataclass(frozen=True)
+class MonthlyCurveResult:
+    monthly_curve_schema_version: str
+    monthly_curve: pd.Series
+    constraints: pd.DataFrame
+    residuals: pd.DataFrame
+    priors: pd.DataFrame
+    diagnostics: pd.DataFrame
+    kkt: dict[str, float | int | bool]
 
 
 def build_delivery_grid(
@@ -292,6 +303,164 @@ def build_monthly_constraint_system(
     )
 
 
+def solve_monthly_forward_curve(
+    *,
+    market: str,
+    delivery_months: Sequence[str | pd.Period] | pd.PeriodIndex,
+    own_quotes: Mapping[str, float] | Sequence[MarketQuote],
+    eex_history: pd.DataFrame | None = None,
+    neighbor_markets: Sequence[str] = ("DE", "FR", "AT", "IT"),
+    neighbor_quotes: Sequence[MarketQuote] | None = None,
+    run_timestamp: pd.Timestamp | None = None,
+    config: MonthlyCurveConfig | None = None,
+    shape_prior: pd.Series | object | None = None,
+    timezone: str = "Europe/Zurich",
+) -> MonthlyCurveResult:
+    """Solve the monthly BASE curve under hard own-market EEX constraints."""
+
+    del eex_history, neighbor_markets, neighbor_quotes, run_timestamp
+    constraints = build_monthly_constraint_system(
+        delivery_months,
+        own_quotes,
+        timezone=timezone,
+        market=market,
+        load_type="BASE",
+        constraint_tolerance=(config or MonthlyCurveConfig()).constraint_tolerance,
+    )
+    return solve_monthly_forward_curve_from_constraints(
+        constraints,
+        config=config,
+        shape_prior=shape_prior,
+    )
+
+
+def solve_monthly_forward_curve_from_inputs(
+    inputs: MonthlyCurveInputs,
+    *,
+    shape_prior: pd.Series | object | None = None,
+) -> MonthlyCurveResult:
+    """Contract-based entry point used by production and local export."""
+
+    return solve_monthly_forward_curve_from_constraints(
+        build_monthly_constraint_system(
+            inputs.delivery_grid.months,
+            inputs.own_quotes,
+            timezone=inputs.delivery_grid.timezone,
+            market=inputs.delivery_grid.calendar,
+            load_type="BASE",
+            constraint_tolerance=inputs.config.constraint_tolerance,
+        ),
+        config=inputs.config,
+        shape_prior=shape_prior,
+    )
+
+
+def solve_monthly_forward_curve_from_constraints(
+    monthly_constraints: MonthlyConstraintSystem,
+    *,
+    config: MonthlyCurveConfig | None = None,
+    shape_prior: pd.Series | object | None = None,
+) -> MonthlyCurveResult:
+    """Solve a small equality-constrained quadratic monthly curve problem."""
+
+    cfg = config or MonthlyCurveConfig()
+    n = len(monthly_constraints.delivery_grid.months)
+    a = monthly_constraints.matrix
+    q = monthly_constraints.targets
+    parent_flat = _parent_flat_baseline(monthly_constraints)
+    parent_operator = _parent_mean_operator(monthly_constraints)
+    shape_operator = np.eye(n) - parent_operator
+    shape_target = _shape_prior_vector(shape_prior, monthly_constraints)
+    shape_target = _recenter_vector_by_parent(shape_target, monthly_constraints)
+
+    terms: list[tuple[str, float, np.ndarray, np.ndarray]] = []
+    ridge_used = False
+    if cfg.lambda_prior > 0.0:
+        terms.append(("parent_flat_prior", float(cfg.lambda_prior), np.eye(n), parent_flat))
+    else:
+        ridge_used = True
+        terms.append(("numerical_parent_flat_ridge", 1e-10, np.eye(n), parent_flat))
+
+    d2 = _second_difference_operator(monthly_constraints.delivery_grid.months)
+    if cfg.lambda_smooth_month > 0.0 and d2.size:
+        terms.append(("smooth_month", float(cfg.lambda_smooth_month), d2, np.zeros(d2.shape[0])))
+
+    dyoy, dropped_yoy = _yoy_shape_operator(monthly_constraints, shape_operator)
+    if cfg.lambda_smooth_yoy > 0.0 and dyoy.size:
+        terms.append(("smooth_yoy_shape", float(cfg.lambda_smooth_yoy), dyoy, np.zeros(dyoy.shape[0])))
+
+    if cfg.lambda_shape > 0.0 and shape_prior is not None:
+        terms.append(("shape_prior", float(cfg.lambda_shape), shape_operator, shape_target))
+
+    q_matrix = np.zeros((n, n), dtype=float)
+    c_vector = np.zeros(n, dtype=float)
+    for _, weight, operator, target in terms:
+        q_matrix += weight * (operator.T @ operator)
+        c_vector -= weight * (operator.T @ target)
+
+    kkt = np.block(
+        [
+            [q_matrix, a.T],
+            [a, np.zeros((a.shape[0], a.shape[0]), dtype=float)],
+        ]
+    )
+    rhs = np.concatenate([-c_vector, q])
+    try:
+        solution = np.linalg.solve(kkt, rhs)
+        solved_by_lstsq = False
+    except np.linalg.LinAlgError:
+        solution = np.linalg.lstsq(kkt, rhs, rcond=None)[0]
+        solved_by_lstsq = True
+
+    x = solution[:n]
+    multipliers = solution[n:]
+    active_residual = a @ x - q
+    stationarity = q_matrix @ x + c_vector + a.T @ multipliers
+    objective_terms = {
+        name: float(0.5 * weight * np.sum((operator @ x - target) ** 2))
+        for name, weight, operator, target in terms
+    }
+    residuals = monthly_constraints.residuals(x)
+    priors = pd.DataFrame(
+        {
+            "month": [str(month) for month in monthly_constraints.delivery_grid.months],
+            "parent_bucket": monthly_constraints.month_buckets.astype(str).to_list(),
+            "parent_flat_eur_mwh": parent_flat,
+            "shape_prior_eur_mwh": shape_target,
+            "monthly_curve_eur_mwh": x,
+        }
+    )
+    diagnostics = pd.DataFrame(
+        [
+            {"metric": "max_abs_constraint_residual", "value": float(np.max(np.abs(active_residual))) if len(q) else 0.0},
+            {"metric": "stationarity_residual", "value": float(np.max(np.abs(stationarity))) if len(stationarity) else 0.0},
+            {"metric": "condition_number", "value": _condition_number(kkt)},
+            {"metric": "active_constraint_rank", "value": float(np.linalg.matrix_rank(a)) if a.size else 0.0},
+            {"metric": "nullspace_dimension", "value": float(n - (np.linalg.matrix_rank(a) if a.size else 0))},
+            {"metric": "dropped_yoy_rows", "value": float(dropped_yoy)},
+        ]
+        + [{"metric": f"objective_{name}", "value": value} for name, value in objective_terms.items()]
+    )
+    return MonthlyCurveResult(
+        monthly_curve_schema_version=MONTHLY_CURVE_SCHEMA_VERSION,
+        monthly_curve=pd.Series(x, index=monthly_constraints.delivery_grid.months, name="monthly_base_eur_mwh"),
+        constraints=monthly_constraints.rows.copy(),
+        residuals=residuals,
+        priors=priors,
+        diagnostics=diagnostics,
+        kkt={
+            "max_abs_constraint_residual": float(np.max(np.abs(active_residual))) if len(q) else 0.0,
+            "stationarity_residual": float(np.max(np.abs(stationarity))) if len(stationarity) else 0.0,
+            "condition_number": _condition_number(kkt),
+            "active_constraint_rank": int(np.linalg.matrix_rank(a)) if a.size else 0,
+            "nullspace_dimension": int(n - (np.linalg.matrix_rank(a) if a.size else 0)),
+            "ridge_used": bool(ridge_used),
+            "solved_by_lstsq": bool(solved_by_lstsq),
+            "dropped_yoy_rows": int(dropped_yoy),
+        },
+    )
+
+
 def _normalize_months(
     delivery_months: Sequence[str | pd.Period] | pd.PeriodIndex,
 ) -> pd.PeriodIndex:
@@ -469,3 +638,137 @@ def _quote_diag_row(quote: MarketQuote, *, active: bool, dropped_reason: str) ->
         "dropped_reason": dropped_reason,
         "active_row_indices": tuple(),
     }
+
+
+def _parent_flat_baseline(monthly_constraints: MonthlyConstraintSystem) -> np.ndarray:
+    values = np.zeros(len(monthly_constraints.delivery_grid.months), dtype=float)
+    for i, month in enumerate(monthly_constraints.delivery_grid.months):
+        bucket = monthly_constraints.month_buckets.loc[month]
+        if pd.isna(bucket):
+            continue
+        values[i] = float(monthly_constraints.bucket_targets[str(bucket)])
+    return values
+
+
+def _parent_mean_operator(monthly_constraints: MonthlyConstraintSystem) -> np.ndarray:
+    n = len(monthly_constraints.delivery_grid.months)
+    operator = np.eye(n, dtype=float)
+    for bucket in monthly_constraints.month_buckets.dropna().drop_duplicates():
+        mask = monthly_constraints.month_buckets.eq(bucket).to_numpy()
+        idx = np.flatnonzero(mask)
+        hours = monthly_constraints.delivery_grid.month_hours.iloc[idx].to_numpy(dtype=float)
+        total = float(hours.sum())
+        if total <= 0.0:
+            continue
+        operator[idx, :] = 0.0
+        operator[np.ix_(idx, idx)] = np.repeat((hours / total).reshape(1, -1), len(idx), axis=0)
+    return operator
+
+
+def _shape_prior_vector(
+    shape_prior: pd.Series | object | None,
+    monthly_constraints: MonthlyConstraintSystem,
+) -> np.ndarray:
+    n = len(monthly_constraints.delivery_grid.months)
+    if shape_prior is None:
+        return np.zeros(n, dtype=float)
+    if isinstance(shape_prior, pd.Series):
+        series = shape_prior
+    elif hasattr(shape_prior, "shape"):
+        series = getattr(shape_prior, "shape")
+        if not isinstance(series, pd.Series):
+            raise TypeError("shape_prior.shape must be a pandas Series")
+    else:
+        raise TypeError("shape_prior must be a pandas Series or an object exposing a Series named 'shape'")
+    return series.reindex(monthly_constraints.delivery_grid.months).fillna(0.0).to_numpy(dtype=float)
+
+
+def _recenter_vector_by_parent(
+    values: np.ndarray,
+    monthly_constraints: MonthlyConstraintSystem,
+) -> np.ndarray:
+    out = np.asarray(values, dtype=float).copy()
+    for bucket in monthly_constraints.month_buckets.dropna().drop_duplicates():
+        mask = monthly_constraints.month_buckets.eq(bucket).to_numpy()
+        idx = np.flatnonzero(mask)
+        hours = monthly_constraints.delivery_grid.month_hours.iloc[idx].to_numpy(dtype=float)
+        total = float(hours.sum())
+        if total <= 0.0:
+            continue
+        mean = float((out[idx] * hours).sum() / total)
+        out[idx] -= mean
+    return out
+
+
+def _second_difference_operator(months: pd.PeriodIndex) -> np.ndarray:
+    rows: list[np.ndarray] = []
+    n = len(months)
+    for i in range(1, n - 1):
+        if months[i - 1] + 1 != months[i] or months[i] + 1 != months[i + 1]:
+            continue
+        row = np.zeros(n, dtype=float)
+        row[i - 1] = 1.0
+        row[i] = -2.0
+        row[i + 1] = 1.0
+        rows.append(row)
+    if not rows:
+        return np.zeros((0, n), dtype=float)
+    return np.vstack(rows)
+
+
+def _yoy_shape_operator(
+    monthly_constraints: MonthlyConstraintSystem,
+    shape_operator: np.ndarray,
+) -> tuple[np.ndarray, int]:
+    months = monthly_constraints.delivery_grid.months
+    month_to_pos = {month: i for i, month in enumerate(months)}
+    parent_types = _parent_block_types(monthly_constraints)
+    rows: list[np.ndarray] = []
+    dropped = 0
+    for i, month in enumerate(months):
+        previous = month - 12
+        if previous not in month_to_pos:
+            continue
+        j = month_to_pos[previous]
+        if parent_types[i] != parent_types[j]:
+            dropped += 1
+            continue
+        rows.append(shape_operator[i, :] - shape_operator[j, :])
+    if not rows:
+        return np.zeros((0, len(months)), dtype=float), dropped
+    return np.vstack(rows), dropped
+
+
+def _parent_block_types(monthly_constraints: MonthlyConstraintSystem) -> list[str]:
+    parent_by_bucket: dict[str, str] = {}
+    if not monthly_constraints.rows.empty:
+        parent_by_bucket = {
+            str(row["product"]): str(row["parent_product"])
+            for _, row in monthly_constraints.rows.iterrows()
+        }
+    out: list[str] = []
+    for month in monthly_constraints.delivery_grid.months:
+        bucket = monthly_constraints.month_buckets.loc[month]
+        if pd.isna(bucket):
+            out.append("unassigned")
+            continue
+        bucket_text = str(bucket)
+        parent = parent_by_bucket.get(bucket_text, bucket_text)
+        if bucket_text.endswith("-RESIDUAL"):
+            out.append("residual")
+        elif "-Q" in parent:
+            out.append("quarter")
+        elif parent.isdigit():
+            out.append("calendar")
+        elif _MONTH_RE.match(parent):
+            out.append("month")
+        else:
+            out.append("unknown")
+    return out
+
+
+def _condition_number(matrix: np.ndarray) -> float:
+    try:
+        return float(np.linalg.cond(matrix))
+    except np.linalg.LinAlgError:
+        return float("inf")
