@@ -117,7 +117,6 @@ def main() -> None:
 
     monthly = _monthly_curve_frame(result.monthly_curve, constraints)
     checks = _sparse_year_checks(monthly, constraints, year_a=2028, year_b=2029)
-    audit_gates = audit_monthly_curve_shape(result.monthly_curve, constraints, year_pairs=[(2028, 2029)])
     leakage_max_abs = _neighbor_level_leakage_check(
         constraints=constraints,
         neighbor_prices=neighbor_prices,
@@ -127,6 +126,13 @@ def main() -> None:
         config=config,
         run_timestamp=run_timestamp,
         args=args,
+    )
+    audit_gates = audit_monthly_curve_shape(
+        result.monthly_curve,
+        constraints,
+        year_pairs=[(2028, 2029)],
+        neighbor_level_leakage_max_abs=leakage_max_abs,
+        leakage_tolerance=float(args.leakage_tolerance),
     )
     _assert_proof(
         result=result,
