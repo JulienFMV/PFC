@@ -49,6 +49,7 @@ def evaluate_monthly_curve_promotion(
     run_timestamp: pd.Timestamp | None = None,
     far_horizon_min_years: int = 2,
     required_hard_gates: set[str] | None = None,
+    required_governance_gates: set[str] | None = None,
     manifest: Mapping[str, object] | None = None,
 ) -> MonthlyCurvePromotionDecision:
     """Evaluate whether monthly curve audit evidence is promotion-ready.
@@ -92,6 +93,23 @@ def evaluate_monthly_curve_promotion(
                     gate_id,
                     "BLOCK",
                     f"required hard gate has non-PASS statuses: {sorted(bad['status'].astype(str).unique())}",
+                )
+            )
+
+    for gate_id in sorted(required_governance_gates or set()):
+        rows = gates[gates["gate_id"].astype(str).eq(gate_id)]
+        if rows.empty:
+            details.append(_detail(gate_id, "BLOCK", "required governance gate is missing"))
+            continue
+        bad = rows[~rows["status"].astype(str).eq("PASS")]
+        if bad.empty:
+            details.append(_detail(gate_id, "PASS", "required governance gate passed"))
+        else:
+            details.append(
+                _detail(
+                    gate_id,
+                    "BLOCK",
+                    f"required governance gate has non-PASS statuses: {sorted(bad['status'].astype(str).unique())}",
                 )
             )
 

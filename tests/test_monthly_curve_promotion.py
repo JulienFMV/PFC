@@ -78,6 +78,44 @@ def test_promotion_blocks_missing_required_hard_gate() -> None:
     assert row["reason"] == "required hard gate is missing"
 
 
+def test_promotion_blocks_missing_required_governance_gate() -> None:
+    decision = evaluate_monthly_curve_promotion(
+        _audit_gates(),
+        _thresholds(status="UNSUPPORTED", n_snapshots=13, min_required_n=24),
+        run_timestamp=pd.Timestamp("2026-06-17"),
+        required_governance_gates={"lambda_calibration_artifact_present"},
+    )
+
+    assert not decision.approved
+    row = decision.details[
+        decision.details["gate_id"].eq("lambda_calibration_artifact_present")
+    ].iloc[0]
+    assert row["decision"] == "BLOCK"
+    assert row["reason"] == "required governance gate is missing"
+
+
+def test_promotion_passes_when_required_governance_gates_pass() -> None:
+    gates = pd.concat([_audit_gates(), _passing_governance_gates()], ignore_index=True)
+
+    decision = evaluate_monthly_curve_promotion(
+        gates,
+        _thresholds(status="UNSUPPORTED", n_snapshots=13, min_required_n=24),
+        run_timestamp=pd.Timestamp("2026-06-17"),
+        required_governance_gates={
+            "lambda_calibration_artifact_present",
+            "production_export_path_parity",
+        },
+    )
+
+    assert decision.approved
+    required = decision.details[
+        decision.details["gate_id"].isin(
+            {"lambda_calibration_artifact_present", "production_export_path_parity"}
+        )
+    ]
+    assert set(required["decision"]) == {"PASS"}
+
+
 def _audit_gates(*, year: int = 2028) -> pd.DataFrame:
     return pd.DataFrame(
         [
@@ -120,6 +158,29 @@ def _audit_gates(*, year: int = 2028) -> pd.DataFrame:
                 "month": 0,
                 "product": "2028_2030",
                 "metric_name": "targeted_monthly_gate_status",
+            },
+        ]
+    )
+
+
+def _passing_governance_gates() -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "gate_id": "lambda_calibration_artifact_present",
+                "status": "PASS",
+                "year": 0,
+                "month": 0,
+                "product": "monthly_curve_selected_config",
+                "metric_name": "selected_config_hash_mismatch",
+            },
+            {
+                "gate_id": "production_export_path_parity",
+                "status": "PASS",
+                "year": 0,
+                "month": 0,
+                "product": "monthly_level_authority",
+                "metric_name": "prod_export_hash_mismatch",
             },
         ]
     )

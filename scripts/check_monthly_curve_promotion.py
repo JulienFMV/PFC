@@ -29,6 +29,7 @@ def main(argv: list[str] | None = None) -> int:
         historical_thresholds,
         run_timestamp=pd.Timestamp(args.run_timestamp) if args.run_timestamp else None,
         far_horizon_min_years=int(args.far_horizon_min_years),
+        required_governance_gates=_csv_set(args.require_governance_gates),
         manifest=manifest,
     )
 
@@ -53,9 +54,21 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--manifest", type=Path, default=None)
     parser.add_argument("--run-timestamp", default=None)
     parser.add_argument("--far-horizon-min-years", type=int, default=2)
+    parser.add_argument(
+        "--require-governance-gates",
+        default="",
+        help=(
+            "Comma-separated governance gate ids that must be present and PASS, "
+            "for example lambda_calibration_artifact_present,production_export_path_parity."
+        ),
+    )
     parser.add_argument("--output", type=Path, default=None)
     parser.add_argument("--details-output", type=Path, default=None)
     return parser.parse_args(argv)
+
+
+def _csv_set(value: str) -> set[str]:
+    return {part.strip() for part in str(value).split(",") if part.strip()}
 
 
 if __name__ == "__main__":
