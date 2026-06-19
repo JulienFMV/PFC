@@ -33,6 +33,20 @@ default.
   - Aggregates targeted 2028-2030 same-month and comparable-block rows.
   - `CRITICAL` if any targeted row is critical; `UNSUPPORTED` if required
     threshold evidence is missing.
+- `point_in_time_data_contract`
+  - Added as a governance gate row in the sparse-year proof.
+  - Checks that supplied quotes and EEX history rows are available at or before
+    `run_timestamp`.
+  - Any future or unverifiable input is `CRITICAL`.
+- `lambda_calibration_artifact_present`
+  - Row builder added for strict promotion/audit packages.
+  - Compares active config hash with selected lambda artifact hash.
+  - Missing or mismatched hashes are `CRITICAL` when the row is requested.
+- `production_export_path_parity`
+  - Row builder added for strict promotion/audit packages.
+  - Compares production/export `monthly_solution_hash` and
+    `active_constraints_hash`.
+  - Missing or mismatched hashes are `CRITICAL` when the row is requested.
 
 All emitted rows follow the Phase F machine-readable schema:
 
@@ -81,7 +95,10 @@ Results:
 - Sparse proof with historical thresholds:
   - `max_abs_constraint_residual=2.132e-13`
   - `neighbor_level_leakage_max_abs=1.421e-13`
-  - `gate_summary={'PASS': 21, 'UNSUPPORTED': 10}`
+  - before point-in-time governance row:
+    `gate_summary={'PASS': 21, 'UNSUPPORTED': 10}`
+  - after point-in-time governance row:
+    `gate_summary={'PASS': 22, 'UNSUPPORTED': 10}`
   - `same_month_rank_consistency`: `12 PASS`
   - `residual_vs_implied_comparable_block`: `9 UNSUPPORTED`
 
@@ -102,10 +119,12 @@ truth for residual Apr-Dec versus full-calendar comparisons.
 - The same-month gate currently uses absolute comparable-parent shape delta
   against calibrated thresholds. Full conditional rank/z-score logic remains a
   later Phase F extension.
-- `calendar_spread_seasonal_decomposition`,
-  `historical_quantile_shape_outlier`,
-  `lambda_calibration_artifact_present`, `point_in_time_data_contract`, and
-  `production_export_path_parity` remain to be implemented as Phase F gates.
+- `calendar_spread_seasonal_decomposition` and
+  `historical_quantile_shape_outlier` remain to be implemented as Phase F
+  gates.
+- `lambda_calibration_artifact_present` and `production_export_path_parity`
+  row builders exist, but full candidate approval must pass their hashes from
+  the selected lambda artifact and the prod/export parity fixture or manifests.
 - Power BI sidecar integration for the new `audit_gates.csv` rows remains to be
   wired.
 - Production approval remains blocked while required near-horizon or otherwise

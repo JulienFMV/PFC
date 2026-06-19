@@ -18,7 +18,10 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from pfc_shaping.calibration.monthly_curve_audit import audit_monthly_curve_shape
+from pfc_shaping.calibration.monthly_curve_audit import (
+    audit_monthly_curve_shape,
+    build_monthly_curve_governance_gates,
+)
 from pfc_shaping.calibration.monthly_curve_priors import (
     build_fused_shape_prior,
     build_history_shape_prior,
@@ -140,6 +143,17 @@ def main() -> None:
         neighbor_level_leakage_max_abs=leakage_max_abs,
         leakage_tolerance=float(args.leakage_tolerance),
     )
+    governance_gates = build_monthly_curve_governance_gates(
+        run_timestamp=run_timestamp,
+        own_quotes=own_quotes,
+        neighbor_quotes=tuple(
+            quote
+            for market in neighbor_markets
+            for quote in _latest_quotes(history, market, "BASE")
+        ),
+        eex_history=history,
+    )
+    audit_gates = pd.concat([audit_gates, governance_gates], ignore_index=True)
     _assert_proof(
         result=result,
         audit_gates=audit_gates,

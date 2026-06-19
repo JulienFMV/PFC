@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 
 from pfc_shaping.calibration.monthly_forward_curve import (
+    MarketQuote,
     MonthlyConstraintSystem,
     month_delivery_hours,
 )
@@ -90,6 +91,60 @@ def audit_monthly_curve_shape(
             )
         )
     rows.append(_monthly_shape_regression_row(rows))
+    return pd.DataFrame(rows)
+
+
+def build_monthly_curve_governance_gates(
+    *,
+    run_timestamp: pd.Timestamp,
+    own_quotes: Sequence[MarketQuote] = (),
+    neighbor_quotes: Sequence[MarketQuote] = (),
+    eex_history: pd.DataFrame | None = None,
+    active_config_hash: str | None = None,
+    selected_config_hash: str | None = None,
+    production_monthly_solution_hash: str | None = None,
+    export_monthly_solution_hash: str | None = None,
+    production_active_constraints_hash: str | None = None,
+    export_active_constraints_hash: str | None = None,
+    require_lambda_artifact: bool = False,
+    require_path_parity: bool = False,
+) -> pd.DataFrame:
+    """Build machine-readable governance gate rows.
+
+    These are metadata/evidence gates rather than curve-shape gates.  They use
+    the same Phase F row schema as ``audit_monthly_curve_shape``.
+    """
+
+    rows = [
+        _point_in_time_data_contract_row(
+            run_timestamp=run_timestamp,
+            own_quotes=own_quotes,
+            neighbor_quotes=neighbor_quotes,
+            eex_history=eex_history,
+        )
+    ]
+    if require_lambda_artifact or active_config_hash is not None or selected_config_hash is not None:
+        rows.append(
+            _lambda_calibration_artifact_row(
+                active_config_hash=active_config_hash,
+                selected_config_hash=selected_config_hash,
+            )
+        )
+    if (
+        require_path_parity
+        or production_monthly_solution_hash is not None
+        or export_monthly_solution_hash is not None
+        or production_active_constraints_hash is not None
+        or export_active_constraints_hash is not None
+    ):
+        rows.append(
+            _production_export_path_parity_row(
+                production_monthly_solution_hash=production_monthly_solution_hash,
+                export_monthly_solution_hash=export_monthly_solution_hash,
+                production_active_constraints_hash=production_active_constraints_hash,
+                export_active_constraints_hash=export_active_constraints_hash,
+            )
+        )
     return pd.DataFrame(rows)
 
 
@@ -475,6 +530,191 @@ def _neighbor_level_leakage_row(
         n_neighbors=np.nan,
         evidence=f"max_abs_solution_delta={float(leakage_max_abs):.12g}",
         remediation_hint="External market levels leaked into CH monthly solution; recenter neighbor priors.",
+    )
+
+
+def _point_in_time_data_contract_row(
+    *,
+    run_timestamp: pd.Timestamp,
+    own_quotes: Sequence[MarketQuote],
+    neighbor_quotes: Sequence[MarketQuote],
+    eex_history: pd.DataFrame | None,
+) -> dict[str, object]:
+    run_ts = pd.Timestamp(run_timestamp).tz_localize(None)
+    checked = 0
+    violations: list[str] = []
+    for quote in list(own_quotes) + list(neighbor_quotes):
+        checked += 1
+        available_at = getattr(quote, "available_at", None) or getattr(quote, "snapshot_date", None)
+        if available_at is None:
+            violations.append(f"{quote.market}:{quote.load_type}:{quote.product}:missing_available_at")
+            continue
+        available_ts = pd.Timestamp(available_at).tz_localize(None)
+        if available_ts > run_ts:
+            violations.append(f"{quote.market}:{quote.load_type}:{quote.product}:{available_ts}")
+    if eex_history is not None and not eex_history.empty:
+        date_col = "available_at" if "available_at" in eex_history.columns else "date" if "date" in eex_history.columns else ""
+        if date_col:
+            dates = pd.to_datetime(eex_history[date_col], errors="coerce").dt.tz_localize(None)
+            checked += int(dates.notna().sum())
+            future = eex_history[dates > run_ts]
+            for row in future.head(5).itertuples(index=False):
+                market = getattr(row, "market", "")
+                load_type = getattr(row, "load_type", "")
+                product = getattr(row, "product", "")
+                date_value = getattr(row, date_col)
+                violations.append(f"{market}:{load_type}:{product}:{date_value}")
+        else:
+            violations.append("eex_history:missing_date_or_available_at")
+    if checked == 0:
+        status = "UNSUPPORTED"
+        severity = "P1"
+        evidence = "no point-in-time inputs supplied"
+    elif violations:
+        status = "CRITICAL"
+        severity = "P0"
+        evidence = f"future_or_unverifiable_inputs={violations[:5]}, checked={checked}"
+    else:
+        status = "PASS"
+        severity = "INFO"
+        evidence = f"all inputs available_at <= run_timestamp; checked={checked}"
+    return _gate_row(
+        gate_id="point_in_time_data_contract",
+        status=status,
+        severity=severity,
+        year=int(run_ts.year),
+        month=int(run_ts.month),
+        product="monthly_curve_inputs",
+        parent_block_id="input_contract",
+        parent_block_type="governance",
+        parent_hours=np.nan,
+        parent_mean=np.nan,
+        month_price=np.nan,
+        month_deviation=np.nan,
+        metric_name="future_input_count",
+        metric_value=float(len(violations)),
+        threshold_warning=0.0,
+        threshold_critical=0.0,
+        threshold_source="hard_point_in_time_contract",
+        n_history=float(checked),
+        n_neighbors=np.nan,
+        evidence=evidence,
+        remediation_hint="Remove or mask inputs with available_at after run_timestamp.",
+    )
+
+
+def _lambda_calibration_artifact_row(
+    *,
+    active_config_hash: str | None,
+    selected_config_hash: str | None,
+) -> dict[str, object]:
+    active = str(active_config_hash or "")
+    selected = str(selected_config_hash or "")
+    if not active or not selected:
+        status = "CRITICAL"
+        severity = "P0"
+        metric_value = 1.0
+        evidence = f"missing active_config_hash or selected_config_hash; active={active}, selected={selected}"
+    elif active != selected:
+        status = "CRITICAL"
+        severity = "P0"
+        metric_value = 1.0
+        evidence = f"active_config_hash={active} selected_config_hash={selected}"
+    else:
+        status = "PASS"
+        severity = "INFO"
+        metric_value = 0.0
+        evidence = f"active_config_hash matches selected_config_hash={active}"
+    return _gate_row(
+        gate_id="lambda_calibration_artifact_present",
+        status=status,
+        severity=severity,
+        year=0,
+        month=None,
+        product="monthly_curve_selected_config",
+        parent_block_id="lambda_config",
+        parent_block_type="governance",
+        parent_hours=np.nan,
+        parent_mean=np.nan,
+        month_price=np.nan,
+        month_deviation=np.nan,
+        metric_name="selected_config_hash_mismatch",
+        metric_value=metric_value,
+        threshold_warning=0.0,
+        threshold_critical=0.0,
+        threshold_source="selected_config_artifact",
+        n_history=np.nan,
+        n_neighbors=np.nan,
+        evidence=evidence,
+        remediation_hint="Regenerate lambda calibration artifact or align active monthly solver config.",
+    )
+
+
+def _production_export_path_parity_row(
+    *,
+    production_monthly_solution_hash: str | None,
+    export_monthly_solution_hash: str | None,
+    production_active_constraints_hash: str | None,
+    export_active_constraints_hash: str | None,
+) -> dict[str, object]:
+    prod_solution = str(production_monthly_solution_hash or "")
+    export_solution = str(export_monthly_solution_hash or "")
+    prod_constraints = str(production_active_constraints_hash or "")
+    export_constraints = str(export_active_constraints_hash or "")
+    missing = [
+        name
+        for name, value in {
+            "production_monthly_solution_hash": prod_solution,
+            "export_monthly_solution_hash": export_solution,
+            "production_active_constraints_hash": prod_constraints,
+            "export_active_constraints_hash": export_constraints,
+        }.items()
+        if not value
+    ]
+    mismatch = (
+        bool(prod_solution and export_solution and prod_solution != export_solution)
+        or bool(prod_constraints and export_constraints and prod_constraints != export_constraints)
+    )
+    if missing:
+        status = "CRITICAL"
+        severity = "P0"
+        metric_value = 1.0
+        evidence = f"missing parity hashes: {missing}"
+    elif mismatch:
+        status = "CRITICAL"
+        severity = "P0"
+        metric_value = 1.0
+        evidence = (
+            f"production_solution={prod_solution}, export_solution={export_solution}, "
+            f"production_constraints={prod_constraints}, export_constraints={export_constraints}"
+        )
+    else:
+        status = "PASS"
+        severity = "INFO"
+        metric_value = 0.0
+        evidence = "production/export monthly_solution_hash and active_constraints_hash match"
+    return _gate_row(
+        gate_id="production_export_path_parity",
+        status=status,
+        severity=severity,
+        year=0,
+        month=None,
+        product="monthly_level_authority",
+        parent_block_id="prod_export_paths",
+        parent_block_type="governance",
+        parent_hours=np.nan,
+        parent_mean=np.nan,
+        month_price=np.nan,
+        month_deviation=np.nan,
+        metric_name="prod_export_hash_mismatch",
+        metric_value=metric_value,
+        threshold_warning=0.0,
+        threshold_critical=0.0,
+        threshold_source="monthly_authority_hash_parity",
+        n_history=np.nan,
+        n_neighbors=np.nan,
+        evidence=evidence,
+        remediation_hint="Route production and local export through the same MonthlyCurveInputs and solver config.",
     )
 
 

@@ -4,12 +4,13 @@ import pandas as pd
 
 from pfc_shaping.calibration.monthly_curve_audit import (
     build_monthly_curve_historical_thresholds,
+    build_monthly_curve_governance_gates,
     audit_monthly_curve_shape,
 )
 from pfc_shaping.calibration.monthly_curve_priors import (
     recenter_shape_by_parent,
 )
-from pfc_shaping.calibration.monthly_forward_curve import build_monthly_constraint_system
+from pfc_shaping.calibration.monthly_forward_curve import MarketQuote, build_monthly_constraint_system
 
 
 def test_monthly_audit_passes_solver_candidate_without_critical_flags():
@@ -199,6 +200,83 @@ def test_historical_threshold_builder_emits_unsupported_when_sample_is_small():
 
     assert set(thresholds["status"]) == {"UNSUPPORTED"}
     assert thresholds["p90"].isna().all()
+
+
+def test_governance_gate_flags_future_available_quote():
+    gates = build_monthly_curve_governance_gates(
+        run_timestamp=pd.Timestamp("2026-06-17"),
+        own_quotes=[
+            MarketQuote(
+                market="CH",
+                product="2028",
+                load_type="BASE",
+                price=80.0,
+                snapshot_date=pd.Timestamp("2026-06-18"),
+                available_at=pd.Timestamp("2026-06-18"),
+            )
+        ],
+    )
+
+    row = gates[gates["gate_id"].eq("point_in_time_data_contract")].iloc[0]
+    assert row["status"] == "CRITICAL"
+    assert row["metric_value"] == 1.0
+
+
+def test_governance_gate_passes_point_in_time_inputs():
+    gates = build_monthly_curve_governance_gates(
+        run_timestamp=pd.Timestamp("2026-06-17"),
+        own_quotes=[
+            MarketQuote(
+                market="CH",
+                product="2028",
+                load_type="BASE",
+                price=80.0,
+                snapshot_date=pd.Timestamp("2026-06-17"),
+                available_at=pd.Timestamp("2026-06-17"),
+            )
+        ],
+        eex_history=pd.DataFrame(
+            [
+                {
+                    "date": pd.Timestamp("2026-06-17"),
+                    "market": "CH",
+                    "load_type": "BASE",
+                    "product": "2028",
+                    "price": 80.0,
+                }
+            ]
+        ),
+    )
+
+    row = gates[gates["gate_id"].eq("point_in_time_data_contract")].iloc[0]
+    assert row["status"] == "PASS"
+    assert row["metric_value"] == 0.0
+
+
+def test_governance_gate_flags_lambda_hash_mismatch():
+    gates = build_monthly_curve_governance_gates(
+        run_timestamp=pd.Timestamp("2026-06-17"),
+        active_config_hash="active",
+        selected_config_hash="selected",
+    )
+
+    row = gates[gates["gate_id"].eq("lambda_calibration_artifact_present")].iloc[0]
+    assert row["status"] == "CRITICAL"
+    assert row["metric_name"] == "selected_config_hash_mismatch"
+
+
+def test_governance_gate_flags_production_export_hash_mismatch():
+    gates = build_monthly_curve_governance_gates(
+        run_timestamp=pd.Timestamp("2026-06-17"),
+        production_monthly_solution_hash="prod_solution",
+        export_monthly_solution_hash="export_solution",
+        production_active_constraints_hash="same_constraints",
+        export_active_constraints_hash="same_constraints",
+    )
+
+    row = gates[gates["gate_id"].eq("production_export_path_parity")].iloc[0]
+    assert row["status"] == "CRITICAL"
+    assert row["metric_name"] == "prod_export_hash_mismatch"
 
 
 def _constraints():

@@ -11,6 +11,11 @@ toggle the monthly solver production flag.
 - Added `pfc_shaping/calibration/monthly_curve_promotion.py`.
 - Added `scripts/check_monthly_curve_promotion.py`.
 - Added unit tests in `tests/test_monthly_curve_promotion.py`.
+- Added governance gate row builders in
+  `pfc_shaping/calibration/monthly_curve_audit.py` for:
+  - `point_in_time_data_contract`;
+  - `lambda_calibration_artifact_present`;
+  - `production_export_path_parity`.
 
 The promotion evaluator consumes:
 
@@ -64,7 +69,7 @@ Results:
 ```text
 status=PROMOTION_EVIDENCE_PASS
 approved=true
-audit_gate_status_counts={'PASS': 21, 'UNSUPPORTED': 10}
+audit_gate_status_counts={'PASS': 22, 'UNSUPPORTED': 10}
 threshold_status_counts={'PASS': 13, 'UNSUPPORTED': 13}
 blocking_count=0
 ```
@@ -73,8 +78,11 @@ blocking_count=0
 
 - This is an evidence gate, not a flag flip. Production default activation
   still requires the desk to accept the named far-horizon residual risk.
-- The evaluator currently enforces the first production-critical hard gates and
-  far-horizon unsupported policy. Future Phase F gates such as
-  `lambda_calibration_artifact_present`, `point_in_time_data_contract` and
-  `production_export_path_parity` should be wired as first-class rows once they
-  are emitted by the audit package.
+- The evaluator currently enforces the production-critical hard gates,
+  any emitted `CRITICAL` governance row, and the far-horizon unsupported
+  policy.
+- `point_in_time_data_contract` is emitted by the sparse-year proof.
+- `lambda_calibration_artifact_present` and `production_export_path_parity`
+  row builders exist, but candidate approval still needs the selected lambda
+  artifact hash and prod/export path hashes to be supplied by the release
+  audit package.
