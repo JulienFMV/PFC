@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import pandas as pd
 
-from pfc_shaping.calibration.monthly_curve_audit import audit_monthly_curve_shape
+from pfc_shaping.calibration.monthly_curve_audit import (
+    build_monthly_curve_historical_thresholds,
+    audit_monthly_curve_shape,
+)
 from pfc_shaping.calibration.monthly_curve_priors import (
     recenter_shape_by_parent,
 )
@@ -137,6 +140,67 @@ def test_monthly_audit_flags_calendar_repricing_break():
     assert broken["status"] == "CRITICAL"
 
 
+def test_historical_threshold_builder_emits_pass_rows_from_point_in_time_history():
+    history = _threshold_history(n_snapshots=30)
+
+    thresholds = build_monthly_curve_historical_thresholds(
+        history,
+        run_timestamp=pd.Timestamp("2026-01-30"),
+        min_required_n=24,
+        lookback_years=None,
+    )
+
+    same_all = thresholds[
+        thresholds["gate_id"].eq("same_month_rank_consistency")
+        & thresholds["delivery_bucket"].eq("all")
+    ].iloc[0]
+    comparable_apr = thresholds[
+        thresholds["gate_id"].eq("residual_vs_implied_comparable_block")
+        & thresholds["delivery_bucket"].eq("month_04")
+    ].iloc[0]
+    assert same_all["status"] == "PASS"
+    assert comparable_apr["status"] == "PASS"
+    assert same_all["n_snapshots"] == 30
+    assert pd.notna(same_all["p90"])
+    assert pd.notna(comparable_apr["p975"])
+
+
+def test_historical_threshold_builder_excludes_future_snapshot():
+    history = pd.concat(
+        [
+            _threshold_history(n_snapshots=30),
+            _threshold_history(n_snapshots=1, start="2026-03-01", shock=500.0),
+        ],
+        ignore_index=True,
+    )
+
+    thresholds = build_monthly_curve_historical_thresholds(
+        history,
+        run_timestamp=pd.Timestamp("2026-01-30"),
+        min_required_n=24,
+        lookback_years=None,
+    )
+
+    same_all = thresholds[
+        thresholds["gate_id"].eq("same_month_rank_consistency")
+        & thresholds["delivery_bucket"].eq("all")
+    ].iloc[0]
+    assert same_all["status"] == "PASS"
+    assert float(same_all["max_observed"]) < 500.0
+
+
+def test_historical_threshold_builder_emits_unsupported_when_sample_is_small():
+    thresholds = build_monthly_curve_historical_thresholds(
+        _threshold_history(n_snapshots=5),
+        run_timestamp=pd.Timestamp("2026-01-30"),
+        min_required_n=24,
+        lookback_years=None,
+    )
+
+    assert set(thresholds["status"]) == {"UNSUPPORTED"}
+    assert thresholds["p90"].isna().all()
+
+
 def _constraints():
     months = pd.period_range("2028-01", "2029-12", freq="M")
     return build_monthly_constraint_system(
@@ -192,3 +256,38 @@ def _thresholds(*, n_snapshots: int = 120, min_required_n: int = 24) -> pd.DataF
             }
         )
     return pd.DataFrame(rows)
+
+
+def _threshold_history(
+    *,
+    n_snapshots: int,
+    start: str = "2026-01-01",
+    shock: float = 0.0,
+) -> pd.DataFrame:
+    rows = []
+    for idx in range(n_snapshots):
+        date = pd.Timestamp(start) + pd.Timedelta(days=idx)
+        drift = float(idx % 7) * 0.2 + float(shock)
+        base = [
+            ("2028", 80.0 + 0.1 * drift),
+            ("2028-Q1", 108.0 + 0.1 * drift),
+            ("2029", 72.0 + 0.05 * drift),
+        ]
+        for product, price in base:
+            rows.append(_history_row(date, product, price))
+        for month in range(1, 13):
+            seasonal = {1: 12, 2: 10, 3: 4, 4: -2, 5: -5, 6: -6, 7: -4, 8: -3, 9: 1, 10: 4, 11: 7, 12: 11}[month]
+            rows.append(_history_row(date, f"2028-{month:02d}", 80.0 + seasonal + drift))
+            rows.append(_history_row(date, f"2029-{month:02d}", 72.0 + 0.8 * seasonal + 0.5 * drift))
+    return pd.DataFrame(rows)
+
+
+def _history_row(date: pd.Timestamp, product: str, price: float) -> dict[str, object]:
+    return {
+        "date": date,
+        "market": "CH",
+        "load_type": "BASE",
+        "product": product,
+        "price": float(price),
+        "source": "synthetic_threshold_fixture",
+    }

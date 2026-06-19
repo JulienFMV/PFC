@@ -117,6 +117,11 @@ def main() -> None:
 
     monthly = _monthly_curve_frame(result.monthly_curve, constraints)
     checks = _sparse_year_checks(monthly, constraints, year_a=2028, year_b=2029)
+    historical_thresholds = (
+        pd.read_csv(args.historical_thresholds)
+        if args.historical_thresholds is not None
+        else pd.DataFrame()
+    )
     leakage_max_abs = _neighbor_level_leakage_check(
         constraints=constraints,
         neighbor_prices=neighbor_prices,
@@ -131,6 +136,7 @@ def main() -> None:
         result.monthly_curve,
         constraints,
         year_pairs=[(2028, 2029)],
+        historical_thresholds=historical_thresholds if not historical_thresholds.empty else None,
         neighbor_level_leakage_max_abs=leakage_max_abs,
         leakage_tolerance=float(args.leakage_tolerance),
     )
@@ -155,6 +161,7 @@ def main() -> None:
         checks=checks,
         audit_gates=audit_gates,
         coverage=coverage,
+        historical_thresholds=historical_thresholds,
         manifest={
             "script": Path(__file__).as_posix(),
             "market": args.market,
@@ -168,6 +175,7 @@ def main() -> None:
             "fused_status": fused.status,
             "structural_status": structural.status,
             "neighbor_level_leakage_max_abs": leakage_max_abs,
+            "historical_thresholds": str(args.historical_thresholds) if args.historical_thresholds else "",
             "solver_kkt": result.kkt,
             "gate_summary": audit_gates["status"].value_counts().to_dict(),
             "config": config.__dict__,
@@ -383,6 +391,7 @@ def _write_outputs(
     checks: pd.DataFrame,
     audit_gates: pd.DataFrame,
     coverage: pd.DataFrame,
+    historical_thresholds: pd.DataFrame,
     manifest: dict[str, object],
 ) -> None:
     monthly.to_csv(output_dir / "monthly_curve.csv", index=False)
@@ -397,6 +406,8 @@ def _write_outputs(
     checks.to_csv(output_dir / "sparse_year_checks.csv", index=False)
     audit_gates.to_csv(output_dir / "audit_gates.csv", index=False)
     coverage.to_csv(output_dir / "monthly_quote_coverage_by_horizon.csv", index=False)
+    if not historical_thresholds.empty:
+        historical_thresholds.to_csv(output_dir / "historical_thresholds.csv", index=False)
     (output_dir / "manifest.json").write_text(
         json.dumps(manifest, indent=2, sort_keys=True, default=str),
         encoding="utf-8",
@@ -445,6 +456,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--repricing-tolerance", type=float, default=1e-8)
     parser.add_argument("--leakage-shift-eur-mwh", type=float, default=1000.0)
     parser.add_argument("--leakage-tolerance", type=float, default=1e-8)
+    parser.add_argument("--historical-thresholds", type=Path, default=None)
     parser.add_argument("--allow-critical-gates", action="store_true")
     parser.add_argument("--no-plot", action="store_true")
     return parser.parse_args()

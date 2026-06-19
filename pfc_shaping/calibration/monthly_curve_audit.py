@@ -12,7 +12,31 @@ from collections.abc import Sequence
 import numpy as np
 import pandas as pd
 
-from pfc_shaping.calibration.monthly_forward_curve import MonthlyConstraintSystem
+from pfc_shaping.calibration.monthly_forward_curve import (
+    MonthlyConstraintSystem,
+    month_delivery_hours,
+)
+
+
+THRESHOLD_COLUMNS = [
+    "gate_id",
+    "metric",
+    "market",
+    "delivery_bucket",
+    "lookback_start",
+    "lookback_end",
+    "n_snapshots",
+    "min_required_n",
+    "p50",
+    "p90",
+    "p975",
+    "max_observed",
+    "regime_filter",
+    "status",
+]
+
+_SAME_MONTH_METRIC = "same_month_shape_delta_abs_eur_mwh"
+_COMPARABLE_BLOCK_METRIC = "comparable_block_shape_delta_abs_eur_mwh"
 
 
 def audit_monthly_curve_shape(
@@ -69,6 +93,69 @@ def audit_monthly_curve_shape(
     return pd.DataFrame(rows)
 
 
+def build_monthly_curve_historical_thresholds(
+    eex_history: pd.DataFrame,
+    *,
+    market: str = "CH",
+    load_type: str = "BASE",
+    run_timestamp: pd.Timestamp | None = None,
+    lookback_years: int | None = 6,
+    min_required_n: int = 24,
+    timezone: str = "Europe/Zurich",
+) -> pd.DataFrame:
+    """Build Phase F historical P90/P97.5 threshold rows.
+
+    Thresholds are estimated from traded monthly quotes only.  The function is
+    point-in-time: rows after ``run_timestamp`` are excluded before metrics are
+    computed.  Insufficient samples emit schema-valid ``UNSUPPORTED`` rows.
+    """
+
+    history = _prepare_threshold_history(
+        eex_history,
+        market=market,
+        load_type=load_type,
+        run_timestamp=run_timestamp,
+        lookback_years=lookback_years,
+    )
+    if history.empty:
+        lookback_start = ""
+        lookback_end = ""
+        observations = pd.DataFrame(columns=["gate_id", "metric", "delivery_bucket", "date", "metric_value"])
+    else:
+        lookback_start = str(pd.Timestamp(history["date"].min()).date())
+        lookback_end = str(pd.Timestamp(history["date"].max()).date())
+        observations = _historical_threshold_observations(history, timezone=timezone)
+
+    rows: list[dict[str, object]] = []
+    specs = [
+        ("same_month_rank_consistency", _SAME_MONTH_METRIC),
+        ("residual_vs_implied_comparable_block", _COMPARABLE_BLOCK_METRIC),
+    ]
+    buckets = ["all"] + [f"month_{month:02d}" for month in range(1, 13)]
+    for gate_id, metric in specs:
+        for bucket in buckets:
+            values = observations[
+                observations["gate_id"].astype(str).eq(gate_id)
+                & observations["metric"].astype(str).eq(metric)
+                & observations["delivery_bucket"].astype(str).eq(bucket)
+            ]
+            rows.append(
+                _threshold_row(
+                    values["metric_value"].astype(float) if not values.empty else pd.Series(dtype=float),
+                    dates=values["date"] if not values.empty else pd.Series(dtype="datetime64[ns]"),
+                    gate_id=gate_id,
+                    metric=metric,
+                    market=str(market).upper(),
+                    delivery_bucket=bucket,
+                    lookback_start=lookback_start,
+                    lookback_end=lookback_end,
+                    min_required_n=int(min_required_n),
+                    regime_filter=_threshold_regime_filter(bucket),
+                )
+            )
+    return pd.DataFrame(rows, columns=THRESHOLD_COLUMNS)
+
+
 def _active_repricing_rows(
     curve: pd.Series,
     constraints: MonthlyConstraintSystem,
@@ -107,6 +194,257 @@ def _active_repricing_rows(
             )
         )
     return rows
+
+
+def _prepare_threshold_history(
+    eex_history: pd.DataFrame,
+    *,
+    market: str,
+    load_type: str,
+    run_timestamp: pd.Timestamp | None,
+    lookback_years: int | None,
+) -> pd.DataFrame:
+    required = {"date", "product", "load_type", "market", "price"}
+    missing = sorted(required - set(eex_history.columns))
+    if missing:
+        raise ValueError(f"missing required EEX history columns: {missing}")
+    df = eex_history.copy()
+    df["date"] = pd.to_datetime(df["date"]).dt.tz_localize(None).dt.normalize()
+    df["product"] = df["product"].astype(str)
+    df["load_type"] = df["load_type"].astype(str).str.upper()
+    df["market"] = df["market"].astype(str).str.upper()
+    df["price"] = pd.to_numeric(df["price"], errors="coerce")
+    df = df[
+        df["market"].eq(str(market).upper())
+        & df["load_type"].eq(str(load_type).upper())
+        & df["price"].notna()
+    ].copy()
+    if run_timestamp is not None:
+        run_date = pd.Timestamp(run_timestamp).tz_localize(None).normalize()
+        df = df[df["date"] <= run_date]
+        if lookback_years is not None:
+            df = df[df["date"] >= run_date - pd.DateOffset(years=int(lookback_years))]
+    return df.sort_values(["date", "product"]).reset_index(drop=True)
+
+
+def _historical_threshold_observations(history: pd.DataFrame, *, timezone: str) -> pd.DataFrame:
+    same_snapshot_rows: list[dict[str, object]] = []
+    deviation_frames: list[pd.DataFrame] = []
+    for date, group in history.groupby("date", sort=True):
+        prices = {
+            str(row.product): float(row.price)
+            for row in group.itertuples(index=False)
+            if np.isfinite(float(row.price))
+        }
+        deviations = _historical_month_deviations(prices, timezone=timezone)
+        if not deviations.empty:
+            deviations = deviations.copy()
+            deviations["date"] = pd.Timestamp(date)
+            deviation_frames.append(deviations)
+        for month, month_devs in deviations.groupby("month", sort=True):
+            records = month_devs.to_dict("records")
+            for left_pos in range(len(records)):
+                for right_pos in range(left_pos + 1, len(records)):
+                    left = records[left_pos]
+                    right = records[right_pos]
+                    same_month_value = abs(float(left["deviation"]) - float(right["deviation"]))
+                    types = {str(left["parent_type"]), str(right["parent_type"])}
+                    if "residual" in types and "calendar" in types:
+                        same_snapshot_rows.extend(
+                            _observation_rows(
+                                date=date,
+                                gate_id="residual_vs_implied_comparable_block",
+                                metric=_COMPARABLE_BLOCK_METRIC,
+                                month=int(month),
+                                metric_value=same_month_value,
+                            )
+                        )
+    rows = _cross_snapshot_same_month_observations(deviation_frames)
+    rows.extend(same_snapshot_rows)
+    return pd.DataFrame(rows, columns=["date", "gate_id", "metric", "delivery_bucket", "metric_value"])
+
+
+def _cross_snapshot_same_month_observations(deviation_frames: list[pd.DataFrame]) -> list[dict[str, object]]:
+    if not deviation_frames:
+        return []
+    deviations = pd.concat(deviation_frames, ignore_index=True)
+    rows: list[dict[str, object]] = []
+    for month, month_devs in deviations.groupby("month", sort=True):
+        records = month_devs[["date", "deviation"]].to_dict("records")
+        for left_pos in range(len(records)):
+            for right_pos in range(left_pos + 1, len(records)):
+                left = records[left_pos]
+                right = records[right_pos]
+                metric_value = abs(float(left["deviation"]) - float(right["deviation"]))
+                rows.extend(
+                    _observation_rows(
+                        date=max(pd.Timestamp(left["date"]), pd.Timestamp(right["date"])),
+                        gate_id="same_month_rank_consistency",
+                        metric=_SAME_MONTH_METRIC,
+                        month=int(month),
+                        metric_value=metric_value,
+                    )
+                )
+    return rows
+
+
+def _historical_month_deviations(prices: dict[str, float], *, timezone: str) -> pd.DataFrame:
+    rows: list[dict[str, object]] = []
+    for year in _historical_years(prices):
+        for month in range(1, 13):
+            month_key = f"{int(year)}-{month:02d}"
+            if month_key not in prices:
+                continue
+            parent = _historical_parent_value_for_threshold(
+                prices,
+                year=int(year),
+                month=month,
+                timezone=timezone,
+            )
+            if parent is None:
+                continue
+            rows.append(
+                {
+                    "year": int(year),
+                    "month": int(month),
+                    "parent_type": str(parent["type"]),
+                    "parent_product": str(parent["product"]),
+                    "deviation": float(prices[month_key]) - float(parent["target"]),
+                }
+            )
+    return pd.DataFrame(
+        rows,
+        columns=["year", "month", "parent_type", "parent_product", "deviation"],
+    )
+
+
+def _observation_rows(
+    *,
+    date: pd.Timestamp,
+    gate_id: str,
+    metric: str,
+    month: int,
+    metric_value: float,
+) -> list[dict[str, object]]:
+    if not np.isfinite(float(metric_value)):
+        return []
+    return [
+        {
+            "date": pd.Timestamp(date),
+            "gate_id": gate_id,
+            "metric": metric,
+            "delivery_bucket": "all",
+            "metric_value": abs(float(metric_value)),
+        },
+        {
+            "date": pd.Timestamp(date),
+            "gate_id": gate_id,
+            "metric": metric,
+            "delivery_bucket": f"month_{int(month):02d}",
+            "metric_value": abs(float(metric_value)),
+        },
+    ]
+
+
+def _threshold_row(
+    values: pd.Series,
+    *,
+    dates: pd.Series,
+    gate_id: str,
+    metric: str,
+    market: str,
+    delivery_bucket: str,
+    lookback_start: str,
+    lookback_end: str,
+    min_required_n: int,
+    regime_filter: str,
+) -> dict[str, object]:
+    clean = pd.to_numeric(values, errors="coerce").dropna().astype(float)
+    n_snapshots = int(pd.to_datetime(dates).dropna().nunique()) if not dates.empty else 0
+    if n_snapshots >= int(min_required_n) and not clean.empty:
+        status = "PASS"
+        p50 = float(clean.quantile(0.50))
+        p90 = float(clean.quantile(0.90))
+        p975 = float(clean.quantile(0.975))
+        max_observed = float(clean.max())
+    else:
+        status = "UNSUPPORTED"
+        p50 = np.nan
+        p90 = np.nan
+        p975 = np.nan
+        max_observed = np.nan
+    return {
+        "gate_id": gate_id,
+        "metric": metric,
+        "market": market,
+        "delivery_bucket": delivery_bucket,
+        "lookback_start": lookback_start,
+        "lookback_end": lookback_end,
+        "n_snapshots": n_snapshots,
+        "min_required_n": int(min_required_n),
+        "p50": p50,
+        "p90": p90,
+        "p975": p975,
+        "max_observed": max_observed,
+        "regime_filter": regime_filter,
+        "status": status,
+    }
+
+
+def _threshold_regime_filter(delivery_bucket: str) -> str:
+    if delivery_bucket == "all":
+        return "monthly_forward_shape_all_months"
+    return f"monthly_forward_shape_{delivery_bucket}"
+
+
+def _historical_years(prices: dict[str, float]) -> list[int]:
+    years: set[int] = set()
+    for product in prices:
+        text = str(product)
+        if len(text) >= 4 and text[:4].isdigit():
+            years.add(int(text[:4]))
+    return sorted(years)
+
+
+def _historical_parent_value_for_threshold(
+    prices: dict[str, float],
+    *,
+    year: int,
+    month: int,
+    timezone: str,
+) -> dict[str, object] | None:
+    quarter = ((int(month) - 1) // 3) + 1
+    quarter_key = f"{int(year)}-Q{quarter}"
+    cal_key = str(int(year))
+    if quarter_key in prices:
+        return {"type": "quarter", "product": quarter_key, "target": float(prices[quarter_key])}
+    if int(month) >= 4 and cal_key in prices and f"{int(year)}-Q1" in prices:
+        target = _historical_apr_dec_residual_target(
+            year=int(year),
+            cal_price=float(prices[cal_key]),
+            q1_price=float(prices[f"{int(year)}-Q1"]),
+            timezone=timezone,
+        )
+        return {"type": "residual", "product": f"{int(year)}-RESIDUAL", "target": target}
+    if cal_key in prices:
+        return {"type": "calendar", "product": cal_key, "target": float(prices[cal_key])}
+    return None
+
+
+def _historical_apr_dec_residual_target(
+    *,
+    year: int,
+    cal_price: float,
+    q1_price: float,
+    timezone: str,
+) -> float:
+    months = pd.period_range(f"{int(year)}-01", f"{int(year)}-12", freq="M")
+    hours = month_delivery_hours(months, timezone=timezone)
+    q1 = pd.period_range(f"{int(year)}-01", f"{int(year)}-03", freq="M")
+    q1_hours = float(hours.loc[q1].sum())
+    cal_hours = float(hours.sum())
+    residual_hours = cal_hours - q1_hours
+    return float((float(cal_price) * cal_hours - float(q1_price) * q1_hours) / residual_hours)
 
 
 def _neighbor_level_leakage_row(

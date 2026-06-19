@@ -8,6 +8,12 @@ default.
 
 ## Gates Delivered
 
+- `historical_thresholds.csv` builder
+  - Added `build_monthly_curve_historical_thresholds(...)` and
+    `scripts/build_monthly_curve_historical_thresholds.py`.
+  - Uses only EEX history rows point-in-time at or before `run_timestamp`.
+  - Emits Phase F threshold schema rows with `PASS` only when
+    `n_snapshots >= min_required_n`; otherwise `UNSUPPORTED`.
 - `hard_monthly_curve_repricing`
   - Uses active monthly constraint residuals.
   - `PASS <= 1e-8`, otherwise `CRITICAL`.
@@ -48,6 +54,8 @@ pytest tests/test_monthly_forward_curve_audit.py tests/test_monthly_forward_curv
 python -m compileall pfc_shaping/calibration/monthly_curve_audit.py scripts/run_monthly_curve_sparse_year_proof.py
 python scripts/run_monthly_curve_sparse_year_proof.py --forwards data/eex_forwards_history.parquet --output-dir output/monthly_curve_sparse_year_proof --no-plot
 $files = Get-ChildItem tests -Filter 'test_monthly_forward_curve_*.py' | ForEach-Object { $_.FullName }; pytest @files tests/test_monthly_curve_lambda_calibration.py tests/test_lt_ct_imports.py -q
+python scripts/build_monthly_curve_historical_thresholds.py --forwards data/eex_forwards_history.parquet --output output/monthly_curve_calibration/historical_thresholds.csv --run-timestamp 2026-06-17 --lookback-years 6 --min-required-n 24
+python scripts/run_monthly_curve_sparse_year_proof.py --forwards data/eex_forwards_history.parquet --output-dir output/monthly_curve_sparse_year_proof --historical-thresholds output/monthly_curve_calibration/historical_thresholds.csv --no-plot
 ```
 
 Results:
@@ -55,6 +63,13 @@ Results:
 - Monthly audit unit tests: `6 passed`
 - Audit/solver/lambda targeted tests: `28 passed`
 - Monthly family plus LT/CT import guard: `76 passed, 1 skipped`
+- After threshold-builder patch:
+  - Monthly audit unit tests: `9 passed`
+  - Monthly family plus LT/CT import guard: `79 passed, 1 skipped`
+- Historical threshold generation:
+  - `rows=26`
+  - `same_month_rank_consistency`: `13 PASS`
+  - `residual_vs_implied_comparable_block`: `13 UNSUPPORTED`
 - Sparse proof:
   - `max_abs_constraint_residual=2.132e-13`
   - `neighbor_level_leakage_max_abs=1.421e-13`
@@ -63,15 +78,27 @@ Results:
   - `history_status=PARTIAL_HISTORY_FORWARD`
   - `structural_status=UNSUPPORTED`
   - `fused_status=PARTIAL_MONTHLY_PANEL`
+- Sparse proof with historical thresholds:
+  - `max_abs_constraint_residual=2.132e-13`
+  - `neighbor_level_leakage_max_abs=1.421e-13`
+  - `gate_summary={'PASS': 21, 'UNSUPPORTED': 10}`
+  - `same_month_rank_consistency`: `12 PASS`
+  - `residual_vs_implied_comparable_block`: `9 UNSUPPORTED`
 
 The `UNSUPPORTED` sparse-proof shape gates are intentional at this stage:
 historical P90/P97.5 threshold artifacts are not yet calibrated for promotion.
 The gates fail closed instead of reporting `PASS` without sufficient evidence.
 
+After adding threshold generation, the same-month rank gate is active on the
+current local history. The residual-vs-calendar comparable-block gate remains
+`UNSUPPORTED` because the local CH history does not contain enough monthly
+truth for residual Apr-Dec versus full-calendar comparisons.
+
 ## Remaining Limits
 
-- Historical threshold generation and `historical_thresholds.csv` production
-  are still missing.
+- Historical threshold generation now exists, but residual/calendar thresholds
+  remain unsupported on the local parquet due to insufficient observable
+  monthly market evidence.
 - The same-month gate currently uses absolute comparable-parent shape delta
   against calibrated thresholds. Full conditional rank/z-score logic remains a
   later Phase F extension.
