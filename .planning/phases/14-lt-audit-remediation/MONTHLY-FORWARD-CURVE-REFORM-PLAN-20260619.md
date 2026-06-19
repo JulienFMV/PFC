@@ -15,6 +15,8 @@ This plan is intentionally conservative:
 - no neighbor absolute level leakage;
 - no promotion of local-test post-processors into production as-is;
 - no "score-only" approval without visual and quantitative audit for 2028-2030.
+- no assumption that far-horizon monthly forward quotes exist when the history
+  parquet shows they do not.
 
 ## 1. Problem Statement
 
@@ -81,6 +83,42 @@ Relevant conceptual anchors:
 - Benth/Koekebakker/Ollmar style maximum smoothness from average-based contracts: solve a constrained curve problem rather than fitting isolated delivery buckets.
 - Hourly price forward curve literature such as Kiesel/Paraschiv/Saetheroe: seasonality and granularity are model objects, not residual plotting artifacts.
 
+## 2.1 Data Coverage Reality Check
+
+The latest local `data/eex_forwards_history.parquet` has dense calendar and
+quarter quotes for long horizons, but almost no far-horizon monthly quotes.
+Before implementation, reproduce and persist a coverage report:
+
+```text
+output/monthly_curve_calibration/monthly_quote_coverage_by_horizon.csv
+```
+
+Observed BASE monthly quote counts in the local parquet (`1569` snapshots,
+2020-05-04 to 2026-06-17):
+
+| market | h+0 | h+1 | h+2 | h+3+ |
+|---|---:|---:|---:|---:|
+| CH | 6343 | 1097 | 0 | 0 |
+| DE | 9830 | 7257 | 637 | 0 |
+| FR | 673 | 120 | 0 | 0 |
+| AT | 609 | 120 | 0 | 0 |
+| IT | 502 | 20 | 0 | 0 |
+
+Implications for v1:
+
+- CH far-horizon month-vs-parent forward history is unavailable at `h+2+`;
+- a robust four-market monthly panel is not available at `h+2+`; in practice,
+  DE is the only market with meaningful far-horizon monthly quotes, and even
+  DE is partial by delivery year;
+- lambda calibration trained only on `h+0/h+1` monthly-rich data has a
+  train/deploy mismatch for the sparse `h+2+` years that triggered the defect;
+- for far horizons, maximum smoothness under hard CH constraints plus
+  reliability-weighted DE shape and CH structural/climatological seasonality is
+  the core model, not a fallback.
+
+This does not weaken the plan. It prevents over-engineering a panel/history
+prior that the data cannot support.
+
 ## 3. Target Architecture
 
 ### 3.1 New Monthly Layer
@@ -123,8 +161,8 @@ class MonthlyCurveConfig:
     lambda_prior: float
     lambda_smooth_month: float
     lambda_smooth_yoy: float
-    lambda_panel_shape: float
-    lambda_history_shape: float
+    lambda_shape: float
+    neighbor_shrinkage: float
     robust_panel_quantile: float
     min_history_snapshots: int
     max_prior_residual_eur_mwh: float | None
@@ -371,6 +409,30 @@ min_x  0.5 * [
 subject to A x = q
 ```
 
+v1 active objective must be identifiable under sparse far-horizon data. Use the
+full expression above as the general form, but enable only a slim core unless
+coverage diagnostics justify more terms:
+
+```text
+min_x  0.5 * [
+    lambda_smooth_month * ||D2_month x||^2
+  + lambda_smooth_yoy   * ||D_yoy shape(x)||^2
+  + lambda_shape        * ||W_shape (shape(x) - shape_fused)||^2
+]
+subject to A x = q
+```
+
+where `shape_fused` is one reliability-weighted shape prior combining available
+DE forward shape, CH near-tenor forward climatology and CH structural/spot
+climatology in zero-mean parent-block space. The level prior term is a
+regularization/ridge or parent-flat feasible baseline only; it must not become
+a second shape prior that double-counts `shape_fused`.
+
+The separate `lambda_panel_shape` and `lambda_history_shape` terms in the
+general expression are reserved for later sensitivity runs. They are not v1
+production defaults unless coverage diagnostics prove that both sources are
+independently identifiable at the target horizon.
+
 Definitions:
 
 ```text
@@ -399,9 +461,9 @@ Any `x_prior` source must be recorded in diagnostics with an explicit
 
 If `x_prior` is a feasible projection of CH historical or panel shape priors,
 the solver must avoid double-counting the same evidence. Either use a
-parent-flat CH-only feasible `x_prior` with separate `lambda_panel_shape` and
-`lambda_history_shape` penalties, or set/report evidence-specific lambda terms
-so each prior source enters the objective exactly once.
+parent-flat CH-only feasible `x_prior` with one separate `lambda_shape` penalty
+on `shape_fused`, or set/report evidence-specific lambda terms so each prior
+source enters the objective exactly once.
 
 Smoothness operators:
 
@@ -486,6 +548,22 @@ neighbor_prices + C  =>  same CH monthly solution
 
 for any constant `C` applied to all neighbor prices within a market/curve.
 
+Coverage-aware v1 rule:
+
+- do not build recursive full monthly neighbor curves for markets without
+  monthly evidence at the target horizon;
+- use directly observed neighbor month-vs-quarter/calendar deviations where
+  monthly products exist;
+- use neighbor quarterly/calendar products to guide block-level seasonal mix,
+  not intra-quarter monthly splits, when monthly products are absent;
+- compute a robust multi-market panel only when at least two markets have
+  comparable current monthly or block-shape evidence;
+- if only DE has usable far-horizon monthly evidence, label the prior
+  `DE_SINGLE_MARKET` and shrink it toward CH structural/climatological shape;
+- if no current neighbor monthly evidence exists, the model falls back to
+  maximum smoothness plus CH structural/climatological shape, with explicit
+  `UNSUPPORTED` flags for forward-monthly evidence.
+
 Amplitude rule:
 
 - neighbor markets provide zero-mean shape only;
@@ -508,6 +586,17 @@ Use `data/eex_forwards_history.parquet` to estimate historical distributions of:
 - winter/spring/summer/autumn slope distributions.
 
 History must be computed by snapshot date and delivery product, not from realized spot. Spot can inform hourly shape, but the monthly forward layer should primarily learn from forward-market seasonal structure.
+
+Coverage exception for far horizons:
+
+- CH forward monthly history at `h+2+` is unavailable in the current parquet;
+- near-tenor CH forward month-vs-parent patterns may be used only as
+  climatological shape evidence with an explicit tenor-mismatch penalty;
+- realized CH spot or climate/fundamental seasonality may be used for
+  zero-mean structural monthly shape when forward monthly evidence is
+  unsupported;
+- realized/spot-derived inputs may never set absolute forward levels and must
+  be recentered inside CH parent blocks before entering `shape_fused`.
 
 All historical features must be point-in-time:
 
@@ -541,17 +630,30 @@ Calibration protocol:
    same-snapshot traded prices. Later-observed forward quotes are secondary
    stability diagnostics only and must not drive lambda selection unless
    de-leveled and explicitly justified.
-3. Evaluate a grid or Bayesian search over:
+3. Evaluate a reduced grid or Bayesian search over the active v1 degrees of
+   freedom:
 
 ```text
-lambda_prior
 lambda_smooth_month
 lambda_smooth_yoy
-lambda_panel_shape
-lambda_history_shape
+lambda_shape
 neighbor_shrinkage
 history_lookback
 ```
+
+Do not run an unconstrained seven-dimensional lambda search for v1. Normalize
+penalty terms by historical variance or duration so most penalties are O(1),
+then calibrate only the core trade-off:
+
+```text
+shape confidence vs smoothness
+monthly smoothness vs year-on-year smoothness
+```
+
+The calibration report must explicitly quantify the regime mismatch between
+monthly-rich `h+0/h+1` training examples and sparse `h+2+` deployment years.
+If this mismatch is material, v1 defaults must favor maximum smoothness and
+shrink shape priors rather than overfitting near-tenor monthly quotes.
 
 4. Plot an L-curve / Pareto surface between:
 
@@ -642,6 +744,8 @@ Acceptance:
   desk data;
 - fixtures include expected active constraints and expected residual targets,
   not just source quotes.
+- coverage report reproduces monthly, quarterly and calendar quote availability
+  by market/horizon and drives prior reliability weights.
 
 ### Phase B - Constraint System
 
@@ -676,6 +780,8 @@ Implement:
 ```python
 build_history_shape_prior(...)
 build_neighbor_panel_shape_prior(...)
+build_structural_monthly_shape_prior(...)
+build_fused_shape_prior(...)
 ```
 
 History prior:
@@ -685,12 +791,29 @@ History prior:
 - robust median and dispersion;
 - output reliability weights.
 
+Structural/climatological prior:
+
+- estimate zero-mean CH monthly shape from realized spot, hydro/seasonal
+  climatology, or near-tenor forward history;
+- recenter inside comparable CH parent blocks;
+- apply tenor-mismatch and source-reliability penalties;
+- never affect absolute CH levels.
+
 Panel prior:
 
 - build neighbor monthly curves or implied monthly deviations;
 - recenter to CH comparable parent block;
 - robust aggregation across available markets;
 - output contribution diagnostics per market/month.
+
+Fused shape prior:
+
+- combine panel, CH forward history and CH structural/climatological shape into
+  one `shape_fused` object;
+- reliability weights are functions of quote coverage, horizon, tenor mismatch
+  and source dispersion;
+- `shape_fused` carries status labels such as `PANEL_MULTI_MARKET`,
+  `DE_SINGLE_MARKET`, `STRUCTURAL_ONLY`, or `UNSUPPORTED`.
 
 Acceptance tests:
 
@@ -728,6 +851,29 @@ Acceptance:
 - changing CH calendar quotes moves the monthly solution through constraints,
   not through an external post-processor.
 
+### Phase D1 - Sparse-Year Proof Of Shape
+
+Before the full lambda-calibration and governance package, generate a
+diagnostic 2028-2030 monthly BASE curve from:
+
+```text
+hard CH constraints
+nullspace/KKT solve
+maximum smoothness
+DE_SINGLE_MARKET or STRUCTURAL_ONLY shape_fused prior
+variance-normalized provisional lambdas
+```
+
+Purpose:
+
+- prove that the core formulation removes the visible 2028-2030 monthly defect;
+- verify exact CH EEX repricing, no neighbor level leakage and comparable-block
+  logic;
+- inspect the candidate before investing in full calibration infrastructure.
+
+This proof run is not production approval. If it fails visually or
+quantitatively, fix the model formulation before adding governance scaffolding.
+
 ### Phase D0 - Lambda Calibration
 
 This phase is required before using the monthly solver as a production default.
@@ -762,14 +908,26 @@ otherwise the score mixes curve-construction error with market moves.
 Candidate grid:
 
 ```yaml
-lambda_prior: [0.1, 1.0, 10.0, 100.0]
 lambda_smooth_month: [0.0, 0.1, 1.0, 10.0, 100.0]
 lambda_smooth_yoy: [0.0, 0.1, 1.0, 10.0]
-lambda_panel_shape: [0.0, 0.25, 1.0, 4.0]
-lambda_history_shape: [0.0, 0.25, 1.0, 4.0]
+lambda_shape: [0.0, 0.25, 1.0, 4.0]
 neighbor_shrinkage: [0.25, 0.5, 0.75]
 history_lookback_years: [3, 5, 6]
 ```
+
+Do not run an unconstrained seven-dimensional lambda search for v1. Normalize
+penalty terms by historical variance or duration so most penalties are O(1),
+then calibrate only the core trade-off:
+
+```text
+shape confidence vs smoothness
+monthly smoothness vs year-on-year smoothness
+```
+
+The calibration report must explicitly quantify the regime mismatch between
+monthly-rich `h+0/h+1` training examples and sparse `h+2+` deployment years.
+If this mismatch is material, v1 defaults must favor maximum smoothness and
+shrink shape priors rather than overfitting near-tenor monthly quotes.
 
 Scoring table columns:
 
@@ -821,8 +979,8 @@ forwards:
     lambda_prior: ...
     lambda_smooth_month: ...
     lambda_smooth_yoy: ...
-    lambda_panel_shape: ...
-    lambda_history_shape: ...
+    lambda_shape: ...
+    neighbor_shrinkage: ...
 ```
 
 Integrate in:
@@ -1217,6 +1375,12 @@ Must cover:
 - numerical gate failure does not mutate the curve through a post-solver patch;
 - monthly solver imports no `pfc_shaping.ct.*` and no deprecated
   `pfc_shaping.model.*` path.
+- quote coverage by market/horizon is reproduced and stored;
+- `shape_fused` reliability labels match available evidence
+  (`PANEL_MULTI_MARKET`, `DE_SINGLE_MARKET`, `STRUCTURAL_ONLY`,
+  `UNSUPPORTED`);
+- sparse-year proof run fails if 2028-2030 remains monthly-incoherent despite
+  exact EEX repricing.
 
 ### Integration Tests
 
@@ -1287,7 +1451,10 @@ Patch 1: constraints and tests.
 Patch 2: priors.
 
 - history prior;
-- neighbor panel prior;
+- coverage report and reliability weights;
+- neighbor panel / DE_SINGLE_MARKET prior;
+- structural/climatological CH shape prior;
+- fused `shape_fused` prior;
 - no-level-leakage tests.
 
 Patch 3: solver.
@@ -1297,34 +1464,41 @@ Patch 3: solver.
 - diagnostics;
 - sparse 2028 fixture.
 
-Patch 4: lambda calibration package.
+Patch 4: sparse-year proof candidate.
+
+- diagnostic 2028-2030 monthly curve;
+- exact repricing / no leakage / comparable-block checks;
+- PNGs linked to numerical rows;
+- no production promotion.
+
+Patch 5: lambda calibration package.
 
 - rolling-origin backtest harness;
 - withheld-product scoring;
 - L-curve / Pareto report;
 - persisted selected defaults.
 
-Patch 5: integration behind flag.
+Patch 6: integration behind flag.
 
 - production path;
 - local export path;
 - report tables.
 - run manifest.
 
-Patch 6: audits and Power BI sidecars.
+Patch 7: audits and Power BI sidecars.
 
 - comparable-block gates;
 - historical quantile thresholds;
 - summary metrics.
 - same-month cross-year spread diagnostics.
 
-Patch 7: frozen governance fixtures.
+Patch 8: frozen governance fixtures.
 
 - compact known-bad monthly curve preserving the 2028-2030 failure;
 - compact known-coherent sparse curve;
 - tests proving the bad fixture fails and coherent fixture passes.
 
-Patch 8: candidate generation and audit package.
+Patch 9: candidate generation and audit package.
 
 - regenerate PFC;
 - PNGs;
@@ -1339,6 +1513,8 @@ This plan is 10/10 only if external auditors agree that:
 - it is literature-aligned;
 - it preserves CH EEX as hard constraints;
 - it uses neighbors in shape space only;
+- it is calibrated to actual quote coverage by market/horizon instead of
+  assuming far-horizon monthly quotes exist;
 - it unifies production and local export paths;
 - it has explicit tests for the observed failure mode;
 - it has a safe migration path with flag OFF protection;
