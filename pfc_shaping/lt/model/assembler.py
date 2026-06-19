@@ -255,6 +255,9 @@ class PFCAssembler:
         electrification_scenario_path: str | Path | None = None,
         require_electrification_scenarios: bool = False,
         require_production_electrification_scenarios: bool = False,
+        monthly_level_authority: str = "legacy",
+        skip_legacy_level_cascade: bool = False,
+        skip_legacy_base_smoothing: bool = False,
     ) -> None:
         self.sh = shape_hourly
         self.si = shape_intraday
@@ -304,6 +307,9 @@ class PFCAssembler:
         self.require_production_electrification_scenarios: bool = bool(
             require_production_electrification_scenarios
         )
+        self.monthly_level_authority = str(monthly_level_authority)
+        self.skip_legacy_level_cascade = bool(skip_legacy_level_cascade)
+        self.skip_legacy_base_smoothing = bool(skip_legacy_base_smoothing)
 
         # B1/B4 Approach B — forward the four floor kwargs to sub-components.
         # WR-03 (Phase 5 code review): the previous one-way mutation
@@ -473,9 +479,15 @@ class PFCAssembler:
         logger.info("Assemblage PFC 15min : %s Ã¢â€ â€™ %s", ts_start.date(), ts_end.date())
 
         # Ã¢â€â‚¬Ã¢â€â‚¬ 0. Cascading des forwards manquants Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
-        if self.cascader is not None:
+        if self.cascader is not None and not self.skip_legacy_level_cascade:
             base_prices = self.cascader.cascade(base_prices)
             logger.info("Cascading terminÃƒÂ© : %d produits forwards", len(base_prices))
+
+        elif self.skip_legacy_level_cascade:
+            logger.info(
+                "Legacy forward cascade skipped; monthly_level_authority=%s",
+                self.monthly_level_authority,
+            )
 
         # Index complet 15min UTC
         idx = pd.date_range(ts_start, ts_end, freq="15min", inclusive="left", tz="UTC")
@@ -605,11 +617,17 @@ class PFCAssembler:
         # Phase 5 B1/B4 Approach B: enforce_positivity forwarded from PFCAssembler
         # kwarg to smooth_base_prices (propagates to _enforce_mean_constraints
         # per Plan 05-01 RESEARCH Pitfall 1 — TWO floors, both gated by the same flag).
-        try:
-            from pfc_shaping.lt.model.msfc_spline import smooth_base_prices
-            B = smooth_base_prices(idx, base_prices, B, enforce_positivity=self.enforce_positivity)
-        except Exception as exc:
-            logger.warning("MSFC smoothing failed, using flat B: %s", exc)
+        if self.skip_legacy_base_smoothing:
+            logger.info(
+                "Legacy BASE MSFC smoothing skipped; monthly_level_authority=%s",
+                self.monthly_level_authority,
+            )
+        else:
+            try:
+                from pfc_shaping.lt.model.msfc_spline import smooth_base_prices
+                B = smooth_base_prices(idx, base_prices, B, enforce_positivity=self.enforce_positivity)
+            except Exception as exc:
+                logger.warning("MSFC smoothing failed, using flat B: %s", exc)
 
         if getattr(self, "enable_intraday_amplitude_shrinkage", False):
             from pfc_shaping.lt.model.intraday_amplitude import (
@@ -863,19 +881,29 @@ class PFCAssembler:
 
         contracts = []
         quoted_keys = set(quoted_keys or set())
+        if self.skip_legacy_level_cascade and quoted_keys:
+            return self._build_monthly_solver_contracts(
+                idx=idx,
+                base_prices=base_prices,
+                quoted_keys=quoted_keys,
+                futures_contract_cls=futures_contract_cls,
+                period_boundaries_fn=period_boundaries_fn,
+                country=country,
+                local_tz=local_tz,
+            )
         for year, month in month_periods:
             key_m = f"{year}-{month:02d}"
             key_q = f"{year}-Q{(month - 1) // 3 + 1}"
             key_y = str(year)
 
             # ── Find base price ────────────────────────────────────────
-            source_key = None
-            if key_m in base_prices:
-                source_key = key_m
-            elif key_q in base_prices:
-                source_key = key_q
-            elif key_y in base_prices:
-                source_key = key_y
+            source_key = self._select_base_contract_key(
+                key_m=key_m,
+                key_q=key_q,
+                key_y=key_y,
+                base_prices=base_prices,
+                quoted_keys=quoted_keys,
+            )
 
             if source_key is None:
                 continue
@@ -957,6 +985,103 @@ class PFCAssembler:
             )
 
         return contracts
+
+    def _build_monthly_solver_contracts(
+        self,
+        *,
+        idx: pd.DatetimeIndex,
+        base_prices: dict,
+        quoted_keys: set[str],
+        futures_contract_cls,
+        period_boundaries_fn,
+        country: str,
+        local_tz: str,
+    ) -> list:
+        from pfc_shaping.calibration.monthly_forward_curve import (
+            MarketQuote,
+            build_monthly_constraint_system,
+            product_periods,
+        )
+
+        quote_products = []
+        delivery_months: set[pd.Period] = set()
+        for key in sorted(quoted_keys):
+            if key not in base_prices or str(key).endswith("-Peak") or str(key).endswith("-Offpeak"):
+                continue
+            try:
+                months = product_periods(str(key))
+            except ValueError:
+                continue
+            delivery_months.update(months.tolist())
+            quote_products.append(
+                MarketQuote(
+                    market=country,
+                    product=str(key),
+                    load_type="BASE",
+                    price=float(base_prices[key]),
+                    source="assembler_monthly_solver_quoted_key",
+                )
+            )
+        if not quote_products or not delivery_months:
+            return []
+
+        constraints = build_monthly_constraint_system(
+            pd.PeriodIndex(sorted(delivery_months), freq="M"),
+            tuple(quote_products),
+            timezone=local_tz,
+            market=country,
+            load_type="BASE",
+        )
+        contracts = []
+        for _, row in constraints.rows.iterrows():
+            product = str(row["product"])
+            bucket_months = constraints.month_buckets[constraints.month_buckets.eq(product)].index
+            if len(bucket_months) == 0:
+                continue
+            first = bucket_months.min()
+            last = bucket_months.max()
+            start_utc, _ = period_boundaries_fn(int(first.year), int(first.month), int(first.month), local_tz)
+            _, end_utc = period_boundaries_fn(int(last.year), int(last.month), int(last.month), local_tz)
+            if end_utc <= idx[0] or start_utc >= idx[-1]:
+                continue
+            contracts.append(
+                futures_contract_cls(
+                    name=f"{product}<monthly_solver:{row['parent_product']}>",
+                    price=float(row["target"]),
+                    start=start_utc,
+                    end=end_utc,
+                    product_type="Base",
+                    is_hard=True,
+                    penalty_weight=1.0,
+                )
+            )
+        logger.info("Monthly solver final calibration contracts: %d BASE rows", len(contracts))
+        return contracts
+
+    @staticmethod
+    def _select_base_contract_key(
+        *,
+        key_m: str,
+        key_q: str,
+        key_y: str,
+        base_prices: dict,
+        quoted_keys: set[str],
+    ) -> str | None:
+        """Select the BASE key used by final calibration.
+
+        Monthly solver mode supplies synthetic monthly BASE keys for the level
+        input. Those keys must not become final hard traded constraints unless
+        they also appear in ``quoted_keys``.
+        """
+
+        candidates = [key_m, key_q, key_y]
+        for key in candidates:
+            if key in base_prices and key in quoted_keys:
+                return key
+        for key in candidates:
+            if key in base_prices:
+                return key
+        return None
 
     # ---------------------------------------------------------------------------
     # Calcul des composantes

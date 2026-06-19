@@ -2297,6 +2297,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Multiplier for the final local/test seam nullspace smoothing correction.",
     )
     parser.add_argument("--skip-build", action="store_true")
+    parser.add_argument(
+        "--enable-monthly-forward-curve-solver",
+        action="store_true",
+        help="Build the local-test PFC with the governed monthly BASE curve solver as level authority.",
+    )
     parser.add_argument("--fan-chart-output", default=None)
     parser.add_argument(
         "--skip-powerbi-refresh",
@@ -2314,6 +2319,25 @@ def main(argv: list[str] | None = None) -> int:
     features_output = Path(f"data/hpfc_scenario_features_{args.prefix}.parquet")
     summary_output = Path(f".planning/phases/13-lt-electrification-scenario-shape/{args.prefix.upper()}-BUILD.md")
     governance_report = Path(f".planning/phases/13-lt-electrification-scenario-shape/{args.prefix.upper()}-GOVERNANCE.md")
+
+    if args.enable_monthly_forward_curve_solver:
+        if args.skip_build:
+            raise ValueError("--enable-monthly-forward-curve-solver requires building a fresh fan chart")
+        incompatible = {
+            "--enable-quote-aware-monthly-smoothing": args.enable_quote_aware_monthly_smoothing,
+            "--enable-neighbor-monthly-spread-anchor": args.enable_neighbor_monthly_spread_anchor,
+            "--enable-neighbor-annual-residual-shape-anchor": args.enable_neighbor_annual_residual_shape_anchor,
+            "--enable-final-monthly-path-smoothing": args.enable_final_monthly_path_smoothing,
+            "--enable-final-quant-annual-smoothness": args.enable_final_quant_annual_smoothness,
+            "--enable-cross-year-seasonal-shape-optimizer": args.enable_cross_year_seasonal_shape_optimizer,
+            "--enable-final-seam-nullspace-smoothing": args.enable_final_seam_nullspace_smoothing,
+        }
+        enabled = [flag for flag, active in incompatible.items() if active]
+        if enabled:
+            raise ValueError(
+                "--enable-monthly-forward-curve-solver is mutually exclusive with "
+                f"mutating local-test post-processors: {', '.join(enabled)}"
+            )
 
     if not args.skip_build:
         build_local_test_ch_pfc(
@@ -2336,6 +2360,11 @@ def main(argv: list[str] | None = None) -> int:
                 args.forwards,
                 "--governance-report",
                 str(governance_report),
+                *(
+                    ["--enable-monthly-forward-curve-solver"]
+                    if args.enable_monthly_forward_curve_solver
+                    else []
+                ),
                 *(
                     ["--disable-cascade-trend-for-annual-only"]
                     if args.disable_cascade_trend_for_annual_only

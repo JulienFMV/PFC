@@ -29,6 +29,7 @@ from pfc_shaping.lt.model.assembler import PFCAssembler
 from pfc_shaping.lt.model.electrification_shape import structural_fan_chart
 from pfc_shaping.lt.model.shape_hourly import ShapeHourly
 from pfc_shaping.lt.model.shape_intraday import ShapeIntraday
+from pfc_shaping.pipeline.monthly_curve_authority import MonthlyLevelAuthority
 
 from scripts.build_first_ep2050_pfc import _latest_forwards, _load_epex_hourly, _validate_pfc
 
@@ -244,21 +245,29 @@ def _build_one_curve(
     si,
     cascader,
     calibrator,
+    monthly_authority: MonthlyLevelAuthority | None = None,
 ) -> pd.DataFrame:
+    assembler_base_prices = (
+        monthly_authority.assembler_base_prices if monthly_authority is not None else base_prices
+    )
+    quoted_keys = monthly_authority.quoted_keys if monthly_authority is not None else set(base_prices)
     assembler = PFCAssembler(
         shape_hourly=sh,
         shape_intraday=si,
-        cascader=cascader,
+        cascader=None if monthly_authority is not None else cascader,
         calibrator=calibrator,
         enable_electrification_shape=True,
         electrification_scenario=scenario,
         electrification_scenario_path=scenario_path,
         require_electrification_scenarios=True,
         enable_intraday_amplitude_shrinkage=True,
+        monthly_level_authority="solver" if monthly_authority is not None else "legacy",
+        skip_legacy_level_cascade=monthly_authority is not None,
+        skip_legacy_base_smoothing=monthly_authority is not None,
     )
     pfc = assembler.build(
-        base_prices=base_prices,
-        quoted_keys=set(base_prices),
+        base_prices=assembler_base_prices,
+        quoted_keys=quoted_keys,
         start_date=start_date,
         horizon_days=horizon_days,
         reference_date=reference_date,

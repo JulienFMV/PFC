@@ -82,6 +82,29 @@ forwards:
   eex_as_of_date: null  # null => dernière date non nulle disponible
 
 # ── Paramètres du modèle ────────────────────────────────────
+  monthly_curve_solver:
+    enabled: false
+    target_markets: ["CH"]
+    markets: ["DE", "FR", "AT", "IT"]
+    monthly_level_authority: "solver"
+    skip_legacy_level_cascade: true
+    skip_legacy_base_smoothing: true
+    eex_history_path: "data/eex_forwards_history.parquet"
+    lambda_prior: 0.000001
+    lambda_smooth_month: 1.0
+    lambda_smooth_yoy: 0.25
+    lambda_shape: 1.0
+    neighbor_shrinkage: 0.5
+    min_history_snapshots: 24
+    history_lookback_years: 6
+    min_structural_snapshots: 24
+    allow_template_structural_fallback: false
+    panel_weight: 1.0
+    history_weight: 0.5
+    structural_weight: 0.25
+    constraint_tolerance: 0.000000001
+    stationarity_tolerance: 0.0000001
+
 model:
   # Lookback historique pour la calibration (mois)
   lookback_months: 12

@@ -331,6 +331,13 @@ def run_long_term_phase(
     logger.info("=" * 70)
     from pfc_shaping.data.forward_proxy import load_base_prices as load_fwd_prices
     from pfc_shaping.calibration.cascading import ContractCascader
+    from pfc_shaping.pipeline.monthly_curve_authority import (
+        delivery_months_from_prices,
+        latest_base_prices_by_market,
+        monthly_solver_enabled,
+        monthly_solver_settings,
+        solve_monthly_level_authority,
+    )
 
     base_prices_ch, fwd_source_ch = load_fwd_prices(
         inputs.epex_ch,
@@ -350,6 +357,43 @@ def run_long_term_phase(
     cascader_ch.fit_peak_spreads(inputs.epex_ch)
     cascaded_prices_ch = cascader_ch.cascade(base_prices_ch)
     cascaded_prices_ch = cascader_ch.synthesize_peak_prices(cascaded_prices_ch)
+    quoted_keys_ch = set(base_prices_ch.keys())
+    cascader_for_ch_branch: object | None = cascader_ch
+
+    monthly_authority_ch = None
+    if monthly_solver_enabled(inputs.config, market="CH"):
+        settings = monthly_solver_settings(inputs.config)
+        history_path = settings.get("eex_history_path")
+        history = pd.DataFrame()
+        neighbor_prices: dict[str, dict[str, float]] = {}
+        if history_path and os.path.exists(str(history_path)):
+            history = pd.read_parquet(str(history_path))
+            history["date"] = pd.to_datetime(history["date"]).dt.tz_localize(None).dt.normalize()
+            for neighbor in settings.get("markets", ("DE", "FR", "AT", "IT")):
+                try:
+                    _, prices = latest_base_prices_by_market(history, market=str(neighbor).upper())
+                except ValueError:
+                    continue
+                neighbor_prices[str(neighbor).upper()] = prices
+        monthly_authority_ch = solve_monthly_level_authority(
+            market="CH",
+            delivery_months=delivery_months_from_prices(base_prices_ch),
+            own_base_prices=base_prices_ch,
+            all_market_base_prices=neighbor_prices,
+            eex_history=history,
+            run_timestamp=pd.Timestamp.utcnow().tz_localize(None).normalize(),
+            settings=settings,
+            timezone="Europe/Zurich",
+            original_forward_prices=base_prices_ch,
+        )
+        cascaded_prices_ch = monthly_authority_ch.assembler_base_prices
+        quoted_keys_ch = monthly_authority_ch.quoted_keys
+        cascader_for_ch_branch = None
+        logger.info(
+            "Monthly curve solver enabled for CH: monthly_solution_hash=%s active_constraints_hash=%s",
+            monthly_authority_ch.monthly_solution_hash,
+            monthly_authority_ch.active_constraints_hash,
+        )
 
     logger.info("  Input keys: %d", len(base_prices_ch))
     logger.info("  Cascaded keys: %d", len(cascaded_prices_ch))
@@ -472,7 +516,11 @@ def run_long_term_phase(
         pre_loaded_base_prices=base_prices_ch,
         pre_loaded_fwd_source=fwd_source_ch,
         pre_loaded_cascaded_prices=cascaded_prices_ch,
-        pre_loaded_cascader=cascader_ch,
+        pre_loaded_cascader=cascader_for_ch_branch,
+        pre_loaded_quoted_keys=quoted_keys_ch,
+        monthly_level_authority="solver" if monthly_authority_ch is not None else "legacy",
+        skip_legacy_level_cascade=monthly_authority_ch is not None,
+        skip_legacy_base_smoothing=monthly_authority_ch is not None,
     )
 
     german_spec = MarketSpec(
@@ -579,6 +627,10 @@ def _build_long_term_branch(
     pre_loaded_fwd_source: str | None = None,
     pre_loaded_cascaded_prices: dict | None = None,
     pre_loaded_cascader: object | None = None,
+    pre_loaded_quoted_keys: set[str] | None = None,
+    monthly_level_authority: str = "legacy",
+    skip_legacy_level_cascade: bool = False,
+    skip_legacy_base_smoothing: bool = False,
 ) -> MarketBranchArtifacts:
     """Build one market's PFC from a MarketSpec.
 
@@ -644,6 +696,9 @@ def _build_long_term_branch(
     if pre_loaded_cascader is not None and pre_loaded_cascaded_prices is not None:
         cascader = pre_loaded_cascader
         cascaded_prices = pre_loaded_cascaded_prices
+    elif skip_legacy_level_cascade and pre_loaded_cascaded_prices is not None:
+        cascader = None
+        cascaded_prices = pre_loaded_cascaded_prices
     else:
         # Phase 5 D-A2-1 default (negative-ready): no explicit enforce_* kwargs.
         # Legacy rollback per D-A2-3: pass allow_negative_peak=False at ContractCascader construction.
@@ -667,10 +722,13 @@ def _build_long_term_branch(
         cascader=cascader,
         calibrator=shared.calibrator,
         peak_source_policy=peak_source_policy,
+        monthly_level_authority=monthly_level_authority,
+        skip_legacy_level_cascade=skip_legacy_level_cascade,
+        skip_legacy_base_smoothing=skip_legacy_base_smoothing,
     )
     build_kwargs = dict(
         base_prices=cascaded_prices,
-        quoted_keys=set(base_prices.keys()),
+        quoted_keys=set(pre_loaded_quoted_keys) if pre_loaded_quoted_keys is not None else set(base_prices.keys()),
         start_date=shared.start_date,
         horizon_days=shared.horizon_days,
         entso_forecast=shared.entso_forecast,

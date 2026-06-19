@@ -8,6 +8,7 @@ structural fan chart. Production approval remains a separate human-signoff gate.
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
 import numpy as np
@@ -31,6 +32,11 @@ from scripts.build_ep2050_multi_scenario_pfc import (
 )
 from scripts.build_first_ep2050_pfc import _latest_forwards, _load_epex_hourly
 from scripts.validate_scenario_governance import validate_governance, write_report
+from pfc_shaping.pipeline.monthly_curve_authority import (
+    delivery_months_for_window,
+    monthly_solver_settings,
+    solve_monthly_level_authority_from_history,
+)
 
 DEFAULT_INVENTORY = Path("data/electrification_scenarios_prod_candidate_neutralized_2030.parquet")
 DEFAULT_MANIFEST = Path(".planning/phases/13-lt-electrification-scenario-shape/SCENARIO-GOVERNANCE-LOCAL-TEST-MANIFEST.yaml")
@@ -213,6 +219,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--fan-chart-output", default="output/local_test_ch_pfc_2030_structural_fan_chart.parquet")
     parser.add_argument("--summary", default=str(DEFAULT_SUMMARY))
     parser.add_argument(
+        "--enable-monthly-forward-curve-solver",
+        action="store_true",
+        help="Use the governed monthly BASE curve solver as the LT level authority.",
+    )
+    parser.add_argument(
         "--disable-cascade-trend-for-annual-only",
         action="store_true",
         help=(
@@ -262,6 +273,30 @@ def main(argv: list[str] | None = None) -> int:
     epex = _load_epex_hourly(args.epex_hourly)
     latest, base_prices = _latest_forwards(args.forwards, market=args.market)
     reference_date = pd.Timestamp(latest, tz="UTC")
+    monthly_authority = None
+    if args.enable_monthly_forward_curve_solver:
+        settings = monthly_solver_settings(
+            {
+                "forwards": {
+                    "monthly_curve_solver": {
+                        "enabled": True,
+                        "eex_history_path": args.forwards,
+                    }
+                }
+            }
+        )
+        monthly_authority = solve_monthly_level_authority_from_history(
+            forwards_path=args.forwards,
+            market=args.market,
+            delivery_months=delivery_months_for_window(
+                start_date=args.start_date,
+                horizon_days=args.horizon_days,
+                timezone="Europe/Zurich" if args.market == "CH" else "Europe/Berlin",
+            ),
+            settings=settings,
+            timezone="Europe/Zurich" if args.market == "CH" else "Europe/Berlin",
+            original_forward_prices=base_prices,
+        )
     sh, si, cascader, calibrator = _fit_components(
         epex,
         args.market,
@@ -285,6 +320,7 @@ def main(argv: list[str] | None = None) -> int:
             si=si,
             cascader=cascader,
             calibrator=calibrator,
+            monthly_authority=monthly_authority,
         )
         path = output_dir / f"{args.output_prefix}_{_safe_slug(scenario)}.parquet"
         _write_parquet(pfc, path, index=True)
@@ -294,6 +330,12 @@ def main(argv: list[str] | None = None) -> int:
     fan = _build_fan(pfc_by_scenario, weights)
     fan_path = Path(args.fan_chart_output)
     _write_parquet(fan, fan_path, index=True)
+    if monthly_authority is not None:
+        manifest_path = fan_path.with_suffix(".monthly_curve_manifest.json")
+        manifest_path.write_text(
+            json.dumps(monthly_authority.manifest, indent=2, sort_keys=True, default=str),
+            encoding="utf-8",
+        )
     _write_summary(
         Path(args.summary),
         args=args,
@@ -310,6 +352,8 @@ def main(argv: list[str] | None = None) -> int:
     for scenario, path in pfc_paths.items():
         print(f"[local-test-pfc] {scenario} -> {path}")
     print(f"[local-test-pfc] fan chart -> {fan_path}")
+    if monthly_authority is not None:
+        print(f"[local-test-pfc] monthly curve manifest -> {fan_path.with_suffix('.monthly_curve_manifest.json')}")
     print(f"[local-test-pfc] summary -> {args.summary}")
     print(
         f"[local-test-pfc] weighted_mean={fan['weighted_mean'].mean():.2f} "
