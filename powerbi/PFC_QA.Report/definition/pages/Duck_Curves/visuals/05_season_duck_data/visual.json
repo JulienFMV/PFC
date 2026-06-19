@@ -2,11 +2,11 @@
   "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.10.0/schema.json",
   "name": "season_duck_data",
   "position": {
-    "x": 649.726443768997,
+    "x": 640,
     "y": 469.78723404255322,
     "z": 0,
     "height": 249.96960486322189,
-    "width": 590.39513677811556
+    "width": 633.19148936170211
   },
   "visual": {
     "visualType": "tableEx",

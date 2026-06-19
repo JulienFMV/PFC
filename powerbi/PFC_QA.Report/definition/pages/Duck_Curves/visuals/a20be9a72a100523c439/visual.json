@@ -1,12 +1,12 @@
 {
   "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.10.0/schema.json",
-  "name": "slicer_season",
+  "name": "a20be9a72a100523c439",
   "position": {
-    "x": 210,
-    "y": 20,
-    "z": 0,
-    "height": 80,
-    "width": 170
+    "x": 640,
+    "y": 27.23404255319149,
+    "z": 1,
+    "height": 79.756838905775084,
+    "width": 170.21276595744681
   },
   "visual": {
     "visualType": "slicer",
@@ -19,14 +19,14 @@
                 "Column": {
                   "Expression": {
                     "SourceRef": {
-                      "Entity": "HFC_Hourly"
+                      "Entity": "Duck_Season_Hour"
                     }
                   },
-                  "Property": "season"
+                  "Property": "year"
                 }
               },
-              "queryRef": "HFC_Hourly.season",
-              "nativeQueryRef": "season",
+              "queryRef": "Duck_Season_Hour.year",
+              "nativeQueryRef": "year1",
               "active": true
             }
           ]
@@ -34,19 +34,6 @@
       }
     },
     "objects": {
-      "data": [
-        {
-          "properties": {
-            "mode": {
-              "expr": {
-                "Literal": {
-                  "Value": "'Dropdown'"
-                }
-              }
-            }
-          }
-        }
-      ],
       "general": [
         {
           "properties": {
@@ -55,8 +42,8 @@
                 "Version": 2,
                 "From": [
                   {
-                    "Name": "h",
-                    "Entity": "HFC_Hourly",
+                    "Name": "d",
+                    "Entity": "Duck_Season_Hour",
                     "Type": 0
                   }
                 ],
@@ -69,10 +56,10 @@
                             "Column": {
                               "Expression": {
                                 "SourceRef": {
-                                  "Source": "h"
+                                  "Source": "d"
                                 }
                               },
-                              "Property": "season"
+                              "Property": "year"
                             }
                           }
                         ],
@@ -80,7 +67,7 @@
                           [
                             {
                               "Literal": {
-                                "Value": "'Autumn'"
+                                "Value": "2027L"
                               }
                             }
                           ]
@@ -89,6 +76,19 @@
                     }
                   }
                 ]
+              }
+            }
+          }
+        }
+      ],
+      "data": [
+        {
+          "properties": {
+            "mode": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Dropdown'"
+                }
               }
             }
           }
@@ -109,7 +109,7 @@
             "text": {
               "expr": {
                 "Literal": {
-                  "Value": "'Season'"
+                  "Value": "'Year'"
                 }
               }
             },
@@ -135,18 +135,18 @@
   "filterConfig": {
     "filters": [
       {
-        "name": "811164845c7415aa5302",
+        "name": "937c72d46a040971ddbd",
         "field": {
           "Column": {
             "Expression": {
               "SourceRef": {
-                "Entity": "HFC_Hourly"
+                "Entity": "Duck_Season_Hour"
               }
             },
-            "Property": "season"
+            "Property": "year"
           }
         },
-        "type": "Categorical"
+        "type": "Advanced"
       }
     ]
   }

@@ -9,15 +9,19 @@ table Duck_Month_Hour_Long
 		dataType: int64
 		formatString: 0
 		lineageTag: b0471ab7-3a4f-4c67-967d-0092f408606a
-		summarizeBy: none
+		summarizeBy: sum
 		sourceColumn: year
+
+		annotation SummarizationSetBy = Automatic
 
 	column month
 		dataType: int64
 		formatString: 0
 		lineageTag: 8100fc4e-e95f-4ddb-9243-90a749bbfdf7
-		summarizeBy: none
+		summarizeBy: sum
 		sourceColumn: month
+
+		annotation SummarizationSetBy = Automatic
 
 	column month_code
 		dataType: string
@@ -29,8 +33,10 @@ table Duck_Month_Hour_Long
 		dataType: int64
 		formatString: 0
 		lineageTag: 6f4812a7-8921-46d1-a0ba-ba4234a8c488
-		summarizeBy: none
+		summarizeBy: sum
 		sourceColumn: hour
+
+		annotation SummarizationSetBy = Automatic
 
 	column hour_code
 		dataType: string
@@ -48,8 +54,10 @@ table Duck_Month_Hour_Long
 		dataType: double
 		formatString: 0.00
 		lineageTag: 8c6b6bfd-f72c-4a61-8632-3823153d16d1
-		summarizeBy: none
+		summarizeBy: sum
 		sourceColumn: price_eur_mwh
+
+		annotation SummarizationSetBy = Automatic
 
 	column series_label
 		dataType: string

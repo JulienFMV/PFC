@@ -2,11 +2,11 @@
   "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.10.0/schema.json",
   "name": "season_duck",
   "position": {
-    "x": 650,
-    "y": 115,
+    "x": 640,
+    "y": 114.77203647416414,
     "z": 0,
-    "height": 330,
-    "width": 590
+    "height": 330.69908814589667,
+    "width": 600.12158054711244
   },
   "visual": {
     "visualType": "lineChart",
@@ -105,5 +105,51 @@
         }
       ]
     }
+  },
+  "filterConfig": {
+    "filters": [
+      {
+        "name": "34abb66662017abde232",
+        "field": {
+          "Column": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "Duck_Season_Hour"
+              }
+            },
+            "Property": "hour"
+          }
+        },
+        "type": "Advanced"
+      },
+      {
+        "name": "30de5b00eaca1c86ec59",
+        "field": {
+          "Column": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "Duck_Season_Hour"
+              }
+            },
+            "Property": "season"
+          }
+        },
+        "type": "Categorical"
+      },
+      {
+        "name": "9a56ff7b1315621b6d8e",
+        "field": {
+          "Measure": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "Duck_Season_Hour"
+              }
+            },
+            "Property": "Duck Season Avg Weighted Price"
+          }
+        },
+        "type": "Advanced"
+      }
+    ]
   }
 }

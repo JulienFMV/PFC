@@ -2,11 +2,11 @@
   "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.10.0/schema.json",
   "name": "annual_spreads",
   "position": {
-    "x": 20,
-    "y": 410,
+    "x": 20.286298568507156,
+    "y": 410.30674846625766,
     "z": 0,
-    "height": 260,
-    "width": 620
+    "height": 259.79550102249488,
+    "width": 1219.7955010224948
   },
   "visual": {
     "visualType": "tableEx",

@@ -17,8 +17,10 @@ table Duck_Season_Hour
 		dataType: int64
 		formatString: 0
 		lineageTag: 4324dae9-d510-4c5f-b614-1a4c8f8bd5a9
-		summarizeBy: none
+		summarizeBy: sum
 		sourceColumn: year
+
+		annotation SummarizationSetBy = Automatic
 
 	column season
 		dataType: string
@@ -30,64 +32,82 @@ table Duck_Season_Hour
 		dataType: int64
 		formatString: 0
 		lineageTag: f6e000c2-a6b0-4b33-b2a7-2eeaf8e73da3
-		summarizeBy: none
+		summarizeBy: sum
 		sourceColumn: hour
+
+		annotation SummarizationSetBy = Automatic
 
 	column price_slow_eur_mwh
 		dataType: double
 		formatString: 0.00
 		lineageTag: 2dd0d834-ed19-464e-ac2a-69e508f9009d
-		summarizeBy: none
+		summarizeBy: sum
 		sourceColumn: price_slow_eur_mwh
+
+		annotation SummarizationSetBy = Automatic
 
 	column price_central_eur_mwh
 		dataType: double
 		formatString: 0.00
 		lineageTag: 31089e2d-b418-4254-a75e-726b1a708ece
-		summarizeBy: none
+		summarizeBy: sum
 		sourceColumn: price_central_eur_mwh
+
+		annotation SummarizationSetBy = Automatic
 
 	column price_fast_eur_mwh
 		dataType: double
 		formatString: 0.00
 		lineageTag: 0c2b71b7-72d8-4634-b0b4-9c542597dd25
-		summarizeBy: none
+		summarizeBy: sum
 		sourceColumn: price_fast_eur_mwh
+
+		annotation SummarizationSetBy = Automatic
 
 	column price_weighted_mean_eur_mwh
 		dataType: double
 		formatString: 0.00
 		lineageTag: 1fffa70d-3e55-4944-9ae5-4b0a015c350b
-		summarizeBy: none
+		summarizeBy: sum
 		sourceColumn: price_weighted_mean_eur_mwh
+
+		annotation SummarizationSetBy = Automatic
 
 	column structural_p10_eur_mwh
 		dataType: double
 		formatString: 0.00
 		lineageTag: 842742d7-bd6e-4d02-9393-90be47e8cde8
-		summarizeBy: none
+		summarizeBy: sum
 		sourceColumn: structural_p10_eur_mwh
+
+		annotation SummarizationSetBy = Automatic
 
 	column structural_p50_eur_mwh
 		dataType: double
 		formatString: 0.00
 		lineageTag: d7529fee-2729-48d1-81b4-5e339841d434
-		summarizeBy: none
+		summarizeBy: sum
 		sourceColumn: structural_p50_eur_mwh
+
+		annotation SummarizationSetBy = Automatic
 
 	column structural_p90_eur_mwh
 		dataType: double
 		formatString: 0.00
 		lineageTag: 26b14e53-9533-430b-8ead-f41753b9c279
-		summarizeBy: none
+		summarizeBy: sum
 		sourceColumn: structural_p90_eur_mwh
+
+		annotation SummarizationSetBy = Automatic
 
 	column structural_width_eur_mwh
 		dataType: double
 		formatString: 0.00
 		lineageTag: c15e22ce-0d42-4412-aa46-7b4cf32d95aa
-		summarizeBy: none
+		summarizeBy: sum
 		sourceColumn: structural_width_eur_mwh
+
+		annotation SummarizationSetBy = Automatic
 
 	column hour_code
 		dataType: string
