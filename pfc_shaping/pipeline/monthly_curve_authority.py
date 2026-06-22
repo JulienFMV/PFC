@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from pfc_shaping.calibration.monthly_curve_lambda_calibration import config_hash
 from pfc_shaping.calibration.monthly_curve_priors import (
     MonthlyShapePrior,
     build_fused_shape_prior,
@@ -381,12 +382,15 @@ def _manifest(
     source_hashes: Mapping[str, str],
 ) -> dict[str, object]:
     monthly_payload = {str(k): round(float(v), 10) for k, v in result.monthly_curve.sort_index().items()}
+    active_config_payload = dict(monthly_curve_config_from_settings(settings).__dict__)
+    active_config_payload["history_lookback_years"] = dict(settings).get("history_lookback_years")
     return {
         "monthly_curve_schema_version": result.monthly_curve_schema_version,
         "market": market,
         "run_timestamp": str(pd.Timestamp(run_timestamp)),
         "solver_config": dict(settings),
         "solver_config_hash": _sha256_json(dict(settings)),
+        "active_config_hash": config_hash(active_config_payload),
         "source_hashes": dict(source_hashes),
         "forward_snapshot_date": str(pd.Timestamp(run_timestamp).date()),
         "active_constraints_hash": _hash_frame(constraints.rows),

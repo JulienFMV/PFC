@@ -60,6 +60,16 @@ default.
   - `run_monthly_curve_sparse_year_proof.py` can now emit this row via
     `--require-path-parity`, using explicit production/export solution and
     constraint hashes.
+- Manifest-backed promotion capstone
+  - Added `scripts/check_monthly_curve_promotion_from_manifests.py`.
+  - Reads production/export monthly manifests and the selected lambda config
+    artifact, derives the strict governance gates, appends them to
+    `audit_gates.csv`, then runs the same promotion evaluator.
+  - This avoids treating manually supplied proof-local hashes as promotion
+    evidence.
+  - Monthly authority manifests now include `active_config_hash` in the same
+    hash scheme as the selected lambda artifact; older manifests can still be
+    checked by recomputing the hash from `solver_config`.
 
 All emitted rows follow the Phase F machine-readable schema:
 
@@ -89,6 +99,9 @@ python scripts/run_monthly_curve_sparse_year_proof.py --forwards data/eex_forwar
 python scripts/run_monthly_curve_sparse_year_proof.py --forwards data/eex_forwards_history.parquet --output-dir output/monthly_curve_sparse_year_proof_strict_pass --historical-thresholds output/monthly_curve_calibration/historical_thresholds.csv --require-lambda-artifact --selected-config-hash <active_config_hash> --require-path-parity --production-monthly-solution-hash <hash> --export-monthly-solution-hash <hash> --production-active-constraints-hash <hash> --export-active-constraints-hash <hash> --no-plot
 pytest tests/test_run_monthly_curve_sparse_year_proof_script.py -q
 $files = Get-ChildItem tests -Filter 'test_monthly_forward_curve_*.py' | ForEach-Object { $_.FullName }; pytest @files tests/test_monthly_curve_lambda_calibration.py tests/test_monthly_curve_promotion.py tests/test_run_monthly_curve_sparse_year_proof_script.py tests/test_lt_ct_imports.py -q
+pytest tests/test_check_monthly_curve_promotion_from_manifests.py -q
+$files = Get-ChildItem tests -Filter 'test_monthly_forward_curve_*.py' | ForEach-Object { $_.FullName }; pytest @files tests/test_monthly_curve_lambda_calibration.py tests/test_monthly_curve_promotion.py tests/test_run_monthly_curve_sparse_year_proof_script.py tests/test_check_monthly_curve_promotion_from_manifests.py tests/test_lt_ct_imports.py -q
+python scripts/check_monthly_curve_promotion_from_manifests.py --audit-gates output/monthly_curve_sparse_year_proof/audit_gates.csv --historical-thresholds output/monthly_curve_sparse_year_proof/historical_thresholds.csv --manifest output/monthly_curve_sparse_year_proof/manifest.json --production-manifest output/monthly_curve_sparse_year_proof/manifest.json --export-manifest output/monthly_curve_sparse_year_proof/manifest.json --selected-config-artifact output/monthly_curve_sparse_year_proof/selected_config_from_manifest.json --run-timestamp 2026-06-17 --augmented-audit-gates output/monthly_curve_sparse_year_proof/audit_gates_manifest_capstone.csv
 ```
 
 Results:
@@ -136,6 +149,11 @@ Results:
 - Sparse proof governance wiring unit test: `2 passed`
 - Monthly family plus LT/CT import guard after strict wiring:
   `92 passed, 1 skipped`
+- Manifest-backed capstone unit tests: `2 passed`
+- Monthly family plus LT/CT import guard after manifest-backed capstone:
+  `94 passed, 1 skipped`
+- Manifest-backed local proof check:
+  `PROMOTION_EVIDENCE_PASS`, `audit_gate_status_counts={'PASS': 25, 'UNSUPPORTED': 10}`
 
 The `UNSUPPORTED` sparse-proof shape gates are intentional at this stage:
 historical P90/P97.5 threshold artifacts are not yet calibrated for promotion.
@@ -159,7 +177,8 @@ truth for residual Apr-Dec versus full-calendar comparisons.
 - `lambda_calibration_artifact_present` and `production_export_path_parity`
   are emitted by the sparse proof when requested, but full candidate approval
   must still pass hashes from the selected lambda artifact and the real
-  prod/export path manifests, not proof-local placeholder hashes.
+  prod/export path manifests. The manifest-backed capstone script is now the
+  preferred promotion entry point because it reads those manifests directly.
 - Power BI sidecar integration for the new `audit_gates.csv` rows remains to be
   wired.
 - Production approval remains blocked while required near-horizon or otherwise
