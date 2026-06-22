@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -139,6 +140,7 @@ class LongTermArtifacts:
     out_dir: str
     artifacts_dir: str
     today: str
+    monthly_curve_manifests: dict[str, dict[str, object]] = field(default_factory=dict)
 
     @property
     def swiss(self) -> MarketBranchArtifacts:
@@ -551,6 +553,7 @@ def run_long_term_phase(
         out_dir=out_dir,
         artifacts_dir=artifacts_dir,
         today=today,
+        monthly_curve_manifests={"CH": monthly_authority_ch.manifest} if monthly_authority_ch is not None else {},
     )
 
 
@@ -794,6 +797,19 @@ def _save_market_artifacts(
         art.wv.save(os.path.join(artifacts_dir, f"water_value{suffix}.parquet"))
 
 
+def _save_monthly_curve_manifests(
+    manifests: dict[str, dict[str, object]],
+    artifacts_dir: str,
+    logger: logging.Logger,
+) -> None:
+    for market, manifest in sorted((manifests or {}).items()):
+        suffix = "" if str(market).upper() == "CH" else f"_{str(market).lower()}"
+        path = os.path.join(artifacts_dir, f"production_monthly_curve_manifest{suffix}.json")
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(manifest, handle, indent=2, sort_keys=True, default=str)
+        logger.info("  Saved monthly curve manifest: %s", path)
+
+
 def save_long_term_outputs(long_term: LongTermArtifacts, logger: logging.Logger) -> None:
     logger.info("=" * 70)
     logger.info("STEP 10: Saving output")
@@ -804,6 +820,7 @@ def save_long_term_outputs(long_term: LongTermArtifacts, logger: logging.Logger)
 
     for art in long_term.markets.values():
         _save_market_artifacts(art, long_term.artifacts_dir, logger)
+    _save_monthly_curve_manifests(long_term.monthly_curve_manifests, long_term.artifacts_dir, logger)
 
     # Shared (cross-market) artifacts written once.
     long_term.shared.si.save(os.path.join(long_term.artifacts_dir, "shape_intraday.parquet"))

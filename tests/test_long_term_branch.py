@@ -28,6 +28,7 @@ from pfc_shaping.pipeline.production_phases import (
     SharedStructuralArtifacts,
     SwissLongTermArtifacts,
     _ARTIFACT_SUFFIX,
+    _save_monthly_curve_manifests,
 )
 
 
@@ -197,3 +198,24 @@ def test_artifact_suffix_covers_full_panel() -> None:
     """The mapping must contain at least the 5 markets we plan to
     activate in Phase 3. Adding more later is fine."""
     assert {"CH", "DE", "FR", "AT", "IT"}.issubset(_ARTIFACT_SUFFIX.keys())
+
+
+def test_save_monthly_curve_manifests_writes_production_ch_manifest(tmp_path) -> None:
+    manifest = {
+        "monthly_solution_hash": "solution",
+        "active_constraints_hash": "constraints",
+        "active_config_hash": "config",
+    }
+
+    _save_monthly_curve_manifests({"CH": manifest}, str(tmp_path), logger=_NullLogger())
+
+    path = tmp_path / "production_monthly_curve_manifest.json"
+    assert path.exists()
+    text = path.read_text(encoding="utf-8")
+    assert '"monthly_solution_hash": "solution"' in text
+    assert '"active_constraints_hash": "constraints"' in text
+
+
+class _NullLogger:
+    def info(self, *args, **kwargs) -> None:
+        return None
