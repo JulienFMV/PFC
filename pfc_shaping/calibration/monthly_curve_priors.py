@@ -75,6 +75,82 @@ def recenter_shape_by_parent(
     return out
 
 
+def _parent_mean_diagnostics(
+    values: pd.Series,
+    constraints: MonthlyConstraintSystem,
+) -> pd.DataFrame:
+    months = constraints.delivery_grid.months
+    series = pd.Series(values, dtype=float).reindex(months).fillna(0.0)
+    rows: list[dict[str, object]] = []
+    for month in months:
+        bucket = constraints.month_buckets.loc[month]
+        if pd.isna(bucket):
+            rows.append(
+                {
+                    "month": str(month),
+                    "parent_bucket": "",
+                    "parent_hours": np.nan,
+                    "parent_weighted_mean_eur_mwh": np.nan,
+                }
+            )
+            continue
+        mask = constraints.month_buckets.eq(bucket)
+        idx = constraints.month_buckets.index[mask]
+        hours = constraints.delivery_grid.month_hours.loc[idx].astype(float)
+        total = float(hours.sum())
+        if total <= 0.0:
+            mean = np.nan
+        else:
+            mean = float((series.loc[idx].to_numpy(dtype=float) * hours.to_numpy(dtype=float)).sum() / total)
+        rows.append(
+            {
+                "month": str(month),
+                "parent_bucket": str(bucket),
+                "parent_hours": total,
+                "parent_weighted_mean_eur_mwh": mean,
+            }
+        )
+    return pd.DataFrame(rows).set_index("month")
+
+
+def _cap_zero_mean_by_parent(
+    shape: pd.Series,
+    constraints: MonthlyConstraintSystem,
+    cap_eur_mwh: float,
+) -> pd.Series:
+    """Apply an absolute cap while preserving each parent-block weighted mean."""
+
+    cap = abs(float(cap_eur_mwh))
+    months = constraints.delivery_grid.months
+    out = pd.Series(shape, dtype=float).reindex(months).fillna(0.0).astype(float)
+    out.index = months
+    for bucket in constraints.month_buckets.dropna().drop_duplicates():
+        mask = constraints.month_buckets.eq(bucket)
+        idx = constraints.month_buckets.index[mask]
+        values = out.loc[idx].to_numpy(dtype=float)
+        hours = constraints.delivery_grid.month_hours.loc[idx].to_numpy(dtype=float)
+        if len(values) == 0 or float(hours.sum()) <= 0.0:
+            continue
+        if np.nanmax(np.abs(values)) <= cap:
+            continue
+
+        def weighted_mean(shift: float) -> float:
+            clipped = np.clip(values - shift, -cap, cap)
+            return float(np.average(clipped, weights=hours))
+
+        lo = float(np.nanmin(values) - cap - 1.0)
+        hi = float(np.nanmax(values) + cap + 1.0)
+        for _ in range(80):
+            mid = (lo + hi) / 2.0
+            if weighted_mean(mid) > 0.0:
+                lo = mid
+            else:
+                hi = mid
+        out.loc[idx] = np.clip(values - ((lo + hi) / 2.0), -cap, cap)
+    out.name = "shape_deviation_eur_mwh"
+    return out
+
+
 def quote_coverage_by_horizon(
     eex_history: pd.DataFrame,
     *,
@@ -141,6 +217,21 @@ def build_neighbor_panel_shape_prior(
             constraints.delivery_grid.months,
             run_timestamp=run_timestamp,
         )
+        if usable > 0 and month_count == 0 and quarter_count == 0:
+            diagnostic_rows.append(
+                _market_diag(
+                    market,
+                    status="CALENDAR_LEVEL_ONLY_UNSUPPORTED",
+                    covered_months=0,
+                    direct_month_quotes=0,
+                    block_shape_months=0,
+                    horizon_months=len(constraints.delivery_grid.months),
+                    quarter_quotes=0,
+                    calendar_quotes=calendar_count,
+                    **horizon_counts,
+                )
+            )
+            continue
         if usable == 0:
             diagnostic_rows.append(
                 _market_diag(
@@ -300,27 +391,91 @@ def build_structural_monthly_shape_prior(
     *,
     monthly_ratios: Mapping[int, float] | None = None,
     amplitude_eur_mwh: float = 20.0,
+    cap_eur_mwh: float | None = None,
+    shrinkage: float = 0.0,
 ) -> MonthlyShapePrior:
     """Build an explicit template structural prior in zero-mean space."""
 
+    amplitude = float(amplitude_eur_mwh)
+    if not np.isfinite(amplitude):
+        raise ValueError("amplitude_eur_mwh must be finite")
+    if cap_eur_mwh is not None:
+        cap_value = float(cap_eur_mwh)
+        if not np.isfinite(cap_value) or cap_value <= 0.0:
+            raise ValueError("cap_eur_mwh must be positive and finite")
+    else:
+        cap_value = np.nan
+    shrink = float(shrinkage)
+    if not np.isfinite(shrink) or shrink < 0.0 or shrink > 1.0:
+        raise ValueError("shrinkage must be finite and in [0, 1]")
     ratios = dict(monthly_ratios or DEFAULT_CH_STRUCTURAL_MONTHLY_RATIOS)
-    raw = {
-        month: (float(ratios.get(int(month.month), 1.0)) - 1.0) * float(amplitude_eur_mwh)
-        for month in constraints.delivery_grid.months
-    }
-    shape = recenter_shape_by_parent(pd.Series(raw), constraints)
+    for month_number, ratio in ratios.items():
+        if not np.isfinite(float(ratio)):
+            raise ValueError(f"monthly ratio for month {month_number!r} must be finite")
+    months = constraints.delivery_grid.months
+    raw = pd.Series(
+        {
+            month: (float(ratios.get(int(month.month), 1.0)) - 1.0) * amplitude
+            for month in months
+        },
+        index=months,
+        dtype=float,
+        name="raw_deviation_eur_mwh",
+    )
+    raw_parent = _parent_mean_diagnostics(raw, constraints)
+    recentered = recenter_shape_by_parent(raw, constraints).rename("recentered_deviation_eur_mwh")
+    pre_cap = (recentered * (1.0 - shrink)).rename("pre_cap_deviation_eur_mwh")
+    if cap_eur_mwh is None:
+        shape = pre_cap.rename("shape_deviation_eur_mwh")
+    else:
+        shape = _cap_zero_mean_by_parent(pre_cap, constraints, cap_value)
+    shape_parent = _parent_mean_diagnostics(shape, constraints)
+    was_capped = shape.ne(pre_cap)
+    max_abs_parent_mean_residual = float(
+        np.nanmax(np.abs(shape_parent["parent_weighted_mean_eur_mwh"].to_numpy(dtype=float)))
+    )
     diagnostics = pd.DataFrame(
         {
-            "month": [str(month) for month in constraints.delivery_grid.months],
-            "month_number": [int(month.month) for month in constraints.delivery_grid.months],
-            "ratio": [float(ratios.get(int(month.month), 1.0)) for month in constraints.delivery_grid.months],
+            "source": "template_structural_monthly_ratios",
+            "month": [str(month) for month in months],
+            "month_number": [int(month.month) for month in months],
+            "parent_bucket": [str(raw_parent.loc[str(month), "parent_bucket"]) for month in months],
+            "parent_hours": [float(raw_parent.loc[str(month), "parent_hours"]) for month in months],
+            "ratio": [float(ratios.get(int(month.month), 1.0)) for month in months],
+            "amplitude_eur_mwh": amplitude,
+            "raw_deviation_eur_mwh": [float(raw.loc[month]) for month in months],
+            "pre_recenter_parent_mean_eur_mwh": [
+                float(raw_parent.loc[str(month), "parent_weighted_mean_eur_mwh"]) for month in months
+            ],
+            "recentered_deviation_eur_mwh": [float(recentered.loc[month]) for month in months],
+            "recenter_adjustment_eur_mwh": [float(recentered.loc[month] - raw.loc[month]) for month in months],
+            "shrinkage": shrink,
+            "pre_cap_deviation_eur_mwh": [float(pre_cap.loc[month]) for month in months],
+            "cap_eur_mwh": cap_value,
+            "was_capped": [bool(was_capped.loc[month]) for month in months],
+            "cap_adjustment_eur_mwh": [float(shape.loc[month] - pre_cap.loc[month]) for month in months],
+            "shape_deviation_eur_mwh": [float(shape.loc[month]) for month in months],
+            "shape_parent_mean_eur_mwh": [
+                float(shape_parent.loc[str(month), "parent_weighted_mean_eur_mwh"]) for month in months
+            ],
+            "max_abs_parent_mean_residual": max_abs_parent_mean_residual,
+            "zero_mean_parent_space": True,
             "status": "STRUCTURAL_TEMPLATE",
         }
+    )
+    contributions = pd.DataFrame(
+        {
+            "raw_deviation_eur_mwh": raw,
+            "recentered_deviation_eur_mwh": recentered,
+            "pre_cap_deviation_eur_mwh": pre_cap,
+            "shape_deviation_eur_mwh": shape,
+        },
+        index=months,
     )
     return MonthlyShapePrior(
         shape,
         diagnostics,
-        pd.DataFrame(index=constraints.delivery_grid.months),
+        contributions,
         "STRUCTURAL_TEMPLATE",
     )
 

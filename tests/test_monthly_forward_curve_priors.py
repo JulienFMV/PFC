@@ -180,6 +180,26 @@ def test_neighbor_panel_block_shape_does_not_claim_far_horizon_monthly_evidence(
     assert int(prior.diagnostics["direct_month_quotes_h+2"].sum()) == 0
 
 
+def test_neighbor_calendar_only_quotes_do_not_create_shape_prior():
+    constraints = _constraints_2029_calendar()
+    prices = {
+        "DE": {"2029": 80.0},
+        "FR": {"2029": 85.0},
+        "AT": {"2029": 75.0},
+    }
+
+    prior = build_neighbor_panel_shape_prior(
+        constraints,
+        prices,
+        neighbor_markets=("DE", "FR", "AT"),
+        neighbor_shrinkage=0.5,
+    )
+
+    assert prior.status == "UNSUPPORTED"
+    assert set(prior.diagnostics["status"]) == {"CALENDAR_LEVEL_ONLY_UNSUPPORTED"}
+    assert float(prior.shape.abs().max()) == pytest.approx(0.0)
+
+
 def test_history_shape_prior_computes_month_vs_calendar_deviations():
     constraints = _constraints_2029_calendar()
     deviations = {month: 12.0 - month for month in range(1, 13)}
@@ -232,6 +252,103 @@ def test_template_structural_and_fused_prior_keep_zero_mean_and_status_label():
     assert fused.status == "STRUCTURAL_TEMPLATE"
     _assert_zero_mean_by_parent(structural.shape, constraints)
     _assert_zero_mean_by_parent(fused.shape, constraints)
+
+
+def test_template_structural_prior_reports_lambda_diagnostics_and_recenter_steps():
+    constraints = _constraints_2028_residual()
+
+    structural = build_structural_monthly_shape_prior(
+        constraints,
+        amplitude_eur_mwh=110.0,
+        cap_eur_mwh=12.0,
+        shrinkage=0.25,
+    )
+    diagnostics = structural.diagnostics.set_index("month")
+
+    assert structural.status == "STRUCTURAL_TEMPLATE"
+    assert {
+        "source",
+        "parent_bucket",
+        "amplitude_eur_mwh",
+        "raw_deviation_eur_mwh",
+        "pre_recenter_parent_mean_eur_mwh",
+        "recentered_deviation_eur_mwh",
+        "pre_cap_deviation_eur_mwh",
+        "cap_eur_mwh",
+        "was_capped",
+        "shrinkage",
+        "recenter_adjustment_eur_mwh",
+        "cap_adjustment_eur_mwh",
+        "shape_deviation_eur_mwh",
+        "shape_parent_mean_eur_mwh",
+        "max_abs_parent_mean_residual",
+        "zero_mean_parent_space",
+    }.issubset(structural.diagnostics.columns)
+    assert diagnostics["source"].unique().tolist() == ["template_structural_monthly_ratios"]
+    assert diagnostics["amplitude_eur_mwh"].unique().tolist() == [110.0]
+    assert diagnostics["cap_eur_mwh"].unique().tolist() == [12.0]
+    assert diagnostics["shrinkage"].unique().tolist() == [0.25]
+    assert diagnostics.loc["2028-01", "raw_deviation_eur_mwh"] == pytest.approx(22.0)
+    assert diagnostics.loc["2028-01", "recentered_deviation_eur_mwh"] != pytest.approx(22.0)
+    assert diagnostics.loc["2028-01", "pre_cap_deviation_eur_mwh"] == pytest.approx(
+        diagnostics.loc["2028-01", "recentered_deviation_eur_mwh"] * 0.75
+    )
+    assert diagnostics["was_capped"].any()
+    assert bool(diagnostics.loc["2028-12", "was_capped"])
+    for month in constraints.delivery_grid.months:
+        row = diagnostics.loc[str(month)]
+        assert row["shape_deviation_eur_mwh"] == pytest.approx(structural.shape.loc[month])
+        assert row["recenter_adjustment_eur_mwh"] == pytest.approx(
+            row["recentered_deviation_eur_mwh"] - row["raw_deviation_eur_mwh"]
+        )
+        assert row["shape_parent_mean_eur_mwh"] == pytest.approx(0.0, abs=1e-10)
+    assert structural.contributions["shape_deviation_eur_mwh"].abs().max() <= 12.0
+    assert diagnostics.loc["2028-12", "shape_deviation_eur_mwh"] == pytest.approx(12.0)
+    assert diagnostics["max_abs_parent_mean_residual"].max() <= 1e-10
+    _assert_zero_mean_by_parent(structural.shape, constraints)
+
+
+def test_template_structural_prior_cap_is_invariant_to_ratio_level_offset():
+    constraints = _constraints_2028_residual()
+    ratios = {month: 1.0 + 0.02 * month for month in range(1, 13)}
+    shifted = {month: ratio + 0.50 for month, ratio in ratios.items()}
+
+    prior = build_structural_monthly_shape_prior(
+        constraints,
+        monthly_ratios=ratios,
+        amplitude_eur_mwh=110.0,
+        cap_eur_mwh=8.0,
+        shrinkage=0.1,
+    )
+    shifted_prior = build_structural_monthly_shape_prior(
+        constraints,
+        monthly_ratios=shifted,
+        amplitude_eur_mwh=110.0,
+        cap_eur_mwh=8.0,
+        shrinkage=0.1,
+    )
+
+    assert float((prior.shape - shifted_prior.shape).abs().max()) <= 1e-10
+    assert prior.shape.abs().max() <= 8.0
+    _assert_zero_mean_by_parent(prior.shape, constraints)
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"amplitude_eur_mwh": float("nan")},
+        {"cap_eur_mwh": -1.0},
+        {"cap_eur_mwh": float("inf")},
+        {"shrinkage": -0.1},
+        {"shrinkage": 1.1},
+        {"monthly_ratios": {1: float("nan")}},
+    ],
+)
+def test_template_structural_prior_rejects_invalid_parameters(kwargs):
+    constraints = _constraints_2028_residual()
+
+    with pytest.raises(ValueError):
+        build_structural_monthly_shape_prior(constraints, **kwargs)
 
 
 def test_structural_prior_can_be_derived_from_forward_history():

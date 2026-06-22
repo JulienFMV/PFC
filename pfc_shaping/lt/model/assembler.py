@@ -258,6 +258,7 @@ class PFCAssembler:
         monthly_level_authority: str = "legacy",
         skip_legacy_level_cascade: bool = False,
         skip_legacy_base_smoothing: bool = False,
+        monthly_constraint_tolerance: float = 1e-9,
     ) -> None:
         self.sh = shape_hourly
         self.si = shape_intraday
@@ -310,6 +311,7 @@ class PFCAssembler:
         self.monthly_level_authority = str(monthly_level_authority)
         self.skip_legacy_level_cascade = bool(skip_legacy_level_cascade)
         self.skip_legacy_base_smoothing = bool(skip_legacy_base_smoothing)
+        self.monthly_constraint_tolerance = float(monthly_constraint_tolerance)
 
         # B1/B4 Approach B — forward the four floor kwargs to sub-components.
         # WR-03 (Phase 5 code review): the previous one-way mutation
@@ -513,9 +515,20 @@ class PFCAssembler:
             index=idx,
             dtype=float,
         )
+        solver_monthly_level = self.monthly_level_authority.lower() == "solver"
+        if solver_monthly_level and (
+            not self.skip_legacy_level_cascade or not self.skip_legacy_base_smoothing
+        ):
+            raise ValueError(
+                "monthly_level_authority='solver' requires "
+                "skip_legacy_level_cascade=True and skip_legacy_base_smoothing=True"
+            )
 
         # Ã¢â€â‚¬Ã¢â€â‚¬ Facteur saisonnier mensuel f_S Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
-        f_S = self._compute_f_S(idx, base_prices, country=country)
+        if solver_monthly_level:
+            f_S = pd.Series(1.0, index=idx, name="f_S")
+        else:
+            f_S = self._compute_f_S(idx, base_prices, country=country)
 
         # Ã¢â€â‚¬Ã¢â€â‚¬ Facteur jour de semaine f_W Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         f_W = self._compute_f_W(cal)
@@ -591,7 +604,8 @@ class PFCAssembler:
         # near horizon keeps rich historical shapes, far horizon converges
         # progressively to structural level B(t).
         shape_freedom = self._shape_freedom(months_ahead)
-        f_S = 1.0 + (f_S - 1.0) * shape_freedom["f_S"]
+        if not solver_monthly_level:
+            f_S = 1.0 + (f_S - 1.0) * shape_freedom["f_S"]
         f_W = 1.0 + (f_W - 1.0) * shape_freedom["f_W"]
         # Lever 2 (Plan 05C-02, D-A2-3..D-A2-5): split-based damping under flag=ON,
         # legacy single-line under flag=OFF.
@@ -683,7 +697,10 @@ class PFCAssembler:
             # Legacy multiplicative path (wv is None OR wv.enforce_floor=True).
             delta_wv = pd.Series(0.0, index=idx, name="delta_wv")
             price_raw = B * f_S * f_W * f_H * f_Q * f_WV * f_bridge
-        price_raw = self._stabilize_raw_curve(price_raw, B, months_ahead)
+        if solver_monthly_level:
+            price_raw = self._preserve_monthly_base_means(price_raw, B, idx, country=country)
+        else:
+            price_raw = self._stabilize_raw_curve(price_raw, B, months_ahead)
 
         # Ã¢â€â‚¬Ã¢â€â‚¬ Profile type (pour traÃƒÂ§abilitÃƒÂ©) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         profile_type = pd.Series("Y+2/Y+3", index=idx)
@@ -717,6 +734,9 @@ class PFCAssembler:
                 peak_spreads,
                 tz=local_tz,
             )
+
+        if solver_monthly_level:
+            price_shape = self._preserve_monthly_base_means(price_shape, B, idx, country=country)
 
         df = pd.DataFrame(
             {
@@ -1032,8 +1052,11 @@ class PFCAssembler:
             timezone=local_tz,
             market=country,
             load_type="BASE",
+            constraint_tolerance=getattr(self, "monthly_constraint_tolerance", 1e-9),
         )
         contracts = []
+        idx_step = (idx[1] - idx[0]) if len(idx) > 1 else pd.Timedelta(minutes=15)
+        idx_end_exclusive = idx[-1] + idx_step
         for _, row in constraints.rows.iterrows():
             product = str(row["product"])
             bucket_months = constraints.month_buckets[constraints.month_buckets.eq(product)].index
@@ -1043,7 +1066,15 @@ class PFCAssembler:
             last = bucket_months.max()
             start_utc, _ = period_boundaries_fn(int(first.year), int(first.month), int(first.month), local_tz)
             _, end_utc = period_boundaries_fn(int(last.year), int(last.month), int(last.month), local_tz)
-            if end_utc <= idx[0] or start_utc >= idx[-1]:
+            if start_utc < idx[0] or end_utc > idx_end_exclusive:
+                logger.info(
+                    "Skipping partial monthly-solver calibration row %s: row=[%s,%s), index=[%s,%s)",
+                    product,
+                    start_utc,
+                    end_utc,
+                    idx[0],
+                    idx_end_exclusive,
+                )
                 continue
             contracts.append(
                 futures_contract_cls(
@@ -1302,6 +1333,28 @@ class PFCAssembler:
                 [(0.0, 1.00), (6.0, 0.98), (12.0, 0.90), (24.0, 0.70), (36.0, 0.50)],
             ),
         }
+
+    def _preserve_monthly_base_means(
+        self,
+        price_raw: pd.Series,
+        base_level: pd.Series,
+        idx: pd.DatetimeIndex,
+        country: str = "CH",
+    ) -> pd.Series:
+        """
+        Recenter hourly shape so solver-owned monthly BASE means equal B.
+
+        The monthly forward solver is the level authority when enabled. Hourly,
+        weekday, intraday and water-value terms may shape within each month, but
+        they must not change the all-hour monthly mean before final calibration
+        to the original CH traded products.
+        """
+
+        local_tz = _country_local_tz(country)
+        month_key = pd.Index(idx.tz_convert(local_tz).strftime("%Y-%m"), name="month_key")
+        raw_month_mean = price_raw.groupby(month_key).transform("mean")
+        base_month_mean = base_level.groupby(month_key).transform("mean")
+        return (price_raw + base_month_mean - raw_month_mean).rename("price_shape")
 
     def _stabilize_raw_curve(
         self,

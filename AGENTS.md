@@ -1,5 +1,48 @@
 # AGENTS.md
 
+## Permanent handoff and context hygiene rules
+
+This file is the canonical root contract for Codex and local agents. If
+`CLAUDE.md` exists, it must point here instead of duplicating rules.
+
+Permanent project facts:
+
+- LT code must remain independent from CT code. Do not import
+  `pfc_shaping.ct.*` from LT modules.
+- The CH LT monthly reform uses one monthly BASE solver with hard CH EEX
+  constraints. Neighbor/history information may enter only as zero-mean shape.
+- When `monthly_level_authority="solver"`, the monthly solver is the level
+  authority. Hourly layers may shape within a month but must not rewrite solver
+  monthly means.
+- Promotion evidence must come from independent real manifests: production,
+  local export, and the selected lambda artifact.
+- Far-horizon `UNSUPPORTED` can be accepted only when documented and when it
+  does not hide a `CRITICAL` gate or known-bad fixture failure.
+
+Do not touch without explicit request:
+
+- `pfc_shaping/ct/*` during LT work.
+- `powerbi/data/*` or `powerbi/PFC_QA.*` unless the task is explicitly Power BI.
+- Heavy desk data files such as `data/eex_forwards_history.parquet`,
+  `data/epex_hourly.parquet`, `pfc_shaping/data/*.parquet`, or
+  `pfc_shaping/data/*.duckdb`.
+- Monthly solver production flag promotion without manifest-backed gates.
+- Individual month patches after the solver. Fix specification, priors,
+  objective weights, or audit gates, then regenerate.
+
+Handoff rules:
+
+- Aim to keep active session input below about 120k tokens.
+- Prepare a handoff around 60% context, not near 90%.
+- Always produce or update a handoff before closing a session or phase.
+- Handoffs must record exact changed files, commands, outputs, artifact paths,
+  config values, hashes/manifests when available, tests, failures, and risks.
+- Durable decisions must be recorded as decision / reason / rejected
+  alternatives / invariants not to break.
+- For Phase 14 monthly reform, use
+  `.planning/phases/14-lt-audit-remediation/DECISION-LOG.md` and
+  `SESSION-HANDOFF-YYYYMMDD-*.md`.
+
 Conventions pour les agents (Claude Code, agents locaux, contributeurs humains)
 travaillant sur ce repo. Lecture obligatoire avant toute PR.
 
