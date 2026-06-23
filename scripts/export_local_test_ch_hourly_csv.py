@@ -128,7 +128,7 @@ def to_hourly_csv_frame(fan_15min: pd.DataFrame, *, local_start_date: str, local
     out["timestamp_ch"] = hourly.index.strftime("%d.%m.%Y %H:%M")
     offset = pd.Index(hourly.index.strftime("%z"))
     out["utc_offset_ch"] = "UTC" + offset.str.slice(0, 3) + ":" + offset.str.slice(3, 5)
-    out["timestamp_utc"] = hourly.index.tz_convert("UTC").strftime("%d.%m.%Y %H:%M")
+    out["timestamp_utc"] = hourly.index.tz_convert("UTC").strftime("%Y-%m-%dT%H:%M:%S%z")
     column_map = {
         "curve_slow": "price_slow_eur_mwh",
         "curve_central": "price_central_eur_mwh",

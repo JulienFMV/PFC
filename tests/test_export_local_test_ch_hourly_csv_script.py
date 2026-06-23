@@ -63,6 +63,7 @@ def test_to_hourly_csv_frame_filters_local_window_and_averages():
     ]
     assert out.loc[0, "timestamp_ch"] == "13.06.2026 00:00"
     assert out.loc[0, "utc_offset_ch"] == "UTC+02:00"
+    assert out.loc[0, "timestamp_utc"] == "2026-06-12T22:00:00+0000"
     assert out.loc[0, "price_weighted_mean_eur_mwh"] == 31.5
 
 

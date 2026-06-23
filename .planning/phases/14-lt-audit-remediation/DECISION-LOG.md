@@ -102,3 +102,117 @@ Invariants not to break:
   artifacts, config values and unresolved risks.
 - Context should be compacted or handed off around 60%, not near exhaustion.
 
+## D-20260622-05 - UTC-Aware Hourly Export Timestamp
+
+Decision: LT hourly CSV exports must write `timestamp_utc` with an explicit UTC
+offset.
+
+Reason: Phase P1 product-window gates require unambiguous UTC timestamps before
+checking DST, leap-year and EEX PEAK/OFFPEAK masks. A text value such as
+`21.06.2026 22:00` may be intended as UTC, but it is timezone-naive evidence
+and must fail closed.
+
+Rejected alternatives:
+
+- Let the P1 audit infer UTC from the column name.
+- Repair delivered CSV timestamps inside the audit before checking products.
+- Use `timestamp_ch` plus `utc_offset_ch` as a substitute while leaving
+  `timestamp_utc` naive.
+
+Invariants not to break:
+
+- Existing CH local timestamp and offset columns remain available for Power BI
+  and analyst display.
+- The P1 audit continues to reject timezone-naive `timestamp_utc` values.
+- Old delivered artifacts are not retroactively converted to PASS evidence.
+
+## D-20260622-06 - Source Quote Parent/Child Consistency Gate
+
+Decision: P1 audit reports a `source_quote_parent_child_consistency` gate when
+a selected CH EEX snapshot contains a quoted parent product and a complete set
+of quoted child products whose hour-weighted mean differs beyond tolerance.
+
+Reason: when the source snapshot itself has parent/child inconsistencies, no
+single delivered curve can satisfy all overlapping direct quotes exactly. The
+audit still fails closed, but it must identify the upstream quote conflict
+instead of leaving the direct quote residuals ambiguous.
+
+Rejected alternatives:
+
+- Silently prefer Month > Quarter > Calendar without reporting the dropped
+  parent inconsistency.
+- Treat parent/child conflicts as curve-only residuals.
+- Relax the direct quote tolerance to hide small parent/child source conflicts.
+
+Invariants not to break:
+
+- Quote-aware bucket checks still run and preserve Month > Quarter > Calendar
+  priority.
+- Conflicting source quotes are `CRITICAL` gates, not analyst warnings.
+- Direct quote residuals remain visible; the source gate explains, but does not
+  erase, the failed evidence.
+
+## D-20260622-07 - P1 Active Quote Set Direct Checks
+
+Decision: Phase P1 direct product mean checks are run against an explicit
+active quote set using `Month > Quarter > Calendar`. A parent quote with a
+complete finer child quote set is dropped from direct checks and recorded as
+`active_quote_set_parent_dropped`.
+
+Clarification: this supersedes the earlier provisional gate naming in
+D-20260622-06. Parent/child source conflicts are still fail-closed, but the
+final emitted gate is `active_quote_set_parent_dropped` with
+`dropped_reason=parent_child_conflict`, so the audit records both the active
+quote hierarchy and the source inconsistency in one row.
+
+Reason: when a selected EEX snapshot contains both a parent and a complete
+child set, the active market-evidence hierarchy must be explicit. Otherwise the
+audit double-counts the same conflict: first as a source inconsistency and then
+again as a curve residual that no single curve can remove without violating the
+children.
+
+Rejected alternatives:
+
+- Continue checking all overlapping direct products as if they were jointly
+  satisfiable.
+- Drop parent quotes silently.
+- Let bucket residual logic imply the hierarchy without exposing which quotes
+  were active or dropped.
+
+Invariants not to break:
+
+- Dropped parents remain auditable evidence with `dropped_reason`,
+  `child_products`, target, implied child-weighted value and residual.
+- `parent_child_conflict` remains `CRITICAL` until governance explicitly
+  approves a different promotion policy.
+- Active direct quote checks and quote-aware bucket checks must both be run
+  from the same active quote set.
+
+## D-20260623-01 - Explicit CSV Window Scope For P1
+
+Decision: Phase P1 may explicitly scope selected forwards to the delivered CSV
+window. Only quoted products with no overlap with the CSV window are excluded,
+and each exclusion is reported as `INFO out_of_scope_quote`.
+
+Reason: a delivered export can legitimately start after the first product in
+the selected EEX snapshot, for example a July 1 export against a snapshot that
+also contains June quotes. Those no-overlap quotes are outside the evidence
+population for that CSV. Without an explicit scope contract, they create
+`UNSUPPORTED quoted_product_absent` rows that obscure the actual product
+normalization result.
+
+Rejected alternatives:
+
+- Drop no-overlap quotes silently.
+- Treat partial product windows as out of scope.
+- Enable scoping by default.
+
+Invariants not to break:
+
+- The default audit remains fail-closed: absent quoted products are
+  `UNSUPPORTED` unless explicit CSV-window scoping is requested.
+- Partial product windows remain `UNSUPPORTED`; only zero-overlap quotes can be
+  scoped out.
+- Scoping does not change active quote hierarchy or `parent_child_conflict`
+  severity.
+
