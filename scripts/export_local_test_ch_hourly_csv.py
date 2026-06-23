@@ -37,6 +37,12 @@ from pfc_shaping.lt.model.seam_nullspace_smoothing import (  # noqa: E402
 from pfc_shaping.lt.model.shape_constraints import (  # noqa: E402
     build_base_peak_offpeak_constraint_system,
 )
+from pfc_shaping.lt.model.structural_scenario_bracket import (  # noqa: E402
+    PRICE_COLUMNS,
+    SCENARIO_PRICE_COLUMNS,
+    ensure_structural_scenario_bracket_aliases,
+    recompute_structural_scenario_bracket,
+)
 from scripts.build_local_test_ch_pfc import main as build_local_test_ch_pfc
 
 LOCAL_TZ = "Europe/Zurich"
@@ -44,21 +50,6 @@ DEFAULT_LOCAL_START = "2026-06-13"
 DEFAULT_LOCAL_END = "2030-12-31"
 DEFAULT_OUTPUT = Path("output/local_test_ch_pfc_hourly_20260613_20301231.csv")
 DEFAULT_REPORT = Path(".planning/phases/13-lt-electrification-scenario-shape/LOCAL-TEST-CH-PFC-HOURLY-CSV.md")
-PRICE_COLUMNS = [
-    "price_slow_eur_mwh",
-    "price_central_eur_mwh",
-    "price_fast_eur_mwh",
-    "price_weighted_mean_eur_mwh",
-    "structural_p10_eur_mwh",
-    "structural_p50_eur_mwh",
-    "structural_p90_eur_mwh",
-    "structural_width_eur_mwh",
-]
-SCENARIO_PRICE_COLUMNS = {
-    "slow": "price_slow_eur_mwh",
-    "central": "price_central_eur_mwh",
-    "fast": "price_fast_eur_mwh",
-}
 
 def _normalize_date(value: str | pd.Timestamp) -> pd.Timestamp:
     return pd.Timestamp(value).tz_localize(None).normalize()
@@ -129,23 +120,46 @@ def to_hourly_csv_frame(fan_15min: pd.DataFrame, *, local_start_date: str, local
     offset = pd.Index(hourly.index.strftime("%z"))
     out["utc_offset_ch"] = "UTC" + offset.str.slice(0, 3) + ":" + offset.str.slice(3, 5)
     out["timestamp_utc"] = hourly.index.tz_convert("UTC").strftime("%Y-%m-%dT%H:%M:%S%z")
-    column_map = {
-        "curve_slow": "price_slow_eur_mwh",
-        "curve_central": "price_central_eur_mwh",
-        "curve_fast": "price_fast_eur_mwh",
-        "weighted_mean": "price_weighted_mean_eur_mwh",
-        "structural_scenario_low": "structural_p10_eur_mwh",
-        "structural_scenario_central": "structural_p50_eur_mwh",
-        "structural_scenario_high": "structural_p90_eur_mwh",
-        "structural_scenario_spread": "structural_width_eur_mwh",
-        "structural_p10": "structural_p10_eur_mwh",
-        "structural_p50": "structural_p50_eur_mwh",
-        "structural_p90": "structural_p90_eur_mwh",
-        "structural_width": "structural_width_eur_mwh",
-    }
-    for source, target in column_map.items():
+    column_map = [
+        ("curve_slow", "price_slow_eur_mwh"),
+        ("curve_central", "price_central_eur_mwh"),
+        ("curve_fast", "price_fast_eur_mwh"),
+        ("weighted_mean", "price_weighted_mean_eur_mwh"),
+        ("structural_scenario_low", "structural_scenario_low_eur_mwh"),
+        ("structural_scenario_central", "structural_scenario_central_eur_mwh"),
+        ("structural_scenario_high", "structural_scenario_high_eur_mwh"),
+        ("structural_scenario_spread", "structural_scenario_spread_eur_mwh"),
+        ("structural_scenario_low_eur_mwh", "structural_scenario_low_eur_mwh"),
+        ("structural_scenario_central_eur_mwh", "structural_scenario_central_eur_mwh"),
+        ("structural_scenario_high_eur_mwh", "structural_scenario_high_eur_mwh"),
+        ("structural_scenario_spread_eur_mwh", "structural_scenario_spread_eur_mwh"),
+        ("structural_p10", "structural_p10_eur_mwh"),
+        ("structural_p50", "structural_p50_eur_mwh"),
+        ("structural_p90", "structural_p90_eur_mwh"),
+        ("structural_width", "structural_width_eur_mwh"),
+    ]
+    for source, target in column_map:
         if source in hourly.columns and target not in out.columns:
             out[target] = hourly[source].astype(float).round(6)
+    out = ensure_structural_scenario_bracket_aliases(out)
+    ordered_columns = [
+        "timestamp_ch",
+        "utc_offset_ch",
+        "timestamp_utc",
+        "price_slow_eur_mwh",
+        "price_central_eur_mwh",
+        "price_fast_eur_mwh",
+        "price_weighted_mean_eur_mwh",
+        "structural_scenario_low_eur_mwh",
+        "structural_scenario_central_eur_mwh",
+        "structural_scenario_high_eur_mwh",
+        "structural_scenario_spread_eur_mwh",
+        "structural_p10_eur_mwh",
+        "structural_p50_eur_mwh",
+        "structural_p90_eur_mwh",
+        "structural_width_eur_mwh",
+    ]
+    out = out[[col for col in ordered_columns if col in out.columns]]
     out = out.reset_index(drop=True)
     expected_hours = len(pd.date_range(hourly_start, hourly_end, freq="h", tz=LOCAL_TZ))
     if len(out) != expected_hours:
@@ -298,20 +312,12 @@ def _eex_peak_mask(ts_ch: pd.Series, *, country: str = "CH") -> pd.Series:
 
 
 def _price_level_columns(frame: pd.DataFrame) -> list[str]:
-    return [column for column in PRICE_COLUMNS if column in frame.columns and column != "structural_width_eur_mwh"]
+    spread_cols = {"structural_width_eur_mwh", "structural_scenario_spread_eur_mwh"}
+    return [column for column in PRICE_COLUMNS if column in frame.columns and column not in spread_cols]
 
 
 def _recompute_weighted_fan_columns(hourly: pd.DataFrame, weights: dict[str, float]) -> pd.DataFrame:
-    out = hourly.copy()
-    labels = tuple(SCENARIO_PRICE_COLUMNS)
-    matrix = np.column_stack([out[SCENARIO_PRICE_COLUMNS[label]].to_numpy(dtype=float) for label in labels])
-    w = np.array([weights[label] for label in labels], dtype=float)
-    out["price_weighted_mean_eur_mwh"] = matrix @ w
-    out["structural_p10_eur_mwh"] = [_weighted_quantile_row(row, w, 0.10) for row in matrix]
-    out["structural_p50_eur_mwh"] = [_weighted_quantile_row(row, w, 0.50) for row in matrix]
-    out["structural_p90_eur_mwh"] = [_weighted_quantile_row(row, w, 0.90) for row in matrix]
-    out["structural_width_eur_mwh"] = out["structural_p90_eur_mwh"] - out["structural_p10_eur_mwh"]
-    return out
+    return recompute_structural_scenario_bracket(hourly, weights, include_legacy_aliases=True)
 
 
 def _quarter_month_numbers(product: str) -> list[int]:
@@ -1356,14 +1362,6 @@ def _negative_capture_delta(ts: pd.Timestamp, scenario: str, *, intensity: float
     return float(np.clip(raw * float(intensity), -35.0, 0.0))
 
 
-def _weighted_quantile_row(values: np.ndarray, weights: np.ndarray, q: float) -> float:
-    order = np.argsort(values)
-    x = values[order]
-    w = weights[order]
-    cdf = np.cumsum(w) / float(w.sum())
-    return float(x[np.searchsorted(cdf, q, side="left")])
-
-
 def apply_local_test_structural_shape_upgrade(
     hourly: pd.DataFrame,
     *,
@@ -1440,14 +1438,7 @@ def apply_local_test_structural_shape_upgrade(
             raise ValueError(f"shape upgrade produced non-positive prices for scenario={scenario}")
         out[column] = stressed_s.astype(float)
 
-    labels = tuple(SCENARIO_PRICE_COLUMNS)
-    matrix = np.column_stack([out[SCENARIO_PRICE_COLUMNS[label]].to_numpy(dtype=float) for label in labels])
-    w = np.array([weights[label] for label in labels], dtype=float)
-    out["price_weighted_mean_eur_mwh"] = matrix @ w
-    out["structural_p10_eur_mwh"] = [_weighted_quantile_row(row, w, 0.10) for row in matrix]
-    out["structural_p50_eur_mwh"] = [_weighted_quantile_row(row, w, 0.50) for row in matrix]
-    out["structural_p90_eur_mwh"] = [_weighted_quantile_row(row, w, 0.90) for row in matrix]
-    out["structural_width_eur_mwh"] = out["structural_p90_eur_mwh"] - out["structural_p10_eur_mwh"]
+    out = recompute_structural_scenario_bracket(out, weights, include_legacy_aliases=True)
     for column in PRICE_COLUMNS:
         if column in out.columns:
             out[column] = out[column].astype(float).round(6)
@@ -1591,20 +1582,13 @@ def apply_post_calibration_negative_rebalancer(
             )
         out[column] = stressed.astype(float)
 
-    labels = tuple(SCENARIO_PRICE_COLUMNS)
-    matrix = np.column_stack([out[SCENARIO_PRICE_COLUMNS[label]].to_numpy(dtype=float) for label in labels])
-    w = np.array([weights[label] for label in labels], dtype=float)
-    out["price_weighted_mean_eur_mwh"] = matrix @ w
+    out = recompute_structural_scenario_bracket(out, weights, include_legacy_aliases=True)
     weighted_negative_hours = int((out["price_weighted_mean_eur_mwh"] < 0.0).sum())
     if weighted_negative_hours > int(max_weighted_negative_hours):
         raise ValueError(
             "post-calibration negative rebalancer produced too many weighted-mean negative hours: "
             f"{weighted_negative_hours} > {int(max_weighted_negative_hours)}"
         )
-    out["structural_p10_eur_mwh"] = [_weighted_quantile_row(row, w, 0.10) for row in matrix]
-    out["structural_p50_eur_mwh"] = [_weighted_quantile_row(row, w, 0.50) for row in matrix]
-    out["structural_p90_eur_mwh"] = [_weighted_quantile_row(row, w, 0.90) for row in matrix]
-    out["structural_width_eur_mwh"] = out["structural_p90_eur_mwh"] - out["structural_p10_eur_mwh"]
     for column in PRICE_COLUMNS:
         if column in out.columns:
             out[column] = out[column].astype(float).round(6)
@@ -1695,20 +1679,13 @@ def apply_post_calibration_peak_shape_rebalancer(
             )
         out[column] = stressed.astype(float)
 
-    labels = tuple(SCENARIO_PRICE_COLUMNS)
-    matrix = np.column_stack([out[SCENARIO_PRICE_COLUMNS[label]].to_numpy(dtype=float) for label in labels])
-    w = np.array([weights[label] for label in labels], dtype=float)
-    out["price_weighted_mean_eur_mwh"] = matrix @ w
+    out = recompute_structural_scenario_bracket(out, weights, include_legacy_aliases=True)
     weighted_negative_hours = int((out["price_weighted_mean_eur_mwh"] < 0.0).sum())
     if weighted_negative_hours > int(max_weighted_negative_hours):
         raise ValueError(
             "post-calibration peak shape rebalancer produced too many weighted-mean negative hours: "
             f"{weighted_negative_hours} > {int(max_weighted_negative_hours)}"
         )
-    out["structural_p10_eur_mwh"] = [_weighted_quantile_row(row, w, 0.10) for row in matrix]
-    out["structural_p50_eur_mwh"] = [_weighted_quantile_row(row, w, 0.50) for row in matrix]
-    out["structural_p90_eur_mwh"] = [_weighted_quantile_row(row, w, 0.90) for row in matrix]
-    out["structural_width_eur_mwh"] = out["structural_p90_eur_mwh"] - out["structural_p10_eur_mwh"]
     for column in PRICE_COLUMNS:
         if column in out.columns:
             out[column] = out[column].astype(float).round(6)
@@ -1772,7 +1749,9 @@ def _write_report(
     disable_cascade_trend_for_annual_only: bool = False,
 ) -> None:
     price = hourly["price_weighted_mean_eur_mwh"]
-    if "structural_width_eur_mwh" in hourly.columns:
+    if "structural_scenario_spread_eur_mwh" in hourly.columns:
+        width = hourly["structural_scenario_spread_eur_mwh"]
+    elif "structural_width_eur_mwh" in hourly.columns:
         width = hourly["structural_width_eur_mwh"]
     elif {"structural_p90_eur_mwh", "structural_p10_eur_mwh"}.issubset(hourly.columns):
         width = hourly["structural_p90_eur_mwh"] - hourly["structural_p10_eur_mwh"]
@@ -2695,22 +2674,10 @@ def main(argv: list[str] | None = None) -> int:
         )
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
-    if "structural_p10_eur_mwh" not in hourly.columns and "price_slow_eur_mwh" in hourly.columns:
-        scenario = hourly[["price_slow_eur_mwh", "price_central_eur_mwh", "price_fast_eur_mwh"]].astype(float)
-        hourly["structural_p10_eur_mwh"] = scenario.min(axis=1)
-    if "structural_p50_eur_mwh" not in hourly.columns and "price_central_eur_mwh" in hourly.columns:
-        scenario = hourly[["price_slow_eur_mwh", "price_central_eur_mwh", "price_fast_eur_mwh"]].astype(float)
-        hourly["structural_p50_eur_mwh"] = scenario.median(axis=1)
-    if "structural_p90_eur_mwh" not in hourly.columns and "price_fast_eur_mwh" in hourly.columns:
-        scenario = hourly[["price_slow_eur_mwh", "price_central_eur_mwh", "price_fast_eur_mwh"]].astype(float)
-        hourly["structural_p90_eur_mwh"] = scenario.max(axis=1)
-    if (
-        "structural_width_eur_mwh" not in hourly.columns
-        and {"structural_p90_eur_mwh", "structural_p10_eur_mwh"}.issubset(hourly.columns)
-    ):
-        hourly["structural_width_eur_mwh"] = (
-            hourly["structural_p90_eur_mwh"] - hourly["structural_p10_eur_mwh"]
-        )
+    if set(SCENARIO_PRICE_COLUMNS.values()).issubset(hourly.columns):
+        hourly = recompute_structural_scenario_bracket(hourly, weights, include_legacy_aliases=True)
+    else:
+        hourly = ensure_structural_scenario_bracket_aliases(hourly)
     hourly.to_csv(output, index=False)
     _write_report(
         Path(args.report),

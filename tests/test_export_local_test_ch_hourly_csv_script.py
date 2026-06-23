@@ -56,6 +56,10 @@ def test_to_hourly_csv_frame_filters_local_window_and_averages():
         "price_central_eur_mwh",
         "price_fast_eur_mwh",
         "price_weighted_mean_eur_mwh",
+        "structural_scenario_low_eur_mwh",
+        "structural_scenario_central_eur_mwh",
+        "structural_scenario_high_eur_mwh",
+        "structural_scenario_spread_eur_mwh",
         "structural_p10_eur_mwh",
         "structural_p50_eur_mwh",
         "structural_p90_eur_mwh",
@@ -89,6 +93,10 @@ def test_to_hourly_csv_frame_prefers_ordered_structural_bracket_columns():
 
     out = to_hourly_csv_frame(fan, local_start_date="2026-06-13", local_end_date="2026-06-13")
 
+    assert out["structural_scenario_low_eur_mwh"].iloc[0] == pytest.approx(90.0)
+    assert out["structural_scenario_central_eur_mwh"].iloc[0] == pytest.approx(100.0)
+    assert out["structural_scenario_high_eur_mwh"].iloc[0] == pytest.approx(120.0)
+    assert out["structural_scenario_spread_eur_mwh"].iloc[0] == pytest.approx(30.0)
     assert out["structural_p10_eur_mwh"].iloc[0] == pytest.approx(90.0)
     assert out["structural_p50_eur_mwh"].iloc[0] == pytest.approx(100.0)
     assert out["structural_p90_eur_mwh"].iloc[0] == pytest.approx(120.0)

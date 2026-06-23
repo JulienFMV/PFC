@@ -15,24 +15,11 @@ import numpy as np
 import pandas as pd
 
 from pfc_shaping.calibration.eex_contract_selection import calibration_buckets
-
-
-SCENARIO_PRICE_COLUMNS = {
-    "slow": "price_slow_eur_mwh",
-    "central": "price_central_eur_mwh",
-    "fast": "price_fast_eur_mwh",
-}
-
-PRICE_COLUMNS = [
-    "price_slow_eur_mwh",
-    "price_central_eur_mwh",
-    "price_fast_eur_mwh",
-    "price_weighted_mean_eur_mwh",
-    "structural_p10_eur_mwh",
-    "structural_p50_eur_mwh",
-    "structural_p90_eur_mwh",
-    "structural_width_eur_mwh",
-]
+from pfc_shaping.lt.model.structural_scenario_bracket import (
+    PRICE_COLUMNS,
+    SCENARIO_PRICE_COLUMNS,
+    recompute_structural_scenario_bracket,
+)
 
 
 def apply_quote_aware_monthly_smoothing(
@@ -468,20 +455,4 @@ def _independent_constraint_rows(matrix: np.ndarray, *, tol: float = 1e-10) -> n
 
 
 def _recompute_weighted_fan_columns(out: pd.DataFrame, weights: Mapping[str, float]) -> pd.DataFrame:
-    labels = tuple(SCENARIO_PRICE_COLUMNS)
-    matrix = np.column_stack([out[SCENARIO_PRICE_COLUMNS[label]].to_numpy(dtype=float) for label in labels])
-    w = np.array([float(weights[label]) for label in labels], dtype=float)
-    out["price_weighted_mean_eur_mwh"] = matrix @ w
-    out["structural_p10_eur_mwh"] = [_weighted_quantile_row(row, w, 0.10) for row in matrix]
-    out["structural_p50_eur_mwh"] = [_weighted_quantile_row(row, w, 0.50) for row in matrix]
-    out["structural_p90_eur_mwh"] = [_weighted_quantile_row(row, w, 0.90) for row in matrix]
-    out["structural_width_eur_mwh"] = out["structural_p90_eur_mwh"] - out["structural_p10_eur_mwh"]
-    return out
-
-
-def _weighted_quantile_row(values: np.ndarray, weights: np.ndarray, q: float) -> float:
-    order = np.argsort(values)
-    xs = values[order]
-    ws = weights[order]
-    cumulative = np.cumsum(ws) / float(np.sum(ws))
-    return float(xs[np.searchsorted(cumulative, q, side="left")])
+    return recompute_structural_scenario_bracket(out, weights, include_legacy_aliases=True)

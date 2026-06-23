@@ -9,24 +9,11 @@ import pandas as pd
 
 from pfc_shaping.calibration.eex_contract_selection import calibration_buckets
 from pfc_shaping.lt.model.shape_constraints import eex_peak_mask, interval_hours, validate_utc_index
-
-
-SCENARIO_PRICE_COLUMNS = {
-    "slow": "price_slow_eur_mwh",
-    "central": "price_central_eur_mwh",
-    "fast": "price_fast_eur_mwh",
-}
-
-PRICE_COLUMNS = [
-    "price_slow_eur_mwh",
-    "price_central_eur_mwh",
-    "price_fast_eur_mwh",
-    "price_weighted_mean_eur_mwh",
-    "structural_p10_eur_mwh",
-    "structural_p50_eur_mwh",
-    "structural_p90_eur_mwh",
-    "structural_width_eur_mwh",
-]
+from pfc_shaping.lt.model.structural_scenario_bracket import (
+    PRICE_COLUMNS,
+    SCENARIO_PRICE_COLUMNS,
+    recompute_structural_scenario_bracket,
+)
 
 
 def apply_seam_nullspace_smoothing(
@@ -284,16 +271,7 @@ def _independent_rows(matrix: np.ndarray, *, tol: float = 1e-10) -> np.ndarray:
 
 
 def _recompute_weighted_fan_columns(hourly: pd.DataFrame, weights: Mapping[str, float]) -> pd.DataFrame:
-    out = hourly.copy()
-    labels = tuple(SCENARIO_PRICE_COLUMNS)
-    matrix = np.column_stack([out[SCENARIO_PRICE_COLUMNS[label]].to_numpy(dtype=float) for label in labels])
-    weight_vector = np.array([float(weights[label]) for label in labels], dtype=float)
-    out["price_weighted_mean_eur_mwh"] = matrix @ weight_vector
-    out["structural_p10_eur_mwh"] = np.quantile(matrix, 0.10, axis=1)
-    out["structural_p50_eur_mwh"] = np.quantile(matrix, 0.50, axis=1)
-    out["structural_p90_eur_mwh"] = np.quantile(matrix, 0.90, axis=1)
-    out["structural_width_eur_mwh"] = out["structural_p90_eur_mwh"] - out["structural_p10_eur_mwh"]
-    return out
+    return recompute_structural_scenario_bracket(hourly, weights, include_legacy_aliases=True)
 
 
 def _max_feasible_scale(

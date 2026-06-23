@@ -330,3 +330,40 @@ Invariants not to break:
   `UNSUPPORTED` when undersampled or when the required `parent_type_pair` is
   unsupported.
 - The audit remains evidence-only and must not mutate monthly solver output.
+
+## D-20260623-06 - Structural Scenario Bracket Is Not A Probability Fan
+
+Decision: local/test structural scenario fan columns are canonical as
+`structural_scenario_low_eur_mwh`,
+`structural_scenario_central_eur_mwh`,
+`structural_scenario_high_eur_mwh`, and
+`structural_scenario_spread_eur_mwh`. Legacy
+`structural_p10_eur_mwh`, `structural_p50_eur_mwh`,
+`structural_p90_eur_mwh`, and `structural_width_eur_mwh` remain export aliases
+only and are populated from ordered low, central scenario, ordered high, and
+spread. They are not computed as probabilistic quantiles from three scenario
+points.
+
+Reason: slow/central/fast are governed structural scenarios, not a calibrated
+distribution. Computing p10/p50/p90 from three points mislabeled a deterministic
+scenario bracket as probabilistic risk and made downstream charts look more
+statistically calibrated than the data supports.
+
+Rejected alternatives:
+
+- Keep weighted quantile calculations over slow/central/fast in each mutator.
+- Rename the global LT `p10/p90` uncertainty contract, which is a separate
+  probabilistic export surface.
+- Drop legacy structural columns immediately and break current audit/reporting
+  consumers.
+
+Invariants not to break:
+
+- `price_weighted_mean_eur_mwh` remains the weighted scenario mean.
+- `structural_scenario_central_eur_mwh` is the central scenario curve, not the
+  median if central is not between slow and fast.
+- `structural_scenario_spread_eur_mwh` is high minus low and must be
+  non-negative.
+- When canonical and legacy structural columns conflict, canonical scenario
+  columns win and legacy aliases are overwritten from them.
+- Production LT uncertainty columns named `p10`/`p90` remain out of scope.
