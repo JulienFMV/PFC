@@ -153,6 +153,72 @@ def _write_2028_cal_q1_curve(csv_path: Path, forwards_path: Path) -> None:
     )
 
 
+def _write_2027_q3_redundant_conflict_curve(
+    csv_path: Path,
+    forwards_path: Path,
+    *,
+    drift_monthly_bucket: bool = False,
+) -> None:
+    idx_utc = _hourly_index("2027-07-01", "2027-10-01")
+    ts_ch = idx_utc.tz_convert(LOCAL_TZ)
+    ts_series = pd.Series(ts_ch)
+    peak_mask = eex_peak_mask(ts_series, country="CH").to_numpy(dtype=bool)
+    base_by_month = {7: 100.0, 8: 110.0, 9: 120.0}
+    peak_by_month = {7: 130.0, 8: 140.0, 9: 150.0}
+    price = np.empty(len(idx_utc), dtype=float)
+
+    for month in (7, 8, 9):
+        total_hours, peak_hours, offpeak_hours = count_hours(
+            2027,
+            month,
+            month,
+            tz=LOCAL_TZ,
+            country="CH",
+        )
+        offpeak = (
+            base_by_month[month] * total_hours
+            - peak_by_month[month] * peak_hours
+        ) / offpeak_hours
+        month_mask = ts_series.dt.month.eq(month).to_numpy(dtype=bool)
+        price[month_mask & peak_mask] = peak_by_month[month]
+        price[month_mask & ~peak_mask] = offpeak
+
+    if drift_monthly_bucket:
+        price[ts_series.dt.month.eq(7).to_numpy(dtype=bool)] += 5.0
+
+    offset = pd.Index(ts_ch.strftime("%z"))
+    frame = pd.DataFrame(
+        {
+            "timestamp_ch": ts_ch.strftime("%d.%m.%Y %H:%M"),
+            "utc_offset_ch": "UTC" + offset.str.slice(0, 3) + ":" + offset.str.slice(3, 5),
+            "timestamp_utc": idx_utc.strftime("%d.%m.%Y %H:%M"),
+            PRICE: price,
+        }
+    )
+    frame.to_csv(csv_path, index=False)
+
+    total_q3, peak_q3, _offpeak_q3 = count_hours(2027, 7, 9, tz=LOCAL_TZ, country="CH")
+    month_hours = {
+        month: count_hours(2027, month, month, tz=LOCAL_TZ, country="CH")
+        for month in (7, 8, 9)
+    }
+    implied_base_q3 = sum(
+        base_by_month[month] * month_hours[month][0]
+        for month in (7, 8, 9)
+    ) / total_q3
+    implied_peak_q3 = sum(
+        peak_by_month[month] * month_hours[month][1]
+        for month in (7, 8, 9)
+    ) / peak_q3
+    rows = []
+    for month in (7, 8, 9):
+        rows.append(_quote_row(f"2027-{month:02d}", "BASE", base_by_month[month]))
+        rows.append(_quote_row(f"2027-{month:02d}", "PEAK", peak_by_month[month]))
+    rows.append(_quote_row("2027-Q3", "BASE", implied_base_q3 + 1.0))
+    rows.append(_quote_row("2027-Q3", "PEAK", implied_peak_q3 - 1.0))
+    _write_forwards_rows(forwards_path, rows)
+
+
 def test_product_normalization_audit_passes_base_peak_and_implied_offpeak(tmp_path: Path) -> None:
     csv_path = tmp_path / "delivered.csv"
     forwards_path = tmp_path / "forwards.parquet"
@@ -216,6 +282,90 @@ def test_product_normalization_audit_checks_quote_aware_residual_buckets(tmp_pat
     assert indexed.loc[("quote_aware_peak_bucket_repricing", "PEAK", "2028-RESIDUAL"), "status"] == "PASS"
     assert indexed.loc[("hard_base_product_repricing", "BASE", "2028"), "status"] == "PASS"
     assert indexed.loc[("hard_peak_product_repricing", "PEAK", "2028"), "status"] == "PASS"
+
+
+def test_product_normalization_audit_reclassifies_redundant_parent_quote_conflict(tmp_path: Path) -> None:
+    csv_path = tmp_path / "delivered_q3.csv"
+    forwards_path = tmp_path / "forwards_q3.parquet"
+    _write_2027_q3_redundant_conflict_curve(csv_path, forwards_path)
+
+    gates, summary = run_audit(
+        csv_path=csv_path,
+        forwards_path=forwards_path,
+        required_forward_date="2026-06-22",
+    )
+
+    indexed = gates.set_index(["gate_id", "load_type", "product"])
+    assert indexed.loc[("hard_base_product_repricing", "BASE", "2027-Q3"), "status"] == "QUOTE_CONFLICT"
+    assert indexed.loc[("hard_peak_product_repricing", "PEAK", "2027-Q3"), "status"] == "QUOTE_CONFLICT"
+    assert indexed.loc[("implied_offpeak_identity", "OFFPEAK", "2027-Q3"), "status"] == "QUOTE_CONFLICT"
+    assert indexed.loc[("quote_aware_base_bucket_repricing", "BASE", "2027-07"), "status"] == "PASS"
+    assert indexed.loc[("quote_aware_peak_bucket_repricing", "PEAK", "2027-07"), "status"] == "PASS"
+    assert summary["critical_count"] == 0
+    assert summary["quote_conflict_count"] == 3
+    assert summary["delivered_curve_drift_count"] == 0
+    assert summary["all_gates_pass"] is False
+
+
+def test_product_normalization_audit_keeps_parent_critical_when_fine_bucket_fails(tmp_path: Path) -> None:
+    csv_path = tmp_path / "delivered_q3_drift.csv"
+    forwards_path = tmp_path / "forwards_q3.parquet"
+    _write_2027_q3_redundant_conflict_curve(csv_path, forwards_path, drift_monthly_bucket=True)
+
+    gates, summary = run_audit(
+        csv_path=csv_path,
+        forwards_path=forwards_path,
+        required_forward_date="2026-06-22",
+    )
+
+    indexed = gates.set_index(["gate_id", "load_type", "product"])
+    assert indexed.loc[("quote_aware_base_bucket_repricing", "BASE", "2027-07"), "status"] == "CRITICAL"
+    assert indexed.loc[("hard_base_product_repricing", "BASE", "2027-Q3"), "status"] == "CRITICAL"
+    assert summary["critical_count"] >= 1
+    assert summary["all_gates_pass"] is False
+
+
+def test_product_normalization_cli_fails_closed_on_quote_conflict(tmp_path: Path) -> None:
+    csv_path = tmp_path / "delivered_q3.csv"
+    forwards_path = tmp_path / "forwards_q3.parquet"
+    gates_path = tmp_path / "gates.csv"
+    summary_path = tmp_path / "summary.json"
+    _write_2027_q3_redundant_conflict_curve(csv_path, forwards_path)
+
+    exit_code = main(
+        [
+            "--csv",
+            str(csv_path),
+            "--forwards",
+            str(forwards_path),
+            "--required-forward-date",
+            "2026-06-22",
+            "--output-csv",
+            str(gates_path),
+            "--summary-json",
+            str(summary_path),
+        ]
+    )
+
+    assert exit_code == 1
+    summary = pd.read_json(summary_path, typ="series").to_dict()
+    assert summary["quote_conflict_count"] == 3
+    assert summary["all_gates_pass"] is False
+    assert main(
+        [
+            "--csv",
+            str(csv_path),
+            "--forwards",
+            str(forwards_path),
+            "--required-forward-date",
+            "2026-06-22",
+            "--output-csv",
+            str(gates_path),
+            "--summary-json",
+            str(summary_path),
+            "--allow-failed-gates",
+        ]
+    ) == 0
 
 
 def test_product_normalization_audit_marks_partial_product_unsupported(tmp_path: Path) -> None:

@@ -296,3 +296,40 @@ Invariants not to break:
 - Intermediate overbuilt fan-chart rows are not promotion evidence unless the
   candidate horizon explicitly includes them and audits cover them.
 
+## D-20260623-11 - Redundant Quote Conflicts Are Blocking Source-Quality Evidence
+
+Decision: delivered-product normalization audit separates redundant parent
+quote conflicts from delivered curve drift. If a direct parent BASE/PEAK quote
+fails repricing only because finer quote-aware non-overlapping buckets fully
+cover that parent and pass, the direct parent row is reported as
+`QUOTE_CONFLICT`, not `CRITICAL` or `UNSUPPORTED`. `QUOTE_CONFLICT` remains a
+non-pass, promotion-blocking status by default.
+
+Reason: the 2026-06-17 CH EEX snapshot contains internally inconsistent
+redundant quotes, e.g. monthly/quarterly finer quotes imply parent levels that
+differ from quoted parents by small but non-zero amounts. A delivered curve
+cannot satisfy both the quote-aware hierarchy and the redundant parent quote at
+`1e-6` tolerance. Reporting that as ordinary delivered-curve `CRITICAL`
+misdirects remediation toward solver/hourly shaping. Reporting it as
+`UNSUPPORTED` is also wrong because evidence exists and is contradictory.
+
+Rejected alternatives:
+
+- Keep all redundant parent mismatches as ordinary `CRITICAL` curve drift.
+- Convert source quote conflicts to `PASS` because quote-aware buckets pass.
+- Hide quote conflicts under `UNSUPPORTED` or far-horizon insufficiency logic.
+- Patch individual months or hourly values to satisfy contradictory quotes.
+
+Invariants not to break:
+
+- Quote-aware non-overlapping BASE and PEAK bucket repricing remains a hard
+  delivered-product gate.
+- A direct parent row may become `QUOTE_CONFLICT` only when finer quote-aware
+  buckets fully cover it and all those buckets pass.
+- Direct product failures that are not explained by passing finer buckets
+  remain `CRITICAL`.
+- `QUOTE_CONFLICT` blocks strict CLI/Power BI/promotion flows unless an
+  explicit future manifest-backed policy accepts a source hierarchy.
+- The audit must keep the parent target, delivered mean, residual, covered
+  finer bucket names and summary counts visible.
+

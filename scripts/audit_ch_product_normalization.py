@@ -13,6 +13,7 @@ import argparse
 import hashlib
 import json
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -27,7 +28,7 @@ from pfc_shaping.calibration.eex_contract_selection import calibration_buckets  
 
 LOCAL_TZ = "Europe/Zurich"
 DEFAULT_PRICE_COLUMN = "price_weighted_mean_eur_mwh"
-SCHEMA_VERSION = "ch_product_normalization_audit.v1"
+SCHEMA_VERSION = "ch_product_normalization_audit.v2"
 
 
 def _sha256_file(path: Path) -> str:
@@ -192,6 +193,8 @@ def _product_type_for_label(product: str) -> str:
 def _severity(status: str) -> str:
     if status == "CRITICAL":
         return "critical"
+    if status == "QUOTE_CONFLICT":
+        return "quote_conflict"
     if status == "UNSUPPORTED":
         return "unsupported"
     return "info"
@@ -248,6 +251,11 @@ def _gate_row(
 def _remediation_hint(gate_id: str, status: str) -> str:
     if status == "PASS":
         return ""
+    if status == "QUOTE_CONFLICT":
+        return (
+            "Inspect the EEX snapshot hierarchy: finer quote-aware buckets pass, "
+            "but the redundant parent quote is inconsistent with them."
+        )
     if status == "UNSUPPORTED":
         return "Verify the delivered CSV fully covers this product window and the EEX quote exists."
     if gate_id == "hard_peak_product_repricing":
@@ -485,6 +493,17 @@ def build_product_normalization_gates(
             )
         )
 
+    out = pd.DataFrame(rows)
+    if not out.empty:
+        out = _reclassify_redundant_quote_conflicts(
+            out,
+            hourly=hourly,
+            fully_covered_prices=fully_covered_prices,
+            price_column=price_column,
+            hard_tolerance=hard_tolerance,
+            peak_country=peak_country,
+        )
+
     if not rows:
         rows.append(
             _gate_row(
@@ -508,8 +527,121 @@ def build_product_normalization_gates(
                 price_column=price_column,
             )
         )
-    out = pd.DataFrame(rows)
+        out = pd.DataFrame(rows)
     return out.sort_values(["gate_id", "load_type", "product"]).reset_index(drop=True)
+
+
+def _reclassify_redundant_quote_conflicts(
+    gates: pd.DataFrame,
+    *,
+    hourly: pd.DataFrame,
+    fully_covered_prices: dict[str, dict[str, float]],
+    price_column: str,
+    hard_tolerance: float,
+    peak_country: str,
+) -> pd.DataFrame:
+    out = gates.copy()
+    direct_conflict_products: set[tuple[str, str]] = set()
+    for load_type in ("BASE", "PEAK"):
+        forward_prices = fully_covered_prices.get(load_type, {})
+        if not forward_prices:
+            continue
+        if load_type == "PEAK":
+            frame = hourly.loc[eex_peak_mask(hourly["ts_ch"], country=peak_country)].copy()
+            gate_id = "hard_peak_product_repricing"
+            quote_aware_gate_id = "quote_aware_peak_bucket_repricing"
+        else:
+            frame = hourly
+            gate_id = "hard_base_product_repricing"
+            quote_aware_gate_id = "quote_aware_base_bucket_repricing"
+        buckets, targets = calibration_buckets(frame["ts_ch"], forward_prices)
+        quote_aware_pass = set(
+            out.loc[
+                (out["gate_id"] == quote_aware_gate_id) & (out["status"] == "PASS"),
+                "product",
+            ].astype(str)
+        )
+        direct_mask = (
+            (out["gate_id"] == gate_id)
+            & (out["load_type"] == load_type)
+            & (out["status"] == "CRITICAL")
+            & (out["product_type"].isin(["Cal", "Quarter"]))
+        )
+        for idx, row in out.loc[direct_mask].iterrows():
+            product = str(row["product"])
+            if not _direct_parent_conflict_is_explained_by_finer_buckets(
+                frame=frame,
+                product=product,
+                buckets=buckets,
+                targets=targets,
+                quote_aware_pass=quote_aware_pass,
+                price_column=price_column,
+                hard_tolerance=hard_tolerance,
+            ):
+                continue
+            parent_mask = product_mask(frame, product)
+            bucket_names = sorted(str(bucket) for bucket in buckets.loc[parent_mask].dropna().unique())
+            out.loc[idx, "status"] = "QUOTE_CONFLICT"
+            out.loc[idx, "severity"] = _severity("QUOTE_CONFLICT")
+            out.loc[idx, "evidence"] = "redundant_parent_quote_conflict_finer_buckets_pass"
+            out.loc[idx, "remediation_hint"] = _remediation_hint(gate_id, "QUOTE_CONFLICT")
+            out.loc[idx, "quote_conflict_basis"] = "finer_quote_aware_buckets"
+            out.loc[idx, "covered_by_quote_aware_products"] = ",".join(bucket_names)
+            direct_conflict_products.add((load_type, product))
+
+    offpeak_mask = (out["gate_id"] == "implied_offpeak_identity") & (out["status"] == "CRITICAL")
+    for idx, row in out.loc[offpeak_mask].iterrows():
+        product = str(row["product"])
+        if ("BASE", product) not in direct_conflict_products and ("PEAK", product) not in direct_conflict_products:
+            continue
+        out.loc[idx, "status"] = "QUOTE_CONFLICT"
+        out.loc[idx, "severity"] = _severity("QUOTE_CONFLICT")
+        out.loc[idx, "evidence"] = "implied_offpeak_quote_conflict_from_parent_base_peak"
+        out.loc[idx, "remediation_hint"] = _remediation_hint(
+            "implied_offpeak_identity",
+            "QUOTE_CONFLICT",
+        )
+        out.loc[idx, "quote_conflict_basis"] = "parent_base_peak_quote_conflict"
+        out.loc[idx, "covered_by_quote_aware_products"] = product
+    return out
+
+
+def _direct_parent_conflict_is_explained_by_finer_buckets(
+    *,
+    frame: pd.DataFrame,
+    product: str,
+    buckets: pd.Series,
+    targets: Mapping[str, float],
+    quote_aware_pass: set[str],
+    price_column: str,
+    hard_tolerance: float,
+) -> bool:
+    parent_mask = product_mask(frame, product)
+    if not bool(parent_mask.any()):
+        return False
+    parent_buckets = buckets.loc[parent_mask]
+    if parent_buckets.isna().any():
+        return False
+    bucket_names = {str(bucket) for bucket in parent_buckets.dropna().unique()}
+    if not bucket_names:
+        return False
+    if product in bucket_names or f"{product}-RESIDUAL" in bucket_names:
+        return False
+    if not bucket_names.issubset(quote_aware_pass):
+        return False
+    implied = 0.0
+    total_rows = 0
+    for bucket, idx in parent_buckets.groupby(parent_buckets).groups.items():
+        bucket_s = str(bucket)
+        if bucket_s not in targets:
+            return False
+        rows = len(idx)
+        implied += float(targets[bucket_s]) * rows
+        total_rows += rows
+    if total_rows <= 0:
+        return False
+    curve_mean = float(frame.loc[parent_mask, price_column].mean())
+    return abs(curve_mean - implied / total_rows) <= hard_tolerance * 10
 
 
 def build_summary(
@@ -526,10 +658,26 @@ def build_summary(
     if gates.empty:
         status_counts: dict[str, int] = {}
         critical_count = 0
+        quote_conflict_count = 0
+        delivered_curve_drift_count = 0
         hard_max = None
     else:
         status_counts = {str(k): int(v) for k, v in gates["status"].value_counts().sort_index().items()}
         critical_count = int((gates["status"] == "CRITICAL").sum())
+        quote_conflict_count = int((gates["status"] == "QUOTE_CONFLICT").sum())
+        delivered_curve_drift_count = int(
+            (
+                gates["status"].eq("CRITICAL")
+                & gates["gate_id"].isin(
+                    [
+                        "hard_base_product_repricing",
+                        "hard_peak_product_repricing",
+                        "hard_offpeak_product_repricing",
+                        "implied_offpeak_identity",
+                    ]
+                )
+            ).sum()
+        )
         supported = gates[gates["status"] != "UNSUPPORTED"]
         hard_max = (
             None
@@ -537,7 +685,7 @@ def build_summary(
             else float(pd.to_numeric(supported["abs_residual_eur_mwh"], errors="coerce").max())
         )
     unsupported_count = int(status_counts.get("UNSUPPORTED", 0))
-    all_gates_pass = critical_count == 0 and unsupported_count == 0
+    all_gates_pass = critical_count == 0 and unsupported_count == 0 and quote_conflict_count == 0
     script_path = Path(__file__).resolve()
     return {
         "schema_version": SCHEMA_VERSION,
@@ -555,6 +703,8 @@ def build_summary(
         "forwards_sha256": _sha256_file(forwards_path),
         "status_counts": status_counts,
         "critical_count": critical_count,
+        "quote_conflict_count": quote_conflict_count,
+        "delivered_curve_drift_count": delivered_curve_drift_count,
         "unsupported_count": unsupported_count,
         "supported_hard_gate_max_abs_residual_eur_mwh": hard_max,
         "supported_hard_gates_no_critical": critical_count == 0,
@@ -562,7 +712,8 @@ def build_summary(
         "all_gates_pass": all_gates_pass,
         "note": (
             "UNSUPPORTED rows mean the delivered CSV or quote snapshot did not fully cover "
-            "that product window; they are not converted to PASS."
+            "that product window; QUOTE_CONFLICT rows mean redundant parent quotes conflict "
+            "with finer quote-aware buckets. Neither status is converted to PASS."
         ),
     }
 
@@ -637,7 +788,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--allow-failed-gates",
         action="store_true",
-        help="Write outputs and return 0 even when CRITICAL/UNSUPPORTED gates are present.",
+        help="Write outputs and return 0 even when CRITICAL/UNSUPPORTED/QUOTE_CONFLICT gates are present.",
     )
     parser.add_argument("--fail-on-critical", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--fail-on-unsupported", action="store_true", help=argparse.SUPPRESS)

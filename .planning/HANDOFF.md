@@ -2,7 +2,7 @@
 
 Latest active handoff:
 
-`.planning/phases/14-lt-audit-remediation/SESSION-HANDOFF-20260623-CANDIDATE-AUDIT-BLOCKERS.md`
+`.planning/phases/14-lt-audit-remediation/SESSION-HANDOFF-20260623-QUOTE-CONFLICT-AUDIT-GOVERNANCE.md`
 
 Read order for new agents:
 
@@ -15,13 +15,13 @@ Read order for new agents:
 Do not treat older Phase 14 generated reports as accepted production evidence
 unless the latest handoff or decision log names them explicitly.
 
-Current verdict: Phase 14 has a fresh local-test CH candidate generated with
-monthly solver ON and final PEAK calibration ON, but it is still production
-NO-GO. Delivered quote-aware BASE/PEAK buckets pass, while direct parent quote
-gates fail because the 2026-06-17 EEX snapshot contains internally inconsistent
-finer-vs-parent quotes. Strict Power BI export also blocks on
-`shape_score_10=6.75 < 8.50` and `monthly_split_critical_flags=1`.
-Next phase must resolve audit semantics for internally inconsistent redundant
-quotes and calibrate the remaining monthly split / structural width blockers
-without individual month patches.
+Current verdict: Phase 14 product audit now distinguishes delivered curve drift
+from redundant source quote conflicts. The fresh local-test CH candidate has
+quote-aware BASE/PEAK buckets passing and `critical_count=0` in the delivered
+product audit, but still blocks with `quote_conflict_count=9` and
+`unsupported_count=9`. Strict Power BI export still blocks on
+`shape_score_10=6.75 < 8.50` and `monthly_split_critical_flags=1`. Production
+remains NO-GO; next phase should decide cleaned-snapshot vs hierarchy-policy
+handling for `QUOTE_CONFLICT`, then fix the remaining model-quality gates
+through priors/objective/shape calibration, not month patches.
 
