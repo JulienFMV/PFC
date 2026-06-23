@@ -537,12 +537,16 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--lambda-smooth-yoy", type=float, default=0.25)
     parser.add_argument("--lambda-shape", type=float, default=4.0)
     parser.add_argument("--neighbor-shrinkage", type=float, default=0.5)
-    parser.add_argument("--structural-amplitude-eur-mwh", type=float, default=20.0)
+    parser.add_argument("--structural-amplitude-eur-mwh", type=float, default=110.0)
     parser.add_argument("--min-structural-snapshots", type=int, default=24)
-    parser.add_argument("--allow-template-structural-fallback", action="store_true")
+    parser.add_argument(
+        "--allow-template-structural-fallback",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
     parser.add_argument("--panel-weight", type=float, default=1.0)
     parser.add_argument("--history-weight", type=float, default=0.25)
-    parser.add_argument("--structural-weight", type=float, default=0.5)
+    parser.add_argument("--structural-weight", type=float, default=1.0)
     parser.add_argument("--min-history-snapshots", type=int, default=24)
     parser.add_argument("--history-lookback-years", type=int, default=6)
     parser.add_argument("--repricing-tolerance", type=float, default=1e-8)

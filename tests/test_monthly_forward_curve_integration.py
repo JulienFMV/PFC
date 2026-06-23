@@ -120,6 +120,84 @@ def test_monthly_solver_defaults_include_structural_template_fallback() -> None:
     assert settings["structural_weight"] == 1.0
 
 
+def test_monthly_authority_manifest_records_structural_template_summary() -> None:
+    own = {"2028": 80.0, "2028-Q1": 110.0}
+    months = delivery_months_from_prices(own)
+
+    authority = solve_monthly_level_authority(
+        market="CH",
+        delivery_months=months,
+        own_base_prices=own,
+        all_market_base_prices={},
+        eex_history=pd.DataFrame(columns=["date", "market", "load_type", "product", "price"]),
+        run_timestamp=pd.Timestamp("2026-06-17"),
+        settings={
+            "enabled": True,
+            "markets": [],
+            "allow_template_structural_fallback": True,
+            "structural_amplitude_eur_mwh": 110.0,
+            "structural_weight": 1.0,
+        },
+    )
+
+    summary = authority.manifest["structural_prior_summary"]
+    assert authority.manifest["structural_status"] == "STRUCTURAL_TEMPLATE"
+    assert summary["status"] == "STRUCTURAL_TEMPLATE"
+    assert summary["sources"] == ["template_structural_monthly_ratios"]
+    assert summary["fallback_reasons"] == ["empty_history"]
+    assert summary["amplitude_eur_mwh_min"] == 110.0
+    assert summary["amplitude_eur_mwh_max"] == 110.0
+    assert summary["zero_mean_parent_space_all"] is True
+    assert summary["max_abs_parent_mean_residual_max"] <= 1e-10
+    assert summary["n_history_max"] == 0.0
+
+
+def test_monthly_authority_active_config_hash_includes_structural_prior_knobs() -> None:
+    history = _history()
+    own = {"2028": 80.0, "2028-Q1": 110.0}
+    months = delivery_months_from_prices(own)
+    base_settings = {
+        "enabled": True,
+        "markets": ["DE"],
+        "allow_template_structural_fallback": True,
+        "structural_amplitude_eur_mwh": 110.0,
+        "panel_weight": 1.0,
+        "history_weight": 0.5,
+        "structural_weight": 1.0,
+    }
+
+    baseline = solve_monthly_level_authority(
+        market="CH",
+        delivery_months=months,
+        own_base_prices=own,
+        all_market_base_prices={"DE": {f"2028-{month:02d}": 70.0 + month for month in range(1, 13)}},
+        eex_history=history,
+        run_timestamp=pd.Timestamp("2026-06-17"),
+        settings=base_settings,
+    )
+    changed_amplitude = solve_monthly_level_authority(
+        market="CH",
+        delivery_months=months,
+        own_base_prices=own,
+        all_market_base_prices={"DE": {f"2028-{month:02d}": 70.0 + month for month in range(1, 13)}},
+        eex_history=history,
+        run_timestamp=pd.Timestamp("2026-06-17"),
+        settings={**base_settings, "structural_amplitude_eur_mwh": 40.0},
+    )
+    changed_weight = solve_monthly_level_authority(
+        market="CH",
+        delivery_months=months,
+        own_base_prices=own,
+        all_market_base_prices={"DE": {f"2028-{month:02d}": 70.0 + month for month in range(1, 13)}},
+        eex_history=history,
+        run_timestamp=pd.Timestamp("2026-06-17"),
+        settings={**base_settings, "structural_weight": 0.25},
+    )
+
+    assert baseline.manifest["active_config_hash"] != changed_amplitude.manifest["active_config_hash"]
+    assert baseline.manifest["active_config_hash"] != changed_weight.manifest["active_config_hash"]
+
+
 def test_delivery_months_for_window_respects_exclusive_end_boundary() -> None:
     months = delivery_months_for_window(
         start_date=pd.Timestamp("2028-01-01", tz="Europe/Zurich"),

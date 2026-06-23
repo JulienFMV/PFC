@@ -108,11 +108,11 @@ class LambdaCalibrationSettings:
     quote_consistency_tolerance: float = 0.01
     hard_constraint_tolerance: float = 1e-8
     history_lookback_years: int | None = 6
-    structural_weight: float = 0.5
+    structural_weight: float = 1.0
     panel_weight: float = 1.0
-    history_weight: float = 0.25
-    allow_template_structural_fallback: bool = False
-    structural_amplitude_eur_mwh: float = 20.0
+    history_weight: float = 0.5
+    allow_template_structural_fallback: bool = True
+    structural_amplitude_eur_mwh: float = 110.0
     min_structural_snapshots: int = 24
     identifiability_min_abs_error_improvement: float = 0.05
     identifiability_min_rel_error_improvement: float = 0.01
@@ -250,6 +250,7 @@ def run_lambda_calibration(
         scoring,
         summary=summary,
         configs=configs,
+        settings=settings,
         grid_hash=lambda_grid_hash(grid),
         source_data_hash=source_file_hash,
         withheld_counts=withheld_counts,
@@ -643,6 +644,7 @@ def build_candidate_config(
     *,
     summary: Mapping[str, object],
     configs: Sequence[MonthlyCurveConfig | LambdaCandidateConfig],
+    settings: LambdaCalibrationSettings | None = None,
     grid_hash: str,
     source_data_hash: str,
     withheld_counts: Counter[tuple[str, str, str]],
@@ -653,12 +655,13 @@ def build_candidate_config(
         return None
     selected_hash = str(summary.get("selected_config_hash") or config_hash(configs[0]))
     selected = next((cfg for cfg in configs if config_hash(cfg) == selected_hash), configs[0])
+    active_payload = _active_config_payload(selected, settings or LambdaCalibrationSettings())
     selection_status = "SELECTED" if final_status.startswith("PASS_CALIBRATION_CANDIDATE") else "UNSUPPORTED"
     if final_status == "PASS_IMPLEMENTATION_ONLY":
         selection_status = "NOT_PRODUCTION_APPROVED"
     return {
-        "config_hash": config_hash(selected),
-        "canonical_config": _config_payload(selected),
+        "config_hash": config_hash(active_payload),
+        "canonical_config": active_payload,
         "grid_file_hash": grid_hash,
         "source_data_hash": source_data_hash,
         "generated_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
@@ -1120,9 +1123,35 @@ def _config_payload(config: MonthlyCurveConfig | LambdaCandidateConfig | Mapping
         "max_prior_residual_eur_mwh",
         "constraint_tolerance",
         "stationarity_tolerance",
+        "markets",
+        "min_structural_snapshots",
+        "allow_template_structural_fallback",
+        "structural_amplitude_eur_mwh",
+        "panel_weight",
+        "history_weight",
+        "structural_weight",
     ]
     payload = {key: raw.get(key) for key in keys}
     payload["history_lookback_years"] = history_lookback_years
+    return payload
+
+
+def _active_config_payload(
+    config: MonthlyCurveConfig | LambdaCandidateConfig | Mapping[str, object],
+    settings: LambdaCalibrationSettings,
+) -> dict[str, object]:
+    payload = _config_payload(config)
+    payload.update(
+        {
+            "markets": sorted(str(market).upper() for market in settings.neighbor_markets),
+            "min_structural_snapshots": int(settings.min_structural_snapshots),
+            "allow_template_structural_fallback": bool(settings.allow_template_structural_fallback),
+            "structural_amplitude_eur_mwh": float(settings.structural_amplitude_eur_mwh),
+            "panel_weight": float(settings.panel_weight),
+            "history_weight": float(settings.history_weight),
+            "structural_weight": float(settings.structural_weight),
+        }
+    )
     return payload
 
 

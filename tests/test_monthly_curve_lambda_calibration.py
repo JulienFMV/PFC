@@ -6,6 +6,7 @@ import pandas as pd
 import pytest
 
 from pfc_shaping.calibration.monthly_curve_lambda_calibration import (
+    LambdaCandidateConfig,
     LambdaCalibrationSettings,
     WithheldProduct,
     build_calibration_manifest,
@@ -26,6 +27,7 @@ from pfc_shaping.calibration.monthly_curve_lambda_calibration import (
     validate_masked_inputs,
 )
 from pfc_shaping.calibration.monthly_forward_curve import MarketQuote, MonthlyCurveConfig
+from pfc_shaping.pipeline.monthly_curve_authority import solve_monthly_level_authority
 
 
 def test_masking_removes_withheld_and_revealing_own_and_neighbor_quotes():
@@ -136,6 +138,106 @@ def test_config_hash_is_reproducible_and_independent_of_yaml_key_order():
     right = dict(reversed(list(left.items())))
 
     assert config_hash(left) == config_hash(right)
+
+
+def test_candidate_config_hash_includes_active_prior_stack_knobs():
+    config = LambdaCandidateConfig(
+        monthly_config=MonthlyCurveConfig(),
+        history_lookback_years=6,
+    )
+    summary = {
+        "final_status": "PASS_IMPLEMENTATION_ONLY",
+        "selected_config_hash": config_hash(config),
+    }
+
+    base = build_candidate_config(
+        pd.DataFrame(),
+        summary=summary,
+        configs=[config],
+        settings=LambdaCalibrationSettings(),
+        grid_hash="grid",
+        source_data_hash="source",
+        withheld_counts=Counter(),
+        excluded_reasons=Counter(),
+    )
+    changed_weight = build_candidate_config(
+        pd.DataFrame(),
+        summary=summary,
+        configs=[config],
+        settings=LambdaCalibrationSettings(structural_weight=0.25),
+        grid_hash="grid",
+        source_data_hash="source",
+        withheld_counts=Counter(),
+        excluded_reasons=Counter(),
+    )
+    changed_fallback = build_candidate_config(
+        pd.DataFrame(),
+        summary=summary,
+        configs=[config],
+        settings=LambdaCalibrationSettings(
+            allow_template_structural_fallback=False,
+            structural_amplitude_eur_mwh=40.0,
+            min_structural_snapshots=12,
+        ),
+        grid_hash="grid",
+        source_data_hash="source",
+        withheld_counts=Counter(),
+        excluded_reasons=Counter(),
+    )
+
+    assert base is not None
+    assert changed_weight is not None
+    assert changed_fallback is not None
+    assert base["config_hash"] != changed_weight["config_hash"]
+    assert base["config_hash"] != changed_fallback["config_hash"]
+    assert base["canonical_config"]["structural_weight"] == 1.0
+    assert base["canonical_config"]["history_weight"] == 0.5
+
+
+def test_candidate_config_hash_matches_monthly_authority_active_config_hash():
+    settings = LambdaCalibrationSettings()
+    config = LambdaCandidateConfig(
+        monthly_config=MonthlyCurveConfig(),
+        history_lookback_years=settings.history_lookback_years,
+    )
+    summary = {
+        "final_status": "PASS_IMPLEMENTATION_ONLY",
+        "selected_config_hash": config_hash(config),
+    }
+
+    candidate = build_candidate_config(
+        pd.DataFrame(),
+        summary=summary,
+        configs=[config],
+        settings=settings,
+        grid_hash="grid",
+        source_data_hash="source",
+        withheld_counts=Counter(),
+        excluded_reasons=Counter(),
+    )
+
+    authority = solve_monthly_level_authority(
+        market="CH",
+        delivery_months=pd.period_range("2028-01", "2028-12", freq="M"),
+        own_base_prices={"2028": 80.0},
+        all_market_base_prices={},
+        eex_history=pd.DataFrame(columns=["date", "market", "load_type", "product", "price"]),
+        run_timestamp=pd.Timestamp("2026-06-17"),
+        settings={
+            "enabled": True,
+            "markets": list(settings.neighbor_markets),
+            "history_lookback_years": settings.history_lookback_years,
+            "min_structural_snapshots": settings.min_structural_snapshots,
+            "allow_template_structural_fallback": settings.allow_template_structural_fallback,
+            "structural_amplitude_eur_mwh": settings.structural_amplitude_eur_mwh,
+            "panel_weight": settings.panel_weight,
+            "history_weight": settings.history_weight,
+            "structural_weight": settings.structural_weight,
+        },
+    )
+
+    assert candidate is not None
+    assert candidate["config_hash"] == authority.manifest["active_config_hash"]
 
 
 def test_scoring_of_synthetic_withheld_product_is_point_in_time_and_near_exact():

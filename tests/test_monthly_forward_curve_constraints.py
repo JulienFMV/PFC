@@ -37,6 +37,17 @@ def test_cal_plus_q1_implies_hour_weighted_apr_dec_residual_target():
     assert system.feasibility_report().feasible
 
 
+def test_high_q1_can_make_apr_dec_residual_below_lower_next_calendar():
+    months = pd.period_range("2028-01", "2029-12", freq="M")
+    system = build_monthly_constraint_system(
+        months,
+        {"2028": 80.99, "2028-Q1": 111.25, "2029": 73.25},
+    )
+
+    assert system.bucket_targets["2028-RESIDUAL"] < system.bucket_targets["2029"]
+    assert system.bucket_targets["2028-RESIDUAL"] == pytest.approx(70.9827920012)
+
+
 def test_manual_bucket_solution_reprices_active_constraints_exactly():
     months = pd.period_range("2028-01", "2028-12", freq="M")
     system = build_monthly_constraint_system(months, {"2028": 80.40, "2028-Q1": 109.97})

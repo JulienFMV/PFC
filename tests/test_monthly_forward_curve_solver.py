@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pandas as pd
+import numpy as np
 import pytest
 
 from pfc_shaping.calibration.monthly_curve_priors import (
@@ -12,6 +13,11 @@ from pfc_shaping.calibration.monthly_forward_curve import (
     build_monthly_constraint_system,
     solve_monthly_forward_curve,
     solve_monthly_forward_curve_from_constraints,
+)
+from pfc_shaping.calibration.monthly_forward_curve import (
+    _parent_mean_operator,
+    _second_difference_operator,
+    _yoy_shape_operator,
 )
 
 
@@ -118,6 +124,60 @@ def test_shape_prior_moves_unquoted_degrees_without_breaking_eex_quotes():
 
     assert shaped.residuals["abs_error"].max() <= 1e-8
     assert float((shaped.monthly_curve - base.monthly_curve).abs().max()) > 0.1
+
+
+def test_month_smoothness_does_not_cross_incompatible_parent_blocks():
+    months = pd.period_range("2028-01", "2028-12", freq="M")
+    constraints = build_monthly_constraint_system(months, {"2028": 80.40, "2028-Q1": 109.97})
+
+    d2 = _second_difference_operator(constraints)
+
+    march = months.get_loc(pd.Period("2028-03", freq="M"))
+    april = months.get_loc(pd.Period("2028-04", freq="M"))
+    crossing_rows = [
+        row
+        for row in d2
+        if abs(row[march]) > 0.0 and abs(row[april]) > 0.0
+    ]
+    assert crossing_rows == []
+
+
+def test_month_smoothness_does_not_cross_distinct_calendar_buckets():
+    months = pd.period_range("2029-01", "2030-12", freq="M")
+    constraints = build_monthly_constraint_system(months, {"2029": 73.25, "2030": 69.60})
+
+    d2 = _second_difference_operator(constraints)
+
+    dec_2029 = months.get_loc(pd.Period("2029-12", freq="M"))
+    jan_2030 = months.get_loc(pd.Period("2030-01", freq="M"))
+    crossing_rows = [
+        row
+        for row in d2
+        if abs(row[dec_2029]) > 0.0 and abs(row[jan_2030]) > 0.0
+    ]
+    assert crossing_rows == []
+
+
+def test_yoy_shape_operator_compares_residual_to_calendar_comparable_block():
+    months = pd.period_range("2028-01", "2029-12", freq="M")
+    constraints = build_monthly_constraint_system(
+        months,
+        {"2028": 80.40, "2028-Q1": 109.97, "2029": 82.67},
+    )
+    parent_operator = _parent_mean_operator(constraints)
+    shape_operator = np.eye(len(months)) - parent_operator
+
+    dyoy, dropped = _yoy_shape_operator(constraints, shape_operator)
+
+    april_2028 = months.get_loc(pd.Period("2028-04", freq="M"))
+    april_2029 = months.get_loc(pd.Period("2029-04", freq="M"))
+    comparable_rows = [
+        row
+        for row in dyoy
+        if abs(row[april_2028]) > 0.0 and abs(row[april_2029]) > 0.0
+    ]
+    assert comparable_rows
+    assert dropped == 3
 
 
 def _bucket_mean(curve: pd.Series, constraints, bucket: str) -> float:

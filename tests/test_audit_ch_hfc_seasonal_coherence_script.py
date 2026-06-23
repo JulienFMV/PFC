@@ -97,6 +97,57 @@ def test_seasonal_audit_keeps_quoted_quarter_inversion_as_market_signal(tmp_path
     assert seasonal.loc[seasonal["year"] == 2030, "severity"].iloc[0] == "ok"
 
 
+def test_seasonal_audit_flags_far_horizon_amplitude_collapse(tmp_path):
+    rows = []
+    prices = {
+        (2028, 1): 120.0,
+        (2028, 2): 115.0,
+        (2028, 3): 100.0,
+        (2028, 4): 78.0,
+        (2028, 5): 64.0,
+        (2028, 6): 62.0,
+        (2028, 7): 64.0,
+        (2028, 8): 67.0,
+        (2028, 9): 70.0,
+        (2028, 10): 75.0,
+        (2028, 11): 79.0,
+        (2028, 12): 82.0,
+        **{(2029, month): 70.0 + (month % 3) for month in range(1, 13)},
+    }
+    for (year, month), price in prices.items():
+        for hour in range(24):
+            ts = pd.Timestamp(year=year, month=month, day=1, hour=hour)
+            rows.append(
+                {
+                    "timestamp_ch": ts.strftime("%d.%m.%Y %H:%M"),
+                    "utc_offset_ch": _offset_for_month(month),
+                    "timestamp_utc": ts.strftime("%d.%m.%Y %H:%M"),
+                    "price_weighted_mean_eur_mwh": price,
+                }
+            )
+    csv = tmp_path / "curve.csv"
+    pd.DataFrame(rows).to_csv(csv, index=False)
+
+    forwards = tmp_path / "forwards.parquet"
+    pd.DataFrame(
+        {
+            "market": ["CH", "CH", "CH"],
+            "load_type": ["BASE", "BASE", "BASE"],
+            "date": [pd.Timestamp("2026-06-12")] * 3,
+            "product": ["2028", "2028-Q1", "2029"],
+            "price": [80.0, 110.0, 72.0],
+        }
+    ).to_parquet(forwards, index=False)
+
+    result = audit(csv, forwards)
+
+    seasonal = result["seasonal_checks"]
+    row = seasonal.loc[seasonal["year"] == 2029].iloc[0]
+    assert row["severity"] == "critical"
+    assert "amplitude collapses" in row["reason"]
+    assert row["annual_monthly_range_eur_mwh"] < 0.50 * row["previous_year_monthly_range_eur_mwh"]
+
+
 def test_monthly_split_audit_flags_unquoted_ch_months_inverted_vs_neighbor(tmp_path):
     rows = []
     for month, price in [(1, 80.0), (2, 100.0), (3, 120.0)]:

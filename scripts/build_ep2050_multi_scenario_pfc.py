@@ -251,6 +251,10 @@ def _build_one_curve(
         monthly_authority.assembler_base_prices if monthly_authority is not None else base_prices
     )
     quoted_keys = monthly_authority.quoted_keys if monthly_authority is not None else set(base_prices)
+    monthly_constraint_tolerance = 1e-9
+    if monthly_authority is not None:
+        solver_config = dict(monthly_authority.manifest.get("solver_config", {}) or {})
+        monthly_constraint_tolerance = float(solver_config.get("constraint_tolerance", 1e-9))
     assembler = PFCAssembler(
         shape_hourly=sh,
         shape_intraday=si,
@@ -264,6 +268,7 @@ def _build_one_curve(
         monthly_level_authority="solver" if monthly_authority is not None else "legacy",
         skip_legacy_level_cascade=monthly_authority is not None,
         skip_legacy_base_smoothing=monthly_authority is not None,
+        monthly_constraint_tolerance=monthly_constraint_tolerance,
     )
     pfc = assembler.build(
         base_prices=assembler_base_prices,

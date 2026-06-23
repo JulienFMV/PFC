@@ -200,7 +200,12 @@ def audit(csv_path: Path, forwards_path: Path) -> tuple[pd.DataFrame, pd.DataFra
     max_eex_peak_error = (
         float(residuals.loc[residuals["load_type"] == "PEAK", "abs_error_eur_mwh"].max())
         if not residuals.empty and bool((residuals["load_type"] == "PEAK").any())
-        else 0.0
+        else float("inf")
+    )
+    eex_peak_residual_count = (
+        int((residuals["load_type"] == "PEAK").sum())
+        if not residuals.empty and "load_type" in residuals
+        else 0
     )
     width_mean = float(df["structural_width_eur_mwh"].mean())
     width_p95 = float(df["structural_width_eur_mwh"].quantile(0.95))
@@ -237,6 +242,7 @@ def audit(csv_path: Path, forwards_path: Path) -> tuple[pd.DataFrame, pd.DataFra
         "boundary_jump_abs_p95_eur_mwh": boundary_p95,
         "max_eex_base_error_eur_mwh": max_eex_base_error,
         "max_eex_peak_error_eur_mwh": max_eex_peak_error,
+        "eex_peak_residual_count": float(eex_peak_residual_count),
         **negative_gate,
     }
     return annual, residuals, metrics

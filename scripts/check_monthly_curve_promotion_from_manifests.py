@@ -156,7 +156,22 @@ def _active_config_hash(manifest: Mapping[str, object]) -> str:
         raise ValueError("production manifest missing active_config_hash or solver_config/config")
     monthly_config = monthly_curve_config_from_settings(solver_config)
     payload = dict(monthly_config.__dict__)
-    payload["history_lookback_years"] = solver_config.get("history_lookback_years")
+    payload.update(
+        {
+            "markets": sorted(str(m).upper() for m in solver_config.get("markets", [])),
+            "history_lookback_years": solver_config.get("history_lookback_years"),
+            "min_structural_snapshots": solver_config.get("min_structural_snapshots"),
+            "allow_template_structural_fallback": bool(
+                solver_config.get("allow_template_structural_fallback", False)
+            ),
+            "structural_amplitude_eur_mwh": float(
+                solver_config.get("structural_amplitude_eur_mwh", 110.0)
+            ),
+            "panel_weight": float(solver_config.get("panel_weight", 1.0)),
+            "history_weight": float(solver_config.get("history_weight", 0.5)),
+            "structural_weight": float(solver_config.get("structural_weight", 1.0)),
+        }
+    )
     return config_hash(payload)
 
 

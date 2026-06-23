@@ -223,6 +223,17 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Use the governed monthly BASE curve solver as the LT level authority.",
     )
+    parser.add_argument("--monthly-solver-constraint-tolerance", type=float, default=0.01)
+    parser.add_argument("--monthly-solver-lambda-smooth-month", type=float, default=1.0)
+    parser.add_argument("--monthly-solver-lambda-smooth-yoy", type=float, default=0.25)
+    parser.add_argument("--monthly-solver-lambda-shape", type=float, default=1.0)
+    parser.add_argument("--monthly-solver-neighbor-shrinkage", type=float, default=0.5)
+    parser.add_argument(
+        "--monthly-solver-allow-template-structural-fallback",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    parser.add_argument("--monthly-solver-structural-amplitude", type=float, default=110.0)
     parser.add_argument(
         "--disable-cascade-trend-for-annual-only",
         action="store_true",
@@ -281,6 +292,13 @@ def main(argv: list[str] | None = None) -> int:
                     "monthly_curve_solver": {
                         "enabled": True,
                         "eex_history_path": args.forwards,
+                        "constraint_tolerance": args.monthly_solver_constraint_tolerance,
+                        "lambda_smooth_month": args.monthly_solver_lambda_smooth_month,
+                        "lambda_smooth_yoy": args.monthly_solver_lambda_smooth_yoy,
+                        "lambda_shape": args.monthly_solver_lambda_shape,
+                        "neighbor_shrinkage": args.monthly_solver_neighbor_shrinkage,
+                        "allow_template_structural_fallback": args.monthly_solver_allow_template_structural_fallback,
+                        "structural_amplitude_eur_mwh": args.monthly_solver_structural_amplitude,
                     }
                 }
             }

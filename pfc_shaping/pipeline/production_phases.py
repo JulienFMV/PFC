@@ -361,10 +361,12 @@ def run_long_term_phase(
     cascaded_prices_ch = cascader_ch.synthesize_peak_prices(cascaded_prices_ch)
     quoted_keys_ch = set(base_prices_ch.keys())
     cascader_for_ch_branch: object | None = cascader_ch
+    monthly_constraint_tolerance_ch = 1e-9
 
     monthly_authority_ch = None
     if monthly_solver_enabled(inputs.config, market="CH"):
         settings = monthly_solver_settings(inputs.config)
+        monthly_constraint_tolerance_ch = float(settings.get("constraint_tolerance", 1e-9))
         history_path = settings.get("eex_history_path")
         history = pd.DataFrame()
         neighbor_prices: dict[str, dict[str, float]] = {}
@@ -522,6 +524,7 @@ def run_long_term_phase(
         monthly_level_authority="solver" if monthly_authority_ch is not None else "legacy",
         skip_legacy_level_cascade=monthly_authority_ch is not None,
         skip_legacy_base_smoothing=monthly_authority_ch is not None,
+        monthly_constraint_tolerance=monthly_constraint_tolerance_ch,
     )
 
     german_spec = MarketSpec(
@@ -633,6 +636,7 @@ def _build_long_term_branch(
     monthly_level_authority: str = "legacy",
     skip_legacy_level_cascade: bool = False,
     skip_legacy_base_smoothing: bool = False,
+    monthly_constraint_tolerance: float = 1e-9,
 ) -> MarketBranchArtifacts:
     """Build one market's PFC from a MarketSpec.
 
@@ -727,6 +731,7 @@ def _build_long_term_branch(
         monthly_level_authority=monthly_level_authority,
         skip_legacy_level_cascade=skip_legacy_level_cascade,
         skip_legacy_base_smoothing=skip_legacy_base_smoothing,
+        monthly_constraint_tolerance=monthly_constraint_tolerance,
     )
     build_kwargs = dict(
         base_prices=cascaded_prices,

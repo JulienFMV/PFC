@@ -393,6 +393,8 @@ def build_structural_monthly_shape_prior(
     amplitude_eur_mwh: float = 20.0,
     cap_eur_mwh: float | None = None,
     shrinkage: float = 0.0,
+    fallback_reason: str | None = None,
+    history_counts: Mapping[int, int] | None = None,
 ) -> MonthlyShapePrior:
     """Build an explicit template structural prior in zero-mean space."""
 
@@ -412,6 +414,7 @@ def build_structural_monthly_shape_prior(
     for month_number, ratio in ratios.items():
         if not np.isfinite(float(ratio)):
             raise ValueError(f"monthly ratio for month {month_number!r} must be finite")
+    counts = {int(k): int(v) for k, v in dict(history_counts or {}).items()}
     months = constraints.delivery_grid.months
     raw = pd.Series(
         {
@@ -460,6 +463,8 @@ def build_structural_monthly_shape_prior(
             ],
             "max_abs_parent_mean_residual": max_abs_parent_mean_residual,
             "zero_mean_parent_space": True,
+            "fallback_reason": fallback_reason or "",
+            "n_history": [int(counts.get(int(month.month), 0)) for month in months],
             "status": "STRUCTURAL_TEMPLATE",
         }
     )
@@ -500,6 +505,8 @@ def build_structural_monthly_shape_prior_from_history(
             return build_structural_monthly_shape_prior(
                 constraints,
                 amplitude_eur_mwh=fallback_amplitude_eur_mwh,
+                fallback_reason="empty_history",
+                history_counts={month_number: 0 for month_number in range(1, 13)},
             )
         return _unsupported_prior(months, "UNSUPPORTED")
     _require_columns(eex_history, {"date", "product", "load_type", "market", "price"})
@@ -537,6 +544,8 @@ def build_structural_monthly_shape_prior_from_history(
             return build_structural_monthly_shape_prior(
                 constraints,
                 amplitude_eur_mwh=fallback_amplitude_eur_mwh,
+                fallback_reason="no_monthly_cal_history",
+                history_counts={month_number: 0 for month_number in range(1, 13)},
             )
         return _unsupported_prior(months, "UNSUPPORTED")
 
@@ -549,6 +558,8 @@ def build_structural_monthly_shape_prior_from_history(
             return build_structural_monthly_shape_prior(
                 constraints,
                 amplitude_eur_mwh=fallback_amplitude_eur_mwh,
+                fallback_reason="insufficient_monthly_history",
+                history_counts={month_number: int(counts.get(month_number, 0)) for month_number in range(1, 13)},
             )
         diagnostics = pd.DataFrame(
             {

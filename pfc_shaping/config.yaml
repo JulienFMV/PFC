@@ -98,10 +98,11 @@ forwards:
     min_history_snapshots: 24
     history_lookback_years: 6
     min_structural_snapshots: 24
-    allow_template_structural_fallback: false
+    allow_template_structural_fallback: true
+    structural_amplitude_eur_mwh: 110.0
     panel_weight: 1.0
     history_weight: 0.5
-    structural_weight: 0.25
+    structural_weight: 1.0
     constraint_tolerance: 0.000000001
     stationarity_tolerance: 0.0000001
 

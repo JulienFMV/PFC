@@ -50,6 +50,8 @@ def test_audit_scores_well_shaped_hourly_csv(tmp_path):
 
     assert not annual.empty
     assert residuals.loc[0, "abs_error_eur_mwh"] == 0.0
+    assert metrics["eex_peak_residual_count"] == 0.0
+    assert metrics["max_eex_peak_error_eur_mwh"] == float("inf")
     assert metrics["score_10"] >= 8.5
 
 
@@ -130,6 +132,7 @@ def test_audit_reports_peak_residuals_when_peak_quotes_exist(tmp_path):
     assert set(residuals["load_type"]) == {"BASE", "PEAK"}
     assert metrics["max_eex_base_error_eur_mwh"] < 1e-9
     assert metrics["max_eex_peak_error_eur_mwh"] < 1e-9
+    assert metrics["eex_peak_residual_count"] > 0.0
 
 
 def test_audit_accepts_bounded_localized_weighted_negatives(tmp_path):

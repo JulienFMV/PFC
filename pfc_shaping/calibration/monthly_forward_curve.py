@@ -381,7 +381,7 @@ def solve_monthly_forward_curve_from_constraints(
         ridge_used = True
         terms.append(("numerical_parent_flat_ridge", 1e-10, np.eye(n), parent_flat))
 
-    d2 = _second_difference_operator(monthly_constraints.delivery_grid.months)
+    d2 = _second_difference_operator(monthly_constraints)
     if cfg.lambda_smooth_month > 0.0 and d2.size:
         terms.append(("smooth_month", float(cfg.lambda_smooth_month), d2, np.zeros(d2.shape[0])))
 
@@ -647,6 +647,14 @@ def _parent_flat_baseline(monthly_constraints: MonthlyConstraintSystem) -> np.nd
         if pd.isna(bucket):
             continue
         values[i] = float(monthly_constraints.bucket_targets[str(bucket)])
+    missing = monthly_constraints.month_buckets.isna().to_numpy()
+    if bool(missing.any()) and bool((~missing).any()):
+        hours = monthly_constraints.delivery_grid.month_hours.to_numpy(dtype=float)
+        represented_hours = hours[~missing]
+        represented_values = values[~missing]
+        total_hours = float(represented_hours.sum())
+        if total_hours > 0.0:
+            values[missing] = float((represented_values * represented_hours).sum() / total_hours)
     return values
 
 
@@ -700,11 +708,20 @@ def _recenter_vector_by_parent(
     return out
 
 
-def _second_difference_operator(months: pd.PeriodIndex) -> np.ndarray:
+def _second_difference_operator(monthly_constraints: MonthlyConstraintSystem) -> np.ndarray:
     rows: list[np.ndarray] = []
+    months = monthly_constraints.delivery_grid.months
+    month_buckets = monthly_constraints.month_buckets.reindex(months)
     n = len(months)
     for i in range(1, n - 1):
         if months[i - 1] + 1 != months[i] or months[i] + 1 != months[i + 1]:
+            continue
+        buckets = {
+            str(month_buckets.iloc[i - 1]),
+            str(month_buckets.iloc[i]),
+            str(month_buckets.iloc[i + 1]),
+        }
+        if len(buckets) != 1:
             continue
         row = np.zeros(n, dtype=float)
         row[i - 1] = 1.0
@@ -731,12 +748,87 @@ def _yoy_shape_operator(
             continue
         j = month_to_pos[previous]
         if parent_types[i] != parent_types[j]:
-            dropped += 1
+            comparable = _residual_calendar_yoy_shape_row(
+                monthly_constraints,
+                current_pos=i,
+                previous_pos=j,
+                parent_types=parent_types,
+            )
+            if comparable is None:
+                dropped += 1
+                continue
+            rows.append(comparable)
             continue
         rows.append(shape_operator[i, :] - shape_operator[j, :])
     if not rows:
         return np.zeros((0, len(months)), dtype=float), dropped
     return np.vstack(rows), dropped
+
+
+def _residual_calendar_yoy_shape_row(
+    monthly_constraints: MonthlyConstraintSystem,
+    *,
+    current_pos: int,
+    previous_pos: int,
+    parent_types: list[str],
+) -> np.ndarray | None:
+    type_current = parent_types[current_pos]
+    type_previous = parent_types[previous_pos]
+    if {type_current, type_previous} != {"residual", "calendar"}:
+        return None
+
+    months = monthly_constraints.delivery_grid.months
+    residual_pos = current_pos if type_current == "residual" else previous_pos
+    residual_bucket = monthly_constraints.month_buckets.iloc[residual_pos]
+    if pd.isna(residual_bucket):
+        return None
+    residual_mask = monthly_constraints.month_buckets.eq(residual_bucket).to_numpy()
+    residual_indices = np.flatnonzero(residual_mask)
+    residual_month_numbers = {int(months[pos].month) for pos in residual_indices}
+    if not residual_month_numbers:
+        return None
+
+    def comparable_block(position: int) -> np.ndarray | None:
+        year = int(months[position].year)
+        if parent_types[position] == "residual":
+            bucket = monthly_constraints.month_buckets.iloc[position]
+            mask = monthly_constraints.month_buckets.eq(bucket).to_numpy()
+            return np.flatnonzero(mask)
+        if parent_types[position] == "calendar":
+            indices = np.array(
+                [
+                    idx
+                    for idx, month in enumerate(months)
+                    if int(month.year) == year and int(month.month) in residual_month_numbers
+                ],
+                dtype=int,
+            )
+            if len(indices) != len(residual_month_numbers):
+                return None
+            return indices
+        return None
+
+    current_block = comparable_block(current_pos)
+    previous_block = comparable_block(previous_pos)
+    if current_block is None or previous_block is None or len(current_block) == 0 or len(previous_block) == 0:
+        return None
+
+    row = np.zeros(len(months), dtype=float)
+    row[current_pos] += 1.0
+    row[previous_pos] -= 1.0
+    row -= _weighted_mean_row(monthly_constraints, current_block)
+    row += _weighted_mean_row(monthly_constraints, previous_block)
+    return row
+
+
+def _weighted_mean_row(monthly_constraints: MonthlyConstraintSystem, indices: np.ndarray) -> np.ndarray:
+    row = np.zeros(len(monthly_constraints.delivery_grid.months), dtype=float)
+    hours = monthly_constraints.delivery_grid.month_hours.iloc[indices].to_numpy(dtype=float)
+    total = float(hours.sum())
+    if total <= 0.0:
+        return row
+    row[indices] = hours / total
+    return row
 
 
 def _parent_block_types(monthly_constraints: MonthlyConstraintSystem) -> list[str]:

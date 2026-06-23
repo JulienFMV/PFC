@@ -283,6 +283,8 @@ def test_template_structural_prior_reports_lambda_diagnostics_and_recenter_steps
         "shape_parent_mean_eur_mwh",
         "max_abs_parent_mean_residual",
         "zero_mean_parent_space",
+        "fallback_reason",
+        "n_history",
     }.issubset(structural.diagnostics.columns)
     assert diagnostics["source"].unique().tolist() == ["template_structural_monthly_ratios"]
     assert diagnostics["amplitude_eur_mwh"].unique().tolist() == [110.0]
@@ -304,6 +306,26 @@ def test_template_structural_prior_reports_lambda_diagnostics_and_recenter_steps
         assert row["shape_parent_mean_eur_mwh"] == pytest.approx(0.0, abs=1e-10)
     assert structural.contributions["shape_deviation_eur_mwh"].abs().max() <= 12.0
     assert diagnostics.loc["2028-12", "shape_deviation_eur_mwh"] == pytest.approx(12.0)
+    assert diagnostics["max_abs_parent_mean_residual"].max() <= 1e-10
+    _assert_zero_mean_by_parent(structural.shape, constraints)
+
+
+def test_template_structural_fallback_reports_reason_and_history_counts():
+    constraints = _constraints_2028_residual()
+    history = pd.DataFrame(columns=["date", "market", "load_type", "product", "price"])
+
+    structural = build_structural_monthly_shape_prior_from_history(
+        constraints,
+        history,
+        fallback_to_template=True,
+        fallback_amplitude_eur_mwh=110.0,
+    )
+
+    assert structural.status == "STRUCTURAL_TEMPLATE"
+    diagnostics = structural.diagnostics
+    assert set(diagnostics["fallback_reason"]) == {"empty_history"}
+    assert diagnostics["n_history"].max() == 0
+    assert diagnostics["amplitude_eur_mwh"].unique().tolist() == [110.0]
     assert diagnostics["max_abs_parent_mean_residual"].max() <= 1e-10
     _assert_zero_mean_by_parent(structural.shape, constraints)
 

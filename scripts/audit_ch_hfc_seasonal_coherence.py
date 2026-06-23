@@ -662,6 +662,8 @@ def seasonal_coherence_checks(
     forwards: pd.DataFrame,
 ) -> pd.DataFrame:
     rows: list[dict[str, object]] = []
+    previous_year_range: float | None = None
+    previous_year_coverage: str | None = None
     for year in sorted(monthly["year"].unique()):
         jan = _month_value(monthly, int(year), 1)
         feb = _month_value(monthly, int(year), 2)
@@ -681,6 +683,16 @@ def seasonal_coherence_checks(
         winter_minus_autumn = (
             float(np.mean(winter_values) - np.mean(autumn_values)) if winter_values and autumn_values else np.nan
         )
+        year_values = [
+            _month_value(monthly, int(year), month)
+            for month in range(1, 13)
+        ]
+        complete_year_values = [float(value) for value in year_values if value is not None]
+        annual_range = (
+            float(max(complete_year_values) - min(complete_year_values))
+            if len(complete_year_values) == 12
+            else np.nan
+        )
         coverage = _coverage_for_year(forwards, int(year))
 
         severity = "ok"
@@ -688,9 +700,37 @@ def seasonal_coherence_checks(
         if coverage == "annual_only" and jan_minus_oct < -5.0:
             severity = "critical"
             reason = "annual-only synthetic shape has January materially below October"
+        elif (
+            coverage == "annual_only"
+            and np.isfinite(annual_range)
+            and previous_year_range is not None
+            and np.isfinite(previous_year_range)
+            and previous_year_range >= 30.0
+            and annual_range < 0.50 * previous_year_range
+            and previous_year_coverage in {"monthly_or_mixed", "full_quarter", "partial_quarter"}
+        ):
+            severity = "critical"
+            reason = "annual-only synthetic monthly amplitude collapses versus quoted/partial previous year"
+        elif coverage == "annual_only" and np.isfinite(annual_range) and annual_range < 12.0:
+            severity = "critical"
+            reason = "annual-only synthetic monthly amplitude is too flat"
         elif coverage == "annual_only" and jan_minus_oct < 0.0:
             severity = "warning"
             reason = "annual-only synthetic shape has January below October"
+        elif (
+            coverage == "annual_only"
+            and np.isfinite(annual_range)
+            and previous_year_range is not None
+            and np.isfinite(previous_year_range)
+            and previous_year_range >= 30.0
+            and annual_range < 0.65 * previous_year_range
+            and previous_year_coverage in {"monthly_or_mixed", "full_quarter", "partial_quarter"}
+        ):
+            severity = "warning"
+            reason = "annual-only synthetic monthly amplitude drops sharply versus quoted/partial previous year"
+        elif coverage == "annual_only" and np.isfinite(annual_range) and annual_range < 18.0:
+            severity = "warning"
+            reason = "annual-only synthetic monthly amplitude is marginally flat"
         elif coverage == "partial_quarter" and q1_minus_q4 < -5.0:
             severity = "warning"
             reason = "partial-quarter year has Q1 materially below Q4 after completion"
@@ -704,10 +744,21 @@ def seasonal_coherence_checks(
                 "jan_minus_oct_eur_mwh": jan_minus_oct,
                 "q1_minus_q4_eur_mwh": q1_minus_q4,
                 "winter_minus_autumn_eur_mwh": winter_minus_autumn,
+                "annual_monthly_range_eur_mwh": annual_range,
+                "previous_year_monthly_range_eur_mwh": (
+                    np.nan if previous_year_range is None else previous_year_range
+                ),
+                "range_ratio_vs_previous_year": (
+                    np.nan
+                    if previous_year_range is None or not np.isfinite(previous_year_range) or previous_year_range <= 0.0
+                    else annual_range / previous_year_range
+                ),
                 "severity": severity,
                 "reason": reason,
             }
         )
+        previous_year_range = annual_range
+        previous_year_coverage = coverage
     return pd.DataFrame(rows)
 
 

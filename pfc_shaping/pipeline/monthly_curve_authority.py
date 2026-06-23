@@ -50,10 +50,11 @@ DEFAULT_MONTHLY_SOLVER_CONFIG: dict[str, object] = {
     "min_history_snapshots": 24,
     "history_lookback_years": 6,
     "min_structural_snapshots": 24,
-    "allow_template_structural_fallback": False,
+    "allow_template_structural_fallback": True,
+    "structural_amplitude_eur_mwh": 110.0,
     "panel_weight": 1.0,
     "history_weight": 0.5,
-    "structural_weight": 0.25,
+    "structural_weight": 1.0,
     "constraint_tolerance": 1e-9,
     "stationarity_tolerance": 1e-7,
     "eex_history_path": "data/eex_forwards_history.parquet",
@@ -213,6 +214,7 @@ def solve_monthly_level_authority(
         min_snapshots=int(cfg_settings.get("min_structural_snapshots", 24)),
         lookback_years=int(cfg_settings.get("history_lookback_years", 6)),
         fallback_to_template=bool(cfg_settings.get("allow_template_structural_fallback", False)),
+        fallback_amplitude_eur_mwh=float(cfg_settings.get("structural_amplitude_eur_mwh", 110.0)),
     )
     fused = build_fused_shape_prior(
         constraints,
@@ -222,7 +224,7 @@ def solve_monthly_level_authority(
         weights={
             "panel": float(cfg_settings.get("panel_weight", 1.0)),
             "history": float(cfg_settings.get("history_weight", 0.5)),
-            "structural": float(cfg_settings.get("structural_weight", 0.25)),
+            "structural": float(cfg_settings.get("structural_weight", 1.0)),
         },
     )
     result = solve_monthly_forward_curve_from_constraints(constraints, config=cfg, shape_prior=fused)
@@ -262,6 +264,7 @@ def solve_monthly_level_authority(
         history_status=historical.status,
         structural_status=structural.status,
         fused_status=fused.status,
+        structural_prior_summary=_prior_diagnostics_summary(structural),
         source_hashes=source_hashes or {},
     )
     return MonthlyLevelAuthority(
@@ -379,11 +382,11 @@ def _manifest(
     history_status: str,
     structural_status: str,
     fused_status: str,
+    structural_prior_summary: Mapping[str, object],
     source_hashes: Mapping[str, str],
 ) -> dict[str, object]:
     monthly_payload = {str(k): round(float(v), 10) for k, v in result.monthly_curve.sort_index().items()}
-    active_config_payload = dict(monthly_curve_config_from_settings(settings).__dict__)
-    active_config_payload["history_lookback_years"] = dict(settings).get("history_lookback_years")
+    active_config_payload = _active_config_payload(settings)
     return {
         "monthly_curve_schema_version": result.monthly_curve_schema_version,
         "market": market,
@@ -399,11 +402,66 @@ def _manifest(
         "history_status": history_status,
         "structural_status": structural_status,
         "fused_status": fused_status,
+        "structural_prior_summary": dict(structural_prior_summary),
         "solver_kkt": dict(result.kkt),
         "monthly_level_authority": settings.get("monthly_level_authority", "solver"),
         "skip_legacy_level_cascade": bool(settings.get("skip_legacy_level_cascade", True)),
         "skip_legacy_base_smoothing": bool(settings.get("skip_legacy_base_smoothing", True)),
     }
+
+
+def _active_config_payload(settings: Mapping[str, object]) -> dict[str, object]:
+    raw = dict(settings)
+    payload = dict(monthly_curve_config_from_settings(raw).__dict__)
+    payload.update(
+        {
+            "markets": sorted(str(m).upper() for m in raw.get("markets", [])),
+            "history_lookback_years": raw.get("history_lookback_years"),
+            "min_structural_snapshots": raw.get("min_structural_snapshots"),
+            "allow_template_structural_fallback": bool(
+                raw.get("allow_template_structural_fallback", False)
+            ),
+            "structural_amplitude_eur_mwh": float(
+                raw.get("structural_amplitude_eur_mwh", 110.0)
+            ),
+            "panel_weight": float(raw.get("panel_weight", 1.0)),
+            "history_weight": float(raw.get("history_weight", 0.5)),
+            "structural_weight": float(raw.get("structural_weight", 1.0)),
+        }
+    )
+    return payload
+
+
+def _prior_diagnostics_summary(prior: MonthlyShapePrior) -> dict[str, object]:
+    diagnostics = prior.diagnostics.copy()
+    summary: dict[str, object] = {
+        "status": prior.status,
+        "diagnostic_rows": int(len(diagnostics)),
+    }
+    if diagnostics.empty:
+        return summary
+
+    for column in ("source", "fallback_reason"):
+        if column in diagnostics.columns:
+            values = sorted(
+                {
+                    str(value)
+                    for value in diagnostics[column].dropna().unique().tolist()
+                    if str(value) != ""
+                }
+            )
+            summary[f"{column}s"] = values
+    for column in ("amplitude_eur_mwh", "max_abs_parent_mean_residual", "n_history"):
+        if column in diagnostics.columns:
+            numeric = pd.to_numeric(diagnostics[column], errors="coerce")
+            if numeric.notna().any():
+                summary[f"{column}_min"] = float(numeric.min())
+                summary[f"{column}_max"] = float(numeric.max())
+    if "zero_mean_parent_space" in diagnostics.columns:
+        summary["zero_mean_parent_space_all"] = bool(
+            diagnostics["zero_mean_parent_space"].fillna(False).astype(bool).all()
+        )
+    return summary
 
 
 def _hash_frame(frame: pd.DataFrame) -> str:
