@@ -263,3 +263,36 @@ Invariants not to break:
 - Promotion evidence must include the gate CSV, summary JSON, input hashes,
   script hash, and command arguments.
 
+## D-20260623-10 - Local Export Solver Months Follow The Delivered Artifact Window
+
+Decision: for the local-test hourly CSV export, when the monthly solver is
+enabled, the solver delivery months are derived from the intended local
+artifact window, not from the rounded whole-UTC-day build horizon used by the
+intermediate fan-chart builder.
+
+Reason: `scripts/export_local_test_ch_hourly_csv.py` has to overbuild by whole
+UTC days so the 15-minute fan chart fully covers the requested local CSV
+window. For the 2026-06-13 to 2030-12-31 candidate this technical overbuild
+included local 2031-01 rows, causing the monthly solver to see a partial
+delivery grid for quoted `CAL 2031` and fail before generating the delivered
+artifact. The intended delivered CSV does not include 2031, so the solver
+months must follow the delivered artifact horizon. The low-level partial
+product check remains fail-closed.
+
+Rejected alternatives:
+
+- Relax `_raise_on_partial_product_grid` in the monthly constraint builder.
+- Silently filter partially overlapping quoted products inside the solver.
+- Extend the candidate horizon merely to avoid the exception without declaring
+  a full-horizon change across CSV, audits, manifests and Power BI sidecars.
+- Patch 2031 months or quoted products after the solve.
+
+Invariants not to break:
+
+- A quoted product that overlaps the solver delivery grid only partially must
+  still raise `partial delivery grid`.
+- Quotes fully outside the delivered artifact window remain outside the solver
+  delivery grid and must not become active hard constraints for that artifact.
+- Intermediate overbuilt fan-chart rows are not promotion evidence unless the
+  candidate horizon explicitly includes them and audits cover them.
+

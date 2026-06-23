@@ -350,6 +350,40 @@ def test_final_eex_peak_calibration_runs_after_final_mutators(tmp_path, monkeypa
     assert out.loc[peak, "price_weighted_mean_eur_mwh"].mean() == pytest.approx(95.0, abs=1e-6)
 
 
+def test_monthly_solver_build_receives_intended_local_delivery_window(tmp_path, monkeypatch):
+    captured: dict[str, list[str]] = {}
+
+    def capture_build(argv):
+        captured["argv"] = list(argv)
+        raise RuntimeError("stop after build argv capture")
+
+    monkeypatch.setattr(export_script, "build_local_test_ch_pfc", capture_build)
+
+    with pytest.raises(RuntimeError, match="stop after build argv capture"):
+        export_script.main(
+            [
+                "--enable-monthly-forward-curve-solver",
+                "--local-start-date",
+                "2026-06-13",
+                "--local-end-date",
+                "2030-12-31",
+                "--output",
+                str(tmp_path / "hourly.csv"),
+                "--report",
+                str(tmp_path / "report.md"),
+                "--fan-chart-output",
+                str(tmp_path / "fan.parquet"),
+                "--skip-powerbi-refresh",
+            ]
+        )
+
+    argv = captured["argv"]
+    assert "--monthly-solver-delivery-local-start-date" in argv
+    assert argv[argv.index("--monthly-solver-delivery-local-start-date") + 1] == "2026-06-13"
+    assert "--monthly-solver-delivery-local-end-date" in argv
+    assert argv[argv.index("--monthly-solver-delivery-local-end-date") + 1] == "2030-12-31"
+
+
 def test_eex_peak_mask_excludes_ch_national_holidays():
     timestamps = pd.Series(
         pd.DatetimeIndex(

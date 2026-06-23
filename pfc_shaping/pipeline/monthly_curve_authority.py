@@ -132,6 +132,33 @@ def delivery_months_for_window(
     return pd.PeriodIndex(sorted(months.unique()), freq="M")
 
 
+def delivery_months_for_local_window(
+    *,
+    start_date: str | pd.Timestamp,
+    end_date: str | pd.Timestamp,
+    timezone: str = "Europe/Zurich",
+) -> pd.PeriodIndex:
+    """Return inclusive delivery months for the intended local artifact window."""
+
+    start = pd.Timestamp(start_date)
+    end = pd.Timestamp(end_date)
+    if start.tz is None:
+        start = start.tz_localize(timezone)
+    else:
+        start = start.tz_convert(timezone)
+    if end.tz is None:
+        end = end.tz_localize(timezone)
+    else:
+        end = end.tz_convert(timezone)
+    if end < start:
+        raise ValueError("end_date must be >= start_date")
+    first_month = pd.Timestamp(start.year, start.month, 1, tz=timezone)
+    last_month = pd.Timestamp(end.year, end.month, 1, tz=timezone)
+    month_starts = pd.date_range(first_month, last_month, freq="MS", tz=timezone)
+    months = pd.PeriodIndex(month_starts.strftime("%Y-%m"), freq="M")
+    return pd.PeriodIndex(sorted(months.unique()), freq="M")
+
+
 def delivery_months_from_prices(prices: Mapping[str, float]) -> pd.PeriodIndex:
     months: set[pd.Period] = set()
     for product in prices:

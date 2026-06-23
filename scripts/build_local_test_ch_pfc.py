@@ -33,6 +33,7 @@ from scripts.build_ep2050_multi_scenario_pfc import (
 from scripts.build_first_ep2050_pfc import _latest_forwards, _load_epex_hourly
 from scripts.validate_scenario_governance import validate_governance, write_report
 from pfc_shaping.pipeline.monthly_curve_authority import (
+    delivery_months_for_local_window,
     delivery_months_for_window,
     monthly_solver_settings,
     solve_monthly_level_authority_from_history,
@@ -228,6 +229,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--monthly-solver-lambda-smooth-yoy", type=float, default=0.25)
     parser.add_argument("--monthly-solver-lambda-shape", type=float, default=1.0)
     parser.add_argument("--monthly-solver-neighbor-shrinkage", type=float, default=0.5)
+    parser.add_argument("--monthly-solver-delivery-local-start-date", default=None)
+    parser.add_argument("--monthly-solver-delivery-local-end-date", default=None)
     parser.add_argument(
         "--monthly-solver-allow-template-structural-fallback",
         action=argparse.BooleanOptionalAction,
@@ -303,14 +306,29 @@ def main(argv: list[str] | None = None) -> int:
                 }
             }
         )
-        monthly_authority = solve_monthly_level_authority_from_history(
-            forwards_path=args.forwards,
-            market=args.market,
-            delivery_months=delivery_months_for_window(
+        if args.monthly_solver_delivery_local_start_date or args.monthly_solver_delivery_local_end_date:
+            if not (
+                args.monthly_solver_delivery_local_start_date
+                and args.monthly_solver_delivery_local_end_date
+            ):
+                raise ValueError(
+                    "monthly solver local delivery override requires both start and end dates"
+                )
+            delivery_months = delivery_months_for_local_window(
+                start_date=args.monthly_solver_delivery_local_start_date,
+                end_date=args.monthly_solver_delivery_local_end_date,
+                timezone="Europe/Zurich" if args.market == "CH" else "Europe/Berlin",
+            )
+        else:
+            delivery_months = delivery_months_for_window(
                 start_date=args.start_date,
                 horizon_days=args.horizon_days,
                 timezone="Europe/Zurich" if args.market == "CH" else "Europe/Berlin",
-            ),
+            )
+        monthly_authority = solve_monthly_level_authority_from_history(
+            forwards_path=args.forwards,
+            market=args.market,
+            delivery_months=delivery_months,
             settings=settings,
             timezone="Europe/Zurich" if args.market == "CH" else "Europe/Berlin",
             original_forward_prices=base_prices,

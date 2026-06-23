@@ -9,6 +9,7 @@ import pandas as pd
 
 from pfc_shaping.lt.model.assembler import PFCAssembler
 from pfc_shaping.pipeline.monthly_curve_authority import (
+    delivery_months_for_local_window,
     delivery_months_for_window,
     delivery_months_from_prices,
     latest_base_prices_by_market,
@@ -208,6 +209,24 @@ def test_delivery_months_for_window_respects_exclusive_end_boundary() -> None:
     assert str(months[0]) == "2028-01"
     assert str(months[-1]) == "2028-12"
     assert "2029-01" not in {str(month) for month in months}
+
+
+def test_delivery_months_for_local_window_uses_intended_artifact_months() -> None:
+    rounded_build_months = delivery_months_for_window(
+        start_date="2026-06-12 22:00:00",
+        horizon_days=1664,
+        timezone="Europe/Zurich",
+    )
+    artifact_months = delivery_months_for_local_window(
+        start_date="2026-06-13",
+        end_date="2030-12-31",
+        timezone="Europe/Zurich",
+    )
+
+    assert "2031-01" in {str(month) for month in rounded_build_months}
+    assert str(artifact_months[0]) == "2026-06"
+    assert str(artifact_months[-1]) == "2030-12"
+    assert "2031-01" not in {str(month) for month in artifact_months}
 
 
 def test_monthly_authority_hash_parity_and_quoted_keys_exclude_synthetic_months() -> None:

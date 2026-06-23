@@ -2405,6 +2405,16 @@ def main(argv: list[str] | None = None) -> int:
                         "--monthly-solver-structural-amplitude",
                         str(args.monthly_solver_structural_amplitude),
                         *(
+                            [
+                                "--monthly-solver-delivery-local-start-date",
+                                args.local_start_date,
+                                "--monthly-solver-delivery-local-end-date",
+                                args.local_end_date,
+                            ]
+                            if args.enable_monthly_forward_curve_solver
+                            else []
+                        ),
+                        *(
                             ["--monthly-solver-allow-template-structural-fallback"]
                             if args.monthly_solver_allow_template_structural_fallback
                             else ["--no-monthly-solver-allow-template-structural-fallback"]
