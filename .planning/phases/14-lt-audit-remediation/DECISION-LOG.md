@@ -299,3 +299,34 @@ Invariants not to break:
   `active_config_hash`.
 - No CT, Power BI, heavy data, or individual generated month patch is part of
   this decision.
+
+## D-20260623-05 - Q4 Is A Comparable Seasonal Sub-Block
+
+Decision: the `residual_vs_implied_comparable_block` audit population covers
+quoted seasonal sub-blocks against full calendars, not only residual buckets
+against calendars. In particular, a quoted Q4 parent block compared with a
+next-year full CAL parent must emit comparable-block rows and use calibrated
+historical thresholds for the same `parent_type_pair` where available.
+
+Reason: the Phase 4 cross-year failure mode is not limited to Apr-Dec residual
+buckets. A quoted Q4 can also make same-month visual comparisons misleading if
+the audit treats the opposite year's full calendar as directly comparable.
+The gate must therefore compare same-month deviations from parent blocks for
+`quarter|calendar` as well as `residual|calendar`.
+
+Rejected alternatives:
+
+- Rely on `same_month_rank_consistency` alone for Q4-vs-CAL cases.
+- Treat the gate name as limiting the population to residual buckets only.
+- Let Q4-vs-CAL rows become permanently `UNSUPPORTED` because the historical
+  threshold builder ignores quarter/calendar observations.
+
+Invariants not to break:
+
+- No naive rule forces every month to follow the calendar spread sign.
+- Quote support can suppress a shape critical only when active hard constraints
+  cover the exact month or parent block under test.
+- Historical threshold rows remain point-in-time and fail closed as
+  `UNSUPPORTED` when undersampled or when the required `parent_type_pair` is
+  unsupported.
+- The audit remains evidence-only and must not mutate monthly solver output.

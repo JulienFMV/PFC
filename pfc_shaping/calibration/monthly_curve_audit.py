@@ -24,6 +24,7 @@ THRESHOLD_COLUMNS = [
     "metric",
     "market",
     "delivery_bucket",
+    "parent_type_pair",
     "lookback_start",
     "lookback_end",
     "n_snapshots",
@@ -185,7 +186,9 @@ def build_monthly_curve_historical_thresholds(
     if history.empty:
         lookback_start = ""
         lookback_end = ""
-        observations = pd.DataFrame(columns=["gate_id", "metric", "delivery_bucket", "date", "metric_value"])
+        observations = pd.DataFrame(
+            columns=["gate_id", "metric", "delivery_bucket", "parent_type_pair", "date", "metric_value"]
+        )
     else:
         lookback_start = str(pd.Timestamp(history["date"].min()).date())
         lookback_end = str(pd.Timestamp(history["date"].max()).date())
@@ -193,31 +196,34 @@ def build_monthly_curve_historical_thresholds(
 
     rows: list[dict[str, object]] = []
     specs = [
-        ("same_month_rank_consistency", _SAME_MONTH_METRIC),
-        ("residual_vs_implied_comparable_block", _COMPARABLE_BLOCK_METRIC),
+        ("same_month_rank_consistency", _SAME_MONTH_METRIC, ("all",)),
+        ("residual_vs_implied_comparable_block", _COMPARABLE_BLOCK_METRIC, ("residual|calendar", "quarter|calendar")),
     ]
     buckets = ["all"] + [f"month_{month:02d}" for month in range(1, 13)]
-    for gate_id, metric in specs:
-        for bucket in buckets:
-            values = observations[
-                observations["gate_id"].astype(str).eq(gate_id)
-                & observations["metric"].astype(str).eq(metric)
-                & observations["delivery_bucket"].astype(str).eq(bucket)
-            ]
-            rows.append(
-                _threshold_row(
-                    values["metric_value"].astype(float) if not values.empty else pd.Series(dtype=float),
-                    dates=values["date"] if not values.empty else pd.Series(dtype="datetime64[ns]"),
-                    gate_id=gate_id,
-                    metric=metric,
-                    market=str(market).upper(),
-                    delivery_bucket=bucket,
-                    lookback_start=lookback_start,
-                    lookback_end=lookback_end,
-                    min_required_n=int(min_required_n),
-                    regime_filter=_threshold_regime_filter(bucket),
+    for gate_id, metric, parent_type_pairs in specs:
+        for parent_type_pair in parent_type_pairs:
+            for bucket in buckets:
+                values = observations[
+                    observations["gate_id"].astype(str).eq(gate_id)
+                    & observations["metric"].astype(str).eq(metric)
+                    & observations["delivery_bucket"].astype(str).eq(bucket)
+                    & observations["parent_type_pair"].astype(str).eq(parent_type_pair)
+                ]
+                rows.append(
+                    _threshold_row(
+                        values["metric_value"].astype(float) if not values.empty else pd.Series(dtype=float),
+                        dates=values["date"] if not values.empty else pd.Series(dtype="datetime64[ns]"),
+                        gate_id=gate_id,
+                        metric=metric,
+                        market=str(market).upper(),
+                        delivery_bucket=bucket,
+                        parent_type_pair=parent_type_pair,
+                        lookback_start=lookback_start,
+                        lookback_end=lookback_end,
+                        min_required_n=int(min_required_n),
+                        regime_filter=_threshold_regime_filter(bucket, parent_type_pair=parent_type_pair),
+                    )
                 )
-            )
     return pd.DataFrame(rows, columns=THRESHOLD_COLUMNS)
 
 
@@ -313,20 +319,24 @@ def _historical_threshold_observations(history: pd.DataFrame, *, timezone: str) 
                     left = records[left_pos]
                     right = records[right_pos]
                     same_month_value = abs(float(left["deviation"]) - float(right["deviation"]))
-                    types = {str(left["parent_type"]), str(right["parent_type"])}
-                    if "residual" in types and "calendar" in types:
+                    parent_type_pair = _parent_type_pair(str(left["parent_type"]), str(right["parent_type"]))
+                    if _is_calendar_vs_seasonal_subblock(parent_type_pair):
                         same_snapshot_rows.extend(
                             _observation_rows(
                                 date=date,
                                 gate_id="residual_vs_implied_comparable_block",
                                 metric=_COMPARABLE_BLOCK_METRIC,
                                 month=int(month),
+                                parent_type_pair=parent_type_pair,
                                 metric_value=same_month_value,
                             )
                         )
     rows = _cross_snapshot_same_month_observations(deviation_frames)
     rows.extend(same_snapshot_rows)
-    return pd.DataFrame(rows, columns=["date", "gate_id", "metric", "delivery_bucket", "metric_value"])
+    return pd.DataFrame(
+        rows,
+        columns=["date", "gate_id", "metric", "delivery_bucket", "parent_type_pair", "metric_value"],
+    )
 
 
 def _cross_snapshot_same_month_observations(deviation_frames: list[pd.DataFrame]) -> list[dict[str, object]]:
@@ -390,6 +400,7 @@ def _observation_rows(
     metric: str,
     month: int,
     metric_value: float,
+    parent_type_pair: str = "all",
 ) -> list[dict[str, object]]:
     if not np.isfinite(float(metric_value)):
         return []
@@ -399,6 +410,7 @@ def _observation_rows(
             "gate_id": gate_id,
             "metric": metric,
             "delivery_bucket": "all",
+            "parent_type_pair": parent_type_pair,
             "metric_value": abs(float(metric_value)),
         },
         {
@@ -406,6 +418,7 @@ def _observation_rows(
             "gate_id": gate_id,
             "metric": metric,
             "delivery_bucket": f"month_{int(month):02d}",
+            "parent_type_pair": parent_type_pair,
             "metric_value": abs(float(metric_value)),
         },
     ]
@@ -419,6 +432,7 @@ def _threshold_row(
     metric: str,
     market: str,
     delivery_bucket: str,
+    parent_type_pair: str,
     lookback_start: str,
     lookback_end: str,
     min_required_n: int,
@@ -443,6 +457,7 @@ def _threshold_row(
         "metric": metric,
         "market": market,
         "delivery_bucket": delivery_bucket,
+        "parent_type_pair": parent_type_pair,
         "lookback_start": lookback_start,
         "lookback_end": lookback_end,
         "n_snapshots": n_snapshots,
@@ -456,10 +471,14 @@ def _threshold_row(
     }
 
 
-def _threshold_regime_filter(delivery_bucket: str) -> str:
+def _threshold_regime_filter(delivery_bucket: str, *, parent_type_pair: str) -> str:
     if delivery_bucket == "all":
-        return "monthly_forward_shape_all_months"
-    return f"monthly_forward_shape_{delivery_bucket}"
+        bucket_text = "all_months"
+    else:
+        bucket_text = f"shape_{delivery_bucket}"
+    if parent_type_pair == "all":
+        return f"monthly_forward_{bucket_text}"
+    return f"monthly_forward_{bucket_text}_{parent_type_pair.replace('|', '_vs_')}"
 
 
 def _historical_years(prices: dict[str, float]) -> list[int]:
@@ -839,8 +858,8 @@ def _residual_comparable_block_rows(
         parent_b = _parent_info(constraints, month_b)
         if parent_a is None or parent_b is None:
             continue
-        types = {str(parent_a["type"]), str(parent_b["type"])}
-        if "residual" not in types or "calendar" not in types:
+        parent_type_pair = _parent_type_pair(str(parent_a["type"]), str(parent_b["type"]))
+        if not _is_calendar_vs_seasonal_subblock(parent_type_pair):
             continue
         price_a = float(curve.loc[month_a])
         price_b = float(curve.loc[month_b])
@@ -852,6 +871,7 @@ def _residual_comparable_block_rows(
             gate_id="residual_vs_implied_comparable_block",
             metric_name="comparable_block_shape_delta_abs_eur_mwh",
             month=month_number,
+            parent_type_pair=parent_type_pair,
         )
         status, severity, threshold_source, warning, critical, n_history, reason = _status_from_threshold(
             metric_value=metric,
@@ -883,17 +903,19 @@ def _residual_comparable_block_rows(
                 n_neighbors=np.nan,
                 evidence=(
                     f"parent_block_a={parent_a['bucket']}, parent_block_b={parent_b['bucket']}, "
-                    f"parent_spread={parent_spread:.4f}, dev_a={dev_a:.4f}, dev_b={dev_b:.4f}, {reason}"
+                    f"parent_spread={parent_spread:.4f}, dev_a={dev_a:.4f}, dev_b={dev_b:.4f}, "
+                    f"comparable_parent_types={parent_type_pair}, {reason}"
                 ),
                 remediation_hint=(
-                    "Compare same-month deviations from comparable parent blocks; do not compare residual "
-                    "Apr-Dec level directly with full calendar level."
+                    "Compare same-month deviations from comparable parent blocks; do not compare a quoted "
+                    "seasonal sub-block level directly with a full calendar level."
                 ),
                 year_b=year_b,
                 price_b=price_b,
                 parent_mean_b=float(parent_b["target"]),
                 parent_hours_b=parent_b["hours"],
                 parent_mix_adjustment=parent_spread - _calendar_spread(constraints, year_a, year_b),
+                parent_type_pair=parent_type_pair,
             )
         )
     return rows
@@ -1122,6 +1144,20 @@ def _calendar_spread(constraints: MonthlyConstraintSystem, year_a: int, year_b: 
     return float(cal_a) - float(cal_b)
 
 
+def _parent_type_pair(left: str, right: str) -> str:
+    types = {str(left), str(right)}
+    if "calendar" in types:
+        if "quarter" in types:
+            return "quarter|calendar"
+        if "residual" in types:
+            return "residual|calendar"
+    return "|".join(sorted(types))
+
+
+def _is_calendar_vs_seasonal_subblock(parent_type_pair: str) -> bool:
+    return str(parent_type_pair) in {"residual|calendar", "quarter|calendar"}
+
+
 def _adjacent_year_pairs(months: pd.PeriodIndex) -> list[tuple[int, int]]:
     years = sorted({int(month.year) for month in months})
     return list(zip(years, years[1:]))
@@ -1187,6 +1223,7 @@ def _threshold_lookup(
     gate_id: str,
     metric_name: str,
     month: int,
+    parent_type_pair: str | None = None,
 ) -> dict[str, object] | None:
     if thresholds is None or thresholds.empty:
         return None
@@ -1200,6 +1237,10 @@ def _threshold_lookup(
     ].copy()
     if frame.empty:
         return None
+    if parent_type_pair is not None and "parent_type_pair" in frame.columns:
+        frame = frame[frame["parent_type_pair"].astype(str).eq(str(parent_type_pair))]
+        if frame.empty:
+            return None
     delivery_bucket = frame.get("delivery_bucket", pd.Series("", index=frame.index)).astype(str)
     specific = frame[delivery_bucket.eq(f"month_{int(month):02d}")]
     if not specific.empty:

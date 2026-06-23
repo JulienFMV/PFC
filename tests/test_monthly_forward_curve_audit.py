@@ -55,6 +55,77 @@ def test_monthly_audit_flags_winter_inversion_without_direct_quote_support():
     assert audit.loc[audit["gate_id"].eq("monthly_shape_regression_2028_2030"), "status"].iloc[0] == "CRITICAL"
 
 
+def test_monthly_audit_flags_q4_vs_calendar_comparable_block_incoherence():
+    constraints = _q4_constraints()
+    curve = _bad_repriced_q4_curve_with_december_inversion(constraints)
+
+    audit = audit_monthly_curve_shape(
+        curve,
+        constraints,
+        year_pairs=[(2028, 2029)],
+        historical_thresholds=_thresholds(),
+    )
+    dec = audit[
+        audit["gate_id"].eq("residual_vs_implied_comparable_block")
+        & audit["year"].eq(2028)
+        & audit["month"].eq(12)
+    ].iloc[0]
+
+    assert dec["status"] == "CRITICAL"
+    assert dec["parent_block_type"] == "quarter|calendar"
+    assert dec["parent_type_pair"] == "quarter|calendar"
+    assert "comparable_parent_types=quarter|calendar" in dec["evidence"]
+    assert audit.loc[audit["gate_id"].eq("monthly_shape_regression_2028_2030"), "status"].iloc[0] == "CRITICAL"
+
+
+def test_monthly_audit_q4_comparable_block_fails_closed_without_q4_threshold_history():
+    constraints = _q4_constraints()
+    curve = _parent_flat_curve(constraints)
+    residual_only_thresholds = build_monthly_curve_historical_thresholds(
+        _threshold_history(n_snapshots=30),
+        run_timestamp=pd.Timestamp("2026-01-30"),
+        min_required_n=24,
+        lookback_years=None,
+    )
+
+    audit = audit_monthly_curve_shape(
+        curve,
+        constraints,
+        year_pairs=[(2028, 2029)],
+        historical_thresholds=residual_only_thresholds,
+    )
+    dec = audit[
+        audit["gate_id"].eq("residual_vs_implied_comparable_block")
+        & audit["year"].eq(2028)
+        & audit["month"].eq(12)
+    ].iloc[0]
+
+    assert dec["status"] == "UNSUPPORTED"
+    assert dec["parent_type_pair"] == "quarter|calendar"
+    assert dec["threshold_source"] == "insufficient_historical_threshold"
+
+
+def test_monthly_audit_normalizes_reversed_calendar_vs_q4_parent_type_pair():
+    constraints = _q4_reversed_constraints()
+    curve = _bad_repriced_curve_with_december_inversion(constraints)
+
+    audit = audit_monthly_curve_shape(
+        curve,
+        constraints,
+        year_pairs=[(2028, 2029)],
+        historical_thresholds=_thresholds(),
+    )
+    dec = audit[
+        audit["gate_id"].eq("residual_vs_implied_comparable_block")
+        & audit["year"].eq(2028)
+        & audit["month"].eq(12)
+    ].iloc[0]
+
+    assert dec["parent_block_type"] == "calendar|quarter"
+    assert dec["parent_type_pair"] == "quarter|calendar"
+    assert "comparable_parent_types=quarter|calendar" in dec["evidence"]
+
+
 def test_monthly_audit_marks_shape_gates_unsupported_when_threshold_history_is_missing():
     constraints = _constraints()
     curve = _parent_flat_curve(constraints)
@@ -170,6 +241,26 @@ def test_historical_threshold_builder_emits_pass_rows_from_point_in_time_history
     assert same_all["n_snapshots"] == 30
     assert pd.notna(same_all["p90"])
     assert pd.notna(comparable_apr["p975"])
+
+
+def test_historical_threshold_builder_calibrates_q4_vs_calendar_comparable_blocks():
+    thresholds = build_monthly_curve_historical_thresholds(
+        _q4_threshold_history(n_snapshots=30),
+        run_timestamp=pd.Timestamp("2026-01-30"),
+        min_required_n=24,
+        lookback_years=None,
+    )
+
+    comparable_dec = thresholds[
+        thresholds["gate_id"].eq("residual_vs_implied_comparable_block")
+        & thresholds["delivery_bucket"].eq("month_12")
+        & thresholds["parent_type_pair"].eq("quarter|calendar")
+    ].iloc[0]
+
+    assert comparable_dec["status"] == "PASS"
+    assert comparable_dec["n_snapshots"] == 30
+    assert comparable_dec["parent_type_pair"] == "quarter|calendar"
+    assert pd.notna(comparable_dec["p975"])
 
 
 def test_historical_threshold_builder_excludes_future_snapshot():
@@ -293,7 +384,37 @@ def _constraints():
     )
 
 
+def _q4_constraints():
+    months = pd.period_range("2028-01", "2029-12", freq="M")
+    return build_monthly_constraint_system(
+        months,
+        {"2028": 80.40, "2028-Q4": 70.00, "2029": 72.41},
+    )
+
+
+def _q4_reversed_constraints():
+    months = pd.period_range("2028-01", "2029-12", freq="M")
+    return build_monthly_constraint_system(
+        months,
+        {"2028": 80.40, "2029": 72.41, "2029-Q4": 70.00},
+    )
+
+
 def _bad_repriced_curve_with_december_inversion(constraints) -> pd.Series:
+    raw = {}
+    for month in constraints.delivery_grid.months:
+        raw[month] = 0.0
+        if month.year == 2028 and month.month == 12:
+            raw[month] = -30.0
+    shape = recenter_shape_by_parent(pd.Series(raw), constraints)
+    values = {}
+    for month in constraints.delivery_grid.months:
+        bucket = constraints.month_buckets.loc[month]
+        values[month] = constraints.bucket_targets[str(bucket)] + float(shape.loc[month])
+    return pd.Series(values, dtype=float, name="monthly_base_eur_mwh")
+
+
+def _bad_repriced_q4_curve_with_december_inversion(constraints) -> pd.Series:
     raw = {}
     for month in constraints.delivery_grid.months:
         raw[month] = 0.0
@@ -355,6 +476,25 @@ def _threshold_history(
         base = [
             ("2028", 80.0 + 0.1 * drift),
             ("2028-Q1", 108.0 + 0.1 * drift),
+            ("2029", 72.0 + 0.05 * drift),
+        ]
+        for product, price in base:
+            rows.append(_history_row(date, product, price))
+        for month in range(1, 13):
+            seasonal = {1: 12, 2: 10, 3: 4, 4: -2, 5: -5, 6: -6, 7: -4, 8: -3, 9: 1, 10: 4, 11: 7, 12: 11}[month]
+            rows.append(_history_row(date, f"2028-{month:02d}", 80.0 + seasonal + drift))
+            rows.append(_history_row(date, f"2029-{month:02d}", 72.0 + 0.8 * seasonal + 0.5 * drift))
+    return pd.DataFrame(rows)
+
+
+def _q4_threshold_history(*, n_snapshots: int) -> pd.DataFrame:
+    rows = []
+    for idx in range(n_snapshots):
+        date = pd.Timestamp("2026-01-01") + pd.Timedelta(days=idx)
+        drift = float(idx % 7) * 0.2
+        base = [
+            ("2028", 80.0 + 0.1 * drift),
+            ("2028-Q4", 70.0 + 0.1 * drift),
             ("2029", 72.0 + 0.05 * drift),
         ]
         for product, price in base:

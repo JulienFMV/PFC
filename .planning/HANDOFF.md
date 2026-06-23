@@ -2,7 +2,7 @@
 
 Latest active handoff:
 
-`.planning/phases/14-lt-audit-remediation/SESSION-HANDOFF-20260622-PHASE1-ROASTED.md`
+`.planning/phases/14-lt-audit-remediation/SESSION-HANDOFF-20260623-PHASE4-Q4-COMPARABLE-BLOCK.md`
 
 Read order for new agents:
 
