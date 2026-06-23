@@ -66,6 +66,36 @@ def test_to_hourly_csv_frame_filters_local_window_and_averages():
     assert out.loc[0, "price_weighted_mean_eur_mwh"] == 31.5
 
 
+def test_to_hourly_csv_frame_prefers_ordered_structural_bracket_columns():
+    index = pd.date_range("2026-06-12 22:00", periods=96, freq="15min", tz="UTC")
+    fan = pd.DataFrame(
+        {
+            "curve_slow": [120.0] * len(index),
+            "curve_central": [100.0] * len(index),
+            "curve_fast": [90.0] * len(index),
+            "weighted_mean": [102.5] * len(index),
+            "structural_scenario_low": [90.0] * len(index),
+            "structural_scenario_central": [100.0] * len(index),
+            "structural_scenario_high": [120.0] * len(index),
+            "structural_scenario_spread": [30.0] * len(index),
+            "structural_p10": [120.0] * len(index),
+            "structural_p50": [100.0] * len(index),
+            "structural_p90": [90.0] * len(index),
+            "structural_width": [-30.0] * len(index),
+        },
+        index=index,
+    )
+
+    out = to_hourly_csv_frame(fan, local_start_date="2026-06-13", local_end_date="2026-06-13")
+
+    assert out["structural_p10_eur_mwh"].iloc[0] == pytest.approx(90.0)
+    assert out["structural_p50_eur_mwh"].iloc[0] == pytest.approx(100.0)
+    assert out["structural_p90_eur_mwh"].iloc[0] == pytest.approx(120.0)
+    assert out["structural_width_eur_mwh"].iloc[0] == pytest.approx(30.0)
+    assert out["structural_p10_eur_mwh"].iloc[0] <= out["structural_p50_eur_mwh"].iloc[0]
+    assert out["structural_p50_eur_mwh"].iloc[0] <= out["structural_p90_eur_mwh"].iloc[0]
+
+
 def test_calibrate_hourly_to_eex_scales_product_mean():
     hourly = pd.DataFrame(
         {
@@ -252,6 +282,76 @@ def test_quote_aware_monthly_smoothing_flag_off_does_not_call_smoother(tmp_path,
     assert rc == 0
     assert out_path.exists()
     assert "quote-aware monthly smoothing: `OFF`" in report_path.read_text(encoding="utf-8")
+
+
+def test_final_eex_peak_calibration_runs_after_final_mutators(tmp_path, monkeypatch):
+    fan_path = tmp_path / "fan.parquet"
+    out_path = tmp_path / "hourly.csv"
+    report_path = tmp_path / "report.md"
+    forwards_path = tmp_path / "forwards.parquet"
+    index = pd.date_range("2026-06-30 22:00", periods=96, freq="15min", tz="UTC")
+    pd.DataFrame(
+        {
+            "curve_slow": [80.0] * len(index),
+            "curve_central": [80.0] * len(index),
+            "curve_fast": [80.0] * len(index),
+            "weighted_mean": [80.0] * len(index),
+            "structural_p10": [80.0] * len(index),
+            "structural_p50": [80.0] * len(index),
+            "structural_p90": [80.0] * len(index),
+            "structural_width": [0.0] * len(index),
+        },
+        index=index,
+    ).to_parquet(fan_path)
+    pd.DataFrame(
+        {
+            "date": [pd.Timestamp("2026-06-15"), pd.Timestamp("2026-06-15")],
+            "product": ["2026-07", "2026-07"],
+            "load_type": ["BASE", "PEAK"],
+            "product_type": ["Month", "Month"],
+            "price": [80.0, 95.0],
+            "market": ["CH", "CH"],
+            "source": ["TEST", "TEST"],
+        }
+    ).to_parquet(forwards_path, index=False)
+
+    def damage_peak_after_initial_calibration(hourly, *, ts_ch, **kwargs):
+        out = hourly.copy()
+        peak = _eex_peak_mask(ts_ch, country="CH")
+        price_cols = [column for column in export_script.PRICE_COLUMNS if column in out.columns]
+        out.loc[peak, price_cols] = out.loc[peak, price_cols].astype(float) + 25.0
+        return out, pd.DataFrame([{"step": "damaged_peak"}])
+
+    monkeypatch.setattr(export_script, "apply_seam_nullspace_smoothing", damage_peak_after_initial_calibration)
+
+    rc = export_script.main(
+        [
+            "--skip-build",
+            "--allow-stale-forwards",
+            "--local-start-date",
+            "2026-07-01",
+            "--local-end-date",
+            "2026-07-01",
+            "--fan-chart-output",
+            str(fan_path),
+            "--forwards",
+            str(forwards_path),
+            "--output",
+            str(out_path),
+            "--report",
+            str(report_path),
+            "--enable-eex-peak-calibration",
+            "--enable-final-seam-nullspace-smoothing",
+            "--skip-powerbi-refresh",
+        ]
+    )
+
+    assert rc == 0
+    out = pd.read_csv(out_path)
+    ts_ch = export_script._parse_timestamp_ch(out["timestamp_ch"], out.get("utc_offset_ch"))
+    peak = _eex_peak_mask(ts_ch, country="CH")
+    assert out["price_weighted_mean_eur_mwh"].mean() == pytest.approx(80.0, abs=1e-6)
+    assert out.loc[peak, "price_weighted_mean_eur_mwh"].mean() == pytest.approx(95.0, abs=1e-6)
 
 
 def test_eex_peak_mask_excludes_ch_national_holidays():

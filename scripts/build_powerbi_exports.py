@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import tempfile
 from pathlib import Path
 
 import pandas as pd
@@ -46,11 +47,17 @@ REQUIRED_HOURLY_COLUMNS = {
     "price_central_eur_mwh",
     "price_fast_eur_mwh",
     "price_weighted_mean_eur_mwh",
+}
+
+OPTIONAL_STRUCTURAL_COLUMNS = {
     "structural_p10_eur_mwh",
     "structural_p50_eur_mwh",
     "structural_p90_eur_mwh",
     "structural_width_eur_mwh",
 }
+
+QUALITY_MIN_SHAPE_SCORE = 8.5
+QUALITY_EEX_TOLERANCE_EUR_MWH = 0.01
 
 
 def _has_hourly_schema(path: Path) -> bool:
@@ -91,8 +98,33 @@ def _season(month: int) -> str:
     return "Autumn"
 
 
+def _with_structural_fallback_columns(frame: pd.DataFrame) -> pd.DataFrame:
+    out = frame.copy()
+    scenario = out[["price_slow_eur_mwh", "price_central_eur_mwh", "price_fast_eur_mwh"]].astype(float)
+    fallback_values = {
+        "structural_p10_eur_mwh": scenario.min(axis=1),
+        "structural_p50_eur_mwh": scenario.median(axis=1),
+        "structural_p90_eur_mwh": scenario.max(axis=1),
+    }
+    for column, fallback in fallback_values.items():
+        if column not in out.columns:
+            out[column] = fallback
+        else:
+            current = pd.to_numeric(out[column], errors="coerce")
+            out[column] = current.where(current.notna(), fallback)
+
+    width_fallback = out["structural_p90_eur_mwh"].astype(float) - out["structural_p10_eur_mwh"].astype(float)
+    if "structural_width_eur_mwh" not in out.columns:
+        out["structural_width_eur_mwh"] = width_fallback
+    else:
+        current_width = pd.to_numeric(out["structural_width_eur_mwh"], errors="coerce")
+        out["structural_width_eur_mwh"] = current_width.where(current_width.notna(), width_fallback)
+    return out
+
+
 def load_hourly(csv_path: Path) -> pd.DataFrame:
     frame = pd.read_csv(csv_path)
+    frame = _with_structural_fallback_columns(frame)
     frame["ts_ch"] = _parse_timestamp_ch(frame["timestamp_ch"], frame.get("utc_offset_ch"))
     frame["timestamp_ch_iso"] = frame["ts_ch"].dt.strftime("%Y-%m-%d %H:%M:%S")
     frame["timestamp_ch_text"] = frame["ts_ch"].dt.strftime("%d.%m.%Y %H:%M")
@@ -115,9 +147,110 @@ def load_hourly(csv_path: Path) -> pd.DataFrame:
     return frame
 
 
-def build_exports(csv_path: Path, forwards_path: Path, spot_path: Path, output_dir: Path) -> None:
+def _severity_count(frame: pd.DataFrame, severity: str) -> int:
+    if frame.empty or "severity" not in frame:
+        return 0
+    return int((frame["severity"].astype(str).str.lower() == severity).sum())
+
+
+def _quality_gate_issues(
+    *,
+    shape_metrics: dict[str, object],
+    seasonal_checks: pd.DataFrame,
+    monthly_split_checks: pd.DataFrame,
+    monthly_path_checks: pd.DataFrame,
+    cross_year_checks: pd.DataFrame,
+    calendar_checks: pd.DataFrame,
+) -> list[str]:
+    issues: list[str] = []
+    score = float(shape_metrics.get("score_10", 0.0))
+    if score < QUALITY_MIN_SHAPE_SCORE:
+        issues.append(f"shape_score_10={score:.2f} < {QUALITY_MIN_SHAPE_SCORE:.2f}")
+
+    base_error = float(shape_metrics.get("max_eex_base_error_eur_mwh", 0.0))
+    if base_error > QUALITY_EEX_TOLERANCE_EUR_MWH:
+        issues.append(
+            f"max_eex_base_error_eur_mwh={base_error:.6f} > {QUALITY_EEX_TOLERANCE_EUR_MWH:.6f}"
+        )
+
+    peak_error = float(shape_metrics.get("max_eex_peak_error_eur_mwh", 0.0))
+    if peak_error > QUALITY_EEX_TOLERANCE_EUR_MWH:
+        issues.append(
+            f"max_eex_peak_error_eur_mwh={peak_error:.6f} > {QUALITY_EEX_TOLERANCE_EUR_MWH:.6f}"
+        )
+
+    negative_status = str(shape_metrics.get("negative_gate_status", "UNKNOWN")).upper()
+    if negative_status != "PASS":
+        issues.append(f"negative_gate_status={negative_status}")
+
+    named_frames = {
+        "seasonal": seasonal_checks,
+        "monthly_split": monthly_split_checks,
+        "monthly_path": monthly_path_checks,
+        "cross_year_month_shape": cross_year_checks,
+        "calendar": calendar_checks,
+    }
+    for name, frame in named_frames.items():
+        count = _severity_count(frame, "critical")
+        if count:
+            issues.append(f"{name}_critical_flags={count}")
+
+    if not cross_year_checks.empty and {"severity", "reason"}.issubset(cross_year_checks.columns):
+        near_clone = cross_year_checks[
+            cross_year_checks["severity"].astype(str).str.lower().eq("warning")
+            & cross_year_checks["reason"].astype(str).str.contains("near-cloned", case=False, na=False)
+        ]
+        if len(near_clone) >= 2:
+            issues.append(f"cross_year_near_clone_warnings={len(near_clone)}")
+
+    if not seasonal_checks.empty and {"severity", "reason"}.issubset(seasonal_checks.columns):
+        flat_warning = seasonal_checks[
+            seasonal_checks["severity"].astype(str).str.lower().eq("warning")
+            & seasonal_checks["reason"].astype(str).str.contains("amplitude|flat|collapses", case=False, na=False)
+        ]
+        if len(flat_warning) >= 2:
+            issues.append(f"annual_only_flattening_warnings={len(flat_warning)}")
+
+    return issues
+
+
+def build_exports(
+    csv_path: Path,
+    forwards_path: Path,
+    spot_path: Path,
+    output_dir: Path,
+    *,
+    allow_failed_gates: bool = False,
+) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     hourly = load_hourly(csv_path)
+
+    with tempfile.TemporaryDirectory(prefix="pfc_powerbi_audit_") as temp_dir:
+        normalized_csv_path = Path(temp_dir) / "hfc_hourly_with_structural_columns.csv"
+        hourly.to_csv(normalized_csv_path, index=False)
+        annual, residuals, shape_metrics = audit_shape(normalized_csv_path, forwards_path)
+        seasonal_result = audit_seasonal(normalized_csv_path, forwards_path)
+        _, _, _, _, spot_summary = audit_vs_spot(normalized_csv_path, spot_path)
+    seasonal_checks = seasonal_result["seasonal_checks"]
+    monthly_path_checks = seasonal_result["monthly_path_checks"]
+    cross_year_checks = seasonal_result["cross_year_month_shape_checks"]
+    monthly_split_checks = seasonal_result["monthly_split_checks"]
+    calendar_checks = seasonal_result["calendar_checks"]
+    quality_issues = _quality_gate_issues(
+        shape_metrics=shape_metrics,
+        seasonal_checks=seasonal_checks,
+        monthly_split_checks=monthly_split_checks,
+        monthly_path_checks=monthly_path_checks,
+        cross_year_checks=cross_year_checks,
+        calendar_checks=calendar_checks,
+    )
+    if quality_issues and not allow_failed_gates:
+        issue_lines = "\n".join(f"- {issue}" for issue in quality_issues)
+        raise RuntimeError(
+            "Power BI export blocked by quality gates. "
+            "Use --allow-failed-gates only for explicitly diagnostic sidecars.\n"
+            f"{issue_lines}"
+        )
 
     hourly_cols = [
         "timestamp_ch_text",
@@ -224,23 +357,11 @@ def build_exports(csv_path: Path, forwards_path: Path, spot_path: Path, output_d
     negative["hour_code"] = "H" + negative["hour"].astype(str).str.zfill(2)
     negative.to_csv(output_dir / "negative_low_hours.csv", index=False)
 
-    annual, residuals, shape_metrics = audit_shape(csv_path, forwards_path)
-    seasonal_result = audit_seasonal(csv_path, forwards_path)
-    seasonal_checks = seasonal_result["seasonal_checks"]
-    monthly_path_checks = seasonal_result["monthly_path_checks"]
-    cross_year_checks = seasonal_result["cross_year_month_shape_checks"]
-    monthly_split_checks = seasonal_result["monthly_split_checks"]
-    calendar_checks = seasonal_result["calendar_checks"]
     seasonal_checks.to_csv(output_dir / "seasonal_coherence.csv", index=False)
     monthly_path_checks.to_csv(output_dir / "monthly_path_diagnostics.csv", index=False)
     cross_year_checks.to_csv(output_dir / "cross_year_month_shape_diagnostics.csv", index=False)
     monthly_split_checks.to_csv(output_dir / "monthly_split_diagnostics.csv", index=False)
     calendar_checks.to_csv(output_dir / "calendar_coherence.csv", index=False)
-
-    def severity_count(frame: pd.DataFrame, severity: str) -> int:
-        if frame.empty or "severity" not in frame:
-            return 0
-        return int((frame["severity"] == severity).sum())
 
     derived_annual = []
     for year, group in hourly.groupby("year", sort=True):
@@ -281,7 +402,6 @@ def build_exports(csv_path: Path, forwards_path: Path, spot_path: Path, output_d
     annual[annual_cols].round(6).to_csv(output_dir / "annual_shape.csv", index=False)
     residuals.to_csv(output_dir / "eex_residuals.csv", index=False)
 
-    _, _, _, _, spot_summary = audit_vs_spot(csv_path, spot_path)
     def metric_value(value: object) -> str:
         if isinstance(value, (int, float)):
             if abs(value) < 1e-4:
@@ -327,16 +447,18 @@ def build_exports(csv_path: Path, forwards_path: Path, spot_path: Path, output_d
             "value": spot_summary["latest_hfc_winter_summer_spread_eur_mwh"],
         },
         {"metric": "latest_hfc_shape_corr_vs_spot", "value": spot_summary["latest_hfc_shape_corr_vs_spot"]},
-        {"metric": "seasonal_critical_flags", "value": severity_count(seasonal_checks, "critical")},
-        {"metric": "seasonal_warning_flags", "value": severity_count(seasonal_checks, "warning")},
-        {"metric": "monthly_split_critical_flags", "value": severity_count(monthly_split_checks, "critical")},
-        {"metric": "monthly_split_warning_flags", "value": severity_count(monthly_split_checks, "warning")},
-        {"metric": "monthly_path_critical_flags", "value": severity_count(monthly_path_checks, "critical")},
-        {"metric": "monthly_path_warning_flags", "value": severity_count(monthly_path_checks, "warning")},
-        {"metric": "cross_year_month_shape_critical_flags", "value": severity_count(cross_year_checks, "critical")},
-        {"metric": "cross_year_month_shape_warning_flags", "value": severity_count(cross_year_checks, "warning")},
-        {"metric": "calendar_critical_flags", "value": severity_count(calendar_checks, "critical")},
-        {"metric": "calendar_warning_flags", "value": severity_count(calendar_checks, "warning")},
+        {"metric": "seasonal_critical_flags", "value": _severity_count(seasonal_checks, "critical")},
+        {"metric": "seasonal_warning_flags", "value": _severity_count(seasonal_checks, "warning")},
+        {"metric": "monthly_split_critical_flags", "value": _severity_count(monthly_split_checks, "critical")},
+        {"metric": "monthly_split_warning_flags", "value": _severity_count(monthly_split_checks, "warning")},
+        {"metric": "monthly_path_critical_flags", "value": _severity_count(monthly_path_checks, "critical")},
+        {"metric": "monthly_path_warning_flags", "value": _severity_count(monthly_path_checks, "warning")},
+        {"metric": "cross_year_month_shape_critical_flags", "value": _severity_count(cross_year_checks, "critical")},
+        {"metric": "cross_year_month_shape_warning_flags", "value": _severity_count(cross_year_checks, "warning")},
+        {"metric": "calendar_critical_flags", "value": _severity_count(calendar_checks, "critical")},
+        {"metric": "calendar_warning_flags", "value": _severity_count(calendar_checks, "warning")},
+        {"metric": "powerbi_quality_gate_status", "value": "PASS" if not quality_issues else "FAILED_DIAGNOSTIC"},
+        {"metric": "powerbi_quality_gate_issues", "value": "; ".join(quality_issues)},
     ]
     summary = pd.DataFrame(
         [
@@ -360,9 +482,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--forwards", default="data/eex_forwards_history.parquet")
     parser.add_argument("--spot", default="data/epex_hourly.parquet")
     parser.add_argument("--output-dir", default="powerbi/data")
+    parser.add_argument(
+        "--allow-failed-gates",
+        action="store_true",
+        help="Write diagnostic Power BI sidecars even when quality gates fail.",
+    )
     args = parser.parse_args(argv)
     csv_path = resolve_csv_path(args.csv)
-    build_exports(csv_path, Path(args.forwards), Path(args.spot), Path(args.output_dir))
+    build_exports(
+        csv_path,
+        Path(args.forwards),
+        Path(args.spot),
+        Path(args.output_dir),
+        allow_failed_gates=bool(args.allow_failed_gates),
+    )
     print(f"[powerbi] source csv -> {csv_path}")
     print(f"[powerbi] exports -> {args.output_dir}")
     return 0
