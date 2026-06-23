@@ -138,6 +138,31 @@ def test_config_hash_is_reproducible_and_independent_of_yaml_key_order():
     assert config_hash(left) == config_hash(right)
 
 
+def test_config_hash_includes_structural_prior_knobs():
+    base = {
+        "lambda_shape": 1.0,
+        "lambda_smooth_month": 0.1,
+        "lambda_smooth_yoy": 0.0,
+        "neighbor_shrinkage": 0.5,
+        "lambda_prior": 1e-6,
+        "min_history_snapshots": 24,
+        "constraint_tolerance": 0.01,
+        "stationarity_tolerance": 1e-7,
+        "markets": ["DE"],
+        "history_lookback_years": 6,
+        "min_structural_snapshots": 24,
+        "allow_template_structural_fallback": True,
+        "structural_amplitude_eur_mwh": 110.0,
+        "panel_weight": 1.0,
+        "history_weight": 0.5,
+        "structural_weight": 1.0,
+    }
+
+    assert config_hash(base) != config_hash(base | {"structural_amplitude_eur_mwh": 90.0})
+    assert config_hash(base) != config_hash(base | {"structural_weight": 0.5})
+    assert config_hash(base) != config_hash(base | {"allow_template_structural_fallback": False})
+
+
 def test_scoring_of_synthetic_withheld_product_is_point_in_time_and_near_exact():
     history = _flat_history()
     grid = _small_grid()
@@ -300,6 +325,53 @@ grid:
     assert artifacts.candidate_config is not None
     assert artifacts.candidate_config["production_approved"] is False
     assert artifacts.candidate_config["baseline_comparison"]["by_tenor_horizon"]
+
+
+def test_candidate_config_hash_uses_canonical_structural_payload(tmp_path):
+    grid_path = tmp_path / "grid.yaml"
+    grid_path.write_text(
+        """
+defaults:
+  constraint_tolerance: 0.01
+calibration:
+  neighbor_markets: [DE]
+  min_history_snapshots: 1
+  min_structural_snapshots: 1
+  panel_weight: 1.0
+  history_weight: 0.5
+  structural_weight: 1.0
+  allow_template_structural_fallback: true
+  structural_amplitude_eur_mwh: 110.0
+smoke:
+  min_valid_origins: 1
+  min_withheld_monthly: 1
+  min_withheld_quarterly: 1
+  max_withheld_per_origin: 2
+grid:
+  lambda_smooth_month: [1.0]
+  lambda_smooth_yoy: [0.0]
+  lambda_shape: [0.0]
+  neighbor_shrinkage: [0.5]
+  history_lookback_years: [6]
+""",
+        encoding="utf-8",
+    )
+    grid = load_lambda_grid(grid_path)
+    artifacts = run_lambda_calibration(
+        _flat_history(),
+        grid=grid,
+        smoke=True,
+        max_origins=1,
+        max_configs=1,
+    )
+    assert artifacts.candidate_config is not None
+    canonical = artifacts.candidate_config["canonical_config"]
+
+    assert artifacts.candidate_config["config_hash"] == config_hash(canonical)
+    assert canonical["markets"] == ["DE"]
+    assert canonical["allow_template_structural_fallback"] is True
+    assert canonical["structural_amplitude_eur_mwh"] == 110.0
+    assert canonical["structural_weight"] == 1.0
 
 
 def test_product_horizon_bucket_helpers_expose_train_deploy_gap():

@@ -382,6 +382,32 @@ def test_structural_prior_can_be_derived_from_forward_history():
     _assert_zero_mean_by_parent(structural.shape, constraints)
 
 
+def test_structural_template_fallback_reports_insufficient_history_reason():
+    constraints = _constraints_2029_calendar()
+    rows = []
+    for snap in pd.date_range("2026-01-01", periods=2, freq="MS"):
+        rows.append(_history_row(str(snap.date()), "2027", 80.0))
+        rows.append(_history_row(str(snap.date()), "2027-01", 84.0))
+    history = pd.DataFrame(rows)
+
+    structural = build_structural_monthly_shape_prior_from_history(
+        constraints,
+        history,
+        run_timestamp=pd.Timestamp("2026-12-31"),
+        min_snapshots=3,
+        fallback_to_template=True,
+        fallback_amplitude_eur_mwh=110.0,
+    )
+    diagnostics = structural.diagnostics
+
+    assert structural.status == "STRUCTURAL_TEMPLATE"
+    assert diagnostics["fallback_reason"].unique().tolist() == ["insufficient_history"]
+    assert diagnostics.loc[diagnostics["month_number"].eq(1), "n_history"].iloc[0] == 2
+    assert diagnostics.loc[diagnostics["month_number"].eq(2), "n_history"].iloc[0] == 0
+    assert diagnostics["amplitude_eur_mwh"].unique().tolist() == [110.0]
+    _assert_zero_mean_by_parent(structural.shape, constraints)
+
+
 def test_quote_coverage_by_horizon_counts_monthly_quotes_only():
     rows = [
         _history_row("2026-06-17", "2026-07", 60.0, market="CH"),

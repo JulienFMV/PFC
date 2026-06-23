@@ -108,11 +108,11 @@ class LambdaCalibrationSettings:
     quote_consistency_tolerance: float = 0.01
     hard_constraint_tolerance: float = 1e-8
     history_lookback_years: int | None = 6
-    structural_weight: float = 0.5
+    structural_weight: float = 1.0
     panel_weight: float = 1.0
-    history_weight: float = 0.25
-    allow_template_structural_fallback: bool = False
-    structural_amplitude_eur_mwh: float = 20.0
+    history_weight: float = 0.5
+    allow_template_structural_fallback: bool = True
+    structural_amplitude_eur_mwh: float = 110.0
     min_structural_snapshots: int = 24
     identifiability_min_abs_error_improvement: float = 0.05
     identifiability_min_rel_error_improvement: float = 0.01
@@ -140,6 +140,13 @@ class WithheldProduct:
 class LambdaCandidateConfig:
     monthly_config: MonthlyCurveConfig
     history_lookback_years: int | None
+    markets: tuple[str, ...] = ("DE", "FR", "AT", "IT")
+    min_structural_snapshots: int = 24
+    allow_template_structural_fallback: bool = True
+    structural_amplitude_eur_mwh: float = 110.0
+    panel_weight: float = 1.0
+    history_weight: float = 0.5
+    structural_weight: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -166,7 +173,7 @@ def run_lambda_calibration(
 
     settings = _settings_from_grid(grid, settings=settings, smoke=smoke)
     history = normalize_history(history)
-    configs = list(iter_candidate_configs(grid))
+    configs = list(iter_candidate_configs(grid, settings=settings))
     if not configs:
         raise ValueError("lambda grid did not produce any candidate configuration")
     if smoke:
@@ -285,9 +292,14 @@ def load_lambda_grid(path: Path) -> dict[str, object]:
     return data
 
 
-def iter_candidate_configs(grid: Mapping[str, object]) -> Iterable[LambdaCandidateConfig]:
+def iter_candidate_configs(
+    grid: Mapping[str, object],
+    *,
+    settings: LambdaCalibrationSettings | None = None,
+) -> Iterable[LambdaCandidateConfig]:
     config_grid = dict(grid.get("grid", grid))
     defaults = dict(grid.get("defaults", {}))
+    prior_payload = _candidate_prior_payload(settings or _settings_from_grid(grid, settings=None, smoke=False))
     keys = ["lambda_smooth_month", "lambda_smooth_yoy", "lambda_shape", "neighbor_shrinkage"]
     value_lists: list[list[object]] = []
     for key in keys:
@@ -311,6 +323,7 @@ def iter_candidate_configs(grid: Mapping[str, object]) -> Iterable[LambdaCandida
             stationarity_tolerance=float(defaults.get("stationarity_tolerance", 1e-7)),
         ),
         history_lookback_years=int(lookback_values[0]) if lookback_values[0] is not None else None,
+        **prior_payload,
     )
     yield baseline
 
@@ -331,6 +344,7 @@ def iter_candidate_configs(grid: Mapping[str, object]) -> Iterable[LambdaCandida
                                 stationarity_tolerance=float(defaults.get("stationarity_tolerance", 1e-7)),
                             ),
                             history_lookback_years=int(lookback) if lookback is not None else None,
+                            **prior_payload,
                         )
 
 
@@ -1104,6 +1118,17 @@ def _config_payload(config: MonthlyCurveConfig | LambdaCandidateConfig | Mapping
     if isinstance(config, LambdaCandidateConfig):
         history_lookback_years = config.history_lookback_years
         raw = dict(config.monthly_config.__dict__)
+        raw.update(
+            {
+                "markets": list(config.markets),
+                "min_structural_snapshots": config.min_structural_snapshots,
+                "allow_template_structural_fallback": config.allow_template_structural_fallback,
+                "structural_amplitude_eur_mwh": config.structural_amplitude_eur_mwh,
+                "panel_weight": config.panel_weight,
+                "history_weight": config.history_weight,
+                "structural_weight": config.structural_weight,
+            }
+        )
     elif isinstance(config, Mapping):
         raw = dict(config)
         history_lookback_years = raw.get("history_lookback_years")  # type: ignore[assignment]
@@ -1122,8 +1147,28 @@ def _config_payload(config: MonthlyCurveConfig | LambdaCandidateConfig | Mapping
         "stationarity_tolerance",
     ]
     payload = {key: raw.get(key) for key in keys}
+    markets = raw.get("markets", raw.get("neighbor_markets", ()))
+    payload["markets"] = [str(m).upper() for m in (markets or [])]
     payload["history_lookback_years"] = history_lookback_years
+    payload["min_structural_snapshots"] = raw.get("min_structural_snapshots")
+    payload["allow_template_structural_fallback"] = bool(raw.get("allow_template_structural_fallback", False))
+    payload["structural_amplitude_eur_mwh"] = raw.get("structural_amplitude_eur_mwh")
+    payload["panel_weight"] = raw.get("panel_weight")
+    payload["history_weight"] = raw.get("history_weight")
+    payload["structural_weight"] = raw.get("structural_weight")
     return payload
+
+
+def _candidate_prior_payload(settings: LambdaCalibrationSettings) -> dict[str, object]:
+    return {
+        "markets": tuple(str(m).upper() for m in settings.neighbor_markets),
+        "min_structural_snapshots": int(settings.min_structural_snapshots),
+        "allow_template_structural_fallback": bool(settings.allow_template_structural_fallback),
+        "structural_amplitude_eur_mwh": float(settings.structural_amplitude_eur_mwh),
+        "panel_weight": float(settings.panel_weight),
+        "history_weight": float(settings.history_weight),
+        "structural_weight": float(settings.structural_weight),
+    }
 
 
 def _monthly_config(config: MonthlyCurveConfig | LambdaCandidateConfig) -> MonthlyCurveConfig:

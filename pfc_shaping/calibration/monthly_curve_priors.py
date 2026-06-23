@@ -431,9 +431,8 @@ def build_structural_monthly_shape_prior(
         shape = _cap_zero_mean_by_parent(pre_cap, constraints, cap_value)
     shape_parent = _parent_mean_diagnostics(shape, constraints)
     was_capped = shape.ne(pre_cap)
-    max_abs_parent_mean_residual = float(
-        np.nanmax(np.abs(shape_parent["parent_weighted_mean_eur_mwh"].to_numpy(dtype=float)))
-    )
+    parent_residuals = np.abs(shape_parent["parent_weighted_mean_eur_mwh"].to_numpy(dtype=float))
+    max_abs_parent_mean_residual = float(np.nanmax(parent_residuals)) if not np.isnan(parent_residuals).all() else 0.0
     diagnostics = pd.DataFrame(
         {
             "source": "template_structural_monthly_ratios",
@@ -497,8 +496,10 @@ def build_structural_monthly_shape_prior_from_history(
     months = constraints.delivery_grid.months
     if eex_history.empty:
         if fallback_to_template:
-            return build_structural_monthly_shape_prior(
+            return _structural_template_fallback_prior(
                 constraints,
+                fallback_reason="empty_history",
+                n_history_by_month={month_number: 0 for month_number in range(1, 13)},
                 amplitude_eur_mwh=fallback_amplitude_eur_mwh,
             )
         return _unsupported_prior(months, "UNSUPPORTED")
@@ -534,8 +535,10 @@ def build_structural_monthly_shape_prior_from_history(
                     )
     if not rows:
         if fallback_to_template:
-            return build_structural_monthly_shape_prior(
+            return _structural_template_fallback_prior(
                 constraints,
+                fallback_reason="no_month_cal_history",
+                n_history_by_month={month_number: 0 for month_number in range(1, 13)},
                 amplitude_eur_mwh=fallback_amplitude_eur_mwh,
             )
         return _unsupported_prior(months, "UNSUPPORTED")
@@ -546,8 +549,10 @@ def build_structural_monthly_shape_prior_from_history(
     counts = grouped.size()
     if any(int(counts.get(month_number, 0)) < int(min_snapshots) for month_number in range(1, 13)):
         if fallback_to_template:
-            return build_structural_monthly_shape_prior(
+            return _structural_template_fallback_prior(
                 constraints,
+                fallback_reason="insufficient_history",
+                n_history_by_month={month_number: int(counts.get(month_number, 0)) for month_number in range(1, 13)},
                 amplitude_eur_mwh=fallback_amplitude_eur_mwh,
             )
         diagnostics = pd.DataFrame(
@@ -584,6 +589,26 @@ def build_structural_monthly_shape_prior_from_history(
         pd.DataFrame(index=constraints.delivery_grid.months),
         "STRUCTURAL_FORWARD_CLIMATOLOGY",
     )
+
+
+def _structural_template_fallback_prior(
+    constraints: MonthlyConstraintSystem,
+    *,
+    fallback_reason: str,
+    n_history_by_month: Mapping[int, int],
+    amplitude_eur_mwh: float,
+) -> MonthlyShapePrior:
+    prior = build_structural_monthly_shape_prior(
+        constraints,
+        amplitude_eur_mwh=amplitude_eur_mwh,
+    )
+    diagnostics = prior.diagnostics.copy()
+    diagnostics["fallback_reason"] = str(fallback_reason)
+    diagnostics["n_history"] = [
+        int(n_history_by_month.get(int(month_number), 0))
+        for month_number in diagnostics["month_number"].astype(int)
+    ]
+    return MonthlyShapePrior(prior.shape, diagnostics, prior.contributions, prior.status)
 
 
 def build_fused_shape_prior(

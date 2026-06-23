@@ -268,3 +268,34 @@ Invariants not to break:
 - Row-wise fallback must produce non-negative width.
 - Failed quality gates remain blocking by default; diagnostic sidecars require
   explicit `--allow-failed-gates`.
+
+## D-20260623-04 - Audited Structural Template Fallback Defaults
+
+Decision: the monthly solver default/config enables
+`allow_template_structural_fallback=true`, uses
+`structural_amplitude_eur_mwh=110.0`, and sets `structural_weight=1.0`. The
+selected structural prior is summarized in the solver manifest, and the active
+config hash includes the structural fallback knobs and prior weights.
+
+Reason: when CH monthly structural history is absent or below support, the
+solver still needs a deterministic zero-mean structural prior rather than a
+silent flat fallback. The fallback must be visible in promotion evidence so the
+curve can be audited against the exact prior that shaped unquoted months.
+
+Rejected alternatives:
+
+- Keep config defaults at `allow_template_structural_fallback=false` while tests
+  and phase planning assume the template prior is active.
+- Let the template prior influence the solver without recording amplitude,
+  fallback status or zero-mean diagnostics in the manifest.
+- Hash only the numerical solver lambdas while excluding structural prior knobs.
+
+Invariants not to break:
+
+- The structural template remains a soft prior only; CH EEX constraints remain
+  hard level authority.
+- Structural deviations must remain zero-mean inside active CH parent blocks.
+- Changing fallback amplitude or structural prior weight must change
+  `active_config_hash`.
+- No CT, Power BI, heavy data, or individual generated month patch is part of
+  this decision.
