@@ -216,3 +216,55 @@ Invariants not to break:
 - Scoping does not change active quote hierarchy or `parent_child_conflict`
   severity.
 
+## D-20260623-02 - Final Delivered-Hourly PEAK Projection
+
+Decision: when `--enable-eex-peak-calibration` is active, the delivered-hourly
+export runs a final BASE+PEAK projection immediately before CSV write, after
+all mutating hourly shape layers.
+
+Reason: intermediate PEAK calibration is not stable if later seam/monthly
+mutators alter PEAK hours. The final delivered CSV is the evidence surface, so
+the last mutating step must restore quoted BASE and PEAK means before writing
+the artifact.
+
+Rejected alternatives:
+
+- Calibrate PEAK only before final seam or path smoothing.
+- Preserve the pre-existing BASE level after PEAK shifts instead of solving the
+  OFFPEAK mean from quoted BASE energy and quoted PEAK energy.
+- Accept PEAK residuals as a Power BI or downstream presentation issue.
+
+Invariants not to break:
+
+- Final projection must preserve quoted BASE and PEAK means on exact product
+  windows.
+- Hourly layers may shape inside product windows but must not rewrite final
+  quoted product means.
+- The projection remains opt-in via `--enable-eex-peak-calibration`.
+
+## D-20260623-03 - Ordered Structural Bridge And Strict Diagnostic Export
+
+Decision: delivered-hourly and Power BI export bridges must use ordered
+structural brackets when available and row-wise ordered scenario fallback when
+not. Strict Power BI sidecar export blocks on quality gates unless
+`--allow-failed-gates` is explicitly requested.
+
+Reason: `slow/central/fast` scenario labels are not guaranteed to be ordered
+P10/P50/P90 quantiles. Treating them as ordered quantiles can invert fan-chart
+width and hide shaping defects. Diagnostic Power BI exports should not be
+silently generated from a curve that fails the audited quality gates.
+
+Rejected alternatives:
+
+- Continue assigning `slow/central/fast` directly to P10/P50/P90.
+- Keep structural columns mandatory for Power BI input discovery.
+- Let strict Power BI export write sidecars while only recording failed gates in
+  summary metrics.
+
+Invariants not to break:
+
+- Ordered `structural_scenario_low/central/high/spread` columns take precedence
+  over legacy structural columns when both exist.
+- Row-wise fallback must produce non-negative width.
+- Failed quality gates remain blocking by default; diagnostic sidecars require
+  explicit `--allow-failed-gates`.

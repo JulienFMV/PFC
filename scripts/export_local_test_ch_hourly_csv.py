@@ -134,13 +134,17 @@ def to_hourly_csv_frame(fan_15min: pd.DataFrame, *, local_start_date: str, local
         "curve_central": "price_central_eur_mwh",
         "curve_fast": "price_fast_eur_mwh",
         "weighted_mean": "price_weighted_mean_eur_mwh",
+        "structural_scenario_low": "structural_p10_eur_mwh",
+        "structural_scenario_central": "structural_p50_eur_mwh",
+        "structural_scenario_high": "structural_p90_eur_mwh",
+        "structural_scenario_spread": "structural_width_eur_mwh",
         "structural_p10": "structural_p10_eur_mwh",
         "structural_p50": "structural_p50_eur_mwh",
         "structural_p90": "structural_p90_eur_mwh",
         "structural_width": "structural_width_eur_mwh",
     }
     for source, target in column_map.items():
-        if source in hourly.columns:
+        if source in hourly.columns and target not in out.columns:
             out[target] = hourly[source].astype(float).round(6)
     out = out.reset_index(drop=True)
     expected_hours = len(pd.date_range(hourly_start, hourly_end, freq="h", tz=LOCAL_TZ))
@@ -1170,7 +1174,7 @@ def calibrate_hourly_to_eex_base_peak(
         if len(product_offpeak_idx) == 0:
             raise ValueError(f"cannot preserve BASE for {base_product}: no offpeak hours")
 
-        total_peak_energy_delta = 0.0
+        target_peak_energy = 0.0
         peak_adjustments: list[tuple[pd.Index, str, float, float, float]] = []
         for peak_product, peak_idx in peak_products.loc[product_peak_idx].groupby(
             peak_products.loc[product_peak_idx],
@@ -1186,12 +1190,15 @@ def calibrate_hourly_to_eex_base_peak(
             peak_delta = target_peak - current_peak
             for column in price_columns:
                 out.loc[peak_idx, column] = out.loc[peak_idx, column].astype(float) + peak_delta
-            total_peak_energy_delta += peak_delta * len(peak_idx)
+            target_peak_energy += target_peak * len(peak_idx)
             peak_adjustments.append((peak_idx, str(peak_product), target_peak, current_peak, peak_delta))
 
         if not peak_adjustments:
             continue
-        offpeak_delta = -total_peak_energy_delta / len(product_offpeak_idx)
+        current_offpeak_mean = float(out.loc[product_offpeak_idx, "price_weighted_mean_eur_mwh"].mean())
+        target_base_energy = float(base_targets[str(base_product)]) * len(base_idx)
+        target_offpeak_mean = (target_base_energy - target_peak_energy) / len(product_offpeak_idx)
+        offpeak_delta = target_offpeak_mean - current_offpeak_mean
         for column in price_columns:
             out.loc[product_offpeak_idx, column] = out.loc[product_offpeak_idx, column].astype(float) + offpeak_delta
 
@@ -1765,7 +1772,14 @@ def _write_report(
     disable_cascade_trend_for_annual_only: bool = False,
 ) -> None:
     price = hourly["price_weighted_mean_eur_mwh"]
-    width = hourly["structural_width_eur_mwh"]
+    if "structural_width_eur_mwh" in hourly.columns:
+        width = hourly["structural_width_eur_mwh"]
+    elif {"structural_p90_eur_mwh", "structural_p10_eur_mwh"}.issubset(hourly.columns):
+        width = hourly["structural_p90_eur_mwh"] - hourly["structural_p10_eur_mwh"]
+    elif {"price_fast_eur_mwh", "price_slow_eur_mwh"}.issubset(hourly.columns):
+        width = hourly["price_fast_eur_mwh"] - hourly["price_slow_eur_mwh"]
+    else:
+        width = pd.Series(0.0, index=hourly.index)
     lines = [
         "# Local-Test CH PFC Hourly CSV",
         "",
@@ -2670,8 +2684,33 @@ def main(argv: list[str] | None = None) -> int:
             negative_price_floor=args.negative_price_floor,
             max_weighted_negative_hours=args.max_weighted_negative_hours,
         )
+    if args.enable_eex_peak_calibration:
+        hourly, eex_peak_audit = calibrate_hourly_to_eex_base_peak(
+            hourly,
+            base_forward_prices=forward_prices,
+            peak_forward_prices=peak_forward_prices,
+            weights=weights,
+            negative_price_floor=args.negative_price_floor,
+            max_weighted_negative_hours=args.max_weighted_negative_hours,
+        )
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
+    if "structural_p10_eur_mwh" not in hourly.columns and "price_slow_eur_mwh" in hourly.columns:
+        scenario = hourly[["price_slow_eur_mwh", "price_central_eur_mwh", "price_fast_eur_mwh"]].astype(float)
+        hourly["structural_p10_eur_mwh"] = scenario.min(axis=1)
+    if "structural_p50_eur_mwh" not in hourly.columns and "price_central_eur_mwh" in hourly.columns:
+        scenario = hourly[["price_slow_eur_mwh", "price_central_eur_mwh", "price_fast_eur_mwh"]].astype(float)
+        hourly["structural_p50_eur_mwh"] = scenario.median(axis=1)
+    if "structural_p90_eur_mwh" not in hourly.columns and "price_fast_eur_mwh" in hourly.columns:
+        scenario = hourly[["price_slow_eur_mwh", "price_central_eur_mwh", "price_fast_eur_mwh"]].astype(float)
+        hourly["structural_p90_eur_mwh"] = scenario.max(axis=1)
+    if (
+        "structural_width_eur_mwh" not in hourly.columns
+        and {"structural_p90_eur_mwh", "structural_p10_eur_mwh"}.issubset(hourly.columns)
+    ):
+        hourly["structural_width_eur_mwh"] = (
+            hourly["structural_p90_eur_mwh"] - hourly["structural_p10_eur_mwh"]
+        )
     hourly.to_csv(output, index=False)
     _write_report(
         Path(args.report),
