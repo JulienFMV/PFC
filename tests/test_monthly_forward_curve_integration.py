@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 import pandas as pd
 
+from pfc_shaping.calibration.monthly_curve_lambda_calibration import config_hash
 from pfc_shaping.lt.model.assembler import PFCAssembler
 from pfc_shaping.pipeline.monthly_curve_authority import (
     delivery_months_for_window,
@@ -120,6 +121,88 @@ def test_monthly_solver_defaults_include_structural_template_fallback() -> None:
     assert settings["structural_weight"] == 1.0
 
 
+def test_monthly_authority_manifest_records_structural_template_summary() -> None:
+    own = {"2028": 80.0, "2028-Q1": 110.0}
+    authority = solve_monthly_level_authority(
+        market="CH",
+        delivery_months=delivery_months_from_prices(own),
+        own_base_prices=own,
+        all_market_base_prices={},
+        eex_history=pd.DataFrame(),
+        run_timestamp=pd.Timestamp("2026-06-17"),
+        settings={
+            "enabled": True,
+            "markets": ["DE"],
+            "allow_template_structural_fallback": True,
+            "structural_amplitude_eur_mwh": 110.0,
+            "structural_weight": 1.0,
+            "lambda_smooth_yoy": 0.0,
+        },
+        original_forward_prices=own,
+    )
+
+    summary = authority.manifest["structural_prior_summary"]
+
+    assert authority.manifest["structural_status"] == "STRUCTURAL_TEMPLATE"
+    assert summary["status"] == "STRUCTURAL_TEMPLATE"
+    assert summary["sources"] == ["template_structural_monthly_ratios"]
+    assert summary["fallback_reasons"] == ["empty_history"]
+    assert summary["amplitude_eur_mwh_min"] == pytest.approx(110.0)
+    assert summary["amplitude_eur_mwh_max"] == pytest.approx(110.0)
+    assert summary["zero_mean_parent_space_all"] is True
+    assert summary["max_abs_parent_mean_residual_max"] <= 1e-10
+    assert summary["n_history_max"] == pytest.approx(0.0)
+    assert authority.manifest["active_config_hash"] == config_hash(authority.manifest["solver_config"])
+
+
+def test_monthly_authority_active_config_hash_includes_structural_prior_knobs() -> None:
+    own = {"2028": 80.0, "2028-Q1": 110.0}
+    months = delivery_months_from_prices(own)
+    base_settings = {
+        "enabled": True,
+        "markets": ["DE"],
+        "allow_template_structural_fallback": True,
+        "structural_amplitude_eur_mwh": 110.0,
+        "structural_weight": 1.0,
+        "lambda_smooth_yoy": 0.0,
+    }
+
+    baseline = solve_monthly_level_authority(
+        market="CH",
+        delivery_months=months,
+        own_base_prices=own,
+        all_market_base_prices={},
+        eex_history=pd.DataFrame(),
+        run_timestamp=pd.Timestamp("2026-06-17"),
+        settings=base_settings,
+        original_forward_prices=own,
+    )
+    amplitude_changed = solve_monthly_level_authority(
+        market="CH",
+        delivery_months=months,
+        own_base_prices=own,
+        all_market_base_prices={},
+        eex_history=pd.DataFrame(),
+        run_timestamp=pd.Timestamp("2026-06-17"),
+        settings=base_settings | {"structural_amplitude_eur_mwh": 90.0},
+        original_forward_prices=own,
+    )
+    weight_changed = solve_monthly_level_authority(
+        market="CH",
+        delivery_months=months,
+        own_base_prices=own,
+        all_market_base_prices={},
+        eex_history=pd.DataFrame(),
+        run_timestamp=pd.Timestamp("2026-06-17"),
+        settings=base_settings | {"structural_weight": 0.5},
+        original_forward_prices=own,
+    )
+
+    assert baseline.manifest["active_config_hash"] != amplitude_changed.manifest["active_config_hash"]
+    assert baseline.manifest["active_config_hash"] != weight_changed.manifest["active_config_hash"]
+    assert baseline.manifest["active_config_hash"] == config_hash(baseline.manifest["solver_config"])
+
+
 def test_delivery_months_for_window_respects_exclusive_end_boundary() -> None:
     months = delivery_months_for_window(
         start_date=pd.Timestamp("2028-01-01", tz="Europe/Zurich"),
@@ -215,6 +298,10 @@ def test_monthly_authority_direct_and_history_paths_hash_equal(tmp_path) -> None
     assert direct.active_constraints_hash == from_history.active_constraints_hash
     assert direct.monthly_solution_hash == expected["monthly_solution_hash"]
     assert direct.active_constraints_hash == expected["active_constraints_hash"]
+    assert direct.manifest["active_config_hash"] == expected["active_config_hash"]
+    assert direct.manifest["structural_status"] == expected["structural_status"]
+    assert direct.manifest["fused_status"] == expected["fused_status"]
+    assert direct.manifest["structural_prior_summary"] == expected["structural_prior_summary"]
     assert sorted(direct.quoted_keys) == expected["quoted_keys"]
     assert sorted(direct.synthetic_monthly_keys) == expected["synthetic_monthly_keys"]
     pd.testing.assert_series_equal(direct.result.monthly_curve, from_history.result.monthly_curve)

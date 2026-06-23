@@ -3,9 +3,11 @@
   "history_snapshot_date": "2026-06-17",
   "monthly_authority": {
     "active_constraints_hash": "ac7ed9b966fe21be709db0148c4af844270444bc8b3a4b073e5b2a5a40661aa1",
+    "active_config_hash": "19e36cbce0011696531c2b024b208f509d67426f1734f5c30c3056c9429b1d62",
     "direct_history_constraints_hash_equal": true,
     "direct_history_monthly_hash_equal": true,
-    "monthly_solution_hash": "99f38c0354b89136ace1cc2b0e8aed382ff4b085511b512b1a540462d9c0f622",
+    "fused_status": "DE_SINGLE_MARKET_MONTHLY",
+    "monthly_solution_hash": "5902cdb14fc6190c1aa40fb35eab968cea22f899dcd83bc8e28e0c262b02eb37",
     "quoted_keys": [
       "2028",
       "2028-Q1",
@@ -21,6 +23,24 @@
         "DE"
       ]
     },
+    "structural_prior_summary": {
+      "amplitude_eur_mwh_max": 110.0,
+      "amplitude_eur_mwh_min": 110.0,
+      "diagnostic_rows": 24,
+      "fallback_reasons": [
+        "no_month_cal_history"
+      ],
+      "max_abs_parent_mean_residual_max": 2.0831303293012557e-15,
+      "max_abs_parent_mean_residual_min": 2.0831303293012557e-15,
+      "n_history_max": 0.0,
+      "n_history_min": 0.0,
+      "sources": [
+        "template_structural_monthly_ratios"
+      ],
+      "status": "STRUCTURAL_TEMPLATE",
+      "zero_mean_parent_space_all": true
+    },
+    "structural_status": "STRUCTURAL_TEMPLATE",
     "synthetic_monthly_keys": [
       "2028-01",
       "2028-02",

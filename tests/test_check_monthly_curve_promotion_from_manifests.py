@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from pfc_shaping.calibration.monthly_curve_lambda_calibration import config_hash
 from scripts.check_monthly_curve_promotion_from_manifests import _active_config_hash, main
 
 
@@ -68,6 +69,21 @@ def test_manifest_backed_promotion_blocks_export_hash_mismatch(tmp_path: Path) -
     assert parity["status"] == "CRITICAL"
 
 
+def test_active_config_hash_fallback_uses_canonical_structural_contract() -> None:
+    production = _manifest(monthly_solution_hash="solution")
+
+    assert _active_config_hash(production) == config_hash(production["solver_config"])
+    assert _active_config_hash(production) != config_hash(
+        production["solver_config"] | {"structural_weight": 0.5}
+    )
+
+
+def test_active_config_hash_prefers_explicit_manifest_hash() -> None:
+    production = _manifest(monthly_solution_hash="solution") | {"active_config_hash": "explicit"}
+
+    assert _active_config_hash(production) == "explicit"
+
+
 def _write_inputs(tmp_path: Path, *, export_solution_hash: str = "solution") -> dict[str, Path]:
     audit_gates = tmp_path / "audit_gates.csv"
     historical_thresholds = tmp_path / "historical_thresholds.csv"
@@ -123,8 +139,16 @@ def _manifest(*, monthly_solution_hash: str) -> dict[str, object]:
             "lambda_smooth_yoy": 0.25,
             "lambda_shape": 1.0,
             "neighbor_shrinkage": 0.5,
+            "robust_panel_quantile": 0.5,
             "history_lookback_years": 6,
             "min_history_snapshots": 24,
+            "markets": ["DE", "FR", "AT", "IT"],
+            "min_structural_snapshots": 24,
+            "allow_template_structural_fallback": True,
+            "structural_amplitude_eur_mwh": 110.0,
+            "panel_weight": 1.0,
+            "history_weight": 0.5,
+            "structural_weight": 1.0,
             "constraint_tolerance": 1e-9,
             "stationarity_tolerance": 1e-7,
         },

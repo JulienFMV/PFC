@@ -4,8 +4,9 @@ production_approved: false
 
 defaults:
   lambda_prior: 1.0e-6
+  robust_panel_quantile: 0.5
   min_history_snapshots: 24
-  constraint_tolerance: 0.01
+  constraint_tolerance: 1.0e-9
   stationarity_tolerance: 1.0e-7
 
 calibration:
@@ -21,11 +22,11 @@ calibration:
   quote_consistency_tolerance: 0.01
   hard_constraint_tolerance: 1.0e-8
   history_lookback_years: 6
-  structural_weight: 0.5
+  structural_weight: 1.0
   panel_weight: 1.0
-  history_weight: 0.25
-  allow_template_structural_fallback: false
-  structural_amplitude_eur_mwh: 20.0
+  history_weight: 0.5
+  allow_template_structural_fallback: true
+  structural_amplitude_eur_mwh: 110.0
   min_structural_snapshots: 24
   identifiability_min_abs_error_improvement: 0.05
   identifiability_min_rel_error_improvement: 0.01
@@ -40,7 +41,7 @@ smoke:
 
 grid:
   lambda_smooth_month: [0.0, 0.1, 1.0, 10.0, 100.0]
-  lambda_smooth_yoy: [0.0, 0.1, 1.0, 10.0]
+  lambda_smooth_yoy: [0.0, 0.1, 0.25, 1.0, 10.0]
   lambda_shape: [0.0, 0.25, 1.0, 4.0]
   neighbor_shrinkage: [0.25, 0.5, 0.75]
   history_lookback_years: [3, 5, 6]

@@ -24,7 +24,6 @@ if str(ROOT) not in sys.path:
 from pfc_shaping.calibration.monthly_curve_audit import build_monthly_curve_governance_gates
 from pfc_shaping.calibration.monthly_curve_lambda_calibration import config_hash
 from pfc_shaping.calibration.monthly_curve_promotion import evaluate_monthly_curve_promotion
-from pfc_shaping.pipeline.monthly_curve_authority import monthly_curve_config_from_settings
 
 
 REQUIRED_GOVERNANCE_GATES = {
@@ -154,10 +153,7 @@ def _active_config_hash(manifest: Mapping[str, object]) -> str:
     solver_config = manifest.get("solver_config") or manifest.get("config")
     if not isinstance(solver_config, Mapping):
         raise ValueError("production manifest missing active_config_hash or solver_config/config")
-    monthly_config = monthly_curve_config_from_settings(solver_config)
-    payload = dict(monthly_config.__dict__)
-    payload["history_lookback_years"] = solver_config.get("history_lookback_years")
-    return config_hash(payload)
+    return config_hash(solver_config)
 
 
 def _required_manifest_hash(manifest: Mapping[str, object], key: str, *, role: str) -> str:

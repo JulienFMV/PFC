@@ -114,6 +114,7 @@ def main() -> None:
         lambda_smooth_yoy=float(args.lambda_smooth_yoy),
         lambda_shape=float(args.lambda_shape),
         neighbor_shrinkage=float(args.neighbor_shrinkage),
+        robust_panel_quantile=float(args.robust_panel_quantile),
         min_history_snapshots=int(args.min_history_snapshots),
         constraint_tolerance=float(args.quote_consistency_tolerance),
     )
@@ -122,7 +123,7 @@ def main() -> None:
         config=config,
         shape_prior=fused,
     )
-    active_config_hash = str(args.active_config_hash or config_hash(config))
+    active_config_hash = str(args.active_config_hash or config_hash(_active_config_payload(args, config, neighbor_markets)))
     selected_config_hash = _selected_config_hash(args)
     monthly_solution_hash = _monthly_solution_hash(result)
     active_constraints_hash = _monthly_authority_hash_frame(constraints.rows)
@@ -501,6 +502,23 @@ def _selected_config_hash(args: argparse.Namespace) -> str | None:
     return str(selected)
 
 
+def _active_config_payload(
+    args: argparse.Namespace,
+    config: MonthlyCurveConfig,
+    neighbor_markets: tuple[str, ...],
+) -> dict[str, object]:
+    payload = dict(config.__dict__)
+    payload["markets"] = list(neighbor_markets)
+    payload["history_lookback_years"] = int(args.history_lookback_years)
+    payload["min_structural_snapshots"] = int(args.min_structural_snapshots)
+    payload["allow_template_structural_fallback"] = bool(args.allow_template_structural_fallback)
+    payload["structural_amplitude_eur_mwh"] = float(args.structural_amplitude_eur_mwh)
+    payload["panel_weight"] = float(args.panel_weight)
+    payload["history_weight"] = float(args.history_weight)
+    payload["structural_weight"] = float(args.structural_weight)
+    return payload
+
+
 def _optional_text(value: object) -> str | None:
     text = str(value or "")
     return text or None
@@ -531,18 +549,19 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--end", default="2030-12")
     parser.add_argument("--timezone", default="Europe/Zurich")
     parser.add_argument("--neighbor-markets", default="DE,FR,AT,IT")
-    parser.add_argument("--quote-consistency-tolerance", type=float, default=0.01)
+    parser.add_argument("--quote-consistency-tolerance", type=float, default=1e-9)
     parser.add_argument("--lambda-prior", type=float, default=1e-6)
     parser.add_argument("--lambda-smooth-month", type=float, default=1.0)
     parser.add_argument("--lambda-smooth-yoy", type=float, default=0.25)
-    parser.add_argument("--lambda-shape", type=float, default=4.0)
+    parser.add_argument("--lambda-shape", type=float, default=1.0)
     parser.add_argument("--neighbor-shrinkage", type=float, default=0.5)
-    parser.add_argument("--structural-amplitude-eur-mwh", type=float, default=20.0)
+    parser.add_argument("--robust-panel-quantile", type=float, default=0.5)
+    parser.add_argument("--structural-amplitude-eur-mwh", type=float, default=110.0)
     parser.add_argument("--min-structural-snapshots", type=int, default=24)
-    parser.add_argument("--allow-template-structural-fallback", action="store_true")
+    parser.add_argument("--allow-template-structural-fallback", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--panel-weight", type=float, default=1.0)
-    parser.add_argument("--history-weight", type=float, default=0.25)
-    parser.add_argument("--structural-weight", type=float, default=0.5)
+    parser.add_argument("--history-weight", type=float, default=0.5)
+    parser.add_argument("--structural-weight", type=float, default=1.0)
     parser.add_argument("--min-history-snapshots", type=int, default=24)
     parser.add_argument("--history-lookback-years", type=int, default=6)
     parser.add_argument("--repricing-tolerance", type=float, default=1e-8)
