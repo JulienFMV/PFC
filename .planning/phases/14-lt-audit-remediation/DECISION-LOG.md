@@ -102,3 +102,164 @@ Invariants not to break:
   artifacts, config values and unresolved risks.
 - Context should be compacted or handed off around 60%, not near exhaustion.
 
+## D-20260622-05 - Candidate Evidence Must Be Layered
+
+Decision: a sparse monthly solver proof is necessary but not sufficient to
+declare the delivered CH LT graph corrected. Phase 2 acceptance must compare
+the monthly solver curve, assembler `B`, delivered `price_shape`, hourly CSV
+and dashboard sidecars. A clean KKT/repricing proof cannot override failed
+delivered-curve audits.
+
+Reason: on 2026-06-22 the solver proof repriced BASE constraints and passed
+neighbor-leakage checks, while the delivered local-test candidate still failed
+hourly/Power BI diagnostics with PEAK residuals and cross-year month-shape
+critical flags. The defect can therefore live downstream of the monthly solve
+or in non-BASE/hourly audit layers.
+
+Rejected alternatives:
+
+- Declare Phase 2 green from `audit_gates.csv` alone.
+- Treat Power BI sidecars generated with `--allow-failed-gates` as promotion
+  evidence.
+- Ignore `price_shape` / CSV diagnostics because `B` equals the solver curve.
+
+Invariants not to break:
+
+- `--allow-failed-gates` remains diagnostic-only.
+- Handoffs must report both solver proof status and delivered-curve audit
+  status.
+- `price_raw` is not currently exposed by standard artifacts; do not claim it
+  was verified unless a diagnostic artifact records it.
+
+## D-20260622-06 - Lambda And Prior Hashes Are Not Yet Promotion Proof
+
+Decision: until the hash contract is widened, matching `active_config_hash` or
+`monthly_solution_hash` is not sufficient proof that the selected lambda/prior
+artifact governs the run.
+
+Reason: Phase 2 read-only review found that the active config hash covers the
+core `MonthlyCurveConfig` but omits material prior knobs such as
+`panel_weight`, `history_weight`, `structural_weight`,
+`allow_template_structural_fallback`, `structural_amplitude_eur_mwh`, and
+`min_structural_snapshots`. The sparse proof also uses a different default
+`history_weight` than the local export wrapper unless explicitly overridden.
+
+Rejected alternatives:
+
+- Accept hash equality as a lambda-calibration gate without checking the
+  selected artifact status and prior-stack knobs.
+- Treat structural template defaults as calibrated market evidence.
+
+Invariants not to break:
+
+- Promotion must cite manifest-backed production, export and selected-lambda
+  artifacts.
+- Far-horizon `UNSUPPORTED` remains explicit and cannot hide a known-bad
+  fixture failure.
+- Candidate diagnostics must record the exact prior weights used.
+
+## D-20260622-07 - Structural Lambda Activation Requires Evidence, Not Just Defaults
+
+Decision: activating `allow_template_structural_fallback=True` is acceptable
+only when the diagnostics and monthly authority manifest expose the structural
+source, fallback reason, amplitude, history counts, parent zero-mean residuals,
+and full prior-stack config hash inputs. A default flip without this evidence
+is not promotion proof.
+
+Reason: the pushed commit `c7e8ab6` had a test expecting structural template
+fallback while the pushed code still had the fallback disabled. Local green
+tests were also not reproducible in cloud because
+`tests/test_build_powerbi_exports_script.py` was not tracked. Expert review
+identified that the structural template is a material far-horizon model change,
+so hidden defaults or incomplete hashes would replace a flat curve defect with
+an unauditable prior.
+
+Rejected alternatives:
+
+- Treat `allow_template_structural_fallback=True` as sufficient by itself.
+- Keep structural fallback reason and history support only in in-memory prior
+  diagnostics.
+- Continue using a narrow active config hash that omits material prior knobs.
+- Let masked lambda calibration months fall back to an implicit zero baseline.
+
+Invariants not to break:
+
+- Structural fallback remains zero-mean in parent space and must report max
+  parent residuals.
+- The monthly authority manifest must expose `structural_prior_summary`.
+- `active_config_hash` must change when material structural prior knobs change.
+- Point-in-time lambda calibration must not score withheld monthly products
+  against synthetic zero levels created by masking.
+
+## D-20260622-08 - Delivered Hourly Shaping Gates Are Separate From Monthly BASE Authority
+
+Decision: PEAK repricing and structural fan-chart bridge correctness are
+delivered-hourly invariants. They must be enforced at the final CSV/export
+boundary and audited separately from the monthly BASE solver. Passing monthly
+BASE constraints does not imply a promotable CH HFC.
+
+Reason: Phase 3 expert roasts and local diagnostics showed that the monthly
+BASE chain was not the source of the delivered-curve PEAK failure. The Phase 2
+CSV missed quoted PEAK products because the existing BASE+PEAK calibration was
+not enabled, and a final mutator could also run after an earlier PEAK
+projection. The same investigation showed that inverted quantile rows came
+from export/Power BI fallbacks treating `slow` and `fast` scenario labels as
+ordered P10/P90 aliases, while the source fan chart already had ordered
+`structural_scenario_low/high` bracket columns.
+
+Rejected alternatives:
+
+- Move PEAK hard constraints into the monthly BASE solver.
+- Patch individual months or PEAK products after export.
+- Treat `slow`, `central`, `fast` labels as ordered quantiles.
+- Declare the curve green after PEAK residuals are fixed while structural
+  width and cross-year allocation still fail.
+
+Invariants not to break:
+
+- If `--enable-eex-peak-calibration` is used, final CSV output must satisfy
+  both quoted BASE and PEAK residuals within tolerance after all hourly
+  mutators.
+- Structural export must prefer ordered fan-chart bracket columns over
+  scenario label aliases.
+- If structural columns are missing, fallbacks must compute ordered row-wise
+  low/median/high from scenario prices, not assign `slow -> low` and
+  `fast -> high`.
+- Power BI strict export remains blocked unless all quality gates pass without
+  `--allow-failed-gates`.
+
+## D-20260622-09 - P1 Product Normalization Audit Is Delivered-Artifact Repricing
+
+Decision: add a read-only P1 audit that checks the exact delivered hourly CSV
+against CH EEX product averages. The audit must cover hard BASE repricing over
+all delivery hours, hard PEAK repricing over EEX peak hours, implied OFFPEAK
+energy balance where BASE and PEAK are both quoted, and quote-aware
+non-overlapping buckets. The CLI is fail-closed by default; exploratory runs
+must pass `--allow-failed-gates`.
+
+Reason: solver-level monthly diagnostics and Power BI screenshots do not prove
+the exported HPFC/PFC. Benth/HPFC literature requires product-window
+normalization after the complete shaping stack, not only at the intermediate
+monthly solver layer. The 2026-06-22 phase3 peak-calibration probe still emits
+hard delivered-product failures: 9 `CRITICAL`, 3 `UNSUPPORTED`, max residual
+`0.10246153717949369` EUR/MWh.
+
+Rejected alternatives:
+
+- Treat quote-aware buckets alone as proof that every original parent quote
+  reprices.
+- Let a plain CLI run return success with `CRITICAL` or `UNSUPPORTED` gates.
+- Treat missing or partial product windows as `PASS`.
+- Use screenshots or Power BI aggregate visuals as the promotion gate.
+
+Invariants not to break:
+
+- The audit reads delivered CSV and EEX parquet only; it must not regenerate or
+  mutate the curve.
+- `UNSUPPORTED` is not `PASS`.
+- Empty evidence is `CRITICAL`.
+- Required load types default to `BASE,PEAK`; missing PEAK evidence for a fully
+  covered quoted product is `UNSUPPORTED`, not silently ignored.
+- Promotion evidence must include the gate CSV, summary JSON, input hashes,
+  script hash, and command arguments.
+
