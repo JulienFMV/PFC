@@ -224,6 +224,11 @@ def _matching_threshold(row: pd.Series, thresholds: pd.DataFrame) -> pd.Series |
     ].copy()
     if candidates.empty:
         return None
+    parent_type_pair = str(row.get("parent_type_pair", ""))
+    if parent_type_pair and "parent_type_pair" in candidates.columns:
+        candidates = candidates[candidates["parent_type_pair"].astype(str).eq(parent_type_pair)]
+        if candidates.empty:
+            return None
     buckets: list[str] = []
     if month is not None:
         buckets.append(f"month_{int(month):02d}")

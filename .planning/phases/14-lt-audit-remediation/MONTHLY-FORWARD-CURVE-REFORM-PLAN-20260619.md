@@ -1143,7 +1143,7 @@ Minimum specification:
 |---|---|---|---|---|
 | `hard_monthly_curve_repricing` | `max(abs(A @ x - q))` | `PASS <= 1e-8`, otherwise `CRITICAL` | sparse 2028 | true |
 | `neighbor_level_leakage` | `max(abs(solution(neighbor+C)-solution(neighbor)))` | `PASS <= 1e-8`, otherwise `CRITICAL` | neighbor +1000 | true |
-| `residual_vs_implied_comparable_block` | residual parent spread z-score vs history/panel | `WARNING > P90`, `CRITICAL > P97.5`, insufficient sample `UNSUPPORTED` | 2028 CAL+Q1 | true |
+| `residual_vs_implied_comparable_block` | same-month deviation delta between seasonal sub-block parents (`residual|calendar` or `quarter|calendar`) and full-CAL parents, thresholded by parent-type pair | `WARNING > P90`, `CRITICAL > P97.5`, insufficient parent-type sample `UNSUPPORTED` | 2028 CAL+Q1 residual and 2028 Q4 vs 2029 CAL | true |
 | `same_month_rank_consistency` | sign/rank z-score after comparable-parent adjustment | `WARNING > P90`, `CRITICAL > P97.5`, insufficient sample `UNSUPPORTED` | Apr/Dec 2028-2029 | true |
 | `calendar_spread_seasonal_decomposition` | decomposition residual between CAL spread and weighted seasonal block spreads | `WARNING > P90`, `CRITICAL > P97.5` | CAL28/CAL29 | true |
 | `historical_quantile_shape_outlier` | `abs(metric - hist_median) / hist_dispersion` | historical P90/P97.5 | synthetic outlier | true |
