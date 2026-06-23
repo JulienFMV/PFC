@@ -207,6 +207,7 @@ def build_neighbor_panel_shape_prior(
             continue
         raw, evidence = _raw_neighbor_month_values(constraints, prices)
         shape = _recenter_market_raw_values(raw, constraints)
+        direct_month_parent_buckets = _direct_month_parent_buckets(evidence, constraints)
         usable = int(shape.notna().sum())
         month_count = int((evidence == "month").sum())
         quarter_count = int((evidence == "quarter").sum())
@@ -228,6 +229,7 @@ def build_neighbor_panel_shape_prior(
                     horizon_months=len(constraints.delivery_grid.months),
                     quarter_quotes=0,
                     calendar_quotes=calendar_count,
+                    direct_month_parent_buckets="",
                     **horizon_counts,
                 )
             )
@@ -243,6 +245,7 @@ def build_neighbor_panel_shape_prior(
                     horizon_months=len(constraints.delivery_grid.months),
                     quarter_quotes=quarter_count,
                     calendar_quotes=calendar_count,
+                    direct_month_parent_buckets=",".join(direct_month_parent_buckets),
                     **horizon_counts,
                 )
             )
@@ -259,6 +262,7 @@ def build_neighbor_panel_shape_prior(
                 horizon_months=len(constraints.delivery_grid.months),
                 quarter_quotes=quarter_count,
                 calendar_quotes=calendar_count,
+                direct_month_parent_buckets=",".join(direct_month_parent_buckets),
                 **horizon_counts,
             )
         )
@@ -622,8 +626,23 @@ def build_fused_shape_prior(
     if not pieces:
         return _unsupported_prior(constraints.delivery_grid.months, "UNSUPPORTED")
 
-    total_weight = sum(weight for _, _, weight in pieces)
-    combined = sum(prior.shape * (weight / total_weight) for _, prior, weight in pieces)
+    parent_buckets = constraints.month_buckets.astype(str)
+    panel_direct_month_buckets = _panel_direct_month_parent_buckets(panel_prior)
+    combined_num = pd.Series(0.0, index=constraints.delivery_grid.months, dtype=float)
+    combined_den = pd.Series(0.0, index=constraints.delivery_grid.months, dtype=float)
+    for name, prior, weight in pieces:
+        effective_weight = pd.Series(float(weight), index=constraints.delivery_grid.months, dtype=float)
+        if (
+            name == "structural"
+            and prior.status == "STRUCTURAL_TEMPLATE"
+            and panel_direct_month_buckets
+        ):
+            suppress = parent_buckets.isin(panel_direct_month_buckets).to_numpy(dtype=bool)
+            effective_weight.iloc[suppress] = 0.0
+        values = prior.shape.reindex(constraints.delivery_grid.months).fillna(0.0).astype(float)
+        combined_num = combined_num + values * effective_weight
+        combined_den = combined_den + effective_weight
+    combined = combined_num.divide(combined_den.where(combined_den > 0.0, np.nan)).fillna(0.0)
     shape = recenter_shape_by_parent(combined, constraints)
     status = _fused_status([prior.status for _, prior, _ in pieces])
     diagnostics = pd.DataFrame(
@@ -631,6 +650,14 @@ def build_fused_shape_prior(
             "source": [name for name, _, _ in pieces],
             "source_status": [prior.status for _, prior, _ in pieces],
             "weight": [weight for _, _, weight in pieces],
+            "panel_direct_month_parent_buckets": [
+                ",".join(sorted(panel_direct_month_buckets)) if name == "panel" else ""
+                for name, _, _ in pieces
+            ],
+            "evidence_aware_policy": [
+                "dominant_on_direct_month_parent_buckets" if name == "panel" and panel_direct_month_buckets else ""
+                for name, _, _ in pieces
+            ],
         }
     )
     contributions = pd.DataFrame(
@@ -696,6 +723,33 @@ def _recenter_market_raw_values(
         mean = float((block.to_numpy(dtype=float) * hours.to_numpy(dtype=float)).sum() / hours.sum())
         out.loc[idx] = block - mean
     return out
+
+
+def _direct_month_parent_buckets(
+    evidence: pd.Series,
+    constraints: MonthlyConstraintSystem,
+) -> list[str]:
+    out: list[str] = []
+    for bucket in constraints.month_buckets.dropna().drop_duplicates():
+        mask = constraints.month_buckets.eq(bucket)
+        idx = constraints.month_buckets.index[mask]
+        if len(idx) > 0 and bool(evidence.loc[idx].eq("month").all()):
+            out.append(str(bucket))
+    return sorted(out)
+
+
+def _panel_direct_month_parent_buckets(panel_prior: MonthlyShapePrior | None) -> set[str]:
+    if panel_prior is None or panel_prior.status == "UNSUPPORTED" or panel_prior.diagnostics.empty:
+        return set()
+    if "direct_month_parent_buckets" not in panel_prior.diagnostics.columns:
+        return set()
+    buckets: set[str] = set()
+    for value in panel_prior.diagnostics["direct_month_parent_buckets"].dropna().astype(str):
+        for bucket in value.split(","):
+            bucket = bucket.strip()
+            if bucket:
+                buckets.add(bucket)
+    return buckets
 
 
 def _prepare_history(

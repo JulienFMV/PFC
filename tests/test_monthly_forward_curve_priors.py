@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -13,6 +14,10 @@ from pfc_shaping.calibration.monthly_curve_priors import (
     recenter_shape_by_parent,
 )
 from pfc_shaping.calibration.monthly_forward_curve import build_monthly_constraint_system
+from pfc_shaping.calibration.monthly_forward_curve import (
+    MonthlyCurveConfig,
+    solve_monthly_forward_curve_from_constraints,
+)
 
 
 def _constraints_2028_residual():
@@ -25,6 +30,11 @@ def _constraints_2029_calendar():
     return build_monthly_constraint_system(months, {"2029": 72.41})
 
 
+def _constraints_2027_q2():
+    months = pd.period_range("2027-04", "2027-06", freq="M")
+    return build_monthly_constraint_system(months, {"2027-Q2": 71.95})
+
+
 def _assert_zero_mean_by_parent(shape: pd.Series, constraints) -> None:
     for bucket in constraints.month_buckets.dropna().drop_duplicates():
         mask = constraints.month_buckets.eq(bucket)
@@ -32,6 +42,12 @@ def _assert_zero_mean_by_parent(shape: pd.Series, constraints) -> None:
         hours = constraints.delivery_grid.month_hours.loc[idx]
         mean = float((shape.loc[idx].to_numpy(dtype=float) * hours.to_numpy(dtype=float)).sum() / hours.sum())
         assert mean == pytest.approx(0.0, abs=1e-10)
+
+
+def _bucket_mean(values: pd.Series, constraints, bucket: str) -> float:
+    idx = constraints.month_buckets.index[constraints.month_buckets.eq(bucket)]
+    hours = constraints.delivery_grid.month_hours.loc[idx]
+    return float((values.loc[idx].to_numpy(dtype=float) * hours.to_numpy(dtype=float)).sum() / hours.sum())
 
 
 def test_recenter_shape_by_parent_preserves_zero_mean_per_active_bucket():
@@ -252,6 +268,45 @@ def test_template_structural_and_fused_prior_keep_zero_mean_and_status_label():
     assert fused.status == "STRUCTURAL_TEMPLATE"
     _assert_zero_mean_by_parent(structural.shape, constraints)
     _assert_zero_mean_by_parent(fused.shape, constraints)
+
+
+def test_fused_prior_lets_direct_monthly_panel_dominate_structural_template_inside_parent():
+    constraints = _constraints_2027_q2()
+    de_prices = {
+        "2027-04": 80.220000,
+        "2027-05": 75.890000,
+        "2027-06": 80.290000,
+    }
+    panel = build_neighbor_panel_shape_prior(
+        constraints,
+        {"DE": de_prices},
+        neighbor_markets=("DE",),
+        neighbor_shrinkage=0.0,
+    )
+    structural = build_structural_monthly_shape_prior(
+        constraints,
+        amplitude_eur_mwh=110.0,
+    )
+
+    fused = build_fused_shape_prior(
+        constraints,
+        panel_prior=panel,
+        structural_prior=structural,
+        weights={"panel": 1.0, "structural": 1.0},
+    )
+    result = solve_monthly_forward_curve_from_constraints(
+        constraints,
+        config=MonthlyCurveConfig(lambda_smooth_month=0.1, lambda_smooth_yoy=0.0, lambda_shape=25.0),
+        shape_prior=fused,
+    )
+
+    assert "2027-Q2" in str(panel.diagnostics["direct_month_parent_buckets"].iloc[0])
+    pd.testing.assert_series_equal(fused.shape, panel.shape, check_names=False)
+    _assert_zero_mean_by_parent(fused.shape, constraints)
+    assert result.residuals["abs_error"].max() <= 1e-8
+    solved_dev = result.monthly_curve - _bucket_mean(result.monthly_curve, constraints, "2027-Q2")
+    corr = float(np.corrcoef(solved_dev.to_numpy(dtype=float), panel.shape.to_numpy(dtype=float))[0, 1])
+    assert corr >= 0.45
 
 
 def test_template_structural_prior_reports_lambda_diagnostics_and_recenter_steps():

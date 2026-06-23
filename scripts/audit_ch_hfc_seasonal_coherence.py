@@ -540,6 +540,51 @@ def cross_year_month_shape_checks(
     def row_for(year: int, month: int) -> pd.Series | None:
         return by_key.get((int(year), int(month)))
 
+    def weighted_mean(frame: pd.DataFrame) -> float:
+        weights = frame["rows"].astype(float).to_numpy(dtype=float)
+        values = frame["mean_eur_mwh"].astype(float).to_numpy(dtype=float)
+        total = float(weights.sum())
+        if total <= 0.0:
+            return float("nan")
+        return float((values * weights).sum() / total)
+
+    def reference_spread(
+        *,
+        from_year: int,
+        to_year: int,
+        from_bucket: str,
+        to_bucket: str,
+    ) -> tuple[float, str]:
+        parent_spread = float(bucket_targets[to_bucket] - bucket_targets[from_bucket])
+        residual_calendar = {from_bucket.endswith("-RESIDUAL"), to_bucket.endswith("-RESIDUAL")} == {True, False}
+        if not residual_calendar:
+            return parent_spread, "parent_bucket"
+
+        residual_year = from_year if from_bucket.endswith("-RESIDUAL") else to_year
+        residual_bucket = from_bucket if from_bucket.endswith("-RESIDUAL") else to_bucket
+        calendar_year = to_year if from_bucket.endswith("-RESIDUAL") else from_year
+        calendar_bucket = to_bucket if from_bucket.endswith("-RESIDUAL") else from_bucket
+
+        residual_rows = path[(path["year"].astype(int) == residual_year) & path["bucket"].astype(str).eq(residual_bucket)]
+        residual_months = sorted(residual_rows["month"].astype(int).unique())
+        if not residual_months:
+            return parent_spread, "parent_bucket"
+        calendar_rows = path[
+            (path["year"].astype(int) == calendar_year)
+            & path["bucket"].astype(str).eq(calendar_bucket)
+            & path["month"].astype(int).isin(residual_months)
+        ]
+        if len(calendar_rows) != len(residual_months):
+            return parent_spread, "parent_bucket"
+
+        residual_mean = weighted_mean(residual_rows)
+        calendar_mean = weighted_mean(calendar_rows)
+        if not (np.isfinite(residual_mean) and np.isfinite(calendar_mean)):
+            return parent_spread, "parent_bucket"
+        if from_bucket.endswith("-RESIDUAL"):
+            return float(calendar_mean - residual_mean), "comparable_residual_calendar_block"
+        return float(residual_mean - calendar_mean), "comparable_residual_calendar_block"
+
     rows: list[dict[str, object]] = []
     years = sorted(int(year) for year in path["year"].unique())
     for from_year, to_year in zip(years, years[1:]):
@@ -559,22 +604,28 @@ def cross_year_month_shape_checks(
             if from_bucket not in bucket_targets or to_bucket not in bucket_targets:
                 continue
             parent_spread = float(bucket_targets[to_bucket] - bucket_targets[from_bucket])
+            ref_spread, ref_basis = reference_spread(
+                from_year=from_year,
+                to_year=to_year,
+                from_bucket=from_bucket,
+                to_bucket=to_bucket,
+            )
             same_month_spread = float(right["mean_eur_mwh"] - left["mean_eur_mwh"])
-            spread_error = float(same_month_spread - parent_spread)
+            spread_error = float(same_month_spread - ref_spread)
             severity = "ok"
-            reason = "same-month cross-year spread is coherent with parent bucket spread"
-            if abs(parent_spread) > 2.0 and same_month_spread * parent_spread < 0.0 and abs(spread_error) > 5.0:
+            reason = "same-month cross-year spread is coherent with reference bucket spread"
+            if abs(ref_spread) > 2.0 and same_month_spread * ref_spread < 0.0 and abs(spread_error) > 5.0:
                 severity = "critical"
-                reason = "same-month cross-year spread has opposite sign to parent bucket spread"
+                reason = "same-month cross-year spread has opposite sign to reference bucket spread"
             elif abs(spread_error) > 12.0:
                 severity = "critical"
-                reason = "same-month cross-year spread is materially inconsistent with parent bucket spread"
-            elif abs(parent_spread) > 1.5 and abs(same_month_spread) < 0.25:
+                reason = "same-month cross-year spread is materially inconsistent with reference bucket spread"
+            elif abs(ref_spread) > 1.5 and abs(same_month_spread) < 0.25:
                 severity = "warning"
-                reason = "same-month values are near-cloned despite a non-zero parent bucket spread"
+                reason = "same-month values are near-cloned despite a non-zero reference bucket spread"
             elif abs(spread_error) > 8.0:
                 severity = "warning"
-                reason = "same-month cross-year spread is wide versus parent bucket spread"
+                reason = "same-month cross-year spread is wide versus reference bucket spread"
             rows.append(
                 {
                     "from_year": int(from_year),
@@ -585,6 +636,8 @@ def cross_year_month_shape_checks(
                     "from_parent_target_eur_mwh": float(bucket_targets[from_bucket]),
                     "to_parent_target_eur_mwh": float(bucket_targets[to_bucket]),
                     "parent_spread_eur_mwh": parent_spread,
+                    "reference_spread_eur_mwh": ref_spread,
+                    "reference_spread_basis": ref_basis,
                     "from_month_mean_eur_mwh": float(left["mean_eur_mwh"]),
                     "to_month_mean_eur_mwh": float(right["mean_eur_mwh"]),
                     "same_month_spread_eur_mwh": same_month_spread,

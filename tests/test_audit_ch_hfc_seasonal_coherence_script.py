@@ -388,8 +388,8 @@ def test_cross_year_month_shape_flags_residual_vs_next_annual_incoherence(tmp_pa
     slope = checks[checks["check_type"] == "seasonal_slope_delta"].iloc[0]
     assert slope["severity"] == "critical"
     april = checks[(checks["check_type"] == "same_month_parent_spread") & (checks["month"] == 4)].iloc[0]
-    assert april["severity"] == "warning"
-    assert april["reason"] == "same-month values are near-cloned despite a non-zero parent bucket spread"
+    assert april["reference_spread_basis"] == "comparable_residual_calendar_block"
+    assert april["severity"] == "ok"
 
 
 def test_cross_year_month_shape_accepts_parallel_parent_spread(tmp_path):
@@ -428,3 +428,54 @@ def test_cross_year_month_shape_accepts_parallel_parent_spread(tmp_path):
     checks = result["cross_year_month_shape_checks"]
     assert not checks.empty
     assert set(checks["severity"]) == {"ok"}
+
+
+def test_cross_year_residual_calendar_near_clone_uses_comparable_block_spread(tmp_path):
+    values: dict[tuple[int, int], float] = {
+        (2028, 1): 100.0,
+        (2028, 2): 100.0,
+        (2028, 3): 100.0,
+        (2029, 1): 108.0,
+        (2029, 2): 108.0,
+        (2029, 3): 108.0,
+    }
+    apr_dec = {
+        4: 65.0,
+        5: 59.0,
+        6: 62.0,
+        7: 64.0,
+        8: 64.0,
+        9: 71.0,
+        10: 80.0,
+        11: 83.0,
+        12: 85.0,
+    }
+    for month, price in apr_dec.items():
+        values[(2028, month)] = price
+        values[(2029, month)] = price
+    csv = _write_monthly_curve(tmp_path, values)
+
+    forwards = tmp_path / "forwards.parquet"
+    pd.DataFrame(
+        {
+            "market": ["CH", "CH", "CH"],
+            "load_type": ["BASE", "BASE", "BASE"],
+            "date": [pd.Timestamp("2026-06-12")] * 3,
+            "product": ["2028", "2028-Q1", "2029"],
+            "price": [80.0, 100.0, 82.0],
+        }
+    ).to_parquet(forwards, index=False)
+
+    result = audit(csv, forwards)
+
+    checks = result["cross_year_month_shape_checks"]
+    apr_may = checks[
+        (checks["check_type"] == "same_month_parent_spread")
+        & (checks["from_year"] == 2028)
+        & (checks["to_year"] == 2029)
+        & (checks["month"].isin([4, 5]))
+    ]
+    assert set(apr_may["reference_spread_basis"]) == {"comparable_residual_calendar_block"}
+    assert apr_may["reference_spread_eur_mwh"].abs().max() < 1e-9
+    assert set(apr_may["severity"]) == {"ok"}
+    assert not apr_may["reason"].str.contains("near-cloned", case=False).any()

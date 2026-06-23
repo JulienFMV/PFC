@@ -333,3 +333,63 @@ Invariants not to break:
 - The audit must keep the parent target, delivered mean, residual, covered
   finer bucket names and summary counts visible.
 
+## D-20260623-12 - Direct Monthly Panel Evidence Dominates Template Structural Shape Locally
+
+Decision: when a neighbor panel has direct monthly evidence for every month of
+an active CH parent bucket, the fused monthly prior suppresses
+`STRUCTURAL_TEMPLATE` contribution inside that parent bucket only. The panel
+does not set CH level; it remains a zero-mean shape prior inside the CH parent
+bucket.
+
+Reason: the 2026-06-17 candidate showed `2027-Q2 BASE` still influenced by the
+generic structural template even though DE had direct monthly Apr/May/Jun
+quotes covering the full comparable parent bucket. The template encoded an
+Apr > May > Jun pattern while the directly quoted neighbor panel encoded
+Apr/Jun high and May low. A global average of panel and template diluted the
+best local evidence and produced a monthly split gate failure.
+
+Rejected alternatives:
+
+- Patch individual Q2 2027 months after the solver.
+- Downgrade the monthly split gate while contradictory local prior evidence
+  remained.
+- Remove the structural template globally whenever any panel monthly quote
+  exists.
+
+Invariants not to break:
+
+- The fused prior remains zero-mean inside each CH parent bucket.
+- Structural template fallback remains available for parent buckets without
+  full direct monthly panel evidence.
+- Diagnostics must expose the direct-month parent buckets and the
+  evidence-aware policy.
+
+## D-20260623-13 - Cross-Year Audit Uses Comparable Reference Spread
+
+Decision: cross-year same-month diagnostics keep reporting full parent targets
+and parent spreads, but residual/calendar mixed comparisons use a
+`reference_spread_eur_mwh` based on the economically comparable block. For a
+residual Apr-Dec bucket against a calendar year, the reference is the calendar
+year's Apr-Dec implied monthly block, not the full calendar average.
+
+Reason: Phase 14 already decided that a residual block must not be compared
+directly to a full calendar year. The Power BI strict gate was still blocked by
+near-clone warnings produced from full parent spread logic. This could either
+hide a real allocation issue or falsely escalate a valid seasonal
+decomposition. The audit now exposes both `parent_spread_eur_mwh` and
+`reference_spread_eur_mwh`; severity is based on the comparable reference.
+
+Rejected alternatives:
+
+- Revert solver comparable-block YoY logic to full-calendar comparisons.
+- Remove the near-clone blocker from Power BI strict gates.
+- Allow cross-year post-processors to mutate a solver-authoritative curve.
+
+Invariants not to break:
+
+- Cross-year checks remain fail-closed for `CRITICAL` severity.
+- Near-clone warnings still block strict Power BI export when they occur
+  against a non-zero comparable reference spread.
+- The report must keep parent targets, parent spread, reference spread and
+  reference basis visible.
+
