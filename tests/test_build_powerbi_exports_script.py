@@ -89,7 +89,33 @@ def test_powerbi_load_hourly_orders_structural_fallback_from_crossed_scenarios(t
     assert (loaded["structural_width_eur_mwh"] >= 0.0).all()
 
 
-def test_powerbi_load_hourly_preserves_valid_partial_structural_columns(tmp_path) -> None:
+def test_powerbi_load_hourly_prefers_canonical_structural_bracket(tmp_path) -> None:
+    path = tmp_path / "hourly.csv"
+    pd.DataFrame(
+        {
+            "timestamp_ch": ["01.07.2026 12:00"],
+            "utc_offset_ch": ["UTC+02:00"],
+            "timestamp_utc": ["01.07.2026 10:00"],
+            "price_slow_eur_mwh": [120.0],
+            "price_central_eur_mwh": [100.0],
+            "price_fast_eur_mwh": [90.0],
+            "price_weighted_mean_eur_mwh": [102.5],
+            "structural_scenario_low_eur_mwh": [80.0],
+            "structural_scenario_central_eur_mwh": [100.0],
+            "structural_scenario_high_eur_mwh": [130.0],
+            "structural_scenario_spread_eur_mwh": [50.0],
+        }
+    ).to_csv(path, index=False)
+
+    loaded = load_hourly(path)
+
+    assert loaded.loc[0, "structural_p10_eur_mwh"] == 80.0
+    assert loaded.loc[0, "structural_p50_eur_mwh"] == 100.0
+    assert loaded.loc[0, "structural_p90_eur_mwh"] == 130.0
+    assert loaded.loc[0, "structural_width_eur_mwh"] == 50.0
+
+
+def test_powerbi_load_hourly_recomputes_legacy_structural_columns_from_scenarios(tmp_path) -> None:
     path = tmp_path / "hourly.csv"
     pd.DataFrame(
         {
@@ -103,15 +129,16 @@ def test_powerbi_load_hourly_preserves_valid_partial_structural_columns(tmp_path
             "structural_p10_eur_mwh": [70.0],
             "structural_p50_eur_mwh": [95.0],
             "structural_p90_eur_mwh": [140.0],
+            "structural_width_eur_mwh": [70.0],
         }
     ).to_csv(path, index=False)
 
     loaded = load_hourly(path)
 
-    assert loaded.loc[0, "structural_p10_eur_mwh"] == 70.0
-    assert loaded.loc[0, "structural_p50_eur_mwh"] == 95.0
-    assert loaded.loc[0, "structural_p90_eur_mwh"] == 140.0
-    assert loaded.loc[0, "structural_width_eur_mwh"] == 70.0
+    assert loaded.loc[0, "structural_p10_eur_mwh"] == 90.0
+    assert loaded.loc[0, "structural_p50_eur_mwh"] == 100.0
+    assert loaded.loc[0, "structural_p90_eur_mwh"] == 120.0
+    assert loaded.loc[0, "structural_width_eur_mwh"] == 30.0
 
 
 def test_powerbi_build_exports_blocks_failed_gates_after_normalizing_structural_columns(

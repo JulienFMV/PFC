@@ -60,9 +60,18 @@ def recompute_structural_scenario_bracket(
     if missing:
         raise ValueError(f"structural scenario bracket missing scenario columns: {missing}")
     matrix = np.column_stack([out[SCENARIO_PRICE_COLUMNS[label]].to_numpy(dtype=float) for label in labels])
+    weight_labels = set(weights)
+    expected_labels = set(labels)
+    if weight_labels != expected_labels:
+        raise ValueError(
+            "structural scenario weights must contain exactly "
+            f"{sorted(expected_labels)}, got {sorted(weight_labels)}"
+        )
     weight_vector = np.array([float(weights[label]) for label in labels], dtype=float)
+    if (not np.isfinite(weight_vector).all()) or np.any(weight_vector < 0.0):
+        raise ValueError("structural scenario weights must be finite and non-negative")
     total = float(weight_vector.sum())
-    if total <= 0.0 or not np.isfinite(total):
+    if total <= 0.0:
         raise ValueError("structural scenario weights must sum to a finite positive value")
     weight_vector = weight_vector / total
 

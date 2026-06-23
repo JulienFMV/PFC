@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import sys
 from pathlib import Path
+from typing import Any
 
 import holidays
 import numpy as np
@@ -18,6 +20,7 @@ from pfc_shaping.calibration.eex_contract_selection import (  # noqa: E402
     finest_product_for_timestamp,
     quarter_product,
 )
+from pfc_shaping.calibration.monthly_curve_lambda_calibration import config_hash  # noqa: E402
 from pfc_shaping.lt.model.holiday_pressure import (  # noqa: E402
     ch_market_holiday_components as _ch_market_holiday_components,
     ch_market_holiday_pressure as _ch_market_holiday_pressure,
@@ -50,6 +53,34 @@ DEFAULT_LOCAL_START = "2026-06-13"
 DEFAULT_LOCAL_END = "2030-12-31"
 DEFAULT_OUTPUT = Path("output/local_test_ch_pfc_hourly_20260613_20301231.csv")
 DEFAULT_REPORT = Path(".planning/phases/13-lt-electrification-scenario-shape/LOCAL-TEST-CH-PFC-HOURLY-CSV.md")
+
+SOLVER_AUTHORITY_MANIFEST_REQUIRED_FIELDS = {
+    "monthly_curve_schema_version",
+    "market",
+    "forward_snapshot_date",
+    "solver_config",
+    "solver_config_hash",
+    "active_config_hash",
+    "source_hashes",
+    "active_constraints_hash",
+    "monthly_solution_hash",
+    "solver_kkt",
+    "monthly_level_authority",
+    "skip_legacy_level_cascade",
+    "skip_legacy_base_smoothing",
+}
+
+SOLVER_AUTHORITY_KKT_REQUIRED_FIELDS = {
+    "max_abs_constraint_residual",
+    "stationarity_residual",
+    "condition_number",
+    "active_constraint_rank",
+    "nullspace_dimension",
+    "ridge_used",
+    "solved_by_lstsq",
+    "dropped_yoy_rows",
+}
+
 
 def _normalize_date(value: str | pd.Timestamp) -> pd.Timestamp:
     return pd.Timestamp(value).tz_localize(None).normalize()
@@ -221,6 +252,171 @@ def require_forward_date(
             "or pass --allow-stale-forwards for an explicit diagnostic/backtest run."
         )
     return required
+
+
+def _read_fan_chart_monthly_level_authority(
+    fan_output: Path,
+    declared_authority: str,
+) -> tuple[str, Path | None, dict[str, Any]]:
+    """Resolve a prebuilt fan chart's monthly authority from its manifest."""
+    manifest_path = fan_output.with_suffix(".monthly_curve_manifest.json")
+    if not manifest_path.exists():
+        if declared_authority == "solver":
+            raise ValueError(
+                "fan chart monthly_level_authority=solver requires a manifest-backed "
+                f"solver authority file at {manifest_path}"
+            )
+        if declared_authority == "unknown":
+            raise ValueError(
+                "--skip-build requires a fan chart monthly authority manifest or "
+                "--fan-chart-monthly-level-authority=legacy"
+            )
+        return declared_authority, None, {}
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest_authority = str(manifest.get("monthly_level_authority", "unknown"))
+    if declared_authority != "unknown" and declared_authority != manifest_authority:
+        raise ValueError(
+            "fan chart monthly authority declaration conflicts with manifest: "
+            f"declared={declared_authority} manifest={manifest_authority} path={manifest_path}"
+        )
+    return manifest_authority, manifest_path, manifest
+
+
+def _validate_solver_authority_manifest(
+    manifest: dict[str, Any],
+    *,
+    manifest_path: Path | None,
+    latest_forward_date: pd.Timestamp,
+    market: str = "CH",
+) -> None:
+    missing = sorted(SOLVER_AUTHORITY_MANIFEST_REQUIRED_FIELDS - set(manifest))
+    if missing:
+        raise ValueError(
+            "solver monthly authority manifest missing required fields: "
+            f"{missing} path={manifest_path or ''}"
+        )
+    authority = str(manifest.get("monthly_level_authority"))
+    if authority != "solver":
+        raise ValueError(
+            "solver monthly authority manifest must declare monthly_level_authority=solver: "
+            f"got {authority} path={manifest_path or ''}"
+        )
+    manifest_market = str(manifest.get("market", "")).upper()
+    if manifest_market != market.upper():
+        raise ValueError(
+            "solver monthly authority manifest market mismatch: "
+            f"expected={market.upper()} manifest={manifest_market} path={manifest_path or ''}"
+        )
+    snapshot_date = pd.Timestamp(manifest["forward_snapshot_date"]).date()
+    latest_date = pd.Timestamp(latest_forward_date).date()
+    if snapshot_date != latest_date:
+        raise ValueError(
+            "solver monthly authority manifest forward snapshot mismatch: "
+            f"manifest={snapshot_date} forwards={latest_date} path={manifest_path or ''}"
+        )
+    for field in ("active_config_hash", "active_constraints_hash", "monthly_solution_hash"):
+        if not str(manifest.get(field, "")).strip():
+            raise ValueError(
+                f"solver monthly authority manifest has empty {field}: path={manifest_path or ''}"
+            )
+    solver_config = manifest.get("solver_config")
+    if not isinstance(solver_config, dict) or not solver_config:
+        raise ValueError(f"solver monthly authority manifest solver_config must be an object: path={manifest_path or ''}")
+    if str(solver_config.get("monthly_level_authority", "")) != "solver":
+        raise ValueError(
+            "solver monthly authority manifest solver_config must declare monthly_level_authority=solver: "
+            f"path={manifest_path or ''}"
+        )
+    if solver_config.get("skip_legacy_level_cascade") is not True:
+        raise ValueError(
+            "solver monthly authority manifest solver_config must skip legacy level cascade: "
+            f"path={manifest_path or ''}"
+        )
+    if solver_config.get("skip_legacy_base_smoothing") is not True:
+        raise ValueError(
+            "solver monthly authority manifest solver_config must skip legacy BASE smoothing: "
+            f"path={manifest_path or ''}"
+        )
+    expected_active_config_hash = config_hash(solver_config)
+    if str(manifest.get("active_config_hash", "")) != expected_active_config_hash:
+        raise ValueError(
+            "solver monthly authority manifest active_config_hash does not match solver_config: "
+            f"path={manifest_path or ''}"
+        )
+    if not str(manifest.get("solver_config_hash", "")).strip():
+        raise ValueError(
+            "solver monthly authority manifest has empty solver_config_hash: "
+            f"path={manifest_path or ''}"
+        )
+    source_hashes = manifest.get("source_hashes")
+    if not isinstance(source_hashes, dict) or not source_hashes:
+        raise ValueError(f"solver monthly authority manifest source_hashes must be an object: path={manifest_path or ''}")
+    if any(not str(value).strip() for value in source_hashes.values()):
+        raise ValueError(
+            "solver monthly authority manifest source_hashes must contain non-empty hashes: "
+            f"path={manifest_path or ''}"
+        )
+    solver_kkt = manifest.get("solver_kkt")
+    if not isinstance(solver_kkt, dict) or not solver_kkt:
+        raise ValueError(f"solver monthly authority manifest solver_kkt must be an object: path={manifest_path or ''}")
+    missing_kkt = sorted(SOLVER_AUTHORITY_KKT_REQUIRED_FIELDS - set(solver_kkt))
+    if missing_kkt:
+        raise ValueError(
+            "solver monthly authority manifest solver_kkt missing required fields: "
+            f"{missing_kkt} path={manifest_path or ''}"
+        )
+    for field in (
+        "max_abs_constraint_residual",
+        "stationarity_residual",
+        "condition_number",
+        "active_constraint_rank",
+        "nullspace_dimension",
+        "dropped_yoy_rows",
+    ):
+        value = float(solver_kkt[field])
+        if not np.isfinite(value):
+            raise ValueError(
+                f"solver monthly authority manifest solver_kkt has non-finite {field}: "
+                f"path={manifest_path or ''}"
+            )
+    for field in ("ridge_used", "solved_by_lstsq"):
+        if not isinstance(solver_kkt[field], bool):
+            raise ValueError(
+                f"solver monthly authority manifest solver_kkt {field} must be boolean: "
+                f"path={manifest_path or ''}"
+            )
+    if manifest.get("skip_legacy_level_cascade") is not True:
+        raise ValueError(
+            "solver monthly authority manifest must skip legacy level cascade: "
+            f"path={manifest_path or ''}"
+        )
+    if manifest.get("skip_legacy_base_smoothing") is not True:
+        raise ValueError(
+            "solver monthly authority manifest must skip legacy BASE smoothing: "
+            f"path={manifest_path or ''}"
+        )
+
+
+def _skipped_solver_authority_calibration(
+    hourly: pd.DataFrame,
+    *,
+    manifest_path: Path | None,
+    reason: str,
+) -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "product": "SKIPPED_SOLVER_AUTHORITY",
+                "target_eex_base_eur_mwh": np.nan,
+                "pre_calibration_mean_eur_mwh": float(hourly["price_weighted_mean_eur_mwh"].mean()),
+                "post_calibration_mean_eur_mwh": float(hourly["price_weighted_mean_eur_mwh"].mean()),
+                "scale_factor": 1.0,
+                "rows": len(hourly),
+                "reason": reason,
+                "manifest": str(manifest_path) if manifest_path else "",
+            }
+        ]
+    )
 
 
 def _quarter_product(ts: pd.Timestamp) -> str:
@@ -1747,6 +1943,8 @@ def _write_report(
     eex_peak_calibration_enabled: bool = False,
     eex_peak_calibration_audit: pd.DataFrame | None = None,
     disable_cascade_trend_for_annual_only: bool = False,
+    monthly_level_authority: str = "legacy",
+    monthly_level_authority_manifest: Path | None = None,
 ) -> None:
     price = hourly["price_weighted_mean_eur_mwh"]
     if "structural_scenario_spread_eur_mwh" in hourly.columns:
@@ -1810,6 +2008,8 @@ def _write_report(
         ),
         f"* local/test EEX BASE+PEAK calibration: `{'ON' if eex_peak_calibration_enabled else 'OFF'}`",
         f"* disable cascade trend for annual-only years: `{'ON' if disable_cascade_trend_for_annual_only else 'OFF'}`",
+        f"* monthly level authority: `{monthly_level_authority}`",
+        f"* monthly level authority manifest: `{monthly_level_authority_manifest or 'not provided'}`",
         f"* rows: `{len(hourly)}`",
         "",
         "## Price Summary",
@@ -1924,8 +2124,13 @@ def _write_report(
         "",
         "## Limitations",
         "",
-        "* Hourly values are arithmetic averages of the calibrated 15-minute local/test PFC.",
-        "* The curve is calibrated to the required EEX CH forward snapshot for the run date.",
+        "* Hourly values are arithmetic averages of the 15-minute local/test PFC.",
+        (
+            "* When monthly level authority is `solver`, EEX BASE calibration is not rerun during export; "
+            "the solver manifest is the monthly level evidence."
+            if monthly_level_authority == "solver"
+            else "* The curve is calibrated to the required EEX CH forward snapshot for the run date."
+        ),
         "* The structural shape upgrade is local/test only and remains disabled unless explicitly requested.",
         "* Negative-price capture, when enabled, is local/test only and bounded by an explicit floor.",
         "* The post-calibration negative rebalancer, when enabled, is local/test only and mean-preserving by EEX bucket.",
@@ -2295,6 +2500,15 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Build the local-test PFC with the governed monthly BASE curve solver as level authority.",
     )
+    parser.add_argument(
+        "--fan-chart-monthly-level-authority",
+        choices=["legacy", "solver", "unknown"],
+        default="unknown",
+        help=(
+            "Authority of a prebuilt --skip-build fan chart. Required when "
+            "--skip-build is combined with mutating local/test post-processors."
+        ),
+    )
     parser.add_argument("--fan-chart-output", default=None)
     parser.add_argument(
         "--skip-powerbi-refresh",
@@ -2312,24 +2526,56 @@ def main(argv: list[str] | None = None) -> int:
     features_output = Path(f"data/hpfc_scenario_features_{args.prefix}.parquet")
     summary_output = Path(f".planning/phases/13-lt-electrification-scenario-shape/{args.prefix.upper()}-BUILD.md")
     governance_report = Path(f".planning/phases/13-lt-electrification-scenario-shape/{args.prefix.upper()}-GOVERNANCE.md")
+    fan_chart_authority = args.fan_chart_monthly_level_authority
+    fan_chart_authority_manifest = None
+    fan_chart_authority_manifest_data: dict[str, Any] = {}
+    if args.skip_build:
+        fan_chart_authority, fan_chart_authority_manifest, fan_chart_authority_manifest_data = (
+            _read_fan_chart_monthly_level_authority(
+                fan_output,
+                args.fan_chart_monthly_level_authority,
+            )
+        )
+
+    monthly_level_mutators = {
+        "--enable-quote-aware-monthly-smoothing": args.enable_quote_aware_monthly_smoothing,
+        "--enable-neighbor-monthly-spread-anchor": args.enable_neighbor_monthly_spread_anchor,
+        "--enable-neighbor-annual-residual-shape-anchor": args.enable_neighbor_annual_residual_shape_anchor,
+        "--enable-final-monthly-path-smoothing": args.enable_final_monthly_path_smoothing,
+        "--enable-final-quant-annual-smoothness": args.enable_final_quant_annual_smoothness,
+        "--enable-cross-year-seasonal-shape-optimizer": args.enable_cross_year_seasonal_shape_optimizer,
+        "--enable-final-seam-nullspace-smoothing": args.enable_final_seam_nullspace_smoothing,
+    }
+    authority_level_mutators = {
+        **monthly_level_mutators,
+        "--enable-structural-shape-upgrade": args.enable_structural_shape_upgrade,
+        "--enable-post-calibration-negative-rebalancer": args.enable_post_calibration_negative_rebalancer,
+        "--enable-post-calibration-peak-shape-rebalancer": args.enable_post_calibration_peak_shape_rebalancer,
+        "--enable-eex-peak-calibration": args.enable_eex_peak_calibration,
+    }
+    enabled_authority_level_mutators = [
+        flag for flag, active in authority_level_mutators.items() if active
+    ]
 
     if args.enable_monthly_forward_curve_solver:
         if args.skip_build:
             raise ValueError("--enable-monthly-forward-curve-solver requires building a fresh fan chart")
-        incompatible = {
-            "--enable-quote-aware-monthly-smoothing": args.enable_quote_aware_monthly_smoothing,
-            "--enable-neighbor-monthly-spread-anchor": args.enable_neighbor_monthly_spread_anchor,
-            "--enable-neighbor-annual-residual-shape-anchor": args.enable_neighbor_annual_residual_shape_anchor,
-            "--enable-final-monthly-path-smoothing": args.enable_final_monthly_path_smoothing,
-            "--enable-final-quant-annual-smoothness": args.enable_final_quant_annual_smoothness,
-            "--enable-cross-year-seasonal-shape-optimizer": args.enable_cross_year_seasonal_shape_optimizer,
-            "--enable-final-seam-nullspace-smoothing": args.enable_final_seam_nullspace_smoothing,
-        }
-        enabled = [flag for flag, active in incompatible.items() if active]
-        if enabled:
+        if enabled_authority_level_mutators:
             raise ValueError(
                 "--enable-monthly-forward-curve-solver is mutually exclusive with "
-                f"mutating local-test post-processors: {', '.join(enabled)}"
+                f"mutating local-test post-processors: {', '.join(enabled_authority_level_mutators)}"
+            )
+    if args.skip_build:
+        if fan_chart_authority == "unknown":
+            raise ValueError(
+                "--skip-build requires a fan chart monthly authority manifest or "
+                "--fan-chart-monthly-level-authority=legacy"
+            )
+        if fan_chart_authority == "solver" and enabled_authority_level_mutators:
+            raise ValueError(
+                "prebuilt fan chart declares monthly_level_authority=solver; "
+                "mutating local-test post-processors would rewrite solver monthly means: "
+                f"{', '.join(enabled_authority_level_mutators)}"
             )
 
     if not args.skip_build:
@@ -2365,9 +2611,20 @@ def main(argv: list[str] | None = None) -> int:
                 ),
             ]
         )
+        if args.enable_monthly_forward_curve_solver:
+            fan_chart_authority, fan_chart_authority_manifest, fan_chart_authority_manifest_data = (
+                _read_fan_chart_monthly_level_authority(fan_output, "solver")
+            )
 
     fan = pd.read_parquet(fan_output)
     latest_forward_date, forward_prices_by_load_type = _latest_eex_prices_by_load_type(Path(args.forwards), market="CH")
+    if fan_chart_authority == "solver":
+        _validate_solver_authority_manifest(
+            fan_chart_authority_manifest_data,
+            manifest_path=fan_chart_authority_manifest,
+            latest_forward_date=latest_forward_date,
+            market="CH",
+        )
     forward_prices = forward_prices_by_load_type.get("BASE", {})
     if not forward_prices:
         raise ValueError("no EEX CH BASE prices in latest forward snapshot")
@@ -2435,7 +2692,14 @@ def main(argv: list[str] | None = None) -> int:
             negative_capture_intensity=args.negative_price_capture_intensity,
             negative_price_floor=args.negative_price_floor,
         )
-    hourly, calibration = calibrate_hourly_to_eex(hourly, forward_prices=forward_prices)
+    if fan_chart_authority == "solver":
+        calibration = _skipped_solver_authority_calibration(
+            hourly,
+            manifest_path=fan_chart_authority_manifest,
+            reason="fan chart monthly_level_authority=solver",
+        )
+    else:
+        hourly, calibration = calibrate_hourly_to_eex(hourly, forward_prices=forward_prices)
     post_negative_audit = None
     post_peak_audit = None
     if args.enable_post_calibration_negative_rebalancer:
@@ -2714,6 +2978,8 @@ def main(argv: list[str] | None = None) -> int:
         eex_peak_calibration_enabled=bool(args.enable_eex_peak_calibration),
         eex_peak_calibration_audit=eex_peak_audit,
         disable_cascade_trend_for_annual_only=bool(args.disable_cascade_trend_for_annual_only),
+        monthly_level_authority=fan_chart_authority,
+        monthly_level_authority_manifest=fan_chart_authority_manifest,
     )
     print(f"[hourly-csv] rows={len(hourly)}")
     print(f"[hourly-csv] output -> {output}")

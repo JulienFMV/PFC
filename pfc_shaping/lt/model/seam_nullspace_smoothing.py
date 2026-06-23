@@ -213,10 +213,11 @@ def _constraint_matrix(
     peak_forward_prices: Mapping[str, float],
 ) -> np.ndarray:
     hours = interval_hours(index_utc)
+    positions = pd.Series(np.arange(len(ts_ch), dtype=int), index=ts_ch.index)
     rows: list[np.ndarray] = []
     base_buckets, _ = calibration_buckets(ts_ch, base_forward_prices)
     for _, idx in base_buckets.groupby(base_buckets, dropna=True).groups.items():
-        idx_arr = np.asarray(list(idx), dtype=int)
+        idx_arr = positions.loc[pd.Index(idx)].to_numpy(dtype=int)
         denom = float(hours[idx_arr].sum())
         if denom <= 0.0:
             continue
@@ -229,7 +230,7 @@ def _constraint_matrix(
         if bool(peak_mask.any()):
             peak_buckets, _ = calibration_buckets(ts_ch.loc[peak_mask], peak_forward_prices)
             for _, idx in peak_buckets.groupby(peak_buckets, dropna=True).groups.items():
-                idx_arr = np.asarray(list(idx), dtype=int)
+                idx_arr = positions.loc[pd.Index(idx)].to_numpy(dtype=int)
                 denom = float(hours[idx_arr].sum())
                 if denom <= 0.0:
                     continue

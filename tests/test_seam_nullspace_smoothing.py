@@ -87,6 +87,38 @@ def test_seam_nullspace_smoothing_preserves_peak_mean_when_peak_quote_exists():
     )
 
 
+def test_seam_nullspace_smoothing_handles_non_default_index_with_peak_constraints():
+    timestamps = pd.date_range("2030-01-01", "2030-03-31 23:00", freq="h", tz="Europe/Zurich")
+    values = np.where(timestamps.month == 1, 85.0, 125.0).astype(float)
+    hourly = _hourly_frame(timestamps, values)
+    hourly.index = pd.RangeIndex(1000, 1000 + len(hourly))
+    ts_ch = pd.Series(timestamps, index=hourly.index)
+    base_target = float(hourly["price_weighted_mean_eur_mwh"].mean())
+    peak_mask = eex_peak_mask(timestamps.tz_convert("UTC"), country="CH")
+    peak_target = float(hourly.loc[peak_mask, "price_weighted_mean_eur_mwh"].mean())
+
+    smoothed, audit = apply_seam_nullspace_smoothing(
+        hourly,
+        ts_ch=ts_ch,
+        base_forward_prices={"2030-Q1": base_target},
+        peak_forward_prices={"2030-Q1": peak_target},
+        weights={"slow": 0.25, "central": 0.5, "fast": 0.25},
+        seam_window_hours=72,
+        target_boundary_jump_eur_mwh=8.0,
+        min_boundary_jump_eur_mwh=20.0,
+        max_abs_delta_eur_mwh=20.0,
+        negative_price_floor=-30.0,
+        max_weighted_negative_hours=0,
+    )
+
+    assert not audit.empty
+    assert float(smoothed["price_weighted_mean_eur_mwh"].mean()) == pytest.approx(base_target, abs=1e-6)
+    assert float(smoothed.loc[peak_mask, "price_weighted_mean_eur_mwh"].mean()) == pytest.approx(
+        peak_target,
+        abs=1e-6,
+    )
+
+
 def test_seam_nullspace_smoothing_handles_dst_months_with_hour_weights():
     timestamps = pd.date_range("2030-03-01", "2030-04-30 23:00", freq="h", tz="Europe/Zurich")
     values = np.where(timestamps.month == 3, 110.0, 70.0).astype(float)

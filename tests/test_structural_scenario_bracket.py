@@ -30,3 +30,25 @@ def test_structural_scenario_bracket_is_ordered_and_non_probabilistic_alias() ->
     assert out.loc[0, "structural_p50_eur_mwh"] == pytest.approx(100.0)
     assert out.loc[0, "structural_p90_eur_mwh"] == pytest.approx(120.0)
     assert out.loc[0, "structural_width_eur_mwh"] == pytest.approx(30.0)
+
+
+@pytest.mark.parametrize(
+    "weights, match",
+    [
+        ({"slow": 0.25, "central": 0.75}, "exactly"),
+        ({"slow": 0.25, "central": 0.75, "fast": -0.10}, "finite and non-negative"),
+        ({"slow": 0.0, "central": 0.0, "fast": 0.0}, "positive"),
+        ({"slow": 0.25, "central": float("nan"), "fast": 0.75}, "finite and non-negative"),
+    ],
+)
+def test_structural_scenario_bracket_rejects_invalid_weights(weights, match) -> None:
+    frame = pd.DataFrame(
+        {
+            "price_slow_eur_mwh": [90.0],
+            "price_central_eur_mwh": [100.0],
+            "price_fast_eur_mwh": [120.0],
+        }
+    )
+
+    with pytest.raises(ValueError, match=match):
+        recompute_structural_scenario_bracket(frame, weights)

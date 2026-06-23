@@ -15,6 +15,9 @@ from scripts.audit_ch_hfc_vs_spot_shape import audit as audit_vs_spot  # noqa: E
 from scripts.audit_ch_hfc_seasonal_coherence import audit as audit_seasonal  # noqa: E402
 from scripts.audit_ch_pfc_hourly_shape import audit as audit_shape  # noqa: E402
 from scripts.export_local_test_ch_hourly_csv import _eex_peak_mask, _parse_timestamp_ch  # noqa: E402
+from pfc_shaping.lt.model.structural_scenario_bracket import (  # noqa: E402
+    ensure_structural_scenario_bracket_aliases,
+)
 
 
 PRICE_COLUMNS = [
@@ -99,26 +102,42 @@ def _season(month: int) -> str:
 
 
 def _with_structural_fallback_columns(frame: pd.DataFrame) -> pd.DataFrame:
-    out = frame.copy()
+    original_columns = set(frame.columns)
+    out = ensure_structural_scenario_bracket_aliases(frame)
     scenario = out[["price_slow_eur_mwh", "price_central_eur_mwh", "price_fast_eur_mwh"]].astype(float)
+    canonical_columns = {
+        "structural_scenario_low_eur_mwh",
+        "structural_scenario_central_eur_mwh",
+        "structural_scenario_high_eur_mwh",
+        "structural_scenario_spread_eur_mwh",
+    }
+    has_input_canonical_bracket = canonical_columns.issubset(original_columns)
     fallback_values = {
-        "structural_p10_eur_mwh": scenario.min(axis=1),
-        "structural_p50_eur_mwh": scenario.median(axis=1),
-        "structural_p90_eur_mwh": scenario.max(axis=1),
+        "structural_p10_eur_mwh": (
+            out["structural_scenario_low_eur_mwh"].astype(float)
+            if has_input_canonical_bracket
+            else scenario.min(axis=1)
+        ),
+        "structural_p50_eur_mwh": (
+            out["structural_scenario_central_eur_mwh"].astype(float)
+            if has_input_canonical_bracket
+            else scenario["price_central_eur_mwh"]
+        ),
+        "structural_p90_eur_mwh": (
+            out["structural_scenario_high_eur_mwh"].astype(float)
+            if has_input_canonical_bracket
+            else scenario.max(axis=1)
+        ),
     }
     for column, fallback in fallback_values.items():
-        if column not in out.columns:
-            out[column] = fallback
-        else:
-            current = pd.to_numeric(out[column], errors="coerce")
-            out[column] = current.where(current.notna(), fallback)
+        out[column] = fallback
 
-    width_fallback = out["structural_p90_eur_mwh"].astype(float) - out["structural_p10_eur_mwh"].astype(float)
-    if "structural_width_eur_mwh" not in out.columns:
-        out["structural_width_eur_mwh"] = width_fallback
+    if has_input_canonical_bracket:
+        out["structural_width_eur_mwh"] = out["structural_scenario_spread_eur_mwh"].astype(float)
     else:
-        current_width = pd.to_numeric(out["structural_width_eur_mwh"], errors="coerce")
-        out["structural_width_eur_mwh"] = current_width.where(current_width.notna(), width_fallback)
+        out["structural_width_eur_mwh"] = (
+            out["structural_p90_eur_mwh"].astype(float) - out["structural_p10_eur_mwh"].astype(float)
+        )
     return out
 
 

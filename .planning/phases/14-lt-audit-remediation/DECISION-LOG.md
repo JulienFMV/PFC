@@ -367,3 +367,41 @@ Invariants not to break:
 - When canonical and legacy structural columns conflict, canonical scenario
   columns win and legacy aliases are overwritten from them.
 - Production LT uncertainty columns named `p10`/`p90` remain out of scope.
+
+## D-20260623-07 - Solver Authority Export Is Manifest-Backed And Non-Mutating
+
+Decision: local/test hourly export treats `monthly_level_authority=solver` as a
+hard level authority. Fresh solver builds and prebuilt solver fan charts skip
+export-time EEX BASE recalibration, block local/test post-processors that can
+rewrite solver monthly means, and require a complete adjacent solver manifest.
+Prebuilt skip-build exports without a manifest now fail closed unless explicitly
+declared as `legacy`.
+
+Reason: a solver-authority fan chart has already satisfied hard CH EEX monthly
+constraints in the monthly solver. Re-running legacy export calibration or
+post-calibration rebalancers after that point silently reassigns level authority
+to the export script. A one-field manifest is also not enough evidence to
+disable calibration; the export must validate market, snapshot date, solver
+config hash, source hashes, constraint/solution hashes, KKT diagnostics, and
+legacy-bypass flags.
+
+Rejected alternatives:
+
+- Trust `--fan-chart-monthly-level-authority=solver` without an adjacent
+  manifest.
+- Allow solver-authority exports to run structural shape upgrade,
+  post-calibration rebalancers, EEX PEAK calibration, or final/monthly mutators.
+- Preserve stale legacy `structural_p10/p50/p90` aliases in Power BI when
+  canonical structural scenario columns or scenario price columns are present.
+
+Invariants not to break:
+
+- Solver-authority export may aggregate and alias columns but must not change
+  solver monthly means.
+- `active_config_hash` must match `config_hash(solver_config)`.
+- `solver_config`, `source_hashes`, and `solver_kkt` must be non-empty, with
+  required KKT fields and boolean flags validated.
+- Skip-build without a manifest is allowed only when the caller explicitly
+  declares the prebuilt fan chart as `legacy`.
+- Power BI structural aliases are recomputed from canonical structural scenario
+  columns when present, otherwise from ordered slow/central/fast scenario prices.
