@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
+
 import pandas as pd
 
-from scripts.build_local_test_ch_pfc import _build_fan, _expand_inventory
+from scripts.build_local_test_ch_pfc import _build_fan, _expand_inventory, _fan_weighted_monthly_hash, _file_sha256
 
 
 def _inventory():
@@ -75,3 +77,31 @@ def test_build_fan_has_ordered_scenario_bracket():
     assert (fan["structural_scenario_low"] <= fan["structural_scenario_central"]).all()
     assert (fan["structural_scenario_central"] <= fan["structural_scenario_high"]).all()
     assert (fan["structural_scenario_spread"] > 0).all()
+
+
+def test_solver_manifest_fan_hash_fields_are_reproducible(tmp_path):
+    index = pd.date_range("2030-01-01", periods=4, freq="15min", tz="UTC")
+    fan = pd.DataFrame(
+        {
+            "curve_slow": [90.0, 91.0, 92.0, 93.0],
+            "curve_central": [100.0, 101.0, 102.0, 103.0],
+            "curve_fast": [110.0, 111.0, 112.0, 113.0],
+            "weighted_mean": [100.0, 101.0, 102.0, 103.0],
+        },
+        index=index,
+    )
+    fan_path = tmp_path / "fan.parquet"
+    fan.to_parquet(fan_path)
+    manifest = {
+        "fan_chart_sha256": _file_sha256(fan_path),
+        "fan_chart_weighted_monthly_hash": _fan_weighted_monthly_hash(fan, timezone="Europe/Zurich"),
+        "scenario_weights": {"slow": 0.25, "central": 0.5, "fast": 0.25},
+    }
+    manifest_path = fan_path.with_suffix(".monthly_curve_manifest.json")
+    manifest_path.write_text(json.dumps(manifest, sort_keys=True), encoding="utf-8")
+
+    loaded = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    assert loaded["fan_chart_sha256"] == _file_sha256(fan_path)
+    assert loaded["fan_chart_weighted_monthly_hash"] == _fan_weighted_monthly_hash(fan, timezone="Europe/Zurich")
+    assert loaded["scenario_weights"] == {"central": 0.5, "fast": 0.25, "slow": 0.25}

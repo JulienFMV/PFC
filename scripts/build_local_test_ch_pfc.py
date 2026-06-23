@@ -8,6 +8,7 @@ structural fan chart. Production approval remains a separate human-signoff gate.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 
@@ -47,6 +48,28 @@ DEFAULT_SUMMARY = Path(".planning/phases/13-lt-electrification-scenario-shape/LO
 def _write_parquet(frame: pd.DataFrame, path: Path, *, index: bool = False) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     frame.to_parquet(path, index=index)
+
+
+def _file_sha256(path: str | Path) -> str:
+    h = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _sha256_json(payload: object) -> str:
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    ).hexdigest()
+
+
+def _fan_weighted_monthly_hash(fan: pd.DataFrame, *, timezone: str) -> str:
+    local = pd.to_datetime(fan.index, utc=True).tz_convert(timezone)
+    month = pd.PeriodIndex(local.strftime("%Y-%m"), freq="M")
+    monthly = pd.Series(fan["weighted_mean"].to_numpy(dtype=float), index=month).groupby(level=0).mean().sort_index()
+    payload = {str(month): round(float(value), 10) for month, value in monthly.items()}
+    return _sha256_json(payload)
 
 
 def _expand_inventory(
@@ -332,8 +355,15 @@ def main(argv: list[str] | None = None) -> int:
     _write_parquet(fan, fan_path, index=True)
     if monthly_authority is not None:
         manifest_path = fan_path.with_suffix(".monthly_curve_manifest.json")
+        manifest = dict(monthly_authority.manifest)
+        manifest["fan_chart_sha256"] = _file_sha256(fan_path)
+        manifest["fan_chart_weighted_monthly_hash"] = _fan_weighted_monthly_hash(
+            fan,
+            timezone="Europe/Zurich" if args.market == "CH" else "Europe/Berlin",
+        )
+        manifest["scenario_weights"] = {str(key): float(value) for key, value in weights.items()}
         manifest_path.write_text(
-            json.dumps(monthly_authority.manifest, indent=2, sort_keys=True, default=str),
+            json.dumps(manifest, indent=2, sort_keys=True, default=str),
             encoding="utf-8",
         )
     _write_summary(

@@ -401,6 +401,16 @@ Invariants not to break:
 - `active_config_hash` must match `config_hash(solver_config)`.
 - `solver_config`, `source_hashes`, and `solver_kkt` must be non-empty, with
   required KKT fields and boolean flags validated.
+- Solver manifest evidence must bind to the exported fan parquet through
+  `fan_chart_sha256` and `fan_chart_weighted_monthly_hash`.
+- `source_hashes.forwards_path` must equal the SHA-256 of the actual
+  `--forwards` parquet used by the export.
+- Solver-authority exports must validate every fully covered EEX BASE Month,
+  Quarter, and Calendar quote independently, including parent quotes that are
+  also covered by finer quotes. Solver authority is rejected when the export
+  window contains no fully covered EEX BASE quote.
+- Solver-authority KKT evidence must reject large residuals, non-positive or
+  extreme condition numbers, and ridge/lstsq fallback solves.
 - Skip-build without a manifest is allowed only when the caller explicitly
   declares the prebuilt fan chart as `legacy`.
 - Power BI structural aliases are recomputed from canonical structural scenario

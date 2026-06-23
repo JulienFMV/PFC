@@ -33,7 +33,14 @@ from scripts.export_local_test_ch_hourly_csv import (
 from pfc_shaping.lt.model.holiday_pressure import ch_market_nonworking_pressure
 
 
-def _solver_manifest(*, forward_snapshot_date: str = "2026-06-15", market: str = "CH") -> dict[str, object]:
+def _solver_manifest(
+    *,
+    fan: pd.DataFrame,
+    fan_path: Path,
+    forwards_path: Path,
+    forward_snapshot_date: str = "2026-06-15",
+    market: str = "CH",
+) -> dict[str, object]:
     solver_config = {
         "monthly_level_authority": "solver",
         "skip_legacy_level_cascade": True,
@@ -44,11 +51,16 @@ def _solver_manifest(*, forward_snapshot_date: str = "2026-06-15", market: str =
         "market": market,
         "forward_snapshot_date": forward_snapshot_date,
         "solver_config": solver_config,
-        "solver_config_hash": "solver-config-hash",
+        "solver_config_hash": export_script._sha256_json(solver_config),
         "active_config_hash": config_hash(solver_config),
-        "source_hashes": {"forwards": "forwards-hash"},
+        "source_hashes": {"forwards_path": export_script._file_sha256(forwards_path)},
         "active_constraints_hash": "constraints-hash",
-        "monthly_solution_hash": "solution-hash",
+        "monthly_solution_hash": "solver-solution-hash",
+        "fan_chart_weighted_monthly_hash": export_script._fan_weighted_monthly_solution_hash(
+            fan,
+            timezone=export_script.LOCAL_TZ,
+        ),
+        "fan_chart_sha256": export_script._file_sha256(fan_path),
         "solver_kkt": {
             "max_abs_constraint_residual": 0.0,
             "stationarity_residual": 0.0,
@@ -408,7 +420,7 @@ def test_skip_build_monthly_solver_fan_blocks_mutating_postprocessor(tmp_path):
     out_path = tmp_path / "hourly.csv"
     report_path = tmp_path / "report.md"
     forwards_path = tmp_path / "forwards.parquet"
-    index = pd.date_range("2026-06-30 22:00", periods=96, freq="15min", tz="UTC")
+    index = pd.date_range("2026-06-30 22:00", periods=31 * 96, freq="15min", tz="UTC")
     pd.DataFrame(
         {
             "curve_slow": [80.0] * len(index),
@@ -438,7 +450,7 @@ def test_skip_build_monthly_solver_fan_blocks_mutating_postprocessor(tmp_path):
                 "--local-start-date",
                 "2026-07-01",
                 "--local-end-date",
-                "2026-07-01",
+                "2026-07-31",
                 "--fan-chart-output",
                 str(fan_path),
                 "--forwards",
@@ -455,13 +467,13 @@ def test_skip_build_monthly_solver_fan_blocks_mutating_postprocessor(tmp_path):
         )
 
 
-def test_skip_build_reads_solver_authority_from_fan_manifest(tmp_path):
+def test_skip_build_rejects_solver_manifest_when_fan_violates_eex_constraints(tmp_path):
     fan_path = tmp_path / "fan.parquet"
     out_path = tmp_path / "hourly.csv"
     report_path = tmp_path / "report.md"
     forwards_path = tmp_path / "forwards.parquet"
-    index = pd.date_range("2026-06-30 22:00", periods=96, freq="15min", tz="UTC")
-    pd.DataFrame(
+    index = pd.date_range("2026-06-30 22:00", periods=31 * 96, freq="15min", tz="UTC")
+    fan = pd.DataFrame(
         {
             "curve_slow": [80.0] * len(index),
             "curve_central": [80.0] * len(index),
@@ -469,11 +481,8 @@ def test_skip_build_reads_solver_authority_from_fan_manifest(tmp_path):
             "weighted_mean": [80.0] * len(index),
         },
         index=index,
-    ).to_parquet(fan_path)
-    fan_path.with_suffix(".monthly_curve_manifest.json").write_text(
-        json.dumps(_solver_manifest()),
-        encoding="utf-8",
     )
+    fan.to_parquet(fan_path)
     pd.DataFrame(
         {
             "date": [pd.Timestamp("2026-06-15")],
@@ -485,6 +494,64 @@ def test_skip_build_reads_solver_authority_from_fan_manifest(tmp_path):
             "source": ["TEST"],
         }
     ).to_parquet(forwards_path, index=False)
+    fan_path.with_suffix(".monthly_curve_manifest.json").write_text(
+        json.dumps(_solver_manifest(fan=fan, fan_path=fan_path, forwards_path=forwards_path)),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="violates EEX BASE constraint"):
+        export_script.main(
+            [
+                "--skip-build",
+                "--allow-stale-forwards",
+                "--local-start-date",
+                "2026-07-01",
+                "--local-end-date",
+                "2026-07-31",
+                "--fan-chart-output",
+                str(fan_path),
+                "--forwards",
+                str(forwards_path),
+                "--output",
+                str(out_path),
+                "--report",
+                str(report_path),
+                "--skip-powerbi-refresh",
+            ]
+        )
+
+
+def test_skip_build_reads_solver_authority_from_bound_fan_manifest(tmp_path):
+    fan_path = tmp_path / "fan.parquet"
+    out_path = tmp_path / "hourly.csv"
+    report_path = tmp_path / "report.md"
+    forwards_path = tmp_path / "forwards.parquet"
+    index = pd.date_range("2026-06-30 22:00", periods=31 * 96, freq="15min", tz="UTC")
+    fan = pd.DataFrame(
+        {
+            "curve_slow": [80.0] * len(index),
+            "curve_central": [100.0] * len(index),
+            "curve_fast": [120.0] * len(index),
+            "weighted_mean": [100.0] * len(index),
+        },
+        index=index,
+    )
+    fan.to_parquet(fan_path)
+    pd.DataFrame(
+        {
+            "date": [pd.Timestamp("2026-06-15")],
+            "product": ["2026-07"],
+            "load_type": ["BASE"],
+            "product_type": ["Month"],
+            "price": [100.0],
+            "market": ["CH"],
+            "source": ["TEST"],
+        }
+    ).to_parquet(forwards_path, index=False)
+    fan_path.with_suffix(".monthly_curve_manifest.json").write_text(
+        json.dumps(_solver_manifest(fan=fan, fan_path=fan_path, forwards_path=forwards_path)),
+        encoding="utf-8",
+    )
 
     rc = export_script.main(
         [
@@ -493,7 +560,7 @@ def test_skip_build_reads_solver_authority_from_fan_manifest(tmp_path):
             "--local-start-date",
             "2026-07-01",
             "--local-end-date",
-            "2026-07-01",
+            "2026-07-31",
             "--fan-chart-output",
             str(fan_path),
             "--forwards",
@@ -502,16 +569,45 @@ def test_skip_build_reads_solver_authority_from_fan_manifest(tmp_path):
             str(out_path),
             "--report",
             str(report_path),
+            "--weights",
+            "0.0,0.0,1.0",
             "--skip-powerbi-refresh",
         ]
     )
 
     assert rc == 0
     out = pd.read_csv(out_path)
-    assert out["price_weighted_mean_eur_mwh"].mean() == pytest.approx(80.0)
+    assert out["price_weighted_mean_eur_mwh"].mean() == pytest.approx(100.0)
+    assert out["structural_p90_eur_mwh"].mean() == pytest.approx(120.0)
     report = report_path.read_text(encoding="utf-8")
     assert "SKIPPED_SOLVER_AUTHORITY" in report
     assert "monthly level authority: `solver`" in report
+
+
+def test_solver_fan_base_constraints_check_overlapping_complete_parent_quotes() -> None:
+    index = pd.date_range("2025-12-31 23:00", periods=365 * 96, freq="15min", tz="UTC")
+    fan = pd.DataFrame({"weighted_mean": [80.0] * len(index)}, index=index)
+    prices = {f"2026-{month:02d}": 80.0 for month in range(1, 13)}
+    prices["2026"] = 100.0
+
+    with pytest.raises(ValueError, match="product=2026"):
+        export_script._validate_solver_fan_base_constraints(
+            fan,
+            base_forward_prices=prices,
+            timezone=export_script.LOCAL_TZ,
+        )
+
+
+def test_solver_fan_base_constraints_reject_partial_windows_without_full_quote() -> None:
+    index = pd.date_range("2026-06-30 22:00", periods=96, freq="15min", tz="UTC")
+    fan = pd.DataFrame({"weighted_mean": [100.0] * len(index)}, index=index)
+
+    with pytest.raises(ValueError, match="no fully covered EEX BASE constraints"):
+        export_script._validate_solver_fan_base_constraints(
+            fan,
+            base_forward_prices={"2026-07": 100.0},
+            timezone=export_script.LOCAL_TZ,
+        )
 
 
 def test_skip_build_rejects_minimal_solver_authority_manifest(tmp_path):
@@ -575,22 +671,74 @@ def test_skip_build_rejects_minimal_solver_authority_manifest(tmp_path):
         (lambda manifest: manifest.update({"solver_kkt": {}}), "solver_kkt"),
         (lambda manifest: manifest.update({"active_config_hash": "not-the-config-hash"}), "active_config_hash"),
         (lambda manifest: manifest.update({"solver_config_hash": ""}), "solver_config_hash"),
+        (lambda manifest: manifest.update({"fan_chart_sha256": "not-the-fan-hash"}), "fan_chart_sha256"),
+        (lambda manifest: manifest["source_hashes"].update({"forwards_path": "not-the-forwards-hash"}), "forwards_path"),
+        (
+            lambda manifest: manifest.update({"fan_chart_weighted_monthly_hash": "not-the-solution-hash"}),
+            "fan_chart_weighted_monthly_hash",
+        ),
         (
             lambda manifest: manifest["solver_kkt"].update({"max_abs_constraint_residual": float("nan")}),
             "non-finite",
         ),
+        (
+            lambda manifest: manifest["solver_kkt"].update({"stationarity_residual": 1.0}),
+            "stationarity_residual",
+        ),
+        (
+            lambda manifest: manifest["solver_kkt"].update({"condition_number": 0.0}),
+            "condition_number",
+        ),
+        (
+            lambda manifest: manifest["solver_kkt"].update({"condition_number": 1e13}),
+            "condition_number",
+        ),
+        (
+            lambda manifest: manifest["solver_kkt"].update({"active_constraint_rank": -1}),
+            "non-negative integer",
+        ),
         (lambda manifest: manifest["solver_kkt"].update({"ridge_used": ""}), "boolean"),
         (lambda manifest: manifest["solver_kkt"].update({"solved_by_lstsq": ""}), "boolean"),
+        (lambda manifest: manifest["solver_kkt"].update({"ridge_used": True}), "must be false"),
+        (lambda manifest: manifest["solver_kkt"].update({"solved_by_lstsq": True}), "must be false"),
     ],
 )
-def test_solver_authority_manifest_rejects_empty_or_nonfinite_proof(mutate, match):
-    manifest = _solver_manifest()
+def test_solver_authority_manifest_rejects_empty_or_nonfinite_proof(tmp_path, mutate, match):
+    fan_path = tmp_path / "fan.parquet"
+    forwards_path = tmp_path / "forwards.parquet"
+    index = pd.date_range("2026-06-30 22:00", periods=31 * 96, freq="15min", tz="UTC")
+    fan = pd.DataFrame(
+        {
+            "curve_slow": [80.0] * len(index),
+            "curve_central": [100.0] * len(index),
+            "curve_fast": [120.0] * len(index),
+            "weighted_mean": [100.0] * len(index),
+        },
+        index=index,
+    )
+    fan.to_parquet(fan_path)
+    pd.DataFrame(
+        {
+            "date": [pd.Timestamp("2026-06-15")],
+            "product": ["2026-07"],
+            "load_type": ["BASE"],
+            "product_type": ["Month"],
+            "price": [100.0],
+            "market": ["CH"],
+            "source": ["TEST"],
+        }
+    ).to_parquet(forwards_path, index=False)
+    manifest = _solver_manifest(fan=fan, fan_path=fan_path, forwards_path=forwards_path)
     mutate(manifest)
 
     with pytest.raises(ValueError, match=match):
         export_script._validate_solver_authority_manifest(
             manifest,
             manifest_path=Path("fan.monthly_curve_manifest.json"),
+            fan_output=fan_path,
+            fan=fan,
+            forwards_path=forwards_path,
+            base_forward_prices={"2026-07": 100.0},
             latest_forward_date=pd.Timestamp("2026-06-15"),
             market="CH",
         )
@@ -685,19 +833,21 @@ def test_fresh_monthly_solver_build_skips_export_recalibration(tmp_path, monkeyp
     ).to_parquet(forwards_path, index=False)
 
     def fake_build(argv):
+        assert argv[argv.index("--weights") + 1] == "0.0,0.0,1.0"
         fan_output = Path(argv[argv.index("--fan-chart-output") + 1])
-        index = pd.date_range("2026-06-30 22:00", periods=96, freq="15min", tz="UTC")
-        pd.DataFrame(
+        index = pd.date_range("2026-06-30 22:00", periods=31 * 96, freq="15min", tz="UTC")
+        fan = pd.DataFrame(
             {
                 "curve_slow": [80.0] * len(index),
-                "curve_central": [80.0] * len(index),
-                "curve_fast": [80.0] * len(index),
-                "weighted_mean": [80.0] * len(index),
+                "curve_central": [100.0] * len(index),
+                "curve_fast": [120.0] * len(index),
+                "weighted_mean": [100.0] * len(index),
             },
             index=index,
-        ).to_parquet(fan_output)
+        )
+        fan.to_parquet(fan_output)
         fan_output.with_suffix(".monthly_curve_manifest.json").write_text(
-            json.dumps(_solver_manifest()),
+            json.dumps(_solver_manifest(fan=fan, fan_path=fan_output, forwards_path=forwards_path)),
             encoding="utf-8",
         )
 
@@ -709,7 +859,7 @@ def test_fresh_monthly_solver_build_skips_export_recalibration(tmp_path, monkeyp
             "--local-start-date",
             "2026-07-01",
             "--local-end-date",
-            "2026-07-01",
+            "2026-07-31",
             "--fan-chart-output",
             str(fan_path),
             "--forwards",
@@ -719,13 +869,15 @@ def test_fresh_monthly_solver_build_skips_export_recalibration(tmp_path, monkeyp
             "--report",
             str(report_path),
             "--enable-monthly-forward-curve-solver",
+            "--weights",
+            "0.0,0.0,1.0",
             "--skip-powerbi-refresh",
         ]
     )
 
     assert rc == 0
     out = pd.read_csv(out_path)
-    assert out["price_weighted_mean_eur_mwh"].mean() == pytest.approx(80.0)
+    assert out["price_weighted_mean_eur_mwh"].mean() == pytest.approx(100.0)
     assert "SKIPPED_SOLVER_AUTHORITY" in report_path.read_text(encoding="utf-8")
 
 
@@ -735,7 +887,7 @@ def test_skip_build_rejects_authority_declaration_conflicting_with_manifest(tmp_
     report_path = tmp_path / "report.md"
     forwards_path = tmp_path / "forwards.parquet"
     index = pd.date_range("2026-06-30 22:00", periods=96, freq="15min", tz="UTC")
-    pd.DataFrame(
+    fan = pd.DataFrame(
         {
             "curve_slow": [80.0] * len(index),
             "curve_central": [80.0] * len(index),
@@ -743,11 +895,8 @@ def test_skip_build_rejects_authority_declaration_conflicting_with_manifest(tmp_
             "weighted_mean": [80.0] * len(index),
         },
         index=index,
-    ).to_parquet(fan_path)
-    fan_path.with_suffix(".monthly_curve_manifest.json").write_text(
-        json.dumps(_solver_manifest()),
-        encoding="utf-8",
     )
+    fan.to_parquet(fan_path)
     pd.DataFrame(
         {
             "date": [pd.Timestamp("2026-06-15")],
@@ -759,6 +908,10 @@ def test_skip_build_rejects_authority_declaration_conflicting_with_manifest(tmp_
             "source": ["TEST"],
         }
     ).to_parquet(forwards_path, index=False)
+    fan_path.with_suffix(".monthly_curve_manifest.json").write_text(
+        json.dumps(_solver_manifest(fan=fan, fan_path=fan_path, forwards_path=forwards_path)),
+        encoding="utf-8",
+    )
 
     with pytest.raises(ValueError, match="conflicts with manifest"):
         export_script.main(

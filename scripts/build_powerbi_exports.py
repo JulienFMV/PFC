@@ -324,8 +324,8 @@ def build_exports(
             "price_weighted_mean_eur_mwh": "Weighted mean",
             "price_central_eur_mwh": "Central",
             "price_fast_eur_mwh": "Fast",
-            "structural_p10_eur_mwh": "P10",
-            "structural_p90_eur_mwh": "P90",
+            "structural_p10_eur_mwh": "Structural low",
+            "structural_p90_eur_mwh": "Structural high",
         }
     )
     duck_month_long.to_csv(output_dir / "duck_month_hour_long.csv", index=False)
@@ -344,8 +344,8 @@ def build_exports(
         {
             "price_weighted_mean_eur_mwh": "Weighted mean",
             "price_fast_eur_mwh": "Fast",
-            "structural_p10_eur_mwh": "P10",
-            "structural_p90_eur_mwh": "P90",
+            "structural_p10_eur_mwh": "Structural low",
+            "structural_p90_eur_mwh": "Structural high",
         }
     )
     duck_season_long.to_csv(output_dir / "duck_season_hour_long.csv", index=False)

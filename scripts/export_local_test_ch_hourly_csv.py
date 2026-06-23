@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import sys
@@ -20,6 +21,7 @@ from pfc_shaping.calibration.eex_contract_selection import (  # noqa: E402
     finest_product_for_timestamp,
     quarter_product,
 )
+from pfc_shaping.calibration.monthly_forward_curve import product_periods  # noqa: E402
 from pfc_shaping.calibration.monthly_curve_lambda_calibration import config_hash  # noqa: E402
 from pfc_shaping.lt.model.holiday_pressure import (  # noqa: E402
     ch_market_holiday_components as _ch_market_holiday_components,
@@ -64,6 +66,8 @@ SOLVER_AUTHORITY_MANIFEST_REQUIRED_FIELDS = {
     "source_hashes",
     "active_constraints_hash",
     "monthly_solution_hash",
+    "fan_chart_sha256",
+    "fan_chart_weighted_monthly_hash",
     "solver_kkt",
     "monthly_level_authority",
     "skip_legacy_level_cascade",
@@ -282,12 +286,99 @@ def _read_fan_chart_monthly_level_authority(
     return manifest_authority, manifest_path, manifest
 
 
+def _sha256_json(payload: object) -> str:
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    ).hexdigest()
+
+
+def _file_sha256(path: str | Path) -> str:
+    h = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _fan_weighted_monthly_solution_hash(fan: pd.DataFrame, *, timezone: str) -> str:
+    if "weighted_mean" not in fan.columns:
+        raise ValueError("solver fan chart validation requires weighted_mean column")
+    index = fan.index
+    if not isinstance(index, pd.DatetimeIndex):
+        raise TypeError("solver fan chart validation requires a DatetimeIndex")
+    index = pd.to_datetime(index, utc=True)
+    local = index.tz_convert(timezone)
+    month = pd.PeriodIndex(local.strftime("%Y-%m"), freq="M")
+    values = pd.Series(fan["weighted_mean"].to_numpy(dtype=float), index=month)
+    if not np.isfinite(values.to_numpy(dtype=float)).all():
+        raise ValueError("solver fan chart weighted_mean contains non-finite values")
+    monthly = values.groupby(level=0).mean().sort_index()
+    payload = {str(month): round(float(value), 10) for month, value in monthly.items()}
+    return _sha256_json(payload)
+
+
+def _validate_solver_fan_base_constraints(
+    fan: pd.DataFrame,
+    *,
+    base_forward_prices: dict[str, float],
+    timezone: str,
+    tolerance_eur_mwh: float = 1e-6,
+) -> None:
+    index = fan.index
+    if not isinstance(index, pd.DatetimeIndex):
+        raise TypeError("solver fan chart constraint validation requires a DatetimeIndex")
+    ts_ch = pd.Series(pd.to_datetime(index, utc=True).tz_convert(timezone), index=fan.index)
+    values = pd.Series(fan["weighted_mean"].to_numpy(dtype=float), index=fan.index)
+    rows = []
+    for product, target in sorted((str(key), float(value)) for key, value in base_forward_prices.items()):
+        try:
+            product_months = product_periods(product)
+        except ValueError:
+            continue
+        full_coverage = True
+        mask = pd.Series(False, index=fan.index)
+        for product_month in product_months:
+            start = pd.Timestamp(product_month.start_time).tz_localize(timezone)
+            end = pd.Timestamp(product_month.end_time).tz_localize(timezone)
+            month_mask = (ts_ch >= start) & (ts_ch <= end)
+            expected = len(pd.date_range(start, end, freq="15min"))
+            observed = int(month_mask.sum())
+            if observed != expected:
+                full_coverage = False
+                break
+            mask = mask | month_mask
+        if not full_coverage:
+            continue
+        current = float(values.loc[mask].mean())
+        residual = current - target
+        rows.append((product, current, target, residual))
+    if not rows:
+        raise ValueError("solver fan chart has no fully covered EEX BASE constraints to validate")
+    bad = [
+        (product, current, target, residual)
+        for product, current, target, residual in rows
+        if abs(residual) > tolerance_eur_mwh
+    ]
+    if bad:
+        product, current, target, residual = bad[0]
+        raise ValueError(
+            "solver fan chart weighted_mean violates EEX BASE constraint: "
+            f"product={product} current={current:.10f} target={target:.10f} "
+            f"residual={residual:.10f}"
+        )
+
+
 def _validate_solver_authority_manifest(
     manifest: dict[str, Any],
     *,
     manifest_path: Path | None,
+    fan_output: Path,
+    fan: pd.DataFrame,
+    forwards_path: Path,
+    base_forward_prices: dict[str, float],
     latest_forward_date: pd.Timestamp,
     market: str = "CH",
+    timezone: str = LOCAL_TZ,
 ) -> None:
     missing = sorted(SOLVER_AUTHORITY_MANIFEST_REQUIRED_FIELDS - set(manifest))
     if missing:
@@ -319,6 +410,23 @@ def _validate_solver_authority_manifest(
             raise ValueError(
                 f"solver monthly authority manifest has empty {field}: path={manifest_path or ''}"
             )
+    fan_hash = _file_sha256(fan_output)
+    if str(manifest.get("fan_chart_sha256", "")) != fan_hash:
+        raise ValueError(
+            "solver monthly authority manifest fan_chart_sha256 does not match exported fan chart: "
+            f"path={manifest_path or ''}"
+        )
+    fan_monthly_hash = _fan_weighted_monthly_solution_hash(fan, timezone=timezone)
+    if str(manifest.get("fan_chart_weighted_monthly_hash", "")) != fan_monthly_hash:
+        raise ValueError(
+            "solver monthly authority manifest fan_chart_weighted_monthly_hash does not match fan weighted monthly means: "
+            f"path={manifest_path or ''}"
+        )
+    _validate_solver_fan_base_constraints(
+        fan,
+        base_forward_prices=base_forward_prices,
+        timezone=timezone,
+    )
     solver_config = manifest.get("solver_config")
     if not isinstance(solver_config, dict) or not solver_config:
         raise ValueError(f"solver monthly authority manifest solver_config must be an object: path={manifest_path or ''}")
@@ -343,9 +451,10 @@ def _validate_solver_authority_manifest(
             "solver monthly authority manifest active_config_hash does not match solver_config: "
             f"path={manifest_path or ''}"
         )
-    if not str(manifest.get("solver_config_hash", "")).strip():
+    expected_solver_config_hash = _sha256_json(solver_config)
+    if str(manifest.get("solver_config_hash", "")) != expected_solver_config_hash:
         raise ValueError(
-            "solver monthly authority manifest has empty solver_config_hash: "
+            "solver monthly authority manifest solver_config_hash does not match solver_config: "
             f"path={manifest_path or ''}"
         )
     source_hashes = manifest.get("source_hashes")
@@ -354,6 +463,12 @@ def _validate_solver_authority_manifest(
     if any(not str(value).strip() for value in source_hashes.values()):
         raise ValueError(
             "solver monthly authority manifest source_hashes must contain non-empty hashes: "
+            f"path={manifest_path or ''}"
+        )
+    expected_forwards_hash = _file_sha256(forwards_path)
+    if str(source_hashes.get("forwards_path", "")) != expected_forwards_hash:
+        raise ValueError(
+            "solver monthly authority manifest source_hashes.forwards_path does not match --forwards: "
             f"path={manifest_path or ''}"
         )
     solver_kkt = manifest.get("solver_kkt")
@@ -379,10 +494,43 @@ def _validate_solver_authority_manifest(
                 f"solver monthly authority manifest solver_kkt has non-finite {field}: "
                 f"path={manifest_path or ''}"
             )
+    tolerance = 1e-6
+    if float(solver_kkt["max_abs_constraint_residual"]) > tolerance:
+        raise ValueError(
+            "solver monthly authority manifest max_abs_constraint_residual exceeds tolerance: "
+            f"path={manifest_path or ''}"
+        )
+    if float(solver_kkt["stationarity_residual"]) > tolerance:
+        raise ValueError(
+            "solver monthly authority manifest stationarity_residual exceeds tolerance: "
+            f"path={manifest_path or ''}"
+        )
+    if float(solver_kkt["condition_number"]) <= 0.0:
+        raise ValueError(
+            "solver monthly authority manifest condition_number must be positive: "
+            f"path={manifest_path or ''}"
+        )
+    if float(solver_kkt["condition_number"]) > 1e12:
+        raise ValueError(
+            "solver monthly authority manifest condition_number exceeds tolerance: "
+            f"path={manifest_path or ''}"
+        )
+    for field in ("active_constraint_rank", "nullspace_dimension", "dropped_yoy_rows"):
+        value = solver_kkt[field]
+        if not isinstance(value, int) or value < 0:
+            raise ValueError(
+                f"solver monthly authority manifest solver_kkt {field} must be a non-negative integer: "
+                f"path={manifest_path or ''}"
+            )
     for field in ("ridge_used", "solved_by_lstsq"):
         if not isinstance(solver_kkt[field], bool):
             raise ValueError(
                 f"solver monthly authority manifest solver_kkt {field} must be boolean: "
+                f"path={manifest_path or ''}"
+            )
+        if solver_kkt[field]:
+            raise ValueError(
+                f"solver monthly authority manifest solver_kkt {field} must be false for solver-authority export: "
                 f"path={manifest_path or ''}"
             )
     if manifest.get("skip_legacy_level_cascade") is not True:
@@ -2597,6 +2745,8 @@ def main(argv: list[str] | None = None) -> int:
                 str(summary_output),
                 "--forwards",
                 args.forwards,
+                "--weights",
+                args.weights,
                 "--governance-report",
                 str(governance_report),
                 *(
@@ -2618,16 +2768,20 @@ def main(argv: list[str] | None = None) -> int:
 
     fan = pd.read_parquet(fan_output)
     latest_forward_date, forward_prices_by_load_type = _latest_eex_prices_by_load_type(Path(args.forwards), market="CH")
+    forward_prices = forward_prices_by_load_type.get("BASE", {})
+    if not forward_prices:
+        raise ValueError("no EEX CH BASE prices in latest forward snapshot")
     if fan_chart_authority == "solver":
         _validate_solver_authority_manifest(
             fan_chart_authority_manifest_data,
             manifest_path=fan_chart_authority_manifest,
+            fan_output=fan_output,
+            fan=fan,
+            forwards_path=Path(args.forwards),
+            base_forward_prices=forward_prices,
             latest_forward_date=latest_forward_date,
             market="CH",
         )
-    forward_prices = forward_prices_by_load_type.get("BASE", {})
-    if not forward_prices:
-        raise ValueError("no EEX CH BASE prices in latest forward snapshot")
     peak_forward_prices = forward_prices_by_load_type.get("PEAK", {})
     neighbor_prices_by_load_type: dict[str, dict[str, float]] = {}
     historical_neighbor_deviations: dict[str, dict[tuple[int, int], float]] = {}
@@ -2939,7 +3093,14 @@ def main(argv: list[str] | None = None) -> int:
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     if set(SCENARIO_PRICE_COLUMNS.values()).issubset(hourly.columns):
+        solver_weighted_mean = (
+            hourly["price_weighted_mean_eur_mwh"].copy()
+            if fan_chart_authority == "solver" and "price_weighted_mean_eur_mwh" in hourly.columns
+            else None
+        )
         hourly = recompute_structural_scenario_bracket(hourly, weights, include_legacy_aliases=True)
+        if solver_weighted_mean is not None:
+            hourly["price_weighted_mean_eur_mwh"] = solver_weighted_mean
     else:
         hourly = ensure_structural_scenario_bracket_aliases(hourly)
     hourly.to_csv(output, index=False)
