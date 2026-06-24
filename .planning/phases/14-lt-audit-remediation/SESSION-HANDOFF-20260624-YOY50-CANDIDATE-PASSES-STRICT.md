@@ -135,6 +135,11 @@ Governance parity was simulated using the candidate manifest as both the
 production and export manifest; all selected-config gates passed in that
 simulation. This is not real production promotion evidence.
 
+Follow-up hardening: `scripts/check_monthly_curve_promotion_from_manifests.py`
+now treats `production_promotion_approved=false` as a blocking
+`selected_config_production_approval` failure. This keeps the `yoy50` artifact
+valid as a selected local candidate but not as a production-promotion approval.
+
 ## Tests
 
 Targeted product audit:
@@ -166,6 +171,47 @@ python -m pytest tests/test_check_monthly_curve_promotion_from_manifests.py test
 ```
 
 Result: `24 passed in 5.75s`.
+
+After the explicit production-promotion scope hardening:
+
+```powershell
+python -m pytest tests/test_check_monthly_curve_promotion_from_manifests.py -q -p no:cacheprovider
+```
+
+Result: `7 passed in 1.47s`.
+
+```powershell
+python -m pytest tests/test_audit_ch_product_normalization_script.py tests/test_monthly_forward_curve_integration.py -q -p no:cacheprovider
+```
+
+Result: `56 passed in 21.05s`.
+
+Real production/export/selected capstone check:
+
+```powershell
+python scripts/check_monthly_curve_promotion_from_manifests.py --audit-gates output/monthly_curve_sparse_year_proof/audit_gates.csv --historical-thresholds output/monthly_curve_sparse_year_proof/historical_thresholds.csv --manifest output/monthly_curve_sparse_year_proof/manifest.json --production-manifest pfc_shaping/model/artifacts/production_monthly_curve_manifest.json --export-manifest output/phase14/20260624_parent_local_prior_lshape25_yoy50_structural_s126/ch_hfc_fan_chart_parent_local_prior_lshape25_yoy50_structural_s126_20260613_20301231.monthly_curve_manifest.json --selected-config-artifact .planning/phases/14-lt-audit-remediation/monthly_curve_selected_config_lshape25_yoy50_structural_s126.json --run-timestamp 2026-06-17 --augmented-audit-gates output/phase14/20260624_parent_local_prior_lshape25_yoy50_structural_s126/promotion_triad_real_prod_check/audit_gates_real_prod_triad.csv --output output/phase14/20260624_parent_local_prior_lshape25_yoy50_structural_s126/promotion_triad_real_prod_check/promotion_decision_real_prod_triad.json --details-output output/phase14/20260624_parent_local_prior_lshape25_yoy50_structural_s126/promotion_triad_real_prod_check/promotion_decision_real_prod_triad_details.csv
+```
+
+Result: exit `1`, `approved=false`, `status=BLOCKED`,
+`audit_gate_status_counts={"CRITICAL": 4, "PASS": 23, "UNSUPPORTED": 10}`,
+`blocking_count=8`.
+
+Critical gates:
+
+- `lambda_calibration_artifact_present`: production active config
+  `cb11dea390965ecc5895f494163e1b9cf50ff776fde645bac1019b5b0d3cce7b`
+  differs from selected config
+  `9a29207f20efd39be80a33b3fa1ffc4c02b28daa2fd550e1db20837d1f8966db`.
+- `production_export_path_parity`: production solution/constraints
+  `5a53bfae483743b0e998f61d998f8610718164a9053061f6de6a452129754c67` /
+  `554cfae0e419da72a190cdfb9ce4db9149383abcda1e57ec6d3ee5a036a62c18`
+  differ from export solution/constraints
+  `7a4e09fb58f0699ce022f0ccc7d7ec47245f660b011781a9b4ad5f5a56d81bd5` /
+  `efb01468d31e43f9c6cd66102ad5c573a9aacc8913e26b1a20139358174144cf`.
+- `selected_config_production_approval`:
+  `production_promotion_approved=false`.
+- `selected_config_manifest_parity`: selected config hashes match the local
+  candidate, not the real production manifest.
 
 Targeted LT/audit regression suite:
 
@@ -204,13 +250,12 @@ Local Phase 14 candidate is auditable:
 - delivered-product audit passes with exact artifact-bound source hierarchy
   policy;
 - strict Power BI export passes without `--allow-failed-gates`;
-- selected config artifact exists and is production-approved for the selected
-  hash set.
+- selected config artifact exists for the selected local candidate hash set,
+  but is explicitly not production-promotion approved.
 
-Production remains NO-GO until the real production manifest, local export
-manifest, and selected config artifact are regenerated/checked as one manifest
-triad. The current repository production manifest is still from an older
-configuration, so simulated parity must not be treated as promotion evidence.
+Production remains NO-GO. The real production manifest is still from an older
+configuration, the export manifest is the `yoy50` candidate, and the selected
+config is scoped to local candidate selection only.
 
 ## Next
 

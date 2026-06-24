@@ -166,13 +166,20 @@ def _selected_config_hash(config: Mapping[str, object], path: Path) -> str:
 
 def _selected_config_production_approval_row(selected_config: Mapping[str, object]) -> dict[str, object]:
     approved = selected_config.get("production_approved") is True
+    promotion_approval = selected_config.get("production_promotion_approved")
+    promotion_approved = promotion_approval is True if "production_promotion_approved" in selected_config else True
     selection_status = str(selected_config.get("selection_status", ""))
     status_is_prod = selection_status == "PRODUCTION_APPROVED"
-    if approved and status_is_prod:
+    if approved and promotion_approved and status_is_prod:
         status = "PASS"
         severity = "INFO"
         metric_value = 0.0
-        evidence = f"selected config is production approved; selection_status={selection_status}"
+        evidence = (
+            "selected config is production approved; "
+            f"production_approved={selected_config.get('production_approved')!r}, "
+            f"production_promotion_approved={promotion_approval!r}, "
+            f"selection_status={selection_status}"
+        )
     else:
         status = "CRITICAL"
         severity = "P0"
@@ -180,6 +187,7 @@ def _selected_config_production_approval_row(selected_config: Mapping[str, objec
         evidence = (
             "selected config is not production-approved; "
             f"production_approved={selected_config.get('production_approved')!r}, "
+            f"production_promotion_approved={promotion_approval!r}, "
             f"selection_status={selection_status!r}"
         )
     return _governance_gate_row(

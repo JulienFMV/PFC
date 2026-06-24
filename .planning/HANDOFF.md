@@ -25,8 +25,13 @@ strict Power BI export passes without `--allow-failed-gates`
 (`powerbi_quality_gate_status=PASS`, cross-year warnings `0`). Selected config
 artifact
 `.planning/phases/14-lt-audit-remediation/monthly_curve_selected_config_lshape25_yoy50_structural_s126.json`
-is production-approved for this candidate hash set. Phase 14 remains NO-GO for
-actual production promotion until the real production manifest, local export
-manifest, and selected config artifact are regenerated/checked as one manifest
-triad; simulated parity on the local candidate is not production evidence.
+is scoped to local candidate selection only:
+`production_promotion_approved=false`. Real production/export/selected capstone
+check remains BLOCKED with 4 CRITICAL governance gates:
+`lambda_calibration_artifact_present`, `production_export_path_parity`,
+`selected_config_production_approval`, and
+`selected_config_manifest_parity`. Phase 14 remains NO-GO for actual
+production promotion until the real production manifest, local export manifest,
+and selected config artifact are regenerated/checked as one manifest triad;
+simulated parity on the local candidate is not production evidence.
 

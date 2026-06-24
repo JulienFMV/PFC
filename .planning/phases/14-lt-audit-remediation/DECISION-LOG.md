@@ -670,3 +670,34 @@ Invariants not to break:
   manifest parity.
 - Source hierarchy `QUOTE_CONFLICT` acceptance remains exact artifact-bound.
 
+## D-20260624-24 - Production Promotion Requires Explicit Promotion Scope
+
+Decision: the manifest-backed promotion capstone must block a selected config
+artifact when it declares `production_promotion_approved=false`, even if
+`production_approved=true` and `selection_status="PRODUCTION_APPROVED"`.
+Legacy selected config artifacts without this field keep the previous strict
+`production_approved` plus exact status behavior.
+
+Reason: the Phase 14 `yoy50` selected config is approved as the current local
+auditable candidate, but it is not a real production promotion artifact. The
+real prod/export/selected triad check showed production still on older hashes.
+The extra scope flag prevents an isolated local-candidate selected config from
+being overread as production promotion approval.
+
+Rejected alternatives:
+
+- Let `production_approved=true` alone pass a production promotion capstone.
+- Rely only on prose in handoffs to distinguish candidate selection from
+  production promotion.
+- Mark the local candidate selected config as production-promotion approved
+  before the real manifest triad matches.
+
+Invariants not to break:
+
+- Real promotion remains blocked until production, export and selected config
+  hashes match.
+- Candidate selection can stay documented without implying production
+  deployment.
+- Older selected config fixtures remain supported unless they opt into the new
+  explicit promotion-scope field.
+
