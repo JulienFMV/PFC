@@ -476,3 +476,57 @@ Invariants not to break:
 - `production_approved=false` selected artifacts are evidence for diagnosis,
   not authority for prod.
 
+## D-20260624-17 - Selected Config Approval Is A Promotion Gate
+
+Decision: manifest-backed promotion must include explicit governance gates for
+selected config production approval and selected/prod/export manifest parity.
+`config_hash` equality alone is not enough.
+
+Reason: read-only roaster audit found the capstone promotion script could pass
+`lambda_calibration_artifact_present` when `active_config_hash` matched the
+selected artifact even if that selected artifact had
+`production_approved=false`. It also did not compare selected
+`monthly_solution_hash` or `active_constraints_hash` against the production
+and local-export manifests.
+
+Rejected alternatives:
+
+- Rely on handoff text saying the selected artifact is diagnostic-only.
+- Keep the selected artifact outside required governance gates.
+- Compare selected config only on `config_hash`.
+
+Invariants not to break:
+
+- Required promotion governance gates include
+  `selected_config_production_approval` and
+  `selected_config_manifest_parity`.
+- The selected config artifact must have `production_approved=true` and a
+  production-approved selection status before promotion can pass.
+- Selected config, production manifest and export manifest must agree on active
+  config, monthly solution and active constraints hashes.
+
+## D-20260624-18 - Source Hierarchy Policy Is Strictly Typed And Count-Bound
+
+Decision: a source hierarchy policy may accept `QUOTE_CONFLICT` only when its
+governance fields are strictly typed and bound to the audited evidence:
+`accept_quote_conflict is True`, `production_approved is True`,
+`forward_snapshot_date` is present and equal to the audited snapshot, and
+`expected_quote_conflict_count` equals the observed quote conflict count.
+
+Reason: roaster audit found a future approved policy could otherwise accept
+new conflicts too broadly. Python truthiness also meant string values such as
+`"false"` could be interpreted as approval if not rejected explicitly.
+
+Rejected alternatives:
+
+- Cast policy booleans with `bool(...)`.
+- Let an approved policy omit `forward_snapshot_date`.
+- Let a policy approved for 9 conflicts accept a different conflict count.
+
+Invariants not to break:
+
+- Draft policies with `production_approved=false` remain valid but blocking.
+- Malformed or stale policies are `INVALID` and accept zero quote conflicts.
+- `blocking_quote_conflict_count` remains equal to the observed count unless
+  every strict policy condition passes.
+

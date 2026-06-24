@@ -30,6 +30,8 @@ from pfc_shaping.pipeline.monthly_curve_authority import monthly_curve_config_fr
 REQUIRED_GOVERNANCE_GATES = {
     "lambda_calibration_artifact_present",
     "production_export_path_parity",
+    "selected_config_manifest_parity",
+    "selected_config_production_approval",
 }
 
 
@@ -47,6 +49,7 @@ def main(argv: list[str] | None = None) -> int:
         run_timestamp=pd.Timestamp(args.run_timestamp) if args.run_timestamp else None,
         production_manifest=production_manifest,
         export_manifest=export_manifest,
+        selected_config=selected_config,
         active_config_hash=active_hash,
         selected_config_hash=selected_hash,
     )
@@ -90,12 +93,13 @@ def build_manifest_governance_gates(
     run_timestamp: pd.Timestamp | None,
     production_manifest: Mapping[str, object],
     export_manifest: Mapping[str, object],
+    selected_config: Mapping[str, object],
     active_config_hash: str,
     selected_config_hash: str,
 ) -> pd.DataFrame:
     """Return strict governance gates backed by manifest-derived hashes."""
 
-    return build_monthly_curve_governance_gates(
+    base = build_monthly_curve_governance_gates(
         run_timestamp=pd.Timestamp(run_timestamp) if run_timestamp is not None else pd.Timestamp.utcnow(),
         active_config_hash=active_config_hash,
         selected_config_hash=selected_config_hash,
@@ -122,6 +126,19 @@ def build_manifest_governance_gates(
         require_lambda_artifact=True,
         require_path_parity=True,
     ).loc[lambda frame: frame["gate_id"].isin(REQUIRED_GOVERNANCE_GATES)].reset_index(drop=True)
+    extra = pd.DataFrame(
+        [
+            _selected_config_production_approval_row(selected_config),
+            _selected_config_manifest_parity_row(
+                selected_config=selected_config,
+                production_manifest=production_manifest,
+                export_manifest=export_manifest,
+                active_config_hash=active_config_hash,
+                selected_config_hash=selected_config_hash,
+            ),
+        ]
+    )
+    return pd.concat([base, extra], ignore_index=True)
 
 
 def _replace_gate_rows(audit_gates: pd.DataFrame, governance: pd.DataFrame) -> pd.DataFrame:
@@ -145,6 +162,148 @@ def _selected_config_hash(config: Mapping[str, object], path: Path) -> str:
     if not value:
         raise ValueError(f"selected config artifact missing config_hash or selected_config_hash: {path}")
     return str(value)
+
+
+def _selected_config_production_approval_row(selected_config: Mapping[str, object]) -> dict[str, object]:
+    approved = selected_config.get("production_approved") is True
+    selection_status = str(selected_config.get("selection_status", ""))
+    status_is_prod = "PRODUCTION_APPROVED" in selection_status.upper()
+    if approved and status_is_prod:
+        status = "PASS"
+        severity = "INFO"
+        metric_value = 0.0
+        evidence = f"selected config is production approved; selection_status={selection_status}"
+    else:
+        status = "CRITICAL"
+        severity = "P0"
+        metric_value = 1.0
+        evidence = (
+            "selected config is not production-approved; "
+            f"production_approved={selected_config.get('production_approved')!r}, "
+            f"selection_status={selection_status!r}"
+        )
+    return _governance_gate_row(
+        gate_id="selected_config_production_approval",
+        status=status,
+        severity=severity,
+        product="monthly_curve_selected_config",
+        parent_block_id="selected_config_approval",
+        metric_name="selected_config_not_production_approved",
+        metric_value=metric_value,
+        threshold_source="selected_config_artifact",
+        evidence=evidence,
+        remediation_hint="Use a production-approved selected config artifact before promotion.",
+    )
+
+
+def _selected_config_manifest_parity_row(
+    *,
+    selected_config: Mapping[str, object],
+    production_manifest: Mapping[str, object],
+    export_manifest: Mapping[str, object],
+    active_config_hash: str,
+    selected_config_hash: str,
+) -> dict[str, object]:
+    missing: list[str] = []
+    mismatches: list[str] = []
+
+    expected = {
+        "config_hash": active_config_hash,
+        "active_config_hash_from_candidate_manifest": active_config_hash,
+        "monthly_solution_hash": _required_manifest_hash(
+            production_manifest,
+            "monthly_solution_hash",
+            role="production",
+        ),
+        "active_constraints_hash": _required_manifest_hash(
+            production_manifest,
+            "active_constraints_hash",
+            role="production",
+        ),
+    }
+    for key, expected_value in expected.items():
+        value = selected_config.get(key)
+        if not value:
+            missing.append(key)
+        elif str(value) != str(expected_value):
+            mismatches.append(f"{key}: selected={value} expected={expected_value}")
+
+    if str(export_manifest.get("monthly_solution_hash", "")) != str(expected["monthly_solution_hash"]):
+        mismatches.append("export monthly_solution_hash does not match production")
+    if str(export_manifest.get("active_constraints_hash", "")) != str(expected["active_constraints_hash"]):
+        mismatches.append("export active_constraints_hash does not match production")
+    if selected_config_hash != active_config_hash:
+        mismatches.append(
+            f"selected_config_hash={selected_config_hash} active_config_hash={active_config_hash}"
+        )
+    if str(selected_config.get("schema_version", "")) != "monthly_curve_selected_config.v1":
+        mismatches.append("schema_version is not monthly_curve_selected_config.v1")
+    if not selected_config.get("candidate_manifest"):
+        missing.append("candidate_manifest")
+
+    if missing or mismatches:
+        status = "CRITICAL"
+        severity = "P0"
+        metric_value = 1.0
+        evidence = f"missing={missing}; mismatches={mismatches}"
+    else:
+        status = "PASS"
+        severity = "INFO"
+        metric_value = 0.0
+        evidence = (
+            "selected config hashes match production/export active config, "
+            "monthly solution and active constraints"
+        )
+    return _governance_gate_row(
+        gate_id="selected_config_manifest_parity",
+        status=status,
+        severity=severity,
+        product="monthly_curve_selected_config",
+        parent_block_id="selected_prod_export_triad",
+        metric_name="selected_manifest_hash_mismatch",
+        metric_value=metric_value,
+        threshold_source="selected_config_prod_export_manifest_triad",
+        evidence=evidence,
+        remediation_hint="Regenerate or approve the selected config artifact from the same production/export manifest triad.",
+    )
+
+
+def _governance_gate_row(
+    *,
+    gate_id: str,
+    status: str,
+    severity: str,
+    product: str,
+    parent_block_id: str,
+    metric_name: str,
+    metric_value: float,
+    threshold_source: str,
+    evidence: str,
+    remediation_hint: str,
+) -> dict[str, object]:
+    return {
+        "gate_id": gate_id,
+        "status": status,
+        "severity": severity,
+        "year": 0,
+        "month": None,
+        "product": product,
+        "parent_block_id": parent_block_id,
+        "parent_block_type": "governance",
+        "parent_hours": float("nan"),
+        "parent_mean": float("nan"),
+        "month_price": float("nan"),
+        "month_deviation": float("nan"),
+        "metric_name": metric_name,
+        "metric_value": metric_value,
+        "threshold_warning": 0.0,
+        "threshold_critical": 0.0,
+        "threshold_source": threshold_source,
+        "n_history": float("nan"),
+        "n_neighbors": float("nan"),
+        "evidence": evidence,
+        "remediation_hint": remediation_hint,
+    }
 
 
 def _active_config_hash(manifest: Mapping[str, object]) -> str:
@@ -198,6 +357,10 @@ def _promotion_manifest(
     manifest["export_active_constraints_hash"] = export_manifest.get("active_constraints_hash", "")
     manifest["active_config_hash"] = _active_config_hash(production_manifest)
     manifest["selected_config_hash"] = _selected_config_hash(selected_config, Path("<selected_config_artifact>"))
+    manifest["selected_config_production_approved"] = selected_config.get("production_approved", False)
+    manifest["selected_config_selection_status"] = selected_config.get("selection_status", "")
+    manifest["selected_config_monthly_solution_hash"] = selected_config.get("monthly_solution_hash", "")
+    manifest["selected_config_active_constraints_hash"] = selected_config.get("active_constraints_hash", "")
     manifest["governance_gate_summary"] = governance_gates["status"].value_counts().to_dict()
     return manifest
 

@@ -83,18 +83,33 @@ def evaluate_source_hierarchy_policy(
     if str(policy.get("market", "")).upper() != str(market).upper():
         errors.append("market_mismatch")
     policy_forward_date = str(policy.get("forward_snapshot_date", ""))
-    if policy_forward_date and policy_forward_date != forward_date.date().isoformat():
+    if not policy_forward_date:
+        errors.append("forward_snapshot_date_missing")
+    elif policy_forward_date != forward_date.date().isoformat():
         errors.append("forward_snapshot_date_mismatch")
     if str(policy.get("source_hierarchy", "")) != "quote_aware_finer_buckets_over_redundant_parent":
         errors.append("source_hierarchy_mismatch")
-    if not bool(policy.get("accept_quote_conflict", False)):
+    if policy.get("accept_quote_conflict") is not True:
         errors.append("accept_quote_conflict_false")
+    expected_quote_conflict_count = policy.get("expected_quote_conflict_count")
+    if expected_quote_conflict_count is None:
+        errors.append("expected_quote_conflict_count_missing")
+    else:
+        try:
+            expected_count = int(expected_quote_conflict_count)
+        except (TypeError, ValueError):
+            errors.append("expected_quote_conflict_count_invalid")
+        else:
+            if expected_count != int(quote_conflict_count):
+                errors.append("expected_quote_conflict_count_mismatch")
 
-    production_approved = bool(policy.get("production_approved", False))
+    production_approved = policy.get("production_approved") is True
+    if policy.get("production_approved") is not False and not production_approved:
+        errors.append("production_approved_not_boolean")
     accepted = quote_conflict_count if production_approved and not errors else 0
     status = (
         "ACCEPTED_PRODUCTION_APPROVED"
-        if accepted
+        if production_approved and not errors
         else "VALID_NOT_PRODUCTION_APPROVED"
         if not errors
         else "INVALID"

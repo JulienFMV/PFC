@@ -321,6 +321,7 @@ def test_product_normalization_source_hierarchy_policy_requires_production_appro
                 "forward_snapshot_date": "2026-06-22",
                 "source_hierarchy": "quote_aware_finer_buckets_over_redundant_parent",
                 "accept_quote_conflict": True,
+                "expected_quote_conflict_count": 3,
                 "production_approved": False,
                 "decision": "draft policy only",
             }
@@ -355,6 +356,7 @@ def test_product_normalization_source_hierarchy_policy_can_accept_quote_conflict
                 "forward_snapshot_date": "2026-06-22",
                 "source_hierarchy": "quote_aware_finer_buckets_over_redundant_parent",
                 "accept_quote_conflict": True,
+                "expected_quote_conflict_count": 3,
                 "production_approved": True,
                 "decision": "test-only approved hierarchy",
             }
@@ -374,6 +376,111 @@ def test_product_normalization_source_hierarchy_policy_can_accept_quote_conflict
     assert summary["blocking_quote_conflict_count"] == 0
     assert summary["source_hierarchy_policy"]["status"] == "ACCEPTED_PRODUCTION_APPROVED"
     assert summary["all_gates_pass"] is True
+
+
+def test_product_normalization_source_hierarchy_policy_rejects_string_booleans(tmp_path: Path) -> None:
+    csv_path = tmp_path / "delivered_q3.csv"
+    forwards_path = tmp_path / "forwards_q3.parquet"
+    policy_path = tmp_path / "policy.json"
+    _write_2027_q3_redundant_conflict_curve(csv_path, forwards_path)
+    policy_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "ch_quote_conflict_source_hierarchy_policy.v1",
+                "market": "CH",
+                "forward_snapshot_date": "2026-06-22",
+                "source_hierarchy": "quote_aware_finer_buckets_over_redundant_parent",
+                "accept_quote_conflict": "false",
+                "expected_quote_conflict_count": 3,
+                "production_approved": "false",
+                "decision": "badly typed policy",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    _, summary = run_audit(
+        csv_path=csv_path,
+        forwards_path=forwards_path,
+        required_forward_date="2026-06-22",
+        source_hierarchy_policy_path=policy_path,
+    )
+
+    assert summary["accepted_quote_conflict_count"] == 0
+    assert summary["blocking_quote_conflict_count"] == 3
+    assert summary["source_hierarchy_policy"]["status"] == "INVALID"
+    assert "accept_quote_conflict_false" in summary["source_hierarchy_policy"]["reason"]
+    assert "production_approved_not_boolean" in summary["source_hierarchy_policy"]["reason"]
+    assert summary["all_gates_pass"] is False
+
+
+def test_product_normalization_source_hierarchy_policy_requires_snapshot_date(tmp_path: Path) -> None:
+    csv_path = tmp_path / "delivered_q3.csv"
+    forwards_path = tmp_path / "forwards_q3.parquet"
+    policy_path = tmp_path / "policy.json"
+    _write_2027_q3_redundant_conflict_curve(csv_path, forwards_path)
+    policy_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "ch_quote_conflict_source_hierarchy_policy.v1",
+                "market": "CH",
+                "source_hierarchy": "quote_aware_finer_buckets_over_redundant_parent",
+                "accept_quote_conflict": True,
+                "expected_quote_conflict_count": 3,
+                "production_approved": True,
+                "decision": "missing date",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    _, summary = run_audit(
+        csv_path=csv_path,
+        forwards_path=forwards_path,
+        required_forward_date="2026-06-22",
+        source_hierarchy_policy_path=policy_path,
+    )
+
+    assert summary["accepted_quote_conflict_count"] == 0
+    assert summary["blocking_quote_conflict_count"] == 3
+    assert summary["source_hierarchy_policy"]["status"] == "INVALID"
+    assert "forward_snapshot_date_missing" in summary["source_hierarchy_policy"]["reason"]
+    assert summary["all_gates_pass"] is False
+
+
+def test_product_normalization_source_hierarchy_policy_requires_expected_conflict_count(tmp_path: Path) -> None:
+    csv_path = tmp_path / "delivered_q3.csv"
+    forwards_path = tmp_path / "forwards_q3.parquet"
+    policy_path = tmp_path / "policy.json"
+    _write_2027_q3_redundant_conflict_curve(csv_path, forwards_path)
+    policy_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "ch_quote_conflict_source_hierarchy_policy.v1",
+                "market": "CH",
+                "forward_snapshot_date": "2026-06-22",
+                "source_hierarchy": "quote_aware_finer_buckets_over_redundant_parent",
+                "accept_quote_conflict": True,
+                "expected_quote_conflict_count": 2,
+                "production_approved": True,
+                "decision": "wrong count",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    _, summary = run_audit(
+        csv_path=csv_path,
+        forwards_path=forwards_path,
+        required_forward_date="2026-06-22",
+        source_hierarchy_policy_path=policy_path,
+    )
+
+    assert summary["accepted_quote_conflict_count"] == 0
+    assert summary["blocking_quote_conflict_count"] == 3
+    assert summary["source_hierarchy_policy"]["status"] == "INVALID"
+    assert "expected_quote_conflict_count_mismatch" in summary["source_hierarchy_policy"]["reason"]
+    assert summary["all_gates_pass"] is False
 
 
 def test_product_normalization_audit_keeps_parent_critical_when_fine_bucket_fails(tmp_path: Path) -> None:
