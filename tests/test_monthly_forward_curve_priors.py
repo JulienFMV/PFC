@@ -309,6 +309,39 @@ def test_fused_prior_lets_direct_monthly_panel_dominate_structural_template_insi
     assert corr >= 0.45
 
 
+def test_fused_prior_does_not_suppress_structural_when_panel_weight_is_zero():
+    constraints = _constraints_2027_q2()
+    panel = build_neighbor_panel_shape_prior(
+        constraints,
+        {
+            "DE": {
+                "2027-04": 80.220000,
+                "2027-05": 75.890000,
+                "2027-06": 80.290000,
+            }
+        },
+        neighbor_markets=("DE",),
+        neighbor_shrinkage=0.0,
+    )
+    structural = build_structural_monthly_shape_prior(
+        constraints,
+        amplitude_eur_mwh=110.0,
+    )
+
+    fused = build_fused_shape_prior(
+        constraints,
+        panel_prior=panel,
+        structural_prior=structural,
+        weights={"panel": 0.0, "structural": 1.0},
+    )
+
+    pd.testing.assert_series_equal(fused.shape, structural.shape, check_names=False)
+    structural_diag = fused.diagnostics.set_index("source").loc["structural"]
+    assert structural_diag["suppressed_parent_buckets"] == ""
+    assert structural_diag["effective_weight_min"] == pytest.approx(1.0)
+    assert structural_diag["effective_weight_max"] == pytest.approx(1.0)
+
+
 def test_template_structural_prior_reports_lambda_diagnostics_and_recenter_steps():
     constraints = _constraints_2028_residual()
 

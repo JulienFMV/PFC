@@ -393,3 +393,86 @@ Invariants not to break:
 - The report must keep parent targets, parent spread, reference spread and
   reference basis visible.
 
+## D-20260624-14 - One Cross-Year Near-Clone Warning Blocks Strict Power BI
+
+Decision: strict Power BI sidecar export blocks on any cross-year near-clone
+warning, not only on two or more warnings.
+
+Reason: the 2026-06-23 candidate
+`parent_local_prior_lshape25_yoy10_structural_s126` had one same-month
+near-clone warning against a non-zero comparable reference spread. Expert
+review found that allowing a strict export in this state made the Power BI
+artifact look promotion-ready while a structural allocation warning remained
+unresolved.
+
+Rejected alternatives:
+
+- Keep the previous threshold `near_clone >= 2`.
+- Generate strict sidecars and leave interpretation to manual chart review.
+- Downgrade near-clone warnings while comparable reference spread is non-zero.
+
+Invariants not to break:
+
+- `--allow-failed-gates` remains diagnostic-only.
+- Strict Power BI exports must fail closed on unresolved cross-year near-clone
+  warnings.
+- The cross-year audit remains the source of near-clone evidence; Power BI does
+  not rewrite monthly solver levels.
+
+## D-20260624-15 - Quote Conflict Source Hierarchy Requires Production Approval
+
+Decision: `QUOTE_CONFLICT` may stop blocking delivered-product normalization
+only when an explicit source-hierarchy policy artifact is present, valid for
+the market and forward snapshot, and marked `production_approved=true`.
+Draft or missing policies keep all quote conflicts blocking.
+
+Reason: the CH 2026-06-17 quote snapshot contains redundant parent quotes that
+conflict with passing finer quote-aware BASE/PEAK buckets. The solver cannot
+simultaneously satisfy contradictory source quotes at hard tolerance. Accepting
+the finer-bucket hierarchy is a source-quality policy decision, not a model
+fix, so it must be manifest-backed and production-approved before promotion.
+
+Rejected alternatives:
+
+- Treat all explained quote conflicts as `PASS` by default.
+- Hide quote conflicts under `UNSUPPORTED`.
+- Patch individual delivered months to satisfy contradictory quotes.
+- Promote from a draft policy artifact.
+
+Invariants not to break:
+
+- A missing or draft policy leaves `blocking_quote_conflict_count` equal to
+  `quote_conflict_count`.
+- Direct failures not explained by passing finer buckets remain `CRITICAL`.
+- The audit summary must expose policy path, hash, status, production approval,
+  accepted count and blocking count.
+
+## D-20260624-16 - Selected Lambda Artifact Is Required But Not Sufficient
+
+Decision: Phase 14 may keep a diagnostic selected-lambda/config artifact for
+the current candidate, but production remains NO-GO while that artifact is
+`production_approved=false` or while the production/local-export/selected
+artifact triad is not manifest-backed and mutually consistent.
+
+Reason: the candidate config hash
+`145b123177061c9d2cd64ec831b83ea4ac84ff500356adb03623c4a9d1f86fc0`
+matches the local candidate manifest, but this only proves diagnostic hash
+alignment for that run. It does not prove production selection, source policy
+acceptance, or a full promotion triad.
+
+Rejected alternatives:
+
+- Treat config-hash equality as production promotion proof.
+- Store selected lambda/config only in chat or untracked local output.
+- Mark the candidate production-approved while product and Power BI gates still
+  block.
+
+Invariants not to break:
+
+- Selected config artifacts must record the canonical config, config hash,
+  manifest path, solution hash when available and production approval state.
+- Production promotion must cite independent real manifests for production,
+  local export and selected lambda/config.
+- `production_approved=false` selected artifacts are evidence for diagnosis,
+  not authority for prod.
+

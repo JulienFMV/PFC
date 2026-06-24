@@ -627,11 +627,15 @@ def build_fused_shape_prior(
         return _unsupported_prior(constraints.delivery_grid.months, "UNSUPPORTED")
 
     parent_buckets = constraints.month_buckets.astype(str)
-    panel_direct_month_buckets = _panel_direct_month_parent_buckets(panel_prior)
+    panel_is_active = any(name == "panel" for name, _, _ in pieces)
+    panel_direct_month_buckets = _panel_direct_month_parent_buckets(panel_prior) if panel_is_active else set()
     combined_num = pd.Series(0.0, index=constraints.delivery_grid.months, dtype=float)
     combined_den = pd.Series(0.0, index=constraints.delivery_grid.months, dtype=float)
+    effective_weight_stats: dict[str, tuple[float, float]] = {}
+    suppressed_buckets_by_source: dict[str, str] = {}
     for name, prior, weight in pieces:
         effective_weight = pd.Series(float(weight), index=constraints.delivery_grid.months, dtype=float)
+        suppressed_buckets: set[str] = set()
         if (
             name == "structural"
             and prior.status == "STRUCTURAL_TEMPLATE"
@@ -639,6 +643,12 @@ def build_fused_shape_prior(
         ):
             suppress = parent_buckets.isin(panel_direct_month_buckets).to_numpy(dtype=bool)
             effective_weight.iloc[suppress] = 0.0
+            suppressed_buckets = set(parent_buckets.iloc[suppress].astype(str))
+        effective_weight_stats[name] = (
+            float(effective_weight.min()),
+            float(effective_weight.max()),
+        )
+        suppressed_buckets_by_source[name] = ",".join(sorted(suppressed_buckets))
         values = prior.shape.reindex(constraints.delivery_grid.months).fillna(0.0).astype(float)
         combined_num = combined_num + values * effective_weight
         combined_den = combined_den + effective_weight
@@ -656,6 +666,12 @@ def build_fused_shape_prior(
             ],
             "evidence_aware_policy": [
                 "dominant_on_direct_month_parent_buckets" if name == "panel" and panel_direct_month_buckets else ""
+                for name, _, _ in pieces
+            ],
+            "effective_weight_min": [effective_weight_stats[name][0] for name, _, _ in pieces],
+            "effective_weight_max": [effective_weight_stats[name][1] for name, _, _ in pieces],
+            "suppressed_parent_buckets": [
+                suppressed_buckets_by_source.get(name, "")
                 for name, _, _ in pieces
             ],
         }

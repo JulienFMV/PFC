@@ -50,6 +50,32 @@ def test_powerbi_quality_gate_blocks_failed_shape_and_seasonality() -> None:
     assert "cross_year_near_clone_warnings=2" in issues
 
 
+def test_powerbi_quality_gate_blocks_single_cross_year_near_clone_warning() -> None:
+    issues = _quality_gate_issues(
+        shape_metrics={
+            "score_10": 9.1,
+            "finite_ok": 1.0,
+            "quantile_order": 1.0,
+            "max_eex_base_error_eur_mwh": 0.0,
+            "max_eex_peak_error_eur_mwh": 0.0,
+            "eex_peak_residual_count": 1.0,
+            "negative_gate_status": "PASS",
+        },
+        seasonal_checks=pd.DataFrame({"severity": ["ok"]}),
+        monthly_split_checks=pd.DataFrame({"severity": ["ok"]}),
+        monthly_path_checks=pd.DataFrame({"severity": ["ok"]}),
+        cross_year_checks=pd.DataFrame(
+            {
+                "severity": ["warning"],
+                "reason": ["same-month values are near-cloned despite a non-zero reference bucket spread"],
+            }
+        ),
+        calendar_checks=pd.DataFrame({"severity": ["ok"]}),
+    )
+
+    assert issues == ["cross_year_near_clone_warnings=1"]
+
+
 def test_powerbi_quality_gate_passes_clean_metrics() -> None:
     issues = _quality_gate_issues(
         shape_metrics={

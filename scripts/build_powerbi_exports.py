@@ -193,7 +193,7 @@ def _quality_gate_issues(
             cross_year_checks["severity"].astype(str).str.lower().eq("warning")
             & cross_year_checks["reason"].astype(str).str.contains("near-cloned", case=False, na=False)
         ]
-        if len(near_clone) >= 2:
+        if len(near_clone) >= 1:
             issues.append(f"cross_year_near_clone_warnings={len(near_clone)}")
 
     if not seasonal_checks.empty and {"severity", "reason"}.issubset(seasonal_checks.columns):

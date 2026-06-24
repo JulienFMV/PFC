@@ -1,0 +1,36 @@
+{
+  "active_config_hash_from_candidate_manifest": "145b123177061c9d2cd64ec831b83ea4ac84ff500356adb03623c4a9d1f86fc0",
+  "active_constraints_hash": "efb01468d31e43f9c6cd66102ad5c573a9aacc8913e26b1a20139358174144cf",
+  "candidate_manifest": "output/phase14/20260623_parent_local_prior_lshape25_yoy10_structural_s126/ch_hfc_fan_chart_parent_local_prior_lshape25_yoy10_structural_s126_20260613_20301231.monthly_curve_manifest.json",
+  "canonical_config": {
+    "allow_template_structural_fallback": true,
+    "constraint_tolerance": 0.01,
+    "history_lookback_years": 6,
+    "history_weight": 0.5,
+    "lambda_prior": 1e-06,
+    "lambda_shape": 25.0,
+    "lambda_smooth_month": 0.1,
+    "lambda_smooth_yoy": 10.0,
+    "markets": [
+      "AT",
+      "DE",
+      "FR",
+      "IT"
+    ],
+    "max_prior_residual_eur_mwh": null,
+    "min_history_snapshots": 24,
+    "min_structural_snapshots": 24,
+    "neighbor_shrinkage": 0.5,
+    "panel_weight": 1.0,
+    "robust_panel_quantile": 0.5,
+    "stationarity_tolerance": 1e-07,
+    "structural_amplitude_eur_mwh": 110.0,
+    "structural_weight": 1.0
+  },
+  "config_hash": "145b123177061c9d2cd64ec831b83ea4ac84ff500356adb03623c4a9d1f86fc0",
+  "monthly_solution_hash": "f1e352245102106e0df1e9c3fe0334cd2d1df032250d62a93586182198ecdde2",
+  "production_approved": false,
+  "schema_version": "monthly_curve_selected_config.v1",
+  "selection_reason": "Phase 14 diagnostic candidate passed shape and seasonal critical gates but still requires policy/triad review before promotion.",
+  "selection_status": "DIAGNOSTIC_SELECTED_NOT_PRODUCTION_APPROVED"
+}

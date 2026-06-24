@@ -29,6 +29,7 @@ from pfc_shaping.calibration.eex_contract_selection import calibration_buckets  
 LOCAL_TZ = "Europe/Zurich"
 DEFAULT_PRICE_COLUMN = "price_weighted_mean_eur_mwh"
 SCHEMA_VERSION = "ch_product_normalization_audit.v2"
+SOURCE_HIERARCHY_POLICY_SCHEMA_VERSION = "ch_quote_conflict_source_hierarchy_policy.v1"
 
 
 def _sha256_file(path: Path) -> str:
@@ -37,6 +38,76 @@ def _sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def load_source_hierarchy_policy(path: Path | None) -> dict[str, Any] | None:
+    if path is None:
+        return None
+    suffix = path.suffix.lower()
+    if suffix == ".json":
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    elif suffix in {".yaml", ".yml"}:
+        import yaml
+
+        payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    else:
+        raise ValueError(f"unsupported source hierarchy policy type: {path}")
+    if not isinstance(payload, dict):
+        raise ValueError(f"source hierarchy policy must be a mapping: {path}")
+    return payload
+
+
+def evaluate_source_hierarchy_policy(
+    policy: Mapping[str, Any] | None,
+    *,
+    policy_path: Path | None,
+    policy_hash: str | None,
+    market: str,
+    forward_date: pd.Timestamp,
+    quote_conflict_count: int,
+) -> dict[str, Any]:
+    if policy is None:
+        return {
+            "path": None,
+            "sha256": None,
+            "status": "NOT_PROVIDED",
+            "production_approved": False,
+            "accepted_quote_conflict_count": 0,
+            "blocking_quote_conflict_count": quote_conflict_count,
+            "reason": "no source hierarchy policy artifact provided",
+        }
+
+    errors: list[str] = []
+    if str(policy.get("schema_version", "")) != SOURCE_HIERARCHY_POLICY_SCHEMA_VERSION:
+        errors.append("schema_version_mismatch")
+    if str(policy.get("market", "")).upper() != str(market).upper():
+        errors.append("market_mismatch")
+    policy_forward_date = str(policy.get("forward_snapshot_date", ""))
+    if policy_forward_date and policy_forward_date != forward_date.date().isoformat():
+        errors.append("forward_snapshot_date_mismatch")
+    if str(policy.get("source_hierarchy", "")) != "quote_aware_finer_buckets_over_redundant_parent":
+        errors.append("source_hierarchy_mismatch")
+    if not bool(policy.get("accept_quote_conflict", False)):
+        errors.append("accept_quote_conflict_false")
+
+    production_approved = bool(policy.get("production_approved", False))
+    accepted = quote_conflict_count if production_approved and not errors else 0
+    status = (
+        "ACCEPTED_PRODUCTION_APPROVED"
+        if accepted
+        else "VALID_NOT_PRODUCTION_APPROVED"
+        if not errors
+        else "INVALID"
+    )
+    return {
+        "path": str(policy_path) if policy_path is not None else None,
+        "sha256": policy_hash,
+        "status": status,
+        "production_approved": production_approved,
+        "accepted_quote_conflict_count": accepted,
+        "blocking_quote_conflict_count": quote_conflict_count - accepted,
+        "reason": ";".join(errors) if errors else str(policy.get("decision", "")),
+    }
 
 
 def _parse_timestamp_ch(values: pd.Series, offsets: pd.Series | None = None) -> pd.Series:
@@ -654,6 +725,8 @@ def build_summary(
     price_column: str,
     hard_tolerance: float,
     command_argv: list[str] | None = None,
+    source_hierarchy_policy: Mapping[str, Any] | None = None,
+    source_hierarchy_policy_path: Path | None = None,
 ) -> dict[str, Any]:
     if gates.empty:
         status_counts: dict[str, int] = {}
@@ -685,7 +758,17 @@ def build_summary(
             else float(pd.to_numeric(supported["abs_residual_eur_mwh"], errors="coerce").max())
         )
     unsupported_count = int(status_counts.get("UNSUPPORTED", 0))
-    all_gates_pass = critical_count == 0 and unsupported_count == 0 and quote_conflict_count == 0
+    policy_hash = _sha256_file(source_hierarchy_policy_path) if source_hierarchy_policy_path is not None else None
+    policy_eval = evaluate_source_hierarchy_policy(
+        source_hierarchy_policy,
+        policy_path=source_hierarchy_policy_path,
+        policy_hash=policy_hash,
+        market=market,
+        forward_date=forward_date,
+        quote_conflict_count=quote_conflict_count,
+    )
+    blocking_quote_conflict_count = int(policy_eval["blocking_quote_conflict_count"])
+    all_gates_pass = critical_count == 0 and unsupported_count == 0 and blocking_quote_conflict_count == 0
     script_path = Path(__file__).resolve()
     return {
         "schema_version": SCHEMA_VERSION,
@@ -704,8 +787,11 @@ def build_summary(
         "status_counts": status_counts,
         "critical_count": critical_count,
         "quote_conflict_count": quote_conflict_count,
+        "accepted_quote_conflict_count": int(policy_eval["accepted_quote_conflict_count"]),
+        "blocking_quote_conflict_count": blocking_quote_conflict_count,
         "delivered_curve_drift_count": delivered_curve_drift_count,
         "unsupported_count": unsupported_count,
+        "source_hierarchy_policy": policy_eval,
         "supported_hard_gate_max_abs_residual_eur_mwh": hard_max,
         "supported_hard_gates_no_critical": critical_count == 0,
         "covered_hard_gates_pass": all_gates_pass,
@@ -713,7 +799,8 @@ def build_summary(
         "note": (
             "UNSUPPORTED rows mean the delivered CSV or quote snapshot did not fully cover "
             "that product window; QUOTE_CONFLICT rows mean redundant parent quotes conflict "
-            "with finer quote-aware buckets. Neither status is converted to PASS."
+            "with finer quote-aware buckets. QUOTE_CONFLICT can be accepted only by an "
+            "explicit production-approved source hierarchy policy artifact."
         ),
     }
 
@@ -729,6 +816,7 @@ def run_audit(
     peak_country: str = "CH",
     command_argv: list[str] | None = None,
     required_load_types: tuple[str, ...] = ("BASE", "PEAK"),
+    source_hierarchy_policy_path: Path | None = None,
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
     hourly = load_delivered_hourly_csv(csv_path, price_column=price_column)
     forward_date, forwards = load_forward_snapshot(
@@ -755,6 +843,8 @@ def run_audit(
         price_column=price_column,
         hard_tolerance=hard_tolerance,
         command_argv=command_argv,
+        source_hierarchy_policy=load_source_hierarchy_policy(source_hierarchy_policy_path),
+        source_hierarchy_policy_path=source_hierarchy_policy_path,
     )
     return gates, summary
 
@@ -783,6 +873,15 @@ def main(argv: list[str] | None = None) -> int:
         default="BASE,PEAK",
         help="Comma-separated load types that must be present for fully covered quoted products.",
     )
+    parser.add_argument(
+        "--source-hierarchy-policy",
+        type=Path,
+        default=None,
+        help=(
+            "Optional manifest-backed policy for accepting redundant parent quote conflicts. "
+            "The policy must be production_approved=true before QUOTE_CONFLICT stops blocking."
+        ),
+    )
     parser.add_argument("--output-csv", required=True, type=Path)
     parser.add_argument("--summary-json", required=True, type=Path)
     parser.add_argument(
@@ -804,6 +903,7 @@ def main(argv: list[str] | None = None) -> int:
         peak_country=args.peak_country,
         command_argv=sys.argv if argv is None else ["audit_ch_product_normalization.py", *argv],
         required_load_types=_parse_load_types(args.required_load_types),
+        source_hierarchy_policy_path=args.source_hierarchy_policy,
     )
 
     args.output_csv.parent.mkdir(parents=True, exist_ok=True)
