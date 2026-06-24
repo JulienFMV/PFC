@@ -94,14 +94,12 @@ def evaluate_source_hierarchy_policy(
     expected_quote_conflict_count = policy.get("expected_quote_conflict_count")
     if expected_quote_conflict_count is None:
         errors.append("expected_quote_conflict_count_missing")
+    elif not isinstance(expected_quote_conflict_count, int) or isinstance(expected_quote_conflict_count, bool):
+        errors.append("expected_quote_conflict_count_invalid")
     else:
-        try:
-            expected_count = int(expected_quote_conflict_count)
-        except (TypeError, ValueError):
-            errors.append("expected_quote_conflict_count_invalid")
-        else:
-            if expected_count != int(quote_conflict_count):
-                errors.append("expected_quote_conflict_count_mismatch")
+        expected_count = expected_quote_conflict_count
+        if expected_count != int(quote_conflict_count):
+            errors.append("expected_quote_conflict_count_mismatch")
 
     production_approved = policy.get("production_approved") is True
     if policy.get("production_approved") is not False and not production_approved:

@@ -101,6 +101,39 @@ def test_manifest_backed_promotion_blocks_non_prod_selected_config(tmp_path: Pat
     assert approval["status"] == "CRITICAL"
 
 
+def test_manifest_backed_promotion_blocks_negative_selection_status(tmp_path: Path) -> None:
+    for selection_status in ("NOT_PRODUCTION_APPROVED", "DIAGNOSTIC_SELECTED_NOT_PRODUCTION_APPROVED"):
+        paths = _write_inputs(
+            tmp_path / selection_status.lower(),
+            selected_production_approved=True,
+            selection_status=selection_status,
+        )
+
+        rc = main(
+            [
+                "--audit-gates",
+                str(paths["audit_gates"]),
+                "--historical-thresholds",
+                str(paths["historical_thresholds"]),
+                "--production-manifest",
+                str(paths["production_manifest"]),
+                "--export-manifest",
+                str(paths["export_manifest"]),
+                "--selected-config-artifact",
+                str(paths["selected_config"]),
+                "--run-timestamp",
+                "2026-06-17",
+                "--augmented-audit-gates",
+                str(paths["augmented"]),
+            ]
+        )
+
+        assert rc == 1
+        augmented = pd.read_csv(paths["augmented"])
+        approval = augmented[augmented["gate_id"].eq("selected_config_production_approval")].iloc[0]
+        assert approval["status"] == "CRITICAL"
+
+
 def test_manifest_backed_promotion_blocks_selected_solution_hash_mismatch(tmp_path: Path) -> None:
     paths = _write_inputs(tmp_path, selected_solution_hash="stale_solution")
 
@@ -164,9 +197,11 @@ def _write_inputs(
     *,
     export_solution_hash: str = "solution",
     selected_production_approved: bool = True,
+    selection_status: str | None = None,
     selected_solution_hash: str = "solution",
     selected_constraints_hash: str = "constraints",
 ) -> dict[str, Path]:
+    tmp_path.mkdir(parents=True, exist_ok=True)
     audit_gates = tmp_path / "audit_gates.csv"
     historical_thresholds = tmp_path / "historical_thresholds.csv"
     production_manifest = tmp_path / "production_manifest.json"
@@ -194,7 +229,9 @@ def _write_inputs(
                 "candidate_manifest": str(production_manifest),
                 "production_approved": selected_production_approved,
                 "selection_status": (
-                    "PRODUCTION_APPROVED"
+                    selection_status
+                    if selection_status is not None
+                    else "PRODUCTION_APPROVED"
                     if selected_production_approved
                     else "DIAGNOSTIC_SELECTED_NOT_PRODUCTION_APPROVED"
                 ),

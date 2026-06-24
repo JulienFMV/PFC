@@ -530,3 +530,30 @@ Invariants not to break:
 - `blocking_quote_conflict_count` remains equal to the observed count unless
   every strict policy condition passes.
 
+## D-20260624-19 - Promotion Policy Status And Counts Use Exact Values
+
+Decision: promotion governance must use exact values for approval state. A
+selected config is production-approved only when
+`production_approved is True` and `selection_status == "PRODUCTION_APPROVED"`.
+A source hierarchy policy conflict count is valid only when
+`expected_quote_conflict_count` is a JSON/YAML integer, not a boolean, string
+or float, and equals the observed quote conflict count.
+
+Reason: roaster re-audit found two remaining fail-open edges. Substring status
+matching accepted negative labels such as `NOT_PRODUCTION_APPROVED`, and
+`int(...)` conversion accepted strings/floats such as `"9"` or `9.1` for an
+integer conflict-count policy.
+
+Rejected alternatives:
+
+- Match selected config status with a substring.
+- Cast conflict counts with `int(...)`.
+- Treat numerically equal floats or strings as equivalent governance values.
+
+Invariants not to break:
+
+- Approval labels are enums, not prose searched by substring.
+- Governance counts are strict integers and remain count-bound.
+- Malformed approval/count fields make the artifact blocking, not partially
+  accepted.
+

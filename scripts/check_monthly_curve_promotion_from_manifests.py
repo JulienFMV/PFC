@@ -167,7 +167,7 @@ def _selected_config_hash(config: Mapping[str, object], path: Path) -> str:
 def _selected_config_production_approval_row(selected_config: Mapping[str, object]) -> dict[str, object]:
     approved = selected_config.get("production_approved") is True
     selection_status = str(selected_config.get("selection_status", ""))
-    status_is_prod = "PRODUCTION_APPROVED" in selection_status.upper()
+    status_is_prod = selection_status.upper() == "PRODUCTION_APPROVED"
     if approved and status_is_prod:
         status = "PASS"
         severity = "INFO"
