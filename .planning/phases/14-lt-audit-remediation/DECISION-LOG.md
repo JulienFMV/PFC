@@ -559,3 +559,32 @@ Invariants not to break:
 - Malformed approval/count fields make the artifact blocking, not partially
   accepted.
 
+## D-20260624-20 - Source Hierarchy Policy Binds Conflict Identity
+
+Decision: a production-approved source hierarchy policy must bind accepted
+`QUOTE_CONFLICT` rows to the audited evidence, not only to market, snapshot and
+count. At least one binding must match: `input_csv_sha256`,
+`quote_conflict_identity_hash`, or the full canonical
+`expected_quote_conflicts` list. If any binding field is provided, it must
+match exactly.
+
+Reason: roaster review accepted the P0/P1 governance exact-value gates but
+left a P2 risk: a policy approved for one candidate could be reused on another
+CSV with the same market, snapshot and conflict count but different conflicting
+products. Binding to the input CSV hash or canonical conflict identities closes
+that reuse path.
+
+Rejected alternatives:
+
+- Accept quote conflicts from market/snapshot/count only.
+- Treat `candidate_csv` path text as sufficient evidence.
+- Require manual review of conflicts while the CLI reports promotion-ready.
+
+Invariants not to break:
+
+- Draft non-production policies remain blocking.
+- Production-approved policies with no binding are `INVALID`.
+- Binding mismatches accept zero quote conflicts.
+- The summary must expose `quote_conflict_identity_hash` and
+  `quote_conflict_identities` so a policy can be reproduced and audited.
+

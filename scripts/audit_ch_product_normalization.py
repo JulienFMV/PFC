@@ -40,6 +40,37 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _sha256_json(payload: Any) -> str:
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def quote_conflict_identities(gates: pd.DataFrame) -> list[dict[str, str]]:
+    if gates.empty or "status" not in gates.columns:
+        return []
+    optional_columns = [
+        "quote_conflict_basis",
+        "covered_by_quote_aware_products",
+    ]
+    rows: list[dict[str, str]] = []
+    subset = gates[gates["status"].astype(str).eq("QUOTE_CONFLICT")].copy()
+    for _, row in subset.sort_values(["gate_id", "load_type", "product"]).iterrows():
+        identity = {
+            "gate_id": str(row.get("gate_id", "")),
+            "load_type": str(row.get("load_type", "")),
+            "product": str(row.get("product", "")),
+        }
+        for column in optional_columns:
+            value = row.get(column, "")
+            identity[column] = "" if pd.isna(value) else str(value)
+        rows.append(identity)
+    return rows
+
+
+def quote_conflict_identity_hash(gates: pd.DataFrame) -> str:
+    return _sha256_json(quote_conflict_identities(gates))
+
+
 def load_source_hierarchy_policy(path: Path | None) -> dict[str, Any] | None:
     if path is None:
         return None
@@ -65,6 +96,9 @@ def evaluate_source_hierarchy_policy(
     market: str,
     forward_date: pd.Timestamp,
     quote_conflict_count: int,
+    input_csv_sha256: str | None = None,
+    quote_conflict_identity_hash_value: str | None = None,
+    quote_conflict_identity_rows: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
     if policy is None:
         return {
@@ -104,6 +138,40 @@ def evaluate_source_hierarchy_policy(
     production_approved = policy.get("production_approved") is True
     if policy.get("production_approved") is not False and not production_approved:
         errors.append("production_approved_not_boolean")
+
+    policy_input_csv_sha256 = policy.get("input_csv_sha256")
+    policy_identity_hash = policy.get("quote_conflict_identity_hash")
+    policy_expected_conflicts = policy.get("expected_quote_conflicts")
+    has_binding = (
+        policy_input_csv_sha256 is not None
+        or policy_identity_hash is not None
+        or policy_expected_conflicts is not None
+    )
+    if production_approved and not has_binding:
+        errors.append("source_hierarchy_binding_missing")
+    if policy_input_csv_sha256 is not None:
+        if not isinstance(policy_input_csv_sha256, str) or not policy_input_csv_sha256:
+            errors.append("input_csv_sha256_invalid")
+        elif input_csv_sha256 is None or policy_input_csv_sha256 != input_csv_sha256:
+            errors.append("input_csv_sha256_mismatch")
+    if policy_identity_hash is not None:
+        if not isinstance(policy_identity_hash, str) or not policy_identity_hash:
+            errors.append("quote_conflict_identity_hash_invalid")
+        elif quote_conflict_identity_hash_value is None or policy_identity_hash != quote_conflict_identity_hash_value:
+            errors.append("quote_conflict_identity_hash_mismatch")
+    if policy_expected_conflicts is not None:
+        if not isinstance(policy_expected_conflicts, list):
+            errors.append("expected_quote_conflicts_invalid")
+        else:
+            expected_conflicts = [
+                {str(key): str(value) for key, value in item.items()}
+                for item in policy_expected_conflicts
+                if isinstance(item, Mapping)
+            ]
+            if len(expected_conflicts) != len(policy_expected_conflicts):
+                errors.append("expected_quote_conflicts_invalid")
+            elif expected_conflicts != list(quote_conflict_identity_rows or []):
+                errors.append("expected_quote_conflicts_mismatch")
     accepted = quote_conflict_count if production_approved and not errors else 0
     status = (
         "ACCEPTED_PRODUCTION_APPROVED"
@@ -119,6 +187,8 @@ def evaluate_source_hierarchy_policy(
         "production_approved": production_approved,
         "accepted_quote_conflict_count": accepted,
         "blocking_quote_conflict_count": quote_conflict_count - accepted,
+        "input_csv_sha256": input_csv_sha256,
+        "quote_conflict_identity_hash": quote_conflict_identity_hash_value,
         "reason": ";".join(errors) if errors else str(policy.get("decision", "")),
     }
 
@@ -772,6 +842,10 @@ def build_summary(
         )
     unsupported_count = int(status_counts.get("UNSUPPORTED", 0))
     policy_hash = _sha256_file(source_hierarchy_policy_path) if source_hierarchy_policy_path is not None else None
+    input_csv_hash = _sha256_file(csv_path)
+    forwards_hash = _sha256_file(forwards_path)
+    conflict_identities = quote_conflict_identities(gates)
+    conflict_identity_hash = _sha256_json(conflict_identities)
     policy_eval = evaluate_source_hierarchy_policy(
         source_hierarchy_policy,
         policy_path=source_hierarchy_policy_path,
@@ -779,6 +853,9 @@ def build_summary(
         market=market,
         forward_date=forward_date,
         quote_conflict_count=quote_conflict_count,
+        input_csv_sha256=input_csv_hash,
+        quote_conflict_identity_hash_value=conflict_identity_hash,
+        quote_conflict_identity_rows=conflict_identities,
     )
     blocking_quote_conflict_count = int(policy_eval["blocking_quote_conflict_count"])
     all_gates_pass = critical_count == 0 and unsupported_count == 0 and blocking_quote_conflict_count == 0
@@ -794,12 +871,14 @@ def build_summary(
         "forward_snapshot_date": forward_date.date().isoformat(),
         "hard_tolerance_eur_mwh": hard_tolerance,
         "input_csv": str(csv_path),
-        "input_csv_sha256": _sha256_file(csv_path),
+        "input_csv_sha256": input_csv_hash,
         "forwards_path": str(forwards_path),
-        "forwards_sha256": _sha256_file(forwards_path),
+        "forwards_sha256": forwards_hash,
         "status_counts": status_counts,
         "critical_count": critical_count,
         "quote_conflict_count": quote_conflict_count,
+        "quote_conflict_identity_hash": conflict_identity_hash,
+        "quote_conflict_identities": conflict_identities,
         "accepted_quote_conflict_count": int(policy_eval["accepted_quote_conflict_count"]),
         "blocking_quote_conflict_count": blocking_quote_conflict_count,
         "delivered_curve_drift_count": delivered_curve_drift_count,
