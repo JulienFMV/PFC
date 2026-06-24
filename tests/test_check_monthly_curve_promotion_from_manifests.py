@@ -102,7 +102,12 @@ def test_manifest_backed_promotion_blocks_non_prod_selected_config(tmp_path: Pat
 
 
 def test_manifest_backed_promotion_blocks_negative_selection_status(tmp_path: Path) -> None:
-    for selection_status in ("NOT_PRODUCTION_APPROVED", "DIAGNOSTIC_SELECTED_NOT_PRODUCTION_APPROVED"):
+    for selection_status in (
+        "NOT_PRODUCTION_APPROVED",
+        "DIAGNOSTIC_SELECTED_NOT_PRODUCTION_APPROVED",
+        "production_approved",
+        "Production_Approved",
+    ):
         paths = _write_inputs(
             tmp_path / selection_status.lower(),
             selected_production_approved=True,

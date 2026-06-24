@@ -553,6 +553,8 @@ Rejected alternatives:
 Invariants not to break:
 
 - Approval labels are enums, not prose searched by substring.
+- Approval labels are case-sensitive exact values; `production_approved` or
+  `Production_Approved` are invalid.
 - Governance counts are strict integers and remain count-bound.
 - Malformed approval/count fields make the artifact blocking, not partially
   accepted.

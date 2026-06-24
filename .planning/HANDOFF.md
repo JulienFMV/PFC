@@ -2,7 +2,7 @@
 
 Latest active handoff:
 
-`.planning/phases/14-lt-audit-remediation/SESSION-HANDOFF-20260624-PROMOTION-POLICY-EXACT-VALUES.md`
+`.planning/phases/14-lt-audit-remediation/SESSION-HANDOFF-20260624-PROMOTION-STATUS-ENUM-EXACT.md`
 
 Read order for new agents:
 
@@ -17,7 +17,7 @@ unless the latest handoff or decision log names them explicitly.
 
 Current verdict: Phase 14 remains NO-GO for production. Roaster P0/P1
 governance fail-open paths have been fixed in code/tests: selected config
-approval uses exact `selection_status == "PRODUCTION_APPROVED"`,
+approval uses case-sensitive exact `selection_status == "PRODUCTION_APPROVED"`,
 selected/prod/export parity is required, and source hierarchy policies are
 strictly typed, snapshot-bound and quote-conflict-count-bound with integer
 counts only. The current local CH candidate still blocks with
