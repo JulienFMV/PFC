@@ -348,6 +348,11 @@ def test_product_normalization_source_hierarchy_policy_can_accept_quote_conflict
     forwards_path = tmp_path / "forwards_q3.parquet"
     policy_path = tmp_path / "policy.json"
     _write_2027_q3_redundant_conflict_curve(csv_path, forwards_path)
+    _, initial_summary = run_audit(
+        csv_path=csv_path,
+        forwards_path=forwards_path,
+        required_forward_date="2026-06-22",
+    )
     policy_path.write_text(
         json.dumps(
             {
@@ -358,6 +363,8 @@ def test_product_normalization_source_hierarchy_policy_can_accept_quote_conflict
                 "accept_quote_conflict": True,
                 "expected_quote_conflict_count": 3,
                 "input_csv_sha256": _sha256_file(csv_path),
+                "forwards_sha256": _sha256_file(forwards_path),
+                "quote_conflict_identity_hash": initial_summary["quote_conflict_identity_hash"],
                 "production_approved": True,
                 "decision": "test-only approved hierarchy",
             }
@@ -398,6 +405,8 @@ def test_product_normalization_source_hierarchy_policy_can_accept_by_conflict_id
                 "source_hierarchy": "quote_aware_finer_buckets_over_redundant_parent",
                 "accept_quote_conflict": True,
                 "expected_quote_conflict_count": 3,
+                "input_csv_sha256": _sha256_file(csv_path),
+                "forwards_sha256": _sha256_file(forwards_path),
                 "quote_conflict_identity_hash": initial_summary["quote_conflict_identity_hash"],
                 "production_approved": True,
                 "decision": "test-only approved hierarchy by conflict identity hash",
@@ -439,6 +448,8 @@ def test_product_normalization_source_hierarchy_policy_can_accept_by_expected_co
                 "source_hierarchy": "quote_aware_finer_buckets_over_redundant_parent",
                 "accept_quote_conflict": True,
                 "expected_quote_conflict_count": 3,
+                "input_csv_sha256": _sha256_file(csv_path),
+                "forwards_sha256": _sha256_file(forwards_path),
                 "expected_quote_conflicts": initial_summary["quote_conflict_identities"],
                 "production_approved": True,
                 "decision": "test-only approved hierarchy by exact identities",
@@ -481,9 +492,139 @@ def test_product_normalization_source_hierarchy_policy_rejects_conflict_identity
                 "source_hierarchy": "quote_aware_finer_buckets_over_redundant_parent",
                 "accept_quote_conflict": True,
                 "expected_quote_conflict_count": 3,
+                "input_csv_sha256": _sha256_file(csv_path),
+                "forwards_sha256": _sha256_file(forwards_path),
                 "expected_quote_conflicts": expected_conflicts,
                 "production_approved": True,
                 "decision": "wrong conflict identities",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    _, summary = run_audit(
+        csv_path=csv_path,
+        forwards_path=forwards_path,
+        required_forward_date="2026-06-22",
+        source_hierarchy_policy_path=policy_path,
+    )
+
+    assert summary["accepted_quote_conflict_count"] == 0
+    assert summary["blocking_quote_conflict_count"] == 3
+    assert summary["source_hierarchy_policy"]["status"] == "INVALID"
+    assert "expected_quote_conflicts_mismatch" in summary["source_hierarchy_policy"]["reason"]
+    assert summary["all_gates_pass"] is False
+
+
+def test_product_normalization_source_hierarchy_policy_rejects_identity_hash_mismatch(tmp_path: Path) -> None:
+    csv_path = tmp_path / "delivered_q3.csv"
+    forwards_path = tmp_path / "forwards_q3.parquet"
+    policy_path = tmp_path / "policy.json"
+    _write_2027_q3_redundant_conflict_curve(csv_path, forwards_path)
+    policy_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "ch_quote_conflict_source_hierarchy_policy.v1",
+                "market": "CH",
+                "forward_snapshot_date": "2026-06-22",
+                "source_hierarchy": "quote_aware_finer_buckets_over_redundant_parent",
+                "accept_quote_conflict": True,
+                "expected_quote_conflict_count": 3,
+                "input_csv_sha256": _sha256_file(csv_path),
+                "forwards_sha256": _sha256_file(forwards_path),
+                "quote_conflict_identity_hash": "0" * 64,
+                "production_approved": True,
+                "decision": "wrong identity hash",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    _, summary = run_audit(
+        csv_path=csv_path,
+        forwards_path=forwards_path,
+        required_forward_date="2026-06-22",
+        source_hierarchy_policy_path=policy_path,
+    )
+
+    assert summary["accepted_quote_conflict_count"] == 0
+    assert summary["blocking_quote_conflict_count"] == 3
+    assert summary["source_hierarchy_policy"]["status"] == "INVALID"
+    assert "quote_conflict_identity_hash_mismatch" in summary["source_hierarchy_policy"]["reason"]
+    assert summary["all_gates_pass"] is False
+
+
+def test_product_normalization_source_hierarchy_policy_rejects_any_bad_binding(tmp_path: Path) -> None:
+    csv_path = tmp_path / "delivered_q3.csv"
+    forwards_path = tmp_path / "forwards_q3.parquet"
+    policy_path = tmp_path / "policy.json"
+    _write_2027_q3_redundant_conflict_curve(csv_path, forwards_path)
+    _, initial_summary = run_audit(
+        csv_path=csv_path,
+        forwards_path=forwards_path,
+        required_forward_date="2026-06-22",
+    )
+    policy_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "ch_quote_conflict_source_hierarchy_policy.v1",
+                "market": "CH",
+                "forward_snapshot_date": "2026-06-22",
+                "source_hierarchy": "quote_aware_finer_buckets_over_redundant_parent",
+                "accept_quote_conflict": True,
+                "expected_quote_conflict_count": 3,
+                "input_csv_sha256": _sha256_file(csv_path),
+                "forwards_sha256": "0" * 64,
+                "quote_conflict_identity_hash": initial_summary["quote_conflict_identity_hash"],
+                "production_approved": True,
+                "decision": "one good binding and one bad binding",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    _, summary = run_audit(
+        csv_path=csv_path,
+        forwards_path=forwards_path,
+        required_forward_date="2026-06-22",
+        source_hierarchy_policy_path=policy_path,
+    )
+
+    assert summary["accepted_quote_conflict_count"] == 0
+    assert summary["blocking_quote_conflict_count"] == 3
+    assert summary["source_hierarchy_policy"]["status"] == "INVALID"
+    assert "forwards_sha256_mismatch" in summary["source_hierarchy_policy"]["reason"]
+    assert summary["all_gates_pass"] is False
+
+
+def test_product_normalization_source_hierarchy_policy_rejects_noncanonical_expected_conflicts(
+    tmp_path: Path,
+) -> None:
+    csv_path = tmp_path / "delivered_q3.csv"
+    forwards_path = tmp_path / "forwards_q3.parquet"
+    policy_path = tmp_path / "policy.json"
+    _write_2027_q3_redundant_conflict_curve(csv_path, forwards_path)
+    _, initial_summary = run_audit(
+        csv_path=csv_path,
+        forwards_path=forwards_path,
+        required_forward_date="2026-06-22",
+    )
+    expected_conflicts = list(initial_summary["quote_conflict_identities"])
+    expected_conflicts[0] = {**expected_conflicts[0], "extra": "not-canonical"}
+    policy_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "ch_quote_conflict_source_hierarchy_policy.v1",
+                "market": "CH",
+                "forward_snapshot_date": "2026-06-22",
+                "source_hierarchy": "quote_aware_finer_buckets_over_redundant_parent",
+                "accept_quote_conflict": True,
+                "expected_quote_conflict_count": 3,
+                "input_csv_sha256": _sha256_file(csv_path),
+                "forwards_sha256": _sha256_file(forwards_path),
+                "expected_quote_conflicts": expected_conflicts,
+                "production_approved": True,
+                "decision": "noncanonical conflict identities",
             }
         ),
         encoding="utf-8",
@@ -534,7 +675,9 @@ def test_product_normalization_source_hierarchy_policy_requires_binding_for_prod
     assert summary["accepted_quote_conflict_count"] == 0
     assert summary["blocking_quote_conflict_count"] == 3
     assert summary["source_hierarchy_policy"]["status"] == "INVALID"
-    assert "source_hierarchy_binding_missing" in summary["source_hierarchy_policy"]["reason"]
+    assert "input_csv_sha256_missing" in summary["source_hierarchy_policy"]["reason"]
+    assert "forwards_sha256_missing" in summary["source_hierarchy_policy"]["reason"]
+    assert "quote_conflict_identity_binding_missing" in summary["source_hierarchy_policy"]["reason"]
     assert summary["all_gates_pass"] is False
 
 
@@ -544,6 +687,11 @@ def test_product_normalization_source_hierarchy_policy_does_not_override_critica
     policy_path = tmp_path / "policy.json"
     _write_delivered_csv(csv_path, peak_delta=5.0)
     _write_forwards(forwards_path)
+    _, initial_summary = run_audit(
+        csv_path=csv_path,
+        forwards_path=forwards_path,
+        required_forward_date="2026-06-22",
+    )
     policy_path.write_text(
         json.dumps(
             {
@@ -554,6 +702,8 @@ def test_product_normalization_source_hierarchy_policy_does_not_override_critica
                 "accept_quote_conflict": True,
                 "expected_quote_conflict_count": 0,
                 "input_csv_sha256": _sha256_file(csv_path),
+                "forwards_sha256": _sha256_file(forwards_path),
+                "quote_conflict_identity_hash": initial_summary["quote_conflict_identity_hash"],
                 "production_approved": True,
                 "decision": "approved but no critical override",
             }

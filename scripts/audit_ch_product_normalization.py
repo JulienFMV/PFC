@@ -97,6 +97,7 @@ def evaluate_source_hierarchy_policy(
     forward_date: pd.Timestamp,
     quote_conflict_count: int,
     input_csv_sha256: str | None = None,
+    forwards_sha256: str | None = None,
     quote_conflict_identity_hash_value: str | None = None,
     quote_conflict_identity_rows: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
@@ -140,20 +141,26 @@ def evaluate_source_hierarchy_policy(
         errors.append("production_approved_not_boolean")
 
     policy_input_csv_sha256 = policy.get("input_csv_sha256")
+    policy_forwards_sha256 = policy.get("forwards_sha256")
     policy_identity_hash = policy.get("quote_conflict_identity_hash")
     policy_expected_conflicts = policy.get("expected_quote_conflicts")
-    has_binding = (
-        policy_input_csv_sha256 is not None
-        or policy_identity_hash is not None
-        or policy_expected_conflicts is not None
-    )
-    if production_approved and not has_binding:
-        errors.append("source_hierarchy_binding_missing")
+    has_identity_binding = policy_identity_hash is not None or policy_expected_conflicts is not None
+    if production_approved and policy_input_csv_sha256 is None:
+        errors.append("input_csv_sha256_missing")
+    if production_approved and policy_forwards_sha256 is None:
+        errors.append("forwards_sha256_missing")
+    if production_approved and not has_identity_binding:
+        errors.append("quote_conflict_identity_binding_missing")
     if policy_input_csv_sha256 is not None:
         if not isinstance(policy_input_csv_sha256, str) or not policy_input_csv_sha256:
             errors.append("input_csv_sha256_invalid")
         elif input_csv_sha256 is None or policy_input_csv_sha256 != input_csv_sha256:
             errors.append("input_csv_sha256_mismatch")
+    if policy_forwards_sha256 is not None:
+        if not isinstance(policy_forwards_sha256, str) or not policy_forwards_sha256:
+            errors.append("forwards_sha256_invalid")
+        elif forwards_sha256 is None or policy_forwards_sha256 != forwards_sha256:
+            errors.append("forwards_sha256_mismatch")
     if policy_identity_hash is not None:
         if not isinstance(policy_identity_hash, str) or not policy_identity_hash:
             errors.append("quote_conflict_identity_hash_invalid")
@@ -163,14 +170,9 @@ def evaluate_source_hierarchy_policy(
         if not isinstance(policy_expected_conflicts, list):
             errors.append("expected_quote_conflicts_invalid")
         else:
-            expected_conflicts = [
-                {str(key): str(value) for key, value in item.items()}
-                for item in policy_expected_conflicts
-                if isinstance(item, Mapping)
-            ]
-            if len(expected_conflicts) != len(policy_expected_conflicts):
+            if not all(isinstance(item, dict) for item in policy_expected_conflicts):
                 errors.append("expected_quote_conflicts_invalid")
-            elif expected_conflicts != list(quote_conflict_identity_rows or []):
+            elif policy_expected_conflicts != list(quote_conflict_identity_rows or []):
                 errors.append("expected_quote_conflicts_mismatch")
     accepted = quote_conflict_count if production_approved and not errors else 0
     status = (
@@ -188,6 +190,7 @@ def evaluate_source_hierarchy_policy(
         "accepted_quote_conflict_count": accepted,
         "blocking_quote_conflict_count": quote_conflict_count - accepted,
         "input_csv_sha256": input_csv_sha256,
+        "forwards_sha256": forwards_sha256,
         "quote_conflict_identity_hash": quote_conflict_identity_hash_value,
         "reason": ";".join(errors) if errors else str(policy.get("decision", "")),
     }
@@ -854,6 +857,7 @@ def build_summary(
         forward_date=forward_date,
         quote_conflict_count=quote_conflict_count,
         input_csv_sha256=input_csv_hash,
+        forwards_sha256=forwards_hash,
         quote_conflict_identity_hash_value=conflict_identity_hash,
         quote_conflict_identity_rows=conflict_identities,
     )

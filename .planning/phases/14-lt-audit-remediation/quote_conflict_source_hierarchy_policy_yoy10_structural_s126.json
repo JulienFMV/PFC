@@ -68,6 +68,7 @@
       "quote_conflict_basis": "parent_base_peak_quote_conflict"
     }
   ],
+  "forwards_sha256": "c4bedaeb4cf7a04324bcf667be35ef9f92eeb2118c431109220076b114f9a3c5",
   "forward_snapshot_date": "2026-06-17",
   "input_csv_sha256": "464fe44b623ffbd15142eac68ea9ab01c7532b86d42b4611ea7d226f0af6665b",
   "market": "CH",

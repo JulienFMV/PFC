@@ -588,3 +588,31 @@ Invariants not to break:
 - The summary must expose `quote_conflict_identity_hash` and
   `quote_conflict_identities` so a policy can be reproduced and audited.
 
+## D-20260624-21 - Production Source Hierarchy Policy Requires Full Artifact Binding
+
+Decision: a production-approved source hierarchy policy must bind all three
+artifact dimensions before accepting `QUOTE_CONFLICT`: the delivered CSV hash
+(`input_csv_sha256`), the forwards snapshot file hash (`forwards_sha256`), and
+the conflict identity evidence (`quote_conflict_identity_hash` or exact
+`expected_quote_conflicts`). Every provided binding must match exactly.
+
+Reason: MIT roasters accepted D-20260624-20 as closing the reuse P2, but noted
+that a policy using only conflict identities could be reused across another
+CSV with the same conflict set, and a policy using only CSV hash would not bind
+the forwards snapshot. Requiring CSV + forwards + conflict identity closes both
+residual reuse paths before any production policy approval.
+
+Rejected alternatives:
+
+- Accept a policy with only one binding dimension.
+- Let `input_csv_sha256` alone stand for the source snapshot.
+- Let conflict identity alone stand for the delivered artifact.
+
+Invariants not to break:
+
+- Draft non-production policies remain blocking but may carry full bindings as
+  evidence.
+- Production-approved policies missing any required artifact dimension are
+  `INVALID`.
+- A correct binding in one field must not override a mismatch in another.
+
