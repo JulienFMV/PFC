@@ -331,6 +331,31 @@ def product_mask(hourly: pd.DataFrame, product: str) -> pd.Series:
     return mask
 
 
+def product_window_ch(product: str) -> tuple[pd.Timestamp, pd.Timestamp]:
+    _product_type, year, start_month, end_month = product_month_range(product)
+    start = pd.Timestamp(year=year, month=start_month, day=1, tz=LOCAL_TZ)
+    if end_month == 12:
+        end = pd.Timestamp(year=year + 1, month=1, day=1, tz=LOCAL_TZ)
+    else:
+        end = pd.Timestamp(year=year, month=end_month + 1, day=1, tz=LOCAL_TZ)
+    return start, end
+
+
+def delivered_window_ch(hourly: pd.DataFrame) -> tuple[pd.Timestamp, pd.Timestamp]:
+    if hourly.empty:
+        raise ValueError("delivered hourly frame is empty")
+    ts_ch = hourly["ts_ch"].sort_values()
+    inferred_freq = ts_ch.diff().dropna().mode()
+    step = inferred_freq.iloc[0] if not inferred_freq.empty else pd.Timedelta(hours=1)
+    return ts_ch.iloc[0], ts_ch.iloc[-1] + step
+
+
+def product_fully_inside_delivered_window(hourly: pd.DataFrame, product: str) -> bool:
+    delivered_start, delivered_end = delivered_window_ch(hourly)
+    product_start, product_end = product_window_ch(product)
+    return product_start >= delivered_start and product_end <= delivered_end
+
+
 def _status_from_residual(abs_residual: float, tolerance: float) -> str:
     if not np.isfinite(abs_residual):
         return "UNSUPPORTED"
@@ -354,6 +379,8 @@ def _severity(status: str) -> str:
         return "quote_conflict"
     if status == "UNSUPPORTED":
         return "unsupported"
+    if status == "OUT_OF_SCOPE":
+        return "info"
     return "info"
 
 
@@ -415,6 +442,8 @@ def _remediation_hint(gate_id: str, status: str) -> str:
         )
     if status == "UNSUPPORTED":
         return "Verify the delivered CSV fully covers this product window and the EEX quote exists."
+    if status == "OUT_OF_SCOPE":
+        return "Product window is outside the delivered artifact window; verify the intended audit horizon."
     if gate_id == "hard_peak_product_repricing":
         return "Inspect PEAK calibration and any post-calibration hourly reshaping on the delivered artifact."
     if gate_id == "hard_base_product_repricing":
@@ -474,10 +503,13 @@ def build_product_normalization_gates(
 
         row_count = int(mask.sum())
         if row_count != expected_rows or expected_rows <= 0:
+            out_of_scope = not product_fully_inside_delivered_window(hourly, product)
+            status = "OUT_OF_SCOPE" if out_of_scope else "UNSUPPORTED"
+            evidence = "outside_delivered_artifact_window" if out_of_scope else "partial_or_missing_delivered_rows"
             rows.append(
                 _gate_row(
                     gate_id=gate_id,
-                    status="UNSUPPORTED",
+                    status=status,
                     market=market,
                     load_type=load_type,
                     product=product,
@@ -492,7 +524,7 @@ def build_product_normalization_gates(
                     total_hours=total_hours,
                     peak_hours=peak_hours,
                     offpeak_hours=offpeak_hours,
-                    evidence="partial_or_missing_delivered_rows",
+                    evidence=evidence,
                     price_column=price_column,
                 )
             )
@@ -618,10 +650,11 @@ def build_product_normalization_gates(
         mask = product_mask(hourly, product) & ~eex_peak_mask(hourly["ts_ch"], country=peak_country)
         row_count = int(mask.sum())
         if row_count != offpeak_hours:
-            status = "UNSUPPORTED"
+            out_of_scope = not product_fully_inside_delivered_window(hourly, product)
+            status = "OUT_OF_SCOPE" if out_of_scope else "UNSUPPORTED"
             curve_mean = None
             residual = None
-            evidence = "partial_or_missing_delivered_rows"
+            evidence = "outside_delivered_artifact_window" if out_of_scope else "partial_or_missing_delivered_rows"
         else:
             curve_mean = float(hourly.loc[mask, price_column].mean())
             residual = curve_mean - offpeak_target
@@ -652,6 +685,31 @@ def build_product_normalization_gates(
 
     out = pd.DataFrame(rows)
     if not out.empty:
+        in_scope = out[~out["status"].eq("OUT_OF_SCOPE")]
+        if in_scope.empty:
+            rows.append(
+                _gate_row(
+                    gate_id="audit_evidence_present",
+                    status="CRITICAL",
+                    market=market,
+                    load_type="ALL",
+                    product="*",
+                    product_type="Audit",
+                    forward_date=forward_date,
+                    target=None,
+                    curve_mean=None,
+                    residual=None,
+                    tolerance=hard_tolerance,
+                    rows=0,
+                    expected_rows=1,
+                    total_hours=0,
+                    peak_hours=0,
+                    offpeak_hours=0,
+                    evidence="no_in_scope_product_gates_emitted",
+                    price_column=price_column,
+                )
+            )
+            out = pd.DataFrame(rows)
         out = _reclassify_redundant_quote_conflicts(
             out,
             hourly=hourly,
@@ -837,13 +895,14 @@ def build_summary(
                 )
             ).sum()
         )
-        supported = gates[gates["status"] != "UNSUPPORTED"]
+        supported = gates[~gates["status"].isin(["UNSUPPORTED", "OUT_OF_SCOPE"])]
         hard_max = (
             None
             if supported.empty
             else float(pd.to_numeric(supported["abs_residual_eur_mwh"], errors="coerce").max())
         )
     unsupported_count = int(status_counts.get("UNSUPPORTED", 0))
+    out_of_scope_count = int(status_counts.get("OUT_OF_SCOPE", 0))
     policy_hash = _sha256_file(source_hierarchy_policy_path) if source_hierarchy_policy_path is not None else None
     input_csv_hash = _sha256_file(csv_path)
     forwards_hash = _sha256_file(forwards_path)
@@ -887,14 +946,17 @@ def build_summary(
         "blocking_quote_conflict_count": blocking_quote_conflict_count,
         "delivered_curve_drift_count": delivered_curve_drift_count,
         "unsupported_count": unsupported_count,
+        "out_of_scope_count": out_of_scope_count,
         "source_hierarchy_policy": policy_eval,
         "supported_hard_gate_max_abs_residual_eur_mwh": hard_max,
         "supported_hard_gates_no_critical": critical_count == 0,
         "covered_hard_gates_pass": all_gates_pass,
         "all_gates_pass": all_gates_pass,
         "note": (
-            "UNSUPPORTED rows mean the delivered CSV or quote snapshot did not fully cover "
-            "that product window; QUOTE_CONFLICT rows mean redundant parent quotes conflict "
+            "OUT_OF_SCOPE rows mean the EEX product window is outside the delivered artifact "
+            "window and is not a hard repricing gate for that artifact; UNSUPPORTED rows mean "
+            "an in-scope delivered CSV or quote snapshot did not fully cover that product "
+            "window; QUOTE_CONFLICT rows mean redundant parent quotes conflict "
             "with finer quote-aware buckets. QUOTE_CONFLICT can be accepted only by an "
             "explicit production-approved source hierarchy policy artifact."
         ),

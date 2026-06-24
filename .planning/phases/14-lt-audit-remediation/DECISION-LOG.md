@@ -616,3 +616,57 @@ Invariants not to break:
   `INVALID`.
 - A correct binding in one field must not override a mismatch in another.
 
+## D-20260624-22 - Boundary Products Are OUT_OF_SCOPE, Not UNSUPPORTED
+
+Decision: delivered-product audit rows whose full EEX product window is outside
+the delivered artifact window are classified as `OUT_OF_SCOPE` with info
+severity. In-scope missing delivered rows or missing required quotes remain
+`UNSUPPORTED` and blocking. If an audit emits only out-of-scope rows and no
+in-scope evidence, it fails closed with `audit_evidence_present=CRITICAL`.
+
+Reason: the CH local candidate is delivered for `2026-06-13` to
+`2030-12-31`. Full product windows such as `2026-06`, `2031`, and `2032` are
+outside that artifact horizon and should remain visible without being treated
+as failed repricing evidence. This preserves the prior invariant that true
+in-scope missing coverage remains blocking.
+
+Rejected alternatives:
+
+- Keep boundary products as `UNSUPPORTED` and require impossible repricing over
+  hours the delivered artifact does not contain.
+- Drop out-of-scope rows entirely.
+- Let an audit with no in-scope product evidence pass.
+
+Invariants not to break:
+
+- `UNSUPPORTED` remains blocking for missing in-scope evidence.
+- `OUT_OF_SCOPE` rows are counted and reported in the summary.
+- At least one in-scope product gate must exist for a passing audit.
+
+## D-20260624-23 - Phase 14 Local Candidate Selects lambda_smooth_yoy=50
+
+Decision: select the local CH candidate
+`20260624_parent_local_prior_lshape25_yoy50_structural_s126` as the current
+auditable Phase 14 candidate, with `lambda_shape=25`,
+`lambda_smooth_month=0.1`, `lambda_smooth_yoy=50`, PEAK calibration enabled,
+and structural scenario spread intensity `1.26`.
+
+Reason: the prior `yoy10` candidate still had a strict Power BI
+cross-year near-clone warning. Lowering YoY smoothness to `2` worsened the
+diagnostic, and increasing local shape to `40` did not remove it. Increasing
+YoY smoothness to `50` keeps the monthly solver as level authority and passes
+strict Power BI without post-solver month patching.
+
+Rejected alternatives:
+
+- Patch the problematic month after the monthly solver.
+- Lower `lambda_smooth_yoy`, which increased cross-year warnings.
+- Treat the strict Power BI warning as acceptable promotion evidence.
+
+Invariants not to break:
+
+- Monthly solver remains the monthly level authority.
+- Promotion still requires real production, local export, and selected config
+  manifest parity.
+- Source hierarchy `QUOTE_CONFLICT` acceptance remains exact artifact-bound.
+

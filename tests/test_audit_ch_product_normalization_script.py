@@ -220,6 +220,43 @@ def _write_2027_q3_redundant_conflict_curve(
     _write_forwards_rows(forwards_path, rows)
 
 
+def _write_partial_january_full_february_curve(csv_path: Path, forwards_path: Path) -> None:
+    idx_utc = _hourly_index("2027-01-15", "2027-03-01")
+    ts_ch = idx_utc.tz_convert(LOCAL_TZ)
+    ts_series = pd.Series(ts_ch)
+    peak_mask = eex_peak_mask(ts_series, country="CH").to_numpy(dtype=bool)
+    feb_mask = ts_series.dt.month.eq(2).to_numpy(dtype=bool)
+
+    base_target = 100.0
+    peak_target = 120.0
+    total_feb, peak_feb, offpeak_feb = count_hours(2027, 2, 2, tz=LOCAL_TZ, country="CH")
+    offpeak_target = (base_target * total_feb - peak_target * peak_feb) / offpeak_feb
+
+    price = np.full(len(idx_utc), 99.0, dtype=float)
+    price[feb_mask & peak_mask] = peak_target
+    price[feb_mask & ~peak_mask] = offpeak_target
+
+    offset = pd.Index(ts_ch.strftime("%z"))
+    frame = pd.DataFrame(
+        {
+            "timestamp_ch": ts_ch.strftime("%d.%m.%Y %H:%M"),
+            "utc_offset_ch": "UTC" + offset.str.slice(0, 3) + ":" + offset.str.slice(3, 5),
+            "timestamp_utc": idx_utc.strftime("%d.%m.%Y %H:%M"),
+            PRICE: price,
+        }
+    )
+    frame.to_csv(csv_path, index=False)
+    _write_forwards_rows(
+        forwards_path,
+        [
+            _quote_row("2027-01", "BASE", base_target),
+            _quote_row("2027-01", "PEAK", peak_target),
+            _quote_row("2027-02", "BASE", base_target),
+            _quote_row("2027-02", "PEAK", peak_target),
+        ],
+    )
+
+
 def _approved_quote_conflict_policy(
     csv_path: Path,
     forwards_path: Path,
@@ -821,11 +858,11 @@ def test_product_normalization_source_hierarchy_policy_rejects_input_csv_hash_mi
 
 
 def test_product_normalization_source_hierarchy_policy_does_not_override_unsupported(tmp_path: Path) -> None:
-    csv_path = tmp_path / "partial.csv"
+    csv_path = tmp_path / "delivered.csv"
     forwards_path = tmp_path / "forwards.parquet"
     policy_path = tmp_path / "policy.json"
-    _write_delivered_csv(csv_path, start="2027-01-01", end="2027-01-11")
-    _write_forwards(forwards_path)
+    _write_delivered_csv(csv_path)
+    _write_forwards_rows(forwards_path, [_quote_row("2027-01", "BASE", 100.0)])
     _, initial_summary = run_audit(
         csv_path=csv_path,
         forwards_path=forwards_path,
@@ -851,6 +888,54 @@ def test_product_normalization_source_hierarchy_policy_does_not_override_unsuppo
     assert summary["unsupported_count"] >= 1
     assert summary["accepted_quote_conflict_count"] == 0
     assert summary["all_gates_pass"] is False
+
+
+def test_product_normalization_source_hierarchy_policy_does_not_mask_out_of_scope_counts(tmp_path: Path) -> None:
+    csv_path = tmp_path / "delivered_q3.csv"
+    forwards_path = tmp_path / "forwards_q3_with_far_quote.parquet"
+    policy_path = tmp_path / "policy.json"
+    _write_2027_q3_redundant_conflict_curve(csv_path, forwards_path)
+    forwards = pd.read_parquet(forwards_path)
+    forwards = pd.concat(
+        [
+            forwards,
+            pd.DataFrame(
+                [
+                    _quote_row("2031", "BASE", 100.0),
+                    _quote_row("2031", "PEAK", 120.0),
+                ]
+            ),
+        ],
+        ignore_index=True,
+    )
+    forwards.to_parquet(forwards_path)
+    _, initial_summary = run_audit(
+        csv_path=csv_path,
+        forwards_path=forwards_path,
+        required_forward_date="2026-06-22",
+    )
+    policy = _approved_quote_conflict_policy(
+        csv_path,
+        forwards_path,
+        initial_summary,
+        decision="approved conflict policy with far out-of-scope quote",
+    )
+    policy_path.write_text(json.dumps(policy), encoding="utf-8")
+
+    gates, summary = run_audit(
+        csv_path=csv_path,
+        forwards_path=forwards_path,
+        required_forward_date="2026-06-22",
+        source_hierarchy_policy_path=policy_path,
+    )
+
+    assert summary["source_hierarchy_policy"]["status"] == "ACCEPTED_PRODUCTION_APPROVED"
+    assert summary["accepted_quote_conflict_count"] == 3
+    assert summary["blocking_quote_conflict_count"] == 0
+    assert summary["out_of_scope_count"] == 3
+    assert summary["unsupported_count"] == 0
+    assert summary["all_gates_pass"] is True
+    assert set(gates.loc[gates["status"] == "OUT_OF_SCOPE", "product"]) == {"2031"}
 
 
 def test_product_normalization_source_hierarchy_policy_rejects_string_booleans(tmp_path: Path) -> None:
@@ -1061,11 +1146,11 @@ def test_product_normalization_cli_fails_closed_on_quote_conflict(tmp_path: Path
     ) == 0
 
 
-def test_product_normalization_audit_marks_partial_product_unsupported(tmp_path: Path) -> None:
-    csv_path = tmp_path / "partial.csv"
+def test_product_normalization_audit_marks_in_scope_missing_required_quote_unsupported(tmp_path: Path) -> None:
+    csv_path = tmp_path / "delivered.csv"
     forwards_path = tmp_path / "forwards.parquet"
-    _write_delivered_csv(csv_path, start="2027-01-01", end="2027-01-11")
-    _write_forwards(forwards_path)
+    _write_delivered_csv(csv_path)
+    _write_forwards_rows(forwards_path, [_quote_row("2027-01", "BASE", 100.0)])
 
     gates, summary = run_audit(
         csv_path=csv_path,
@@ -1076,7 +1161,95 @@ def test_product_normalization_audit_marks_partial_product_unsupported(tmp_path:
     assert summary["critical_count"] == 0
     assert summary["covered_hard_gates_pass"] is False
     assert summary["all_gates_pass"] is False
-    assert set(gates["status"]) == {"UNSUPPORTED"}
+    assert summary["unsupported_count"] >= 1
+    assert summary["out_of_scope_count"] == 0
+    missing = gates[
+        (gates["gate_id"] == "required_forward_quote_present")
+        & (gates["load_type"] == "PEAK")
+        & (gates["product"] == "2027-01")
+    ]
+    assert missing.iloc[0]["status"] == "UNSUPPORTED"
+    assert missing.iloc[0]["evidence"] == "missing_required_forward_quote"
+
+
+def test_product_normalization_audit_marks_out_of_scope_products_non_blocking(tmp_path: Path) -> None:
+    csv_path = tmp_path / "delivered.csv"
+    forwards_path = tmp_path / "forwards_with_far_quotes.parquet"
+    _write_delivered_csv(csv_path)
+    _write_forwards_rows(
+        forwards_path,
+        [
+            _quote_row("2027-01", "BASE", 100.0),
+            _quote_row("2027-01", "PEAK", 120.0),
+            _quote_row("2031", "BASE", 100.0),
+            _quote_row("2031", "PEAK", 120.0),
+        ],
+    )
+
+    gates, summary = run_audit(
+        csv_path=csv_path,
+        forwards_path=forwards_path,
+        required_forward_date="2026-06-22",
+    )
+
+    out_of_scope = gates[gates["status"] == "OUT_OF_SCOPE"]
+    assert summary["critical_count"] == 0
+    assert summary["unsupported_count"] == 0
+    assert summary["out_of_scope_count"] == 3
+    assert summary["all_gates_pass"] is True
+    assert set(out_of_scope["product"]) == {"2031"}
+    assert set(out_of_scope["load_type"]) == {"BASE", "PEAK", "OFFPEAK"}
+    assert set(out_of_scope["evidence"]) == {"outside_delivered_artifact_window"}
+
+
+def test_product_normalization_audit_marks_partial_boundary_month_out_of_scope(tmp_path: Path) -> None:
+    csv_path = tmp_path / "partial_boundary.csv"
+    forwards_path = tmp_path / "forwards_boundary.parquet"
+    _write_partial_january_full_february_curve(csv_path, forwards_path)
+
+    gates, summary = run_audit(
+        csv_path=csv_path,
+        forwards_path=forwards_path,
+        required_forward_date="2026-06-22",
+    )
+
+    boundary = gates[gates["product"].eq("2027-01") & gates["status"].eq("OUT_OF_SCOPE")]
+    feb_hard = gates[
+        gates["product"].eq("2027-02")
+        & gates["gate_id"].isin(["hard_base_product_repricing", "hard_peak_product_repricing"])
+    ]
+    assert summary["critical_count"] == 0
+    assert summary["unsupported_count"] == 0
+    assert summary["out_of_scope_count"] == 3
+    assert summary["all_gates_pass"] is True
+    assert set(boundary["load_type"]) == {"BASE", "PEAK", "OFFPEAK"}
+    assert set(boundary["evidence"]) == {"outside_delivered_artifact_window"}
+    assert set(feb_hard["status"]) == {"PASS"}
+
+
+def test_product_normalization_audit_fails_when_only_out_of_scope_products_exist(tmp_path: Path) -> None:
+    csv_path = tmp_path / "delivered.csv"
+    forwards_path = tmp_path / "forwards_far_only.parquet"
+    _write_delivered_csv(csv_path)
+    _write_forwards_rows(
+        forwards_path,
+        [
+            _quote_row("2031", "BASE", 100.0),
+            _quote_row("2031", "PEAK", 120.0),
+        ],
+    )
+
+    gates, summary = run_audit(
+        csv_path=csv_path,
+        forwards_path=forwards_path,
+        required_forward_date="2026-06-22",
+    )
+
+    assert summary["critical_count"] == 1
+    assert summary["out_of_scope_count"] == 3
+    assert summary["all_gates_pass"] is False
+    assert "audit_evidence_present" in set(gates["gate_id"])
+    assert "no_in_scope_product_gates_emitted" in set(gates["evidence"])
 
 
 def test_product_normalization_audit_flags_empty_evidence_as_critical(tmp_path: Path) -> None:

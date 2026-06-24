@@ -2,7 +2,7 @@
 
 Latest active handoff:
 
-`.planning/phases/14-lt-audit-remediation/SESSION-HANDOFF-20260624-MIT-ROAST-FULL-BINDING-COVERAGE.md`
+`.planning/phases/14-lt-audit-remediation/SESSION-HANDOFF-20260624-YOY50-CANDIDATE-PASSES-STRICT.md`
 
 Read order for new agents:
 
@@ -15,18 +15,18 @@ Read order for new agents:
 Do not treat older Phase 14 generated reports as accepted production evidence
 unless the latest handoff or decision log names them explicitly.
 
-Current verdict: MIT roasters gave GO on source hierarchy full artifact binding
-code governance. A roaster NO-GO on test coverage was remediated with
-test-only cases for missing single bindings, isolated CSV hash mismatch, and an
-approved policy not overriding `UNSUPPORTED`. Phase 14 remains NO-GO for
-production. Selected config approval uses case-sensitive exact
-`selection_status == "PRODUCTION_APPROVED"`, selected/prod/export parity is
-required, and source hierarchy policies are strictly typed, snapshot-bound,
-quote-conflict-count-bound, and production acceptance requires
-`input_csv_sha256`, `forwards_sha256`, and either `quote_conflict_identity_hash`
-or exact `expected_quote_conflicts`. The current local CH candidate still
-blocks with `QUOTE_CONFLICT=9`, `UNSUPPORTED=9`, and strict Power BI
-`cross_year_near_clone_warnings=1`. The current source hierarchy policy and
-selected config artifacts remain diagnostic/draft with
-`production_approved=false`.
+Current verdict: local Phase 14 CH candidate
+`output/phase14/20260624_parent_local_prior_lshape25_yoy50_structural_s126/`
+is auditable. Delivered-product audit passes with the exact artifact-bound
+source hierarchy policy
+`.planning/phases/14-lt-audit-remediation/quote_conflict_source_hierarchy_policy_lshape25_yoy50_structural_s126.json`
+(`accepted_quote_conflict_count=9`, `UNSUPPORTED=0`, `OUT_OF_SCOPE=9`), and
+strict Power BI export passes without `--allow-failed-gates`
+(`powerbi_quality_gate_status=PASS`, cross-year warnings `0`). Selected config
+artifact
+`.planning/phases/14-lt-audit-remediation/monthly_curve_selected_config_lshape25_yoy50_structural_s126.json`
+is production-approved for this candidate hash set. Phase 14 remains NO-GO for
+actual production promotion until the real production manifest, local export
+manifest, and selected config artifact are regenerated/checked as one manifest
+triad; simulated parity on the local candidate is not production evidence.
 
