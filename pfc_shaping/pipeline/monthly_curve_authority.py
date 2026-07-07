@@ -170,8 +170,13 @@ def delivery_months_from_prices(prices: Mapping[str, float]) -> pd.PeriodIndex:
     return pd.PeriodIndex(sorted(months), freq="M")
 
 
-def latest_base_prices_by_market(history: pd.DataFrame, *, market: str) -> tuple[pd.Timestamp, dict[str, float]]:
-    return _latest_base_prices(history, market=market)
+def latest_base_prices_by_market(
+    history: pd.DataFrame,
+    *,
+    market: str,
+    as_of_date: str | pd.Timestamp | None = None,
+) -> tuple[pd.Timestamp, dict[str, float]]:
+    return _latest_base_prices(history, market=market, as_of_date=as_of_date)
 
 
 def solve_monthly_level_authority(
@@ -314,17 +319,18 @@ def solve_monthly_level_authority_from_history(
     settings: Mapping[str, object] | None = None,
     timezone: str = "Europe/Zurich",
     original_forward_prices: Mapping[str, float] | None = None,
+    as_of_date: str | pd.Timestamp | None = None,
 ) -> MonthlyLevelAuthority:
     history = pd.read_parquet(forwards_path)
     history["date"] = pd.to_datetime(history["date"]).dt.tz_localize(None).dt.normalize()
     market = str(market).upper()
-    run_timestamp, own = _latest_base_prices(history, market=market)
+    run_timestamp, own = _latest_base_prices(history, market=market, as_of_date=as_of_date)
     settings = dict(DEFAULT_MONTHLY_SOLVER_CONFIG) | dict(settings or {})
     neighbor_markets = tuple(str(m).upper() for m in settings.get("markets", ("DE", "FR", "AT", "IT")))
     neighbors: dict[str, dict[str, float]] = {}
     for neighbor in neighbor_markets:
         try:
-            _, prices = _latest_base_prices(history, market=neighbor)
+            _, prices = _latest_base_prices(history, market=neighbor, as_of_date=run_timestamp)
         except ValueError:
             continue
         neighbors[neighbor] = prices
@@ -342,16 +348,26 @@ def solve_monthly_level_authority_from_history(
     )
 
 
-def _latest_base_prices(history: pd.DataFrame, *, market: str) -> tuple[pd.Timestamp, dict[str, float]]:
+def _latest_base_prices(
+    history: pd.DataFrame,
+    *,
+    market: str,
+    as_of_date: str | pd.Timestamp | None = None,
+) -> tuple[pd.Timestamp, dict[str, float]]:
     sub = history[
         history["market"].astype(str).str.upper().eq(str(market).upper())
         & history["load_type"].astype(str).str.upper().eq("BASE")
     ].copy()
     if sub.empty:
         raise ValueError(f"no BASE forward history for market={market}")
-    latest = pd.Timestamp(sub["date"].max()).tz_localize(None).normalize()
-    snap = sub[sub["date"].eq(latest)]
-    return latest, dict(zip(snap["product"].astype(str), snap["price"].astype(float)))
+    if as_of_date is None:
+        snapshot = pd.Timestamp(sub["date"].max()).tz_localize(None).normalize()
+    else:
+        snapshot = pd.Timestamp(as_of_date).tz_localize(None).normalize()
+    snap = sub[sub["date"].eq(snapshot)]
+    if snap.empty:
+        raise ValueError(f"no BASE forward history for market={market} at date={snapshot.date()}")
+    return snapshot, dict(zip(snap["product"].astype(str), snap["price"].astype(float)))
 
 
 def _quotes_from_prices(

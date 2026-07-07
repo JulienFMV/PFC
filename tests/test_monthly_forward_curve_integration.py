@@ -39,6 +39,18 @@ class _NonNeutralShapeHourly:
         return values
 
 
+class _ShapeHourlyWithoutSeasonalFlag:
+    f_W_seasonal_: dict = {}
+    f_W_: dict = {}
+
+    def apply(self, idx, cal, reference_date=None):
+        idx_local = idx.tz_convert("Europe/Zurich")
+        values = pd.Series(1.0, index=idx, name="f_H")
+        values.loc[(idx_local.hour >= 8) & (idx_local.hour < 20)] = 1.20
+        values.loc[idx_local.hour < 6] = 0.80
+        return values
+
+
 class _NonNeutralShapeIntraday:
     def apply(self, idx, cal, entso_forecast=None, reference_date=None):
         values = pd.Series(1.0, index=idx, name="f_Q")
@@ -392,6 +404,35 @@ def test_solver_monthly_level_preserves_monthly_base_means_after_near_term_rebal
     )
     idx_local = df.index.tz_convert("Europe/Zurich")
 
+    for month_key, group in df.groupby(idx_local.strftime("%Y-%m")):
+        if month_key in base_prices:
+            assert group["price_shape"].mean() == pytest.approx(group["B"].mean(), abs=1e-9)
+
+
+def test_solver_monthly_level_accepts_hourly_model_without_seasonal_flag() -> None:
+    assembler = PFCAssembler(
+        shape_hourly=_ShapeHourlyWithoutSeasonalFlag(),
+        shape_intraday=_NonNeutralShapeIntraday(),
+        monthly_level_authority="solver",
+        skip_legacy_level_cascade=True,
+        skip_legacy_base_smoothing=True,
+        calibrator=None,
+        water_value=None,
+    )
+    base_prices = {
+        "2029-01": 100.0,
+        "2029-02": 60.0,
+    }
+
+    df = assembler.build(
+        base_prices=base_prices,
+        start_date="2029-01-01",
+        horizon_days=60,
+        reference_date=pd.Timestamp("2026-06-22", tz="Europe/Zurich"),
+    )
+    idx_local = df.index.tz_convert("Europe/Zurich")
+
+    assert not df.empty
     for month_key, group in df.groupby(idx_local.strftime("%Y-%m")):
         if month_key in base_prices:
             assert group["price_shape"].mean() == pytest.approx(group["B"].mean(), abs=1e-9)

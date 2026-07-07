@@ -609,7 +609,7 @@ class PFCAssembler:
         f_W = 1.0 + (f_W - 1.0) * shape_freedom["f_W"]
         # Lever 2 (Plan 05C-02, D-A2-3..D-A2-5): split-based damping under flag=ON,
         # legacy single-line under flag=OFF.
-        if self.sh._use_seasonal_hourly:
+        if bool(getattr(self.sh, "_use_seasonal_hourly", False)):
             level, anomaly = _split_level_anomaly(f_H, cal)
             _emit_level_drift_telemetry(level, logger)
             level_damped = 1.0 + (level - 1.0) * shape_freedom["f_H"]

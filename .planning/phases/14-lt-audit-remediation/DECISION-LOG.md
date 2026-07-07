@@ -701,3 +701,359 @@ Invariants not to break:
 - Older selected config fixtures remain supported unless they opt into the new
   explicit promotion-scope field.
 
+## D-20260624-25 - Current Data Promotion Evidence Uses 2026-06-23 Snapshot
+
+Decision: refresh Phase 14 promotion evidence from the EEX workbook available
+on 2026-06-24, but bind all solver, audit, and promotion artifacts to
+`forward_snapshot_date=2026-06-23`, the latest usable row in that workbook.
+Do not claim a 2026-06-24 forward fixing.
+
+Reason: the workbook file was current on 2026-06-24, while CH/DE/FR forward
+history rows inside it stop at 2026-06-23. AT/IT remain available only up to
+2026-06-17 and are therefore skipped for exact as-of neighbor evidence rather
+than mixed into the 2026-06-23 CH solve.
+
+Rejected alternatives:
+
+- Treat the workbook file date as the forward snapshot date.
+- Mix latest-neighbor dates independently when CH is solved at a fixed as-of
+  date.
+- Hold promotion evidence on the older 2026-06-17 candidate after newer CH/DE/FR
+  forward rows were available.
+
+Invariants not to break:
+
+- Snapshot dates in manifests must mean quote-row dates, not file timestamps.
+- Neighbor priors used for a fixed-as-of solve must come from the same snapshot
+  date when available; missing exact-date neighbors are skipped.
+- Heavy local forward history parquet changes remain generated data and are not
+  commit targets.
+
+## D-20260624-26 - Phase 14 As-Of 2026-06-23 Triad Is Promotion Evidence Pass
+
+Decision: accept that the `asof20260623_yoy50_2032` Phase 14 evidence triad
+passed manifest governance, but supersede it for production promotion after PNG
+diagnostics showed unacceptable far-horizon monthly shape. The accepted
+promotion candidate is now recorded in D-20260624-27.
+
+Reason: after regenerating production and local export on the refreshed
+2026-06-23 snapshot, the real manifest triad matches:
+
+- `active_config_hash`: `9a29207f20efd39be80a33b3fa1ffc4c02b28daa2fd550e1db20837d1f8966db`
+- `active_constraints_hash`: `a80d5e09d2b6eda2ca5f22fd83ed58116a96b91dd80e46f50b61eb7e54baa262`
+- `monthly_solution_hash`: `e42887237658655e8bf5881c667b881d4361a0571ebbb413ad755d7172087a31`
+
+The selected artifact is
+`.planning/phases/14-lt-audit-remediation/monthly_curve_selected_config_asof20260623_yoy50_2032.json`
+with `production_promotion_approved=true` and
+`selection_status="PRODUCTION_APPROVED"`. The capstone output
+`output/phase14/20260624_asof20260623_yoy50_2032/promotion_triad_real_prod_check/promotion_decision_real_prod_triad.json`
+reports `approved=true`, `blocking_count=0`, and
+`audit_gate_status_counts={"PASS": 27, "UNSUPPORTED": 10}`.
+
+Rejected alternatives:
+
+- Promote with the older `2026-06-17` local-candidate selected artifact.
+- Treat a local candidate artifact with `production_promotion_approved=false`
+  as production promotion evidence.
+- Ignore the selected-lambda artifact and rely only on production/export parity.
+
+Supersession note:
+
+- `asof20260623_yoy50_2032` is not the current promotion candidate.
+- Keep the artifact only as historical evidence that manifest parity was
+  repaired before the shape remediation.
+
+Invariants not to break:
+
+- The source hierarchy policy remains exact-artifact-bound and production
+  approved only for matching hashes.
+- `UNSUPPORTED` is acceptable here only because it is documented far-horizon
+  threshold insufficiency and hides no `CRITICAL` gate.
+- Promotion evidence remains manifest-backed; generated output artifacts are
+  evidence, not code commit targets by default.
+
+## D-20260624-27 - PNG Diagnostics Supersede YoY50 With Shape-Restored Candidate
+
+Decision: replace the visually poor `asof20260623_yoy50_2032` candidate with
+`output/phase14/20260624_asof20260623_lshape100_yoy10_amp200_2032/` as the
+current Phase 14 promotion-ready evidence. The monthly solver remains the level
+authority; the remediation changes solver priors/objective settings, not
+individual months after the solve:
+
+- `lambda_shape=100.0`
+- `lambda_smooth_month=0.1`
+- `lambda_smooth_yoy=10.0`
+- `structural_amplitude_eur_mwh=200.0`
+
+Reason: user review of PNG diagnostics correctly flagged the previous monthly
+shape as unsatisfactory. The old candidate passed hard gates but annual-only
+years collapsed toward a flat template. The new candidate restores seasonal
+amplitude while preserving hard BASE/PEAK constraints, source hierarchy policy,
+and production/export/selected manifest parity.
+
+Key evidence:
+
+- PNG diagnostics:
+  `output/phase14/20260624_asof20260623_lshape100_yoy10_amp200_2032/png_diagnostics/`
+- annual amplitude from `monthly_diagnostics.csv`:
+  2029 `44.87`, 2030 `39.75`, 2031 `39.33`, 2032 `39.33`
+- Q1-Q3 spread:
+  2029 `29.27`, 2030 `24.23`, 2031 `23.81`, 2032 `23.76`
+- strict Power BI:
+  `powerbi_quality_gate_status=PASS`, `shape_score_10=9`,
+  `max_eex_base_error_eur_mwh=0.000000`,
+  `max_eex_peak_error_eur_mwh=0.000000`,
+  `seasonal_warning_flags=0`,
+  `cross_year_month_shape_warning_flags=0`,
+  `latest_hfc_winter_summer_spread_eur_mwh=31.10`
+- delivered-product audit:
+  `all_gates_pass=true`, `PASS=80`, `QUOTE_CONFLICT=9`,
+  `accepted_quote_conflict_count=9`, `blocking_quote_conflict_count=0`,
+  `UNSUPPORTED=0`, `OUT_OF_SCOPE=3`
+- promotion capstone:
+  `approved=true`, `status=PROMOTION_EVIDENCE_PASS`, `blocking_count=0`,
+  `audit_gate_status_counts={"PASS": 27, "UNSUPPORTED": 10}`
+
+Manifest triad:
+
+- production manifest:
+  `pfc_shaping/model/artifacts/production_monthly_curve_manifest.json`
+- local export manifest:
+  `output/phase14/20260624_asof20260623_lshape100_yoy10_amp200_2032/fan_asof20260623_lshape100_yoy10_amp200_2032.monthly_curve_manifest.json`
+- selected config:
+  `.planning/phases/14-lt-audit-remediation/monthly_curve_selected_config_asof20260623_lshape100_yoy10_amp200_2032.json`
+- `active_config_hash`:
+  `f4b64f88919149a42a85693135c047b442ffa099011ce17e41c1cfe8782db88e`
+- `active_constraints_hash`:
+  `a80d5e09d2b6eda2ca5f22fd83ed58116a96b91dd80e46f50b61eb7e54baa262`
+- `monthly_solution_hash`:
+  `d717a426f5fee7fe62abf294a0e44311040115fd4edb6a3a118f06bf7243832e`
+
+Rejected alternatives:
+
+- Keep `lambda_smooth_yoy=50` because it passed strict gates.
+- Patch annual-only months manually after the solver.
+- Treat PNG diagnostics as cosmetic when the dashboard shape is a promotion
+  acceptance criterion.
+
+Invariants not to break:
+
+- Monthly solver remains the monthly level authority.
+- Exact CH hard BASE/PEAK constraints and quote-aware delivered-product audit
+  remain mandatory.
+- Source hierarchy `QUOTE_CONFLICT` acceptance remains exact-artifact-bound.
+- Promotion evidence must keep production, local export, and selected config
+  manifest parity.
+
+## D-20260707-01 - Daily Generation Uses 2026-07-06 Forward Snapshot
+
+Decision: regenerate the Tuesday 2026-07-07 CH LT PFC using the latest usable
+desk EEX quote row, `2026-07-06`, not a nonexistent `2026-07-07` quote row.
+Append the daily workbook `Price_Report_EEX.xlsx` to the local forward history
+and bind current generation artifacts to `forward_snapshot_date=2026-07-06`.
+
+Reason: the EEX workbook file was available on 2026-07-07, but the latest
+quoted CH/DE/FR rows inside it stop at 2026-07-06. AT/IT are not present in the
+daily workbook and remain unavailable at this exact as-of date, so they are not
+mixed into exact-date neighbor evidence.
+
+Rejected alternatives:
+
+- Claim a 2026-07-07 forward snapshot from a workbook whose quote rows stop on
+  2026-07-06.
+- Keep using the 2026-06-23 pinned snapshot after fresh CH/DE/FR daily quotes
+  were available.
+- Mix AT/IT stale dates into a fixed 2026-07-06 CH solve.
+
+Invariants not to break:
+
+- Manifest snapshot dates mean quote-row dates, not file timestamps.
+- Refreshed `data/eex_forwards_history.parquet` remains a local generated data
+  artifact and is not a commit target by default.
+- OMPEX/HFC benchmark files remain read-only benchmark evidence and are not
+  model inputs.
+
+## D-20260707-02 - 2026-07-07 Strict-Pass Local Candidate Uses YoY150
+
+Decision: for the 2026-07-07 daily generation, supersede the first
+`lshape100/yoy10/amp200` and `lshape100/yoy50/amp200` local candidates with
+`output/phase14/20260707_asof20260706_lshape100_yoy150_amp200_2032/`.
+
+Reason: the initial `yoy10` candidate generated successfully and had good PNG
+shape, but strict Power BI blocked it with
+`monthly_path_critical_flags=1` and `cross_year_near_clone_warnings=3`.
+`yoy50` removed the cross-year near-clone warnings but still had one residual
+edge monthly-path critical. A targeted solver probe showed
+`lambda_smooth_yoy=150` retained far-horizon seasonal amplitude while giving
+enough margin on the 2028 Q2 -> residual edge. The final candidate passes
+strict Power BI without `--allow-failed-gates`.
+
+Key evidence:
+
+- candidate CSV:
+  `output/phase14/20260707_asof20260706_lshape100_yoy150_amp200_2032/ch_hfc_hourly_asof20260706_lshape100_yoy150_amp200_2032.csv`
+- local export manifest:
+  `output/phase14/20260707_asof20260706_lshape100_yoy150_amp200_2032/fan_asof20260706_lshape100_yoy150_amp200_2032.monthly_curve_manifest.json`
+- PNG diagnostics:
+  `output/phase14/20260707_asof20260706_lshape100_yoy150_amp200_2032/png_diagnostics/`
+- strict Power BI:
+  `powerbi_quality_gate_status=PASS`, `shape_score_10=9`,
+  `max_eex_base_error_eur_mwh=0.000000`,
+  `max_eex_peak_error_eur_mwh=0.000000`,
+  `monthly_path_critical_flags=0`,
+  `cross_year_month_shape_warning_flags=0`,
+  `seasonal_warning_flags=0`
+- monthly shape:
+  2029 amplitude `45.15`, 2030 amplitude `41.98`, 2031 amplitude `40.63`,
+  2032 amplitude `40.13`
+- manifest hashes:
+  `active_config_hash=7bbcb4a63fb51013c5f0b80654167811ea1f86a649004640dc89a61c7b02d94c`,
+  `active_constraints_hash=451f9a23a4388973addabc7b467b535df2352bec74e69af34dcf4c28cdbeb15d`,
+  `monthly_solution_hash=0c42cda6a20fdcde282f6f4b401a347f84073d830da788bceca927f622f9dad0`
+
+Delivered-product audit status:
+
+- diagnostic audit only, no 2026-07-07 source-hierarchy policy artifact yet
+- `PASS=90`, `QUOTE_CONFLICT=6`, `UNSUPPORTED=0`
+- `critical_count=0`, `delivered_curve_drift_count=0`
+- `quote_conflict_identity_hash=a28d7f15151e730dca2099335e1d7e75dcf52e3a77edb6871352f9942c882846`
+
+Production dry-run/save:
+
+- wrote `pfc_shaping/output/pfc_15min_2026-07-07.*`
+- wrote `pfc_shaping/output/pfc_de_15min_2026-07-07.*`
+- wrote `pfc_shaping/model/artifacts/production_monthly_curve_manifest.json`
+- production manifest has the same active config, active constraints, and
+  monthly solution hashes as the strict-pass local candidate; its file sha256 is
+  `003586a10204a7cc236669cc0e15ec8d48b5cd316f9861374b9ad3b05c14491e`
+
+Rejected alternatives:
+
+- Promote the first `yoy10` run despite strict Power BI critical gates.
+- Stop at `yoy50` because PNGs were good while one monthly path critical
+  remained.
+- Patch July 2028 or any individual month after the solver.
+
+Invariants not to break:
+
+- Monthly solver remains the monthly level authority.
+- Exact-source hierarchy policy is still required before treating
+  `QUOTE_CONFLICT` rows as production accepted.
+- Full promotion evidence still requires production, local export, and selected
+  config manifest parity plus capstone; this daily run has not created the
+  2026-07-07 selected config/policy artifacts.
+
+## D-20260707-03 - 2026-07-07 Promotion Candidate Uses Amp150
+
+Decision: supersede the `lshape100/yoy150/amp200` 2026-07-07 candidate with
+`output/phase14/20260707_asof20260706_lshape100_yoy150_amp150_2032/` as the
+promotion-ready candidate.
+
+Reason: `amp200` passed strict Power BI, but the monthly sparse proof failed on
+2028-06 vs 2029-06 and the aggregate 2028-2030 focus population gate. A solver
+probe showed that lowering the structural monthly amplitude to `150` clears all
+CRITICAL sparse-proof gates while preserving visible seasonal shape. This is an
+objective/spec correction, not an individual month patch.
+
+Key evidence:
+
+- final CSV:
+  `output/phase14/20260707_asof20260706_lshape100_yoy150_amp150_2032/ch_hfc_hourly_asof20260706_lshape100_yoy150_amp150_2032.csv`
+- CSV sha256:
+  `4349f4774a4faace76f2022f2a6c39970eb40eb0916099a82801739d53381668`
+- production manifest:
+  `pfc_shaping/model/artifacts/production_monthly_curve_manifest.json`
+- export manifest:
+  `output/phase14/20260707_asof20260706_lshape100_yoy150_amp150_2032/fan_asof20260706_lshape100_yoy150_amp150_2032.monthly_curve_manifest.json`
+- selected config:
+  `.planning/phases/14-lt-audit-remediation/monthly_curve_selected_config_asof20260706_lshape100_yoy150_amp150_2032.json`
+- source hierarchy policy:
+  `.planning/phases/14-lt-audit-remediation/quote_conflict_source_hierarchy_policy_asof20260706_lshape100_yoy150_amp150_2032.json`
+- `active_config_hash`:
+  `f95e81bf8987174eb8b553406de296fc8cfb67a3dfde35f006b88cc006a66469`
+- `active_constraints_hash`:
+  `451f9a23a4388973addabc7b467b535df2352bec74e69af34dcf4c28cdbeb15d`
+- `monthly_solution_hash`:
+  `a505fd3a07cb5573adc2a76061caa52f300ee90043766e10cfe4819107171a04`
+
+Gate results:
+
+- strict Power BI: `PASS`
+- delivered-product audit: `all_gates_pass=true`,
+  `accepted_quote_conflict_count=6`, `UNSUPPORTED=0`
+- sparse proof: `PASS=33`, `WARNING=2`, `UNSUPPORTED=7`, `CRITICAL=0`
+- capstone:
+  `approved=true`, `status=PROMOTION_EVIDENCE_PASS`, `blocking_count=0`
+
+OMPEX benchmark:
+
+- read-only only; not used in model inputs, priors, objectives, or calibration
+- file:
+  `H:\Energy\GeCom\MARCHE & NEGOCE\Prix\Analyse HFC\HFC test\ER -HFC_OMPEX_15min\HFC_Ompex_20260707_101700.xlsx`
+- overlap: `2026-07-01 00:00:00` -> `2031-01-01 00:00:00`
+- points: `39473`, MAE `14.0163`, RMSE `18.4226`, bias `0.6167`,
+  correlation `0.8330`
+
+Rejected alternatives:
+
+- Promote `amp200` because strict Power BI was already green.
+- Relax or bypass sparse-proof CRITICAL gates.
+- Patch June 2028 or June 2029 manually after the solver.
+- Use OMPEX HFC benchmark data as a modeling input.
+
+Invariants not to break:
+
+- Monthly solver remains the monthly level authority.
+- `QUOTE_CONFLICT` acceptance remains exact-artifact-bound.
+- OMPEX remains read-only benchmark evidence only.
+- Generated data/output artifacts remain non-commit targets unless explicitly
+  requested.
+
+## D-20260707-04 - Roasters Audit Confirms GO With Commit Hygiene Guardrails
+
+Decision: accept the read-only Roasters/MIT audit verdict for the 2026-07-07
+`amp150` candidate as GO for promotion governance, with no P0/P1 blocker.
+Proceed only with curated staging; do not use broad `git add -A`.
+
+Reason: three independent read-only audits found the production/export/selected
+triad coherent, the capstone valid, strict Power BI and product-normalization
+gates passing, no OMPEX model contamination, and no staged generated artifacts.
+
+Accepted P2 findings:
+
+- Generated `export_report.md` still says local/test and NO-GO, but it is not
+  the selected governance artifact and is superseded by selected config plus
+  capstone.
+- Sparse-proof standalone manifest is less clear than the capstone because it
+  records a diagnostic solution hash and `production_approved=false`; promotion
+  must be read from the capstone using real production/export/selected
+  manifests.
+- Sparse-proof historical-threshold lineage is slightly messy but materially
+  equivalent; this is traceability cleanup, not a promotion blocker.
+- Residual warnings are accepted and documented: 2 sparse-proof warnings, 7
+  far-horizon `UNSUPPORTED`, and 4 Power BI monthly path warnings, with no
+  `CRITICAL`.
+
+Commit guardrails:
+
+- Include Phase 14 code/docs/governance artifacts only.
+- Exclude `data/eex_forwards_history.parquet`, `output/**`,
+  `pfc_shaping/output/**`, `pfc_shaping/model/artifacts/**`, and OMPEX
+  benchmark outputs.
+- Do not commit a fixed `forwards.eex_as_of_date` default. The `2026-07-06`
+  as-of was a local run pin for this evidence package; durable config should
+  default back to latest available quote row unless explicitly pinned.
+
+Rejected alternatives:
+
+- Treat the generated local export report as the promotion authority.
+- Re-run tuning because of accepted P2 documentation findings.
+- Stage all changed/untracked files.
+
+Invariants not to break:
+
+- Promotion evidence authority is the selected config plus capstone triad.
+- OMPEX remains read-only benchmark evidence only.
+- Monthly solver remains the level authority when enabled.
+

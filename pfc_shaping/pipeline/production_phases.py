@@ -366,6 +366,8 @@ def run_long_term_phase(
     monthly_authority_ch = None
     if monthly_solver_enabled(inputs.config, market="CH"):
         settings = monthly_solver_settings(inputs.config)
+        forwards_cfg = inputs.config.get("forwards", {}) or {}
+        solver_as_of_date = forwards_cfg.get("eex_as_of_date")
         monthly_constraint_tolerance_ch = float(settings.get("constraint_tolerance", 1e-9))
         history_path = settings.get("eex_history_path")
         history = pd.DataFrame()
@@ -373,9 +375,28 @@ def run_long_term_phase(
         if history_path and os.path.exists(str(history_path)):
             history = pd.read_parquet(str(history_path))
             history["date"] = pd.to_datetime(history["date"]).dt.tz_localize(None).dt.normalize()
+            neighbor_as_of_date = solver_as_of_date
+            if solver_as_of_date:
+                run_timestamp, historical_base_prices_ch = latest_base_prices_by_market(
+                    history,
+                    market="CH",
+                    as_of_date=solver_as_of_date,
+                )
+                base_prices_ch = historical_base_prices_ch
+                fwd_source_ch = f"EEX history CH as-of {run_timestamp.date()} ({len(base_prices_ch)} keys)"
+                neighbor_as_of_date = run_timestamp
+            else:
+                try:
+                    neighbor_as_of_date, _ = latest_base_prices_by_market(history, market="CH")
+                except ValueError:
+                    neighbor_as_of_date = None
             for neighbor in settings.get("markets", ("DE", "FR", "AT", "IT")):
                 try:
-                    _, prices = latest_base_prices_by_market(history, market=str(neighbor).upper())
+                    _, prices = latest_base_prices_by_market(
+                        history,
+                        market=str(neighbor).upper(),
+                        as_of_date=neighbor_as_of_date,
+                    )
                 except ValueError:
                     continue
                 neighbor_prices[str(neighbor).upper()] = prices
