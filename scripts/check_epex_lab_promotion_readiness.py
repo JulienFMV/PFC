@@ -18,6 +18,8 @@ from typing import Any
 
 import pandas as pd
 
+from scripts.epex_lab_selection_policy import selection_policy_manifest_value
+
 
 def check_readiness(
     *,
@@ -123,6 +125,11 @@ def check_readiness(
             adjusted_csv=Path(str((lab.get("outputs") or {}).get("adjusted_csv", ""))),
         )
         source_provenance_valid = all(check["status"] == "PASS" for check in source_provenance_checks)
+        selection_policy_value = selection_policy_manifest_value(
+            production_manifest,
+            adjusted_csv=Path(str((lab.get("outputs") or {}).get("adjusted_csv", ""))),
+        )
+        selection_policy_valid = selection_policy_value.get("validated") is True
         production_manifest_identity_valid = _production_run_identity_valid(production_manifest)
         production_manifest_approved = (
             production_manifest.get("schema_version") == "epex_lab_adjusted_production_manifest.v1"
@@ -130,6 +137,7 @@ def check_readiness(
             and production_manifest.get("production_promotion_approved") is True
             and production_manifest.get("contract_pass") is True
             and production_manifest.get("source_provenance_pass") is True
+            and selection_policy_valid
             and production_manifest_bound
             and source_provenance_valid
             and production_manifest_identity_valid
@@ -167,6 +175,11 @@ def check_readiness(
                         "self_attested": production_manifest.get("source_provenance_pass"),
                         "validated": source_provenance_valid,
                     },
+                ),
+                _check(
+                    "adjusted_production_manifest_selection_policy_pass",
+                    selection_policy_valid,
+                    selection_policy_value,
                 ),
                 _check(
                     "adjusted_production_manifest_run_identity_valid",

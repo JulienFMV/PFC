@@ -14,6 +14,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+from scripts.epex_lab_selection_policy import selection_policy_manifest_value
+
 
 def build_chain(
     *,
@@ -134,6 +136,9 @@ def _production_manifest_errors(production: dict[str, Any], path: Path) -> list[
         errors.append("adjusted_csv")
     elif production.get("adjusted_csv_sha256") != _sha256(adjusted_csv):
         errors.append("adjusted_csv_sha256")
+    selection_value = selection_policy_manifest_value(production, adjusted_csv=adjusted_csv)
+    if selection_value.get("validated") is not True:
+        errors.append(str(selection_value.get("error") or "selection_policy_pass"))
     errors.extend(_source_provenance_errors(production, adjusted_csv))
     return errors
 
@@ -206,6 +211,10 @@ def _sha256(path: Path) -> str:
 def _same_path(left: Any, right: Any) -> bool:
     if left is None or right is None:
         return False
+    try:
+        return Path(str(left)).resolve() == Path(str(right)).resolve()
+    except (OSError, TypeError, ValueError):
+        return False
 
 
 def _source_export_manifest_bound_to_csv(manifest_path: Path, source_csv: Path) -> bool:
@@ -234,10 +243,6 @@ def _source_export_manifest_bound_to_csv(manifest_path: Path, source_csv: Path) 
     ]
     expected_sha = _sha256(source_csv) if source_csv.exists() else None
     return expected_sha is not None and any(manifest.get(key) == expected_sha for key in sha_keys)
-    try:
-        return Path(str(left)).resolve() == Path(str(right)).resolve()
-    except (OSError, TypeError, ValueError):
-        return False
 
 
 def main(argv: list[str] | None = None) -> int:

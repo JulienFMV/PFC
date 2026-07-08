@@ -578,6 +578,42 @@ status remains `STRICT_DIAGNOSTICS_PASS_PRODUCTION_CHAIN_MISSING`, but missing
 evidence is now only `adjusted_production_manifest`. Validation: `87 passed,
 1 skipped`.
 
+Follow-up Phase 14 D50 hardening: adjusted production approval now requires an
+explicit no-OMPEX selection pass in addition to diagnostics, source provenance,
+and production manifest checks. `scripts/build_epex_lab_adjusted_production_manifest.py`
+records `selection_summary`, `selection_summary_sha256`, and
+`selection_policy_pass`; production approval requires
+`selection_policy_pass=true`. `scripts/epex_lab_selection_policy.py` provides a
+shared validator that requires explicit no-OMPEX flags,
+`replacement_verdict.replace_incumbent=true`, and exact selected-artifact hash
+binding. `scripts/check_epex_lab_promotion_readiness.py` and
+`scripts/build_epex_lab_adjusted_production_chain.py` reload the bound
+`selection_summary`, verify its sha256, and recalculate that policy instead of
+trusting the manifest boolean. They fail closed when the selection file is
+absent, tampered, not no-OMPEX, not selected, or not replacement-approved, and
+`scripts/stage_epex_lab_adjusted_lt_candidate.py` forwards
+`--selection-summary`.
+
+Current T070 selection-guard staging remains NO-GO:
+
+- adjusted CSV sha256:
+  `f3d1f9d749823c9babd1104261670dcd115a63f797e6aed2e38ef480cbdf40cb`
+- selection summary:
+  `output/phase14/t049_core_balance_selection_summary/spot_backtest_selection_summary.json`
+- selection summary sha256:
+  `0822379db522fadedbb12ae0ab327763fc2cbf28dac4443905ca2f010fb62183`
+- NO-GO adjusted production manifest:
+  `output/phase14/t049_core_balance/t070_diagnostics/staged_adjusted_candidate_selection_guard/adjusted_production_manifest_no_go.json`
+- NO-GO adjusted production manifest sha256:
+  `a042a9b22ac8144e00b62f46c879d46921f4fd9686e94698f54348d4271c12e1`
+- `selection_policy_pass=false`
+- `replacement_verdict.replace_incumbent=false`
+- no OMPEX flags.
+
+Validation for D50:
+`python -m pytest tests/test_stage_epex_lab_adjusted_lt_candidate_script.py tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_adjusted_production_chain_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+reported `47 passed, 1 skipped`.
+
 Previous 2026-07-07 promotion-ready daily candidate:
 `output/phase14/20260707_asof20260706_lshape100_yoy150_amp150_2032/`.
 

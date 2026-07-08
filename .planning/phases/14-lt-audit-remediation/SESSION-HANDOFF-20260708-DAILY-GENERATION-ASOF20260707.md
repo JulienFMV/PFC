@@ -2536,6 +2536,66 @@ Result: exit code `1`, expected. Refusal:
 
 Decision log entry: `D-20260708-49`.
 
+The adjusted production approval path was then hardened again to bind any
+future production-approved adjusted manifest to a no-OMPEX selection decision.
+Diagnostics and source provenance alone are not enough: T070 reproduces the
+frontier CSV and passes strict diagnostics, but the T049/T050 selection summary
+still reports `replace_incumbent=false` because the solar-tail incumbent is not
+beaten.
+
+Code change:
+
+- `scripts/build_epex_lab_adjusted_production_manifest.py`
+  - accepts optional `--selection-summary`;
+  - records `selection_summary`, `selection_summary_sha256`, and
+    `selection_policy_pass`;
+  - requires explicit no-OMPEX flags,
+    `replacement_verdict.replace_incumbent=true`, and an adjusted CSV sha match
+    to the canonical selected trial/artifact fields before production approval.
+- `scripts/epex_lab_selection_policy.py`
+  - provides the shared no-OMPEX selection policy validator.
+- `scripts/check_epex_lab_promotion_readiness.py`
+  - adds an explicit
+    `adjusted_production_manifest_selection_policy_pass` readiness check;
+  - reloads the bound `selection_summary`, validates its sha256, and
+    recalculates the selection policy instead of trusting the manifest boolean.
+- `scripts/build_epex_lab_adjusted_production_chain.py`
+  - refuses chain artifacts unless the input adjusted production manifest has a
+    hash-bound `selection_summary` that independently recalculates to
+    `selection_policy_pass=true`;
+  - fixes `_same_path` so source-export path binding is evaluated correctly.
+- `scripts/stage_epex_lab_adjusted_lt_candidate.py`
+  - forwards `--selection-summary` into the adjusted production manifest build.
+
+Validation:
+
+`python -m pytest tests/test_stage_epex_lab_adjusted_lt_candidate_script.py tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_adjusted_production_chain_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+
+Result: `47 passed, 1 skipped`.
+
+Real T070 selection-guard staging:
+
+`python scripts/stage_epex_lab_adjusted_lt_candidate.py --candidate-csv output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/ch_hfc_hourly_asof20260707_lshape100_yoy150_amp150_2032.csv --source-export-manifest output/phase14/t049_core_balance/t070_diagnostics/source_export_manifest_baseline_20260708.json --output-dir output/phase14/t049_core_balance/t070_diagnostics/staged_adjusted_candidate_selection_guard --spot-parquet output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_spot_refresh_20260708/epex_hourly_ch_energy_charts_20260708.parquet --valuation-timestamp 2026-07-07T00:00:00Z --weekend-intensity 0.75 --low-tail-intensity 0.25 --peak-subshape-intensity 1.0 --night-intensity 0.6 --ramp-intensity 0.0 --max-abs-delta-eur-mwh 2.75 --lookback-years 5 --baseline-monthly-manifest output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/fan_asof20260707_lshape100_yoy150_amp150_2032.monthly_curve_manifest.json --product-summary output/phase14/t049_core_balance/t070_diagnostics/product_normalization_with_policy/summary.json --powerbi-summary output/phase14/t049_core_balance/t070_diagnostics/powerbi_strict/summary_metrics.csv --source-hierarchy-policy .planning/phases/14-lt-audit-remediation/quote_conflict_source_hierarchy_policy_t070_asof20260707_t049_core_balance.json --independent-summary output/phase14/t049_core_balance/t070_w075_l025_p01_n06_r00_d275/independent_ab_comparison/ab_comparison_summary.json --governance-audit output/phase14/t049_core_balance/t070_w075_l025_p01_n06_r00_d275/governance_audit/epex_shape_lab_governance_audit.json --selection-summary output/phase14/t049_core_balance_selection_summary/spot_backtest_selection_summary.json`
+
+Result: exit code `0`, but the produced production manifest remains NO-GO:
+
+- adjusted CSV sha256:
+  `f3d1f9d749823c9babd1104261670dcd115a63f797e6aed2e38ef480cbdf40cb`
+- selection summary sha256:
+  `0822379db522fadedbb12ae0ab327763fc2cbf28dac4443905ca2f010fb62183`
+- adjusted production manifest:
+  `output/phase14/t049_core_balance/t070_diagnostics/staged_adjusted_candidate_selection_guard/adjusted_production_manifest_no_go.json`
+- adjusted production manifest sha256:
+  `a042a9b22ac8144e00b62f46c879d46921f4fd9686e94698f54348d4271c12e1`
+- `contract_pass=false`
+- `selection_policy_pass=false`
+- `production_approved=false`
+- `production_promotion_approved=false`
+- failed check: `selection_policy_pass=FAIL`, `replace_incumbent=false`,
+  no OMPEX flags.
+
+Decision log entry: `D-20260708-50`.
+
 Generated or refreshed local evidence, not default commit targets:
 
 - `data/eex_forwards_history.parquet`

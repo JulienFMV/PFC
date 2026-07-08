@@ -50,6 +50,7 @@ def stage_candidate(
     source_hierarchy_policy: Path | None = None,
     independent_summary: Path | None = None,
     governance_audit: Path | None = None,
+    selection_summary: Path | None = None,
 ) -> dict[str, Any]:
     output_dir.mkdir(parents=True, exist_ok=True)
     staged_candidate_csv = output_dir / "lt_hourly_candidate.csv"
@@ -196,6 +197,7 @@ def stage_candidate(
         "source_hierarchy_policy": source_hierarchy_policy,
         "independent_summary": independent_summary,
         "governance_audit": governance_audit,
+        "selection_summary": selection_summary,
     }
     missing_contract_inputs = [
         name for name, value in production_contract_inputs.items() if value is None or not value.exists()
@@ -211,6 +213,7 @@ def stage_candidate(
             source_hierarchy_policy=source_hierarchy_policy,
             independent_summary=independent_summary,
             governance_audit=governance_audit,
+            selection_summary=selection_summary,
             production_run_id="LT_EPEX_LAB_STAGING_NO_GO",
             production_entrypoint="scripts/stage_epex_lab_adjusted_lt_candidate.py",
             git_commit=None,
@@ -300,6 +303,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--source-hierarchy-policy", type=Path)
     parser.add_argument("--independent-summary", type=Path)
     parser.add_argument("--governance-audit", type=Path)
+    parser.add_argument("--selection-summary", type=Path)
     args = parser.parse_args(argv)
     manifest = stage_candidate(
         fan_parquet=args.fan_parquet,
@@ -325,6 +329,7 @@ def main(argv: list[str] | None = None) -> int:
         source_hierarchy_policy=args.source_hierarchy_policy,
         independent_summary=args.independent_summary,
         governance_audit=args.governance_audit,
+        selection_summary=args.selection_summary,
     )
     print(json.dumps(manifest, indent=2, sort_keys=True))
     return 0

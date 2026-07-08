@@ -110,6 +110,20 @@ def _source_export_manifest(path, candidate_csv) -> None:
     )
 
 
+def _selection_summary(path, adjusted_sha: str, *, replace_incumbent: bool = True) -> None:
+    _write_json(
+        path,
+        {
+            "ompex_used_in_model": False,
+            "ompex_used_in_selection": False,
+            "ompex_used_in_backtest": False,
+            "replacement_verdict": {"replace_incumbent": replace_incumbent},
+            "selected_trial": {"adjusted_csv_sha256": adjusted_sha},
+            "selected_adjusted_csv_sha256": adjusted_sha,
+        },
+    )
+
+
 def test_stage_epex_lab_adjusted_candidate_from_fan_is_no_go_and_hash_bound(tmp_path) -> None:
     fan = tmp_path / "fan.parquet"
     spot = tmp_path / "spot.parquet"
@@ -220,6 +234,8 @@ def test_stage_epex_lab_adjusted_candidate_blocks_contract_from_raw_fan_even_whe
     _fan_parquet(fan)
     _spot_parquet(spot)
     monthly, product, powerbi, policy, independent, governance = _strict_evidence(tmp_path)
+    selection = tmp_path / "selection.json"
+    _selection_summary(selection, "0" * 64)
 
     manifest = stage_candidate(
         fan_parquet=fan,
@@ -234,6 +250,7 @@ def test_stage_epex_lab_adjusted_candidate_blocks_contract_from_raw_fan_even_whe
         source_hierarchy_policy=policy,
         independent_summary=independent,
         governance_audit=governance,
+        selection_summary=selection,
     )
 
     assert manifest["missing_production_contract_inputs"] == []
@@ -262,6 +279,8 @@ def test_stage_epex_lab_adjusted_candidate_blocks_contract_from_csv_without_sour
     )
     hourly.to_csv(candidate, index=False)
     monthly, product, powerbi, policy, independent, governance = _strict_evidence(tmp_path)
+    selection = tmp_path / "selection.json"
+    _selection_summary(selection, "0" * 64)
 
     manifest = stage_candidate(
         candidate_csv=candidate,
@@ -275,6 +294,7 @@ def test_stage_epex_lab_adjusted_candidate_blocks_contract_from_csv_without_sour
         source_hierarchy_policy=policy,
         independent_summary=independent,
         governance_audit=governance,
+        selection_summary=selection,
     )
 
     assert manifest["source_kind"] == "candidate_csv"
@@ -303,6 +323,15 @@ def test_stage_epex_lab_adjusted_candidate_writes_contract_from_manifest_bound_a
     hourly.to_csv(candidate, index=False)
     _source_export_manifest(source_export, candidate)
     monthly, product, powerbi, policy, independent, governance = _strict_evidence(tmp_path)
+    probe = stage_candidate(
+        candidate_csv=candidate,
+        source_export_manifest=source_export,
+        output_dir=tmp_path / "stage_probe",
+        spot_parquet=spot,
+        valuation_timestamp="2026-01-01T00:00:00Z",
+    )
+    selection = tmp_path / "selection.json"
+    _selection_summary(selection, probe["adjusted_csv_sha256"])
 
     manifest = stage_candidate(
         candidate_csv=candidate,
@@ -316,6 +345,7 @@ def test_stage_epex_lab_adjusted_candidate_writes_contract_from_manifest_bound_a
         source_hierarchy_policy=policy,
         independent_summary=independent,
         governance_audit=governance,
+        selection_summary=selection,
     )
 
     assert manifest["source_kind"] == "candidate_csv"

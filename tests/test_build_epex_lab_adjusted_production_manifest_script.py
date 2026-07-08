@@ -136,6 +136,41 @@ def _write_source_provenance(tmp_path, lab_manifest, adjusted_csv: str, *, sourc
     return source
 
 
+def _write_selection_summary(
+    tmp_path,
+    adjusted_csv: str,
+    *,
+    replace_incumbent: bool = True,
+    include_ompex_flags: bool = True,
+    ompex_used_in_model: bool = False,
+    ompex_used_in_selection: bool = False,
+    ompex_used_in_backtest: bool = False,
+    selected_sha: str | None = None,
+):
+    selection = tmp_path / "selection_summary.json"
+    sha = selected_sha or _sha256(tmp_path / "adjusted.csv")
+    payload = {
+        "replacement_verdict": {"replace_incumbent": replace_incumbent},
+        "selected_trial": {
+            "adjusted_csv_sha256": sha,
+        },
+        "selected_adjusted_csv_sha256": sha,
+    }
+    if include_ompex_flags:
+        payload.update(
+            {
+                "ompex_used_in_model": ompex_used_in_model,
+                "ompex_used_in_selection": ompex_used_in_selection,
+                "ompex_used_in_backtest": ompex_used_in_backtest,
+            }
+        )
+    _write_json(
+        selection,
+        payload,
+    )
+    return selection
+
+
 def test_adjusted_production_manifest_builder_is_no_go_by_default(tmp_path) -> None:
     lab, monthly, product, powerbi, policy, independent, governance, _ompex = _write_inputs(tmp_path)
 
@@ -245,6 +280,7 @@ def test_adjusted_production_manifest_approval_rejects_invalid_git_commit(tmp_pa
     lab, monthly, product, powerbi, policy, independent, governance, _ompex = _write_inputs(tmp_path)
     adjusted_csv = json.loads(lab.read_text(encoding="utf-8"))["outputs"]["adjusted_csv"]
     source = _write_source_provenance(tmp_path, lab, adjusted_csv, source_kind="candidate_csv")
+    selection = _write_selection_summary(tmp_path, adjusted_csv)
 
     with pytest.raises(ValueError, match="git_commit_must_be_40_hex"):
         build_manifest(
@@ -255,6 +291,7 @@ def test_adjusted_production_manifest_approval_rejects_invalid_git_commit(tmp_pa
             source_hierarchy_policy=policy,
             independent_summary=independent,
             governance_audit=governance,
+            selection_summary=selection,
             production_run_id="prod-run-1",
             production_entrypoint="pfc_shaping.pipeline.production_phases",
             git_commit="not-a-commit",
@@ -269,6 +306,7 @@ def test_adjusted_production_manifest_can_be_approved_with_candidate_csv_source_
     lab, monthly, product, powerbi, policy, independent, governance, _ompex = _write_inputs(tmp_path)
     adjusted_csv = json.loads(lab.read_text(encoding="utf-8"))["outputs"]["adjusted_csv"]
     source = _write_source_provenance(tmp_path, lab, adjusted_csv, source_kind="candidate_csv")
+    selection = _write_selection_summary(tmp_path, adjusted_csv)
 
     manifest = build_manifest(
         lab_manifest=lab,
@@ -278,6 +316,7 @@ def test_adjusted_production_manifest_can_be_approved_with_candidate_csv_source_
         source_hierarchy_policy=policy,
         independent_summary=independent,
         governance_audit=governance,
+        selection_summary=selection,
         production_run_id="prod-run-1",
         production_entrypoint="pfc_shaping.pipeline.production_phases",
         git_commit="a" * 40,
@@ -290,14 +329,16 @@ def test_adjusted_production_manifest_can_be_approved_with_candidate_csv_source_
     assert manifest["contract_pass"] is True
     assert manifest["source_kind"] == "candidate_csv"
     assert manifest["source_provenance_pass"] is True
+    assert manifest["selection_policy_pass"] is True
     assert manifest["production_approved"] is True
     assert manifest["production_promotion_approved"] is True
 
 
-def test_adjusted_production_manifest_rejects_fan_source_provenance(tmp_path) -> None:
+def test_adjusted_production_manifest_approval_requires_selection_policy(tmp_path) -> None:
     lab, monthly, product, powerbi, policy, independent, governance, _ompex = _write_inputs(tmp_path)
     adjusted_csv = json.loads(lab.read_text(encoding="utf-8"))["outputs"]["adjusted_csv"]
-    source = _write_source_provenance(tmp_path, lab, adjusted_csv, source_kind="fan_parquet")
+    source = _write_source_provenance(tmp_path, lab, adjusted_csv, source_kind="candidate_csv")
+    selection = _write_selection_summary(tmp_path, adjusted_csv, replace_incumbent=False)
 
     manifest = build_manifest(
         lab_manifest=lab,
@@ -307,6 +348,129 @@ def test_adjusted_production_manifest_rejects_fan_source_provenance(tmp_path) ->
         source_hierarchy_policy=policy,
         independent_summary=independent,
         governance_audit=governance,
+        selection_summary=selection,
+        production_run_id="prod-run-1",
+        production_entrypoint="pfc_shaping.pipeline.production_phases",
+        git_commit="a" * 40,
+        source_provenance_manifest=source,
+        production_approved=True,
+        production_promotion_approved=True,
+        output=tmp_path / "adjusted_production_manifest.json",
+    )
+
+    checks = {check["name"]: check["status"] for check in manifest["checks"]}
+    assert checks["selection_policy_pass"] == "FAIL"
+    assert manifest["contract_pass"] is False
+    assert manifest["selection_policy_pass"] is False
+    assert manifest["production_approved"] is False
+    assert manifest["production_promotion_approved"] is False
+
+
+def test_adjusted_production_manifest_selection_policy_requires_explicit_no_ompex(tmp_path) -> None:
+    lab, monthly, product, powerbi, policy, independent, governance, _ompex = _write_inputs(tmp_path)
+    adjusted_csv = json.loads(lab.read_text(encoding="utf-8"))["outputs"]["adjusted_csv"]
+    source = _write_source_provenance(tmp_path, lab, adjusted_csv, source_kind="candidate_csv")
+    selection = _write_selection_summary(tmp_path, adjusted_csv, include_ompex_flags=False)
+
+    manifest = build_manifest(
+        lab_manifest=lab,
+        baseline_monthly_manifest=monthly,
+        product_summary=product,
+        powerbi_summary=powerbi,
+        source_hierarchy_policy=policy,
+        independent_summary=independent,
+        governance_audit=governance,
+        selection_summary=selection,
+        production_run_id="prod-run-1",
+        production_entrypoint="pfc_shaping.pipeline.production_phases",
+        git_commit="a" * 40,
+        source_provenance_manifest=source,
+        production_approved=True,
+        production_promotion_approved=True,
+        output=tmp_path / "adjusted_production_manifest.json",
+    )
+
+    checks = {check["name"]: check["status"] for check in manifest["checks"]}
+    assert checks["selection_policy_pass"] == "FAIL"
+    assert manifest["selection_policy_pass"] is False
+    assert manifest["production_approved"] is False
+
+
+def test_adjusted_production_manifest_selection_policy_rejects_ompex_flags(tmp_path) -> None:
+    lab, monthly, product, powerbi, policy, independent, governance, _ompex = _write_inputs(tmp_path)
+    adjusted_csv = json.loads(lab.read_text(encoding="utf-8"))["outputs"]["adjusted_csv"]
+    source = _write_source_provenance(tmp_path, lab, adjusted_csv, source_kind="candidate_csv")
+    selection = _write_selection_summary(tmp_path, adjusted_csv, ompex_used_in_backtest=True)
+
+    manifest = build_manifest(
+        lab_manifest=lab,
+        baseline_monthly_manifest=monthly,
+        product_summary=product,
+        powerbi_summary=powerbi,
+        source_hierarchy_policy=policy,
+        independent_summary=independent,
+        governance_audit=governance,
+        selection_summary=selection,
+        production_run_id="prod-run-1",
+        production_entrypoint="pfc_shaping.pipeline.production_phases",
+        git_commit="a" * 40,
+        source_provenance_manifest=source,
+        production_approved=True,
+        production_promotion_approved=True,
+        output=tmp_path / "adjusted_production_manifest.json",
+    )
+
+    checks = {check["name"]: check["status"] for check in manifest["checks"]}
+    assert checks["selection_policy_pass"] == "FAIL"
+    assert manifest["selection_policy_pass"] is False
+    assert manifest["production_approved"] is False
+
+
+def test_adjusted_production_manifest_selection_policy_requires_selected_sha_match(tmp_path) -> None:
+    lab, monthly, product, powerbi, policy, independent, governance, _ompex = _write_inputs(tmp_path)
+    adjusted_csv = json.loads(lab.read_text(encoding="utf-8"))["outputs"]["adjusted_csv"]
+    source = _write_source_provenance(tmp_path, lab, adjusted_csv, source_kind="candidate_csv")
+    selection = _write_selection_summary(tmp_path, adjusted_csv, selected_sha="0" * 64)
+
+    manifest = build_manifest(
+        lab_manifest=lab,
+        baseline_monthly_manifest=monthly,
+        product_summary=product,
+        powerbi_summary=powerbi,
+        source_hierarchy_policy=policy,
+        independent_summary=independent,
+        governance_audit=governance,
+        selection_summary=selection,
+        production_run_id="prod-run-1",
+        production_entrypoint="pfc_shaping.pipeline.production_phases",
+        git_commit="a" * 40,
+        source_provenance_manifest=source,
+        production_approved=True,
+        production_promotion_approved=True,
+        output=tmp_path / "adjusted_production_manifest.json",
+    )
+
+    checks = {check["name"]: check["status"] for check in manifest["checks"]}
+    assert checks["selection_policy_pass"] == "FAIL"
+    assert manifest["selection_policy_pass"] is False
+    assert manifest["production_approved"] is False
+
+
+def test_adjusted_production_manifest_rejects_fan_source_provenance(tmp_path) -> None:
+    lab, monthly, product, powerbi, policy, independent, governance, _ompex = _write_inputs(tmp_path)
+    adjusted_csv = json.loads(lab.read_text(encoding="utf-8"))["outputs"]["adjusted_csv"]
+    source = _write_source_provenance(tmp_path, lab, adjusted_csv, source_kind="fan_parquet")
+    selection = _write_selection_summary(tmp_path, adjusted_csv)
+
+    manifest = build_manifest(
+        lab_manifest=lab,
+        baseline_monthly_manifest=monthly,
+        product_summary=product,
+        powerbi_summary=powerbi,
+        source_hierarchy_policy=policy,
+        independent_summary=independent,
+        governance_audit=governance,
+        selection_summary=selection,
         production_run_id="prod-run-1",
         production_entrypoint="pfc_shaping.pipeline.production_phases",
         git_commit="a" * 40,

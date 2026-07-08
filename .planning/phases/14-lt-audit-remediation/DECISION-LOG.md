@@ -4599,3 +4599,93 @@ Invariants not to break:
   valid approval flags and run identity.
 - OMPEX remains outside model, selection, and production-chain validation.
 
+## D-20260708-50 - Adjusted Production Approval Requires No-OMPEX Selection Pass
+
+Decision: require `selection_policy_pass=true` on an adjusted production
+manifest before it can be approved or used to build a production chain. The
+selection policy must be no-OMPEX and must explicitly report
+`replacement_verdict.replace_incumbent=true` for the bound adjusted CSV sha.
+
+Reason: strict diagnostics and source provenance are not sufficient to promote
+an adjusted EPEX lab candidate. T070 passes strict delivered-product and Power
+BI diagnostics, and its staging provenance can reproduce the frontier CSV, but
+the T049 selection summary still reports `replace_incumbent=false` because the
+candidate misses the T046 solar-tail incumbent. Without a selection-policy
+gate, a future approved production manifest could bypass the no-OMPEX
+replacement decision.
+
+Implementation:
+
+- `scripts/build_epex_lab_adjusted_production_manifest.py`
+  - added optional `selection_summary`;
+  - added CLI flag `--selection-summary`;
+  - records `selection_summary`, `selection_summary_sha256`, and
+    `selection_policy_pass`;
+  - `selection_policy_pass` requires explicit no-OMPEX flags
+    (`ompex_used_in_model=false`, `ompex_used_in_selection=false`,
+    `ompex_used_in_backtest=false`), a replacement verdict with
+    `replace_incumbent=true`, and an adjusted CSV sha match to the canonical
+    selected trial/artifact fields;
+  - production approval now requires both `contract_pass=true` and
+    `selection_policy_pass=true`.
+- `scripts/epex_lab_selection_policy.py`
+  - added the shared no-OMPEX selection policy validator.
+- `scripts/check_epex_lab_promotion_readiness.py`
+  - added `adjusted_production_manifest_selection_policy_pass`;
+  - reloads `selection_summary`, validates `selection_summary_sha256`, and
+    recalculates the policy instead of trusting the manifest boolean.
+- `scripts/build_epex_lab_adjusted_production_chain.py`
+  - refuses approved chain artifacts unless the same hash-bound
+    `selection_summary` recalculation passes;
+  - fixed the `_same_path` helper so source-export path binding is actually
+    evaluated before falling back to sha binding.
+- `scripts/stage_epex_lab_adjusted_lt_candidate.py`
+  - accepts `--selection-summary` and forwards it to the adjusted production
+    manifest builder.
+
+Validation:
+
+- `python -m pytest tests/test_stage_epex_lab_adjusted_lt_candidate_script.py tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_adjusted_production_chain_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+- result: `47 passed, 1 skipped`
+
+Real T070 selection-guard staging:
+
+- command:
+  `python scripts/stage_epex_lab_adjusted_lt_candidate.py --candidate-csv output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/ch_hfc_hourly_asof20260707_lshape100_yoy150_amp150_2032.csv --source-export-manifest output/phase14/t049_core_balance/t070_diagnostics/source_export_manifest_baseline_20260708.json --output-dir output/phase14/t049_core_balance/t070_diagnostics/staged_adjusted_candidate_selection_guard --spot-parquet output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_spot_refresh_20260708/epex_hourly_ch_energy_charts_20260708.parquet --valuation-timestamp 2026-07-07T00:00:00Z --weekend-intensity 0.75 --low-tail-intensity 0.25 --peak-subshape-intensity 1.0 --night-intensity 0.6 --ramp-intensity 0.0 --max-abs-delta-eur-mwh 2.75 --lookback-years 5 --baseline-monthly-manifest output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/fan_asof20260707_lshape100_yoy150_amp150_2032.monthly_curve_manifest.json --product-summary output/phase14/t049_core_balance/t070_diagnostics/product_normalization_with_policy/summary.json --powerbi-summary output/phase14/t049_core_balance/t070_diagnostics/powerbi_strict/summary_metrics.csv --source-hierarchy-policy .planning/phases/14-lt-audit-remediation/quote_conflict_source_hierarchy_policy_t070_asof20260707_t049_core_balance.json --independent-summary output/phase14/t049_core_balance/t070_w075_l025_p01_n06_r00_d275/independent_ab_comparison/ab_comparison_summary.json --governance-audit output/phase14/t049_core_balance/t070_w075_l025_p01_n06_r00_d275/governance_audit/epex_shape_lab_governance_audit.json --selection-summary output/phase14/t049_core_balance_selection_summary/spot_backtest_selection_summary.json`
+
+Result:
+
+- adjusted CSV sha256 still matches T070:
+  `f3d1f9d749823c9babd1104261670dcd115a63f797e6aed2e38ef480cbdf40cb`
+- selection summary sha256:
+  `0822379db522fadedbb12ae0ab327763fc2cbf28dac4443905ca2f010fb62183`
+- `adjusted_production_contract_pass=false`
+- adjusted production manifest NO-GO:
+  `output/phase14/t049_core_balance/t070_diagnostics/staged_adjusted_candidate_selection_guard/adjusted_production_manifest_no_go.json`
+- adjusted production manifest NO-GO sha256:
+  `a042a9b22ac8144e00b62f46c879d46921f4fd9686e94698f54348d4271c12e1`
+- manifest fields:
+  - `contract_pass=false`
+  - `selection_policy_pass=false`
+  - `production_approved=false`
+  - `production_promotion_approved=false`
+- failed check:
+  - `selection_policy_pass=FAIL`
+  - `replace_incumbent=false`
+  - no OMPEX flags
+
+Rejected alternatives:
+
+- Let production approval rely only on diagnostics/provenance.
+- Use OMPEX advisory improvement to override `replace_incumbent=false`.
+- Approve T070 with an implicit tolerance for the solar-tail miss.
+
+Invariants not to break:
+
+- A production-approved adjusted EPEX lab candidate must have no-OMPEX
+  replacement evidence for the exact adjusted CSV sha.
+- OMPEX advisory remains outside selection, thresholds, ranking, and promotion.
+- T070 remains NO-GO production until either a future no-OMPEX candidate passes
+  replacement or an explicit pre-approved no-OMPEX tolerance policy is added
+  and bound to the selection artifact.
+

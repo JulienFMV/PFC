@@ -137,6 +137,24 @@ def _write_source_provenance(tmp_path: Path, *, lab: Path, adjusted_csv: str) ->
     return source_provenance
 
 
+def _write_selection_summary(tmp_path: Path) -> Path:
+    selection = tmp_path / "selection_summary.json"
+    _write_json(
+        selection,
+        {
+            "ompex_used_in_model": False,
+            "ompex_used_in_selection": False,
+            "ompex_used_in_backtest": False,
+            "replacement_verdict": {"replace_incumbent": True},
+            "selected_trial": {
+                "adjusted_csv_sha256": _sha256(tmp_path / "adjusted.csv"),
+            },
+            "selected_adjusted_csv_sha256": _sha256(tmp_path / "adjusted.csv"),
+        },
+    )
+    return selection
+
+
 def test_adjusted_production_chain_rejects_no_go_manifest(tmp_path: Path) -> None:
     adjusted_csv = tmp_path / "adjusted.csv"
     adjusted_csv.write_text("timestamp_ch,price_weighted_mean_eur_mwh\n", encoding="utf-8")
@@ -195,6 +213,7 @@ def test_adjusted_production_chain_rejects_tampered_source_provenance(tmp_path: 
     lab, monthly, product, powerbi, policy, independent, governance, ompex = _write_inputs(tmp_path)
     adjusted_csv = json.loads(lab.read_text(encoding="utf-8"))["outputs"]["adjusted_csv"]
     source_provenance = _write_source_provenance(tmp_path, lab=lab, adjusted_csv=adjusted_csv)
+    selection = _write_selection_summary(tmp_path)
     source = json.loads(source_provenance.read_text(encoding="utf-8"))
     source["source_sha256"] = "0" * 64
     source_provenance.write_text(json.dumps(source), encoding="utf-8")
@@ -207,6 +226,7 @@ def test_adjusted_production_chain_rejects_tampered_source_provenance(tmp_path: 
         source_hierarchy_policy=policy,
         independent_summary=independent,
         governance_audit=governance,
+        selection_summary=selection,
         production_run_id="prod-run-1",
         production_entrypoint="pfc_shaping.pipeline.production_phases",
         git_commit="a" * 40,
@@ -220,10 +240,11 @@ def test_adjusted_production_chain_rejects_tampered_source_provenance(tmp_path: 
         build_chain(adjusted_production_manifest=production_manifest, output_dir=tmp_path / "chain")
 
 
-def test_adjusted_production_chain_builds_artifacts_that_unlock_readiness(tmp_path: Path) -> None:
-    lab, monthly, product, powerbi, policy, independent, governance, ompex = _write_inputs(tmp_path)
+def test_adjusted_production_chain_rejects_self_attested_selection_policy(tmp_path: Path) -> None:
+    lab, monthly, product, powerbi, policy, independent, governance, _ompex = _write_inputs(tmp_path)
     adjusted_csv = json.loads(lab.read_text(encoding="utf-8"))["outputs"]["adjusted_csv"]
     source_provenance = _write_source_provenance(tmp_path, lab=lab, adjusted_csv=adjusted_csv)
+    selection = _write_selection_summary(tmp_path)
     production_manifest = tmp_path / "adjusted_production_manifest.json"
     build_manifest(
         lab_manifest=lab,
@@ -233,6 +254,71 @@ def test_adjusted_production_chain_builds_artifacts_that_unlock_readiness(tmp_pa
         source_hierarchy_policy=policy,
         independent_summary=independent,
         governance_audit=governance,
+        selection_summary=selection,
+        production_run_id="prod-run-1",
+        production_entrypoint="pfc_shaping.pipeline.production_phases",
+        git_commit="a" * 40,
+        source_provenance_manifest=source_provenance,
+        production_approved=True,
+        production_promotion_approved=True,
+        output=production_manifest,
+    )
+    manifest = json.loads(production_manifest.read_text(encoding="utf-8"))
+    manifest["selection_policy_pass"] = True
+    manifest.pop("selection_summary")
+    manifest.pop("selection_summary_sha256")
+    production_manifest.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="selection_summary"):
+        build_chain(adjusted_production_manifest=production_manifest, output_dir=tmp_path / "chain")
+
+
+def test_adjusted_production_chain_rejects_tampered_selection_summary(tmp_path: Path) -> None:
+    lab, monthly, product, powerbi, policy, independent, governance, _ompex = _write_inputs(tmp_path)
+    adjusted_csv = json.loads(lab.read_text(encoding="utf-8"))["outputs"]["adjusted_csv"]
+    source_provenance = _write_source_provenance(tmp_path, lab=lab, adjusted_csv=adjusted_csv)
+    selection = _write_selection_summary(tmp_path)
+    production_manifest = tmp_path / "adjusted_production_manifest.json"
+    build_manifest(
+        lab_manifest=lab,
+        baseline_monthly_manifest=monthly,
+        product_summary=product,
+        powerbi_summary=powerbi,
+        source_hierarchy_policy=policy,
+        independent_summary=independent,
+        governance_audit=governance,
+        selection_summary=selection,
+        production_run_id="prod-run-1",
+        production_entrypoint="pfc_shaping.pipeline.production_phases",
+        git_commit="a" * 40,
+        source_provenance_manifest=source_provenance,
+        production_approved=True,
+        production_promotion_approved=True,
+        output=production_manifest,
+    )
+    selection_payload = json.loads(selection.read_text(encoding="utf-8"))
+    selection_payload["replacement_verdict"] = {"replace_incumbent": False}
+    selection.write_text(json.dumps(selection_payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="selection_summary_sha256"):
+        build_chain(adjusted_production_manifest=production_manifest, output_dir=tmp_path / "chain")
+
+
+def test_adjusted_production_chain_builds_artifacts_that_unlock_readiness(tmp_path: Path) -> None:
+    lab, monthly, product, powerbi, policy, independent, governance, ompex = _write_inputs(tmp_path)
+    adjusted_csv = json.loads(lab.read_text(encoding="utf-8"))["outputs"]["adjusted_csv"]
+    source_provenance = _write_source_provenance(tmp_path, lab=lab, adjusted_csv=adjusted_csv)
+    selection = _write_selection_summary(tmp_path)
+    production_manifest = tmp_path / "adjusted_production_manifest.json"
+    build_manifest(
+        lab_manifest=lab,
+        baseline_monthly_manifest=monthly,
+        product_summary=product,
+        powerbi_summary=powerbi,
+        source_hierarchy_policy=policy,
+        independent_summary=independent,
+        governance_audit=governance,
+        selection_summary=selection,
         production_run_id="prod-run-1",
         production_entrypoint="pfc_shaping.pipeline.production_phases",
         git_commit="a" * 40,

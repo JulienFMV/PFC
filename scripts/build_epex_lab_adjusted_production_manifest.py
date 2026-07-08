@@ -17,6 +17,11 @@ from typing import Any
 
 import pandas as pd
 
+from scripts.epex_lab_selection_policy import (
+    selection_policy_pass,
+    selection_policy_value,
+)
+
 
 def build_manifest(
     *,
@@ -28,6 +33,7 @@ def build_manifest(
     independent_summary: Path,
     governance_audit: Path,
     output: Path,
+    selection_summary: Path | None = None,
     production_run_id: str | None = None,
     production_entrypoint: str | None = None,
     git_commit: str | None = None,
@@ -42,6 +48,7 @@ def build_manifest(
     policy = _load_json(source_hierarchy_policy)
     independent = _load_json(independent_summary)
     governance = _load_json(governance_audit)
+    selection = _load_json(selection_summary) if selection_summary is not None else None
     source_provenance = _load_json(source_provenance_manifest) if source_provenance_manifest is not None else None
 
     adjusted_csv = Path(str((lab.get("outputs") or {}).get("adjusted_csv", "")))
@@ -57,9 +64,11 @@ def build_manifest(
         independent=independent,
         governance=governance,
         source_provenance=source_provenance,
+        selection=selection,
         adjusted_csv=adjusted_csv,
     )
     contract_pass = all(check["status"] == "PASS" for check in checks)
+    selection_policy_ok = selection_policy_pass(selection, adjusted_csv=adjusted_csv)
     if production_approved or production_promotion_approved:
         identity_errors = _production_identity_errors(
             production_run_id=production_run_id,
@@ -73,6 +82,7 @@ def build_manifest(
                 + ", ".join(identity_errors)
             )
     approved = bool(production_approved and production_promotion_approved and contract_pass)
+    approved = bool(approved and selection_policy_ok)
 
     manifest: dict[str, Any] = {
         "schema_version": "epex_lab_adjusted_production_manifest.v1",
@@ -103,6 +113,9 @@ def build_manifest(
         "independent_summary_sha256": _sha256(independent_summary),
         "governance_audit": str(governance_audit),
         "governance_audit_sha256": _sha256(governance_audit),
+        "selection_summary": str(selection_summary) if selection_summary is not None else None,
+        "selection_summary_sha256": _sha256(selection_summary) if selection_summary is not None else None,
+        "selection_policy_pass": selection_policy_ok,
         "source_provenance_manifest": str(source_provenance_manifest) if source_provenance_manifest is not None else None,
         "source_provenance_manifest_sha256": (
             _sha256(source_provenance_manifest) if source_provenance_manifest is not None else None
@@ -137,6 +150,7 @@ def _contract_checks(
     independent: dict[str, Any],
     governance: dict[str, Any],
     source_provenance: dict[str, Any] | None,
+    selection: dict[str, Any] | None,
     adjusted_csv: Path,
 ) -> list[dict[str, Any]]:
     checks = [
@@ -172,6 +186,11 @@ def _contract_checks(
             powerbi.get("weighted_negative_hours"),
         ),
         _check("powerbi_no_critical_flags", _powerbi_critical_count(powerbi) == 0, _powerbi_critical_count(powerbi)),
+        _check(
+            "selection_policy_pass",
+            selection_policy_pass(selection, adjusted_csv=adjusted_csv),
+            selection_policy_value(selection, adjusted_csv=adjusted_csv),
+        ),
     ]
     checks.append(
         _check(
@@ -387,6 +406,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--source-hierarchy-policy", type=Path, required=True)
     parser.add_argument("--independent-summary", type=Path, required=True)
     parser.add_argument("--governance-audit", type=Path, required=True)
+    parser.add_argument("--selection-summary", type=Path, default=None)
     parser.add_argument("--production-run-id", default=None)
     parser.add_argument("--production-entrypoint", default=None)
     parser.add_argument("--git-commit", default=None)
@@ -401,6 +421,7 @@ def main(argv: list[str] | None = None) -> int:
         source_hierarchy_policy=args.source_hierarchy_policy,
         independent_summary=args.independent_summary,
         governance_audit=args.governance_audit,
+        selection_summary=args.selection_summary,
         production_run_id=args.production_run_id,
         production_entrypoint=args.production_entrypoint,
         git_commit=args.git_commit,
