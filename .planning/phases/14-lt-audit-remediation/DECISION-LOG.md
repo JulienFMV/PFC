@@ -1985,3 +1985,95 @@ Invariants not to break:
 - Any production adoption of `t046_w05_l025_p075_d03` requires a new
   production/export/capstone chain and artifact-bound source hierarchy policy.
 
+## D-20260708-15 - Run Strict Diagnostics on Frozen T046 Lab Trial
+
+Decision: run strict product-normalization and Power BI diagnostics on the
+frozen V2 trial `t046_w05_l025_p075_d03`, and add a hash-bound source hierarchy
+policy for its redundant quote conflicts. Keep the trial NO-GO production until
+it is regenerated through a real production/export/capstone chain.
+
+Reason: V2 selected `t046` using only pre-registered no-OMPEX criteria. The
+next promotion-readiness question was whether the selected adjusted artifact
+still respects delivered EEX BASE/PEAK/OFFPEAK product governance and strict
+Power BI quality gates under fresh local forwards/spot evidence.
+
+Forwards evidence:
+
+- `data/eex_forwards_history.parquet` was stale locally (`max_date=2026-06-17`)
+  and therefore rejected for a `2026-07-07` required snapshot.
+- A local diagnostic forwards parquet was rebuilt from desk workbooks:
+  `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_sweep_v2/diagnostic_forwards_history_rebuilt_20260708.parquet`
+- Source workbooks:
+  - `H:\Energy\GeCom\MARCHE & NEGOCE\Prix\EEX - ER\Price_Report_EEX_Yearly.xlsx`
+  - `H:\Energy\GeCom\MARCHE & NEGOCE\Prix\EEX - ER\Price_Report_EEX_CH_DE_Hist.xlsx`
+- Rebuilt CH coverage:
+  `2020-05-04 -> 2026-07-07`
+- rebuilt forwards sha256:
+  `a6244638c2234781853284ce2ad58d55d01265568cca6c85d4461f21446e8d76`
+
+Source hierarchy policy:
+
+- added:
+  `.planning/phases/14-lt-audit-remediation/quote_conflict_source_hierarchy_policy_t046_asof20260707_fresh_epex_sweep_v2.json`
+- policy sha256 from audit:
+  `b79aec178312816e7d9554065a2e2acc0d0b419c43d3b85b4373639e22dc64df`
+- bound input CSV sha256:
+  `8b50a01af05dc152a5f95fbd85e36c4bbe0106f0e65c4dd118b3df42737378c8`
+- bound forwards sha256:
+  `a6244638c2234781853284ce2ad58d55d01265568cca6c85d4461f21446e8d76`
+- quote conflict identity hash:
+  `a28d7f15151e730dca2099335e1d7e75dcf52e3a77edb6871352f9942c882846`
+- expected quote conflicts:
+  `6`, same redundant parent/finer-bucket identities as the 2026-07-08
+  baseline.
+
+Product normalization strict:
+
+- output:
+  `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_sweep_v2/t046_product_normalization_with_policy/`
+- command used no `--allow-failed-gates`
+- `all_gates_pass=true`
+- `critical_count=0`
+- `unsupported_count=0`
+- `quote_conflict_count=6`
+- `accepted_quote_conflict_count=6`
+- `blocking_quote_conflict_count=0`
+- `delivered_curve_drift_count=0`
+- `status_counts={"PASS": 90, "QUOTE_CONFLICT": 6}`
+- supported hard-gate max residual:
+  `0.0887692589743665` EUR/MWh
+
+Power BI strict:
+
+- output:
+  `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_sweep_v2/t046_powerbi_strict/`
+- command used no `--allow-failed-gates`
+- `powerbi_quality_gate_status=PASS`
+- `shape_score_10=9`
+- `hfc_vs_spot_score_10=9`
+- `max_eex_base_error_eur_mwh=0.000000`
+- `max_eex_peak_error_eur_mwh=0.000000`
+- `weighted_negative_hours=0`
+- `negative_gate_status=PASS`
+- `min_weighted_eur_mwh=4.84`
+- `min_price_eur_mwh=-3.83`
+- `p10_negative_hours=118`
+- `monthly_path_warning_flags=4`
+- all critical flag counts are `0`
+
+Rejected alternatives:
+
+- Treat the policy as production approval for the adjusted curve.
+- Reuse the baseline policy despite the different adjusted CSV hash.
+- Run product normalization against stale `data/eex_forwards_history.parquet`.
+- Use OMPEX advisory deltas as a promotion gate.
+
+Invariants not to break:
+
+- The policy accepts only source hierarchy quote conflicts for the exact
+  t046 CSV and rebuilt forwards hashes.
+- T046 still lacks production manifest, export manifest, selected config
+  artifact, and capstone evidence, so it remains NO-GO production.
+- Generated forwards, Power BI outputs, and audit CSV/JSON artifacts stay
+  local and are not committed.
+

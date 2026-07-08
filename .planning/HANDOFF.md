@@ -174,6 +174,28 @@ RMSE `-0.1631454`, correlation `+0.0024746`, p95 abs `-0.40474`, inside p10/p90
 `t046` is still lab-only and NO-GO production until a real production/export/
 capstone chain and artifact-bound source hierarchy policy exist.
 
+T046 strict diagnostics now exist. A local diagnostic forwards parquet was
+rebuilt from the EEX desk workbooks because `data/eex_forwards_history.parquet`
+was stale at `2026-06-17`:
+`output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_sweep_v2/diagnostic_forwards_history_rebuilt_20260708.parquet`
+with CH coverage `2020-05-04 -> 2026-07-07` and sha256
+`a6244638c2234781853284ce2ad58d55d01265568cca6c85d4461f21446e8d76`.
+Committed source hierarchy policy:
+`.planning/phases/14-lt-audit-remediation/quote_conflict_source_hierarchy_policy_t046_asof20260707_fresh_epex_sweep_v2.json`
+binds the exact t046 CSV sha
+`8b50a01af05dc152a5f95fbd85e36c4bbe0106f0e65c4dd118b3df42737378c8`, forwards
+sha above, and quote conflict identity hash
+`a28d7f15151e730dca2099335e1d7e75dcf52e3a77edb6871352f9942c882846`.
+Product normalization strict for t046 passes with `all_gates_pass=true`,
+`critical_count=0`, `unsupported_count=0`, `accepted_quote_conflict_count=6`,
+`blocking_quote_conflict_count=0`. Power BI strict for t046 passes with
+`powerbi_quality_gate_status=PASS`, shape score `9`, HFC-vs-spot score `9`,
+BASE/PEAK EEX residuals `0`, weighted negative hours `0`, min weighted price
+`4.84`, min price `-3.83`, and all critical flag counts `0` (`monthly_path`
+warnings remain `4`). T046 still remains NO-GO production: no adjusted
+production manifest, export manifest, selected config artifact, or capstone
+triad exists.
+
 Previous 2026-07-07 promotion-ready daily candidate:
 `output/phase14/20260707_asof20260706_lshape100_yoy150_amp150_2032/`.
 

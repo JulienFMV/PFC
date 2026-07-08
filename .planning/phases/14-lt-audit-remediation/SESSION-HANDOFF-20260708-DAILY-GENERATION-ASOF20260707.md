@@ -832,6 +832,87 @@ NO-GO production. Promotion would require regenerating it through the real
 production/export/capstone path with artifact-bound source hierarchy and strict
 gates.
 
+## T046 Strict Product and Power BI Diagnostics
+
+T046 was then run through strict product-normalization and Power BI diagnostics
+using local rebuilt forwards and refreshed spot evidence.
+
+Forwards note:
+
+- `data/eex_forwards_history.parquet` was stale locally (`max_date=2026-06-17`)
+  and had no CH snapshot on `2026-07-07`.
+- A local diagnostic forwards parquet was rebuilt from the desk workbooks:
+  `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_sweep_v2/diagnostic_forwards_history_rebuilt_20260708.parquet`
+- Source workbooks:
+  - `H:\Energy\GeCom\MARCHE & NEGOCE\Prix\EEX - ER\Price_Report_EEX_Yearly.xlsx`
+  - `H:\Energy\GeCom\MARCHE & NEGOCE\Prix\EEX - ER\Price_Report_EEX_CH_DE_Hist.xlsx`
+- rebuilt CH coverage: `2020-05-04 -> 2026-07-07`
+- rebuilt forwards sha256:
+  `a6244638c2234781853284ce2ad58d55d01265568cca6c85d4461f21446e8d76`
+
+Source hierarchy policy:
+
+- `.planning/phases/14-lt-audit-remediation/quote_conflict_source_hierarchy_policy_t046_asof20260707_fresh_epex_sweep_v2.json`
+- policy sha256 from audit:
+  `b79aec178312816e7d9554065a2e2acc0d0b419c43d3b85b4373639e22dc64df`
+- input CSV sha256:
+  `8b50a01af05dc152a5f95fbd85e36c4bbe0106f0e65c4dd118b3df42737378c8`
+- quote conflict identity hash:
+  `a28d7f15151e730dca2099335e1d7e75dcf52e3a77edb6871352f9942c882846`
+- expected quote conflicts: `6`
+- caveat: this policy accepts only redundant source hierarchy conflicts for
+  the exact bound diagnostic artifact; it is not production approval for the
+  adjusted curve.
+
+Product normalization strict:
+
+```powershell
+python scripts/audit_ch_product_normalization.py --csv output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_sweep_v2/t046_w05_l025_p075_d03/candidate_epex_shape_lab_adjusted.csv --forwards output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_sweep_v2/diagnostic_forwards_history_rebuilt_20260708.parquet --required-forward-date 2026-07-07 --source-hierarchy-policy .planning/phases/14-lt-audit-remediation/quote_conflict_source_hierarchy_policy_t046_asof20260707_fresh_epex_sweep_v2.json --output-csv output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_sweep_v2/t046_product_normalization_with_policy/gates.csv --summary-json output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_sweep_v2/t046_product_normalization_with_policy/summary.json
+```
+
+Result:
+
+- `all_gates_pass=true`
+- `critical_count=0`
+- `unsupported_count=0`
+- `quote_conflict_count=6`
+- `accepted_quote_conflict_count=6`
+- `blocking_quote_conflict_count=0`
+- `delivered_curve_drift_count=0`
+- `status_counts={"PASS": 90, "QUOTE_CONFLICT": 6}`
+
+Power BI strict:
+
+```powershell
+python scripts/build_powerbi_exports.py --csv output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_sweep_v2/t046_w05_l025_p075_d03/candidate_epex_shape_lab_adjusted.csv --forwards output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_sweep_v2/diagnostic_forwards_history_rebuilt_20260708.parquet --spot output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_spot_refresh_20260708/epex_hourly_ch_energy_charts_20260708.parquet --output-dir output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_sweep_v2/t046_powerbi_strict
+```
+
+Result:
+
+- `powerbi_quality_gate_status=PASS`
+- `shape_score_10=9`
+- `hfc_vs_spot_score_10=9`
+- `max_eex_base_error_eur_mwh=0.000000`
+- `max_eex_peak_error_eur_mwh=0.000000`
+- `weighted_negative_hours=0`
+- `negative_gate_status=PASS`
+- `min_weighted_eur_mwh=4.84`
+- `min_price_eur_mwh=-3.83`
+- `p10_negative_hours=118`
+- `monthly_path_warning_flags=4`
+- all critical flag counts: `0`
+
+Decision log entry: `D-20260708-15`.
+
+Remaining promotion blockers for t046:
+
+- no production manifest for the adjusted curve
+- no local export manifest for the adjusted curve
+- no selected config artifact for the adjusted curve
+- no capstone triad decision for the adjusted curve
+- generated rebuilt forwards / spot / audit outputs are local evidence only
+  and were not committed
+
 Governance:
 
 - Decision log entry: `D-20260708-05`.
