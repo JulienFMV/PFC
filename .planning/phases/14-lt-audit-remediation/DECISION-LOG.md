@@ -2149,3 +2149,74 @@ Invariants not to break:
 - Generated readiness decision JSON stays local evidence unless explicitly
   packaged.
 
+## D-20260708-17 - Package T046 Local Adjusted Evidence Bundle
+
+Decision: add a local bundle builder for selected EPEX lab artifacts and use it
+to package T046 export/selected/local-capstone evidence without granting
+production approval.
+
+Reason: after strict diagnostics passed, the readiness checker still reported
+four missing artifacts. Three of those can be truthfully represented as local
+non-production evidence: adjusted export manifest, adjusted selected artifact,
+and local capstone NO-GO decision. The remaining missing item must stay
+`adjusted_production_manifest`, because no real production run has produced or
+approved the adjusted hourly artifact.
+
+Implementation:
+
+- Added `scripts/build_epex_lab_promotion_bundle.py`.
+- Added `tests/test_build_epex_lab_promotion_bundle_script.py`.
+- Hardened `scripts/check_epex_lab_promotion_readiness.py` to validate
+  provided adjusted export/selected artifacts are bound to the adjusted CSV and
+  explicitly not production-approved.
+
+T046 local bundle:
+
+- output directory:
+  `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_sweep_v2/t046_local_promotion_bundle/`
+- adjusted export manifest:
+  `adjusted_export_manifest.json`
+- adjusted selected artifact:
+  `adjusted_selected_artifact.json`
+- adjusted local capstone:
+  `adjusted_local_capstone_no_go.json`
+- all three declare local/lab diagnostic scope and no production approval.
+
+Updated T046 readiness:
+
+- output:
+  `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_sweep_v2/t046_promotion_readiness/decision_with_local_bundle.json`
+- `status=STRICT_DIAGNOSTICS_PASS_PRODUCTION_CHAIN_MISSING`
+- `approved=false`
+- `strict_diagnostics_pass=true`
+- `production_chain_pass=false`
+- missing production evidence now only:
+  - `adjusted_production_manifest`
+- additional checker PASS rows:
+  - `adjusted_export_manifest_bound`
+  - `adjusted_export_manifest_not_production_approved`
+  - `adjusted_selected_artifact_bound`
+  - `adjusted_selected_artifact_not_production_approved`
+
+Validation:
+
+- `python -m pytest tests/test_build_epex_lab_promotion_bundle_script.py tests/test_check_epex_lab_promotion_readiness_script.py -q -p no:cacheprovider`
+  returned `3 passed`.
+- `python -m pytest tests/test_build_epex_lab_promotion_bundle_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_execute_epex_shape_lab_sweep_script.py tests/test_plan_epex_shape_lab_sweep_script.py tests/test_epex_ab_shape_lab.py tests/test_run_epex_shape_lab_ab_script.py tests/test_compare_epex_shape_lab_ab_script.py tests/test_audit_epex_shape_lab_governance_script.py tests/test_audit_ch_product_normalization_script.py tests/test_build_powerbi_exports_script.py tests/test_compare_hpfc_ompex_benchmark_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  returned `87 passed, 1 skipped`.
+
+Rejected alternatives:
+
+- Create a fake adjusted production manifest.
+- Mark the local capstone approved.
+- Leave export/selected artifacts missing even though they can be represented
+  accurately as local diagnostic evidence.
+
+Invariants not to break:
+
+- T046 remains NO-GO production until a real adjusted production manifest
+  exists and the adjusted artifact is promoted by an approved production
+  capstone.
+- Local bundle JSONs are generated evidence and are not committed by default.
+- The baseline 2026-07-08 candidate remains the production-ready artifact.
+

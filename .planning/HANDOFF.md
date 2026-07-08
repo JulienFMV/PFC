@@ -206,6 +206,18 @@ and missing `adjusted_production_manifest`, `adjusted_export_manifest`,
 `adjusted_selected_config`, `adjusted_capstone`. Validation including the new
 checker: `86 passed, 1 skipped`.
 
+`scripts/build_epex_lab_promotion_bundle.py` now packages local non-production
+adjusted evidence for t046. Generated bundle under
+`output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_sweep_v2/t046_local_promotion_bundle/`
+contains `adjusted_export_manifest.json`, `adjusted_selected_artifact.json`,
+and `adjusted_local_capstone_no_go.json`, all explicitly
+`production_approved=false` / local diagnostic scope. Rerunning readiness with
+this bundle writes
+`output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_sweep_v2/t046_promotion_readiness/decision_with_local_bundle.json`;
+status remains `STRICT_DIAGNOSTICS_PASS_PRODUCTION_CHAIN_MISSING`, but missing
+evidence is now only `adjusted_production_manifest`. Validation: `87 passed,
+1 skipped`.
+
 Previous 2026-07-07 promotion-ready daily candidate:
 `output/phase14/20260707_asof20260706_lshape100_yoy150_amp150_2032/`.
 

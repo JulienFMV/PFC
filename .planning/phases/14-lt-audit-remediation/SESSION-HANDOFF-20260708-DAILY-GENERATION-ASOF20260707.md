@@ -952,6 +952,47 @@ Result: `86 passed, 1 skipped`.
 
 Decision log entry: `D-20260708-16`.
 
+## T046 Local Adjusted Evidence Bundle
+
+A local non-production bundle was added so t046 has explicit adjusted
+export/selected/local-capstone evidence without pretending to be production:
+
+- `scripts/build_epex_lab_promotion_bundle.py`
+- `tests/test_build_epex_lab_promotion_bundle_script.py`
+
+Command run:
+
+```powershell
+python scripts/build_epex_lab_promotion_bundle.py --lab-manifest output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_sweep_v2/t046_w05_l025_p075_d03/ab_lab_manifest.json --baseline-monthly-manifest output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/fan_asof20260707_lshape100_yoy150_amp150_2032.monthly_curve_manifest.json --product-summary output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_sweep_v2/t046_product_normalization_with_policy/summary.json --powerbi-summary output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_sweep_v2/t046_powerbi_strict/summary_metrics.csv --source-hierarchy-policy .planning/phases/14-lt-audit-remediation/quote_conflict_source_hierarchy_policy_t046_asof20260707_fresh_epex_sweep_v2.json --independent-summary output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_sweep_v2/t046_w05_l025_p075_d03/independent_ab_comparison/ab_comparison_summary.json --governance-audit output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_sweep_v2/t046_w05_l025_p075_d03/governance_audit/epex_shape_lab_governance_audit.json --ompex-advisory-delta output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_sweep_v2/ompex_advisory_delta_selected_t046_20260708.json --output-dir output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_sweep_v2/t046_local_promotion_bundle
+```
+
+Generated local bundle:
+
+- `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_sweep_v2/t046_local_promotion_bundle/adjusted_export_manifest.json`
+- `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_sweep_v2/t046_local_promotion_bundle/adjusted_selected_artifact.json`
+- `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_sweep_v2/t046_local_promotion_bundle/adjusted_local_capstone_no_go.json`
+
+The readiness checker was rerun with these local artifacts:
+
+- output:
+  `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_sweep_v2/t046_promotion_readiness/decision_with_local_bundle.json`
+- `status=STRICT_DIAGNOSTICS_PASS_PRODUCTION_CHAIN_MISSING`
+- `approved=false`
+- `strict_diagnostics_pass=true`
+- `production_chain_pass=false`
+- missing evidence now only:
+  - `adjusted_production_manifest`
+
+Validation:
+
+```powershell
+python -m pytest tests/test_build_epex_lab_promotion_bundle_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_execute_epex_shape_lab_sweep_script.py tests/test_plan_epex_shape_lab_sweep_script.py tests/test_epex_ab_shape_lab.py tests/test_run_epex_shape_lab_ab_script.py tests/test_compare_epex_shape_lab_ab_script.py tests/test_audit_epex_shape_lab_governance_script.py tests/test_audit_ch_product_normalization_script.py tests/test_build_powerbi_exports_script.py tests/test_compare_hpfc_ompex_benchmark_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result: `87 passed, 1 skipped`.
+
+Decision log entry: `D-20260708-17`.
+
 Governance:
 
 - Decision log entry: `D-20260708-05`.

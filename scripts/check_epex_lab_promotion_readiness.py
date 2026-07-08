@@ -99,6 +99,41 @@ def check_readiness(
         capstone_approved = capstone.get("approved") is True
     else:
         capstone_approved = False
+    if adjusted_export_manifest is not None and adjusted_export_manifest.exists():
+        export_manifest = _load_json(adjusted_export_manifest)
+        checks.extend(
+            [
+                _check(
+                    "adjusted_export_manifest_bound",
+                    _same_path(export_manifest.get("adjusted_csv"), (lab.get("outputs") or {}).get("adjusted_csv")),
+                    export_manifest.get("adjusted_csv"),
+                ),
+                _check(
+                    "adjusted_export_manifest_not_production_approved",
+                    export_manifest.get("production_approved") is False,
+                    export_manifest.get("production_approved"),
+                ),
+            ]
+        )
+    if adjusted_selected_config is not None and adjusted_selected_config.exists():
+        selected_artifact = _load_json(adjusted_selected_config)
+        checks.extend(
+            [
+                _check(
+                    "adjusted_selected_artifact_bound",
+                    _same_path(
+                        selected_artifact.get("selected_adjusted_csv"),
+                        (lab.get("outputs") or {}).get("adjusted_csv"),
+                    ),
+                    selected_artifact.get("selected_adjusted_csv"),
+                ),
+                _check(
+                    "adjusted_selected_artifact_not_production_approved",
+                    selected_artifact.get("production_promotion_approved") is False,
+                    selected_artifact.get("production_promotion_approved"),
+                ),
+            ]
+        )
     strict_diagnostics_pass = all(
         check["status"] == "PASS"
         for check in checks
@@ -164,6 +199,15 @@ def _powerbi_critical_count(summary: dict[str, str]) -> int:
         if key.endswith("_critical_flags"):
             total += int(float(value))
     return total
+
+
+def _same_path(left: Any, right: Any) -> bool:
+    if left is None or right is None:
+        return False
+    try:
+        return Path(str(left)).resolve() == Path(str(right)).resolve()
+    except (OSError, TypeError, ValueError):
+        return False
 
 
 def main(argv: list[str] | None = None) -> int:
