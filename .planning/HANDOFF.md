@@ -114,6 +114,15 @@ critical flags `0`). Product normalization for adjusted and baseline both have
 source hierarchy policy, so `all_gates_pass=false` as expected for lab-only
 evidence.
 
+Next EPEX sweep is pre-registered in
+`output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_shape_lab_sweep_v1/pre_registered_sweep_plan.json`
+using `scripts/plan_epex_shape_lab_sweep.py`. It contains 27 trials over
+weekend/low-tail/peak-subshape intensities `[0.25, 0.5, 0.75]`, records
+`benchmark_policy=pre_registered_independent_no_ompex`, and forbids OMPEX/HFC
+as selection input. Run/select these trials only via independent no-OMPEX
+comparison and governance PASS; OMPEX can be advisory post-check only after a
+trial is frozen.
+
 Previous 2026-07-07 promotion-ready daily candidate:
 `output/phase14/20260707_asof20260706_lshape100_yoy150_amp150_2032/`.
 

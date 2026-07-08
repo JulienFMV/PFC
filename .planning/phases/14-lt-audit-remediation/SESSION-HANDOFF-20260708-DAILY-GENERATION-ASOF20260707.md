@@ -584,6 +584,51 @@ Product normalization diagnostic:
 
 Decision log entry: `D-20260708-10`.
 
+## Pre-Registered Next EPEX Sweep
+
+A sweep plan generator was added:
+
+- `scripts/plan_epex_shape_lab_sweep.py`
+- `tests/test_plan_epex_shape_lab_sweep_script.py`
+
+It writes a lab-only, no-OMPEX pre-registration plan with hashes, parameters,
+and commands for each trial. It does not execute trials and does not read
+OMPEX/HFC files.
+
+2026-07-08 local plan:
+
+```powershell
+python scripts/plan_epex_shape_lab_sweep.py --candidate-csv output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/ch_hfc_hourly_asof20260707_lshape100_yoy150_amp150_2032.csv --spot-parquet data/epex_hourly.parquet --output-root output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_shape_lab_sweep_v1 --valuation-timestamp 2026-07-07T00:00:00Z --max-abs-delta-eur-mwh 6.0 --plan-id epex_shape_lab_sweep_v1_asof20260707 --output-json output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_shape_lab_sweep_v1/pre_registered_sweep_plan.json
+```
+
+Result:
+
+- output:
+  `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_shape_lab_sweep_v1/pre_registered_sweep_plan.json`
+- plan id: `epex_shape_lab_sweep_v1_asof20260707`
+- trial count: `27`
+- `benchmark_policy=pre_registered_independent_no_ompex`
+- `ompex_used_in_model=false`
+- `ompex_used_in_selection=false`
+- candidate CSV sha256:
+  `12447bbaa9828c0ffed871e62c35f90b8c100fcfab8c80b00468ac846848d895`
+- EPEX spot parquet sha256:
+  `5718d243ef681476cabeabac7e866c0c7a63f686750283a2ff50a7d70c216a3d`
+
+Validation:
+
+```powershell
+python -m pytest tests/test_plan_epex_shape_lab_sweep_script.py -q -p no:cacheprovider
+```
+
+Result: `1 passed`.
+
+Decision log entry: `D-20260708-11`.
+
+Next execution rule: run the planned trials and select using independent
+no-OMPEX comparison plus governance PASS only. OMPEX advisory comparison may be
+run after a trial is selected/frozen, not during parameter selection.
+
 Governance:
 
 - Decision log entry: `D-20260708-05`.

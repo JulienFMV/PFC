@@ -1661,3 +1661,69 @@ Invariants not to break:
   production-approved policy bound to the exact artifact.
 - Generated diagnostic forwards and audit outputs stay local artifacts.
 
+## D-20260708-11 - Pre-Register Next EPEX Shape-Lab Sweep
+
+Decision: add a no-OMPEX sweep plan generator for the next EPEX shape-lab
+parameter wave and generate a local pre-registered sweep plan for the
+2026-07-08 candidate.
+
+Reason: OMPEX has already been run as an advisory post-check on the first
+adjusted A/B trial. Any subsequent parameter exploration must be
+pre-registered before execution and selected only on independent no-OMPEX
+diagnostics, otherwise OMPEX would become an implicit tuning target.
+
+Implementation:
+
+- Added `scripts/plan_epex_shape_lab_sweep.py`.
+- Added `tests/test_plan_epex_shape_lab_sweep_script.py`.
+- The plan generator writes candidate/spot hashes, trial parameters, output
+  directories, and the commands to run:
+  - `scripts/run_epex_shape_lab_ab.py`
+  - `scripts/compare_epex_shape_lab_ab.py`
+  - `scripts/audit_epex_shape_lab_governance.py`
+- It does not read OMPEX/HFC and records:
+  - `benchmark_policy=pre_registered_independent_no_ompex`
+  - `ompex_used_in_model=false`
+  - `ompex_used_in_selection=false`
+  - `forbidden_selection_inputs=["OMPEX","HFC_OMPEX","external_HPFC_benchmark"]`
+
+2026-07-08 local plan:
+
+- output:
+  `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_shape_lab_sweep_v1/pre_registered_sweep_plan.json`
+- plan id:
+  `epex_shape_lab_sweep_v1_asof20260707`
+- trial count:
+  `27`
+- candidate CSV sha256:
+  `12447bbaa9828c0ffed871e62c35f90b8c100fcfab8c80b00468ac846848d895`
+- EPEX spot parquet sha256:
+  `5718d243ef681476cabeabac7e866c0c7a63f686750283a2ff50a7d70c216a3d`
+- grid:
+  - weekend intensity: `[0.25, 0.5, 0.75]`
+  - low-tail intensity: `[0.25, 0.5, 0.75]`
+  - peak-subshape intensity: `[0.25, 0.5, 0.75]`
+  - max absolute delta: `6.0`
+
+Validation:
+
+- `python -m pytest tests/test_plan_epex_shape_lab_sweep_script.py -q -p no:cacheprovider`
+  returned `1 passed`.
+
+Rejected alternatives:
+
+- Continue tuning the already observed A/B parameters by reading OMPEX
+  outcomes.
+- Embed OMPEX commands in the pre-selection sweep plan.
+- Treat the plan itself as model evidence; it is only a pre-registration
+  artifact until trials are run and audited.
+
+Invariants not to break:
+
+- Selection for this sweep must use independent comparison and governance
+  outputs only.
+- OMPEX can be run only after a trial is selected/frozen, as advisory
+  post-check evidence.
+- Generated sweep plan and future trial outputs remain local artifacts unless
+  explicitly requested for packaging.
+
