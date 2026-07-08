@@ -155,6 +155,25 @@ new plans are `max_epex_spot_age_days=14.0`,
 a new no-OMPEX plan with a cap grid such as `[2.0, 3.0, 4.0, 6.0]`, then run
 that sweep. The existing `trial_002` remains frozen lab evidence only.
 
+Fresh-spot EPEX sweep V2 has now been run. Local generated spot refresh lives
+under
+`output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_spot_refresh_20260708/`
+with hourly coverage `2023-01-01 00:00 UTC -> 2026-07-08 23:00 UTC`; no
+repository data cache was committed. V2 plan/summary are under
+`output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_sweep_v2/`.
+It ran 108 no-OMPEX trials with cap grid `[2.0, 3.0, 4.0, 6.0]`; 39 were
+eligible. Best frozen no-OMPEX trial is `t046_w05_l025_p075_d03`:
+weekend `0.5`, low-tail `0.25`, peak-subshape `0.75`, cap `3.0`, score
+`2.2242277207731145`, ramp p99 increase `0.9876442199999538`, min adjusted
+price `-3.825623`, EPEX spot age `0.041666666666666664` days, fit coverage
+`1282.9583333333333` days, monthly drift `8.602150532151586e-08`, width drift
+`0`, weighted negative hours `0`, governance `PASS`. OMPEX 2026-07-08 was run
+only after selection as advisory: selected minus baseline MAE `-0.1316206`,
+RMSE `-0.1631454`, correlation `+0.0024746`, p95 abs `-0.40474`, inside p10/p90
+`+0.0024822`, max abs `+0.987837`. Validation: `40 passed, 1 skipped`.
+`t046` is still lab-only and NO-GO production until a real production/export/
+capstone chain and artifact-bound source hierarchy policy exist.
+
 Previous 2026-07-07 promotion-ready daily candidate:
 `output/phase14/20260707_asof20260706_lshape100_yoy150_amp150_2032/`.
 

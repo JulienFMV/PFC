@@ -1871,3 +1871,117 @@ Invariants not to break:
   artifact-bound source hierarchy policy, strict product normalization,
   strict Power BI gates, and capstone triad evidence.
 
+## D-20260708-14 - Run Fresh-Spot EPEX Sweep V2
+
+Decision: refresh a local EPEX spot copy, pre-register and execute a second
+no-OMPEX EPEX shape-lab sweep with stricter selection gates and a delta-cap
+grid, then run OMPEX only as an advisory post-check after the best trial was
+frozen.
+
+Reason: the first EPEX sweep was methodologically clean but fitted stale spot
+history ending `2026-03-15 22:00 UTC`. The next expert step was to refresh
+EPEX spot, enforce freshness/coverage/ramp/min-price thresholds, and reduce
+cap saturation risk with a cap grid.
+
+Local refreshed spot evidence:
+
+- built under:
+  `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_spot_refresh_20260708/`
+- source baseline:
+  `pfc_shaping/data/epex_15min.parquet`
+- incremental source:
+  energy-charts CH prices fetched for `2026-03-15 -> 2026-07-09`
+- local 15min output:
+  `epex_15min_ch_energy_charts_20260708.parquet`
+- local hourly output:
+  `epex_hourly_ch_energy_charts_20260708.parquet`
+- hourly coverage:
+  `2023-01-01 00:00 UTC -> 2026-07-08 23:00 UTC`
+- no repository data cache was committed.
+
+V2 sweep:
+
+- plan:
+  `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_sweep_v2/pre_registered_sweep_plan.json`
+- summary:
+  `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_sweep_v2/sweep_execution_summary.json`
+- ranking:
+  `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_sweep_v2/sweep_execution_summary.csv`
+- plan id:
+  `epex_sweep_v2_fresh_spot_asof20260707`
+- trial count:
+  `108`
+- cap grid:
+  `[2.0, 3.0, 4.0, 6.0]`
+- selection thresholds:
+  - `max_epex_spot_age_days=14.0`
+  - `min_epex_fit_coverage_days=730.0`
+  - `max_ramp_p99_increase_eur_mwh=1.0`
+  - `min_adjusted_price_eur_mwh=-10.0`
+- scoring:
+  `duck + solar_tail + weekend - ramp_p99_increase`
+- execution result:
+  - `trial_count_executed=108`
+  - `eligible_count=39`
+  - `production_approved=false`
+  - `ompex_used_in_model=false`
+  - `ompex_used_in_selection=false`
+
+Best no-OMPEX V2 trial:
+
+- `trial_id=t046_w05_l025_p075_d03`
+- weekend intensity: `0.5`
+- low-tail intensity: `0.25`
+- peak-subshape intensity: `0.75`
+- max delta cap: `3.0` EUR/MWh
+- independent shape score: `2.2242277207731145`
+- duck-change mean: `1.6614858713007632` EUR/MWh
+- solar-tail mean delta: `-1.172939635010313` EUR/MWh
+- weekend mean delta: `-0.3774464344619922` EUR/MWh
+- ramp p99 increase: `0.9876442199999538` EUR/MWh
+- min adjusted price: `-3.825623` EUR/MWh
+- EPEX spot age: `0.041666666666666664` days
+- EPEX fit coverage: `1282.9583333333333` days
+- max monthly mean drift: `8.602150532151586e-08` EUR/MWh
+- max fan-width drift: `0.0`
+- weighted negative hours: `0`
+- governance status: `PASS`
+
+OMPEX advisory post-check after no-OMPEX selection:
+
+- OMPEX file:
+  `H:\Energy\GeCom\MARCHE & NEGOCE\Prix\Analyse HFC\HFC test\ER -HFC_OMPEX_15min\HFC_Ompex_20260708_101700.xlsx`
+- baseline output:
+  `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_sweep_v2/ompex_advisory_baseline_20260708/`
+- selected output:
+  `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_sweep_v2/ompex_advisory_selected_t046_20260708/`
+- delta summary:
+  `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_sweep_v2/ompex_advisory_delta_selected_t046_20260708.json`
+- advisory deltas selected minus baseline:
+  - MAE: `-0.13162060282161114`
+  - RMSE: `-0.1631453735600843`
+  - correlation: `+0.0024745976229031408`
+  - p95 absolute error: `-0.40473999999999677`
+  - inside p10/p90 rate: `+0.002482206631037709`
+  - max absolute error: `+0.987836999999999`
+
+Validation:
+
+- `python -m pytest tests/test_execute_epex_shape_lab_sweep_script.py tests/test_plan_epex_shape_lab_sweep_script.py tests/test_epex_ab_shape_lab.py tests/test_run_epex_shape_lab_ab_script.py tests/test_compare_epex_shape_lab_ab_script.py tests/test_audit_epex_shape_lab_governance_script.py tests/test_compare_hpfc_ompex_benchmark_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  returned `40 passed, 1 skipped`.
+
+Rejected alternatives:
+
+- Run V2 on stale `data/epex_hourly.parquet`.
+- Select a high-cap trial with better internal shape score but ramp p99 above
+  the pre-registered threshold.
+- Use the OMPEX 2026-07-08 benchmark to select or re-rank the V2 grid.
+
+Invariants not to break:
+
+- V2 remains lab-only and does not replace the promotion-ready baseline.
+- OMPEX advisory improvement is not promotion evidence and cannot be used to
+  tune another V2/V3 grid.
+- Any production adoption of `t046_w05_l025_p075_d03` requires a new
+  production/export/capstone chain and artifact-bound source hierarchy policy.
+

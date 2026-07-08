@@ -755,6 +755,83 @@ Next research rule: refresh EPEX spot first, then generate a new
 pre-registered sweep plan with a delta-cap grid. The existing `trial_002`
 remains frozen lab evidence, not a production candidate.
 
+## Fresh-Spot EPEX Sweep V2
+
+The stale `data/epex_hourly.parquet` and `pfc_shaping/data/epex_15min.parquet`
+both ended at `2026-03-15 22:00 UTC`. A local generated refresh was built under
+the Phase 14 output folder, without committing data caches:
+
+- `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_spot_refresh_20260708/epex_15min_ch_energy_charts_20260708.parquet`
+- `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_spot_refresh_20260708/epex_hourly_ch_energy_charts_20260708.parquet`
+- hourly coverage: `2023-01-01 00:00 UTC -> 2026-07-08 23:00 UTC`
+- source: energy-charts CH prices for `2026-03-15 -> 2026-07-09`, merged with
+  the local CH 15min cache.
+
+The V2 sweep was pre-registered and executed:
+
+```powershell
+python scripts/plan_epex_shape_lab_sweep.py --candidate-csv output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/ch_hfc_hourly_asof20260707_lshape100_yoy150_amp150_2032.csv --spot-parquet output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_spot_refresh_20260708/epex_hourly_ch_energy_charts_20260708.parquet --output-root output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_sweep_v2 --valuation-timestamp 2026-07-07T00:00:00Z --max-abs-delta-eur-mwh 6.0 --max-abs-delta-grid-json "[2.0, 3.0, 4.0, 6.0]" --plan-id epex_sweep_v2_fresh_spot_asof20260707 --output-json output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_sweep_v2/pre_registered_sweep_plan.json
+```
+
+```powershell
+python scripts/execute_epex_shape_lab_sweep.py --plan-json output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_sweep_v2/pre_registered_sweep_plan.json --output-summary output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_sweep_v2/sweep_execution_summary.json
+```
+
+Results:
+
+- plan id: `epex_sweep_v2_fresh_spot_asof20260707`
+- trial count: `108`
+- eligible count: `39`
+- cap grid: `[2.0, 3.0, 4.0, 6.0]`
+- `production_approved=false`
+- `ompex_used_in_model=false`
+- `ompex_used_in_selection=false`
+
+Best frozen no-OMPEX trial:
+
+- `t046_w05_l025_p075_d03`
+- weekend intensity: `0.5`
+- low-tail intensity: `0.25`
+- peak-subshape intensity: `0.75`
+- cap: `3.0` EUR/MWh
+- independent shape score: `2.2242277207731145`
+- duck-change mean: `1.6614858713007632` EUR/MWh
+- solar-tail mean delta: `-1.172939635010313` EUR/MWh
+- weekend mean delta: `-0.3774464344619922` EUR/MWh
+- ramp p99 increase: `0.9876442199999538` EUR/MWh
+- min adjusted price: `-3.825623` EUR/MWh
+- EPEX spot age: `0.041666666666666664` days
+- EPEX fit coverage: `1282.9583333333333` days
+- monthly mean drift: `8.602150532151586e-08` EUR/MWh
+- fan-width drift: `0.0`
+- weighted negative hours: `0`
+- governance: `PASS`
+
+OMPEX was then run only as advisory post-check against
+`HFC_Ompex_20260708_101700.xlsx`. Advisory deltas selected minus baseline:
+
+- MAE: `-0.13162060282161114`
+- RMSE: `-0.1631453735600843`
+- correlation: `+0.0024745976229031408`
+- p95 absolute error: `-0.40473999999999677`
+- inside p10/p90 rate: `+0.002482206631037709`
+- max absolute error: `+0.987836999999999`
+
+Validation:
+
+```powershell
+python -m pytest tests/test_execute_epex_shape_lab_sweep_script.py tests/test_plan_epex_shape_lab_sweep_script.py tests/test_epex_ab_shape_lab.py tests/test_run_epex_shape_lab_ab_script.py tests/test_compare_epex_shape_lab_ab_script.py tests/test_audit_epex_shape_lab_governance_script.py tests/test_compare_hpfc_ompex_benchmark_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result: `40 passed, 1 skipped`.
+
+Decision log entry: `D-20260708-14`.
+
+Next rule: `t046_w05_l025_p075_d03` is better lab evidence than V1, but still
+NO-GO production. Promotion would require regenerating it through the real
+production/export/capstone path with artifact-bound source hierarchy and strict
+gates.
+
 Governance:
 
 - Decision log entry: `D-20260708-05`.

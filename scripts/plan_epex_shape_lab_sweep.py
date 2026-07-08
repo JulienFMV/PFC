@@ -70,10 +70,11 @@ def build_plan(
     values_by_dimension = [grid[key] for key in required] + [cap_values]
     for idx, values in enumerate(product(*values_by_dimension), start=1):
         params = dict(zip(dimensions, (float(v) for v in values), strict=True))
-        cap_suffix = f"_d{params['max_abs_delta_eur_mwh']:.2f}" if len(cap_values) > 1 else ""
+        cap_suffix = f"_d{_compact_float(params['max_abs_delta_eur_mwh'])}" if len(cap_values) > 1 else ""
         trial_id = (
-            f"trial_{idx:03d}_w{params['weekend_intensity']:.2f}"
-            f"_l{params['low_tail_intensity']:.2f}_p{params['peak_subshape_intensity']:.2f}{cap_suffix}"
+            f"t{idx:03d}_w{_compact_float(params['weekend_intensity'])}"
+            f"_l{_compact_float(params['low_tail_intensity'])}"
+            f"_p{_compact_float(params['peak_subshape_intensity'])}{cap_suffix}"
         )
         trial_dir = output_root / trial_id
         adjusted_csv = trial_dir / "candidate_epex_shape_lab_adjusted.csv"
@@ -179,6 +180,10 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def _compact_float(value: float) -> str:
+    return f"{int(round(float(value) * 100)):03d}".rstrip("0").rjust(2, "0")
 
 
 def _join_command(parts: list[str]) -> str:
