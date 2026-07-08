@@ -1444,3 +1444,62 @@ Invariants not to break:
 - Generated comparison outputs stay local artifacts unless explicitly
   requested for packaging.
 
+## D-20260708-08 - Run OMPEX Advisory Post-Check After Independent A/B
+
+Decision: run the OMPEX benchmark on the adjusted EPEX A/B lab candidate only
+after the independent no-OMPEX A/B comparison was recorded. Treat the result as
+external advisory evidence, not as parameter-selection evidence and not as a
+promotion gate.
+
+Reason: the A/B trial parameters were fixed before consulting OMPEX, and the
+independent comparison already established monthly-level preservation,
+fan-width preservation, quantile ordering, negative-hour status, and calendar
+shape effects. OMPEX can now be used as an imperfect external sense-check
+without contaminating model selection.
+
+Command:
+
+```powershell
+python scripts/compare_hpfc_ompex_benchmark.py --hpfc-csv output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_shape_lab_ab_trial/candidate_epex_shape_lab_adjusted.csv --ompex-xlsx "H:\Energy\GeCom\MARCHE & NEGOCE\Prix\Analyse HFC\HFC test\ER -HFC_OMPEX_15min\HFC_Ompex_20260708_101700.xlsx" --output-dir output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_shape_lab_ab_trial/ompex_advisory_adjusted_20260708
+```
+
+Output:
+
+`output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_shape_lab_ab_trial/ompex_advisory_adjusted_20260708/`
+
+Adjusted advisory metrics:
+
+- alignment: `ompex_minus_1h_hourending`
+- points: `39481`
+- MAE: `12.328552488842737`
+- RMSE: `16.247141314210175`
+- bias: `0.7010425073326411`
+- correlation: `0.8775633169206011`
+- p95 absolute error: `32.776404`
+- OMPEX inside p10/p90 rate: `0.15807603657455485`
+- max absolute error: `101.939482`
+
+Baseline-vs-adjusted advisory deltas:
+
+- MAE delta: `-0.1985248878447834`
+- RMSE delta: `-0.2333863878943987`
+- correlation delta: `0.0035026506205321217`
+- p95 absolute error delta: `-0.5472940000000008`
+- OMPEX inside p10/p90 rate delta: `0.0043058686456776685`
+- max absolute error delta: `+1.553652999999997`
+
+Rejected alternatives:
+
+- Select or re-tune A/B parameters based on this OMPEX result.
+- Treat the modest OMPEX improvement as production approval.
+- Ignore the max-absolute-error deterioration because aggregate metrics
+  improved.
+
+Invariants not to break:
+
+- OMPEX remains advisory and imperfect external evidence.
+- Any next A/B parameter change must be pre-registered before looking at its
+  OMPEX result.
+- Production promotion still requires strict independent gates and capstone
+  evidence, not OMPEX benchmark movement.
+

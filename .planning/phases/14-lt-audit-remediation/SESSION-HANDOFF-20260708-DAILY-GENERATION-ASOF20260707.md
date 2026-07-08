@@ -438,6 +438,50 @@ Next diagnostic step: run OMPEX comparison separately on the adjusted candidate
 as advisory-only evidence. Do not use the OMPEX result to select A/B
 parameters retroactively.
 
+## OMPEX Advisory Post-Check On Adjusted A/B
+
+After the independent no-OMPEX A/B comparison was recorded, OMPEX was run as a
+post-check on the adjusted candidate:
+
+```powershell
+python scripts/compare_hpfc_ompex_benchmark.py --hpfc-csv output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_shape_lab_ab_trial/candidate_epex_shape_lab_adjusted.csv --ompex-xlsx "H:\Energy\GeCom\MARCHE & NEGOCE\Prix\Analyse HFC\HFC test\ER -HFC_OMPEX_15min\HFC_Ompex_20260708_101700.xlsx" --output-dir output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_shape_lab_ab_trial/ompex_advisory_adjusted_20260708
+```
+
+Output:
+
+`output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_shape_lab_ab_trial/ompex_advisory_adjusted_20260708/`
+
+Adjusted metrics:
+
+- alignment: `ompex_minus_1h_hourending`
+- points: `39481`
+- MAE: `12.328552488842737`
+- RMSE: `16.247141314210175`
+- bias: `0.7010425073326411`
+- correlation: `0.8775633169206011`
+- p95 absolute error: `32.776404`
+- OMPEX inside p10/p90 rate: `0.15807603657455485`
+- max absolute error: `101.939482`
+
+Advisory delta vs baseline OMPEX benchmark:
+
+- MAE `-0.1985248878447834`
+- RMSE `-0.2333863878943987`
+- correlation `+0.0035026506205321217`
+- p95 absolute error `-0.5472940000000008`
+- OMPEX inside p10/p90 rate `+0.0043058686456776685`
+- max absolute error `+1.553652999999997`
+
+Interpretation:
+
+- Aggregate OMPEX advisory metrics moved in the right direction, but max
+  absolute error worsened.
+- This is not production approval and was not used to choose A/B parameters.
+- Any further parameter change must be pre-registered and rerun through the
+  independent no-OMPEX comparison first.
+
+Decision log entry: `D-20260708-08`.
+
 Governance:
 
 - Decision log entry: `D-20260708-05`.

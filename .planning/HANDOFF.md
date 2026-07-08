@@ -85,6 +85,15 @@ negative hours `0`, solar-tail delta about `-2.07`, evening-ramp delta about
 `+0.93`, and annual duck change about `+2.75` EUR/MWh. OMPEX should only be run
 after this as advisory evidence, not as parameter-selection evidence.
 
+OMPEX advisory post-check on the adjusted A/B candidate was run only after the
+independent comparison. Output:
+`output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_shape_lab_ab_trial/ompex_advisory_adjusted_20260708/`.
+Adjusted vs baseline advisory deltas: MAE `-0.1985`, RMSE `-0.2334`,
+correlation `+0.0035`, p95 absolute error `-0.5473`, inside p10/p90 rate
+`+0.0043`, but max absolute error worsened by `+1.5537`. Treat this as
+external advisory evidence only, not production approval and not parameter
+selection evidence.
+
 Previous 2026-07-07 promotion-ready daily candidate:
 `output/phase14/20260707_asof20260706_lshape100_yoy150_amp150_2032/`.
 
