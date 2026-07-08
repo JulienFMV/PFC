@@ -2340,3 +2340,65 @@ Invariants not to break:
   Power BI, selected-artifact, and capstone gates.
 - OMPEX remains benchmark/advisory only.
 
+## D-20260708-20 - Stage LT-Only EPEX Adjusted Candidate From Fan Evidence
+
+Decision: add an off-by-default LT-only staging runner that starts from a
+governed fan parquet or an already exported hourly CH CSV, applies the EPEX lab
+with explicit parameters, and writes NO-GO hash-bound staging evidence.
+
+Reason: T046 cannot be promoted from the ad hoc lab CSV alone, and the
+production 15-minute PFC format is not the same artifact as the audited hourly
+HFC export. The next safe production-integration step is a reproducible bridge
+from LT fan evidence to the hourly EPEX-adjusted candidate, while preserving
+the rule that staging evidence is not promotion evidence.
+
+Implementation:
+
+- Added `scripts/stage_epex_lab_adjusted_lt_candidate.py`.
+- Added `tests/test_stage_epex_lab_adjusted_lt_candidate_script.py`.
+- The runner accepts exactly one source:
+  - `--fan-parquet` plus `--local-start-date` / `--local-end-date`; or
+  - `--candidate-csv`.
+- It reuses existing governed functions:
+  - `to_hourly_csv_frame` for LT fan to hourly HFC conversion;
+  - `run_ab` for the EPEX-only lab adjustment;
+  - `build_epex_lab_adjusted_production_manifest.py` when all strict evidence
+    paths are supplied.
+- Defaults match the selected T046 lab settings:
+  - `weekend_intensity=0.5`;
+  - `low_tail_intensity=0.25`;
+  - `peak_subshape_intensity=0.75`;
+  - `max_abs_delta_eur_mwh=3.0`;
+  - `negative_price_floor=-10.0`;
+  - `max_weighted_negative_hours=0`.
+- The staging manifest schema is
+  `epex_lab_adjusted_lt_candidate_stage.v1` and keeps:
+  - `activation_status=staged_lab_only`;
+  - `production_approved=false`;
+  - `production_promotion_approved=false`;
+  - `promotion_scope=LT_EPEX_LAB_STAGING_NO_GO`;
+  - `ompex_used_in_model=false`;
+  - `ompex_used_in_selection=false`.
+
+Validation:
+
+- `python -m pytest tests/test_stage_epex_lab_adjusted_lt_candidate_script.py tests/test_run_epex_shape_lab_ab_script.py tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_check_epex_lab_promotion_readiness_script.py -q -p no:cacheprovider`
+  returned `11 passed`.
+- `python -m pytest tests/test_stage_epex_lab_adjusted_lt_candidate_script.py tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_promotion_bundle_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_execute_epex_shape_lab_sweep_script.py tests/test_plan_epex_shape_lab_sweep_script.py tests/test_epex_ab_shape_lab.py tests/test_run_epex_shape_lab_ab_script.py tests/test_compare_epex_shape_lab_ab_script.py tests/test_audit_epex_shape_lab_governance_script.py tests/test_audit_ch_product_normalization_script.py tests/test_build_powerbi_exports_script.py tests/test_compare_hpfc_ompex_benchmark_script.py tests/test_export_local_test_ch_hourly_csv_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  returned `124 passed, 1 skipped`.
+
+Rejected alternatives:
+
+- Apply T046 directly to the 15-minute production PFC and call it the same
+  audited hourly artifact.
+- Treat staging manifests as production approval.
+- Read OMPEX in the staging path.
+
+Invariants not to break:
+
+- The staging runner remains LT-only and must not import CT modules.
+- Staging output is local evidence; production GO still requires regenerated
+  product normalization, Power BI strict, selected artifact, and capstone
+  evidence on the staged adjusted CSV.
+- OMPEX remains advisory only.
+
