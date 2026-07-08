@@ -614,6 +614,36 @@ Validation for D50:
 `python -m pytest tests/test_stage_epex_lab_adjusted_lt_candidate_script.py tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_adjusted_production_chain_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
 reported `47 passed, 1 skipped`.
 
+Post-D50 search status: T070 remains NO-GO because it misses the incumbent
+solar-tail metric. T051/T052 showed that tuning `peak_subshape_intensity` and
+cap alone cannot beat both solar-tail and evening/post-valuation. A new
+lab-only EPEX parameter, `evening_recovery_intensity`, was added to split the
+h17-h21 recovery from the broader peak-subshape lever. It is fitted only from
+EPEX residuals, projected through the existing BASE/PEAK nullspace, recorded in
+lab/staging manifests, and remains no-OMPEX/off-production.
+
+Validation for the evening-recovery component:
+`python -m pytest tests/test_run_epex_shape_lab_ab_script.py tests/test_plan_epex_shape_lab_sweep_script.py tests/test_execute_epex_shape_lab_sweep_script.py tests/test_stage_epex_lab_adjusted_lt_candidate_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+reported `34 passed, 1 skipped`.
+
+Best new local frontier is T053:
+
+- selection summary:
+  `output/phase14/t053_evening_recovery_bridge_selection_summary/spot_backtest_selection_summary.json`
+- best trial:
+  `t003_w075_l025_p082_e025_n055_r00_d27`
+- adjusted CSV sha256:
+  `8b1c7f43bdaf3513d417fb6f436470847270af4b83ad5e5053eab08c16b94762`
+- beats T046 on overall, evening, solar-tail, weekend, night, and ramp;
+- still misses post-valuation:
+  `0.292289994623653` vs incumbent `0.3048038417338681`;
+- verdict remains `replace_incumbent=false`.
+
+T054 high-peak/low-tail reproduced the T070 family and remains NO-GO on
+solar-tail. Do not promote T053/T054. Next search should target post-valuation
+stability around T053 without weakening D50 selection policy or using OMPEX as
+model/selection/gate input.
+
 Previous 2026-07-07 promotion-ready daily candidate:
 `output/phase14/20260707_asof20260706_lshape100_yoy150_amp150_2032/`.
 

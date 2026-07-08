@@ -71,6 +71,7 @@ def execute_sweep(
                 weekend_intensity=float(trial["parameters"]["weekend_intensity"]),
                 low_tail_intensity=float(trial["parameters"]["low_tail_intensity"]),
                 peak_subshape_intensity=float(trial["parameters"]["peak_subshape_intensity"]),
+                evening_recovery_intensity=float(trial["parameters"].get("evening_recovery_intensity", 0.0)),
                 max_abs_delta_eur_mwh=float(trial["parameters"]["max_abs_delta_eur_mwh"]),
                 night_intensity=float(trial["parameters"].get("night_intensity", 0.0)),
                 ramp_intensity=float(trial["parameters"].get("ramp_intensity", 0.0)),
@@ -168,6 +169,7 @@ def execute_sweep(
             "EPEX spot freshness and coverage thresholds when pre-registered",
             "ramp and negative price thresholds when pre-registered",
             "night/ramp components when pre-registered",
+            "evening recovery component when pre-registered",
             "higher independent duck/shape score",
             "lower ramp penalty as tie-break",
         ],
@@ -310,6 +312,7 @@ def _manifest_matches_plan(
         and _float_equal(config.get("weekend_intensity"), params["weekend_intensity"])
         and _float_equal(config.get("low_tail_intensity"), params["low_tail_intensity"])
         and _float_equal(config.get("peak_subshape_intensity"), params["peak_subshape_intensity"])
+        and _float_equal(config.get("evening_recovery_intensity", 0.0), params.get("evening_recovery_intensity", 0.0))
         and _float_equal(config.get("night_intensity", 0.0), params.get("night_intensity", 0.0))
         and _float_equal(config.get("ramp_intensity", 0.0), params.get("ramp_intensity", 0.0))
         and _float_equal(config.get("max_abs_delta_eur_mwh"), params["max_abs_delta_eur_mwh"])
@@ -474,6 +477,7 @@ def _trial_row(
         "weekend_intensity": float(trial["parameters"]["weekend_intensity"]),
         "low_tail_intensity": float(trial["parameters"]["low_tail_intensity"]),
         "peak_subshape_intensity": float(trial["parameters"]["peak_subshape_intensity"]),
+        "evening_recovery_intensity": float(trial["parameters"].get("evening_recovery_intensity", 0.0)),
         "night_intensity": float(trial["parameters"].get("night_intensity", 0.0)),
         "ramp_intensity": float(trial["parameters"].get("ramp_intensity", 0.0)),
         "max_abs_delta_eur_mwh": float(independent["max_abs_delta_eur_mwh"]),

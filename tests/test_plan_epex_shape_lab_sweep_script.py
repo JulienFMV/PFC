@@ -35,6 +35,7 @@ def test_plan_epex_shape_lab_sweep_is_pre_registered_and_no_ompex(tmp_path) -> N
     assert all("audit_governance_no_ompex" in trial["commands"] for trial in plan["trials"])
     assert plan["selection_thresholds"]["max_epex_spot_age_days"] == 14.0
     assert plan["scoring_policy"]["ramp_penalty_weight"] == 1.0
+    assert plan["grid"]["evening_recovery_intensity"] == [0.0]
     assert plan["grid"]["night_intensity"] == [0.0]
     assert plan["grid"]["ramp_intensity"] == [0.0]
     json.dumps(plan)
@@ -83,18 +84,21 @@ def test_plan_epex_shape_lab_sweep_can_pre_register_t047_night_ramp_dimensions(t
             "weekend_intensity": [0.5],
             "low_tail_intensity": [0.25],
             "peak_subshape_intensity": [0.75],
+            "evening_recovery_intensity": [0.0, 0.5],
             "night_intensity": [0.0, 0.25],
             "ramp_intensity": [0.0, 0.25],
         },
     )
 
     assert plan["plan_id"] == "epex_shape_lab_sweep_t047_v3"
-    assert plan["trial_count"] == 4
+    assert plan["trial_count"] == 8
     assert plan["scoring_policy"]["night_weight"] == 0.5
+    assert {trial["parameters"]["evening_recovery_intensity"] for trial in plan["trials"]} == {0.0, 0.5}
     assert {trial["parameters"]["night_intensity"] for trial in plan["trials"]} == {0.0, 0.25}
     assert {trial["parameters"]["ramp_intensity"] for trial in plan["trials"]} == {0.0, 0.25}
     assert all("--night-intensity" in trial["commands"]["run_ab"] for trial in plan["trials"])
     assert all("--ramp-intensity" in trial["commands"]["run_ab"] for trial in plan["trials"])
+    assert all("--evening-recovery-intensity" in trial["commands"]["run_ab"] for trial in plan["trials"])
     assert all("compare_hpfc_ompex_benchmark" not in trial["commands"]["run_ab"] for trial in plan["trials"])
 
 

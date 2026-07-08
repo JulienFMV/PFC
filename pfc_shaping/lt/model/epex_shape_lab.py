@@ -47,6 +47,7 @@ class ABShapeLabConfig:
     weekend_intensity: float = 0.0
     low_tail_intensity: float = 0.0
     peak_subshape_intensity: float = 0.0
+    evening_recovery_intensity: float = 0.0
     night_intensity: float = 0.0
     ramp_intensity: float = 0.0
     max_abs_delta_eur_mwh: float = 8.0
@@ -119,6 +120,7 @@ def fit_epex_shape_templates(
     month_hour_median = features.groupby(["month", "hour"])["residual"].median()
     month_hour_q25 = features.groupby(["month", "hour"])["residual"].quantile(0.25)
     month_peak_mean = features.loc[features["is_peak_like"]].groupby("month")["residual"].median()
+    evening_mean = features.loc[features["hour"].between(17, 21)].groupby("month")["residual"].median()
     non_night_mean = features.loc[~features["hour"].between(0, 5)].groupby("month")["residual"].median()
     cell_median = features.groupby(["month", "hour", "is_weekend"])["residual"].median()
     cell_count = features.groupby(["month", "hour", "is_weekend"])["residual"].size()
@@ -149,6 +151,8 @@ def fit_epex_shape_templates(
                 is_peak_like = (not is_weekend) and 8 <= hour <= 19
                 peak_ref = float(month_peak_mean.get(month, 0.0))
                 peak_subshape_delta = (mh_median - peak_ref) * shrink if is_peak_like else 0.0
+                evening_ref = float(evening_mean.get(month, peak_ref))
+                evening_recovery_delta = (mh_median - evening_ref) * shrink if 17 <= hour <= 21 else 0.0
                 night_delta = (mh_median - non_night_ref) * shrink if 0 <= hour <= 5 else 0.0
                 ramp_delta = ramp_smoothing[(month, hour)] * shrink
 
@@ -160,6 +164,7 @@ def fit_epex_shape_templates(
                         "weekend_delta_eur_mwh": float(weekend_delta),
                         "low_tail_delta_eur_mwh": float(low_tail_delta),
                         "peak_subshape_delta_eur_mwh": float(peak_subshape_delta),
+                        "evening_recovery_delta_eur_mwh": float(evening_recovery_delta),
                         "night_delta_eur_mwh": float(night_delta),
                         "ramp_delta_eur_mwh": float(ramp_delta),
                         "n_obs": n_obs,
@@ -207,6 +212,7 @@ def apply_epex_ab_shape_lab(
         float(config.weekend_intensity)
         + float(config.low_tail_intensity)
         + float(config.peak_subshape_intensity)
+        + float(config.evening_recovery_intensity)
         + float(config.night_intensity)
         + float(config.ramp_intensity)
     )
@@ -232,6 +238,7 @@ def apply_epex_ab_shape_lab(
         "weekend_delta_eur_mwh",
         "low_tail_delta_eur_mwh",
         "peak_subshape_delta_eur_mwh",
+        "evening_recovery_delta_eur_mwh",
         "night_delta_eur_mwh",
         "ramp_delta_eur_mwh",
     ]:
@@ -241,6 +248,7 @@ def apply_epex_ab_shape_lab(
         float(config.weekend_intensity) * mapped["weekend_delta_eur_mwh"].to_numpy(dtype=float)
         + float(config.low_tail_intensity) * mapped["low_tail_delta_eur_mwh"].to_numpy(dtype=float)
         + float(config.peak_subshape_intensity) * mapped["peak_subshape_delta_eur_mwh"].to_numpy(dtype=float)
+        + float(config.evening_recovery_intensity) * mapped["evening_recovery_delta_eur_mwh"].to_numpy(dtype=float)
         + float(config.night_intensity) * mapped["night_delta_eur_mwh"].to_numpy(dtype=float)
         + float(config.ramp_intensity) * mapped["ramp_delta_eur_mwh"].to_numpy(dtype=float)
     )
@@ -312,6 +320,7 @@ def apply_epex_ab_shape_lab(
                 "weekend_intensity": float(config.weekend_intensity),
                 "low_tail_intensity": float(config.low_tail_intensity),
                 "peak_subshape_intensity": float(config.peak_subshape_intensity),
+                "evening_recovery_intensity": float(config.evening_recovery_intensity),
                 "night_intensity": float(config.night_intensity),
                 "ramp_intensity": float(config.ramp_intensity),
                 "max_abs_raw_delta_eur_mwh": float(np.max(np.abs(raw_delta))) if len(raw_delta) else 0.0,
@@ -508,6 +517,7 @@ def _validate_config(config: ABShapeLabConfig) -> None:
         "weekend_intensity",
         "low_tail_intensity",
         "peak_subshape_intensity",
+        "evening_recovery_intensity",
         "night_intensity",
         "ramp_intensity",
         "max_abs_delta_eur_mwh",
@@ -529,6 +539,7 @@ def _validate_templates(templates: pd.DataFrame) -> pd.DataFrame:
         "weekend_delta_eur_mwh",
         "low_tail_delta_eur_mwh",
         "peak_subshape_delta_eur_mwh",
+        "evening_recovery_delta_eur_mwh",
         "night_delta_eur_mwh",
         "ramp_delta_eur_mwh",
     }

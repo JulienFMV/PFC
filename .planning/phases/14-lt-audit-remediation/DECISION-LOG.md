@@ -4689,3 +4689,109 @@ Invariants not to break:
   replacement or an explicit pre-approved no-OMPEX tolerance policy is added
   and bound to the selection artifact.
 
+## D-20260708-51 - Split Evening Recovery From Peak Subshape in EPEX Lab
+
+Decision: add a lab-only `evening_recovery_intensity` component to the EPEX
+shape lab. The component is fitted only from historical EPEX residuals, is
+projected through the same BASE/PEAK nullspace as the other EPEX lab deltas,
+and remains off-production / no-OMPEX. It is pre-registerable in sweep plans and
+recorded in lab/staging manifests.
+
+Reason: T049/T050/T070 showed a single-parameter conflict:
+
+- lower `peak_subshape_intensity` preserved solar-tail but degraded
+  evening/post-valuation;
+- higher `peak_subshape_intensity` recovered evening/post-valuation but lost
+  the solar-tail incumbent;
+- T070 therefore remained NO-GO after D50 because
+  `replacement_verdict.replace_incumbent=false`.
+
+T051 and T052 confirmed that tuning `peak_subshape_intensity` and cap alone
+does not close all metrics. T053, using the new evening component, beats T046 on
+overall, evening, solar-tail, weekend, night, and ramp, but still misses the
+post-valuation metric. This is a material improvement of the search frontier
+without changing selection policy.
+
+Implementation:
+
+- `pfc_shaping/lt/model/epex_shape_lab.py`
+  - added `ABShapeLabConfig.evening_recovery_intensity`;
+  - fits `evening_recovery_delta_eur_mwh` from EPEX residuals for h17-h21;
+  - includes it in raw delta construction, validation, template validation,
+    and audit output.
+- `scripts/run_epex_shape_lab_ab.py`
+  - added API/CLI propagation and pre-registration manifest recording.
+- `scripts/plan_epex_shape_lab_sweep.py`
+  - added grid dimension and command propagation.
+- `scripts/execute_epex_shape_lab_sweep.py`
+  - passes the parameter, validates resume manifests, records ranking rows.
+- `scripts/stage_epex_lab_adjusted_lt_candidate.py`
+  - stages and records the parameter.
+
+Validation:
+
+- `python -m pytest tests/test_run_epex_shape_lab_ab_script.py tests/test_plan_epex_shape_lab_sweep_script.py tests/test_execute_epex_shape_lab_sweep_script.py tests/test_stage_epex_lab_adjusted_lt_candidate_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+- result: `34 passed, 1 skipped`
+
+Local no-OMPEX sweeps, generated artifacts only:
+
+- T051 solar/evening bridge:
+  - plan:
+    `output/phase14/t051_solar_evening_bridge/pre_registered_sweep_plan.json`
+  - sweep:
+    `output/phase14/t051_solar_evening_bridge/sweep_execution_summary.json`
+  - selection:
+    `output/phase14/t051_solar_evening_bridge_selection_summary/spot_backtest_selection_summary.json`
+  - result: `replace_incumbent=false`; degraded metrics:
+    `evening_mae_improvement_eur_mwh`,
+    `post_valuation_mae_improvement_eur_mwh`.
+- T052 peak/cap bridge:
+  - plan:
+    `output/phase14/t052_peak_cap_bridge/pre_registered_sweep_plan.json`
+  - selection:
+    `output/phase14/t052_peak_cap_bridge_selection_summary/spot_backtest_selection_summary.json`
+  - result: `replace_incumbent=false`; degraded metrics:
+    `evening_mae_improvement_eur_mwh`,
+    `post_valuation_mae_improvement_eur_mwh`.
+- T053 evening-recovery bridge:
+  - plan:
+    `output/phase14/t053_evening_recovery_bridge/pre_registered_sweep_plan.json`
+  - selection:
+    `output/phase14/t053_evening_recovery_bridge_selection_summary/spot_backtest_selection_summary.json`
+  - best trial:
+    `t003_w075_l025_p082_e025_n055_r00_d27`
+  - adjusted CSV sha256:
+    `8b1c7f43bdaf3513d417fb6f436470847270af4b83ad5e5053eab08c16b94762`
+  - metrics:
+    - overall `0.4403741843600797` vs incumbent `0.40548354103189205`
+    - evening `0.4675508496854987` vs incumbent `0.45338812791781463`
+    - solar-tail `0.44832283438649295` vs incumbent `0.4372953091304925`
+    - weekend `0.3277011767246539` vs incumbent `0.2889611347370835`
+    - night `0.15638454130406818` vs incumbent `0.03190894115068499`
+    - ramp `0.05921350078935572` vs incumbent `0.035478178105887714`
+    - post-valuation `0.292289994623653` vs incumbent
+      `0.3048038417338681`
+  - result: `replace_incumbent=false`; only degraded metric:
+    `post_valuation_mae_improvement_eur_mwh`.
+- T054 high-peak/low-tail:
+  - plan:
+    `output/phase14/t054_high_peak_low_tail/pre_registered_sweep_plan.json`
+  - selection:
+    `output/phase14/t054_high_peak_low_tail_selection_summary/spot_backtest_selection_summary.json`
+  - result: `replace_incumbent=false`; best trial reproduces T070 and still
+    degrades `solar_tail_mae_improvement_eur_mwh`.
+
+Rejected alternatives:
+
+- Relax the replacement policy or accept T053 despite the post-valuation miss.
+- Use OMPEX advisory performance to choose thresholds or override selection.
+- Patch final months/hours after the solver or EPEX lab output.
+
+Invariants not to break:
+
+- `evening_recovery_intensity` remains lab-only and no-OMPEX.
+- Selection still requires all incumbent core metrics to be non-degraded unless
+  an explicit pre-approved no-OMPEX tolerance policy is added.
+- Generated T051-T054 artifacts remain local evidence and are not commit
+  targets.
+

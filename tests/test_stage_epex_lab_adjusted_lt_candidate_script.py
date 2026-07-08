@@ -140,6 +140,7 @@ def test_stage_epex_lab_adjusted_candidate_from_fan_is_no_go_and_hash_bound(tmp_
         weekend_intensity=0.5,
         low_tail_intensity=0.25,
         peak_subshape_intensity=0.75,
+        evening_recovery_intensity=0.3,
         night_intensity=0.4,
         ramp_intensity=0.2,
         max_abs_delta_eur_mwh=3.0,
@@ -163,6 +164,7 @@ def test_stage_epex_lab_adjusted_candidate_from_fan_is_no_go_and_hash_bound(tmp_
     assert manifest["source_provenance_manifest_sha256"]
     assert manifest["epex_lab_config"]["night_intensity"] == 0.4
     assert manifest["epex_lab_config"]["ramp_intensity"] == 0.2
+    assert manifest["epex_lab_config"]["evening_recovery_intensity"] == 0.3
 
     stage_dir = tmp_path / "stage"
     assert (stage_dir / "lt_hourly_candidate.csv").exists()
@@ -178,6 +180,7 @@ def test_stage_epex_lab_adjusted_candidate_from_fan_is_no_go_and_hash_bound(tmp_
     lab_manifest = json.loads((stage_dir / "epex_lab" / "ab_lab_manifest.json").read_text(encoding="utf-8"))
     assert lab_manifest["config"]["night_intensity"] == 0.4
     assert lab_manifest["config"]["ramp_intensity"] == 0.2
+    assert lab_manifest["config"]["evening_recovery_intensity"] == 0.3
 
 
 def test_stage_epex_lab_adjusted_candidate_requires_single_source(tmp_path) -> None:

@@ -19,6 +19,7 @@ DEFAULT_GRID = {
     "weekend_intensity": [0.25, 0.5, 0.75],
     "low_tail_intensity": [0.25, 0.5, 0.75],
     "peak_subshape_intensity": [0.25, 0.5, 0.75],
+    "evening_recovery_intensity": [0.0],
     "night_intensity": [0.0],
     "ramp_intensity": [0.0],
 }
@@ -27,6 +28,7 @@ INTENSITY_KEYS = [
     "weekend_intensity",
     "low_tail_intensity",
     "peak_subshape_intensity",
+    "evening_recovery_intensity",
     "night_intensity",
     "ramp_intensity",
 ]
@@ -83,10 +85,13 @@ def build_plan(
         params = dict(zip(dimensions, (float(v) for v in values), strict=True))
         cap_suffix = f"_d{_compact_float(params['max_abs_delta_eur_mwh'])}" if len(cap_values) > 1 else ""
         advanced_suffix = (
+            f"_e{_compact_float(params['evening_recovery_intensity'])}"
             f"_n{_compact_float(params['night_intensity'])}"
             f"_r{_compact_float(params['ramp_intensity'])}"
-            if len(grid["night_intensity"]) > 1
+            if len(grid["evening_recovery_intensity"]) > 1
+            or len(grid["night_intensity"]) > 1
             or len(grid["ramp_intensity"]) > 1
+            or any(float(v) != 0.0 for v in grid["evening_recovery_intensity"])
             or any(float(v) != 0.0 for v in grid["night_intensity"])
             or any(float(v) != 0.0 for v in grid["ramp_intensity"])
             else ""
@@ -127,6 +132,8 @@ def build_plan(
                             str(params["low_tail_intensity"]),
                             "--peak-subshape-intensity",
                             str(params["peak_subshape_intensity"]),
+                            "--evening-recovery-intensity",
+                            str(params["evening_recovery_intensity"]),
                             "--night-intensity",
                             str(params["night_intensity"]),
                             "--ramp-intensity",

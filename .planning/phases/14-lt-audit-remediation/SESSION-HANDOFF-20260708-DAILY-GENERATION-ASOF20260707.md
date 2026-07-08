@@ -2596,6 +2596,91 @@ Result: exit code `0`, but the produced production manifest remains NO-GO:
 
 Decision log entry: `D-20260708-50`.
 
+After D50, the search moved to the remaining no-OMPEX blocker:
+`replace_incumbent=false` versus T046. T070 had fixed night/ramp and passed
+strict diagnostics/provenance, but still missed the incumbent solar-tail metric.
+
+T051 and T052 tested whether the existing `peak_subshape_intensity` / cap
+family could bridge T046 and T070:
+
+- T051:
+  `output/phase14/t051_solar_evening_bridge_selection_summary/spot_backtest_selection_summary.json`
+  - best trial `t004_w075_l025_p08_n055_r00`
+  - beats overall, solar-tail, weekend, night, ramp
+  - still degrades evening and post-valuation
+  - `replace_incumbent=false`
+- T052:
+  `output/phase14/t052_peak_cap_bridge_selection_summary/spot_backtest_selection_summary.json`
+  - best trial `t004_w075_l025_p082_n055_r00_d27`
+  - beats overall, solar-tail, weekend, night, ramp
+  - still degrades evening and post-valuation
+  - `replace_incumbent=false`
+
+Because the existing peak subshape lever was doing two jobs at once, a new
+lab-only EPEX component was added:
+
+- `pfc_shaping/lt/model/epex_shape_lab.py`
+  - `ABShapeLabConfig.evening_recovery_intensity`
+  - `evening_recovery_delta_eur_mwh` fitted only from EPEX residuals for
+    h17-h21
+  - projected through the same BASE/PEAK nullspace as all EPEX lab deltas.
+- `scripts/run_epex_shape_lab_ab.py`,
+  `scripts/plan_epex_shape_lab_sweep.py`,
+  `scripts/execute_epex_shape_lab_sweep.py`,
+  `scripts/stage_epex_lab_adjusted_lt_candidate.py`
+  - API/CLI/sweep/staging propagation and manifest recording.
+
+Validation for the new component:
+
+`python -m pytest tests/test_run_epex_shape_lab_ab_script.py tests/test_plan_epex_shape_lab_sweep_script.py tests/test_execute_epex_shape_lab_sweep_script.py tests/test_stage_epex_lab_adjusted_lt_candidate_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+
+Result: `34 passed, 1 skipped`.
+
+T053 with the new evening-recovery component:
+
+- plan:
+  `output/phase14/t053_evening_recovery_bridge/pre_registered_sweep_plan.json`
+- sweep:
+  `output/phase14/t053_evening_recovery_bridge/sweep_execution_summary.json`
+- backtests:
+  `output/phase14/t053_evening_recovery_bridge_spot_backtests/run_summary.json`
+- selection:
+  `output/phase14/t053_evening_recovery_bridge_selection_summary/spot_backtest_selection_summary.json`
+- 27/27 independent lab trials eligible; 27 backtested.
+- best trial: `t003_w075_l025_p082_e025_n055_r00_d27`
+- adjusted CSV sha256:
+  `8b1c7f43bdaf3513d417fb6f436470847270af4b83ad5e5053eab08c16b94762`
+- versus T046 incumbent:
+  - overall `0.4403741843600797` vs `0.40548354103189205`
+  - evening `0.4675508496854987` vs `0.45338812791781463`
+  - solar-tail `0.44832283438649295` vs `0.4372953091304925`
+  - weekend `0.3277011767246539` vs `0.2889611347370835`
+  - night `0.15638454130406818` vs `0.03190894115068499`
+  - ramp `0.05921350078935572` vs `0.035478178105887714`
+  - post-valuation `0.292289994623653` vs `0.3048038417338681`
+- verdict: `replace_incumbent=false`; only degraded metric is
+  `post_valuation_mae_improvement_eur_mwh`.
+
+T054 high-peak/low-tail check:
+
+- selection:
+  `output/phase14/t054_high_peak_low_tail_selection_summary/spot_backtest_selection_summary.json`
+- best trial reproduces T070:
+  `t004_w075_l025_p01_e00_n06_r00`
+- verdict: `replace_incumbent=false`; degraded metric remains
+  `solar_tail_mae_improvement_eur_mwh`.
+
+Current next best action:
+
+- keep D50 selection policy unchanged;
+- do not promote T053 because post-valuation remains degraded;
+- run a follow-up sweep targeting post-valuation stability around T053, likely
+  by adding a post-valuation-aware selection diagnostic or by testing smaller
+  evening recovery / cap combinations near `p=0.825`, `e=0.25`, `n=0.55`,
+  `cap=2.70`.
+
+Decision log entry: `D-20260708-51`.
+
 Generated or refreshed local evidence, not default commit targets:
 
 - `data/eex_forwards_history.parquet`

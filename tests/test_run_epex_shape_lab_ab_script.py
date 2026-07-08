@@ -57,6 +57,7 @@ def test_run_epex_shape_lab_ab_writes_lab_only_manifest_and_preserves_monthly_co
         weekend_intensity=1.0,
         low_tail_intensity=0.5,
         peak_subshape_intensity=0.5,
+        evening_recovery_intensity=0.25,
         max_abs_delta_eur_mwh=6.0,
         preserve_peak=True,
     )
@@ -68,6 +69,7 @@ def test_run_epex_shape_lab_ab_writes_lab_only_manifest_and_preserves_monthly_co
     assert manifest["constraint_summary"]["peak_monthly_constraints"] == 2
     assert manifest["constraint_summary"]["max_after_abs_error_eur_mwh"] == pytest.approx(0.0, abs=1e-6)
     assert manifest["candidate_delta_summary"]["max_abs_delta_eur_mwh"] > 0.0
+    assert manifest["config"]["evening_recovery_intensity"] == pytest.approx(0.25)
     assert (output / "candidate_epex_shape_lab_adjusted.csv").exists()
     assert (output / "constraint_residuals_before_after.csv").exists()
     assert (output / "pre_registered_ab_plan.json").exists()
@@ -75,3 +77,4 @@ def test_run_epex_shape_lab_ab_writes_lab_only_manifest_and_preserves_monthly_co
 
     plan = json.loads((output / "pre_registered_ab_plan.json").read_text(encoding="utf-8"))
     assert "OMPEX as target" in plan["forbidden_checks"]
+    assert plan["config"]["evening_recovery_intensity"] == pytest.approx(0.25)
