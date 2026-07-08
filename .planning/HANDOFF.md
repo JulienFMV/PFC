@@ -2,7 +2,7 @@
 
 Latest active handoff:
 
-`.planning/phases/14-lt-audit-remediation/SESSION-HANDOFF-20260707-DAILY-GENERATION-ASOF20260706.md`
+`.planning/phases/14-lt-audit-remediation/SESSION-HANDOFF-20260708-DAILY-GENERATION-ASOF20260707.md`
 
 Read order for new agents:
 
@@ -15,48 +15,52 @@ Read order for new agents:
 Do not treat older Phase 14 generated reports as accepted production evidence
 unless the latest handoff or decision log names them explicitly.
 
-Current daily generation: Tuesday 2026-07-07 was regenerated from the EEX
-workbook available on 2026-07-07. The latest usable CH/DE/FR quote row in that
-workbook is `2026-07-06`, so all new 2026-07-07 evidence is bound to
-`forward_snapshot_date=2026-07-06`.
+Current daily generation: Wednesday 2026-07-08 was regenerated from the EEX
+workbook available on 2026-07-08. The latest usable CH/DE/FR quote row in that
+workbook is `2026-07-07`, so all new 2026-07-08 evidence is bound to
+`forward_snapshot_date=2026-07-07`.
 
-Current promotion-ready 2026-07-07 candidate:
+Current promotion-ready 2026-07-08 candidate:
 
-`output/phase14/20260707_asof20260706_lshape100_yoy150_amp150_2032/`
+`output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/`
 
 Power BI strict passes without `--allow-failed-gates`:
 `powerbi_quality_gate_status=PASS`, `shape_score_10=9`, BASE/PEAK EEX residuals
 `0.000000`, `monthly_path_critical_flags=0`, and
 `cross_year_month_shape_warning_flags=0`. PNG diagnostics are in
-`output/phase14/20260707_asof20260706_lshape100_yoy150_amp150_2032/png_diagnostics/`.
+`output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/png_diagnostics/`.
 
 Production LT dry-run/save also completed and wrote:
 
-- `pfc_shaping/output/pfc_15min_2026-07-07.csv`
-- `pfc_shaping/output/pfc_15min_2026-07-07.parquet`
-- `pfc_shaping/output/pfc_de_15min_2026-07-07.csv`
-- `pfc_shaping/output/pfc_de_15min_2026-07-07.parquet`
+- `pfc_shaping/output/pfc_15min_2026-07-08.csv`
+- `pfc_shaping/output/pfc_15min_2026-07-08.parquet`
+- `pfc_shaping/output/pfc_de_15min_2026-07-08.csv`
+- `pfc_shaping/output/pfc_de_15min_2026-07-08.parquet`
 - `pfc_shaping/model/artifacts/production_monthly_curve_manifest.json`
 
-Promotion evidence is complete for this 2026-07-07 candidate:
+Promotion evidence is complete for this 2026-07-08 candidate:
 
 - source hierarchy policy:
-  `.planning/phases/14-lt-audit-remediation/quote_conflict_source_hierarchy_policy_asof20260706_lshape100_yoy150_amp150_2032.json`
+  `.planning/phases/14-lt-audit-remediation/quote_conflict_source_hierarchy_policy_asof20260707_lshape100_yoy150_amp150_2032.json`
 - selected config:
-  `.planning/phases/14-lt-audit-remediation/monthly_curve_selected_config_asof20260706_lshape100_yoy150_amp150_2032.json`
+  `.planning/phases/14-lt-audit-remediation/monthly_curve_selected_config_asof20260707_lshape100_yoy150_amp150_2032.json`
 - capstone:
-  `output/phase14/20260707_asof20260706_lshape100_yoy150_amp150_2032/promotion_triad_real_prod_check/promotion_decision_real_prod_triad.json`
+  `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/promotion_triad_real_prod_check/promotion_decision_real_prod_triad.json`
 
 Capstone reports `approved=true`, `status=PROMOTION_EVIDENCE_PASS`, and
 `blocking_count=0`. Delivered-product audit passes strictly with
 `accepted_quote_conflict_count=6`, `UNSUPPORTED=0`, `critical_count=0`, and
 `delivered_curve_drift_count=0`.
 
+Previous 2026-07-07 promotion-ready daily candidate:
+`output/phase14/20260707_asof20260706_lshape100_yoy150_amp150_2032/`.
+
 Read-only Roasters/MIT audits after capstone all returned GO with no P0/P1
 blocker. Accepted P2s are traceability/documentation only: generated
 `export_report.md` still has local-test NO-GO boilerplate, sparse-proof
-standalone manifest is less clear than the capstone, and residual warnings are
-documented without hiding any CRITICAL. Do not commit
+standalone manifest is less clear than the capstone, production manifest
+`source_hashes` is empty while export manifest binds the forwards hash, and
+residual warnings are documented without hiding any CRITICAL. Do not commit
 `data/eex_forwards_history.parquet` or generated output artifacts.
 
 Previous promotion-ready Phase 14 CH candidate:

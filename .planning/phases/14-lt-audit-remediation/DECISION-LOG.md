@@ -1057,3 +1057,104 @@ Invariants not to break:
 - OMPEX remains read-only benchmark evidence only.
 - Monthly solver remains the level authority when enabled.
 
+## D-20260708-01 - Daily Generation Uses 2026-07-07 Forward Snapshot
+
+Decision: regenerate the Wednesday 2026-07-08 CH LT PFC using the latest usable
+desk EEX quote row, `2026-07-07`, from the workbook available on 2026-07-08.
+Bind all current artifacts to `forward_snapshot_date=2026-07-07`.
+
+Reason: the EEX workbook file was refreshed on 2026-07-08, but CH/DE/FR quote
+rows inside it stop at 2026-07-07. AT/IT remain unavailable at the exact
+as-of date and are skipped rather than mixed into the fixed-as-of CH solve.
+
+Key evidence:
+
+- candidate:
+  `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/`
+- CSV sha256:
+  `12447bbaa9828c0ffed871e62c35f90b8c100fcfab8c80b00468ac846848d895`
+- selected config:
+  `.planning/phases/14-lt-audit-remediation/monthly_curve_selected_config_asof20260707_lshape100_yoy150_amp150_2032.json`
+- source hierarchy policy:
+  `.planning/phases/14-lt-audit-remediation/quote_conflict_source_hierarchy_policy_asof20260707_lshape100_yoy150_amp150_2032.json`
+- `active_config_hash`:
+  `f95e81bf8987174eb8b553406de296fc8cfb67a3dfde35f006b88cc006a66469`
+- `active_constraints_hash`:
+  `fd95393bd94c2ce5d6ff02ba5c57a0633d00cbc9f6acc540877802fc81a2a7ab`
+- `monthly_solution_hash`:
+  `3882baa358bb2479d4b25aec464b45d74c15713f36ee34d0389790e848430c9e`
+
+Gate results:
+
+- strict Power BI: `PASS`
+- delivered-product audit: `all_gates_pass=true`,
+  `accepted_quote_conflict_count=6`, `UNSUPPORTED=0`
+- sparse proof: `PASS=33`, `WARNING=2`, `UNSUPPORTED=7`, `CRITICAL=0`
+- capstone:
+  `approved=true`, `status=PROMOTION_EVIDENCE_PASS`, `blocking_count=0`
+- targeted tests: `26 passed`
+
+OMPEX benchmark:
+
+- read-only only; not used in model inputs, priors, objectives, or calibration
+- latest observed OMPEX file:
+  `H:\Energy\GeCom\MARCHE & NEGOCE\Prix\Analyse HFC\HFC test\ER -HFC_OMPEX_15min\HFC_Ompex_20260707_101700.xlsx`
+- no `2026-07-08` OMPEX file was observed
+- points: `39473`, MAE `14.0197`, RMSE `18.4823`, bias `1.3495`,
+  correlation `0.8331`
+
+Rejected alternatives:
+
+- Claim a 2026-07-08 forward snapshot from a workbook whose quote rows stop on
+  2026-07-07.
+- Mix stale AT/IT quotes into the exact 2026-07-07 CH solve.
+- Use OMPEX benchmark data as a modeling input.
+
+Invariants not to break:
+
+- Snapshot dates in manifests mean quote-row dates, not file timestamps.
+- Monthly solver remains the monthly level authority.
+- Generated data/output artifacts remain non-commit targets unless explicitly
+  requested.
+
+## D-20260708-02 - Accept 2026-07-08 Roasters GO With Packaging Caveats
+
+Decision: accept the read-only Roasters/MIT GO for the 2026-07-08 candidate
+as promotion evidence, while treating `export_report.md` and standalone
+sparse-proof manifest text as non-authoritative packaging artifacts.
+
+Reason: all three agents found no P0 blocker. Quant/shaping and contamination
+agents found no P1 blocker. The governance agent flagged packaging and
+traceability caveats, but the authoritative capstone reports
+`PROMOTION_EVIDENCE_PASS`, `approved=true`, and `blocking_count=0`, with
+production/export/selected parity on:
+
+- `active_config_hash=f95e81bf8987174eb8b553406de296fc8cfb67a3dfde35f006b88cc006a66469`
+- `active_constraints_hash=fd95393bd94c2ce5d6ff02ba5c57a0633d00cbc9f6acc540877802fc81a2a7ab`
+- `monthly_solution_hash=3882baa358bb2479d4b25aec464b45d74c15713f36ee34d0389790e848430c9e`
+
+Accepted caveats:
+
+- Generated `export_report.md` says production approval `NO`; it is local-test
+  evidence only and must not be shipped as standalone promotion authority.
+- Generated production manifest `source_hashes` is empty; export manifest still
+  binds the forwards hash
+  `159680087cb2f2de6322863660fb481fa531ebc9239e40de4f3735ecdc382ea1`.
+- Sparse-proof standalone manifest has internal proof fields that are less
+  clear than the capstone; capstone remains the authority.
+- Sparse proof keeps `WARNING=2`, `UNSUPPORTED=7`, `CRITICAL=0`; these are
+  non-blocking under the capstone.
+
+Rejected alternatives:
+
+- Override the capstone with the generated local export report.
+- Re-tune the curve because of accepted P2 warnings without any CRITICAL gate.
+- Commit refreshed forwards data or generated output artifacts as part of the
+  audit documentation commit.
+
+Invariants not to break:
+
+- Promotion authority is selected config plus capstone triad.
+- OMPEX remains read-only benchmark evidence only.
+- Commit only curated docs/governance artifacts unless explicitly requested.
+
