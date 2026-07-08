@@ -164,6 +164,13 @@ with `weak_bucket_candidate_count=1`,
 `replacement_verdict.status=WEAK_BUCKET_GAIN_BUT_INCUMBENT_STILL_DOMINATES_CORE_METRICS`,
 and `replace_incumbent=false`. Validation including this summarizer:
 `45 passed, 1 skipped`.
+The eligible-trial spot-backtest step is now also scripted by
+`scripts/run_epex_shape_lab_sweep_spot_backtests.py`. Real T047 resume run:
+`output/phase14/t047_spot_backtest_by_trial/run_summary_from_runner.json`,
+with `trial_count_backtested=9`, `reused_existing_count=9`, no OMPEX flags, and
+the same chained selection verdict under
+`output/phase14/t047_spot_backtest_selection_summary_from_runner/`. Validation
+including the runner: `48 passed, 1 skipped`.
 
 Next-sweep policy hardening is committed in the local work after expert audit
 feedback. New EPEX sweep plans now include `selection_thresholds`,

@@ -4018,3 +4018,68 @@ Invariants not to break:
   beats weak buckets and core metrics without weakening strict diagnostics.
 - OMPEX remains advisory-only after a candidate is frozen.
 
+## D-20260708-42 - Orchestrate Eligible Trial Spot Backtests
+
+Decision: add a read-only runner that executes no-OMPEX spot backtests for
+eligible EPEX sweep trials directly from a pre-registered plan and executed
+sweep summary, then optionally chains the weak-bucket summarizer.
+
+Reason: D41 made weak-bucket selection reproducible once per-trial spot
+backtests exist, but those backtests were still produced by an ad hoc
+PowerShell loop. Future T048/T049 sweeps need a single fail-closed command for
+the full post-sweep evaluation path: eligible trials only, no OMPEX, resume
+safe, and optional incumbent comparison.
+
+Implementation:
+
+- Added `scripts/run_epex_shape_lab_sweep_spot_backtests.py`.
+- Added `tests/test_run_epex_shape_lab_sweep_spot_backtests_script.py`.
+- The runner reads:
+  - `pre_registered_sweep_plan.json`;
+  - executed sweep summary JSON;
+  - sweep ranking CSV referenced by the summary.
+- It validates:
+  - plan is `lab_only` and `pre_registered_independent_no_ompex`;
+  - sweep is `executed_independent_no_ompex`;
+  - all production flags are false;
+  - no OMPEX model/selection/backtest flags;
+  - candidate and spot hashes match the plan;
+  - only `eligible_for_selection=True` trials are processed.
+- It supports resume by hash-validating existing `spot_backtest_summary.json`
+  files against baseline, adjusted CSV and spot parquet hashes.
+- It can call `scripts/summarize_epex_shape_lab_spot_backtests.py` after the
+  backtest run when `--selection-output-dir` is provided.
+
+Real T047 v3 runner validation:
+
+- Command:
+  `python scripts/run_epex_shape_lab_sweep_spot_backtests.py --plan-json output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_sweep_t047_v3/pre_registered_sweep_plan.json --sweep-summary output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_sweep_t047_v3/sweep_execution_summary.json --output-root output/phase14/t047_spot_backtest_by_trial --output-summary output/phase14/t047_spot_backtest_by_trial/run_summary_from_runner.json --incumbent-backtest output/phase14/t046_spot_backtest_v2_buckets/spot_backtest_summary.json --selection-output-dir output/phase14/t047_spot_backtest_selection_summary_from_runner`
+- Result:
+  - `trial_count_backtested=9`;
+  - `reused_existing_count=9`;
+  - `ompex_used_in_model=false`;
+  - `ompex_used_in_selection=false`;
+  - `ompex_used_in_backtest=false`;
+  - chained selection verdict remains
+    `WEAK_BUCKET_GAIN_BUT_INCUMBENT_STILL_DOMINATES_CORE_METRICS`;
+  - `replace_incumbent=false`.
+
+Validation:
+
+- `python -m pytest tests/test_run_epex_shape_lab_sweep_spot_backtests_script.py tests/test_summarize_epex_shape_lab_spot_backtests_script.py tests/test_backtest_epex_shape_lab_against_spot_script.py tests/test_epex_ab_shape_lab.py tests/test_run_epex_shape_lab_ab_script.py tests/test_plan_epex_shape_lab_sweep_script.py tests/test_execute_epex_shape_lab_sweep_script.py tests/test_compare_epex_shape_lab_ab_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  returned `48 passed, 1 skipped`.
+
+Rejected alternatives:
+
+- Keep using shell loops for eligible trial backtests.
+- Backtest every planned trial instead of eligible trials only.
+- Let a post-sweep runner read OMPEX or approve production.
+
+Invariants not to break:
+
+- The runner is lab-only and cannot promote production.
+- It must process only no-OMPEX eligible trials from an executed no-OMPEX
+  sweep.
+- T046 remains incumbent until a future no-OMPEX candidate beats weak buckets
+  and core metrics without weakening strict diagnostics.
+

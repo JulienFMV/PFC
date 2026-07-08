@@ -1020,6 +1020,39 @@ python -m pytest tests/test_summarize_epex_shape_lab_spot_backtests_script.py te
 
 Result: `45 passed, 1 skipped`.
 
+The eligible-trial backtest execution is now scripted as well.
+
+New script:
+
+- `scripts/run_epex_shape_lab_sweep_spot_backtests.py`
+
+New test:
+
+- `tests/test_run_epex_shape_lab_sweep_spot_backtests_script.py`
+
+Real T047 resume command:
+
+```powershell
+python scripts/run_epex_shape_lab_sweep_spot_backtests.py --plan-json output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_sweep_t047_v3/pre_registered_sweep_plan.json --sweep-summary output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_sweep_t047_v3/sweep_execution_summary.json --output-root output/phase14/t047_spot_backtest_by_trial --output-summary output/phase14/t047_spot_backtest_by_trial/run_summary_from_runner.json --incumbent-backtest output/phase14/t046_spot_backtest_v2_buckets/spot_backtest_summary.json --selection-output-dir output/phase14/t047_spot_backtest_selection_summary_from_runner
+```
+
+Result:
+
+- `trial_count_backtested=9`
+- `reused_existing_count=9`
+- no OMPEX model/selection/backtest flags
+- chained selection verdict remains
+  `WEAK_BUCKET_GAIN_BUT_INCUMBENT_STILL_DOMINATES_CORE_METRICS`
+- `replace_incumbent=false`
+
+Validation including the runner:
+
+```powershell
+python -m pytest tests/test_run_epex_shape_lab_sweep_spot_backtests_script.py tests/test_summarize_epex_shape_lab_spot_backtests_script.py tests/test_backtest_epex_shape_lab_against_spot_script.py tests/test_epex_ab_shape_lab.py tests/test_run_epex_shape_lab_ab_script.py tests/test_plan_epex_shape_lab_sweep_script.py tests/test_execute_epex_shape_lab_sweep_script.py tests/test_compare_epex_shape_lab_ab_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result: `48 passed, 1 skipped`.
+
 ## T046 Strict Product and Power BI Diagnostics
 
 T046 was then run through strict product-normalization and Power BI diagnostics
