@@ -52,6 +52,12 @@ Capstone reports `approved=true`, `status=PROMOTION_EVIDENCE_PASS`, and
 `accepted_quote_conflict_count=6`, `UNSUPPORTED=0`, `critical_count=0`, and
 `delivered_curve_drift_count=0`.
 
+OMPEX benchmark policy: OMPEX is useful but imperfect external evidence. It is
+read-only, advisory, not ground truth, not an optimizer target, and not a
+promotion authority. Use `scripts/compare_hpfc_ompex_benchmark.py` for
+repeatable comparisons and retain alignment sensitivity, especially
+`ompex_minus_1h_hourending` for files timestamped as hour-ending.
+
 Previous 2026-07-07 promotion-ready daily candidate:
 `output/phase14/20260707_asof20260706_lshape100_yoy150_amp150_2032/`.
 

@@ -1203,3 +1203,53 @@ Invariants not to break:
 - Local export reports stay local/test reports.
 - Generated parquet/output artifacts remain out of curated commits.
 
+## D-20260708-04 - Treat OMPEX as Imperfect Advisory Benchmark
+
+Decision: formalize OMPEX/HFC as read-only advisory benchmark evidence. OMPEX
+must not be treated as ground truth, model input, optimizer target, calibration
+target, or production promotion authority.
+
+Reason: OMPEX is useful for external comparison and can reveal shape issues,
+but the desk view is that OMPEX also has errors and weaknesses. Optimizing the
+HPFC to OMPEX directly would risk overfitting another vendor curve and could
+degrade independent EEX/spot/physics consistency.
+
+Implementation:
+
+- Added `scripts/compare_hpfc_ompex_benchmark.py`.
+- The script writes `benchmark_policy=advisory`, `read_only=true`,
+  `ompex_used_in_model=false`, and an explicit OMPEX quality caveat.
+- The script writes alignment sensitivity and supports auto-selection across:
+  `direct`, `ompex_minus_1h_hourending`, and `ompex_plus_1h`.
+- The 2026-07-08 comparison selects `ompex_minus_1h_hourending`, consistent
+  with files timestamped as hour-ending.
+
+2026-07-08 benchmark evidence:
+
+- output:
+  `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/ompex_benchmark_read_only_20260708_scripted/`
+- OMPEX file:
+  `H:\Energy\GeCom\MARCHE & NEGOCE\Prix\Analyse HFC\HFC test\ER -HFC_OMPEX_15min\HFC_Ompex_20260708_101700.xlsx`
+- selected alignment: `ompex_minus_1h_hourending`
+- points: `39481`
+- MAE: `12.5271`
+- RMSE: `16.4805`
+- bias HPFC minus OMPEX: `0.7010`
+- correlation: `0.8741`
+
+Rejected alternatives:
+
+- Fit or tune HPFC directly against OMPEX.
+- Use an OMPEX benchmark improvement as sufficient proof of model improvement.
+- Drop alignment sensitivity and assume all OMPEX files use one timestamp
+  convention without evidence.
+
+Invariants not to break:
+
+- EEX BASE/PEAK residual gates and monthly solver authority dominate OMPEX
+  benchmark evidence.
+- OMPEX benchmark may guide diagnostics, but accepted model changes must be
+  justified by independent spot/history/physics features.
+- Generated OMPEX comparison outputs stay local evidence unless explicitly
+  requested for packaging.
+

@@ -252,6 +252,25 @@ Contamination check:
 - `ompex_benchmark_read_only/benchmark_metrics.json` records
   `read_only=true` and `ompex_used_in_model=false`.
 
+OMPEX quality caveat:
+
+- OMPEX is an imperfect external benchmark, not ground truth.
+- OMPEX must not be used as a model input, optimization target, calibration
+  target, or production promotion authority.
+- Improvements should be accepted only when they also improve independent
+  physics/market diagnostics and preserve EEX BASE/PEAK gates.
+
+Repeatable benchmark tooling:
+
+- `scripts/compare_hpfc_ompex_benchmark.py`
+- output from the 2026-07-08 run:
+  `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/ompex_benchmark_read_only_20260708_scripted/`
+- selected alignment: `ompex_minus_1h_hourending`
+- metrics: `MAE=12.5271`, `RMSE=16.4805`, `bias=0.7010`,
+  `correlation=0.8741`
+- output JSON states `benchmark_policy=advisory`, `read_only=true`,
+  `ompex_used_in_model=false`, and records the OMPEX quality caveat.
+
 ## Follow-up Hardening
 
 Code changes:
@@ -298,4 +317,6 @@ Commit candidates for this follow-up:
 - `.planning/phases/14-lt-audit-remediation/SESSION-HANDOFF-20260708-DAILY-GENERATION-ASOF20260707.md`
 - `pfc_shaping/pipeline/production_phases.py`
 - `scripts/export_local_test_ch_hourly_csv.py`
+- `scripts/compare_hpfc_ompex_benchmark.py`
 - `tests/test_long_term_branch.py`
+- `tests/test_compare_hpfc_ompex_benchmark_script.py`
