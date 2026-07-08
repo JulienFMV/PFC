@@ -55,9 +55,12 @@ def test_epex_shape_lab_preserves_base_and_peak_constraints() -> None:
         weekend_intensity=1.0,
         low_tail_intensity=0.5,
         peak_subshape_intensity=0.8,
+        night_intensity=0.4,
+        ramp_intensity=0.3,
         max_abs_delta_eur_mwh=12.0,
     )
     templates, _ = fit_epex_shape_templates(spot, config)
+    assert {"night_delta_eur_mwh", "ramp_delta_eur_mwh"}.issubset(templates.columns)
 
     timestamps = pd.date_range("2030-01-01", "2030-02-28 23:00", freq="h", tz="Europe/Zurich")
     values = np.where(timestamps.month == 1, 92.0, 74.0).astype(float)
@@ -236,7 +239,12 @@ def test_epex_shape_lab_noop_when_all_intensities_are_zero() -> None:
 
 
 def test_epex_shape_lab_manifest_forbids_ompex_as_model_input() -> None:
-    config = ABShapeLabConfig(valuation_timestamp=pd.Timestamp("2026-01-01T00:00:00Z"), weekend_intensity=1.0)
+    config = ABShapeLabConfig(
+        valuation_timestamp=pd.Timestamp("2026-01-01T00:00:00Z"),
+        weekend_intensity=1.0,
+        night_intensity=0.5,
+        ramp_intensity=0.25,
+    )
     manifest = build_ab_lab_manifest(
         config,
         fit_info={"source": "EPEX_CH_spot_history", "max_timestamp_utc": pd.Timestamp("2025-12-31T23:00:00Z")},
@@ -249,6 +257,8 @@ def test_epex_shape_lab_manifest_forbids_ompex_as_model_input() -> None:
     assert manifest["production_approved"] is False
     assert manifest["benchmark_policy"] == "advisory_only_ompex_forbidden_as_input_target_loss_or_gate"
     assert manifest["ompex_used_in_selection"] is False
+    assert manifest["config"]["night_intensity"] == 0.5
+    assert manifest["config"]["ramp_intensity"] == 0.25
     assert manifest["source_hashes_required_for_promotion"] is True
     assert "OMPEX" in manifest["forbidden_inputs"]
     json.dumps(manifest)

@@ -143,6 +143,28 @@ validation now reports `37 passed, 1 skipped`, and a resume check on the
 existing sweep still reports `{"eligible_count": 27, "trial_count_executed":
 27}`.
 
+T047 v3 is the current next model step after expert audit of T046. The lab now
+supports `night_intensity` and `ramp_intensity`, and a no-OMPEX 18-trial plan
+has been pre-registered under
+`output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_sweep_t047_v3/pre_registered_sweep_plan.json`.
+The full sweep now reports `trial_count_executed=18`, `eligible_count=9` in
+`sweep_execution_summary.json`. All 9 eligible trials were then run through
+no-OMPEX spot bucket backtests under `output/phase14/t047_spot_backtest_by_trial/`.
+Best internal ranking trial is `t005_w05_l025_p075_n00_r05_d02`; best
+weak-bucket compromise is `t013_w05_l025_p075_n05_r00_d02`, with night MAE
+improvement `0.1179` and ramp MAE improvement `0.0341`. T047 v3 is not frozen
+as a T046 replacement because T046 still dominates overall profile, solar-tail,
+evening recovery, weekend and post-valuation evidence. Validation for the T047
+code path: `40 passed, 1 skipped`. Next action: refine night/ramp component
+design and selection; OMPEX remains advisory-only after a candidate is frozen.
+The weak-bucket selection is now reproducible through
+`scripts/summarize_epex_shape_lab_spot_backtests.py`; real output is
+`output/phase14/t047_spot_backtest_selection_summary/spot_backtest_selection_summary.json`
+with `weak_bucket_candidate_count=1`,
+`replacement_verdict.status=WEAK_BUCKET_GAIN_BUT_INCUMBENT_STILL_DOMINATES_CORE_METRICS`,
+and `replace_incumbent=false`. Validation including this summarizer:
+`45 passed, 1 skipped`.
+
 Next-sweep policy hardening is committed in the local work after expert audit
 feedback. New EPEX sweep plans now include `selection_thresholds`,
 `scoring_policy`, and optional `max_abs_delta_grid`; the executor records EPEX

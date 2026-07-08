@@ -56,6 +56,8 @@ def run_ab(
     low_tail_intensity: float,
     peak_subshape_intensity: float,
     max_abs_delta_eur_mwh: float,
+    night_intensity: float = 0.0,
+    ramp_intensity: float = 0.0,
     negative_price_floor: float = -30.0,
     max_weighted_negative_hours: int = 0,
     lookback_years: int = 5,
@@ -77,6 +79,8 @@ def run_ab(
         weekend_intensity=float(weekend_intensity),
         low_tail_intensity=float(low_tail_intensity),
         peak_subshape_intensity=float(peak_subshape_intensity),
+        night_intensity=float(night_intensity),
+        ramp_intensity=float(ramp_intensity),
         max_abs_delta_eur_mwh=float(max_abs_delta_eur_mwh),
         negative_price_floor=float(negative_price_floor),
         max_weighted_negative_hours=int(max_weighted_negative_hours),
@@ -257,6 +261,8 @@ def _pre_registration(
             "weekend_intensity": float(config.weekend_intensity),
             "low_tail_intensity": float(config.low_tail_intensity),
             "peak_subshape_intensity": float(config.peak_subshape_intensity),
+            "night_intensity": float(config.night_intensity),
+            "ramp_intensity": float(config.ramp_intensity),
             "max_abs_delta_eur_mwh": float(config.max_abs_delta_eur_mwh),
             "lookback_years": int(config.lookback_years),
             "require_monthly_base_constraints": bool(config.require_monthly_base_constraints),
@@ -268,6 +274,8 @@ def _delta_summary(before: pd.DataFrame, after: pd.DataFrame, ts_ch: pd.Series) 
     delta = after[PRICE].astype(float).to_numpy(dtype=float) - before[PRICE].astype(float).to_numpy(dtype=float)
     weekend = ts_ch.dt.weekday >= 5
     solar_tail = ts_ch.dt.month.between(3, 10) & ts_ch.dt.hour.between(10, 16)
+    night = ts_ch.dt.hour.between(0, 5)
+    ramp = pd.Series(delta, index=ts_ch.index).diff().abs().dropna()
     return {
         "n_hours": int(len(delta)),
         "max_abs_delta_eur_mwh": float(np.max(np.abs(delta))) if len(delta) else 0.0,
@@ -275,6 +283,8 @@ def _delta_summary(before: pd.DataFrame, after: pd.DataFrame, ts_ch: pd.Series) 
         "weekend_mean_delta_eur_mwh": float(np.mean(delta[weekend.to_numpy(dtype=bool)])) if bool(weekend.any()) else 0.0,
         "weekday_mean_delta_eur_mwh": float(np.mean(delta[(~weekend).to_numpy(dtype=bool)])) if bool((~weekend).any()) else 0.0,
         "solar_tail_mean_delta_eur_mwh": float(np.mean(delta[solar_tail.to_numpy(dtype=bool)])) if bool(solar_tail.any()) else 0.0,
+        "night_mean_delta_eur_mwh": float(np.mean(delta[night.to_numpy(dtype=bool)])) if bool(night.any()) else 0.0,
+        "delta_ramp_abs_p99_eur_mwh": float(ramp.quantile(0.99)) if not ramp.empty else 0.0,
     }
 
 
@@ -299,6 +309,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--weekend-intensity", type=float, default=0.0)
     parser.add_argument("--low-tail-intensity", type=float, default=0.0)
     parser.add_argument("--peak-subshape-intensity", type=float, default=0.0)
+    parser.add_argument("--night-intensity", type=float, default=0.0)
+    parser.add_argument("--ramp-intensity", type=float, default=0.0)
     parser.add_argument("--max-abs-delta-eur-mwh", type=float, default=8.0)
     parser.add_argument("--negative-price-floor", type=float, default=-30.0)
     parser.add_argument("--max-weighted-negative-hours", type=int, default=0)
@@ -314,6 +326,8 @@ def main(argv: list[str] | None = None) -> int:
         weekend_intensity=args.weekend_intensity,
         low_tail_intensity=args.low_tail_intensity,
         peak_subshape_intensity=args.peak_subshape_intensity,
+        night_intensity=args.night_intensity,
+        ramp_intensity=args.ramp_intensity,
         max_abs_delta_eur_mwh=args.max_abs_delta_eur_mwh,
         negative_price_floor=args.negative_price_floor,
         max_weighted_negative_hours=args.max_weighted_negative_hours,

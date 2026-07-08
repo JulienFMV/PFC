@@ -47,6 +47,8 @@ class ABShapeLabConfig:
     weekend_intensity: float = 0.0
     low_tail_intensity: float = 0.0
     peak_subshape_intensity: float = 0.0
+    night_intensity: float = 0.0
+    ramp_intensity: float = 0.0
     max_abs_delta_eur_mwh: float = 8.0
     negative_price_floor: float = -30.0
     max_weighted_negative_hours: int = 0
@@ -117,14 +119,23 @@ def fit_epex_shape_templates(
     month_hour_median = features.groupby(["month", "hour"])["residual"].median()
     month_hour_q25 = features.groupby(["month", "hour"])["residual"].quantile(0.25)
     month_peak_mean = features.loc[features["is_peak_like"]].groupby("month")["residual"].median()
+    non_night_mean = features.loc[~features["hour"].between(0, 5)].groupby("month")["residual"].median()
     cell_median = features.groupby(["month", "hour", "is_weekend"])["residual"].median()
     cell_count = features.groupby(["month", "hour", "is_weekend"])["residual"].size()
+    ramp_smoothing: dict[tuple[int, int], float] = {}
+    for month in range(1, 13):
+        for hour in range(24):
+            current = float(month_hour_median.get((month, hour), 0.0))
+            previous_value = float(month_hour_median.get((month, (hour - 1) % 24), current))
+            next_value = float(month_hour_median.get((month, (hour + 1) % 24), current))
+            ramp_smoothing[(month, hour)] = 0.5 * (previous_value + next_value) - current
 
     rows: list[dict[str, Any]] = []
     for month in range(1, 13):
         for hour in range(24):
             mh_median = float(month_hour_median.get((month, hour), 0.0))
             mh_q25 = float(month_hour_q25.get((month, hour), mh_median))
+            non_night_ref = float(non_night_mean.get(month, 0.0))
             for is_weekend in (False, True):
                 cell_key = (month, hour, is_weekend)
                 n_obs = int(cell_count.get(cell_key, 0))
@@ -138,6 +149,8 @@ def fit_epex_shape_templates(
                 is_peak_like = (not is_weekend) and 8 <= hour <= 19
                 peak_ref = float(month_peak_mean.get(month, 0.0))
                 peak_subshape_delta = (mh_median - peak_ref) * shrink if is_peak_like else 0.0
+                night_delta = (mh_median - non_night_ref) * shrink if 0 <= hour <= 5 else 0.0
+                ramp_delta = ramp_smoothing[(month, hour)] * shrink
 
                 rows.append(
                     {
@@ -147,6 +160,8 @@ def fit_epex_shape_templates(
                         "weekend_delta_eur_mwh": float(weekend_delta),
                         "low_tail_delta_eur_mwh": float(low_tail_delta),
                         "peak_subshape_delta_eur_mwh": float(peak_subshape_delta),
+                        "night_delta_eur_mwh": float(night_delta),
+                        "ramp_delta_eur_mwh": float(ramp_delta),
                         "n_obs": n_obs,
                         "sample_shrink": float(shrink),
                     }
@@ -192,6 +207,8 @@ def apply_epex_ab_shape_lab(
         float(config.weekend_intensity)
         + float(config.low_tail_intensity)
         + float(config.peak_subshape_intensity)
+        + float(config.night_intensity)
+        + float(config.ramp_intensity)
     )
     out = hourly.copy()
     if total_intensity == 0.0 or float(config.max_abs_delta_eur_mwh) == 0.0:
@@ -211,13 +228,21 @@ def apply_epex_ab_shape_lab(
     )
     mapped = feature.merge(template, on=["month", "hour", "is_weekend"], how="left", validate="many_to_one")
     mapped = mapped.sort_values("row")
-    for col in ["weekend_delta_eur_mwh", "low_tail_delta_eur_mwh", "peak_subshape_delta_eur_mwh"]:
+    for col in [
+        "weekend_delta_eur_mwh",
+        "low_tail_delta_eur_mwh",
+        "peak_subshape_delta_eur_mwh",
+        "night_delta_eur_mwh",
+        "ramp_delta_eur_mwh",
+    ]:
         mapped[col] = mapped[col].fillna(0.0).astype(float)
 
     raw_delta = (
         float(config.weekend_intensity) * mapped["weekend_delta_eur_mwh"].to_numpy(dtype=float)
         + float(config.low_tail_intensity) * mapped["low_tail_delta_eur_mwh"].to_numpy(dtype=float)
         + float(config.peak_subshape_intensity) * mapped["peak_subshape_delta_eur_mwh"].to_numpy(dtype=float)
+        + float(config.night_intensity) * mapped["night_delta_eur_mwh"].to_numpy(dtype=float)
+        + float(config.ramp_intensity) * mapped["ramp_delta_eur_mwh"].to_numpy(dtype=float)
     )
     if not np.isfinite(raw_delta).all():
         raise ValueError("EPEX shape lab produced non-finite raw deltas")
@@ -287,6 +312,8 @@ def apply_epex_ab_shape_lab(
                 "weekend_intensity": float(config.weekend_intensity),
                 "low_tail_intensity": float(config.low_tail_intensity),
                 "peak_subshape_intensity": float(config.peak_subshape_intensity),
+                "night_intensity": float(config.night_intensity),
+                "ramp_intensity": float(config.ramp_intensity),
                 "max_abs_raw_delta_eur_mwh": float(np.max(np.abs(raw_delta))) if len(raw_delta) else 0.0,
                 "max_abs_projected_delta_eur_mwh": float(np.max(np.abs(projected_delta))) if len(projected_delta) else 0.0,
                 "mean_projected_delta_eur_mwh": float(np.mean(projected_delta)) if len(projected_delta) else 0.0,
@@ -481,6 +508,8 @@ def _validate_config(config: ABShapeLabConfig) -> None:
         "weekend_intensity",
         "low_tail_intensity",
         "peak_subshape_intensity",
+        "night_intensity",
+        "ramp_intensity",
         "max_abs_delta_eur_mwh",
     ]:
         value = float(getattr(config, name))
@@ -500,6 +529,8 @@ def _validate_templates(templates: pd.DataFrame) -> pd.DataFrame:
         "weekend_delta_eur_mwh",
         "low_tail_delta_eur_mwh",
         "peak_subshape_delta_eur_mwh",
+        "night_delta_eur_mwh",
+        "ramp_delta_eur_mwh",
     }
     missing = sorted(required - set(templates.columns))
     if missing:

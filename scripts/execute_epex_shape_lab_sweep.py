@@ -72,6 +72,8 @@ def execute_sweep(
                 low_tail_intensity=float(trial["parameters"]["low_tail_intensity"]),
                 peak_subshape_intensity=float(trial["parameters"]["peak_subshape_intensity"]),
                 max_abs_delta_eur_mwh=float(trial["parameters"]["max_abs_delta_eur_mwh"]),
+                night_intensity=float(trial["parameters"].get("night_intensity", 0.0)),
+                ramp_intensity=float(trial["parameters"].get("ramp_intensity", 0.0)),
                 lookback_years=int(trial["parameters"].get("lookback_years", plan.get("lookback_years", 5))),
             )
             reran_manifest = True
@@ -165,6 +167,7 @@ def execute_sweep(
             "no weighted negative hours",
             "EPEX spot freshness and coverage thresholds when pre-registered",
             "ramp and negative price thresholds when pre-registered",
+            "night/ramp components when pre-registered",
             "higher independent duck/shape score",
             "lower ramp penalty as tie-break",
         ],
@@ -261,6 +264,7 @@ def _scoring_policy(plan: dict[str, Any]) -> dict[str, float]:
         "duck_weight": 1.0,
         "solar_tail_weight": 1.0,
         "weekend_weight": 1.0,
+        "night_weight": 0.5,
         "ramp_penalty_weight": 0.25,
     }
     unknown = sorted(set(raw) - set(defaults))
@@ -306,6 +310,8 @@ def _manifest_matches_plan(
         and _float_equal(config.get("weekend_intensity"), params["weekend_intensity"])
         and _float_equal(config.get("low_tail_intensity"), params["low_tail_intensity"])
         and _float_equal(config.get("peak_subshape_intensity"), params["peak_subshape_intensity"])
+        and _float_equal(config.get("night_intensity", 0.0), params.get("night_intensity", 0.0))
+        and _float_equal(config.get("ramp_intensity", 0.0), params.get("ramp_intensity", 0.0))
         and _float_equal(config.get("max_abs_delta_eur_mwh"), params["max_abs_delta_eur_mwh"])
         and int(config.get("lookback_years", -1)) == int(params.get("lookback_years", plan.get("lookback_years", 5)))
         and _same_path(outputs.get("adjusted_csv"), adjusted_csv)
@@ -453,10 +459,12 @@ def _trial_row(
     duck_change = float(annual.get("evening_minus_midday_change_mean_eur_mwh", 0.0))
     solar_tail_delta = float(calendar.get("solar_tail_mar_oct_10_16", 0.0))
     weekend_delta = float(calendar.get("weekend", 0.0))
+    night_delta = float(calendar.get("night_00_05", 0.0))
     shape_score = (
         scoring_policy["duck_weight"] * duck_change
         + scoring_policy["solar_tail_weight"] * max(0.0, -solar_tail_delta)
         + scoring_policy["weekend_weight"] * max(0.0, -weekend_delta)
+        + scoring_policy["night_weight"] * abs(night_delta)
         - scoring_policy["ramp_penalty_weight"] * max(0.0, ramp_increase)
     )
     return {
@@ -466,6 +474,8 @@ def _trial_row(
         "weekend_intensity": float(trial["parameters"]["weekend_intensity"]),
         "low_tail_intensity": float(trial["parameters"]["low_tail_intensity"]),
         "peak_subshape_intensity": float(trial["parameters"]["peak_subshape_intensity"]),
+        "night_intensity": float(trial["parameters"].get("night_intensity", 0.0)),
+        "ramp_intensity": float(trial["parameters"].get("ramp_intensity", 0.0)),
         "max_abs_delta_eur_mwh": float(independent["max_abs_delta_eur_mwh"]),
         "max_abs_monthly_mean_delta_eur_mwh": monthly_drift,
         "max_abs_width_delta_eur_mwh": width_drift,
@@ -476,6 +486,7 @@ def _trial_row(
         "duck_change_mean_eur_mwh": duck_change,
         "solar_tail_mean_delta_eur_mwh": solar_tail_delta,
         "weekend_mean_delta_eur_mwh": weekend_delta,
+        "night_mean_delta_eur_mwh": night_delta,
         "ramp_abs_p99_increase_eur_mwh": ramp_increase,
         "independent_shape_score": float(shape_score),
         "lab_max_after_constraint_abs_error_eur_mwh": _optional_float(

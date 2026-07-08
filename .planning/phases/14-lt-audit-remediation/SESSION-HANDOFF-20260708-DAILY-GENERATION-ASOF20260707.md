@@ -835,6 +835,191 @@ NO-GO production. Promotion would require regenerating it through the real
 production/export/capstone path with artifact-bound source hierarchy and strict
 gates.
 
+## T047 V3 Night/Ramp EPEX Sweep Pre-Registration
+
+Read-only expert audits after T046 recommended not promoting T046 immediately:
+T046 strict diagnostics are strong, but no-OMPEX spot evidence remains weak on
+night and hourly-ramp buckets, and T046 is close to the ramp p99 selection cap.
+The next model step is therefore T047 v3, still lab-only and no-OMPEX.
+
+Implementation changes:
+
+- `pfc_shaping/lt/model/epex_shape_lab.py` now fits and applies
+  `night_delta_eur_mwh` and `ramp_delta_eur_mwh` templates via new
+  `ABShapeLabConfig.night_intensity` and `ABShapeLabConfig.ramp_intensity`.
+- `scripts/run_epex_shape_lab_ab.py` accepts `--night-intensity` and
+  `--ramp-intensity` and records them in manifests.
+- `scripts/plan_epex_shape_lab_sweep.py` can pre-register the new dimensions,
+  includes `night_weight` in scoring, and supports `@file.json` CLI arguments
+  for robust PowerShell JSON passing.
+- `scripts/execute_epex_shape_lab_sweep.py` passes/validates the new
+  intensities and records them in ranking rows.
+- `scripts/compare_epex_shape_lab_ab.py` adds `night_00_05` to independent
+  calendar diagnostics.
+
+Pre-registered T047 v3 plan:
+
+- folder:
+  `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_sweep_t047_v3/`
+- plan:
+  `pre_registered_sweep_plan.json`
+- trial count: `18`
+- candidate CSV:
+  `ch_hfc_hourly_asof20260707_lshape100_yoy150_amp150_2032.csv`
+- spot parquet:
+  `epex_spot_refresh_20260708/epex_hourly_ch_energy_charts_20260708.parquet`
+- grid:
+  - weekend `0.5`
+  - low-tail `0.25`
+  - peak-subshape `0.75`
+  - night `[0.0, 0.25, 0.5]`
+  - ramp `[0.0, 0.25, 0.5]`
+  - cap `[2.0, 3.0]`
+- thresholds:
+  - max EPEX spot age `14.0` days
+  - min EPEX fit coverage `730.0` days
+  - max ramp p99 increase `0.9` EUR/MWh
+  - min adjusted price `-10.0` EUR/MWh
+- scoring:
+  - duck `1.0`
+  - solar tail `1.0`
+  - weekend `1.0`
+  - night `0.75`
+  - ramp penalty `1.5`
+
+Smoke execution:
+
+```powershell
+python scripts/execute_epex_shape_lab_sweep.py --plan-json output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_sweep_t047_v3/pre_registered_sweep_plan.json --output-summary output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_sweep_t047_v3/sweep_execution_smoke_summary.json --max-trials 2 --no-resume
+```
+
+Result:
+
+- `trial_count_executed=2`
+- `eligible_count=1`
+- best smoke trial: `t001_w05_l025_p075_n00_r00_d02`
+- ramp p99 increase: `0.6714740399999428` EUR/MWh
+- max monthly drift: `1.0119047646367243e-07`
+- width drift: `0`
+- weighted negative hours: `0`
+- governance: `PASS`
+- the cap `3.0` smoke trial is not eligible under the tighter ramp threshold.
+
+Validation:
+
+```powershell
+python -m pytest tests/test_epex_ab_shape_lab.py tests/test_run_epex_shape_lab_ab_script.py tests/test_plan_epex_shape_lab_sweep_script.py tests/test_execute_epex_shape_lab_sweep_script.py tests/test_compare_epex_shape_lab_ab_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result: `40 passed, 1 skipped`.
+
+Full T047 v3 sweep was then executed:
+
+```powershell
+python scripts/execute_epex_shape_lab_sweep.py --plan-json output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_sweep_t047_v3/pre_registered_sweep_plan.json --output-summary output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_sweep_t047_v3/sweep_execution_summary.json
+```
+
+Result:
+
+- `trial_count_executed=18`
+- `eligible_count=9`
+- `production_approved=false`
+- `ompex_used_in_model=false`
+- `ompex_used_in_selection=false`
+
+Best internal ranking trial:
+
+- `t005_w05_l025_p075_n00_r05_d02`
+- cap `2.0`, night `0.0`, ramp `0.5`
+- independent shape score `1.315185990064843`
+- ramp p99 increase `0.7062480299999798`
+- max monthly drift `1.1111111105262712e-07`
+- width drift `0`
+- weighted negative hours `0`
+- governance `PASS`
+
+Because the internal score is not the final weak-bucket selection criterion,
+all 9 eligible trials were then run through the no-OMPEX spot bucket backtest.
+Outputs:
+
+- `output/phase14/t047_spot_backtest_by_trial/`
+- `output/phase14/t047_spot_backtest_by_trial/eligible_spot_backtest_summary.csv`
+
+Best weak-bucket compromise:
+
+- `t013_w05_l025_p075_n05_r00_d02`
+- adjusted CSV SHA-256:
+  `d7b93c7caf4c38ec51cd94d37f0f5308feef9df50bb1ca263705627ac8d7b1fb`
+- overall profile MAE improvement: `0.29295542439021466`
+- night MAE improvement: `0.11792184918005748`, positive folds `10/12`
+- hourly-ramp MAE improvement: `0.034116846702457994`, positive folds `10/12`
+- evening recovery MAE improvement: `0.32206130775585989`
+- solar-tail MAE improvement: `0.29033105604920667`
+- weekend MAE improvement: `0.1990459761545178`
+- post-valuation MAE improvement: `0.22709564079301003`
+
+T046 reference still dominates overall:
+
+- overall profile MAE improvement: `0.4054835410318921`
+- night MAE improvement: `0.031908941150684988`, positive folds `5/12`
+- hourly-ramp MAE improvement: `0.035478178105887714`, positive folds `8/12`
+- evening recovery MAE improvement: `0.45338812791781463`
+- solar-tail MAE improvement: `0.43729530913049253`
+- weekend MAE improvement: `0.28896113473708351`
+- post-valuation MAE improvement: `0.3048038417338681`
+
+Decision: T047 v3 is useful diagnostic evidence but is not frozen as a T046
+replacement. It materially improves night evidence, but it does not beat T046
+on overall, solar/evening/weekend, post-valuation or mean ramp MAE. Next model
+step should refine night/ramp selection and component design, not promote T047.
+OMPEX remains advisory-only post-selection with locked
+`ompex_minus_1h_hourending` alignment.
+
+The weak-bucket selection step is now reproducible rather than manual.
+
+New script:
+
+- `scripts/summarize_epex_shape_lab_spot_backtests.py`
+
+New test:
+
+- `tests/test_summarize_epex_shape_lab_spot_backtests_script.py`
+
+The script reads an executed no-OMPEX sweep summary, per-trial spot-backtest
+summaries, and optional incumbent evidence, then writes a fail-closed lab-only
+selection summary. It rejects any OMPEX use or production-approved/promotion
+gate evidence.
+
+Real T047 v3 selection summary command:
+
+```powershell
+python scripts/summarize_epex_shape_lab_spot_backtests.py --sweep-summary output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_sweep_t047_v3/sweep_execution_summary.json --backtest-root output/phase14/t047_spot_backtest_by_trial --incumbent-backtest output/phase14/t046_spot_backtest_v2_buckets/spot_backtest_summary.json --output-dir output/phase14/t047_spot_backtest_selection_summary
+```
+
+Outputs:
+
+- `output/phase14/t047_spot_backtest_selection_summary/spot_backtest_selection_summary.json`
+- `output/phase14/t047_spot_backtest_selection_summary/spot_backtest_trial_ranking.csv`
+
+Result:
+
+- `trial_count_from_sweep=9`
+- `trial_count_summarized=9`
+- `strict_pass_count=9`
+- `weak_bucket_candidate_count=1`
+- best weak-bucket trial: `t013_w05_l025_p075_n05_r00_d02`
+- verdict:
+  `WEAK_BUCKET_GAIN_BUT_INCUMBENT_STILL_DOMINATES_CORE_METRICS`
+- `replace_incumbent=false`
+
+Validation including the new summarizer:
+
+```powershell
+python -m pytest tests/test_summarize_epex_shape_lab_spot_backtests_script.py tests/test_backtest_epex_shape_lab_against_spot_script.py tests/test_epex_ab_shape_lab.py tests/test_run_epex_shape_lab_ab_script.py tests/test_plan_epex_shape_lab_sweep_script.py tests/test_execute_epex_shape_lab_sweep_script.py tests/test_compare_epex_shape_lab_ab_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result: `45 passed, 1 skipped`.
+
 ## T046 Strict Product and Power BI Diagnostics
 
 T046 was then run through strict product-normalization and Power BI diagnostics

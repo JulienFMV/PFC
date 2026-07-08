@@ -158,6 +158,7 @@ def _add_calendar(frame: pd.DataFrame) -> pd.DataFrame:
     out["is_solar_tail"] = out["month"].between(3, 10) & out["hour"].between(10, 16)
     out["is_evening_ramp"] = out["hour"].between(17, 21)
     out["is_midday"] = out["hour"].between(11, 15)
+    out["is_night"] = out["hour"].between(0, 5)
     return out
 
 
@@ -218,6 +219,7 @@ def _calendar_summary(joined: pd.DataFrame) -> pd.DataFrame:
         "solar_tail_mar_oct_10_16": joined["is_solar_tail"],
         "evening_ramp_17_21": joined["is_evening_ramp"],
         "midday_11_15": joined["is_midday"],
+        "night_00_05": joined["is_night"],
     }
     rows = []
     for name, mask in buckets.items():

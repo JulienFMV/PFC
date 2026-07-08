@@ -4,7 +4,7 @@ import json
 
 import pandas as pd
 
-from scripts.plan_epex_shape_lab_sweep import build_plan
+from scripts.plan_epex_shape_lab_sweep import _parse_grid, build_plan
 
 
 def test_plan_epex_shape_lab_sweep_is_pre_registered_and_no_ompex(tmp_path) -> None:
@@ -35,6 +35,8 @@ def test_plan_epex_shape_lab_sweep_is_pre_registered_and_no_ompex(tmp_path) -> N
     assert all("audit_governance_no_ompex" in trial["commands"] for trial in plan["trials"])
     assert plan["selection_thresholds"]["max_epex_spot_age_days"] == 14.0
     assert plan["scoring_policy"]["ramp_penalty_weight"] == 1.0
+    assert plan["grid"]["night_intensity"] == [0.0]
+    assert plan["grid"]["ramp_intensity"] == [0.0]
     json.dumps(plan)
 
 
@@ -62,3 +64,48 @@ def test_plan_epex_shape_lab_sweep_can_pre_register_delta_cap_grid(tmp_path) -> 
     assert plan["trial_count"] == 4
     assert {trial["parameters"]["max_abs_delta_eur_mwh"] for trial in plan["trials"]} == {2.0, 4.0}
     assert all("_d" in trial["trial_id"] for trial in plan["trials"])
+
+
+def test_plan_epex_shape_lab_sweep_can_pre_register_t047_night_ramp_dimensions(tmp_path) -> None:
+    candidate = tmp_path / "candidate.csv"
+    spot = tmp_path / "spot.parquet"
+    candidate.write_text("timestamp_ch,price_weighted_mean_eur_mwh\n", encoding="utf-8")
+    pd.DataFrame({"price_eur_mwh": [1.0]}, index=pd.date_range("2025-01-01", periods=1, tz="UTC")).to_parquet(spot)
+
+    plan = build_plan(
+        candidate_csv=candidate,
+        spot_parquet=spot,
+        output_root=tmp_path / "sweep",
+        valuation_timestamp="2026-07-07T00:00:00Z",
+        max_abs_delta_eur_mwh=3.0,
+        plan_id="epex_shape_lab_sweep_t047_v3",
+        grid={
+            "weekend_intensity": [0.5],
+            "low_tail_intensity": [0.25],
+            "peak_subshape_intensity": [0.75],
+            "night_intensity": [0.0, 0.25],
+            "ramp_intensity": [0.0, 0.25],
+        },
+    )
+
+    assert plan["plan_id"] == "epex_shape_lab_sweep_t047_v3"
+    assert plan["trial_count"] == 4
+    assert plan["scoring_policy"]["night_weight"] == 0.5
+    assert {trial["parameters"]["night_intensity"] for trial in plan["trials"]} == {0.0, 0.25}
+    assert {trial["parameters"]["ramp_intensity"] for trial in plan["trials"]} == {0.0, 0.25}
+    assert all("--night-intensity" in trial["commands"]["run_ab"] for trial in plan["trials"])
+    assert all("--ramp-intensity" in trial["commands"]["run_ab"] for trial in plan["trials"])
+    assert all("compare_hpfc_ompex_benchmark" not in trial["commands"]["run_ab"] for trial in plan["trials"])
+
+
+def test_plan_epex_shape_lab_sweep_accepts_json_file_arguments(tmp_path) -> None:
+    grid_json = tmp_path / "grid.json"
+    grid_json.write_text('{"weekend_intensity":[0.5],"low_tail_intensity":[0.25],"peak_subshape_intensity":[0.75]}')
+
+    parsed = _parse_grid(f"@{grid_json}")
+
+    assert parsed == {
+        "weekend_intensity": [0.5],
+        "low_tail_intensity": [0.25],
+        "peak_subshape_intensity": [0.75],
+    }

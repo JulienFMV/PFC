@@ -19,7 +19,17 @@ DEFAULT_GRID = {
     "weekend_intensity": [0.25, 0.5, 0.75],
     "low_tail_intensity": [0.25, 0.5, 0.75],
     "peak_subshape_intensity": [0.25, 0.5, 0.75],
+    "night_intensity": [0.0],
+    "ramp_intensity": [0.0],
 }
+
+INTENSITY_KEYS = [
+    "weekend_intensity",
+    "low_tail_intensity",
+    "peak_subshape_intensity",
+    "night_intensity",
+    "ramp_intensity",
+]
 
 DEFAULT_SELECTION_THRESHOLDS = {
     "max_epex_spot_age_days": 14.0,
@@ -32,6 +42,7 @@ DEFAULT_SCORING_POLICY = {
     "duck_weight": 1.0,
     "solar_tail_weight": 1.0,
     "weekend_weight": 1.0,
+    "night_weight": 0.5,
     "ramp_penalty_weight": 1.0,
 }
 
@@ -50,7 +61,7 @@ def build_plan(
     scoring_policy: dict[str, float] | None = None,
     plan_id: str = "epex_shape_lab_sweep_v1",
 ) -> dict[str, Any]:
-    grid = grid or DEFAULT_GRID
+    grid = {**DEFAULT_GRID, **(grid or {})}
     required = ["weekend_intensity", "low_tail_intensity", "peak_subshape_intensity"]
     missing = sorted(set(required) - set(grid))
     if missing:
@@ -66,15 +77,24 @@ def build_plan(
     thresholds = {**DEFAULT_SELECTION_THRESHOLDS, **(selection_thresholds or {})}
     scoring = {**DEFAULT_SCORING_POLICY, **(scoring_policy or {})}
     trials = []
-    dimensions = [*required, "max_abs_delta_eur_mwh"]
-    values_by_dimension = [grid[key] for key in required] + [cap_values]
+    dimensions = [*INTENSITY_KEYS, "max_abs_delta_eur_mwh"]
+    values_by_dimension = [grid[key] for key in INTENSITY_KEYS] + [cap_values]
     for idx, values in enumerate(product(*values_by_dimension), start=1):
         params = dict(zip(dimensions, (float(v) for v in values), strict=True))
         cap_suffix = f"_d{_compact_float(params['max_abs_delta_eur_mwh'])}" if len(cap_values) > 1 else ""
+        advanced_suffix = (
+            f"_n{_compact_float(params['night_intensity'])}"
+            f"_r{_compact_float(params['ramp_intensity'])}"
+            if len(grid["night_intensity"]) > 1
+            or len(grid["ramp_intensity"]) > 1
+            or any(float(v) != 0.0 for v in grid["night_intensity"])
+            or any(float(v) != 0.0 for v in grid["ramp_intensity"])
+            else ""
+        )
         trial_id = (
             f"t{idx:03d}_w{_compact_float(params['weekend_intensity'])}"
             f"_l{_compact_float(params['low_tail_intensity'])}"
-            f"_p{_compact_float(params['peak_subshape_intensity'])}{cap_suffix}"
+            f"_p{_compact_float(params['peak_subshape_intensity'])}{advanced_suffix}{cap_suffix}"
         )
         trial_dir = output_root / trial_id
         adjusted_csv = trial_dir / "candidate_epex_shape_lab_adjusted.csv"
@@ -107,6 +127,10 @@ def build_plan(
                             str(params["low_tail_intensity"]),
                             "--peak-subshape-intensity",
                             str(params["peak_subshape_intensity"]),
+                            "--night-intensity",
+                            str(params["night_intensity"]),
+                            "--ramp-intensity",
+                            str(params["ramp_intensity"]),
                             "--max-abs-delta-eur-mwh",
                             str(params["max_abs_delta_eur_mwh"]),
                             "--lookback-years",
@@ -159,11 +183,12 @@ def build_plan(
             "fan width drift",
             "EPEX spot freshness and coverage thresholds",
             "pre-registered ramp and negative price thresholds",
+            "pre-registered night/ramp shape components when present",
             "calendar shape effects",
             "governance PASS without OMPEX",
         ],
         "forbidden_selection_inputs": ["OMPEX", "HFC_OMPEX", "external_HPFC_benchmark"],
-        "grid": {key: [float(v) for v in grid[key]] for key in required},
+        "grid": {key: [float(v) for v in grid[key]] for key in INTENSITY_KEYS},
         "max_abs_delta_grid": cap_values,
         "max_abs_delta_eur_mwh": float(max_abs_delta_eur_mwh),
         "selection_thresholds": thresholds,
@@ -199,7 +224,7 @@ def _quote(value: str) -> str:
 def _parse_grid(value: str | None) -> dict[str, list[float]] | None:
     if value is None:
         return None
-    payload = json.loads(value)
+    payload = _load_json_arg(value)
     if not isinstance(payload, dict):
         raise ValueError("--grid-json must decode to an object")
     return {str(key): [float(v) for v in values] for key, values in payload.items()}
@@ -208,7 +233,7 @@ def _parse_grid(value: str | None) -> dict[str, list[float]] | None:
 def _parse_float_list(value: str | None) -> list[float] | None:
     if value is None:
         return None
-    payload = json.loads(value)
+    payload = _load_json_arg(value)
     if not isinstance(payload, list):
         raise ValueError("value must decode to a list")
     return [float(v) for v in payload]
@@ -217,10 +242,16 @@ def _parse_float_list(value: str | None) -> list[float] | None:
 def _parse_float_object(value: str | None, *, label: str) -> dict[str, float] | None:
     if value is None:
         return None
-    payload = json.loads(value)
+    payload = _load_json_arg(value)
     if not isinstance(payload, dict):
         raise ValueError(f"{label} must decode to an object")
     return {str(key): float(v) for key, v in payload.items()}
+
+
+def _load_json_arg(value: str) -> Any:
+    if value.startswith("@"):
+        return json.loads(Path(value[1:]).read_text(encoding="utf-8-sig"))
+    return json.loads(value)
 
 
 def main(argv: list[str] | None = None) -> int:
