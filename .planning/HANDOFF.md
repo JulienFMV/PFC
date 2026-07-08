@@ -143,6 +143,18 @@ validation now reports `37 passed, 1 skipped`, and a resume check on the
 existing sweep still reports `{"eligible_count": 27, "trial_count_executed":
 27}`.
 
+Next-sweep policy hardening is committed in the local work after expert audit
+feedback. New EPEX sweep plans now include `selection_thresholds`,
+`scoring_policy`, and optional `max_abs_delta_grid`; the executor records EPEX
+spot age and fit coverage, applies freshness/coverage/ramp/min-price
+thresholds, and ranks with the pre-registered scoring weights. Defaults for
+new plans are `max_epex_spot_age_days=14.0`,
+`min_epex_fit_coverage_days=730.0`, `max_ramp_p99_increase_eur_mwh=1.0`,
+`min_adjusted_price_eur_mwh=-10.0`, and `ramp_penalty_weight=1.0`. Validation:
+`39 passed, 1 skipped`. Next research action is to refresh EPEX spot, generate
+a new no-OMPEX plan with a cap grid such as `[2.0, 3.0, 4.0, 6.0]`, then run
+that sweep. The existing `trial_002` remains frozen lab evidence only.
+
 Previous 2026-07-07 promotion-ready daily candidate:
 `output/phase14/20260707_asof20260706_lshape100_yoy150_amp150_2032/`.
 

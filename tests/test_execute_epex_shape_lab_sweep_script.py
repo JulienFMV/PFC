@@ -120,6 +120,37 @@ def test_execute_epex_shape_lab_sweep_best_trial_is_none_when_no_trial_eligible(
     assert summary["best_trial"] is None
 
 
+def test_execute_epex_shape_lab_sweep_enforces_pre_registered_spot_freshness(tmp_path) -> None:
+    candidate = tmp_path / "candidate.csv"
+    spot = tmp_path / "spot.parquet"
+    timestamps = pd.date_range("2030-01-01", "2030-01-07 23:00", freq="h", tz="Europe/Zurich")
+    _candidate_csv(candidate, timestamps)
+    _spot_parquet(spot)
+    plan = build_plan(
+        candidate_csv=candidate,
+        spot_parquet=spot,
+        output_root=tmp_path / "sweep",
+        valuation_timestamp="2026-07-01T00:00:00Z",
+        max_abs_delta_eur_mwh=2.0,
+        grid={
+            "weekend_intensity": [0.25],
+            "low_tail_intensity": [0.25],
+            "peak_subshape_intensity": [0.25],
+        },
+    )
+    plan_json = tmp_path / "plan.json"
+    plan_json.write_text(json.dumps(plan), encoding="utf-8")
+
+    summary = execute_sweep(plan_json=plan_json, output_summary=tmp_path / "summary.json")
+
+    assert summary["selection_thresholds"]["max_epex_spot_age_days"] == 14.0
+    assert summary["eligible_count"] == 0
+    assert summary["best_trial"] is None
+    ranking = pd.read_csv(tmp_path / "summary.csv")
+    assert ranking.loc[0, "epex_spot_age_days"] > 14.0
+    assert not bool(ranking.loc[0, "eligible_for_selection"])
+
+
 def _single_trial_plan_json(tmp_path):
     candidate = tmp_path / "candidate.csv"
     spot = tmp_path / "spot.parquet"

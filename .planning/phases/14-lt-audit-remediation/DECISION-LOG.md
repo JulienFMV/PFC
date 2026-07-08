@@ -1809,3 +1809,65 @@ Invariants not to break:
   advisory benchmark.
 - Generated trial outputs remain local artifacts unless explicitly packaged.
 
+## D-20260708-13 - Pre-Register EPEX Sweep Selection Policy
+
+Decision: harden the EPEX shape-lab sweep plan and executor so future sweeps
+carry and enforce explicit no-OMPEX selection thresholds and scoring weights.
+
+Reason: read-only expert audits found that the first sweep was correctly
+no-OMPEX and governance-clean, but still not adoption-ready as a research
+model-selection protocol. The EPEX spot history used by the best trial was too
+stale for a 2026-07-07 valuation, all trials saturated the `6.0` EUR/MWh cap,
+and the ranking over-weighted an internal duck-shape score relative to ramp and
+negative-price risk.
+
+Implementation:
+
+- `scripts/plan_epex_shape_lab_sweep.py` now writes:
+  - `selection_thresholds`
+  - `scoring_policy`
+  - `max_abs_delta_grid`
+- Default new-plan thresholds:
+  - `max_epex_spot_age_days=14.0`
+  - `min_epex_fit_coverage_days=730.0`
+  - `max_ramp_p99_increase_eur_mwh=1.0`
+  - `min_adjusted_price_eur_mwh=-10.0`
+- Default new-plan scoring:
+  - `duck_weight=1.0`
+  - `solar_tail_weight=1.0`
+  - `weekend_weight=1.0`
+  - `ramp_penalty_weight=1.0`
+- The planner can now pre-register a cap grid via
+  `--max-abs-delta-grid-json`, e.g. `[2.0, 3.0, 4.0, 6.0]`.
+- `scripts/execute_epex_shape_lab_sweep.py` now records EPEX spot age and fit
+  coverage per trial and applies pre-registered freshness, coverage, ramp, and
+  minimum-price thresholds before marking a trial eligible.
+- Existing historical plans without these policy fields remain readable as
+  already-frozen lab evidence; new plans include the stricter policy.
+
+Validation:
+
+- `python -m pytest tests/test_plan_epex_shape_lab_sweep_script.py tests/test_execute_epex_shape_lab_sweep_script.py -q -p no:cacheprovider`
+  returned `8 passed`.
+- `python -m pytest tests/test_execute_epex_shape_lab_sweep_script.py tests/test_plan_epex_shape_lab_sweep_script.py tests/test_epex_ab_shape_lab.py tests/test_run_epex_shape_lab_ab_script.py tests/test_compare_epex_shape_lab_ab_script.py tests/test_audit_epex_shape_lab_governance_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  returned `39 passed, 1 skipped`.
+
+Rejected alternatives:
+
+- Adopt the already selected `trial_002_w0.25_l0.25_p0.50` as production
+  evidence.
+- Continue scoring future sweeps with the legacy weak ramp penalty.
+- Let stale EPEX spot data remain an advisory note instead of a hard
+  pre-registered eligibility criterion.
+
+Invariants not to break:
+
+- OMPEX/HFC remains forbidden as an input, target, loss, selection criterion,
+  or governance gate.
+- Baseline `20260708_asof20260707_lshape100_yoy150_amp150_2032` remains the
+  only promotion-ready 2026-07-08 candidate until a future adjusted artifact
+  passes a full production/export/capstone chain.
+- Future EPEX lab promotion requires refreshed EPEX spot evidence, an
+  artifact-bound source hierarchy policy, strict product normalization,
+  strict Power BI gates, and capstone triad evidence.
+

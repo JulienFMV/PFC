@@ -21,6 +21,20 @@ DEFAULT_GRID = {
     "peak_subshape_intensity": [0.25, 0.5, 0.75],
 }
 
+DEFAULT_SELECTION_THRESHOLDS = {
+    "max_epex_spot_age_days": 14.0,
+    "min_epex_fit_coverage_days": 730.0,
+    "max_ramp_p99_increase_eur_mwh": 1.0,
+    "min_adjusted_price_eur_mwh": -10.0,
+}
+
+DEFAULT_SCORING_POLICY = {
+    "duck_weight": 1.0,
+    "solar_tail_weight": 1.0,
+    "weekend_weight": 1.0,
+    "ramp_penalty_weight": 1.0,
+}
+
 
 def build_plan(
     *,
@@ -31,6 +45,9 @@ def build_plan(
     max_abs_delta_eur_mwh: float,
     lookback_years: int = 5,
     grid: dict[str, list[float]] | None = None,
+    max_abs_delta_grid: list[float] | None = None,
+    selection_thresholds: dict[str, float] | None = None,
+    scoring_policy: dict[str, float] | None = None,
     plan_id: str = "epex_shape_lab_sweep_v1",
 ) -> dict[str, Any]:
     grid = grid or DEFAULT_GRID
@@ -38,10 +55,26 @@ def build_plan(
     missing = sorted(set(required) - set(grid))
     if missing:
         raise ValueError(f"sweep grid missing keys: {missing}")
+    cap_values = max_abs_delta_grid
+    if cap_values is None and "max_abs_delta_eur_mwh" in grid:
+        cap_values = grid["max_abs_delta_eur_mwh"]
+    if cap_values is None:
+        cap_values = [float(max_abs_delta_eur_mwh)]
+    cap_values = [float(v) for v in cap_values]
+    if not cap_values:
+        raise ValueError("max_abs_delta grid must contain at least one value")
+    thresholds = {**DEFAULT_SELECTION_THRESHOLDS, **(selection_thresholds or {})}
+    scoring = {**DEFAULT_SCORING_POLICY, **(scoring_policy or {})}
     trials = []
-    for idx, values in enumerate(product(*(grid[key] for key in required)), start=1):
-        params = dict(zip(required, (float(v) for v in values), strict=True))
-        trial_id = f"trial_{idx:03d}_w{params['weekend_intensity']:.2f}_l{params['low_tail_intensity']:.2f}_p{params['peak_subshape_intensity']:.2f}"
+    dimensions = [*required, "max_abs_delta_eur_mwh"]
+    values_by_dimension = [grid[key] for key in required] + [cap_values]
+    for idx, values in enumerate(product(*values_by_dimension), start=1):
+        params = dict(zip(dimensions, (float(v) for v in values), strict=True))
+        cap_suffix = f"_d{params['max_abs_delta_eur_mwh']:.2f}" if len(cap_values) > 1 else ""
+        trial_id = (
+            f"trial_{idx:03d}_w{params['weekend_intensity']:.2f}"
+            f"_l{params['low_tail_intensity']:.2f}_p{params['peak_subshape_intensity']:.2f}{cap_suffix}"
+        )
         trial_dir = output_root / trial_id
         adjusted_csv = trial_dir / "candidate_epex_shape_lab_adjusted.csv"
         comparison_dir = trial_dir / "independent_ab_comparison"
@@ -51,7 +84,6 @@ def build_plan(
                 "trial_id": trial_id,
                 "parameters": {
                     **params,
-                    "max_abs_delta_eur_mwh": float(max_abs_delta_eur_mwh),
                     "lookback_years": int(lookback_years),
                 },
                 "output_dir": str(trial_dir),
@@ -75,7 +107,7 @@ def build_plan(
                             "--peak-subshape-intensity",
                             str(params["peak_subshape_intensity"]),
                             "--max-abs-delta-eur-mwh",
-                            str(float(max_abs_delta_eur_mwh)),
+                            str(params["max_abs_delta_eur_mwh"]),
                             "--lookback-years",
                             str(int(lookback_years)),
                         ]
@@ -124,12 +156,17 @@ def build_plan(
             "independent finite/quantile/negative checks",
             "monthly mean drift",
             "fan width drift",
+            "EPEX spot freshness and coverage thresholds",
+            "pre-registered ramp and negative price thresholds",
             "calendar shape effects",
             "governance PASS without OMPEX",
         ],
         "forbidden_selection_inputs": ["OMPEX", "HFC_OMPEX", "external_HPFC_benchmark"],
         "grid": {key: [float(v) for v in grid[key]] for key in required},
+        "max_abs_delta_grid": cap_values,
         "max_abs_delta_eur_mwh": float(max_abs_delta_eur_mwh),
+        "selection_thresholds": thresholds,
+        "scoring_policy": scoring,
         "lookback_years": int(lookback_years),
         "trial_count": len(trials),
         "trials": trials,
@@ -163,6 +200,24 @@ def _parse_grid(value: str | None) -> dict[str, list[float]] | None:
     return {str(key): [float(v) for v in values] for key, values in payload.items()}
 
 
+def _parse_float_list(value: str | None) -> list[float] | None:
+    if value is None:
+        return None
+    payload = json.loads(value)
+    if not isinstance(payload, list):
+        raise ValueError("value must decode to a list")
+    return [float(v) for v in payload]
+
+
+def _parse_float_object(value: str | None, *, label: str) -> dict[str, float] | None:
+    if value is None:
+        return None
+    payload = json.loads(value)
+    if not isinstance(payload, dict):
+        raise ValueError(f"{label} must decode to an object")
+    return {str(key): float(v) for key, v in payload.items()}
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--candidate-csv", type=Path, required=True)
@@ -170,8 +225,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--valuation-timestamp", required=True)
     parser.add_argument("--max-abs-delta-eur-mwh", type=float, default=6.0)
+    parser.add_argument("--max-abs-delta-grid-json", default=None)
     parser.add_argument("--lookback-years", type=int, default=5)
     parser.add_argument("--grid-json", default=None)
+    parser.add_argument("--selection-thresholds-json", default=None)
+    parser.add_argument("--scoring-policy-json", default=None)
     parser.add_argument("--plan-id", default="epex_shape_lab_sweep_v1")
     parser.add_argument("--output-json", type=Path, required=True)
     args = parser.parse_args(argv)
@@ -183,6 +241,9 @@ def main(argv: list[str] | None = None) -> int:
         max_abs_delta_eur_mwh=args.max_abs_delta_eur_mwh,
         lookback_years=args.lookback_years,
         grid=_parse_grid(args.grid_json),
+        max_abs_delta_grid=_parse_float_list(args.max_abs_delta_grid_json),
+        selection_thresholds=_parse_float_object(args.selection_thresholds_json, label="--selection-thresholds-json"),
+        scoring_policy=_parse_float_object(args.scoring_policy_json, label="--scoring-policy-json"),
         plan_id=args.plan_id,
     )
     args.output_json.parent.mkdir(parents=True, exist_ok=True)

@@ -116,7 +116,18 @@ def execute_sweep(
         governance = json.loads(governance_json.read_text(encoding="utf-8"))
         calendar = _read_calendar_summary(comparison_dir / "calendar_delta_summary.csv")
         annual = _read_annual_summary(comparison_dir / "annual_summary.csv")
-        rows.append(_trial_row(trial, lab, independent, governance, calendar, annual))
+        rows.append(
+            _trial_row(
+                trial,
+                lab,
+                independent,
+                governance,
+                calendar,
+                annual,
+                selection_thresholds=_selection_thresholds(plan),
+                scoring_policy=_scoring_policy(plan),
+            )
+        )
 
     ranking = pd.DataFrame(rows)
     if not ranking.empty:
@@ -145,11 +156,15 @@ def execute_sweep(
         "eligible_count": int(ranking["eligible_for_selection"].sum()) if not ranking.empty else 0,
         "ranking_csv": str(ranking_csv),
         "best_trial": _best_eligible_row(ranking),
+        "selection_thresholds": _selection_thresholds(plan),
+        "scoring_policy": _scoring_policy(plan),
         "selection_basis": [
             "governance PASS",
             "finite and quantile ordered adjusted candidate",
             "monthly/fan drift within thresholds",
             "no weighted negative hours",
+            "EPEX spot freshness and coverage thresholds when pre-registered",
+            "ramp and negative price thresholds when pre-registered",
             "higher independent duck/shape score",
             "lower ramp penalty as tie-break",
         ],
@@ -197,6 +212,8 @@ def _validate_plan(plan: dict[str, Any], *, sweep_root: Path) -> None:
         raise ValueError("sweep plan must contain at least one trial")
     if int(plan.get("trial_count")) != len(trials):
         raise ValueError("sweep plan trial_count does not match trials length")
+    _selection_thresholds(plan)
+    _scoring_policy(plan)
 
     seen_trial_ids: set[str] = set()
     seen_output_dirs: set[Path] = set()
@@ -222,6 +239,40 @@ def _validate_plan(plan: dict[str, Any], *, sweep_root: Path) -> None:
         missing_params = sorted(required_params - set(params))
         if missing_params:
             raise ValueError(f"sweep trial {trial_id} missing parameters: {missing_params}")
+
+
+def _selection_thresholds(plan: dict[str, Any]) -> dict[str, float | None]:
+    raw = plan.get("selection_thresholds") or {}
+    allowed = {
+        "max_epex_spot_age_days",
+        "min_epex_fit_coverage_days",
+        "max_ramp_p99_increase_eur_mwh",
+        "min_adjusted_price_eur_mwh",
+    }
+    unknown = sorted(set(raw) - allowed)
+    if unknown:
+        raise ValueError(f"unknown selection thresholds: {unknown}")
+    return {key: _optional_threshold(raw.get(key)) for key in allowed}
+
+
+def _scoring_policy(plan: dict[str, Any]) -> dict[str, float]:
+    raw = plan.get("scoring_policy") or {}
+    defaults = {
+        "duck_weight": 1.0,
+        "solar_tail_weight": 1.0,
+        "weekend_weight": 1.0,
+        "ramp_penalty_weight": 0.25,
+    }
+    unknown = sorted(set(raw) - set(defaults))
+    if unknown:
+        raise ValueError(f"unknown scoring policy keys: {unknown}")
+    return {key: float(raw.get(key, default)) for key, default in defaults.items()}
+
+
+def _optional_threshold(value: Any) -> float | None:
+    if value is None:
+        return None
+    return float(value)
 
 
 def _manifest_matches_plan(
@@ -368,11 +419,25 @@ def _trial_row(
     governance: dict[str, Any],
     calendar: dict[str, float],
     annual: dict[str, float],
+    *,
+    selection_thresholds: dict[str, float | None],
+    scoring_policy: dict[str, float],
 ) -> dict[str, Any]:
     lab_audit = lab.get("audit") or {}
+    fit_info = lab.get("fit_info") or {}
+    epex_age_days = _age_days(
+        valuation_timestamp=fit_info.get("valuation_timestamp_utc")
+        or (lab.get("config") or {}).get("valuation_timestamp"),
+        max_timestamp=fit_info.get("max_timestamp_utc"),
+    )
+    epex_coverage_days = _coverage_days(
+        min_timestamp=fit_info.get("min_timestamp_utc"),
+        max_timestamp=fit_info.get("max_timestamp_utc"),
+    )
     ramp_increase = float(independent["ramp_abs_p99_adjusted_eur_mwh"]) - float(independent["ramp_abs_p99_baseline_eur_mwh"])
     monthly_drift = float(independent["max_abs_monthly_mean_delta_eur_mwh"])
     width_drift = float(independent["max_abs_width_delta_eur_mwh"])
+    min_adjusted_price = float(independent["min_adjusted_price_eur_mwh"])
     eligible = (
         governance.get("status") == "PASS"
         and independent.get("finite_adjusted_ok") is True
@@ -380,11 +445,20 @@ def _trial_row(
         and int(independent.get("weighted_negative_hours_adjusted", -1)) == 0
         and monthly_drift <= 1e-5
         and width_drift <= 1e-9
+        and _threshold_max_ok(epex_age_days, selection_thresholds["max_epex_spot_age_days"])
+        and _threshold_min_ok(epex_coverage_days, selection_thresholds["min_epex_fit_coverage_days"])
+        and _threshold_max_ok(ramp_increase, selection_thresholds["max_ramp_p99_increase_eur_mwh"])
+        and _threshold_min_ok(min_adjusted_price, selection_thresholds["min_adjusted_price_eur_mwh"])
     )
     duck_change = float(annual.get("evening_minus_midday_change_mean_eur_mwh", 0.0))
     solar_tail_delta = float(calendar.get("solar_tail_mar_oct_10_16", 0.0))
     weekend_delta = float(calendar.get("weekend", 0.0))
-    shape_score = duck_change + max(0.0, -solar_tail_delta) + max(0.0, -weekend_delta) - max(0.0, ramp_increase) * 0.25
+    shape_score = (
+        scoring_policy["duck_weight"] * duck_change
+        + scoring_policy["solar_tail_weight"] * max(0.0, -solar_tail_delta)
+        + scoring_policy["weekend_weight"] * max(0.0, -weekend_delta)
+        - scoring_policy["ramp_penalty_weight"] * max(0.0, ramp_increase)
+    )
     return {
         "trial_id": trial["trial_id"],
         "eligible_for_selection": bool(eligible),
@@ -396,7 +470,9 @@ def _trial_row(
         "max_abs_monthly_mean_delta_eur_mwh": monthly_drift,
         "max_abs_width_delta_eur_mwh": width_drift,
         "weighted_negative_hours_adjusted": int(independent["weighted_negative_hours_adjusted"]),
-        "min_adjusted_price_eur_mwh": float(independent["min_adjusted_price_eur_mwh"]),
+        "min_adjusted_price_eur_mwh": min_adjusted_price,
+        "epex_spot_age_days": epex_age_days,
+        "epex_fit_coverage_days": epex_coverage_days,
         "duck_change_mean_eur_mwh": duck_change,
         "solar_tail_mean_delta_eur_mwh": solar_tail_delta,
         "weekend_mean_delta_eur_mwh": weekend_delta,
@@ -412,6 +488,42 @@ def _optional_float(value: Any) -> float | None:
     if value is None:
         return None
     return float(value)
+
+
+def _age_days(*, valuation_timestamp: Any, max_timestamp: Any) -> float | None:
+    if valuation_timestamp is None or max_timestamp is None:
+        return None
+    valuation = pd.Timestamp(valuation_timestamp)
+    maximum = pd.Timestamp(max_timestamp)
+    if valuation.tzinfo is None:
+        valuation = valuation.tz_localize("UTC")
+    if maximum.tzinfo is None:
+        maximum = maximum.tz_localize("UTC")
+    return (valuation.tz_convert("UTC") - maximum.tz_convert("UTC")).total_seconds() / 86400.0
+
+
+def _coverage_days(*, min_timestamp: Any, max_timestamp: Any) -> float | None:
+    if min_timestamp is None or max_timestamp is None:
+        return None
+    minimum = pd.Timestamp(min_timestamp)
+    maximum = pd.Timestamp(max_timestamp)
+    if minimum.tzinfo is None:
+        minimum = minimum.tz_localize("UTC")
+    if maximum.tzinfo is None:
+        maximum = maximum.tz_localize("UTC")
+    return (maximum.tz_convert("UTC") - minimum.tz_convert("UTC")).total_seconds() / 86400.0
+
+
+def _threshold_max_ok(value: float | None, threshold: float | None) -> bool:
+    if threshold is None:
+        return True
+    return value is not None and value <= threshold
+
+
+def _threshold_min_ok(value: float | None, threshold: float | None) -> bool:
+    if threshold is None:
+        return True
+    return value is not None and value >= threshold
 
 
 def _jsonable(value: Any) -> Any:

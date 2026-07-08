@@ -710,6 +710,51 @@ post-check. Do not use OMPEX to re-rank or re-tune. This lab artifact is still
 NO-GO production until regenerated through production/export/capstone evidence
 with artifact-bound source hierarchy and selected-lambda/config manifests.
 
+## Hardened Next-Sweep Selection Policy
+
+Read-only expert audits accepted the baseline as promotion-ready but rejected
+production adoption of any EPEX lab artifact. They also identified research
+risks that must be hard gates before the next sweep: stale EPEX spot data,
+cap saturation, weak ramp penalty, and insufficient negative-price controls.
+
+The planner and executor were therefore hardened:
+
+- `scripts/plan_epex_shape_lab_sweep.py` now writes explicit
+  `selection_thresholds`, `scoring_policy`, and `max_abs_delta_grid`.
+- `scripts/execute_epex_shape_lab_sweep.py` now applies those thresholds when
+  deciding trial eligibility.
+- The executor records per-trial EPEX spot age and fit coverage.
+- Future plans can sweep cap values with `--max-abs-delta-grid-json`, for
+  example `[2.0, 3.0, 4.0, 6.0]`.
+
+Default new-plan thresholds:
+
+- `max_epex_spot_age_days=14.0`
+- `min_epex_fit_coverage_days=730.0`
+- `max_ramp_p99_increase_eur_mwh=1.0`
+- `min_adjusted_price_eur_mwh=-10.0`
+
+Default new-plan scoring:
+
+- `duck_weight=1.0`
+- `solar_tail_weight=1.0`
+- `weekend_weight=1.0`
+- `ramp_penalty_weight=1.0`
+
+Validation:
+
+```powershell
+python -m pytest tests/test_execute_epex_shape_lab_sweep_script.py tests/test_plan_epex_shape_lab_sweep_script.py tests/test_epex_ab_shape_lab.py tests/test_run_epex_shape_lab_ab_script.py tests/test_compare_epex_shape_lab_ab_script.py tests/test_audit_epex_shape_lab_governance_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result: `39 passed, 1 skipped`.
+
+Decision log entry: `D-20260708-13`.
+
+Next research rule: refresh EPEX spot first, then generate a new
+pre-registered sweep plan with a delta-cap grid. The existing `trial_002`
+remains frozen lab evidence, not a production candidate.
+
 Governance:
 
 - Decision log entry: `D-20260708-05`.
