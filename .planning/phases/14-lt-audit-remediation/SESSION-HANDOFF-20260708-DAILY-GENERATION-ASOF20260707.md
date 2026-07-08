@@ -297,6 +297,56 @@ Validation:
 - reran capstone with the source-hashed production manifest:
   `approved=true`, `status=PROMOTION_EVIDENCE_PASS`, `blocking_count=0`.
 
+## Experimental EPEX A/B Shape Lab
+
+After the OMPEX advisory benchmark was formalized, a new LT-only experimental
+shape lab scaffold was added for the next model-improvement cycle.
+
+Files:
+
+- `pfc_shaping/lt/model/epex_shape_lab.py`
+- `tests/test_epex_ab_shape_lab.py`
+
+Scope:
+
+- off by default; not wired into production/export
+- no OMPEX/HFC input, target, loss, calibration, or promotion gate
+- fits shape-only templates from CH EPEX spot residuals before the configured
+  valuation timestamp; fitting fails without an explicit valuation timestamp
+- supports weekend, low-tail, and peak-subshape additive deltas
+- projects candidate deltas into the nullspace of quote-aware
+  BASE/PEAK/OFFPEAK constraints before applying them
+- requires monthly BASE constraints for every delivered month by default
+- applies the same projected delta to slow/central/fast scenarios, shifts the
+  existing weighted mean/fan by that delta, and preserves structural width
+
+Validation:
+
+```powershell
+python -m pytest tests/test_epex_ab_shape_lab.py -q -p no:cacheprovider
+```
+
+Result: `4 passed`.
+
+```powershell
+python -m pytest tests/test_epex_ab_shape_lab.py tests/test_seam_nullspace_smoothing.py tests/test_lt_quant_contract_matrix.py tests/test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result: `34 passed, 1 skipped`.
+
+Governance:
+
+- Decision log entry: `D-20260708-05`.
+- This lab does not change the accepted 2026-07-08 promotion candidate.
+- Before any production/export wiring, run a pre-registered A/B with identical
+  forwards/snapshot inputs, strict Power BI/product/source-hierarchy/capstone
+  gates, and OMPEX retained only as advisory benchmark evidence.
+- The lab manifest marks artifacts `activation_status=lab_only`,
+  `production_approved=false`, `ompex_used_in_selection=false`, and
+  `source_hashes_required_for_promotion=true`.
+- Research callers can disable the monthly-constraint guard, but such outputs
+  are not valid promotion evidence under `monthly_level_authority="solver"`.
+
 ## Worktree / Commit Hygiene
 
 Generated or refreshed local evidence, not default commit targets:
@@ -320,3 +370,5 @@ Commit candidates for this follow-up:
 - `scripts/compare_hpfc_ompex_benchmark.py`
 - `tests/test_long_term_branch.py`
 - `tests/test_compare_hpfc_ompex_benchmark_script.py`
+- `pfc_shaping/lt/model/epex_shape_lab.py`
+- `tests/test_epex_ab_shape_lab.py`

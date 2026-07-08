@@ -58,6 +58,15 @@ promotion authority. Use `scripts/compare_hpfc_ompex_benchmark.py` for
 repeatable comparisons and retain alignment sensitivity, especially
 `ompex_minus_1h_hourending` for files timestamped as hour-ending.
 
+Experimental next-step model work: `pfc_shaping/lt/model/epex_shape_lab.py`
+and `tests/test_epex_ab_shape_lab.py` add an LT-only, off-by-default EPEX
+shape lab scaffold. It fits point-in-time CH EPEX residual templates, projects
+hourly deltas into the BASE/PEAK/OFFPEAK nullspace, requires monthly BASE
+constraints by default, shifts the existing fan rather than rebuilding it, and
+explicitly forbids OMPEX/HFC as input, target, loss, or gate. It is not wired
+into production or export and does not change the promotion-ready 2026-07-08
+candidate.
+
 Previous 2026-07-07 promotion-ready daily candidate:
 `output/phase14/20260707_asof20260706_lshape100_yoy150_amp150_2032/`.
 

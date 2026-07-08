@@ -1253,3 +1253,59 @@ Invariants not to break:
 - Generated OMPEX comparison outputs stay local evidence unless explicitly
   requested for packaging.
 
+## D-20260708-05 - Add EPEX-Only A/B Shape Lab Scaffold
+
+Decision: add an experimental LT-only EPEX shape lab scaffold, off by default,
+to test mean-preserving hourly shape improvements without changing the
+promotion-ready 2026-07-08 candidate or monthly solver authority.
+
+Reason: OMPEX comparison is useful diagnostically but cannot be used as a
+model target. The next admissible improvement path is to build candidate
+hourly-shape deltas from independent CH EPEX spot residuals, then project those
+deltas into the nullspace of active EEX BASE/PEAK/OFFPEAK average constraints.
+This keeps the monthly solver as level authority while allowing controlled A/B
+experiments on weekend, low-tail, and peak-subshape effects.
+
+Implementation:
+
+- Added `pfc_shaping/lt/model/epex_shape_lab.py`.
+- Added `tests/test_epex_ab_shape_lab.py`.
+- The lab fits templates only from rows strictly before the configured
+  valuation timestamp, and fitting fails without an explicit
+  `valuation_timestamp`.
+- The apply path uses the same additive delta across slow/central/fast
+  scenarios, shifts the existing weighted mean/fan by that delta, and preserves
+  structural width.
+- The delta is projected to zero residual against quote-aware
+  BASE/PEAK/OFFPEAK constraints before application.
+- By default, application requires monthly BASE constraints for every
+  delivered month so post-solver use cannot preserve only annual/quarter means
+  while rewriting solver monthly means.
+- The manifest helper states that OMPEX/HFC is forbidden as input, target,
+  loss, or gate, and marks artifacts `activation_status=lab_only` plus
+  `production_approved=false`.
+
+Validation:
+
+- `python -m pytest tests/test_epex_ab_shape_lab.py -q -p no:cacheprovider`
+  returned `4 passed`.
+- `python -m pytest tests/test_epex_ab_shape_lab.py tests/test_seam_nullspace_smoothing.py tests/test_lt_quant_contract_matrix.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  returned `34 passed, 1 skipped`.
+
+Rejected alternatives:
+
+- Tune directly against OMPEX or require OMPEX metric improvement as a gate.
+- Patch individual months or post-solver levels.
+- Wire the new lab into production/export by default before independent A/B
+  evidence exists.
+- Allow annual/quarter-only constraints in post-solver A/B application.
+
+Invariants not to break:
+
+- The 2026-07-08 candidate remains promotion-ready evidence; this lab is
+  future experimental work only until explicitly wired and audited.
+- Monthly solver authority and EEX BASE/PEAK residual gates remain dominant.
+- The lab must remain LT-only and must not import `pfc_shaping.ct.*`.
+- If a research caller disables the monthly-constraint guard, the output is
+  not valid promotion evidence under `monthly_level_authority="solver"`.
+
