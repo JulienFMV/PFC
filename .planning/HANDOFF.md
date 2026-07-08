@@ -94,6 +94,14 @@ correlation `+0.0035`, p95 absolute error `-0.5473`, inside p10/p90 rate
 external advisory evidence only, not production approval and not parameter
 selection evidence.
 
+EPEX A/B governance audit: `scripts/audit_epex_shape_lab_governance.py` checks
+lab-only status, OMPEX non-selection, independent no-OMPEX comparison,
+monthly/fan drift thresholds, and optional advisory OMPEX role. The 2026-07-08
+trial audit output is
+`output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_shape_lab_ab_trial/governance_audit/epex_shape_lab_governance_audit.json`
+with `status=PASS`, `failed_count=0`, `production_approval=NO`, and
+`promotion_gate=false`.
+
 Previous 2026-07-07 promotion-ready daily candidate:
 `output/phase14/20260707_asof20260706_lshape100_yoy150_amp150_2032/`.
 

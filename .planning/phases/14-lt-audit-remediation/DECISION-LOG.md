@@ -1503,3 +1503,73 @@ Invariants not to break:
 - Production promotion still requires strict independent gates and capstone
   evidence, not OMPEX benchmark movement.
 
+## D-20260708-09 - Add EPEX A/B Lab Governance Audit
+
+Decision: add a lab-only governance audit for EPEX shape-lab artifacts. The
+audit verifies contamination controls and preservation checks, but it is not a
+production promotion gate.
+
+Reason: after running independent no-OMPEX diagnostics and the separate OMPEX
+advisory post-check, the evidence chain needed an automated check that future
+readers cannot accidentally interpret OMPEX as parameter-selection evidence or
+production approval.
+
+Implementation:
+
+- Added `scripts/audit_epex_shape_lab_governance.py`.
+- Added `tests/test_audit_epex_shape_lab_governance_script.py`.
+- The audit checks:
+  - `activation_status=lab_only`
+  - `production_approved=false`
+  - OMPEX not used for model or selection
+  - independent comparison policy is `independent_no_ompex`
+  - monthly BASE/PEAK constraints are present
+  - after-constraint error stays below threshold
+  - monthly mean drift and fan-width drift stay below thresholds
+  - adjusted candidate remains finite, quantile-ordered, and without weighted
+    negative hours
+  - OMPEX metrics, when supplied, are `advisory` and `read_only`
+
+2026-07-08 governance audit:
+
+Command:
+
+```powershell
+python scripts/audit_epex_shape_lab_governance.py --lab-manifest output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_shape_lab_ab_trial/ab_lab_manifest.json --independent-summary output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_shape_lab_ab_trial/independent_ab_comparison/ab_comparison_summary.json --ompex-metrics output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_shape_lab_ab_trial/ompex_advisory_adjusted_20260708/benchmark_metrics.json --output-json output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_shape_lab_ab_trial/governance_audit/epex_shape_lab_governance_audit.json
+```
+
+Result:
+
+- output:
+  `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_shape_lab_ab_trial/governance_audit/epex_shape_lab_governance_audit.json`
+- status: `PASS`
+- failed count: `0`
+- production approval: `NO`
+- promotion gate: `false`
+- OMPEX role: `advisory_post_check_only`
+- monthly BASE constraints: `78`
+- monthly PEAK constraints: `78`
+- after-constraint error: `1.666666804567285e-07`
+- independent monthly drift: `9.722222239124298e-08`
+- independent fan-width drift: `0.0`
+
+Validation:
+
+- `python -m pytest tests/test_audit_epex_shape_lab_governance_script.py -q -p no:cacheprovider`
+  returned `2 passed`.
+- `python -m pytest tests/test_epex_ab_shape_lab.py tests/test_run_epex_shape_lab_ab_script.py tests/test_compare_epex_shape_lab_ab_script.py tests/test_audit_epex_shape_lab_governance_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  returned `31 passed, 1 skipped`.
+
+Rejected alternatives:
+
+- Treat OMPEX post-check results as sufficient proof of model improvement.
+- Promote adjusted A/B output without strict product/source/Power BI/capstone
+  gates.
+- Leave governance interpretation to prose only.
+
+Invariants not to break:
+
+- This audit is a lab-governance check, not production approval.
+- Any future A/B parameter change requires a fresh pre-registration and
+  independent no-OMPEX comparison before OMPEX advisory review.
+

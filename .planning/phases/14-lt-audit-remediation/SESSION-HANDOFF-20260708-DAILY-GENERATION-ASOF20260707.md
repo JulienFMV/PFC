@@ -482,6 +482,49 @@ Interpretation:
 
 Decision log entry: `D-20260708-08`.
 
+## EPEX A/B Governance Audit
+
+A local-only governance audit script was added:
+
+- `scripts/audit_epex_shape_lab_governance.py`
+- `tests/test_audit_epex_shape_lab_governance_script.py`
+
+It verifies that the lab artifacts remain lab-only, OMPEX is not used for
+model or selection, independent comparison is no-OMPEX, monthly drift/fan drift
+are below thresholds, and optional OMPEX metrics are advisory/read-only.
+
+2026-07-08 command:
+
+```powershell
+python scripts/audit_epex_shape_lab_governance.py --lab-manifest output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_shape_lab_ab_trial/ab_lab_manifest.json --independent-summary output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_shape_lab_ab_trial/independent_ab_comparison/ab_comparison_summary.json --ompex-metrics output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_shape_lab_ab_trial/ompex_advisory_adjusted_20260708/benchmark_metrics.json --output-json output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_shape_lab_ab_trial/governance_audit/epex_shape_lab_governance_audit.json
+```
+
+Result:
+
+- status: `PASS`
+- failed count: `0`
+- production approval: `NO`
+- promotion gate: `false`
+- OMPEX role: `advisory_post_check_only`
+- output:
+  `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_shape_lab_ab_trial/governance_audit/epex_shape_lab_governance_audit.json`
+
+Validation:
+
+```powershell
+python -m pytest tests/test_audit_epex_shape_lab_governance_script.py -q -p no:cacheprovider
+```
+
+Result: `2 passed`.
+
+```powershell
+python -m pytest tests/test_epex_ab_shape_lab.py tests/test_run_epex_shape_lab_ab_script.py tests/test_compare_epex_shape_lab_ab_script.py tests/test_audit_epex_shape_lab_governance_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result: `31 passed, 1 skipped`.
+
+Decision log entry: `D-20260708-09`.
+
 Governance:
 
 - Decision log entry: `D-20260708-05`.
