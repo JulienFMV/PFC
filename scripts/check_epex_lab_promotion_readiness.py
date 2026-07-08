@@ -12,6 +12,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -98,23 +99,40 @@ def check_readiness(
     ]
     if adjusted_capstone is not None and adjusted_capstone.exists():
         capstone = _load_json(adjusted_capstone)
-        capstone_approved = capstone.get("approved") is True
-        checks.append(_check("adjusted_capstone_approved", capstone_approved, capstone.get("approved")))
+        capstone_schema_ok = bool(capstone.get("schema_version"))
+        checks.extend(
+            [
+                _check("adjusted_capstone_schema", capstone_schema_ok, capstone.get("schema_version")),
+            ]
+        )
     else:
+        capstone = None
+        capstone_schema_ok = False
         capstone_approved = False
     if adjusted_production_manifest is not None and adjusted_production_manifest.exists():
         production_manifest = _load_json(adjusted_production_manifest)
+        production_manifest_sha256 = _sha256(adjusted_production_manifest)
         production_manifest_bound = _manifest_bound_to_adjusted_csv(
             production_manifest,
             path_key="adjusted_csv",
             sha_key="adjusted_csv_sha256",
             adjusted_csv=(lab.get("outputs") or {}).get("adjusted_csv"),
         )
+        source_provenance_checks = _production_manifest_source_provenance_checks(
+            production_manifest,
+            adjusted_csv=Path(str((lab.get("outputs") or {}).get("adjusted_csv", ""))),
+        )
+        source_provenance_valid = all(check["status"] == "PASS" for check in source_provenance_checks)
+        production_manifest_identity_valid = _production_run_identity_valid(production_manifest)
         production_manifest_approved = (
             production_manifest.get("schema_version") == "epex_lab_adjusted_production_manifest.v1"
             and production_manifest.get("production_approved") is True
             and production_manifest.get("production_promotion_approved") is True
+            and production_manifest.get("contract_pass") is True
+            and production_manifest.get("source_provenance_pass") is True
             and production_manifest_bound
+            and source_provenance_valid
+            and production_manifest_identity_valid
         )
         checks.extend(
             [
@@ -137,9 +155,30 @@ def check_readiness(
                         "production_promotion_approved": production_manifest.get("production_promotion_approved"),
                     },
                 ),
+                _check(
+                    "adjusted_production_manifest_contract_pass",
+                    production_manifest.get("contract_pass") is True,
+                    production_manifest.get("contract_pass"),
+                ),
+                _check(
+                    "adjusted_production_manifest_source_provenance_pass",
+                    production_manifest.get("source_provenance_pass") is True and source_provenance_valid,
+                    {
+                        "self_attested": production_manifest.get("source_provenance_pass"),
+                        "validated": source_provenance_valid,
+                    },
+                ),
+                _check(
+                    "adjusted_production_manifest_run_identity_valid",
+                    production_manifest_identity_valid,
+                    _production_run_identity_value(production_manifest),
+                ),
             ]
         )
+        checks.extend(source_provenance_checks)
     else:
+        production_manifest = None
+        production_manifest_sha256 = None
         production_manifest_approved = False
     if adjusted_export_manifest is not None and adjusted_export_manifest.exists():
         export_manifest = _load_json(adjusted_export_manifest)
@@ -149,13 +188,27 @@ def check_readiness(
             sha_key="adjusted_csv_sha256",
             adjusted_csv=(lab.get("outputs") or {}).get("adjusted_csv"),
         )
+        export_manifest_schema_ok = export_manifest.get("schema_version") == "epex_lab_adjusted_export_manifest.v1"
+        export_manifest_chain_bound = _artifact_bound_to_production_manifest(
+            export_manifest,
+            production_manifest_path=adjusted_production_manifest,
+            production_manifest_sha256=production_manifest_sha256,
+            production_manifest=production_manifest,
+        )
         export_manifest_production_ready = (
-            export_manifest.get("production_approved") is True
+            export_manifest_schema_ok
+            and export_manifest.get("production_approved") is True
             and export_manifest.get("production_promotion_approved") is True
             and export_manifest_bound
+            and export_manifest_chain_bound
         )
         checks.extend(
             [
+                _check(
+                    "adjusted_export_manifest_schema",
+                    export_manifest_schema_ok,
+                    export_manifest.get("schema_version"),
+                ),
                 _check(
                     "adjusted_export_manifest_bound",
                     export_manifest_bound,
@@ -169,9 +222,15 @@ def check_readiness(
                         "production_promotion_approved": export_manifest.get("production_promotion_approved"),
                     },
                 ),
+                _check(
+                    "adjusted_export_manifest_production_chain_bound",
+                    export_manifest_chain_bound,
+                    _production_chain_binding_value(export_manifest),
+                ),
             ]
         )
     else:
+        export_manifest = None
         export_manifest_production_ready = False
     if adjusted_selected_config is not None and adjusted_selected_config.exists():
         selected_artifact = _load_json(adjusted_selected_config)
@@ -181,14 +240,29 @@ def check_readiness(
             sha_key="selected_adjusted_csv_sha256",
             adjusted_csv=(lab.get("outputs") or {}).get("adjusted_csv"),
         )
+        selected_artifact_schema_ok = selected_artifact.get("schema_version") == "epex_lab_selected_artifact.v1"
+        selected_artifact_chain_bound = _artifact_bound_to_production_manifest(
+            selected_artifact,
+            production_manifest_path=adjusted_production_manifest,
+            production_manifest_sha256=production_manifest_sha256,
+            production_manifest=production_manifest,
+        )
         selected_artifact_production_ready = (
+            selected_artifact_schema_ok
+            and
             selected_artifact.get("production_approved") is True
             and selected_artifact.get("production_promotion_approved") is True
             and selected_artifact.get("selection_status") == "PRODUCTION_APPROVED"
             and selected_artifact_bound
+            and selected_artifact_chain_bound
         )
         checks.extend(
             [
+                _check(
+                    "adjusted_selected_artifact_schema",
+                    selected_artifact_schema_ok,
+                    selected_artifact.get("schema_version"),
+                ),
                 _check(
                     "adjusted_selected_artifact_bound",
                     selected_artifact_bound,
@@ -203,10 +277,50 @@ def check_readiness(
                         "production_promotion_approved": selected_artifact.get("production_promotion_approved"),
                     },
                 ),
+                _check(
+                    "adjusted_selected_artifact_production_chain_bound",
+                    selected_artifact_chain_bound,
+                    _production_chain_binding_value(selected_artifact),
+                ),
             ]
         )
     else:
+        selected_artifact = None
         selected_artifact_production_ready = False
+    if capstone is not None:
+        capstone_chain_bound = _capstone_bound_to_production_chain(
+            capstone,
+            production_manifest_path=adjusted_production_manifest,
+            production_manifest_sha256=production_manifest_sha256,
+            production_manifest=production_manifest,
+            export_manifest_path=adjusted_export_manifest,
+            export_manifest=export_manifest,
+            selected_artifact_path=adjusted_selected_config,
+            selected_artifact=selected_artifact,
+        )
+        capstone_approved = (
+            capstone_schema_ok
+            and capstone.get("approved") is True
+            and capstone.get("production_chain_pass") is True
+            and capstone_chain_bound
+        )
+        checks.extend(
+            [
+                _check(
+                    "adjusted_capstone_approved",
+                    capstone_approved,
+                    {
+                        "approved": capstone.get("approved"),
+                        "production_chain_pass": capstone.get("production_chain_pass"),
+                    },
+                ),
+                _check(
+                    "adjusted_capstone_production_chain_bound",
+                    capstone_chain_bound,
+                    _production_chain_binding_value(capstone),
+                ),
+            ]
+        )
     strict_diagnostics_pass = all(check["status"] == "PASS" for check in diagnostics_checks)
     production_chain_pass = (
         not missing_production_evidence
@@ -301,6 +415,266 @@ def _manifest_bound_to_adjusted_csv(
     if not path.exists():
         return False
     return expected_sha == _sha256(path)
+
+
+def _production_run_identity_valid(manifest: dict[str, Any] | None) -> bool:
+    if manifest is None:
+        return False
+    return (
+        bool(str(manifest.get("production_run_id") or "").strip())
+        and bool(str(manifest.get("production_entrypoint") or "").strip())
+        and re.fullmatch(r"[0-9a-f]{40}", str(manifest.get("git_commit") or "").strip()) is not None
+    )
+
+
+def _production_run_identity_value(manifest: dict[str, Any] | None) -> dict[str, Any]:
+    manifest = manifest or {}
+    return {
+        "production_run_id": manifest.get("production_run_id"),
+        "production_entrypoint": manifest.get("production_entrypoint"),
+        "git_commit": manifest.get("git_commit"),
+    }
+
+
+def _artifact_bound_to_production_manifest(
+    artifact: dict[str, Any] | None,
+    *,
+    production_manifest_path: Path | None,
+    production_manifest_sha256: str | None,
+    production_manifest: dict[str, Any] | None,
+) -> bool:
+    if artifact is None or production_manifest is None or production_manifest_sha256 is None:
+        return False
+    path_bound = _same_path(artifact.get("adjusted_production_manifest"), production_manifest_path)
+    sha_bound = artifact.get("adjusted_production_manifest_sha256") == production_manifest_sha256
+    identity_bound = _production_run_identity_matches(artifact, production_manifest)
+    return bool((path_bound or sha_bound) and identity_bound)
+
+
+def _production_run_identity_matches(artifact: dict[str, Any], production_manifest: dict[str, Any]) -> bool:
+    for key in ["production_run_id", "production_entrypoint", "git_commit"]:
+        expected = production_manifest.get(key)
+        value = artifact.get(key)
+        if expected and value != expected:
+            return False
+        if expected and not value:
+            return False
+    return True
+
+
+def _capstone_bound_to_production_chain(
+    capstone: dict[str, Any],
+    *,
+    production_manifest_path: Path | None,
+    production_manifest_sha256: str | None,
+    production_manifest: dict[str, Any] | None,
+    export_manifest_path: Path | None,
+    export_manifest: dict[str, Any] | None,
+    selected_artifact_path: Path | None,
+    selected_artifact: dict[str, Any] | None,
+) -> bool:
+    if not _artifact_bound_to_production_manifest(
+        capstone,
+        production_manifest_path=production_manifest_path,
+        production_manifest_sha256=production_manifest_sha256,
+        production_manifest=production_manifest,
+    ):
+        return False
+    export_bound = _same_path(capstone.get("adjusted_export_manifest"), export_manifest_path)
+    selected_bound = _same_path(capstone.get("adjusted_selected_artifact"), selected_artifact_path)
+    if export_manifest_path is not None and export_manifest_path.exists():
+        export_bound = export_bound or capstone.get("adjusted_export_manifest_sha256") == _sha256(export_manifest_path)
+    if selected_artifact_path is not None and selected_artifact_path.exists():
+        selected_bound = selected_bound or capstone.get("adjusted_selected_artifact_sha256") == _sha256(selected_artifact_path)
+    return bool(export_bound and selected_bound and export_manifest is not None and selected_artifact is not None)
+
+
+def _production_chain_binding_value(artifact: dict[str, Any] | None) -> dict[str, Any]:
+    artifact = artifact or {}
+    return {
+        "adjusted_production_manifest": artifact.get("adjusted_production_manifest"),
+        "adjusted_production_manifest_sha256": artifact.get("adjusted_production_manifest_sha256"),
+        "adjusted_export_manifest": artifact.get("adjusted_export_manifest"),
+        "adjusted_export_manifest_sha256": artifact.get("adjusted_export_manifest_sha256"),
+        "adjusted_selected_artifact": artifact.get("adjusted_selected_artifact"),
+        "adjusted_selected_artifact_sha256": artifact.get("adjusted_selected_artifact_sha256"),
+        "production_run_id": artifact.get("production_run_id"),
+        "production_entrypoint": artifact.get("production_entrypoint"),
+        "git_commit": artifact.get("git_commit"),
+    }
+
+
+def _production_manifest_source_provenance_checks(
+    production_manifest: dict[str, Any],
+    *,
+    adjusted_csv: Path,
+) -> list[dict[str, Any]]:
+    provenance_path_text = production_manifest.get("source_provenance_manifest")
+    provenance_sha = production_manifest.get("source_provenance_manifest_sha256")
+    checks = [
+        _check("source_provenance_manifest_present", bool(provenance_path_text), provenance_path_text),
+    ]
+    if not provenance_path_text:
+        return checks
+    provenance_path = Path(str(provenance_path_text))
+    sha_bound = provenance_path.exists() and provenance_sha == _sha256(provenance_path)
+    checks.append(
+        _check(
+            "source_provenance_manifest_sha_bound",
+            sha_bound,
+            {"source_provenance_manifest": str(provenance_path), "source_provenance_manifest_sha256": provenance_sha},
+        )
+    )
+    if not sha_bound:
+        return checks
+    source_provenance = _load_json(provenance_path)
+    checks.extend(_source_provenance_checks(source_provenance, adjusted_csv))
+    checks.extend(
+        [
+            _check(
+                "production_manifest_source_kind_matches_provenance",
+                production_manifest.get("source_kind") == source_provenance.get("source_kind") == "candidate_csv",
+                {
+                    "production_manifest": production_manifest.get("source_kind"),
+                    "source_provenance": source_provenance.get("source_kind"),
+                },
+            ),
+            _check(
+                "production_manifest_source_eligibility_matches_provenance",
+                production_manifest.get("source_promotion_eligible") is True
+                and source_provenance.get("source_promotion_eligible") is True,
+                {
+                    "production_manifest": production_manifest.get("source_promotion_eligible"),
+                    "source_provenance": source_provenance.get("source_promotion_eligible"),
+                },
+            ),
+        ]
+    )
+    return checks
+
+
+def _source_provenance_checks(source_provenance: dict[str, Any], adjusted_csv: Path) -> list[dict[str, Any]]:
+    adjusted_path = str(source_provenance.get("adjusted_csv"))
+    adjusted_sha = source_provenance.get("adjusted_csv_sha256")
+    expected_sha = _sha256(adjusted_csv) if adjusted_csv.exists() else None
+    source_path = Path(str(source_provenance.get("source_path", "")))
+    staged_candidate = Path(str(source_provenance.get("staged_candidate_csv", "")))
+    lab_manifest = Path(str(source_provenance.get("lab_manifest", "")))
+    source_export_manifest = Path(str(source_provenance.get("source_export_manifest", "")))
+    return [
+        _check(
+            "source_provenance_schema",
+            source_provenance.get("schema_version") == "epex_lab_adjusted_lt_candidate_stage.v1",
+            source_provenance.get("schema_version"),
+        ),
+        _check(
+            "source_provenance_schema_role",
+            source_provenance.get("schema_role") == "source_provenance",
+            source_provenance.get("schema_role"),
+        ),
+        _check(
+            "source_provenance_lab_only",
+            source_provenance.get("activation_status") == "staged_lab_only"
+            and source_provenance.get("production_approved") is False
+            and source_provenance.get("production_promotion_approved") is False,
+            {
+                "activation_status": source_provenance.get("activation_status"),
+                "production_approved": source_provenance.get("production_approved"),
+                "production_promotion_approved": source_provenance.get("production_promotion_approved"),
+            },
+        ),
+        _check(
+            "source_provenance_candidate_csv",
+            source_provenance.get("source_kind") == "candidate_csv",
+            source_provenance.get("source_kind"),
+        ),
+        _check(
+            "source_provenance_promotion_eligible",
+            source_provenance.get("source_promotion_eligible") is True,
+            source_provenance.get("source_promotion_eligible"),
+        ),
+        _check(
+            "source_provenance_no_contract_blockers",
+            list(source_provenance.get("production_contract_blockers") or []) == [],
+            source_provenance.get("production_contract_blockers"),
+        ),
+        _check(
+            "source_provenance_adjusted_csv_bound",
+            expected_sha is not None and (_same_path(adjusted_path, adjusted_csv) or adjusted_sha == expected_sha),
+            {"adjusted_csv": adjusted_path, "adjusted_csv_sha256": adjusted_sha},
+        ),
+        _check(
+            "source_provenance_source_sha_bound",
+            source_path.exists() and source_provenance.get("source_sha256") == _sha256(source_path),
+            {"source_path": str(source_path), "source_sha256": source_provenance.get("source_sha256")},
+        ),
+        _check(
+            "source_provenance_staged_candidate_sha_bound",
+            staged_candidate.exists()
+            and source_provenance.get("staged_candidate_csv_sha256") == _sha256(staged_candidate),
+            {
+                "staged_candidate_csv": str(staged_candidate),
+                "staged_candidate_csv_sha256": source_provenance.get("staged_candidate_csv_sha256"),
+            },
+        ),
+        _check(
+            "source_provenance_lab_manifest_sha_bound",
+            lab_manifest.exists() and source_provenance.get("lab_manifest_sha256") == _sha256(lab_manifest),
+            {"lab_manifest": str(lab_manifest), "lab_manifest_sha256": source_provenance.get("lab_manifest_sha256")},
+        ),
+        _check(
+            "source_provenance_source_export_manifest_sha_bound",
+            source_export_manifest.exists()
+            and source_provenance.get("source_export_manifest_sha256") == _sha256(source_export_manifest),
+            {
+                "source_export_manifest": str(source_export_manifest),
+                "source_export_manifest_sha256": source_provenance.get("source_export_manifest_sha256"),
+            },
+        ),
+        _check(
+            "source_provenance_source_export_manifest_bound",
+            source_export_manifest.exists()
+            and _source_export_manifest_bound_to_csv(source_export_manifest, source_path),
+            {"source_export_manifest": str(source_export_manifest), "source_path": str(source_path)},
+        ),
+        _check(
+            "source_provenance_no_ompex",
+            source_provenance.get("ompex_used_in_model") is False
+            and source_provenance.get("ompex_used_in_selection") is False,
+            {
+                "ompex_used_in_model": source_provenance.get("ompex_used_in_model"),
+                "ompex_used_in_selection": source_provenance.get("ompex_used_in_selection"),
+            },
+        ),
+    ]
+
+
+def _source_export_manifest_bound_to_csv(manifest_path: Path, source_csv: Path) -> bool:
+    try:
+        manifest = _load_json(manifest_path)
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not manifest.get("schema_version"):
+        return False
+    candidate_path_keys = [
+        "output_csv",
+        "candidate_csv",
+        "source_csv",
+        "adjusted_csv",
+        "selected_adjusted_csv",
+    ]
+    for key in candidate_path_keys:
+        if _same_path(manifest.get(key), source_csv):
+            return True
+    candidate_sha_keys = [
+        "output_csv_sha256",
+        "candidate_csv_sha256",
+        "source_csv_sha256",
+        "adjusted_csv_sha256",
+        "selected_adjusted_csv_sha256",
+    ]
+    expected_sha = _sha256(source_csv) if source_csv.exists() else None
+    return expected_sha is not None and any(manifest.get(key) == expected_sha for key in candidate_sha_keys)
 
 
 def _sha256(path: Path) -> str:

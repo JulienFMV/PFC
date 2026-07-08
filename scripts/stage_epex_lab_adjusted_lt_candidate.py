@@ -32,6 +32,7 @@ def stage_candidate(
     valuation_timestamp: str,
     fan_parquet: Path | None = None,
     candidate_csv: Path | None = None,
+    source_export_manifest: Path | None = None,
     local_start_date: str | None = None,
     local_end_date: str | None = None,
     weekend_intensity: float = 0.5,
@@ -88,6 +89,21 @@ def stage_candidate(
     lab_manifest_path = lab_dir / "ab_lab_manifest.json"
 
     staging_manifest_path = output_dir / "staged_lt_epex_lab_candidate_manifest.json"
+    production_contract_blockers: list[str] = []
+    if source_kind != "candidate_csv":
+        production_contract_blockers.append("source_kind_fan_parquet_requires_audited_hourly_export")
+    source_export_manifest_ok = False
+    if source_kind == "candidate_csv":
+        if source_export_manifest is None or not source_export_manifest.exists():
+            production_contract_blockers.append("candidate_csv_requires_source_export_manifest")
+        else:
+            source_export_manifest_ok = _source_export_manifest_bound_to_csv(
+                source_export_manifest,
+                Path(str(source_path)),
+            )
+            if not source_export_manifest_ok:
+                production_contract_blockers.append("candidate_csv_source_export_manifest_not_bound")
+
     staging_manifest: dict[str, Any] = {
         "schema_version": "epex_lab_adjusted_lt_candidate_stage.v1",
         "activation_status": "staged_lab_only",
@@ -95,8 +111,16 @@ def stage_candidate(
         "production_promotion_approved": False,
         "promotion_scope": "LT_EPEX_LAB_STAGING_NO_GO",
         "source_kind": source_kind,
+        "source_promotion_eligible": source_kind == "candidate_csv" and source_export_manifest_ok,
         "source_path": str(source_path),
         "source_sha256": _sha256(source_path),
+        "source_export_manifest": str(source_export_manifest) if source_export_manifest is not None else None,
+        "source_export_manifest_sha256": (
+            _sha256(source_export_manifest)
+            if source_export_manifest is not None and source_export_manifest.exists()
+            else None
+        ),
+        "source_export_manifest_bound": source_export_manifest_ok,
         "staged_candidate_csv": str(staged_candidate_csv),
         "staged_candidate_csv_sha256": _sha256(staged_candidate_csv),
         "spot_parquet": str(spot_parquet),
@@ -105,6 +129,7 @@ def stage_candidate(
         "lab_manifest_sha256": _sha256(lab_manifest_path),
         "adjusted_csv": str((lab_manifest.get("outputs") or {}).get("adjusted_csv")),
         "adjusted_csv_sha256": _sha256(Path(str((lab_manifest.get("outputs") or {}).get("adjusted_csv")))),
+        "production_contract_blockers": production_contract_blockers,
         "ompex_used_in_model": False,
         "ompex_used_in_selection": False,
         "epex_lab_config": {
@@ -123,6 +148,41 @@ def stage_candidate(
             "construction only. It is not production promotion evidence."
         ),
     }
+    source_provenance_path = output_dir / "source_provenance_manifest.json"
+    source_provenance = {
+        key: staging_manifest[key]
+        for key in [
+            "schema_version",
+            "activation_status",
+            "production_approved",
+            "production_promotion_approved",
+            "promotion_scope",
+            "source_kind",
+            "source_promotion_eligible",
+            "source_path",
+            "source_sha256",
+            "source_export_manifest",
+            "source_export_manifest_sha256",
+            "source_export_manifest_bound",
+            "staged_candidate_csv",
+            "staged_candidate_csv_sha256",
+            "lab_manifest",
+            "lab_manifest_sha256",
+            "adjusted_csv",
+            "adjusted_csv_sha256",
+            "production_contract_blockers",
+            "ompex_used_in_model",
+            "ompex_used_in_selection",
+        ]
+    }
+    source_provenance["schema_role"] = "source_provenance"
+    source_provenance_path.write_text(
+        json.dumps(source_provenance, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    staging_manifest["source_provenance_manifest"] = str(source_provenance_path)
+    staging_manifest["source_provenance_manifest_sha256"] = _sha256(source_provenance_path)
+
     production_contract_inputs = {
         "baseline_monthly_manifest": baseline_monthly_manifest,
         "product_summary": product_summary,
@@ -135,7 +195,7 @@ def stage_candidate(
         name for name, value in production_contract_inputs.items() if value is None or not value.exists()
     ]
     staging_manifest["missing_production_contract_inputs"] = missing_contract_inputs
-    if not missing_contract_inputs:
+    if not missing_contract_inputs and not production_contract_blockers:
         contract_path = output_dir / "adjusted_production_manifest_no_go.json"
         contract = build_production_contract(
             lab_manifest=lab_manifest_path,
@@ -148,6 +208,7 @@ def stage_candidate(
             production_run_id="LT_EPEX_LAB_STAGING_NO_GO",
             production_entrypoint="scripts/stage_epex_lab_adjusted_lt_candidate.py",
             git_commit=None,
+            source_provenance_manifest=source_provenance_path,
             output=contract_path,
         )
         staging_manifest["adjusted_production_manifest_no_go"] = str(contract_path)
@@ -170,11 +231,49 @@ def _sha256(path: Path | None) -> str | None:
     return digest.hexdigest()
 
 
+def _source_export_manifest_bound_to_csv(manifest_path: Path, source_csv: Path) -> bool:
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not manifest.get("schema_version"):
+        return False
+    path_keys = [
+        "output_csv",
+        "candidate_csv",
+        "source_csv",
+        "adjusted_csv",
+        "selected_adjusted_csv",
+    ]
+    for key in path_keys:
+        if _same_path(manifest.get(key), source_csv):
+            return True
+    sha_keys = [
+        "output_csv_sha256",
+        "candidate_csv_sha256",
+        "source_csv_sha256",
+        "adjusted_csv_sha256",
+        "selected_adjusted_csv_sha256",
+    ]
+    expected_sha = _sha256(source_csv)
+    return expected_sha is not None and any(manifest.get(key) == expected_sha for key in sha_keys)
+
+
+def _same_path(left: Any, right: Any) -> bool:
+    if left is None or right is None:
+        return False
+    try:
+        return Path(str(left)).resolve() == Path(str(right)).resolve()
+    except (OSError, TypeError, ValueError):
+        return False
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--fan-parquet", type=Path)
     source.add_argument("--candidate-csv", type=Path)
+    parser.add_argument("--source-export-manifest", type=Path)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--spot-parquet", type=Path, required=True)
     parser.add_argument("--valuation-timestamp", required=True)
@@ -197,6 +296,7 @@ def main(argv: list[str] | None = None) -> int:
     manifest = stage_candidate(
         fan_parquet=args.fan_parquet,
         candidate_csv=args.candidate_csv,
+        source_export_manifest=args.source_export_manifest,
         output_dir=args.output_dir,
         spot_parquet=args.spot_parquet,
         valuation_timestamp=args.valuation_timestamp,

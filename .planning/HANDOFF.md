@@ -192,9 +192,200 @@ Product normalization strict for t046 passes with `all_gates_pass=true`,
 `powerbi_quality_gate_status=PASS`, shape score `9`, HFC-vs-spot score `9`,
 BASE/PEAK EEX residuals `0`, weighted negative hours `0`, min weighted price
 `4.84`, min price `-3.83`, and all critical flag counts `0` (`monthly_path`
-warnings remain `4`). T046 still remains NO-GO production: no adjusted
-production manifest, export manifest, selected config artifact, or capstone
-triad exists.
+warnings remain `4`). T046 still remains NO-GO production: strict diagnostics
+pass, but there is no production-approved adjusted production/export/selected/
+capstone chain for the adjusted hourly lab curve.
+
+T046 independent no-OMPEX A/B diagnostics have been enriched in
+`scripts/compare_epex_shape_lab_ab.py`. The 2026-07-08 run under
+`output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_sweep_v2/t046_enriched_ab_diagnostics/`
+adds load-type deltas, month-hour deltas, PEAK/OFFPEAK monthly spread deltas,
+boundary delta jumps, and PNG heatmaps. It remains advisory diagnostic evidence
+only: `benchmark_policy=independent_no_ompex`, OMPEX not used in model or
+selection, max monthly mean drift about `8.6e-08`, width drift `0`, weighted
+negative hours `0`, ramp p99 increases from about `24.82` to `25.81`, and the
+largest month-boundary delta jump is about `0.279 EUR/MWh`.
+
+The fan-parquet staging blocker is now diagnosed by
+`scripts/diagnose_fan_to_hourly_parity.py`. The 2026-07-08 fan vs audited
+hourly CSV run under
+`output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/fan_to_hourly_parity_diagnostic/`
+shows identical aligned hourly row count (`57025`) but max absolute weighted
+delta about `24.29 EUR/MWh`, mean absolute weighted delta about `2.80 EUR/MWh`,
+PEAK mean delta about `+1.24 EUR/MWh`, OFFPEAK mean delta about
+`-0.68 EUR/MWh`, and raw fan-derived product audit failures
+(`critical_count=56`, `delivered_curve_drift_count=38`). This confirms raw
+`to_hourly_csv_frame` output is not equivalent to the audited export chain and
+must not become promotion-facing until the full calibration/export path is
+reconciled.
+`scripts/stage_epex_lab_adjusted_lt_candidate.py` now enforces that finding:
+fan-parquet staging records `source_promotion_eligible=false` and blocks
+adjusted production-contract packaging with
+`source_kind_fan_parquet_requires_audited_hourly_export`; candidate CSV staging
+remains eligible to package a NO-GO contract when strict evidence is supplied.
+`scripts/build_epex_lab_adjusted_production_manifest.py` and
+`scripts/check_epex_lab_promotion_readiness.py` also require source provenance
+for any future adjusted production approval: complete run identity plus a
+`source_provenance_manifest` proving `source_kind=candidate_csv`,
+`source_promotion_eligible=true`, empty contract blockers, and adjusted CSV
+path/SHA binding. Readiness requires both `contract_pass=true` and
+`source_provenance_pass=true`.
+The audited-hourly T046 staging path has been rerun under
+`output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_stage_t046_from_hourly_baseline_with_provenance/`;
+its adjusted CSV hash is still `8b50...`, the NO-GO contract now has
+`contract_pass=true` and `source_provenance_pass=true`, and readiness remains
+`approved=false` because production/export/selected/capstone approval flags are
+still deliberately false.
+
+T046 stability v1 has been summarized across the two available current-data
+baselines without OMPEX:
+`output/phase14/t046_stability_summary_v1/`. The cases are `asof20260706` and
+`asof20260707`; both pass read-only stability checks with
+`benchmark_policy=multi_date_independent_no_ompex`, zero weighted negative
+hours, fan width drift `0`, monthly drift about `8.6e-08`, and ramp p99
+increases below the `1.0` EUR/MWh threshold (`0.9379` and `0.9876`). This is
+lab evidence only: `promotion_gate=false`, T046 remains NO-GO production, and
+OMPEX remains advisory benchmark evidence only.
+
+Post-audit hardening D28 supersedes the earlier D26 wording about a "complete"
+T046 contract. A future adjusted production approval now requires the readiness
+checker to reload and hash-validate `source_provenance_manifest`, prove
+`source_kind=candidate_csv`, prove `source_promotion_eligible=true`, prove an
+export manifest is bound to the source CSV, and reject self-attested production,
+export, selected, or capstone manifests. Under this tightened contract, a
+candidate CSV without a source export manifest remains stageable but not
+promotion-contract eligible.
+
+Post-audit diagnostic hardening D29 adds implied-width and coverage signals.
+`scripts/compare_epex_shape_lab_ab.py` now reports implied width
+`structural_p90 - structural_p10`, reported-minus-implied width, and monthly
+implied-width drift. `scripts/diagnose_fan_to_hourly_parity.py` now reports
+missing timestamps, coverage ratios, and `coverage_status`. These are read-only
+lab diagnostics and do not promote T046.
+
+Stability v2 D30 now gates local-shape risk in the no-OMPEX stability summary:
+PEAK/OFFPEAK spread delta, month-hour mean delta, month-boundary delta jump,
+implied width drift, reported-minus-implied width, p10 negative hours, and p10
+negative cluster length. Real T046 v2 outputs:
+`output/phase14/t046_stability_summary_v2/`; status `PASS`, two cases passed,
+`promotion_gate=false`. Key observed maxima: month-hour about `2.2225`
+EUR/MWh, boundary jump about `0.2786` EUR/MWh, PEAK/OFFPEAK spread delta about
+`2.5e-07` EUR/MWh, p10 negative hours `125`/`118`, p10 cluster max `6`,
+weighted negatives `0`.
+
+Delta-field stability D31 compares the actual frozen T046 delta across
+`asof20260706` and `asof20260707`:
+`output/phase14/t046_delta_stability_summary_v1/`. Status `PASS`,
+`promotion_gate=false`, config hash stable
+`e9c1f0831cb896f03987eeefcbb92dfbf900a53eaad4c4d45ab58e761e163b51`,
+timestamp delta correlation `0.9999797676440942`, timestamp MAE
+`0.0011066597457297395` EUR/MWh, timestamp max abs `0.05641400000001795`
+EUR/MWh, month-hour MAE `0.0009053573348698669`, boundary jump max abs
+`0.015835000000009813`, and no missing timestamps.
+
+Source-export provenance D32 now closes the D28 source-manifest gap without
+promoting T046. Source manifest:
+`output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_stage_t046_source_export_manifest/source_export_manifest.json`
+binds the baseline hourly CSV SHA
+`12447bbaa9828c0ffed871e62c35f90b8c100fcfab8c80b00468ac846848d895` and
+has SHA `d662548e2e7605ba2b59e024afd3040f2724fe84c5f3c7d3491fbaa0e1909f1d`.
+Rerun staging:
+`output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_stage_t046_from_hourly_baseline_source_export_provenance/`
+has source provenance SHA
+`eefe822b24a876a176b78afd9ccc21552d4c5248d8833a7c8ee1bbd368789d1f`,
+NO-GO adjusted production manifest SHA
+`7824522ca68f64da20bd7871cba0beed246f27bfb888beef2d1cc65ffdbd17a9`,
+`source_promotion_eligible=true`, `source_export_manifest_bound=true`, and
+`adjusted_production_contract_pass=true`. Readiness still reports
+`approved=false`, `strict_diagnostics_pass=true`, `production_chain_pass=false`;
+the remaining failures are only the expected non-production approval flags.
+
+No-OMPEX spot backtest D33 adds a lab-only realized EPEX spot diagnostic without
+changing the T046 production verdict. New script:
+`scripts/backtest_epex_shape_lab_against_spot.py`; test:
+`tests/test_backtest_epex_shape_lab_against_spot_script.py`. Real output:
+`output/phase14/t046_spot_backtest_v1/spot_backtest_summary.json`.
+Result `status=DIAGNOSTIC_PASS`, `strict_lab_gate_pass=true`,
+`promotion_gate=false`, `production_approved=false`,
+`independent_production_evidence=false`, and
+`benchmark_policy=rolling_origin_epex_spot_no_ompex_lab_only`. Bound hashes:
+baseline CSV `12447bbaa9828c0ffed871e62c35f90b8c100fcfab8c80b00468ac846848d895`,
+adjusted CSV `8b50a01af05dc152a5f95fbd85e36c4bbe0106f0e65c4dd118b3df42737378c8`,
+spot parquet `008f552e0cd684d42dcb95f87a2681054b1af338c6511ae77c1ffa81b421e32f`.
+Rolling folds: `12/12` eligible, all no-temporal-leak, positive MAE
+improvement `12/12`, mean baseline profile MAE `14.153227063777985`, mean
+adjusted profile MAE `13.747743522746092`, mean improvement
+`0.40548354103189205` EUR/MWh. The diagnostic explicitly records that all 12
+historical folds are not independent of the current candidate fit; the only
+true post-valuation overlap is 24 hours, with residual MAE improvement
+`0.3048038417338681` EUR/MWh. This is useful shape evidence, not promotion
+evidence.
+
+D34 extends the same no-OMPEX spot backtest with economic bucket and hourly
+ramp diagnostics. Real output:
+`output/phase14/t046_spot_backtest_v2_buckets/spot_backtest_summary.json`;
+bucket CSV:
+`output/phase14/t046_spot_backtest_v2_buckets/rolling_spot_bucket_metrics.csv`.
+Result remains `DIAGNOSTIC_PASS`, `promotion_gate=false`,
+`production_approved=false`, and all OMPEX flags false. Selected mean MAE
+improvements in EUR/MWh: all residual level `0.24513954474101998`, weekend
+`0.2889611347370835`, weekday `0.22708125671275944`, PEAK-like weekday 08-19
+`0.32096908439747596`, OFFPEAK-like `0.20198153831529964`, solar tail
+Mar-Oct 10-16 `0.4372953091304925`, midday 11-15 `0.35776460522648684`,
+evening ramp 17-21 `0.45338812791781463`, night 00-05
+`0.03190894115068499`, and hourly ramp all `0.035478178105887714`. This says
+T046 helps most on evening recovery, solar/midday, peak-like, and weekend
+buckets; night and ramp gains are weak and should guide future research rather
+than promotion claims.
+
+Future approval path audit D35 now summarizes the production blockers in a
+compact review artifact. New script:
+`scripts/audit_epex_lab_future_approval_path.py`; test:
+`tests/test_audit_epex_lab_future_approval_path_script.py`. Real output:
+`output/phase14/t046_future_approval_path_audit_v1/future_approval_path_audit.json`.
+Result `status=NO_GO_PRODUCTION_CHAIN_INCOMPLETE`, `approved=false`,
+`strict_diagnostics_pass=true`, `production_chain_pass=false`,
+`spot_backtest_policy.pass=true`, and `missing_production_evidence=[]`. The
+remaining blockers are present-but-not-approved production approvals:
+`adjusted_capstone_approved`, `adjusted_export_manifest_production_ready`,
+`adjusted_production_manifest_approved`, and
+`adjusted_selected_artifact_production_ready`. Next action is not another local
+bundle; it is replacing local diagnostic approval flags with real
+production-approved adjusted artifacts.
+
+D36 hardens the only API path that can set adjusted production-manifest
+approval flags. `scripts/build_epex_lab_adjusted_production_manifest.py` now
+requires valid run identity before accepting approval flags: non-empty
+`production_run_id`, non-empty `production_entrypoint`, `git_commit` matching
+`[0-9a-f]{40}`, and an existing `source_provenance_manifest`. The CLI remains
+NO-GO by default and exposes no approval flags. Validation including this
+hardening: `56 passed, 1 skipped`.
+
+D37 hardens readiness so production-ready adjusted export, selected, and
+capstone artifacts must bind to the same adjusted production manifest and run
+identity, not only to the adjusted CSV. New readiness checks include
+`adjusted_production_manifest_run_identity_valid`,
+`adjusted_export_manifest_production_chain_bound`,
+`adjusted_selected_artifact_production_chain_bound`, and
+`adjusted_capstone_production_chain_bound`. Real T046 readiness v2:
+`output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_stage_t046_from_hourly_baseline_source_export_provenance/readiness_no_go_v2_chain_bound.json`.
+Future approval audit v2:
+`output/phase14/t046_future_approval_path_audit_v2_chain_bound/future_approval_path_audit.json`.
+Result remains NO-GO: strict diagnostics pass, spot backtest policy pass, but
+8 production checks fail because local/staging artifacts are not approved and
+not bound to a real production run identity. Validation including D37:
+`57 passed, 1 skipped`.
+
+D38 adds a strict builder for the remaining adjusted production-chain artifacts:
+`scripts/build_epex_lab_adjusted_production_chain.py` with tests in
+`tests/test_build_epex_lab_adjusted_production_chain_script.py`. It can write
+`adjusted_export_manifest.json`, `adjusted_selected_artifact.json`, and
+`adjusted_production_capstone.json`, but only if the input adjusted production
+manifest is already approved, promotion-approved, contract-pass,
+source-provenance-pass, no-OMPEX, adjusted-CSV hash-bound, and run-identity
+valid. This is the safe future path after a real adjusted production manifest
+exists; it cannot be used to promote current T046 local NO-GO staging.
+Validation including D38: `59 passed, 1 skipped`.
 
 `scripts/check_epex_lab_promotion_readiness.py` now makes that NO-GO explicit
 instead of reusing the baseline monthly solver capstone for the adjusted hourly

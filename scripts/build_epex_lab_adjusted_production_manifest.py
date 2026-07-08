@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +31,7 @@ def build_manifest(
     production_run_id: str | None = None,
     production_entrypoint: str | None = None,
     git_commit: str | None = None,
+    source_provenance_manifest: Path | None = None,
     production_approved: bool = False,
     production_promotion_approved: bool = False,
 ) -> dict[str, Any]:
@@ -40,6 +42,7 @@ def build_manifest(
     policy = _load_json(source_hierarchy_policy)
     independent = _load_json(independent_summary)
     governance = _load_json(governance_audit)
+    source_provenance = _load_json(source_provenance_manifest) if source_provenance_manifest is not None else None
 
     adjusted_csv = Path(str((lab.get("outputs") or {}).get("adjusted_csv", "")))
     if not adjusted_csv.exists():
@@ -53,22 +56,21 @@ def build_manifest(
         policy=policy,
         independent=independent,
         governance=governance,
+        source_provenance=source_provenance,
+        adjusted_csv=adjusted_csv,
     )
     contract_pass = all(check["status"] == "PASS" for check in checks)
     if production_approved or production_promotion_approved:
-        missing_identity = [
-            name
-            for name, value in {
-                "production_run_id": production_run_id,
-                "production_entrypoint": production_entrypoint,
-                "git_commit": git_commit,
-            }.items()
-            if not value
-        ]
-        if missing_identity:
+        identity_errors = _production_identity_errors(
+            production_run_id=production_run_id,
+            production_entrypoint=production_entrypoint,
+            git_commit=git_commit,
+            source_provenance_manifest=source_provenance_manifest,
+        )
+        if identity_errors:
             raise ValueError(
-                "production approval requires complete run identity: "
-                + ", ".join(missing_identity)
+                "production approval requires complete valid run identity: "
+                + ", ".join(identity_errors)
             )
     approved = bool(production_approved and production_promotion_approved and contract_pass)
 
@@ -101,6 +103,15 @@ def build_manifest(
         "independent_summary_sha256": _sha256(independent_summary),
         "governance_audit": str(governance_audit),
         "governance_audit_sha256": _sha256(governance_audit),
+        "source_provenance_manifest": str(source_provenance_manifest) if source_provenance_manifest is not None else None,
+        "source_provenance_manifest_sha256": (
+            _sha256(source_provenance_manifest) if source_provenance_manifest is not None else None
+        ),
+        "source_kind": (source_provenance or {}).get("source_kind") if source_provenance is not None else None,
+        "source_promotion_eligible": (
+            (source_provenance or {}).get("source_promotion_eligible") if source_provenance is not None else None
+        ),
+        "source_provenance_pass": _source_provenance_pass(source_provenance, adjusted_csv),
         "ompex_used_in_model": False,
         "ompex_used_in_selection": False,
         "contract_pass": contract_pass,
@@ -125,8 +136,10 @@ def _contract_checks(
     policy: dict[str, Any],
     independent: dict[str, Any],
     governance: dict[str, Any],
+    source_provenance: dict[str, Any] | None,
+    adjusted_csv: Path,
 ) -> list[dict[str, Any]]:
-    return [
+    checks = [
         _check("lab_activation_lab_only", lab.get("activation_status") == "lab_only", lab.get("activation_status")),
         _check("lab_not_production_approved", lab.get("production_approved") is False, lab.get("production_approved")),
         _check("lab_ompex_not_selection", lab.get("ompex_used_in_selection") is False, lab.get("ompex_used_in_selection")),
@@ -160,6 +173,141 @@ def _contract_checks(
         ),
         _check("powerbi_no_critical_flags", _powerbi_critical_count(powerbi) == 0, _powerbi_critical_count(powerbi)),
     ]
+    checks.append(
+        _check(
+            "source_provenance_manifest_present",
+            source_provenance is not None,
+            source_provenance is not None,
+        )
+    )
+    if source_provenance is not None:
+        checks.extend(_source_provenance_checks(source_provenance, adjusted_csv))
+    return checks
+
+
+def _production_identity_errors(
+    *,
+    production_run_id: str | None,
+    production_entrypoint: str | None,
+    git_commit: str | None,
+    source_provenance_manifest: Path | None,
+) -> list[str]:
+    errors: list[str] = []
+    if not str(production_run_id or "").strip():
+        errors.append("production_run_id")
+    if not str(production_entrypoint or "").strip():
+        errors.append("production_entrypoint")
+    if not str(git_commit or "").strip():
+        errors.append("git_commit")
+    elif re.fullmatch(r"[0-9a-f]{40}", str(git_commit).strip()) is None:
+        errors.append("git_commit_must_be_40_hex")
+    if source_provenance_manifest is None:
+        errors.append("source_provenance_manifest")
+    elif not source_provenance_manifest.exists():
+        errors.append("source_provenance_manifest_missing")
+    return errors
+
+
+def _source_provenance_checks(source_provenance: dict[str, Any], adjusted_csv: Path) -> list[dict[str, Any]]:
+    adjusted_path = str(source_provenance.get("adjusted_csv"))
+    adjusted_sha = source_provenance.get("adjusted_csv_sha256")
+    expected_sha = _sha256(adjusted_csv)
+    source_path = Path(str(source_provenance.get("source_path", "")))
+    staged_candidate = Path(str(source_provenance.get("staged_candidate_csv", "")))
+    lab_manifest = Path(str(source_provenance.get("lab_manifest", "")))
+    source_export_manifest = Path(str(source_provenance.get("source_export_manifest", "")))
+    return [
+        _check(
+            "source_provenance_schema",
+            source_provenance.get("schema_version") == "epex_lab_adjusted_lt_candidate_stage.v1",
+            source_provenance.get("schema_version"),
+        ),
+        _check(
+            "source_provenance_schema_role",
+            source_provenance.get("schema_role") == "source_provenance",
+            source_provenance.get("schema_role"),
+        ),
+        _check(
+            "source_provenance_lab_only",
+            source_provenance.get("activation_status") == "staged_lab_only"
+            and source_provenance.get("production_approved") is False
+            and source_provenance.get("production_promotion_approved") is False,
+            {
+                "activation_status": source_provenance.get("activation_status"),
+                "production_approved": source_provenance.get("production_approved"),
+                "production_promotion_approved": source_provenance.get("production_promotion_approved"),
+            },
+        ),
+        _check(
+            "source_provenance_candidate_csv",
+            source_provenance.get("source_kind") == "candidate_csv",
+            source_provenance.get("source_kind"),
+        ),
+        _check(
+            "source_provenance_promotion_eligible",
+            source_provenance.get("source_promotion_eligible") is True,
+            source_provenance.get("source_promotion_eligible"),
+        ),
+        _check(
+            "source_provenance_no_contract_blockers",
+            list(source_provenance.get("production_contract_blockers") or []) == [],
+            source_provenance.get("production_contract_blockers"),
+        ),
+        _check(
+            "source_provenance_adjusted_csv_bound",
+            _same_path(adjusted_path, adjusted_csv) or adjusted_sha == expected_sha,
+            {"adjusted_csv": adjusted_path, "adjusted_csv_sha256": adjusted_sha},
+        ),
+        _check(
+            "source_provenance_source_sha_bound",
+            source_path.exists() and source_provenance.get("source_sha256") == _sha256(source_path),
+            {"source_path": str(source_path), "source_sha256": source_provenance.get("source_sha256")},
+        ),
+        _check(
+            "source_provenance_staged_candidate_sha_bound",
+            staged_candidate.exists()
+            and source_provenance.get("staged_candidate_csv_sha256") == _sha256(staged_candidate),
+            {
+                "staged_candidate_csv": str(staged_candidate),
+                "staged_candidate_csv_sha256": source_provenance.get("staged_candidate_csv_sha256"),
+            },
+        ),
+        _check(
+            "source_provenance_lab_manifest_sha_bound",
+            lab_manifest.exists() and source_provenance.get("lab_manifest_sha256") == _sha256(lab_manifest),
+            {"lab_manifest": str(lab_manifest), "lab_manifest_sha256": source_provenance.get("lab_manifest_sha256")},
+        ),
+        _check(
+            "source_provenance_source_export_manifest_sha_bound",
+            source_export_manifest.exists()
+            and source_provenance.get("source_export_manifest_sha256") == _sha256(source_export_manifest),
+            {
+                "source_export_manifest": str(source_export_manifest),
+                "source_export_manifest_sha256": source_provenance.get("source_export_manifest_sha256"),
+            },
+        ),
+        _check(
+            "source_provenance_source_export_manifest_bound",
+            source_export_manifest.exists()
+            and _source_export_manifest_bound_to_csv(source_export_manifest, source_path),
+            {"source_export_manifest": str(source_export_manifest), "source_path": str(source_path)},
+        ),
+        _check(
+            "source_provenance_no_ompex",
+            source_provenance.get("ompex_used_in_model") is False
+            and source_provenance.get("ompex_used_in_selection") is False,
+            {
+                "ompex_used_in_model": source_provenance.get("ompex_used_in_model"),
+                "ompex_used_in_selection": source_provenance.get("ompex_used_in_selection"),
+            },
+        ),
+    ]
+
+
+def _source_provenance_pass(source_provenance: dict[str, Any] | None, adjusted_csv: Path) -> bool:
+    if source_provenance is None:
+        return False
+    return all(check["status"] == "PASS" for check in _source_provenance_checks(source_provenance, adjusted_csv))
 
 
 def _check(name: str, passed: bool, value: Any) -> dict[str, Any]:
@@ -185,6 +333,43 @@ def _powerbi_critical_count(summary: dict[str, str]) -> int:
     return total
 
 
+def _same_path(left: Any, right: Any) -> bool:
+    if left is None or right is None:
+        return False
+    try:
+        return Path(str(left)).resolve() == Path(str(right)).resolve()
+    except (OSError, TypeError, ValueError):
+        return False
+
+
+def _source_export_manifest_bound_to_csv(manifest_path: Path, source_csv: Path) -> bool:
+    try:
+        manifest = _load_json(manifest_path)
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not manifest.get("schema_version"):
+        return False
+    candidate_path_keys = [
+        "output_csv",
+        "candidate_csv",
+        "source_csv",
+        "adjusted_csv",
+        "selected_adjusted_csv",
+    ]
+    for key in candidate_path_keys:
+        if _same_path(manifest.get(key), source_csv):
+            return True
+    candidate_sha_keys = [
+        "output_csv_sha256",
+        "candidate_csv_sha256",
+        "source_csv_sha256",
+        "adjusted_csv_sha256",
+        "selected_adjusted_csv_sha256",
+    ]
+    expected_sha = _sha256(source_csv) if source_csv.exists() else None
+    return expected_sha is not None and any(manifest.get(key) == expected_sha for key in candidate_sha_keys)
+
+
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -205,6 +390,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--production-run-id", default=None)
     parser.add_argument("--production-entrypoint", default=None)
     parser.add_argument("--git-commit", default=None)
+    parser.add_argument("--source-provenance-manifest", type=Path, default=None)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
     manifest = build_manifest(
@@ -218,6 +404,7 @@ def main(argv: list[str] | None = None) -> int:
         production_run_id=args.production_run_id,
         production_entrypoint=args.production_entrypoint,
         git_commit=args.git_commit,
+        source_provenance_manifest=args.source_provenance_manifest,
         output=args.output,
     )
     print(json.dumps(manifest, indent=2, sort_keys=True))

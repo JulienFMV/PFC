@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 
 import pandas as pd
 import pytest
@@ -85,6 +86,56 @@ def _write_inputs(tmp_path):
     return lab, monthly, product, powerbi, policy, independent, governance, ompex
 
 
+def _sha256(path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _write_source_provenance(tmp_path, lab_manifest, adjusted_csv: str, *, source_kind: str = "candidate_csv"):
+    source = tmp_path / "source_provenance.json"
+    source_csv = tmp_path / "baseline.csv"
+    source_export_manifest = tmp_path / "source_export_manifest.json"
+    blockers = [] if source_kind == "candidate_csv" else ["source_kind_fan_parquet_requires_audited_hourly_export"]
+    _write_json(
+        source_export_manifest,
+        {
+            "schema_version": "test_source_export_manifest.v1",
+            "candidate_csv": str(source_csv),
+            "candidate_csv_sha256": _sha256(source_csv),
+        },
+    )
+    _write_json(
+        source,
+        {
+            "schema_version": "epex_lab_adjusted_lt_candidate_stage.v1",
+            "schema_role": "source_provenance",
+            "activation_status": "staged_lab_only",
+            "production_approved": False,
+            "production_promotion_approved": False,
+            "promotion_scope": "LT_EPEX_LAB_STAGING_NO_GO",
+            "source_kind": source_kind,
+            "source_promotion_eligible": source_kind == "candidate_csv",
+            "source_path": str(source_csv),
+            "source_sha256": _sha256(source_csv),
+            "source_export_manifest": str(source_export_manifest),
+            "source_export_manifest_sha256": _sha256(source_export_manifest),
+            "staged_candidate_csv": str(source_csv),
+            "staged_candidate_csv_sha256": _sha256(source_csv),
+            "lab_manifest": str(lab_manifest),
+            "lab_manifest_sha256": _sha256(lab_manifest),
+            "production_contract_blockers": blockers,
+            "adjusted_csv": adjusted_csv,
+            "adjusted_csv_sha256": _sha256(tmp_path / "adjusted.csv"),
+            "ompex_used_in_model": False,
+            "ompex_used_in_selection": False,
+        },
+    )
+    return source
+
+
 def test_adjusted_production_manifest_builder_is_no_go_by_default(tmp_path) -> None:
     lab, monthly, product, powerbi, policy, independent, governance, _ompex = _write_inputs(tmp_path)
 
@@ -103,12 +154,14 @@ def test_adjusted_production_manifest_builder_is_no_go_by_default(tmp_path) -> N
     )
 
     assert manifest["schema_version"] == "epex_lab_adjusted_production_manifest.v1"
-    assert manifest["contract_pass"] is True
+    assert manifest["contract_pass"] is False
     assert manifest["production_approved"] is False
     assert manifest["production_promotion_approved"] is False
+    assert manifest["source_provenance_pass"] is False
     assert manifest["adjusted_csv_sha256"]
     assert manifest["lab_manifest_sha256"]
-    assert {check["status"] for check in manifest["checks"]} == {"PASS"}
+    checks = {check["name"]: check["status"] for check in manifest["checks"]}
+    assert checks["source_provenance_manifest_present"] == "FAIL"
 
 
 def test_default_adjusted_production_manifest_does_not_unlock_readiness(tmp_path) -> None:
@@ -170,10 +223,10 @@ def test_default_adjusted_production_manifest_does_not_unlock_readiness(tmp_path
     }["adjusted_production_manifest_approved"] == "FAIL"
 
 
-def test_adjusted_production_manifest_approval_requires_run_identity(tmp_path) -> None:
+def test_adjusted_production_manifest_approval_requires_run_identity_and_source_provenance(tmp_path) -> None:
     lab, monthly, product, powerbi, policy, independent, governance, _ompex = _write_inputs(tmp_path)
 
-    with pytest.raises(ValueError, match="production approval requires complete run identity"):
+    with pytest.raises(ValueError, match="source_provenance_manifest"):
         build_manifest(
             lab_manifest=lab,
             baseline_monthly_manifest=monthly,
@@ -186,3 +239,86 @@ def test_adjusted_production_manifest_approval_requires_run_identity(tmp_path) -
             production_promotion_approved=True,
             output=tmp_path / "adjusted_production_manifest.json",
         )
+
+
+def test_adjusted_production_manifest_approval_rejects_invalid_git_commit(tmp_path) -> None:
+    lab, monthly, product, powerbi, policy, independent, governance, _ompex = _write_inputs(tmp_path)
+    adjusted_csv = json.loads(lab.read_text(encoding="utf-8"))["outputs"]["adjusted_csv"]
+    source = _write_source_provenance(tmp_path, lab, adjusted_csv, source_kind="candidate_csv")
+
+    with pytest.raises(ValueError, match="git_commit_must_be_40_hex"):
+        build_manifest(
+            lab_manifest=lab,
+            baseline_monthly_manifest=monthly,
+            product_summary=product,
+            powerbi_summary=powerbi,
+            source_hierarchy_policy=policy,
+            independent_summary=independent,
+            governance_audit=governance,
+            production_run_id="prod-run-1",
+            production_entrypoint="pfc_shaping.pipeline.production_phases",
+            git_commit="not-a-commit",
+            source_provenance_manifest=source,
+            production_approved=True,
+            production_promotion_approved=True,
+            output=tmp_path / "adjusted_production_manifest.json",
+        )
+
+
+def test_adjusted_production_manifest_can_be_approved_with_candidate_csv_source_provenance(tmp_path) -> None:
+    lab, monthly, product, powerbi, policy, independent, governance, _ompex = _write_inputs(tmp_path)
+    adjusted_csv = json.loads(lab.read_text(encoding="utf-8"))["outputs"]["adjusted_csv"]
+    source = _write_source_provenance(tmp_path, lab, adjusted_csv, source_kind="candidate_csv")
+
+    manifest = build_manifest(
+        lab_manifest=lab,
+        baseline_monthly_manifest=monthly,
+        product_summary=product,
+        powerbi_summary=powerbi,
+        source_hierarchy_policy=policy,
+        independent_summary=independent,
+        governance_audit=governance,
+        production_run_id="prod-run-1",
+        production_entrypoint="pfc_shaping.pipeline.production_phases",
+        git_commit="a" * 40,
+        source_provenance_manifest=source,
+        production_approved=True,
+        production_promotion_approved=True,
+        output=tmp_path / "adjusted_production_manifest.json",
+    )
+
+    assert manifest["contract_pass"] is True
+    assert manifest["source_kind"] == "candidate_csv"
+    assert manifest["source_provenance_pass"] is True
+    assert manifest["production_approved"] is True
+    assert manifest["production_promotion_approved"] is True
+
+
+def test_adjusted_production_manifest_rejects_fan_source_provenance(tmp_path) -> None:
+    lab, monthly, product, powerbi, policy, independent, governance, _ompex = _write_inputs(tmp_path)
+    adjusted_csv = json.loads(lab.read_text(encoding="utf-8"))["outputs"]["adjusted_csv"]
+    source = _write_source_provenance(tmp_path, lab, adjusted_csv, source_kind="fan_parquet")
+
+    manifest = build_manifest(
+        lab_manifest=lab,
+        baseline_monthly_manifest=monthly,
+        product_summary=product,
+        powerbi_summary=powerbi,
+        source_hierarchy_policy=policy,
+        independent_summary=independent,
+        governance_audit=governance,
+        production_run_id="prod-run-1",
+        production_entrypoint="pfc_shaping.pipeline.production_phases",
+        git_commit="a" * 40,
+        source_provenance_manifest=source,
+        production_approved=True,
+        production_promotion_approved=True,
+        output=tmp_path / "adjusted_production_manifest.json",
+    )
+
+    checks = {check["name"]: check["status"] for check in manifest["checks"]}
+    assert checks["source_provenance_candidate_csv"] == "FAIL"
+    assert checks["source_provenance_promotion_eligible"] == "FAIL"
+    assert manifest["contract_pass"] is False
+    assert manifest["source_provenance_pass"] is False
+    assert manifest["production_approved"] is False

@@ -2503,3 +2503,1251 @@ Invariants not to break:
   used as a promotion-facing source.
 - OMPEX remains advisory only.
 
+## D-20260708-22 - Enrich Independent No-OMPEX T046 Shape Diagnostics
+
+Decision: extend the independent EPEX A/B comparison to emit gateable
+diagnostics for PEAK/OFFPEAK effects, month-hour deltas, PEAK-OFFPEAK spread
+changes, and month-boundary delta jumps before any further production wiring.
+
+Reason: expert read-only audit found T046 promising but not production-ready.
+The next safe step is better evidence on the shape deformation itself, not
+promotion. The existing no-OMPEX comparison already proves level neutrality and
+basic ramp/width checks; it now needs explicit diagnostics for the risk areas
+seen in PNG reviews: PEAK/OFFPEAK shaping, localized solar-tail/evening-ramp
+movement, and boundary jumps.
+
+Implementation:
+
+- Extended `scripts/compare_epex_shape_lab_ab.py` to write:
+  - `load_type_delta_summary.csv`;
+  - `month_hour_delta_summary.csv`;
+  - `peak_offpeak_monthly_summary.csv`;
+  - `boundary_delta_jumps.csv`;
+  - `delta_heatmap_month_hour_<year>.png`;
+  - `peak_offpeak_spread_delta_by_month.png`;
+  - `boundary_delta_jumps.png`.
+- Extended `tests/test_compare_epex_shape_lab_ab_script.py` to assert the new
+  CSV/PNG evidence exists and preserves `benchmark_policy=independent_no_ompex`.
+
+Real 20260708 T046 evidence:
+
+- Output:
+  `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_sweep_v2/t046_enriched_ab_diagnostics/`
+- Summary:
+  - `benchmark_policy=independent_no_ompex`;
+  - `ompex_used_in_model=false`;
+  - `ompex_used_in_selection=false`;
+  - `n_hours=57025`;
+  - `max_abs_delta_eur_mwh=3.0`;
+  - `max_abs_monthly_mean_delta_eur_mwh=8.602150532151586e-08`;
+  - `max_abs_width_delta_eur_mwh=0.0`;
+  - `quantile_order_adjusted_ok=true`;
+  - `weighted_negative_hours_adjusted=0`;
+  - `ramp_abs_p99_baseline_eur_mwh=24.818882960000007`;
+  - `ramp_abs_p99_adjusted_eur_mwh=25.80652717999996`.
+- The largest mean month-hour deltas are concentrated in April around
+  h13-h14 negative and h19 positive, consistent with the intended solar-tail /
+  evening-ramp reshaping.
+- The largest month-boundary delta jump observed in the enriched diagnostic is
+  about `0.279 EUR/MWh`, so T046's additive delta itself is not introducing a
+  large new month-boundary discontinuity.
+
+Validation:
+
+- `python -m pytest tests/test_compare_epex_shape_lab_ab_script.py -q -p no:cacheprovider`
+  returned `2 passed`.
+- `python -m pytest tests/test_compare_epex_shape_lab_ab_script.py tests/test_audit_epex_shape_lab_governance_script.py tests/test_run_epex_shape_lab_ab_script.py tests/test_execute_epex_shape_lab_sweep_script.py tests/test_plan_epex_shape_lab_sweep_script.py tests/test_stage_epex_lab_adjusted_lt_candidate_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  returned `34 passed, 1 skipped`.
+
+Rejected alternatives:
+
+- Use OMPEX deltas to decide whether T046 is acceptable.
+- Promote T046 because enriched diagnostics look coherent.
+- Patch individual months where the delta looks visually strong.
+
+Invariants not to break:
+
+- The enriched diagnostics are independent no-OMPEX evidence only.
+- T046 remains NO-GO production until a real adjusted production/export/
+  selected/capstone chain exists and passes.
+- The fan-parquet to hourly path remains a separate blocker for promotion-facing
+  integration.
+
+## D-20260708-23 - Diagnose Fan-to-Hourly Parity Before Promotion Wiring
+
+Decision: add a read-only parity diagnostic for the LT fan parquet to hourly
+CSV path and keep the raw fan-derived hourly artifact out of promotion-facing
+staging until it is reconciled with the audited export chain.
+
+Reason: read-only expert audit identified the fan-parquet staging path as the
+main integration blocker. The staging runner used the lightweight
+`to_hourly_csv_frame` conversion directly, while the promotion-ready hourly CSV
+is the result of additional calibration, PEAK/OFFPEAK, smoothing, and strict
+audit steps. Treating raw fan conversion as equivalent to the audited CSV
+created hard product failures.
+
+Implementation:
+
+- Added `scripts/diagnose_fan_to_hourly_parity.py`.
+- Added `tests/test_diagnose_fan_to_hourly_parity_script.py`.
+- The diagnostic:
+  - converts the fan parquet with `to_hourly_csv_frame`;
+  - aligns it to a reference hourly CSV;
+  - writes column, monthly, load-type, and boundary delta CSVs;
+  - optionally runs product-normalization audits on both artifacts;
+  - marks itself `promotion_gate=false`.
+
+Real 20260708 evidence:
+
+- Output:
+  `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/fan_to_hourly_parity_diagnostic/`
+- Fan source:
+  `fan_asof20260707_lshape100_yoy150_amp150_2032.parquet`
+- Reference:
+  `ch_hfc_hourly_asof20260707_lshape100_yoy150_amp150_2032.csv`
+- Diagnostic forwards:
+  `epex_sweep_v2/diagnostic_forwards_history_rebuilt_20260708.parquet`
+- Summary:
+  - `fan_rows_15min=228192`;
+  - `fan_hourly_rows=57025`;
+  - `reference_rows=57025`;
+  - `aligned_rows=57025`;
+  - `missing_price_columns=[]`;
+  - `max_abs_weighted_delta_eur_mwh=24.290847000000014`;
+  - `mean_abs_weighted_delta_eur_mwh=2.797042955633494`;
+  - `max_abs_monthly_weighted_delta_eur_mwh=0.5222635513888889`.
+- Load-type deltas show the raw fan-derived artifact is not PEAK/OFFPEAK
+  calibrated relative to the audited CSV:
+  - `PEAK` mean delta about `+1.2408 EUR/MWh`;
+  - `OFFPEAK` mean delta about `-0.6773 EUR/MWh`.
+- Product audit on the raw fan-derived hourly CSV:
+  - `all_gates_pass=false`;
+  - `critical_count=56`;
+  - `delivered_curve_drift_count=38`;
+  - max supported hard-gate residual about `21.915846 EUR/MWh`.
+- Product audit on the reference CSV under the same diagnostic forwards:
+  - `critical_count=0`;
+  - `delivered_curve_drift_count=0`;
+  - source hierarchy remains hash-bound to its exact production forwards, so
+    this diagnostic is not a replacement for the baseline promotion capstone.
+
+Validation:
+
+- `python -m pytest tests/test_diagnose_fan_to_hourly_parity_script.py -q -p no:cacheprovider`
+  returned `1 passed`.
+- `python -m pytest tests/test_diagnose_fan_to_hourly_parity_script.py tests/test_compare_epex_shape_lab_ab_script.py tests/test_stage_epex_lab_adjusted_lt_candidate_script.py tests/test_audit_ch_product_normalization_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  returned `62 passed, 1 skipped`.
+
+Rejected alternatives:
+
+- Promote or continue using fan-parquet staging as promotion-facing evidence
+  because row counts and monthly means are close.
+- Recalibrate individual failed products after staging.
+- Reuse the baseline source hierarchy policy for a fan-derived CSV with a
+  different input hash.
+
+Invariants not to break:
+
+- Raw fan-to-hourly conversion is diagnostic/staging only until it passes the
+  same product, Power BI, selected-artifact, source-hierarchy, and capstone
+  chain as the audited CSV.
+- Fixes must enter through the production/export specification, not through
+  individual month patches.
+- OMPEX remains advisory only and is irrelevant to this parity diagnostic.
+
+## D-20260708-24 - Block Production Contracts From Raw Fan Staging
+
+Decision: prevent the EPEX lab staging runner from building an adjusted
+production-contract manifest when the source is a raw fan parquet. Only an
+already exported hourly candidate CSV is eligible for adjusted production
+contract packaging.
+
+Reason: the fan-to-hourly parity diagnostic proved that raw
+`to_hourly_csv_frame(fan)` output has the same hourly row count as the audited
+CSV but is not the same artifact and does not pass product gates. Allowing a
+fan-sourced staging run to package a production contract, even a NO-GO
+contract, makes it too easy to confuse diagnostic staging with the audited
+export path.
+
+Implementation:
+
+- Updated `scripts/stage_epex_lab_adjusted_lt_candidate.py`:
+  - adds `source_promotion_eligible`;
+  - records `production_contract_blockers`;
+  - blocks contract building for `source_kind=fan_parquet` with
+    `source_kind_fan_parquet_requires_audited_hourly_export`;
+  - still allows contract packaging for `source_kind=candidate_csv` when all
+    strict evidence inputs are present.
+- Updated `tests/test_stage_epex_lab_adjusted_lt_candidate_script.py`:
+  - fan-sourced staging remains hash-bound and NO-GO;
+  - fan-sourced staging cannot write `adjusted_production_manifest_no_go.json`
+    even when strict summaries are supplied;
+  - candidate CSV staging can still write the contract NO-GO package.
+
+Validation:
+
+- `python -m pytest tests/test_stage_epex_lab_adjusted_lt_candidate_script.py -q -p no:cacheprovider`
+  returned `5 passed`.
+- `python -m pytest tests/test_stage_epex_lab_adjusted_lt_candidate_script.py tests/test_diagnose_fan_to_hourly_parity_script.py tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_compare_epex_shape_lab_ab_script.py tests/test_audit_ch_product_normalization_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  returned `70 passed, 1 skipped`.
+
+Rejected alternatives:
+
+- Keep allowing raw fan staging to package a NO-GO production contract.
+- Make fan staging production-eligible based on row-count or monthly-mean
+  parity only.
+- Recalibrate individual failed PEAK products inside the staging runner.
+
+Invariants not to break:
+
+- Raw fan parquet staging is reproducibility evidence only.
+- Promotion-facing EPEX adjusted work must begin from an audited hourly export
+  or a production path that emits and gates the same artifact.
+- This guard does not approve T046; T046 remains NO-GO production until the
+  adjusted production/export/selected/capstone chain exists and passes.
+
+## D-20260708-25 - Require Source Provenance For Adjusted Production Approval
+
+Decision: require explicit source-provenance evidence before an adjusted EPEX
+production manifest can be approved, and make readiness require both
+`contract_pass=true` and `source_provenance_pass=true`.
+
+Reason: blocking fan-sourced contract packaging in the staging runner is not
+enough if the production-manifest builder can be called directly through its
+Python API. Production approval must be impossible without a bound provenance
+artifact proving that the adjusted CSV came from an audited hourly candidate
+source, not raw fan conversion.
+
+Implementation:
+
+- Updated `scripts/build_epex_lab_adjusted_production_manifest.py`:
+  - optional `source_provenance_manifest` input;
+  - approval flags now require complete run identity plus a source provenance
+    manifest;
+  - source provenance checks require:
+    - schema `epex_lab_adjusted_lt_candidate_stage.v1`;
+    - `source_kind=candidate_csv`;
+    - `source_promotion_eligible=true`;
+    - empty `production_contract_blockers`;
+    - adjusted CSV path or SHA bound to the lab adjusted CSV;
+  - the manifest records `source_kind`, `source_promotion_eligible`, and
+    `source_provenance_pass`.
+- Updated `scripts/check_epex_lab_promotion_readiness.py`:
+  - an adjusted production manifest is production-ready only when
+    `contract_pass=true` and `source_provenance_pass=true`, in addition to
+    approval flags and adjusted CSV binding.
+- Updated tests:
+  - `tests/test_build_epex_lab_adjusted_production_manifest_script.py`;
+  - `tests/test_check_epex_lab_promotion_readiness_script.py`.
+
+Validation:
+
+- `python -m pytest tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_check_epex_lab_promotion_readiness_script.py -q -p no:cacheprovider`
+  returned `9 passed`.
+- `python -m pytest tests/test_stage_epex_lab_adjusted_lt_candidate_script.py tests/test_diagnose_fan_to_hourly_parity_script.py tests/test_compare_epex_shape_lab_ab_script.py tests/test_audit_ch_product_normalization_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  returned `63 passed, 1 skipped`.
+
+Rejected alternatives:
+
+- Rely only on the staging runner to block fan-sourced contracts.
+- Accept approval flags without a source provenance manifest.
+- Treat any source provenance artifact as valid without checking source kind,
+  blockers, and adjusted CSV binding.
+
+Invariants not to break:
+
+- CLI-built adjusted production manifests remain NO-GO by default.
+- A future production approval must carry identity, strict diagnostics, source
+  provenance, export manifest, selected artifact, and capstone approval.
+- Fan-derived raw hourly artifacts remain ineligible for promotion-facing
+  contract approval.
+
+## D-20260708-26 - Emit Source Provenance From Candidate-CSV Staging
+
+Decision: make the staging runner emit a dedicated source provenance manifest
+and pass it into the adjusted production contract builder whenever the source
+is an eligible hourly candidate CSV.
+
+Reason: after adding the source-provenance requirement to the adjusted
+production manifest, the candidate-CSV staging path still needed to produce a
+real provenance artifact. The provenance must be separate from the staging
+manifest because the staging manifest is later augmented with contract paths and
+hashes; the contract should bind to a stable source-provenance artifact.
+
+Implementation:
+
+- Updated `scripts/stage_epex_lab_adjusted_lt_candidate.py`:
+  - writes `source_provenance_manifest.json`;
+  - includes source kind, source eligibility, source/staged/adjusted CSV
+    hashes, lab manifest hash, and contract blockers;
+  - passes `source_provenance_manifest` to
+    `build_epex_lab_adjusted_production_manifest.py` for eligible
+    `candidate_csv` staging.
+- Updated `tests/test_stage_epex_lab_adjusted_lt_candidate_script.py`:
+  - fan staging writes an ineligible provenance artifact but still cannot
+    package a production contract;
+  - candidate CSV staging writes a NO-GO contract with
+    `source_provenance_pass=true`.
+
+Real 20260708 evidence:
+
+- Output:
+  `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_stage_t046_from_hourly_baseline_with_provenance/`
+- Source:
+  `ch_hfc_hourly_asof20260707_lshape100_yoy150_amp150_2032.csv`
+- Staged adjusted CSV SHA-256:
+  `8b50a01af05dc152a5f95fbd85e36c4bbe0106f0e65c4dd118b3df42737378c8`
+- Source provenance SHA-256:
+  `8d3cacb36637ea6e57446d840458d85d6219da72a94c200f1ac8c559a3d2a6b9`
+- Adjusted production contract NO-GO SHA-256:
+  `5600b737482e0db537059f36fe997f3bbe9e15c8435874c98b1ca8b59e0e2f09`
+- Contract fields:
+  - `contract_pass=true`;
+  - `source_kind=candidate_csv`;
+  - `source_promotion_eligible=true`;
+  - `source_provenance_pass=true`;
+  - `production_approved=false`;
+  - `production_promotion_approved=false`.
+
+Readiness with the provenance-aware contract:
+
+- Output:
+  `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_stage_t046_from_hourly_baseline_with_provenance/readiness_no_go.json`
+- Result:
+  - `approved=false`;
+  - `strict_diagnostics_pass=true`;
+  - `production_chain_pass=false`;
+  - `missing_production_evidence=[]`;
+  - provenance checks pass;
+  - failures remain expected non-production approvals:
+    adjusted capstone, adjusted production manifest approval, adjusted export
+    manifest production readiness, and adjusted selected artifact production
+    readiness.
+
+Validation:
+
+- `python -m pytest tests/test_stage_epex_lab_adjusted_lt_candidate_script.py -q -p no:cacheprovider`
+  returned `5 passed`.
+- `python -m pytest tests/test_stage_epex_lab_adjusted_lt_candidate_script.py tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_diagnose_fan_to_hourly_parity_script.py tests/test_compare_epex_shape_lab_ab_script.py tests/test_audit_ch_product_normalization_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  returned `72 passed, 1 skipped`.
+
+Rejected alternatives:
+
+- Use the mutable staged manifest itself as source provenance after adding
+  contract fields.
+- Leave candidate-CSV staging with `source_provenance_pass=false` even though
+  its source is promotion-eligible.
+- Promote the provenance-aware contract despite local NO-GO approval flags.
+
+Invariants not to break:
+
+- Source provenance can make a contract complete, but not approved.
+- T046 remains NO-GO production until export, selected artifact, and capstone
+  are real production-approved artifacts.
+- Fan-sourced staging remains ineligible even though it also writes provenance.
+
+## D-20260708-27 - Add No-OMPEX Multi-Date Stability Summary For T046
+
+Decision: add a read-only multi-date stability summarizer for EPEX shape-lab
+A/B cases and run it on the two available current-data baselines:
+`asof20260706` and `asof20260707`.
+
+Reason: T046 has promising single-date diagnostics, but expert audit called out
+stability as a prerequisite before production wiring. The next evidence should
+compare frozen no-OMPEX A/B outputs across dates, not use OMPEX or promote the
+candidate.
+
+Implementation:
+
+- Added `scripts/summarize_epex_shape_lab_stability.py`.
+- Added `tests/test_summarize_epex_shape_lab_stability_script.py`.
+- The summarizer reads independent A/B summaries plus governance audits and
+  gates each case on:
+  - `benchmark_policy=independent_no_ompex`;
+  - no OMPEX in model or selection;
+  - governance `PASS`;
+  - finite adjusted prices;
+  - quantile order;
+  - zero weighted negative hours;
+  - adjusted min price above floor;
+  - monthly drift and width drift thresholds;
+  - ramp p99 increase threshold.
+
+Real 20260707 stability probe:
+
+- Source baseline:
+  `output/phase14/20260707_asof20260706_lshape100_yoy150_amp150_2032/ch_hfc_hourly_asof20260706_lshape100_yoy150_amp150_2032.csv`
+- Output:
+  `output/phase14/20260707_asof20260706_lshape100_yoy150_amp150_2032/epex_stage_t046_stability_probe/`
+- Result:
+  - adjusted CSV SHA-256:
+    `9df080257f4a9df24314180be344a4c3618b9b21e23240d497403016e1d28e7e`;
+  - `benchmark_policy=independent_no_ompex`;
+  - `max_abs_delta_eur_mwh=3.0`;
+  - `max_abs_monthly_mean_delta_eur_mwh=8.602150568442747e-08`;
+  - `max_abs_width_delta_eur_mwh=0.0`;
+  - `weighted_negative_hours_adjusted=0`;
+  - `min_adjusted_price_eur_mwh=-3.887768`;
+  - ramp p99 increase about `0.937862 EUR/MWh`;
+  - governance `PASS`.
+
+Multi-date summary:
+
+- Output:
+  `output/phase14/t046_stability_summary_v1/`
+- Cases:
+  - `asof20260706`;
+  - `asof20260707`.
+- Status:
+  - `PASS`;
+  - `case_count=2`;
+  - `passed_case_count=2`;
+  - `promotion_gate=false`;
+  - `benchmark_policy=multi_date_independent_no_ompex`.
+- Case values:
+  - `asof20260706`: ramp p99 increase `0.9378621600000336`,
+    min adjusted price `-3.887768`, monthly drift `8.602150568442747e-08`;
+  - `asof20260707`: ramp p99 increase `0.9876442199999538`,
+    min adjusted price `-3.825623`, monthly drift
+    `8.602150532151586e-08`.
+
+Validation:
+
+- `python -m pytest tests/test_summarize_epex_shape_lab_stability_script.py -q -p no:cacheprovider`
+  returned `2 passed`.
+- `python -m pytest tests/test_summarize_epex_shape_lab_stability_script.py tests/test_stage_epex_lab_adjusted_lt_candidate_script.py tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_diagnose_fan_to_hourly_parity_script.py tests/test_compare_epex_shape_lab_ab_script.py tests/test_audit_epex_shape_lab_governance_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  returned `38 passed, 1 skipped`.
+
+Rejected alternatives:
+
+- Use OMPEX to judge cross-date stability.
+- Treat two-date stability PASS as production approval.
+- Promote T046 before production/export/selected/capstone artifacts exist.
+
+Invariants not to break:
+
+- Stability summary is lab evidence only and `promotion_gate=false`.
+- T046 remains NO-GO production.
+- More dates should be added before production promotion if historical
+  comparable current-data baselines are available.
+
+## D-20260708-28 - Require Reloaded Source Provenance For Adjusted Production Readiness
+
+Decision: harden adjusted EPEX lab production readiness so that source
+provenance and promotion manifests are validated from real files instead of
+trusted as self-attested fields.
+
+Reason: a read-only expert audit found a future-path P0. Existing T046 artifacts
+were still NO-GO, but `scripts/check_epex_lab_promotion_readiness.py` could
+approve a fabricated future production chain if a handwritten adjusted
+production manifest claimed `contract_pass=true` and
+`source_provenance_pass=true`. The checker must reload the referenced
+provenance artifact, verify its hash, and validate the source/export chain.
+
+Implementation:
+
+- `scripts/check_epex_lab_promotion_readiness.py` now requires the adjusted
+  production manifest to reference `source_provenance_manifest` and
+  `source_provenance_manifest_sha256`.
+- Readiness reloads that provenance file and validates:
+  - schema and `schema_role=source_provenance`;
+  - lab-only/non-production flags;
+  - `source_kind=candidate_csv`;
+  - `source_promotion_eligible=true`;
+  - empty production contract blockers;
+  - adjusted CSV path/SHA binding;
+  - source CSV SHA binding;
+  - staged candidate CSV SHA binding;
+  - lab manifest SHA binding;
+  - source export manifest SHA binding;
+  - source export manifest binding back to the source CSV;
+  - no OMPEX model/selection usage.
+- Readiness now also rejects minimal handwritten export, selected, and capstone
+  artifacts by requiring known schemas and production-chain fields.
+- `scripts/build_epex_lab_adjusted_production_manifest.py` now includes
+  source provenance presence in `contract_pass`; `contract_pass=true` can no
+  longer mean diagnostics passed while provenance is absent.
+- `scripts/stage_epex_lab_adjusted_lt_candidate.py` now requires a source
+  export manifest bound to the candidate CSV before setting
+  `source_promotion_eligible=true` or writing an adjusted production-contract
+  package. A candidate CSV without this manifest remains stageable but receives
+  blocker `candidate_csv_requires_source_export_manifest`.
+- Tests now cover self-attested provenance rejection, fan-source provenance
+  rejection, source-export-manifest requirement, and the positive path with
+  full bound provenance.
+
+Validation:
+
+- `python -m pytest tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_stage_epex_lab_adjusted_lt_candidate_script.py -q -p no:cacheprovider`
+  returned `17 passed`.
+- `python -m pytest tests/test_summarize_epex_shape_lab_stability_script.py tests/test_stage_epex_lab_adjusted_lt_candidate_script.py tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_diagnose_fan_to_hourly_parity_script.py tests/test_compare_epex_shape_lab_ab_script.py tests/test_audit_epex_shape_lab_governance_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  returned `41 passed, 1 skipped`.
+
+Rejected alternatives:
+
+- Trust `source_provenance_pass=true` copied into the adjusted production
+  manifest.
+- Allow `contract_pass=true` without source provenance, relying on readiness to
+  check a second flag later.
+- Treat any `--candidate-csv` as promotion-eligible without a source export
+  manifest.
+- Accept minimal handwritten export, selected, or capstone JSON as production
+  evidence.
+
+Invariants not to break:
+
+- T046 remains NO-GO production until a real production-approved
+  production/export/selected/capstone chain exists.
+- Candidate CSV staging without a source export manifest is allowed for lab
+  work but must not package an adjusted production contract.
+- Fan-parquet staging remains ineligible for production contracts.
+- OMPEX remains advisory evidence only and must not enter model, selection, or
+  readiness gates.
+
+## D-20260708-29 - Add Implied-Width And Fan-Coverage Diagnostics
+
+Decision: enrich read-only EPEX lab diagnostics with two expert-audit signals:
+implied structural width and fan-to-hourly timestamp coverage.
+
+Reason: expert audit found that width conservation could be falsely reassuring
+if only the reported `structural_width_eur_mwh` column was compared, and that
+fan-to-hourly parity could hide partial timestamp overlap because it used an
+inner join. These diagnostics should make those risks visible without changing
+selection or promotion gates yet.
+
+Implementation:
+
+- `scripts/compare_epex_shape_lab_ab.py` now computes:
+  - baseline and adjusted implied width as `structural_p90 - structural_p10`;
+  - implied width delta;
+  - reported-minus-implied width for baseline and adjusted;
+  - summary fields for max absolute implied-width drift and stale reported
+    width detection;
+  - monthly implied-width drift diagnostics.
+- `scripts/diagnose_fan_to_hourly_parity.py` now reports:
+  - missing timestamps in the fan-derived hourly series;
+  - missing timestamps in the reference audited CSV;
+  - fan and reference coverage ratios;
+  - `coverage_status=PASS` or `PARTIAL_OVERLAP`.
+- Tests now cover a stale reported-width column and partial fan/reference
+  timestamp overlap.
+
+Validation:
+
+- `python -m pytest tests/test_compare_epex_shape_lab_ab_script.py tests/test_diagnose_fan_to_hourly_parity_script.py -q -p no:cacheprovider`
+  returned `5 passed`.
+- `python -m pytest tests/test_summarize_epex_shape_lab_stability_script.py tests/test_stage_epex_lab_adjusted_lt_candidate_script.py tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_diagnose_fan_to_hourly_parity_script.py tests/test_compare_epex_shape_lab_ab_script.py tests/test_audit_epex_shape_lab_governance_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  returned `43 passed, 1 skipped`.
+
+Rejected alternatives:
+
+- Trust the reported structural width column alone.
+- Convert coverage mismatches into hard failures immediately.
+- Use OMPEX to validate width or fan parity.
+
+Invariants not to break:
+
+- These diagnostics are read-only lab evidence and do not promote T046.
+- Width governance should consider implied `p90-p10`, not only a stored width
+  column.
+- Fan-to-hourly inner joins must disclose coverage loss explicitly.
+
+## D-20260708-30 - Gate T046 Stability On Local Shape And Negative-Risk Metrics
+
+Decision: extend the no-OMPEX T046 stability summary from broad conservation
+checks to local shape-risk gates: PEAK/OFFPEAK spread, month-hour extrema,
+month-boundary delta jumps, implied width, and p10 negative clusters.
+
+Reason: expert audit found that T046 could pass monthly mean, width, ramp p99,
+and weighted-negative checks while still introducing a local deformation.
+Stability evidence should prove that the frozen adjustment is not hiding a
+large PEAK/OFFPEAK distortion, stale width column, month-boundary discontinuity,
+or unacceptable p10 negative cluster.
+
+Implementation:
+
+- `scripts/compare_epex_shape_lab_ab.py` now writes the following fields to
+  `ab_comparison_summary.json`:
+  - `max_abs_month_hour_mean_delta_eur_mwh`;
+  - `max_abs_peak_offpeak_spread_delta_eur_mwh`;
+  - `max_abs_boundary_delta_jump_eur_mwh`;
+  - implied width drift and reported-minus-implied width drift;
+  - negative-hour counts for weighted, p10, p50, p90, slow, central, and fast;
+  - max negative cluster length for weighted and p10.
+- `scripts/summarize_epex_shape_lab_stability.py` now requires those fields
+  for PASS and gates them with configurable thresholds:
+  - `max_peak_offpeak_spread_delta=5.0`;
+  - `max_month_hour_mean_delta=3.5`;
+  - `max_boundary_delta_jump=1.0`;
+  - `max_implied_width_delta=1e-9`;
+  - `max_reported_minus_implied_width=1e-9`;
+  - `max_p10_negative_hours=240`;
+  - `max_p10_negative_cluster_hours=48`.
+
+Real T046 stability v2:
+
+- A/B v2 output for `asof20260706`:
+  `output/phase14/20260707_asof20260706_lshape100_yoy150_amp150_2032/epex_stage_t046_stability_probe/independent_ab_comparison_v2/`
+- A/B v2 output for `asof20260707`:
+  `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_stage_t046_from_hourly_baseline_with_provenance/independent_ab_comparison_v2/`
+- Stability summary:
+  `output/phase14/t046_stability_summary_v2/`
+- Result:
+  - `status=PASS`;
+  - `case_count=2`;
+  - `passed_case_count=2`;
+  - `promotion_gate=false`;
+  - `benchmark_policy=multi_date_independent_no_ompex`;
+  - max month-hour mean delta about `2.2225` EUR/MWh on both dates;
+  - max boundary delta jump about `0.2786` EUR/MWh on both dates;
+  - max PEAK/OFFPEAK spread delta about `2.5e-07` EUR/MWh;
+  - implied width drift about `2.84e-14`;
+  - p10 negative hours `125` and `118`;
+  - p10 negative cluster max `6` hours;
+  - weighted negative hours `0`.
+
+Validation:
+
+- `python -m pytest tests/test_compare_epex_shape_lab_ab_script.py tests/test_diagnose_fan_to_hourly_parity_script.py tests/test_summarize_epex_shape_lab_stability_script.py -q -p no:cacheprovider`
+  returned `9 passed`.
+- `python -m pytest tests/test_summarize_epex_shape_lab_stability_script.py tests/test_stage_epex_lab_adjusted_lt_candidate_script.py tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_diagnose_fan_to_hourly_parity_script.py tests/test_compare_epex_shape_lab_ab_script.py tests/test_audit_epex_shape_lab_governance_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  returned `45 passed, 1 skipped`.
+
+Rejected alternatives:
+
+- Keep PEAK/OFFPEAK and boundary diagnostics only as CSV side outputs.
+- Let old A/B summaries without local-shape fields pass stability.
+- Use OMPEX as the arbiter for local-shape stability.
+
+Invariants not to break:
+
+- Stability v2 remains lab evidence only and `promotion_gate=false`.
+- T046 remains NO-GO production.
+- OMPEX remains advisory-only and cannot enter model or selection.
+- Monthly solver level authority remains unchanged; these checks assess hourly
+  shape only.
+
+## D-20260708-31 - Add Cross-Date Delta-Field Stability Diagnostic For T046
+
+Decision: add a read-only no-OMPEX diagnostic that compares the frozen EPEX
+shape-lab delta field itself across dates.
+
+Reason: stability v2 proves local-shape metrics are inside thresholds, but it
+does not directly prove that the actual hourly adjustment field is stable
+across current-data runs. Expert audit requested cross-date delta correlation,
+L1/L2/L-infinity style differences, top month-hour drift, boundary drift, and
+parameter consistency.
+
+Implementation:
+
+- Added `scripts/summarize_epex_shape_lab_delta_stability.py`.
+- Added `tests/test_summarize_epex_shape_lab_delta_stability_script.py`.
+- The diagnostic reads repeated cases as
+  `LABEL|ALIGNED_AB_CSV|AB_SUMMARY_JSON|LAB_MANIFEST_JSON`.
+- It validates no-OMPEX independent A/B summaries, lab-only manifests, no
+  production approval, timestamp coverage, and a stable T046 config hash
+  excluding only valuation timestamp.
+- It compares every non-reference case to the first case using:
+  - timestamp-level delta correlation;
+  - timestamp-level mean, MAE, RMSE, and max absolute delta-field difference;
+  - month-hour profile correlation, MAE, RMSE, and max absolute difference;
+  - month-boundary jump MAE, RMSE, and max absolute difference.
+
+Real T046 delta stability v1:
+
+- Output:
+  `output/phase14/t046_delta_stability_summary_v1/`
+- Cases:
+  - reference `asof20260706`;
+  - comparison `asof20260707`.
+- Result:
+  - `status=PASS`;
+  - `comparison_count=1`;
+  - `passed_comparison_count=1`;
+  - `config_consistent=true`;
+  - config hash:
+    `e9c1f0831cb896f03987eeefcbb92dfbf900a53eaad4c4d45ab58e761e163b51`;
+  - timestamp delta correlation `0.9999797676440942`;
+  - timestamp delta MAE `0.0011066597457297395` EUR/MWh;
+  - timestamp delta RMSE `0.005290483624245774` EUR/MWh;
+  - timestamp delta max abs `0.05641400000001795` EUR/MWh;
+  - month-hour delta correlation `0.9999818326388252`;
+  - month-hour delta MAE `0.0009053573348698669` EUR/MWh;
+  - month-hour delta max abs `0.04788046543778779` EUR/MWh;
+  - boundary jump diff MAE `0.0013372207792282818` EUR/MWh;
+  - boundary jump diff max abs `0.015835000000009813` EUR/MWh;
+  - missing timestamps `0`.
+
+Validation:
+
+- `python -m pytest tests/test_summarize_epex_shape_lab_delta_stability_script.py -q -p no:cacheprovider`
+  returned `3 passed`.
+- `python -m pytest tests/test_summarize_epex_shape_lab_delta_stability_script.py tests/test_summarize_epex_shape_lab_stability_script.py tests/test_stage_epex_lab_adjusted_lt_candidate_script.py tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_diagnose_fan_to_hourly_parity_script.py tests/test_compare_epex_shape_lab_ab_script.py tests/test_audit_epex_shape_lab_governance_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  returned `48 passed, 1 skipped`.
+
+Rejected alternatives:
+
+- Rely only on aggregated stability v2 metrics.
+- Compare deltas against OMPEX.
+- Ignore T046 parameter consistency across dates.
+
+Invariants not to break:
+
+- Delta stability is lab evidence only and `promotion_gate=false`.
+- T046 remains NO-GO production.
+- OMPEX remains advisory-only and cannot enter model or selection.
+- Cross-date comparisons must disclose missing timestamps instead of silently
+  using partial overlap.
+
+## D-20260708-32 - Add Source-Export Manifest For T046 Candidate-CSV Provenance
+
+Decision: add a source-export manifest builder and rerun T046 candidate-CSV
+staging with a hash-bound source manifest, so D28 provenance checks are
+complete without promoting T046.
+
+Reason: D28 correctly blocks candidate-CSV staging from packaging a production
+contract unless the source CSV is bound to a source-export manifest. The
+previous T046 source-provenance staging proved the adjusted CSV but did not
+carry that source-export manifest. The next evidence should close this
+provenance gap while keeping all adjusted production approval flags false.
+
+Implementation:
+
+- Added `scripts/build_epex_lab_source_export_manifest.py`.
+- Added `tests/test_build_epex_lab_source_export_manifest_script.py`.
+- The manifest binds:
+  - candidate/source hourly CSV path and SHA;
+  - baseline monthly manifest and SHA;
+  - selected config artifact and SHA;
+  - source hierarchy policy and SHA;
+  - baseline promotion capstone and SHA;
+  - no OMPEX model/selection flags.
+- The manifest is explicitly source provenance only:
+  - `schema_version=epex_lab_source_export_manifest.v1`;
+  - `production_approved=false`;
+  - `production_promotion_approved=false`;
+  - `promotion_scope=SOURCE_CSV_PROVENANCE_ONLY`.
+
+Real source-export manifest:
+
+- Output:
+  `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_stage_t046_source_export_manifest/source_export_manifest.json`
+- Source CSV:
+  `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/ch_hfc_hourly_asof20260707_lshape100_yoy150_amp150_2032.csv`
+- Source CSV SHA-256:
+  `12447bbaa9828c0ffed871e62c35f90b8c100fcfab8c80b00468ac846848d895`
+- Manifest SHA-256:
+  `d662548e2e7605ba2b59e024afd3040f2724fe84c5f3c7d3491fbaa0e1909f1d`
+- Baseline monthly manifest SHA-256:
+  `cb52a502e8e95af2e5f3fabc3b2b34ca8f365999214cfd7c53718ed7f5ef456a`
+- Selected config SHA-256:
+  `5ca8b3dc3c1dfadf6b2153bc22f6d69cfb2ad767ae8dbada9615f753760e1f34`
+- Baseline capstone SHA-256:
+  `091105ba9bc313b36364a75a9dd88ab9e3eaa9e740151c44c8a40c42cce1048c`
+
+Real source-provenance staging:
+
+- Output:
+  `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_stage_t046_from_hourly_baseline_source_export_provenance/`
+- Adjusted CSV SHA-256:
+  `8b50a01af05dc152a5f95fbd85e36c4bbe0106f0e65c4dd118b3df42737378c8`
+- Source provenance SHA-256:
+  `eefe822b24a876a176b78afd9ccc21552d4c5248d8833a7c8ee1bbd368789d1f`
+- Adjusted production manifest NO-GO SHA-256:
+  `7824522ca68f64da20bd7871cba0beed246f27bfb888beef2d1cc65ffdbd17a9`
+- Staging result:
+  - `source_kind=candidate_csv`;
+  - `source_promotion_eligible=true`;
+  - `source_export_manifest_bound=true`;
+  - `production_contract_blockers=[]`;
+  - `adjusted_production_contract_pass=true`;
+  - `production_approved=false`;
+  - `production_promotion_approved=false`.
+
+Readiness:
+
+- Output:
+  `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_stage_t046_from_hourly_baseline_source_export_provenance/readiness_no_go.json`
+- Result:
+  - `approved=false`;
+  - `strict_diagnostics_pass=true`;
+  - `production_chain_pass=false`;
+  - `missing_production_evidence=[]`;
+  - `adjusted_production_manifest_contract_pass=PASS`;
+  - `adjusted_production_manifest_source_provenance_pass=PASS`;
+  - all source-provenance file/SHA/binding checks PASS;
+  - remaining FAIL checks are the expected non-production approvals:
+    adjusted capstone, adjusted production manifest approval, adjusted export
+    manifest production-ready, and adjusted selected artifact production-ready.
+
+Operational note:
+
+- A first A/B comparison rerun under the very long staging output directory
+  failed during PNG writing because of Windows path length. The comparison was
+  rerun successfully under the shorter folder:
+  `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/t046_srcprov_ab_v2/`.
+
+Validation:
+
+- `python -m pytest tests/test_build_epex_lab_source_export_manifest_script.py tests/test_stage_epex_lab_adjusted_lt_candidate_script.py tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_check_epex_lab_promotion_readiness_script.py -q -p no:cacheprovider`
+  returned `19 passed`.
+- `python -m pytest tests/test_build_epex_lab_source_export_manifest_script.py tests/test_summarize_epex_shape_lab_delta_stability_script.py tests/test_summarize_epex_shape_lab_stability_script.py tests/test_stage_epex_lab_adjusted_lt_candidate_script.py tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_diagnose_fan_to_hourly_parity_script.py tests/test_compare_epex_shape_lab_ab_script.py tests/test_audit_epex_shape_lab_governance_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  returned `50 passed, 1 skipped`.
+
+Rejected alternatives:
+
+- Hand-write a one-off source-export manifest.
+- Treat the previous source-provenance staging as complete under D28.
+- Set adjusted production/export/selected/capstone approval flags true in a
+  local staging path.
+
+Invariants not to break:
+
+- Source-export provenance can make T046 packaging complete, but not approved.
+- T046 remains NO-GO production until a real production-approved adjusted
+  production/export/selected/capstone chain exists.
+- OMPEX remains advisory-only and cannot enter model, selection, provenance, or
+  readiness gates.
+
+## D-20260708-33 - Add No-OMPEX Spot Backtest For T046 Lab Shape
+
+Decision: add a read-only, lab-only EPEX spot backtest for the T046 adjusted
+candidate, with explicit anti-leakage metadata and no production promotion
+authority.
+
+Reason: expert review agreed that OMPEX must remain advisory-only and that the
+next scientific check should compare the baseline and adjusted HPFC shapes
+against realized EPEX spot profiles. The check must not be treated as
+independent production evidence because the current T046 candidate was selected
+after historical spot rows were known; it is useful as an anti-overfit and shape
+reasonableness diagnostic only.
+
+Implementation:
+
+- Added `scripts/backtest_epex_shape_lab_against_spot.py`.
+- Added `tests/test_backtest_epex_shape_lab_against_spot_script.py`.
+- The diagnostic writes:
+  - `spot_backtest_summary.json`;
+  - `rolling_spot_profile_folds.csv`;
+  - `candidate_month_hour_profiles.csv`;
+  - `post_valuation_timestamp_residuals.csv`.
+- It records `promotion_gate=false`, `production_approved=false`,
+  `independent_production_evidence=false`,
+  `benchmark_policy=rolling_origin_epex_spot_no_ompex_lab_only`, and all OMPEX
+  usage flags false.
+- It enforces lab guard checks for finite adjusted values, quantile order,
+  monthly weighted mean drift, implied width drift, weighted negative hours,
+  rolling folds, and no temporal overlap between each fold's train and
+  evaluation spot windows.
+
+Real T046 spot backtest v1:
+
+- Output:
+  `output/phase14/t046_spot_backtest_v1/`
+- Baseline CSV SHA-256:
+  `12447bbaa9828c0ffed871e62c35f90b8c100fcfab8c80b00468ac846848d895`
+- Adjusted CSV SHA-256:
+  `8b50a01af05dc152a5f95fbd85e36c4bbe0106f0e65c4dd118b3df42737378c8`
+- Spot parquet SHA-256:
+  `008f552e0cd684d42dcb95f87a2681054b1af338c6511ae77c1ffa81b421e32f`
+- Valuation timestamp:
+  `2026-07-07 00:00:00+00:00`
+- Result:
+  - `status=DIAGNOSTIC_PASS`;
+  - `strict_lab_gate_pass=true`;
+  - rolling folds `12/12` eligible;
+  - all rolling folds pass no-temporal-leak checks;
+  - historical folds not independent of current candidate fit: `12`;
+  - post-valuation overlap: `24` hours.
+- Rolling profile metrics:
+  - mean baseline MAE `14.153227063777985` EUR/MWh;
+  - mean adjusted MAE `13.747743522746092` EUR/MWh;
+  - mean MAE improvement `0.40548354103189205` EUR/MWh;
+  - median MAE improvement `0.39547100649685163` EUR/MWh;
+  - positive improvement folds `12/12`;
+  - mean baseline correlation `0.8771034667706381`;
+  - mean adjusted correlation `0.881938557794624`.
+- Post-valuation residual metrics:
+  - baseline MAE `11.660298070900533` EUR/MWh;
+  - adjusted MAE `11.355494229166665` EUR/MWh;
+  - improvement `0.3048038417338681` EUR/MWh.
+
+Validation:
+
+- `python -m pytest tests/test_backtest_epex_shape_lab_against_spot_script.py -q -p no:cacheprovider`
+  returned `2 passed`.
+- `python -m pytest tests/test_backtest_epex_shape_lab_against_spot_script.py tests/test_build_epex_lab_source_export_manifest_script.py tests/test_summarize_epex_shape_lab_delta_stability_script.py tests/test_summarize_epex_shape_lab_stability_script.py tests/test_stage_epex_lab_adjusted_lt_candidate_script.py tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_diagnose_fan_to_hourly_parity_script.py tests/test_compare_epex_shape_lab_ab_script.py tests/test_audit_epex_shape_lab_governance_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  returned `52 passed, 1 skipped`.
+
+Rejected alternatives:
+
+- Use OMPEX as target, loss, or promotion gate.
+- Treat historical rolling folds as independent production evidence.
+- Relax monthly-level or fan-width guard checks to make a shape diagnostic pass.
+
+Invariants not to break:
+
+- This backtest is lab evidence only and does not promote T046.
+- OMPEX remains advisory-only and cannot enter model, selection, provenance, or
+  readiness gates.
+- T046 remains NO-GO production until real adjusted production/export/selected
+  artifacts and capstone are approved.
+
+## D-20260708-34 - Add Economic Bucket And Ramp Metrics To Spot Backtest
+
+Decision: extend the no-OMPEX EPEX spot backtest with diagnostic economic
+buckets and hourly ramp metrics.
+
+Reason: the D33 global/profile MAE proved a small average shape improvement,
+but expert review requested more interpretable evidence: weekend/weekday,
+PEAK-like/OFFPEAK-like, solar tail, midday, evening recovery, night, and hourly
+ramp behavior. These diagnostics identify where T046 helps or is weak without
+using OMPEX and without changing production status.
+
+Implementation:
+
+- Updated `scripts/backtest_epex_shape_lab_against_spot.py`.
+- Updated `tests/test_backtest_epex_shape_lab_against_spot_script.py`.
+- Added output:
+  `rolling_spot_bucket_metrics.csv`.
+- Added JSON summary field:
+  `rolling_bucket_metrics`.
+- Buckets:
+  - `all`;
+  - `weekday`;
+  - `weekend`;
+  - `peak_like_weekday_08_19`;
+  - `offpeak_like`;
+  - `solar_tail_mar_oct_10_16`;
+  - `midday_11_15`;
+  - `evening_ramp_17_21`;
+  - `night_00_05`;
+  - `hourly_ramp:all`.
+
+Real T046 spot backtest v2:
+
+- Output:
+  `output/phase14/t046_spot_backtest_v2_buckets/`
+- Result:
+  - `status=DIAGNOSTIC_PASS`;
+  - `strict_lab_gate_pass=true`;
+  - `promotion_gate=false`;
+  - `production_approved=false`;
+  - `independent_production_evidence=false`;
+  - OMPEX flags all false.
+- Source hashes match D33:
+  - baseline CSV
+    `12447bbaa9828c0ffed871e62c35f90b8c100fcfab8c80b00468ac846848d895`;
+  - adjusted CSV
+    `8b50a01af05dc152a5f95fbd85e36c4bbe0106f0e65c4dd118b3df42737378c8`;
+  - spot parquet
+    `008f552e0cd684d42dcb95f87a2681054b1af338c6511ae77c1ffa81b421e32f`.
+
+Selected bucket diagnostics, mean MAE improvement in EUR/MWh:
+
+- all residual level: `0.24513954474101998`, positive folds `11/12`;
+- weekend: `0.2889611347370835`, positive folds `12/12`;
+- weekday: `0.22708125671275944`, positive folds `10/12`;
+- PEAK-like weekday 08-19: `0.32096908439747596`, positive folds `10/12`;
+- OFFPEAK-like: `0.20198153831529964`, positive folds `12/12`;
+- solar tail Mar-Oct 10-16: `0.4372953091304925`, positive folds `8/12`;
+- midday 11-15: `0.35776460522648684`, positive folds `9/12`;
+- evening ramp 17-21: `0.45338812791781463`, positive folds `12/12`;
+- night 00-05: `0.03190894115068499`, positive folds `5/12`;
+- hourly ramp all: `0.035478178105887714`, positive folds `8/12`.
+
+Interpretation:
+
+- T046's strongest no-OMPEX shape evidence is evening recovery, solar/midday,
+  PEAK-like hours, and weekend buckets.
+- Night and hourly ramp gains are weak; future model work should not overclaim
+  ramp improvement from T046 v2.
+- The diagnostic remains lab-only because the current candidate selection used
+  historical spot information.
+
+Validation:
+
+- `python -m pytest tests/test_backtest_epex_shape_lab_against_spot_script.py -q -p no:cacheprovider`
+  returned `2 passed`.
+- `python -m pytest tests/test_backtest_epex_shape_lab_against_spot_script.py tests/test_build_epex_lab_source_export_manifest_script.py tests/test_summarize_epex_shape_lab_delta_stability_script.py tests/test_summarize_epex_shape_lab_stability_script.py tests/test_stage_epex_lab_adjusted_lt_candidate_script.py tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_diagnose_fan_to_hourly_parity_script.py tests/test_compare_epex_shape_lab_ab_script.py tests/test_audit_epex_shape_lab_governance_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  returned `52 passed, 1 skipped`.
+
+Rejected alternatives:
+
+- Use only global MAE/correlation from D33.
+- Tune T046 directly to OMPEX bucket differences.
+- Treat weak ramp improvement as a promotion blocker; it is diagnostic evidence
+  for next research work, not a production gate.
+
+Invariants not to break:
+
+- Bucket/ramp diagnostics are no-OMPEX and lab-only.
+- T046 remains NO-GO production until the adjusted production/export/selected
+  chain and capstone are real and approved.
+- Do not use OMPEX to tune or select future T046-like parameters.
+
+## D-20260708-35 - Add Future Approval Path Audit For T046
+
+Decision: add a read-only future-approval audit that summarizes the exact T046
+production blockers from readiness evidence and optional spot-backtest policy
+evidence.
+
+Reason: after D32-D34, T046 has strong lab diagnostics but still must not be
+promoted. Reviewers need a compact artifact that says which evidence is already
+strict-diagnostic PASS and which real production approvals are still missing or
+false, without treating local bundles, spot diagnostics, or source provenance
+as production approval.
+
+Implementation:
+
+- Added `scripts/audit_epex_lab_future_approval_path.py`.
+- Added `tests/test_audit_epex_lab_future_approval_path_script.py`.
+- The audit reads `check_epex_lab_promotion_readiness.py` output and optional
+  no-OMPEX spot backtest output.
+- It writes `future_approval_path_audit.json` with:
+  - readiness status;
+  - strict diagnostic and production-chain booleans;
+  - failed production checks;
+  - remaining blockers;
+  - required production evidence;
+  - spot-backtest policy checks;
+  - next actions.
+
+Real T046 future approval path audit v1:
+
+- Output:
+  `output/phase14/t046_future_approval_path_audit_v1/future_approval_path_audit.json`
+- Inputs:
+  - readiness:
+    `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_stage_t046_from_hourly_baseline_source_export_provenance/readiness_no_go.json`;
+  - spot backtest:
+    `output/phase14/t046_spot_backtest_v2_buckets/spot_backtest_summary.json`.
+- Result:
+  - `status=NO_GO_PRODUCTION_CHAIN_INCOMPLETE`;
+  - `approved=false`;
+  - `strict_diagnostics_pass=true`;
+  - `production_chain_pass=false`;
+  - `spot_backtest_policy.pass=true`;
+  - `missing_production_evidence=[]`.
+- Remaining blockers:
+  - `adjusted_capstone_approved`;
+  - `adjusted_export_manifest_production_ready`;
+  - `adjusted_production_manifest_approved`;
+  - `adjusted_selected_artifact_production_ready`.
+- Next action:
+  replace local diagnostic approval flags with real production-approved adjusted
+  artifacts.
+
+Validation:
+
+- `python -m pytest tests/test_audit_epex_lab_future_approval_path_script.py -q -p no:cacheprovider`
+  returned `3 passed`.
+- `python -m pytest tests/test_audit_epex_lab_future_approval_path_script.py tests/test_backtest_epex_shape_lab_against_spot_script.py tests/test_build_epex_lab_source_export_manifest_script.py tests/test_summarize_epex_shape_lab_delta_stability_script.py tests/test_summarize_epex_shape_lab_stability_script.py tests/test_stage_epex_lab_adjusted_lt_candidate_script.py tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_diagnose_fan_to_hourly_parity_script.py tests/test_compare_epex_shape_lab_ab_script.py tests/test_audit_epex_shape_lab_governance_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  returned `55 passed, 1 skipped`.
+
+Rejected alternatives:
+
+- Rely on the long readiness checks list only.
+- Treat missing evidence only as files absent from disk; D35 also flags present
+  local artifacts whose production approval booleans are false.
+- Include OMPEX benchmark deltas as promotion evidence.
+
+Invariants not to break:
+
+- Future-approval audit is read-only and `promotion_gate=false`.
+- Local diagnostic bundles, spot diagnostics, and source provenance are not
+  production approval.
+- T046 remains NO-GO production until all four adjusted approval blockers are
+  resolved by real production-approved artifacts.
+
+## D-20260708-36 - Harden Adjusted Production Approval Run Identity
+
+Decision: require a valid production run identity before the adjusted EPEX lab
+production-manifest API can emit production approval flags.
+
+Reason: D35 clarified that the remaining blockers are present-but-unapproved
+adjusted production artifacts. The CLI is already NO-GO by default, but the
+Python API path that can set `production_approved=True` should reject malformed
+run identity up front, rather than accepting any non-empty `git_commit` string.
+
+Implementation:
+
+- Updated `scripts/build_epex_lab_adjusted_production_manifest.py`.
+- Added `_production_identity_errors(...)`.
+- When either approval flag is requested, the API now requires:
+  - non-empty `production_run_id`;
+  - non-empty `production_entrypoint`;
+  - `git_commit` matching `[0-9a-f]{40}`;
+  - existing `source_provenance_manifest`.
+- Invalid identity raises `ValueError` before writing an approved manifest.
+- Updated `tests/test_build_epex_lab_adjusted_production_manifest_script.py`
+  with an invalid-git-commit rejection test.
+
+Validation:
+
+- `python -m pytest tests/test_build_epex_lab_adjusted_production_manifest_script.py -q -p no:cacheprovider`
+  returned `6 passed`.
+- `python -m pytest tests/test_audit_epex_lab_future_approval_path_script.py tests/test_backtest_epex_shape_lab_against_spot_script.py tests/test_build_epex_lab_source_export_manifest_script.py tests/test_summarize_epex_shape_lab_delta_stability_script.py tests/test_summarize_epex_shape_lab_stability_script.py tests/test_stage_epex_lab_adjusted_lt_candidate_script.py tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_diagnose_fan_to_hourly_parity_script.py tests/test_compare_epex_shape_lab_ab_script.py tests/test_audit_epex_shape_lab_governance_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  returned `56 passed, 1 skipped`.
+
+Rejected alternatives:
+
+- Accept any non-empty git commit string.
+- Add CLI flags that can set production approval true from local staging.
+- Treat source provenance alone as sufficient production run identity.
+
+Invariants not to break:
+
+- CLI-built adjusted production manifests remain NO-GO by default.
+- Production approval remains API-only and requires manifest-backed strict
+  diagnostics plus valid run identity.
+- T046 remains NO-GO production until real adjusted production/export/selected
+  artifacts and capstone are approved.
+
+## D-20260708-37 - Require Adjusted Production Chain Binding In Readiness
+
+Decision: require export, selected, and capstone artifacts to bind back to the
+same adjusted production manifest and production run identity before T046 can
+be `PROMOTION_READY`.
+
+Reason: D35 identified that T046's remaining blockers are production approvals.
+D36 hardened the adjusted production-manifest API identity, but readiness still
+needed to prove that the export manifest, selected artifact, and capstone all
+belong to that same approved production chain, not just to the same adjusted
+CSV. This prevents mixing local or stale artifacts into an apparently complete
+production bundle.
+
+Implementation:
+
+- Updated `scripts/check_epex_lab_promotion_readiness.py`.
+- Updated `scripts/audit_epex_lab_future_approval_path.py`.
+- Updated `tests/test_check_epex_lab_promotion_readiness_script.py`.
+- New readiness checks:
+  - `adjusted_production_manifest_run_identity_valid`;
+  - `adjusted_export_manifest_production_chain_bound`;
+  - `adjusted_selected_artifact_production_chain_bound`;
+  - `adjusted_capstone_production_chain_bound`.
+- A production-ready adjusted export/selected artifact must bind to the
+  adjusted production manifest path or SHA and match its run identity.
+- A production-ready capstone must bind to the adjusted production manifest,
+  adjusted export manifest, adjusted selected artifact, and production run
+  identity.
+
+Real T046 readiness v2:
+
+- Output:
+  `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_stage_t046_from_hourly_baseline_source_export_provenance/readiness_no_go_v2_chain_bound.json`
+- Result:
+  - `approved=false`;
+  - `strict_diagnostics_pass=true`;
+  - `production_chain_pass=false`;
+  - `status=STRICT_DIAGNOSTICS_PASS_PRODUCTION_CHAIN_MISSING`.
+- New explicit blockers:
+  - `adjusted_production_manifest_run_identity_valid=FAIL` because the local
+    staging manifest has no real git commit;
+  - `adjusted_export_manifest_production_chain_bound=FAIL`;
+  - `adjusted_selected_artifact_production_chain_bound=FAIL`;
+  - `adjusted_capstone_production_chain_bound=FAIL`.
+
+Real future approval path audit v2:
+
+- Output:
+  `output/phase14/t046_future_approval_path_audit_v2_chain_bound/future_approval_path_audit.json`
+- Result:
+  - `status=NO_GO_PRODUCTION_CHAIN_INCOMPLETE`;
+  - `strict_diagnostics_pass=true`;
+  - `production_chain_pass=false`;
+  - `spot_backtest_policy.pass=true`;
+  - failed production checks `8`.
+- Remaining blockers:
+  - `adjusted_capstone_approved`;
+  - `adjusted_capstone_production_chain_bound`;
+  - `adjusted_export_manifest_production_chain_bound`;
+  - `adjusted_export_manifest_production_ready`;
+  - `adjusted_production_manifest_approved`;
+  - `adjusted_production_manifest_run_identity_valid`;
+  - `adjusted_selected_artifact_production_chain_bound`;
+  - `adjusted_selected_artifact_production_ready`.
+
+Validation:
+
+- `python -m pytest tests/test_check_epex_lab_promotion_readiness_script.py -q -p no:cacheprovider`
+  returned `7 passed`.
+- `python -m pytest tests/test_audit_epex_lab_future_approval_path_script.py tests/test_backtest_epex_shape_lab_against_spot_script.py tests/test_build_epex_lab_source_export_manifest_script.py tests/test_summarize_epex_shape_lab_delta_stability_script.py tests/test_summarize_epex_shape_lab_stability_script.py tests/test_stage_epex_lab_adjusted_lt_candidate_script.py tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_diagnose_fan_to_hourly_parity_script.py tests/test_compare_epex_shape_lab_ab_script.py tests/test_audit_epex_shape_lab_governance_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  returned `57 passed, 1 skipped`.
+
+Rejected alternatives:
+
+- Keep readiness bound only to the adjusted CSV SHA.
+- Allow a production capstone to approve without explicit export/selected
+  artifact bindings.
+- Treat local bundle links as enough for production-chain binding.
+
+Invariants not to break:
+
+- T046 remains NO-GO production until all approved adjusted artifacts are bound
+  to the same production manifest/run identity.
+- Local diagnostic bundles remain non-production even when all files exist.
+- OMPEX remains advisory-only and cannot enter model, selection, readiness, or
+  production-chain gates.
+
+## D-20260708-38 - Add Strict Adjusted Production Chain Builder
+
+Decision: add a strict builder for the remaining adjusted production-chain
+artifacts: export manifest, selected artifact, and production capstone.
+
+Reason: D37 made readiness require export/selected/capstone artifacts to bind
+to the same approved adjusted production manifest and run identity. The repo
+needed a safe way to produce those bound artifacts once, and only once, an
+adjusted production manifest is already approved, contract-pass,
+source-provenance-pass, and run-identity-valid. Local diagnostic bundles remain
+non-production and are not a substitute.
+
+Implementation:
+
+- Added `scripts/build_epex_lab_adjusted_production_chain.py`.
+- Added `tests/test_build_epex_lab_adjusted_production_chain_script.py`.
+- The builder refuses to run unless the input adjusted production manifest has:
+  - `schema_version=epex_lab_adjusted_production_manifest.v1`;
+  - `production_approved=true`;
+  - `production_promotion_approved=true`;
+  - `contract_pass=true`;
+  - `source_provenance_pass=true`;
+  - valid `production_run_id`;
+  - valid `production_entrypoint`;
+  - `git_commit` matching `[0-9a-f]{40}`;
+  - `ompex_used_in_model=false`;
+  - `ompex_used_in_selection=false`;
+  - adjusted CSV path/SHA binding.
+- It writes:
+  - `adjusted_export_manifest.json`;
+  - `adjusted_selected_artifact.json`;
+  - `adjusted_production_capstone.json`.
+- All outputs bind back to the adjusted production manifest path/SHA and run
+  identity. The capstone also binds to the generated export and selected
+  artifacts.
+
+Validation:
+
+- `python -m pytest tests/test_build_epex_lab_adjusted_production_chain_script.py -q -p no:cacheprovider`
+  returned `2 passed`.
+- `python -m pytest tests/test_build_epex_lab_adjusted_production_chain_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_backtest_epex_shape_lab_against_spot_script.py tests/test_build_epex_lab_source_export_manifest_script.py tests/test_summarize_epex_shape_lab_delta_stability_script.py tests/test_summarize_epex_shape_lab_stability_script.py tests/test_stage_epex_lab_adjusted_lt_candidate_script.py tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_diagnose_fan_to_hourly_parity_script.py tests/test_compare_epex_shape_lab_ab_script.py tests/test_audit_epex_shape_lab_governance_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  returned `59 passed, 1 skipped`.
+
+Rejected alternatives:
+
+- Extend the local diagnostic bundle builder to emit production-approved
+  artifacts.
+- Let export/selected/capstone artifacts self-approve without an already
+  approved adjusted production manifest.
+- Generate a real T046 production chain from the current local NO-GO staging
+  manifest.
+
+Invariants not to break:
+
+- The strict chain builder does not approve T046 by itself; it requires an
+  already approved adjusted production manifest.
+- T046 remains NO-GO production in current real evidence.
+- OMPEX remains advisory-only and cannot enter model, selection, readiness, or
+  production-chain gates.
+
