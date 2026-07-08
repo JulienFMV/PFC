@@ -2501,6 +2501,41 @@ Readiness with the NO-GO production manifest:
 
 Decision log entry: `D-20260708-48`.
 
+The adjusted production-chain builder was then hardened before any real
+approval attempt. It no longer trusts `source_provenance_pass=true` by itself;
+it validates the underlying source provenance manifest before writing approved
+adjusted export, selected, or capstone artifacts.
+
+Code change:
+
+- `scripts/build_epex_lab_adjusted_production_chain.py`
+  - validates source provenance path and sha256;
+  - validates source provenance schema/role;
+  - requires candidate-CSV source kind and promotion eligibility;
+  - rejects production contract blockers;
+  - validates adjusted CSV, source CSV, staged candidate, lab manifest, and
+    source export manifest hashes;
+  - validates source export manifest binding to the source CSV;
+  - rejects OMPEX flags.
+- `tests/test_build_epex_lab_adjusted_production_chain_script.py`
+  - rejects self-attested/missing source provenance;
+  - rejects tampered source provenance source hash.
+
+Validation:
+
+`python -m pytest tests/test_build_epex_lab_adjusted_production_chain_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+
+Result: `34 passed, 1 skipped`.
+
+Real T070 NO-GO chain-builder check:
+
+`python scripts/build_epex_lab_adjusted_production_chain.py --adjusted-production-manifest output/phase14/t049_core_balance/t070_diagnostics/staged_adjusted_candidate/adjusted_production_manifest_no_go.json --output-dir output/phase14/t049_core_balance/t070_diagnostics/should_not_build_chain_from_no_go`
+
+Result: exit code `1`, expected. Refusal:
+`approved adjusted production manifest required: production_approved, production_promotion_approved, git_commit`.
+
+Decision log entry: `D-20260708-49`.
+
 Generated or refreshed local evidence, not default commit targets:
 
 - `data/eex_forwards_history.parquet`

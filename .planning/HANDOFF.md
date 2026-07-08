@@ -298,6 +298,20 @@ production-chain-bound. Remaining blocker: create a real approved adjusted
 production manifest from a production path, then use the strict adjusted
 production-chain builder. Decision log entry: `D-20260708-48`.
 
+The strict adjusted production-chain builder was also hardened before any real
+approval attempt. `scripts/build_epex_lab_adjusted_production_chain.py` now
+revalidates the underlying source provenance manifest instead of trusting
+`source_provenance_pass=true`: provenance path/SHA, schema/role,
+candidate-CSV source kind, promotion eligibility, no blockers, adjusted/source/
+staged/lab/source-export hashes, source-export binding, and no-OMPEX flags.
+Tests now reject missing/self-attested provenance and tampered source hashes.
+Validation: `34 passed, 1 skipped` for production-chain/readiness/production-
+manifest tests plus LT/CT import guard. Running the builder on the real T070
+NO-GO manifest still fails as expected with
+`approved adjusted production manifest required: production_approved,
+production_promotion_approved, git_commit`. Decision log entry:
+`D-20260708-49`.
+
 Next-sweep policy hardening is committed in the local work after expert audit
 feedback. New EPEX sweep plans now include `selection_thresholds`,
 `scoring_policy`, and optional `max_abs_delta_grid`; the executor records EPEX

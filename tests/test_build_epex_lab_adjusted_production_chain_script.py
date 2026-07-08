@@ -163,6 +163,63 @@ def test_adjusted_production_chain_rejects_no_go_manifest(tmp_path: Path) -> Non
         build_chain(adjusted_production_manifest=production_manifest, output_dir=tmp_path / "chain")
 
 
+def test_adjusted_production_chain_rejects_self_attested_source_provenance(tmp_path: Path) -> None:
+    adjusted_csv = tmp_path / "adjusted.csv"
+    adjusted_csv.write_text("timestamp_ch,price_weighted_mean_eur_mwh\n", encoding="utf-8")
+    production_manifest = tmp_path / "prod.json"
+    _write_json(
+        production_manifest,
+        {
+            "schema_version": "epex_lab_adjusted_production_manifest.v1",
+            "production_approved": True,
+            "production_promotion_approved": True,
+            "contract_pass": True,
+            "source_provenance_pass": True,
+            "source_kind": "candidate_csv",
+            "source_promotion_eligible": True,
+            "adjusted_csv": str(adjusted_csv),
+            "adjusted_csv_sha256": _sha256(adjusted_csv),
+            "production_run_id": "prod-run-1",
+            "production_entrypoint": "pfc_shaping.pipeline.production_phases",
+            "git_commit": "a" * 40,
+            "ompex_used_in_model": False,
+            "ompex_used_in_selection": False,
+        },
+    )
+
+    with pytest.raises(ValueError, match="source_provenance_manifest"):
+        build_chain(adjusted_production_manifest=production_manifest, output_dir=tmp_path / "chain")
+
+
+def test_adjusted_production_chain_rejects_tampered_source_provenance(tmp_path: Path) -> None:
+    lab, monthly, product, powerbi, policy, independent, governance, ompex = _write_inputs(tmp_path)
+    adjusted_csv = json.loads(lab.read_text(encoding="utf-8"))["outputs"]["adjusted_csv"]
+    source_provenance = _write_source_provenance(tmp_path, lab=lab, adjusted_csv=adjusted_csv)
+    source = json.loads(source_provenance.read_text(encoding="utf-8"))
+    source["source_sha256"] = "0" * 64
+    source_provenance.write_text(json.dumps(source), encoding="utf-8")
+    production_manifest = tmp_path / "adjusted_production_manifest.json"
+    build_manifest(
+        lab_manifest=lab,
+        baseline_monthly_manifest=monthly,
+        product_summary=product,
+        powerbi_summary=powerbi,
+        source_hierarchy_policy=policy,
+        independent_summary=independent,
+        governance_audit=governance,
+        production_run_id="prod-run-1",
+        production_entrypoint="pfc_shaping.pipeline.production_phases",
+        git_commit="a" * 40,
+        source_provenance_manifest=source_provenance,
+        production_approved=True,
+        production_promotion_approved=True,
+        output=production_manifest,
+    )
+
+    with pytest.raises(ValueError, match="source_provenance_source_sha256"):
+        build_chain(adjusted_production_manifest=production_manifest, output_dir=tmp_path / "chain")
+
+
 def test_adjusted_production_chain_builds_artifacts_that_unlock_readiness(tmp_path: Path) -> None:
     lab, monthly, product, powerbi, policy, independent, governance, ompex = _write_inputs(tmp_path)
     adjusted_csv = json.loads(lab.read_text(encoding="utf-8"))["outputs"]["adjusted_csv"]

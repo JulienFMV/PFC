@@ -134,6 +134,60 @@ def _production_manifest_errors(production: dict[str, Any], path: Path) -> list[
         errors.append("adjusted_csv")
     elif production.get("adjusted_csv_sha256") != _sha256(adjusted_csv):
         errors.append("adjusted_csv_sha256")
+    errors.extend(_source_provenance_errors(production, adjusted_csv))
+    return errors
+
+
+def _source_provenance_errors(production: dict[str, Any], adjusted_csv: Path) -> list[str]:
+    errors: list[str] = []
+    provenance_text = str(production.get("source_provenance_manifest") or "").strip()
+    if not provenance_text:
+        return ["source_provenance_manifest"]
+    provenance_path = Path(provenance_text)
+    if not provenance_path.exists():
+        return ["source_provenance_manifest_missing"]
+    if production.get("source_provenance_manifest_sha256") != _sha256(provenance_path):
+        errors.append("source_provenance_manifest_sha256")
+        return errors
+    try:
+        provenance = _load_json(provenance_path)
+    except (OSError, json.JSONDecodeError):
+        return ["source_provenance_manifest_json"]
+    expected_adjusted_sha = _sha256(adjusted_csv) if adjusted_csv.exists() else None
+    if provenance.get("schema_version") != "epex_lab_adjusted_lt_candidate_stage.v1":
+        errors.append("source_provenance_schema")
+    if provenance.get("schema_role") != "source_provenance":
+        errors.append("source_provenance_schema_role")
+    if not (
+        provenance.get("activation_status") == "staged_lab_only"
+        and provenance.get("production_approved") is False
+        and provenance.get("production_promotion_approved") is False
+    ):
+        errors.append("source_provenance_lab_only")
+    if production.get("source_kind") != provenance.get("source_kind") or provenance.get("source_kind") != "candidate_csv":
+        errors.append("source_provenance_source_kind")
+    if production.get("source_promotion_eligible") is not True or provenance.get("source_promotion_eligible") is not True:
+        errors.append("source_provenance_promotion_eligible")
+    if list(provenance.get("production_contract_blockers") or []) != []:
+        errors.append("source_provenance_contract_blockers")
+    if provenance.get("adjusted_csv_sha256") != expected_adjusted_sha:
+        errors.append("source_provenance_adjusted_csv_sha256")
+    source_path = Path(str(provenance.get("source_path", "")))
+    if not source_path.exists() or provenance.get("source_sha256") != _sha256(source_path):
+        errors.append("source_provenance_source_sha256")
+    staged_candidate = Path(str(provenance.get("staged_candidate_csv", "")))
+    if not staged_candidate.exists() or provenance.get("staged_candidate_csv_sha256") != _sha256(staged_candidate):
+        errors.append("source_provenance_staged_candidate_sha256")
+    lab_manifest = Path(str(provenance.get("lab_manifest", "")))
+    if not lab_manifest.exists() or provenance.get("lab_manifest_sha256") != _sha256(lab_manifest):
+        errors.append("source_provenance_lab_manifest_sha256")
+    source_export = Path(str(provenance.get("source_export_manifest", "")))
+    if not source_export.exists() or provenance.get("source_export_manifest_sha256") != _sha256(source_export):
+        errors.append("source_provenance_source_export_manifest_sha256")
+    elif not _source_export_manifest_bound_to_csv(source_export, source_path):
+        errors.append("source_provenance_source_export_manifest_bound")
+    if provenance.get("ompex_used_in_model") is not False or provenance.get("ompex_used_in_selection") is not False:
+        errors.append("source_provenance_ompex")
     return errors
 
 
@@ -152,6 +206,34 @@ def _sha256(path: Path) -> str:
 def _same_path(left: Any, right: Any) -> bool:
     if left is None or right is None:
         return False
+
+
+def _source_export_manifest_bound_to_csv(manifest_path: Path, source_csv: Path) -> bool:
+    try:
+        manifest = _load_json(manifest_path)
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not manifest.get("schema_version"):
+        return False
+    path_keys = [
+        "output_csv",
+        "candidate_csv",
+        "source_csv",
+        "adjusted_csv",
+        "selected_adjusted_csv",
+    ]
+    for key in path_keys:
+        if _same_path(manifest.get(key), source_csv):
+            return True
+    sha_keys = [
+        "output_csv_sha256",
+        "candidate_csv_sha256",
+        "source_csv_sha256",
+        "adjusted_csv_sha256",
+        "selected_adjusted_csv_sha256",
+    ]
+    expected_sha = _sha256(source_csv) if source_csv.exists() else None
+    return expected_sha is not None and any(manifest.get(key) == expected_sha for key in sha_keys)
     try:
         return Path(str(left)).resolve() == Path(str(right)).resolve()
     except (OSError, TypeError, ValueError):

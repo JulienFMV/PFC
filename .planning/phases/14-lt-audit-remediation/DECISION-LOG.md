@@ -4539,3 +4539,63 @@ Invariants not to break:
   identity, 40-hex git commit, source provenance, and then uses the strict
   adjusted production-chain builder.
 
+## D-20260708-49 - Adjusted Production Chain Builder Validates Source Provenance
+
+Decision: harden `scripts/build_epex_lab_adjusted_production_chain.py` so it
+does not trust `source_provenance_pass=true` by assertion alone. Before writing
+approved adjusted export, selected, or capstone artifacts, it now validates the
+source provenance manifest path, sha256, schema, candidate-CSV source kind,
+promotion eligibility, absence of blockers, adjusted CSV hash, source CSV
+hash, staged candidate hash, lab manifest hash, source export manifest hash,
+source export binding, and no-OMPEX flags.
+
+Reason: D48 produced a T070 NO-GO adjusted production manifest with
+`contract_pass=true` and a valid source provenance manifest. The next builder
+in the chain was already strict on approval flags and run identity, but it
+trusted the production manifest's `source_provenance_pass` field instead of
+revalidating the underlying evidence. A future approved manifest must not be
+able to generate chain-bound export/selected/capstone artifacts from
+self-attested or tampered source provenance.
+
+Implementation:
+
+- `scripts/build_epex_lab_adjusted_production_chain.py`
+  - added `_source_provenance_errors`;
+  - added `_source_export_manifest_bound_to_csv`;
+  - validates source provenance against actual files and hashes before chain
+    artifacts are written.
+- `tests/test_build_epex_lab_adjusted_production_chain_script.py`
+  - added rejection coverage for missing/self-attested source provenance;
+  - added rejection coverage for tampered source provenance source hash.
+
+Validation:
+
+- `python -m pytest tests/test_build_epex_lab_adjusted_production_chain_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+- result: `34 passed, 1 skipped`
+
+Real T070 NO-GO chain-builder check:
+
+- command:
+  `python scripts/build_epex_lab_adjusted_production_chain.py --adjusted-production-manifest output/phase14/t049_core_balance/t070_diagnostics/staged_adjusted_candidate/adjusted_production_manifest_no_go.json --output-dir output/phase14/t049_core_balance/t070_diagnostics/should_not_build_chain_from_no_go`
+- result: exit code `1`, expected
+- refusal:
+  `approved adjusted production manifest required: production_approved, production_promotion_approved, git_commit`
+
+Rejected alternatives:
+
+- Rely on readiness alone to catch self-attested source provenance after chain
+  artifacts have already been written.
+- Trust `source_provenance_pass=true` without checking the bound provenance
+  manifest.
+- Allow fan-parquet or unbound source-export provenance into the production
+  chain builder.
+
+Invariants not to break:
+
+- The chain builder writes production-approved artifacts only from an approved,
+  contract-pass, source-provenance-pass, run-identity-valid manifest whose
+  underlying source provenance is independently hash-validated.
+- T070 remains NO-GO production until a real adjusted production manifest has
+  valid approval flags and run identity.
+- OMPEX remains outside model, selection, and production-chain validation.
+
