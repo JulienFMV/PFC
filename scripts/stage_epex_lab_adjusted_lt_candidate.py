@@ -12,10 +12,13 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from scripts.build_epex_lab_adjusted_production_manifest import build_manifest as build_production_contract
 from scripts.export_local_test_ch_hourly_csv import to_hourly_csv_frame

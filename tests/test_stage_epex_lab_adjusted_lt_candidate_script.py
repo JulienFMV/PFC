@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from scripts.stage_epex_lab_adjusted_lt_candidate import stage_candidate
+from scripts.stage_epex_lab_adjusted_lt_candidate import main, stage_candidate
 
 
 def _fan_parquet(path) -> None:
@@ -138,6 +138,33 @@ def test_stage_epex_lab_adjusted_candidate_requires_single_source(tmp_path) -> N
             spot_parquet=spot,
             valuation_timestamp="2026-01-01T00:00:00Z",
         )
+
+
+def test_stage_epex_lab_adjusted_candidate_cli_runs_from_fan(tmp_path) -> None:
+    fan = tmp_path / "fan.parquet"
+    spot = tmp_path / "spot.parquet"
+    _fan_parquet(fan)
+    _spot_parquet(spot)
+
+    rc = main(
+        [
+            "--fan-parquet",
+            str(fan),
+            "--local-start-date",
+            "2030-01-01",
+            "--local-end-date",
+            "2030-02-28",
+            "--spot-parquet",
+            str(spot),
+            "--valuation-timestamp",
+            "2026-01-01T00:00:00Z",
+            "--output-dir",
+            str(tmp_path / "stage"),
+        ]
+    )
+
+    assert rc == 0
+    assert (tmp_path / "stage" / "staged_lt_epex_lab_candidate_manifest.json").exists()
 
 
 def test_stage_epex_lab_adjusted_candidate_writes_contract_when_evidence_is_supplied(tmp_path) -> None:

@@ -2402,3 +2402,104 @@ Invariants not to break:
   evidence on the staged adjusted CSV.
 - OMPEX remains advisory only.
 
+## D-20260708-21 - Execute T046 Staging on Real 20260708 Evidence
+
+Decision: use the audited hourly baseline CSV, not the raw fan parquet, as the
+promotion-facing staging source for T046 until the fan-to-hourly production
+export path itself is proven by strict product gates.
+
+Reason: executing the new staging runner on the 20260708 fan parquet produced
+a reproducible adjusted CSV, but the resulting product-normalization diagnostic
+failed hard repricing gates (`critical_count=56`,
+`delivered_curve_drift_count=38`, max residual about `21.92 EUR/MWh`). The
+same runner executed from the already audited hourly baseline reproduced the
+known T046 adjusted artifact exactly and passed strict diagnostics.
+
+Real staging evidence:
+
+- Fan-source staging output:
+  `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_stage_t046_from_fan/`
+- Fan-source adjusted CSV SHA-256:
+  `f85b868d08f4b6e43f810708d8d88973f5de98219f7ef20e12e056287cc3573c`
+- Fan-source diagnostic product audit:
+  `product_normalization_diagnostic/summary.json`
+- Fan-source product result:
+  - `all_gates_pass=false`
+  - `critical_count=56`
+  - `delivered_curve_drift_count=38`
+  - `blocking_quote_conflict_count=4`
+- Hourly-baseline staging output:
+  `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_stage_t046_from_hourly_baseline/`
+- Hourly-baseline source CSV SHA-256:
+  `12447bbaa9828c0ffed871e62c35f90b8c100fcfab8c80b00468ac846848d895`
+- Hourly-baseline staged adjusted CSV SHA-256:
+  `8b50a01af05dc152a5f95fbd85e36c4bbe0106f0e65c4dd118b3df42737378c8`
+- EPEX spot parquet SHA-256:
+  `008f552e0cd684d42dcb95f87a2681054b1af338c6511ae77c1ffa81b421e32f`
+
+Strict evidence for hourly-baseline staging:
+
+- independent comparison:
+  `epex_stage_t046_from_hourly_baseline/independent_ab_comparison/ab_comparison_summary.json`
+  - `benchmark_policy=independent_no_ompex`
+  - `ompex_used_in_model=false`
+  - `ompex_used_in_selection=false`
+  - `max_abs_monthly_mean_delta_eur_mwh=8.602150532151586e-08`
+  - `max_abs_width_delta_eur_mwh=0.0`
+  - `weighted_negative_hours_adjusted=0`
+- product normalization:
+  `epex_stage_t046_from_hourly_baseline/product_normalization_with_policy/summary.json`
+  - `all_gates_pass=true`
+  - `critical_count=0`
+  - `unsupported_count=0`
+  - `accepted_quote_conflict_count=6`
+  - `blocking_quote_conflict_count=0`
+- governance:
+  `epex_stage_t046_from_hourly_baseline/governance_audit/epex_shape_lab_governance_audit.json`
+  - `status=PASS`
+  - `failed_count=0`
+- Power BI strict:
+  `epex_stage_t046_from_hourly_baseline/powerbi_strict/summary_metrics.csv`
+  - `powerbi_quality_gate_status=PASS`
+  - `weighted_negative_hours=0`
+  - `monthly_path_critical_flags=0`
+  - `cross_year_month_shape_critical_flags=0`
+- adjusted production contract:
+  `epex_stage_t046_from_hourly_baseline/adjusted_production_manifest_no_go.json`
+  - `schema_version=epex_lab_adjusted_production_manifest.v1`
+  - `contract_pass=true`
+  - `production_approved=false`
+  - `production_promotion_approved=false`
+- readiness:
+  `epex_stage_t046_from_hourly_baseline/promotion_readiness/decision_with_contract_no_go.json`
+  - `approved=false`
+  - `strict_diagnostics_pass=true`
+  - `missing_production_evidence=[]`
+  - `production_chain_pass=false`
+
+Implementation follow-up:
+
+- Fixed `scripts/stage_epex_lab_adjusted_lt_candidate.py` so the CLI can import
+  repo-local `scripts.*` modules when executed as `python scripts/...`.
+- Extended `tests/test_stage_epex_lab_adjusted_lt_candidate_script.py` with a
+  direct `main()` smoke test.
+
+Validation:
+
+- `python -m pytest tests/test_stage_epex_lab_adjusted_lt_candidate_script.py tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_promotion_bundle_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_run_epex_shape_lab_ab_script.py tests/test_compare_epex_shape_lab_ab_script.py tests/test_audit_epex_shape_lab_governance_script.py tests/test_audit_ch_product_normalization_script.py tests/test_build_powerbi_exports_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  returned `78 passed, 1 skipped`.
+
+Rejected alternatives:
+
+- Promote the fan-parquet staged result despite product gate failures.
+- Treat the NO-GO contract manifest as production approval.
+- Reuse the source hierarchy policy when the adjusted CSV hash does not match.
+
+Invariants not to break:
+
+- T046 remains NO-GO production until a real production-approved export,
+  selected artifact, and capstone are generated for the adjusted curve.
+- The raw fan parquet path needs its own strict product proof before it can be
+  used as a promotion-facing source.
+- OMPEX remains advisory only.
+
