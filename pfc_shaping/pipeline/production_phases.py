@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -156,6 +157,27 @@ def _first_existing_path(*paths: str | None) -> str | None:
         if path and os.path.exists(path):
             return path
     return None
+
+
+def _file_sha256(path: str) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _monthly_solver_source_hashes(
+    *,
+    history_path: object | None,
+    eex_report_path: str | None,
+) -> dict[str, str]:
+    hashes: dict[str, str] = {}
+    if history_path and os.path.exists(str(history_path)):
+        hashes["forwards_path"] = _file_sha256(str(history_path))
+    if eex_report_path and os.path.exists(eex_report_path):
+        hashes["eex_report_path"] = _file_sha256(eex_report_path)
+    return hashes
 
 
 def _read_required_parquet(path: str, label: str, logger: logging.Logger) -> pd.DataFrame:
@@ -370,6 +392,10 @@ def run_long_term_phase(
         solver_as_of_date = forwards_cfg.get("eex_as_of_date")
         monthly_constraint_tolerance_ch = float(settings.get("constraint_tolerance", 1e-9))
         history_path = settings.get("eex_history_path")
+        source_hashes = _monthly_solver_source_hashes(
+            history_path=history_path,
+            eex_report_path=inputs.eex_report_path,
+        )
         history = pd.DataFrame()
         neighbor_prices: dict[str, dict[str, float]] = {}
         if history_path and os.path.exists(str(history_path)):
@@ -408,6 +434,7 @@ def run_long_term_phase(
             eex_history=history,
             settings=settings,
             timezone="Europe/Zurich",
+            source_hashes=source_hashes,
             original_forward_prices=base_prices_ch,
         )
         cascaded_prices_ch = monthly_authority_ch.assembler_base_prices

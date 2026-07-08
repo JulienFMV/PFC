@@ -28,6 +28,7 @@ from pfc_shaping.pipeline.production_phases import (
     SharedStructuralArtifacts,
     SwissLongTermArtifacts,
     _ARTIFACT_SUFFIX,
+    _monthly_solver_source_hashes,
     _save_monthly_curve_manifests,
 )
 
@@ -214,6 +215,23 @@ def test_save_monthly_curve_manifests_writes_production_ch_manifest(tmp_path) ->
     text = path.read_text(encoding="utf-8")
     assert '"monthly_solution_hash": "solution"' in text
     assert '"active_constraints_hash": "constraints"' in text
+
+
+def test_monthly_solver_source_hashes_bind_history_and_eex_report(tmp_path) -> None:
+    history = tmp_path / "history.parquet"
+    report = tmp_path / "Price_Report_EEX.xlsx"
+    history.write_bytes(b"history")
+    report.write_bytes(b"eex")
+
+    hashes = _monthly_solver_source_hashes(
+        history_path=history,
+        eex_report_path=str(report),
+    )
+
+    assert hashes == {
+        "forwards_path": "259aa8ef98a8b91de574cd904138ef643240c23080cf24da4793a6f10a43fa9d",
+        "eex_report_path": "ccb598084458885106bfe1f9adf8b9cd54622b266a9940f66ea14c5fa57fb71e",
+    }
 
 
 class _NullLogger:

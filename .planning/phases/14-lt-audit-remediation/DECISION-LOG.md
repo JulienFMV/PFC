@@ -1158,3 +1158,48 @@ Invariants not to break:
 - OMPEX remains read-only benchmark evidence only.
 - Commit only curated docs/governance artifacts unless explicitly requested.
 
+## D-20260708-03 - Resolve Production Manifest Source Hash Gap
+
+Decision: harden production monthly curve manifest generation so production
+manifests record hashes for the monthly solver forwards parquet and EEX
+workbook when those files exist. Also clarify local export report wording so
+it does not read as competing production-governance authority.
+
+Reason: Roasters accepted the 2026-07-08 candidate, but flagged two packaging
+caveats. Empty production `source_hashes` weakened audit traceability, and the
+generated local report wording was easy to misread beside the capstone. The
+solver hashes did not change; this is traceability hardening.
+
+Evidence:
+
+- regenerated production manifest sha256:
+  `9b6b238bcbce72bb485f29ce1c6142ebce15b696d8df0a36fc5c673a2dbd4598`
+- production manifest `source_hashes.forwards_path`:
+  `159680087cb2f2de6322863660fb481fa531ebc9239e40de4f3735ecdc382ea1`
+- production manifest `source_hashes.eex_report_path`:
+  `dedae2a6d66ce59b9e3d4a0ab7c85e6800d8eb7d3e911d37651711a393fd4005`
+- production manifest `monthly_solution_hash` unchanged:
+  `3882baa358bb2479d4b25aec464b45d74c15713f36ee34d0389790e848430c9e`
+- local export CSV sha unchanged:
+  `12447bbaa9828c0ffed871e62c35f90b8c100fcfab8c80b00468ac846848d895`
+- local export manifest sha unchanged:
+  `cb52a502e8e95af2e5f3fabc3b2b34ca8f365999214cfd7c53718ed7f5ef456a`
+- capstone rerun:
+  `approved=true`, `status=PROMOTION_EVIDENCE_PASS`, `blocking_count=0`
+- tests:
+  `python -m pytest tests/test_long_term_branch.py tests/test_monthly_forward_curve_integration.py tests/test_check_monthly_curve_promotion_from_manifests.py -q -p no:cacheprovider`
+  returned `41 passed`.
+
+Rejected alternatives:
+
+- Manually patch generated production manifests without changing code.
+- Treat local `export_report.md` as production authority.
+- Add generated data/output artifacts to Git.
+
+Invariants not to break:
+
+- Manifest source hashes are traceability metadata; monthly solver level and
+  constraint hashes remain the promotion-critical parity fields.
+- Local export reports stay local/test reports.
+- Generated parquet/output artifacts remain out of curated commits.
+

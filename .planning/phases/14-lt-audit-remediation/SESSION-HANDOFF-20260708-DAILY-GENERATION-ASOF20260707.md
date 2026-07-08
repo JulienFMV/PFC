@@ -112,6 +112,13 @@ Production manifest values:
 - `active_constraints_hash=fd95393bd94c2ce5d6ff02ba5c57a0633d00cbc9f6acc540877802fc81a2a7ab`
 - `monthly_solution_hash=3882baa358bb2479d4b25aec464b45d74c15713f36ee34d0389790e848430c9e`
 
+Follow-up source-hash hardening regenerated the production manifest with:
+
+- `source_hashes.forwards_path=159680087cb2f2de6322863660fb481fa531ebc9239e40de4f3735ecdc382ea1`
+- `source_hashes.eex_report_path=dedae2a6d66ce59b9e3d4a0ab7c85e6800d8eb7d3e911d37651711a393fd4005`
+- regenerated production manifest sha256:
+  `9b6b238bcbce72bb485f29ce1c6142ebce15b696d8df0a36fc5c673a2dbd4598`
+
 ## Promotion Evidence
 
 Selected config artifact:
@@ -192,6 +199,14 @@ python -m pytest tests/test_monthly_forward_curve_integration.py tests/test_chec
 
 Result: `26 passed`.
 
+Follow-up hardening test command:
+
+```powershell
+python -m pytest tests/test_long_term_branch.py tests/test_monthly_forward_curve_integration.py tests/test_check_monthly_curve_promotion_from_manifests.py -q -p no:cacheprovider
+```
+
+Result: `41 passed`.
+
 ## Roasters / MIT Audit
 
 Three read-only Roasters/MIT agents audited the 2026-07-08 package after the
@@ -208,12 +223,13 @@ P1 findings:
   non-blocking because the selected config plus capstone are the promotion
   authority:
   - generated `export_report.md` remains a local-test report and still says
-    production approval `NO`; do not ship it as standalone external promotion
-    evidence.
+    production approval from the local report is `NO`; follow-up wording now
+    points auditors to the manifest-backed capstone.
   - generated `pfc_shaping/model/artifacts/production_monthly_curve_manifest.json`
-    has empty `source_hashes`, while the export manifest binds the forwards
-    hash. Production/export/selected parity still holds on `active_config_hash`,
-    `active_constraints_hash`, and `monthly_solution_hash`.
+    initially had empty `source_hashes`; follow-up hardening now records both
+    `forwards_path` and `eex_report_path`. Production/export/selected parity
+    still holds on `active_config_hash`, `active_constraints_hash`, and
+    `monthly_solution_hash`.
 
 Accepted P2 findings:
 
@@ -236,6 +252,32 @@ Contamination check:
 - `ompex_benchmark_read_only/benchmark_metrics.json` records
   `read_only=true` and `ompex_used_in_model=false`.
 
+## Follow-up Hardening
+
+Code changes:
+
+- `pfc_shaping/pipeline/production_phases.py` now hashes the monthly solver
+  history parquet and EEX workbook, then passes those hashes into the
+  production monthly curve manifest.
+- `scripts/export_local_test_ch_hourly_csv.py` now states that the generated
+  report is not the production promotion authority and points to the
+  selected-config plus capstone evidence.
+- `tests/test_long_term_branch.py` covers the new source hash helper.
+
+Validation:
+
+- refreshed `data/eex_forwards_history.parquet` locally from the 2026-07-08 EEX
+  workbook to `max_date=2026-07-07`, sha256
+  `159680087cb2f2de6322863660fb481fa531ebc9239e40de4f3735ecdc382ea1`.
+- regenerated production LT output for `today=2026-07-08`; CH manifest keeps
+  `monthly_solution_hash=3882baa358bb2479d4b25aec464b45d74c15713f36ee34d0389790e848430c9e`.
+- regenerated local export; CSV sha remains
+  `12447bbaa9828c0ffed871e62c35f90b8c100fcfab8c80b00468ac846848d895` and
+  export manifest sha remains
+  `cb52a502e8e95af2e5f3fabc3b2b34ca8f365999214cfd7c53718ed7f5ef456a`.
+- reran capstone with the source-hashed production manifest:
+  `approved=true`, `status=PROMOTION_EVIDENCE_PASS`, `blocking_count=0`.
+
 ## Worktree / Commit Hygiene
 
 Generated or refreshed local evidence, not default commit targets:
@@ -249,10 +291,11 @@ Generated or refreshed local evidence, not default commit targets:
 The export script modified a tracked Phase 13 generated report; it was restored
 from HEAD to avoid cross-phase pollution.
 
-Commit candidates if audit GO:
+Commit candidates for this follow-up:
 
 - `.planning/HANDOFF.md`
 - `.planning/phases/14-lt-audit-remediation/DECISION-LOG.md`
 - `.planning/phases/14-lt-audit-remediation/SESSION-HANDOFF-20260708-DAILY-GENERATION-ASOF20260707.md`
-- `.planning/phases/14-lt-audit-remediation/monthly_curve_selected_config_asof20260707_lshape100_yoy150_amp150_2032.json`
-- `.planning/phases/14-lt-audit-remediation/quote_conflict_source_hierarchy_policy_asof20260707_lshape100_yoy150_amp150_2032.json`
+- `pfc_shaping/pipeline/production_phases.py`
+- `scripts/export_local_test_ch_hourly_csv.py`
+- `tests/test_long_term_branch.py`

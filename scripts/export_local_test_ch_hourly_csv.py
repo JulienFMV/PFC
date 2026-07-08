@@ -1784,7 +1784,7 @@ def _write_report(
         "# Local-Test CH PFC Hourly CSV",
         "",
         "* status: `agent-approved local/test only`",
-        "* production approval: `NO`",
+        "* production approval from this local report: `NO - use manifest-backed capstone for promotion evidence`",
         f"* CSV: `{csv_output}`",
         f"* source fan chart: `{fan_output}`",
         f"* local window: `{local_start}` to `{local_end}` Europe/Zurich",
@@ -1958,7 +1958,10 @@ def _write_report(
         "* The final seam nullspace smoothing, when enabled, is local/test only and preserves active BASE/PEAK bucket means.",
         "* The neighbor monthly spread anchor, when enabled, is local/test only and preserves EEX BASE/PEAK buckets.",
         "* The EEX BASE+PEAK calibration, when enabled, is local/test only and uses quoted PEAK products from the same snapshot.",
-        "* This is not production FMV output; production governance remains NO-GO.",
+        (
+            "* This local/test report is not the promotion authority; use the selected-config "
+            "artifact plus manifest-backed capstone for production promotion evidence."
+        ),
         "",
     ]
     path.parent.mkdir(parents=True, exist_ok=True)

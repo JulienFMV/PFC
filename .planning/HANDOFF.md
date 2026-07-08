@@ -56,12 +56,12 @@ Previous 2026-07-07 promotion-ready daily candidate:
 `output/phase14/20260707_asof20260706_lshape100_yoy150_amp150_2032/`.
 
 Read-only Roasters/MIT audits after capstone all returned GO with no P0/P1
-blocker. Accepted P2s are traceability/documentation only: generated
-`export_report.md` still has local-test NO-GO boilerplate, sparse-proof
-standalone manifest is less clear than the capstone, production manifest
-`source_hashes` is empty while export manifest binds the forwards hash, and
-residual warnings are documented without hiding any CRITICAL. Do not commit
-`data/eex_forwards_history.parquet` or generated output artifacts.
+blocker. Follow-up hardening resolved the production manifest `source_hashes`
+gap and clarified generated `export_report.md` wording: the local report is not
+the promotion authority; selected config plus manifest-backed capstone remain
+authoritative. Accepted residual P2s are sparse/far-horizon warnings without
+any hidden CRITICAL. Do not commit `data/eex_forwards_history.parquet` or
+generated output artifacts.
 
 Previous promotion-ready Phase 14 CH candidate:
 `output/phase14/20260624_asof20260623_lshape100_yoy10_amp200_2032/` supersedes
