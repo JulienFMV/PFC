@@ -2077,3 +2077,75 @@ Invariants not to break:
 - Generated forwards, Power BI outputs, and audit CSV/JSON artifacts stay
   local and are not committed.
 
+## D-20260708-16 - Add T046 Lab Promotion Readiness Checker
+
+Decision: add a dedicated readiness checker for selected EPEX lab artifacts
+instead of reusing the monthly solver capstone as if it approved the adjusted
+hourly CSV.
+
+Reason: the existing capstone proves the baseline monthly solver triad. T046
+preserves monthly constraints and passes strict diagnostics, but it is still a
+lab-only hourly adjustment. A separate machine-readable decision is needed to
+show exactly which evidence passes and which production-promotion evidence is
+still missing.
+
+Implementation:
+
+- Added `scripts/check_epex_lab_promotion_readiness.py`.
+- Added `tests/test_check_epex_lab_promotion_readiness_script.py`.
+- The checker reads:
+  - lab manifest
+  - EPEX lab governance audit
+  - independent no-OMPEX A/B summary
+  - product-normalization summary
+  - Power BI summary metrics
+  - optional OMPEX advisory delta
+  - optional adjusted production/export/selected/capstone artifacts
+- It returns non-zero unless the adjusted artifact has both strict diagnostics
+  and a complete adjusted production chain.
+
+T046 readiness execution:
+
+- output:
+  `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_sweep_v2/t046_promotion_readiness/decision.json`
+- status:
+  `STRICT_DIAGNOSTICS_PASS_PRODUCTION_CHAIN_MISSING`
+- `approved=false`
+- `strict_diagnostics_pass=true`
+- `production_chain_pass=false`
+- missing production evidence:
+  - `adjusted_production_manifest`
+  - `adjusted_export_manifest`
+  - `adjusted_selected_config`
+  - `adjusted_capstone`
+- all checker inputs pass:
+  - lab-only / not production approved
+  - OMPEX not used in selection
+  - governance PASS
+  - independent no-OMPEX comparison
+  - product strict gates pass
+  - Power BI strict gates pass
+  - OMPEX advisory is read-only and not selection
+
+Validation:
+
+- `python -m pytest tests/test_check_epex_lab_promotion_readiness_script.py -q -p no:cacheprovider`
+  returned `2 passed`.
+- `python -m pytest tests/test_check_epex_lab_promotion_readiness_script.py tests/test_execute_epex_shape_lab_sweep_script.py tests/test_plan_epex_shape_lab_sweep_script.py tests/test_epex_ab_shape_lab.py tests/test_run_epex_shape_lab_ab_script.py tests/test_compare_epex_shape_lab_ab_script.py tests/test_audit_epex_shape_lab_governance_script.py tests/test_audit_ch_product_normalization_script.py tests/test_build_powerbi_exports_script.py tests/test_compare_hpfc_ompex_benchmark_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  returned `86 passed, 1 skipped`.
+
+Rejected alternatives:
+
+- Reuse the baseline monthly capstone as production approval for t046.
+- Treat strict product/Power BI diagnostics as equivalent to a production
+  chain.
+- Return success from the checker when production evidence is missing.
+
+Invariants not to break:
+
+- A selected lab trial cannot become promotion-ready without its own adjusted
+  production manifest, export manifest, selected config artifact, and capstone.
+- OMPEX remains advisory evidence only.
+- Generated readiness decision JSON stays local evidence unless explicitly
+  packaged.
+

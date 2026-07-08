@@ -913,6 +913,45 @@ Remaining promotion blockers for t046:
 - generated rebuilt forwards / spot / audit outputs are local evidence only
   and were not committed
 
+## T046 Lab Promotion Readiness Decision
+
+A dedicated checker was added because the monthly solver capstone proves the
+baseline monthly triad, not the adjusted hourly lab CSV:
+
+- `scripts/check_epex_lab_promotion_readiness.py`
+- `tests/test_check_epex_lab_promotion_readiness_script.py`
+
+Command run on t046:
+
+```powershell
+python scripts/check_epex_lab_promotion_readiness.py --lab-manifest output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_sweep_v2/t046_w05_l025_p075_d03/ab_lab_manifest.json --governance-audit output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_sweep_v2/t046_w05_l025_p075_d03/governance_audit/epex_shape_lab_governance_audit.json --independent-summary output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_sweep_v2/t046_w05_l025_p075_d03/independent_ab_comparison/ab_comparison_summary.json --product-summary output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_sweep_v2/t046_product_normalization_with_policy/summary.json --powerbi-summary output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_sweep_v2/t046_powerbi_strict/summary_metrics.csv --ompex-advisory-delta output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_sweep_v2/ompex_advisory_delta_selected_t046_20260708.json --output output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_sweep_v2/t046_promotion_readiness/decision.json
+```
+
+The checker intentionally returned non-zero because production approval is not
+complete. It still wrote the local decision:
+
+- output:
+  `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_sweep_v2/t046_promotion_readiness/decision.json`
+- `status=STRICT_DIAGNOSTICS_PASS_PRODUCTION_CHAIN_MISSING`
+- `approved=false`
+- `strict_diagnostics_pass=true`
+- `production_chain_pass=false`
+- missing:
+  - `adjusted_production_manifest`
+  - `adjusted_export_manifest`
+  - `adjusted_selected_config`
+  - `adjusted_capstone`
+
+Validation:
+
+```powershell
+python -m pytest tests/test_check_epex_lab_promotion_readiness_script.py tests/test_execute_epex_shape_lab_sweep_script.py tests/test_plan_epex_shape_lab_sweep_script.py tests/test_epex_ab_shape_lab.py tests/test_run_epex_shape_lab_ab_script.py tests/test_compare_epex_shape_lab_ab_script.py tests/test_audit_epex_shape_lab_governance_script.py tests/test_audit_ch_product_normalization_script.py tests/test_build_powerbi_exports_script.py tests/test_compare_hpfc_ompex_benchmark_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result: `86 passed, 1 skipped`.
+
+Decision log entry: `D-20260708-16`.
+
 Governance:
 
 - Decision log entry: `D-20260708-05`.

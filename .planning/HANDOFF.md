@@ -196,6 +196,16 @@ warnings remain `4`). T046 still remains NO-GO production: no adjusted
 production manifest, export manifest, selected config artifact, or capstone
 triad exists.
 
+`scripts/check_epex_lab_promotion_readiness.py` now makes that NO-GO explicit
+instead of reusing the baseline monthly solver capstone for the adjusted hourly
+lab CSV. T046 readiness output:
+`output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_sweep_v2/t046_promotion_readiness/decision.json`.
+Status is `STRICT_DIAGNOSTICS_PASS_PRODUCTION_CHAIN_MISSING` with
+`approved=false`, `strict_diagnostics_pass=true`, `production_chain_pass=false`,
+and missing `adjusted_production_manifest`, `adjusted_export_manifest`,
+`adjusted_selected_config`, `adjusted_capstone`. Validation including the new
+checker: `86 passed, 1 skipped`.
+
 Previous 2026-07-07 promotion-ready daily candidate:
 `output/phase14/20260707_asof20260706_lshape100_yoy150_amp150_2032/`.
 
