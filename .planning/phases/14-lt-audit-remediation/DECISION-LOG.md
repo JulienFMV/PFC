@@ -2277,3 +2277,66 @@ Invariants not to break:
 - The baseline 2026-07-08 candidate remains the only current production-ready
   artifact.
 
+## D-20260708-19 - Add T046 Adjusted Production Manifest Contract
+
+Decision: add a dedicated adjusted-production manifest builder for EPEX lab
+artifacts, with CLI output deliberately NO-GO by default.
+
+Reason: after hardening readiness, the remaining T046 blocker is a real
+`adjusted_production_manifest`. Creating a JSON file by hand would be a false
+proof. The next safe step is to define the exact schema and checks that a real
+off-by-default LT production path must satisfy, while keeping CLI-generated
+contract manifests non-promotional.
+
+Implementation:
+
+- Added `scripts/build_epex_lab_adjusted_production_manifest.py`.
+- Added `tests/test_build_epex_lab_adjusted_production_manifest_script.py`.
+- The builder emits schema
+  `epex_lab_adjusted_production_manifest.v1`.
+- The manifest records SHA-256 bindings for:
+  - adjusted CSV;
+  - lab manifest;
+  - baseline monthly solver manifest;
+  - source hierarchy policy;
+  - product normalization summary;
+  - Power BI summary;
+  - independent EPEX summary;
+  - governance audit.
+- The contract requires:
+  - lab artifact remains `activation_status=lab_only` and
+    `production_approved=false`;
+  - monthly authority is `solver`;
+  - source hierarchy policy is production-approved;
+  - product normalization and Power BI strict gates pass;
+  - independent/governance evidence confirms no OMPEX in model or selection.
+- CLI-built manifests keep:
+  - `production_approved=false`;
+  - `production_promotion_approved=false`;
+  - `promotion_scope=LT_EPEX_LAB_PRODUCTION_CONTRACT_NO_GO`.
+- Even through the Python API, setting production approval requires complete
+  run identity: `production_run_id`, `production_entrypoint`, and `git_commit`.
+
+Validation:
+
+- `python -m pytest tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_build_epex_lab_promotion_bundle_script.py -q -p no:cacheprovider`
+  returned `8 passed`.
+- `python -m pytest tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_promotion_bundle_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_execute_epex_shape_lab_sweep_script.py tests/test_plan_epex_shape_lab_sweep_script.py tests/test_epex_ab_shape_lab.py tests/test_run_epex_shape_lab_ab_script.py tests/test_compare_epex_shape_lab_ab_script.py tests/test_audit_epex_shape_lab_governance_script.py tests/test_audit_ch_product_normalization_script.py tests/test_build_powerbi_exports_script.py tests/test_compare_hpfc_ompex_benchmark_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  returned `91 passed, 1 skipped`.
+
+Rejected alternatives:
+
+- Generate a local adjusted production manifest and mark it approved.
+- Treat the existing lab CSV as having come from the production path.
+- Wire the EPEX lab directly into the 15-minute production PFC before solving
+  the format mismatch with the audited hourly export.
+
+Invariants not to break:
+
+- A CLI-built adjusted production manifest is contract evidence only, not a
+  promotion approval.
+- A future approval must come from a real off-by-default LT production path
+  that emits the audited hourly adjusted artifact and then passes product,
+  Power BI, selected-artifact, and capstone gates.
+- OMPEX remains benchmark/advisory only.
+
