@@ -172,6 +172,60 @@ the same chained selection verdict under
 `output/phase14/t047_spot_backtest_selection_summary_from_runner/`. Validation
 including the runner: `48 passed, 1 skipped`.
 
+T048 night/core-recovery was run as local no-OMPEX lab evidence under short
+paths to avoid Windows path-length failures:
+
+- plan: `output/phase14/t048_ncr/pre_registered_sweep_plan.json`
+- sweep summary: `output/phase14/t048_ncr/sweep_execution_summary.json`
+- backtest run: `output/phase14/t048_ncr_spot_backtests/run_summary.json`
+- selection summary:
+  `output/phase14/t048_ncr_selection_summary/spot_backtest_selection_summary.json`
+
+Result: 32 trials executed, 27 eligible, 27 backtested, 16 weak-bucket
+candidates, all OMPEX flags false. Official verdict remains
+`WEAK_BUCKET_GAIN_BUT_INCUMBENT_STILL_DOMINATES_CORE_METRICS` and
+`replace_incumbent=false`. Best weak-bucket trial `t004` improves night/ramp
+but degrades core buckets; best overall `t020` degrades evening/post-valuation;
+best compromise `t024` is close but still slightly behind T046 on
+solar-tail/post-valuation. Read-only MIT/Roaster audits therefore returned
+NO-GO for replacing T046 with T048 and NO-GO for promoting any T046/T047/T048
+adjusted lab artifact without a real chain-bound adjusted production manifest,
+export manifest, selected artifact, and capstone.
+
+Next model action is T049 core-balance under short paths:
+`output/phase14/t049_core_balance`,
+`output/phase14/t049_core_balance_spot_backtests`, and
+`output/phase14/t049_core_balance_selection_summary`. It is centered on the
+T048 `t020`/`t024` neighborhood with weekend `[0.65, 0.75]`, low-tail `[0.25]`,
+peak-subshape `[0.75, 0.875, 1.0]`, night `[0.4, 0.5, 0.6]`, ramp
+`[0.0, 0.125]`, cap `[2.5, 2.75]`, ramp p99 threshold `0.90`, and
+`ramp_penalty_weight=2.0`. Replacement requires beating T046 on night/ramp
+without material regression on overall, evening, solar-tail, weekend,
+post-valuation, monthly/fan drift, negative-price stress, or delivered-product
+normalization. Decision log entry: `D-20260708-43`.
+
+T049 core-balance was executed after that handoff update. It ran 72 trials; 52
+were eligible and spot-backtested. Result remains `replace_incumbent=false`.
+The automatic best weak-bucket trial still degrades evening/post-valuation
+versus T046, but T049 identified a stronger no-OMPEX frontier:
+`t070_w075_l025_p01_n06_r00_d275`, adjusted CSV sha256
+`f3d1f9d749823c9babd1104261670dcd115a63f797e6aed2e38ef480cbdf40cb`.
+It beats T046 on overall, night, ramp, evening, weekend, and post-valuation,
+but misses solar-tail by about `0.00606` EUR/MWh. Ramp p99 increase is
+`0.8886024799999568`, below the pre-registered `0.90` threshold, and all
+strict lab/no-OMPEX flags pass.
+
+T050 micro-balance around `t070` was also run under
+`output/phase14/t050_t070_micro_balance`. It executed 12 trials, 4 eligible,
+and reproduced the same best adjusted CSV under trial
+`t007_w075_l025_p01_n06_r00_d275`. Verdict remains
+`WEAK_BUCKET_GAIN_BUT_INCUMBENT_STILL_DOMINATES_CORE_METRICS`; only solar-tail
+is degraded versus T046. T046 remains the incumbent lab candidate. Next action
+is stricter delivered-curve diagnostics on the `t070` frontier, not a broad
+sweep: delivered-product normalization, strict Power BI export in isolated
+output, source-hierarchy binding, and optional OMPEX advisory only after the
+no-OMPEX package is frozen. Decision log entry: `D-20260708-44`.
+
 Next-sweep policy hardening is committed in the local work after expert audit
 feedback. New EPEX sweep plans now include `selection_thresholds`,
 `scoring_policy`, and optional `max_abs_delta_grid`; the executor records EPEX

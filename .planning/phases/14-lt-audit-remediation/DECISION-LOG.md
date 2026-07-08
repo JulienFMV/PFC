@@ -4083,3 +4083,185 @@ Invariants not to break:
 - T046 remains incumbent until a future no-OMPEX candidate beats weak buckets
   and core metrics without weakening strict diagnostics.
 
+## D-20260708-43 - T048 Is Evidence, Not Replacement; T049 Core-Balance Next
+
+Decision: do not replace the current EPEX lab incumbent T046 with any T048
+trial. Treat T048 as local no-OMPEX research evidence that identifies the next
+search direction. The next sweep is T049 core-balance, centered around the
+T048 `t020` / `t024` neighborhood, with a tighter ramp threshold and an
+explicit no-regression replacement contract versus T046.
+
+Reason: T048 materially improves the weak night and ramp buckets, but no T048
+trial dominates T046 across the core business buckets and post-valuation
+evidence. The official T048 selection output reports
+`replacement_verdict.status=WEAK_BUCKET_GAIN_BUT_INCUMBENT_STILL_DOMINATES_CORE_METRICS`
+and `replace_incumbent=false`. Read-only MIT/Roaster audits concurred:
+
+- `t004_w05_l025_p075_n05_r00_d275` improves night, ramp, and post-valuation
+  versus T046 but degrades overall, evening, solar-tail, and weekend.
+- `t020_w075_l025_p075_n05_r00_d275` improves overall, night, ramp, solar-tail,
+  and weekend, but degrades evening and post-valuation.
+- `t024_w075_l025_p01_n05_r00_d275` is the strongest compromise, improving
+  overall, night, ramp, evening, and weekend, but remains slightly behind T046
+  on solar-tail and post-valuation.
+
+T048 executed evidence:
+
+- plan used for execution:
+  `output/phase14/t048_ncr/pre_registered_sweep_plan.json`
+- executed summary:
+  `output/phase14/t048_ncr/sweep_execution_summary.json`
+- spot backtest run:
+  `output/phase14/t048_ncr_spot_backtests/run_summary.json`
+- selection summary:
+  `output/phase14/t048_ncr_selection_summary/spot_backtest_selection_summary.json`
+- result:
+  - `trial_count_executed=32`
+  - `eligible_count=27`
+  - `trial_count_backtested=27`
+  - `strict_pass_count=27`
+  - `weak_bucket_candidate_count=16`
+  - all OMPEX flags remain false
+  - `production_approved=false`
+  - `promotion_gate=false`
+
+T049 pre-registration contract:
+
+- grid neighborhood:
+  - weekend intensity `[0.65, 0.75]`
+  - low-tail intensity `[0.25]`
+  - peak-subshape intensity `[0.75, 0.875, 1.0]`
+  - night intensity `[0.4, 0.5, 0.6]`
+  - ramp intensity `[0.0, 0.125]`
+  - max absolute delta grid `[2.5, 2.75]`
+- selection thresholds:
+  - `max_epex_spot_age_days=14.0`
+  - `min_epex_fit_coverage_days=730.0`
+  - `max_ramp_p99_increase_eur_mwh=0.90`
+  - `min_adjusted_price_eur_mwh=-10.0`
+- scoring policy:
+  - `duck_weight=1.0`
+  - `solar_tail_weight=1.25`
+  - `weekend_weight=1.0`
+  - `night_weight=1.0`
+  - `ramp_penalty_weight=2.0`
+
+Rejected alternatives:
+
+- Freeze `t004` because it improves the weakest buckets while accepting core
+  bucket degradation.
+- Freeze `t020` because it improves the headline overall score while accepting
+  evening and post-valuation degradation.
+- Use OMPEX to break ties between T048 candidates.
+- Treat local lab-only T048 artifacts as production promotion evidence.
+
+Invariants not to break:
+
+- T046 remains the incumbent lab candidate until a no-OMPEX candidate beats
+  weak buckets and core metrics without weakening strict diagnostics.
+- T049 remains lab-only and cannot promote production.
+- OMPEX remains advisory-only after candidate freeze; it is not an input, loss,
+  ranking signal, or gate.
+- Any adjusted EPEX promotion still requires a real chain-bound adjusted
+  production manifest, export manifest, selected artifact, and capstone.
+
+## D-20260708-44 - T049/T050 Identify Frontier Candidate But No Full Replacement
+
+Decision: keep T046 as the incumbent lab candidate. Treat T049/T050 best trial
+`t070_w075_l025_p01_n06_r00_d275` as the current no-OMPEX frontier candidate,
+not as a replacement and not as promotion evidence.
+
+Reason: T049 core-balance improved materially over T048 and found a
+near-dominating candidate, but still found no trial that beats T046 on every
+replacement bucket. T050 micro-balance around that frontier did not recover the
+remaining solar-tail gap; it reproduced the same best candidate under a
+different trial id.
+
+T049 executed evidence:
+
+- plan:
+  `output/phase14/t049_core_balance/pre_registered_sweep_plan.json`
+- sweep summary:
+  `output/phase14/t049_core_balance/sweep_execution_summary.json`
+- spot backtest run:
+  `output/phase14/t049_core_balance_spot_backtests/run_summary.json`
+- selection summary:
+  `output/phase14/t049_core_balance_selection_summary/spot_backtest_selection_summary.json`
+- result:
+  - `trial_count_executed=72`
+  - `eligible_count=52`
+  - `trial_count_backtested=52`
+  - `strict_pass_count=52`
+  - `weak_bucket_candidate_count=52`
+  - `replace_incumbent=false`
+  - degraded versus T046: evening and post-valuation for the automatic
+    best-ranked weak-bucket trial.
+
+T049 frontier candidate:
+
+- trial id: `t070_w075_l025_p01_n06_r00_d275`
+- adjusted CSV sha256:
+  `f3d1f9d749823c9babd1104261670dcd115a63f797e6aed2e38ef480cbdf40cb`
+- parameters:
+  - weekend intensity `0.75`
+  - low-tail intensity `0.25`
+  - peak-subshape intensity `1.0`
+  - night intensity `0.6`
+  - ramp intensity `0.0`
+  - max absolute delta `2.75`
+- strict lab checks: PASS
+- no-OMPEX flags: all false
+- production flags: `production_approved=false`, `promotion_gate=false`
+- ramp p99 increase: `0.8886024799999568`, below the T049 threshold `0.90`
+- min adjusted price: `-3.740814`
+- versus T046 incumbent spot-backtest improvements:
+  - overall: `0.42709956252228376` versus `0.40548354103189205`
+  - night: `0.15957030400928707` versus `0.03190894115068499`
+  - ramp: `0.05043407090595627` versus `0.035478178105887714`
+  - evening: `0.45756877823583286` versus `0.45338812791781463`
+  - solar-tail: `0.4312351115165488` versus `0.4372953091304925`
+  - weekend: `0.2990265337481961` versus `0.2889611347370835`
+  - post-valuation: `0.3053769058019675` versus `0.3048038417338681`
+
+T050 executed evidence:
+
+- plan:
+  `output/phase14/t050_t070_micro_balance/pre_registered_sweep_plan.json`
+- sweep summary:
+  `output/phase14/t050_t070_micro_balance/sweep_execution_summary.json`
+- spot backtest run:
+  `output/phase14/t050_t070_micro_balance_spot_backtests/run_summary.json`
+- selection summary:
+  `output/phase14/t050_t070_micro_balance_selection_summary/spot_backtest_selection_summary.json`
+- result:
+  - `trial_count_executed=12`
+  - `eligible_count=4`
+  - `trial_count_backtested=4`
+  - `strict_pass_count=4`
+  - `weak_bucket_candidate_count=4`
+  - best trial `t007_w075_l025_p01_n06_r00_d275`
+  - adjusted CSV sha256 matches T049 frontier:
+    `f3d1f9d749823c9babd1104261670dcd115a63f797e6aed2e38ef480cbdf40cb`
+  - replacement verdict remains
+    `WEAK_BUCKET_GAIN_BUT_INCUMBENT_STILL_DOMINATES_CORE_METRICS`
+  - only degraded metric versus T046 is solar-tail.
+
+Rejected alternatives:
+
+- Promote the near-dominating frontier candidate by treating a small solar-tail
+  miss as immaterial without a pre-registered tolerance rule.
+- Keep sweeping wider grids immediately despite the frontier now being a
+  diagnostics/policy question rather than a coarse search question.
+- Use OMPEX to decide whether the small solar-tail miss is acceptable.
+
+Invariants not to break:
+
+- `t070`/`t007` remains lab-only until strict delivered-product, Power BI,
+  source hierarchy, selected artifact, and adjusted production-chain evidence
+  exist and pass.
+- T046 remains incumbent unless a future no-OMPEX policy explicitly permits a
+  tolerance for the remaining solar-tail miss or another candidate dominates
+  T046 on all required buckets.
+- OMPEX may be run only as an advisory post-check after no-OMPEX candidate
+  selection; it must not influence ranking, thresholds, or promotion.
+

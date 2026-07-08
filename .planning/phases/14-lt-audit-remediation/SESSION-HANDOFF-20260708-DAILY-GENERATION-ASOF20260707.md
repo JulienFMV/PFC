@@ -2169,6 +2169,160 @@ Governance:
 
 ## Worktree / Commit Hygiene
 
+## Continuation - T048 / T049 EPEX Lab
+
+After the scripted T047 runner, a T048 night/core-recovery sweep was run as
+local no-OMPEX lab evidence. A first long output path failed on Windows path
+length while writing comparison artifacts; the executed evidence is the short
+path only and should be cited as authoritative:
+
+- executed plan:
+  `output/phase14/t048_ncr/pre_registered_sweep_plan.json`
+- sweep summary:
+  `output/phase14/t048_ncr/sweep_execution_summary.json`
+- spot backtest run:
+  `output/phase14/t048_ncr_spot_backtests/run_summary.json`
+- selection summary:
+  `output/phase14/t048_ncr_selection_summary/spot_backtest_selection_summary.json`
+
+T048 result:
+
+- planned trials: `32`
+- executed trials: `32`
+- eligible trials: `27`
+- spot-backtested eligible trials: `27`
+- strict pass count: `27`
+- weak-bucket candidate count: `16`
+- best weak-bucket trial:
+  `t004_w05_l025_p075_n05_r00_d275`
+- best overall trial:
+  `t020_w075_l025_p075_n05_r00_d275`
+- strongest compromise:
+  `t024_w075_l025_p01_n05_r00_d275`
+- official verdict:
+  `WEAK_BUCKET_GAIN_BUT_INCUMBENT_STILL_DOMINATES_CORE_METRICS`
+- `replace_incumbent=false`
+- `production_approved=false`
+- `promotion_gate=false`
+- OMPEX flags remain false.
+
+Read-only MIT/Roaster audits concluded:
+
+- NO-GO to replace T046 with T048.
+- NO-GO to promote T046/T047/T048 to production because they remain lab-only
+  adjusted artifacts without a chain-bound adjusted production manifest,
+  adjusted export manifest, adjusted selected artifact, and adjusted capstone.
+- Baseline 2026-07-08 promotion evidence remains coherent, but current local
+  `data/eex_forwards_history.parquet` hash no longer matches the source hash
+  recorded in the 2026-07-08 manifests. Restore or regenerate source-bound
+  evidence before claiming reproducible local promotion.
+- OMPEX remains advisory-only and must not be used for model input, selection,
+  or gates.
+
+Next planned sweep is T049 core-balance. It should be pre-registered and run
+under short paths:
+
+- output root:
+  `output/phase14/t049_core_balance`
+- spot backtest root:
+  `output/phase14/t049_core_balance_spot_backtests`
+- selection root:
+  `output/phase14/t049_core_balance_selection_summary`
+
+T049 design:
+
+- weekend intensity `[0.65, 0.75]`
+- low-tail intensity `[0.25]`
+- peak-subshape intensity `[0.75, 0.875, 1.0]`
+- night intensity `[0.4, 0.5, 0.6]`
+- ramp intensity `[0.0, 0.125]`
+- max absolute delta `[2.5, 2.75]`
+- `max_ramp_p99_increase_eur_mwh=0.90`
+- `ramp_penalty_weight=2.0`
+
+T049 replacement bar: beat T046 on night and ramp without material regression
+on overall, evening, solar-tail, weekend, post-valuation, monthly/fan drift,
+negative-price stress, or BASE/PEAK/OFFPEAK normalization. If a candidate
+passes this no-OMPEX bar, OMPEX can be run only afterward as advisory evidence.
+
+Decision log entry: `D-20260708-43`.
+
+T049 was then executed:
+
+- plan:
+  `output/phase14/t049_core_balance/pre_registered_sweep_plan.json`
+- sweep summary:
+  `output/phase14/t049_core_balance/sweep_execution_summary.json`
+- spot backtest run:
+  `output/phase14/t049_core_balance_spot_backtests/run_summary.json`
+- selection summary:
+  `output/phase14/t049_core_balance_selection_summary/spot_backtest_selection_summary.json`
+
+T049 result:
+
+- `trial_count_executed=72`
+- `eligible_count=52`
+- `trial_count_backtested=52`
+- `strict_pass_count=52`
+- `weak_bucket_candidate_count=52`
+- `replace_incumbent=false`
+
+The automatic best weak-bucket trial improved night/ramp/overall/solar/weekend
+but still degraded evening and post-valuation versus T046. A better frontier
+candidate was found:
+
+- trial id: `t070_w075_l025_p01_n06_r00_d275`
+- adjusted CSV sha256:
+  `f3d1f9d749823c9babd1104261670dcd115a63f797e6aed2e38ef480cbdf40cb`
+- parameters: weekend `0.75`, low-tail `0.25`, peak-subshape `1.0`, night
+  `0.6`, ramp `0.0`, cap `2.75`
+- ramp p99 increase: `0.8886024799999568`, below the T049 threshold `0.90`
+- strict lab checks pass; no OMPEX flags; production flags remain false.
+
+T049 `t070` versus T046 spot-backtest improvements:
+
+- overall `0.42709956252228376` vs `0.40548354103189205`
+- night `0.15957030400928707` vs `0.03190894115068499`
+- ramp `0.05043407090595627` vs `0.035478178105887714`
+- evening `0.45756877823583286` vs `0.45338812791781463`
+- solar-tail `0.4312351115165488` vs `0.4372953091304925`
+- weekend `0.2990265337481961` vs `0.2889611347370835`
+- post-valuation `0.3053769058019675` vs `0.3048038417338681`
+
+Conclusion: no full bucket dominator exists in T049, but `t070` is the current
+no-OMPEX frontier. It misses only solar-tail by about `0.00606` EUR/MWh.
+
+T050 micro-balance was run around `t070`:
+
+- plan:
+  `output/phase14/t050_t070_micro_balance/pre_registered_sweep_plan.json`
+- sweep summary:
+  `output/phase14/t050_t070_micro_balance/sweep_execution_summary.json`
+- spot backtest run:
+  `output/phase14/t050_t070_micro_balance_spot_backtests/run_summary.json`
+- selection summary:
+  `output/phase14/t050_t070_micro_balance_selection_summary/spot_backtest_selection_summary.json`
+
+T050 result:
+
+- `trial_count_executed=12`
+- `eligible_count=4`
+- `trial_count_backtested=4`
+- `strict_pass_count=4`
+- best trial `t007_w075_l025_p01_n06_r00_d275`
+- adjusted CSV sha256 matches T049 `t070`
+- replacement verdict remains
+  `WEAK_BUCKET_GAIN_BUT_INCUMBENT_STILL_DOMINATES_CORE_METRICS`
+- only degraded metric versus T046 is solar-tail.
+
+Decision log entry: `D-20260708-44`.
+
+Recommended next action: stop broad parameter sweeps for now. Treat `t070` as
+the lab frontier and run stricter delivered-curve diagnostics against it:
+delivered-product normalization, Power BI strict export into an isolated
+`output/phase14/...` directory, source-hierarchy policy binding, and optional
+OMPEX advisory post-check only after the no-OMPEX diagnostic package is frozen.
+
 Generated or refreshed local evidence, not default commit targets:
 
 - `data/eex_forwards_history.parquet`
