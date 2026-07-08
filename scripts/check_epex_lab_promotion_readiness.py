@@ -9,8 +9,9 @@ selected/capstone chain.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
-import sys
+import os
 from pathlib import Path
 from typing import Any
 
@@ -38,7 +39,7 @@ def check_readiness(
     powerbi = _load_powerbi_summary(powerbi_summary)
     ompex = _load_json(ompex_advisory_delta) if ompex_advisory_delta is not None else None
 
-    checks = [
+    diagnostics_checks = [
         _check("lab_activation_lab_only", lab.get("activation_status") == "lab_only", lab.get("activation_status")),
         _check("lab_not_production_approved", lab.get("production_approved") is False, lab.get("production_approved")),
         _check("lab_ompex_not_selection", lab.get("ompex_used_in_selection") is False, lab.get("ompex_used_in_selection")),
@@ -75,7 +76,7 @@ def check_readiness(
         ),
     ]
     if ompex is not None:
-        checks.append(
+        diagnostics_checks.append(
             _check(
                 "ompex_advisory_not_selection",
                 ompex.get("read_only") is True
@@ -85,6 +86,7 @@ def check_readiness(
             )
         )
 
+    checks = list(diagnostics_checks)
     production_paths = {
         "adjusted_production_manifest": adjusted_production_manifest,
         "adjusted_export_manifest": adjusted_export_manifest,
@@ -97,53 +99,122 @@ def check_readiness(
     if adjusted_capstone is not None and adjusted_capstone.exists():
         capstone = _load_json(adjusted_capstone)
         capstone_approved = capstone.get("approved") is True
+        checks.append(_check("adjusted_capstone_approved", capstone_approved, capstone.get("approved")))
     else:
         capstone_approved = False
+    if adjusted_production_manifest is not None and adjusted_production_manifest.exists():
+        production_manifest = _load_json(adjusted_production_manifest)
+        production_manifest_bound = _manifest_bound_to_adjusted_csv(
+            production_manifest,
+            path_key="adjusted_csv",
+            sha_key="adjusted_csv_sha256",
+            adjusted_csv=(lab.get("outputs") or {}).get("adjusted_csv"),
+        )
+        production_manifest_approved = (
+            production_manifest.get("schema_version") == "epex_lab_adjusted_production_manifest.v1"
+            and production_manifest.get("production_approved") is True
+            and production_manifest.get("production_promotion_approved") is True
+            and production_manifest_bound
+        )
+        checks.extend(
+            [
+                _check(
+                    "adjusted_production_manifest_schema",
+                    production_manifest.get("schema_version") == "epex_lab_adjusted_production_manifest.v1",
+                    production_manifest.get("schema_version"),
+                ),
+                _check(
+                    "adjusted_production_manifest_bound",
+                    production_manifest_bound,
+                    production_manifest.get("adjusted_csv"),
+                ),
+                _check(
+                    "adjusted_production_manifest_approved",
+                    production_manifest.get("production_approved") is True
+                    and production_manifest.get("production_promotion_approved") is True,
+                    {
+                        "production_approved": production_manifest.get("production_approved"),
+                        "production_promotion_approved": production_manifest.get("production_promotion_approved"),
+                    },
+                ),
+            ]
+        )
+    else:
+        production_manifest_approved = False
     if adjusted_export_manifest is not None and adjusted_export_manifest.exists():
         export_manifest = _load_json(adjusted_export_manifest)
+        export_manifest_bound = _manifest_bound_to_adjusted_csv(
+            export_manifest,
+            path_key="adjusted_csv",
+            sha_key="adjusted_csv_sha256",
+            adjusted_csv=(lab.get("outputs") or {}).get("adjusted_csv"),
+        )
+        export_manifest_production_ready = (
+            export_manifest.get("production_approved") is True
+            and export_manifest.get("production_promotion_approved") is True
+            and export_manifest_bound
+        )
         checks.extend(
             [
                 _check(
                     "adjusted_export_manifest_bound",
-                    _same_path(export_manifest.get("adjusted_csv"), (lab.get("outputs") or {}).get("adjusted_csv")),
+                    export_manifest_bound,
                     export_manifest.get("adjusted_csv"),
                 ),
                 _check(
-                    "adjusted_export_manifest_not_production_approved",
-                    export_manifest.get("production_approved") is False,
-                    export_manifest.get("production_approved"),
+                    "adjusted_export_manifest_production_ready",
+                    export_manifest_production_ready,
+                    {
+                        "production_approved": export_manifest.get("production_approved"),
+                        "production_promotion_approved": export_manifest.get("production_promotion_approved"),
+                    },
                 ),
             ]
         )
+    else:
+        export_manifest_production_ready = False
     if adjusted_selected_config is not None and adjusted_selected_config.exists():
         selected_artifact = _load_json(adjusted_selected_config)
+        selected_artifact_bound = _manifest_bound_to_adjusted_csv(
+            selected_artifact,
+            path_key="selected_adjusted_csv",
+            sha_key="selected_adjusted_csv_sha256",
+            adjusted_csv=(lab.get("outputs") or {}).get("adjusted_csv"),
+        )
+        selected_artifact_production_ready = (
+            selected_artifact.get("production_approved") is True
+            and selected_artifact.get("production_promotion_approved") is True
+            and selected_artifact.get("selection_status") == "PRODUCTION_APPROVED"
+            and selected_artifact_bound
+        )
         checks.extend(
             [
                 _check(
                     "adjusted_selected_artifact_bound",
-                    _same_path(
-                        selected_artifact.get("selected_adjusted_csv"),
-                        (lab.get("outputs") or {}).get("adjusted_csv"),
-                    ),
+                    selected_artifact_bound,
                     selected_artifact.get("selected_adjusted_csv"),
                 ),
                 _check(
-                    "adjusted_selected_artifact_not_production_approved",
-                    selected_artifact.get("production_promotion_approved") is False,
-                    selected_artifact.get("production_promotion_approved"),
+                    "adjusted_selected_artifact_production_ready",
+                    selected_artifact_production_ready,
+                    {
+                        "selection_status": selected_artifact.get("selection_status"),
+                        "production_approved": selected_artifact.get("production_approved"),
+                        "production_promotion_approved": selected_artifact.get("production_promotion_approved"),
+                    },
                 ),
             ]
         )
-    strict_diagnostics_pass = all(
-        check["status"] == "PASS"
-        for check in checks
-        if check["name"]
-        not in {
-            "lab_activation_lab_only",
-            "lab_not_production_approved",
-        }
+    else:
+        selected_artifact_production_ready = False
+    strict_diagnostics_pass = all(check["status"] == "PASS" for check in diagnostics_checks)
+    production_chain_pass = (
+        not missing_production_evidence
+        and production_manifest_approved
+        and export_manifest_production_ready
+        and selected_artifact_production_ready
+        and capstone_approved
     )
-    production_chain_pass = not missing_production_evidence and capstone_approved and lab.get("production_approved") is True
     approved = bool(strict_diagnostics_pass and production_chain_pass)
     status = (
         "PROMOTION_READY"
@@ -204,10 +275,40 @@ def _powerbi_critical_count(summary: dict[str, str]) -> int:
 def _same_path(left: Any, right: Any) -> bool:
     if left is None or right is None:
         return False
+    left_text = os.path.normcase(os.path.normpath(str(left)))
+    right_text = os.path.normcase(os.path.normpath(str(right)))
+    if left_text == right_text:
+        return True
     try:
         return Path(str(left)).resolve() == Path(str(right)).resolve()
     except (OSError, TypeError, ValueError):
         return False
+
+
+def _manifest_bound_to_adjusted_csv(
+    manifest: dict[str, Any],
+    *,
+    path_key: str,
+    sha_key: str,
+    adjusted_csv: Any,
+) -> bool:
+    if _same_path(manifest.get(path_key), adjusted_csv):
+        return True
+    expected_sha = manifest.get(sha_key)
+    if expected_sha is None or adjusted_csv is None:
+        return False
+    path = Path(str(adjusted_csv))
+    if not path.exists():
+        return False
+    return expected_sha == _sha256(path)
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def main(argv: list[str] | None = None) -> int:

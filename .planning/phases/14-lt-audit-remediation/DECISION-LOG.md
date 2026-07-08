@@ -2220,3 +2220,60 @@ Invariants not to break:
 - Local bundle JSONs are generated evidence and are not committed by default.
 - The baseline 2026-07-08 candidate remains the production-ready artifact.
 
+## D-20260708-18 - Harden T046 Promotion Readiness Against Lab Reclassification
+
+Decision: the EPEX T046 lab manifest must remain `activation_status=lab_only`
+and `production_approved=false`; promotion readiness can pass only through a
+separate adjusted production/export/selected/capstone chain that is explicitly
+production-approved and bound to the adjusted CSV by path or hash.
+
+Reason: read-only governance, data, and quant reviewers converged that T046 is
+strict-diagnostic PASS but still NO-GO production. The unsafe shortcut would be
+to reclassify local lab evidence, or create an `adjusted_production_manifest`
+post-hoc. The readiness checker now validates the contents of provided adjusted
+production/export/selected artifacts instead of treating their existence as
+sufficient evidence.
+
+Implementation:
+
+- Hardened `scripts/check_epex_lab_promotion_readiness.py`:
+  - keeps strict diagnostic checks separate from production-chain checks;
+  - requires `adjusted_production_manifest` schema
+    `epex_lab_adjusted_production_manifest.v1`;
+  - requires production/export/selected artifacts to be bound to the adjusted
+    CSV by path or SHA-256;
+  - requires `production_approved=true` and
+    `production_promotion_approved=true` for adjusted production/export
+    evidence;
+  - requires selected artifact
+    `selection_status="PRODUCTION_APPROVED"`;
+  - requires capstone `approved=true`;
+  - no longer requires the lab manifest itself to become
+    `production_approved=true`.
+- Extended `tests/test_check_epex_lab_promotion_readiness_script.py` with:
+  - rejection of an unapproved adjusted production manifest;
+  - acceptance of a fully separate approved production chain.
+
+Validation:
+
+- `python -m pytest tests/test_check_epex_lab_promotion_readiness_script.py tests/test_build_epex_lab_promotion_bundle_script.py -q -p no:cacheprovider`
+  returned `5 passed`.
+- `python -m pytest tests/test_build_epex_lab_promotion_bundle_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_execute_epex_shape_lab_sweep_script.py tests/test_plan_epex_shape_lab_sweep_script.py tests/test_epex_ab_shape_lab.py tests/test_run_epex_shape_lab_ab_script.py tests/test_compare_epex_shape_lab_ab_script.py tests/test_audit_epex_shape_lab_governance_script.py tests/test_audit_ch_product_normalization_script.py tests/test_build_powerbi_exports_script.py tests/test_compare_hpfc_ompex_benchmark_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  returned `89 passed, 1 skipped`.
+
+Rejected alternatives:
+
+- Set `lab.production_approved=true` to make the readiness checker pass.
+- Treat the local T046 bundle as production evidence.
+- Accept an adjusted production manifest without schema, approval flags, and
+  adjusted CSV binding.
+
+Invariants not to break:
+
+- T046 remains NO-GO production until the adjusted curve is emitted by a real
+  production path and promoted by a real capstone.
+- OMPEX remains an advisory benchmark only and must not enter model training,
+  selection, losses, or gates.
+- The baseline 2026-07-08 candidate remains the only current production-ready
+  artifact.
+
