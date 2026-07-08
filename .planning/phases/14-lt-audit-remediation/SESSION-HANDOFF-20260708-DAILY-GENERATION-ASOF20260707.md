@@ -525,6 +525,65 @@ Result: `31 passed, 1 skipped`.
 
 Decision log entry: `D-20260708-09`.
 
+## Adjusted A/B Promotion-Style Diagnostics
+
+Existing diagnostics were run on the adjusted A/B candidate as lab-only
+evidence.
+
+Important data note:
+
+- the committed/local `data/eex_forwards_history.parquet` currently observed
+  in this session had `max_date=2026-06-17`, too stale for `asof20260707`.
+- a local Yearly-only diagnostic forwards parquet was therefore built under the
+  trial folder:
+  `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_shape_lab_ab_trial/diagnostic_forwards_yearly_only.parquet`
+- source workbook:
+  `H:\Energy\GeCom\MARCHE & NEGOCE\Prix\EEX - ER\Price_Report_EEX_Yearly.xlsx`
+- coverage: CH `2024-07-01 -> 2026-07-07`
+- sha256:
+  `63a40871677a0a82356de762d5a9ceb944a6b431f145d23598b8fb91e6966ce3`
+
+Shape audit:
+
+- adjusted:
+  `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_shape_lab_ab_trial/adjusted_shape_audit/shape_audit_report.md`
+- baseline:
+  `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_shape_lab_ab_trial/baseline_shape_audit/shape_audit_report.md`
+- both report `score=7.00/10`; no adjusted-vs-baseline score degradation
+  under this local audit.
+
+Power BI strict diagnostic on adjusted:
+
+```powershell
+python scripts/build_powerbi_exports.py --csv output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_shape_lab_ab_trial/candidate_epex_shape_lab_adjusted.csv --forwards output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_shape_lab_ab_trial/diagnostic_forwards_yearly_only.parquet --spot data/epex_hourly.parquet --output-dir output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_shape_lab_ab_trial/adjusted_powerbi_strict
+```
+
+Result:
+
+- `powerbi_quality_gate_status=PASS`
+- `shape_score_10=9`
+- `hfc_vs_spot_score_10=9`
+- `max_eex_base_error_eur_mwh=0.000000`
+- `max_eex_peak_error_eur_mwh=0.000000`
+- `weighted_negative_hours=0`
+- `negative_gate_status=PASS`
+- `monthly_path_warning_flags=4`
+- all critical flag counts are `0`
+
+Product normalization diagnostic:
+
+- adjusted:
+  `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_shape_lab_ab_trial/adjusted_product_normalization/`
+- baseline:
+  `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_shape_lab_ab_trial/baseline_product_normalization/`
+- both baseline and adjusted have `critical_count=0`, `unsupported_count=0`,
+  `delivered_curve_drift_count=0`, `quote_conflict_count=6`, and
+  `status_counts={"PASS": 90, "QUOTE_CONFLICT": 6}`.
+- no source hierarchy policy was supplied, so `all_gates_pass=false`; this is
+  expected and correct for lab-only evidence.
+
+Decision log entry: `D-20260708-10`.
+
 Governance:
 
 - Decision log entry: `D-20260708-05`.

@@ -102,6 +102,18 @@ trial audit output is
 with `status=PASS`, `failed_count=0`, `production_approval=NO`, and
 `promotion_gate=false`.
 
+Adjusted A/B promotion-style diagnostics are local lab evidence only. A
+Yearly-only diagnostic forwards parquet was built under the trial folder
+because the observed `data/eex_forwards_history.parquet` was stale
+(`max_date=2026-06-17`). With that diagnostic source, adjusted Power BI strict
+passes in
+`output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_shape_lab_ab_trial/adjusted_powerbi_strict/`
+(`powerbi_quality_gate_status=PASS`, shape score `9`, BASE/PEAK errors `0`,
+critical flags `0`). Product normalization for adjusted and baseline both have
+`critical_count=0`, `unsupported_count=0`, `quote_conflict_count=6`, and no
+source hierarchy policy, so `all_gates_pass=false` as expected for lab-only
+evidence.
+
 Previous 2026-07-07 promotion-ready daily candidate:
 `output/phase14/20260707_asof20260706_lshape100_yoy150_amp150_2032/`.
 
