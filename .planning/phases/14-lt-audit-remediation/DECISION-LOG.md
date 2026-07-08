@@ -1288,9 +1288,9 @@ Implementation:
 Validation:
 
 - `python -m pytest tests/test_epex_ab_shape_lab.py -q -p no:cacheprovider`
-  returned `4 passed`.
+  returned `9 passed`.
 - `python -m pytest tests/test_epex_ab_shape_lab.py tests/test_seam_nullspace_smoothing.py tests/test_lt_quant_contract_matrix.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
-  returned `34 passed, 1 skipped`.
+  returned `39 passed, 1 skipped`.
 
 Rejected alternatives:
 
@@ -1308,4 +1308,73 @@ Invariants not to break:
 - The lab must remain LT-only and must not import `pfc_shaping.ct.*`.
 - If a research caller disables the monthly-constraint guard, the output is
   not valid promotion evidence under `monthly_level_authority="solver"`.
+
+## D-20260708-06 - Add Lab-Only EPEX A/B Runner
+
+Decision: add a reproducible local runner for EPEX shape-lab A/B experiments,
+without wiring the lab into production/export or changing promotion evidence.
+
+Reason: after adding the off-production EPEX shape lab, the next admissible
+step is a pre-registered A/B harness that applies the lab to a specific hourly
+candidate while preserving the candidate's own monthly BASE/PEAK means. This
+creates repeatable local evidence without using OMPEX as input, target, loss,
+or gate.
+
+Implementation:
+
+- Added `scripts/run_epex_shape_lab_ab.py`.
+- Added `tests/test_run_epex_shape_lab_ab_script.py`.
+- The runner derives monthly BASE and PEAK constraints from the input
+  candidate CSV itself, so the A/B delta cannot rewrite solver monthly levels.
+- It writes:
+  - `pre_registered_ab_plan.json`
+  - `ab_lab_manifest.json`
+  - `ab_lab_audit.csv`
+  - `constraint_residuals_before_after.csv`
+  - `epex_shape_templates.csv`
+  - `candidate_epex_shape_lab_adjusted.csv`
+- The manifest is explicitly `activation_status=lab_only`,
+  `production_approved=false`, and `ompex_used_in_selection=false`.
+
+2026-07-08 local trial:
+
+- candidate:
+  `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/ch_hfc_hourly_asof20260707_lshape100_yoy150_amp150_2032.csv`
+- spot input:
+  `data/epex_hourly.parquet`
+- output:
+  `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_shape_lab_ab_trial/`
+- valuation timestamp:
+  `2026-07-07T00:00:00Z`
+- intensities:
+  `weekend=0.5`, `low_tail=0.5`, `peak_subshape=0.5`,
+  `max_abs_delta=6.0`
+- runtime after projection optimization:
+  about `31` seconds on `57025` hourly rows
+- monthly constraints:
+  `base_monthly_constraints=78`, `peak_monthly_constraints=78`
+- max after-constraint absolute error:
+  `1.666666804567285e-07`
+- weighted negative hours:
+  `0`
+
+Validation:
+
+- `python -m pytest tests/test_run_epex_shape_lab_ab_script.py tests/test_epex_ab_shape_lab.py -q -p no:cacheprovider`
+  returned `10 passed`.
+
+Rejected alternatives:
+
+- Add a production/export flag before independent A/B governance is complete.
+- Compare or tune inside the runner against OMPEX.
+- Preserve only annual/quarter products instead of candidate monthly solver
+  levels.
+
+Invariants not to break:
+
+- Generated A/B output is local lab evidence, not a commit target and not
+  promotion evidence.
+- OMPEX can be run separately afterward as advisory comparison only.
+- A future production wiring step requires strict Power BI/product/source
+  hierarchy/capstone gates on the adjusted candidate.
 

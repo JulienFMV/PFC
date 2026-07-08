@@ -334,6 +334,59 @@ python -m pytest tests/test_epex_ab_shape_lab.py tests/test_seam_nullspace_smoot
 
 Result: `34 passed, 1 skipped`.
 
+Later validation after lab hardening:
+
+- `python -m pytest tests/test_epex_ab_shape_lab.py -q -p no:cacheprovider`
+  returned `9 passed`.
+- `python -m pytest tests/test_epex_ab_shape_lab.py tests/test_seam_nullspace_smoothing.py tests/test_lt_quant_contract_matrix.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  returned `39 passed, 1 skipped`.
+
+## EPEX A/B Lab Runner
+
+A local-only runner was added after the lab scaffold:
+
+- `scripts/run_epex_shape_lab_ab.py`
+- `tests/test_run_epex_shape_lab_ab_script.py`
+
+The runner derives monthly BASE/PEAK constraints from the input hourly
+candidate, fits EPEX residual templates with an explicit valuation timestamp,
+applies the lab delta, and writes a lab-only manifest plus before/after
+constraint residuals. It does not read OMPEX/HFC and is not wired into
+production/export.
+
+2026-07-08 local trial:
+
+```powershell
+python scripts/run_epex_shape_lab_ab.py --candidate-csv output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/ch_hfc_hourly_asof20260707_lshape100_yoy150_amp150_2032.csv --spot-parquet data/epex_hourly.parquet --output-dir output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_shape_lab_ab_trial --valuation-timestamp 2026-07-07T00:00:00Z --weekend-intensity 0.5 --low-tail-intensity 0.5 --peak-subshape-intensity 0.5 --max-abs-delta-eur-mwh 6.0
+```
+
+Result:
+
+- runtime after projection optimization: about `31` seconds
+- output:
+  `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_shape_lab_ab_trial/`
+- manifest: `activation_status=lab_only`, `production_approved=false`,
+  `ompex_used_in_selection=false`
+- source hashes:
+  - candidate CSV:
+    `12447bbaa9828c0ffed871e62c35f90b8c100fcfab8c80b00468ac846848d895`
+  - EPEX spot parquet:
+    `5718d243ef681476cabeabac7e866c0c7a63f686750283a2ff50a7d70c216a3d`
+- constraints preserved:
+  `base_monthly_constraints=78`, `peak_monthly_constraints=78`,
+  `max_after_abs_error_eur_mwh=1.666666804567285e-07`
+- `weighted_negative_hours=0`
+
+Validation:
+
+```powershell
+python -m pytest tests/test_run_epex_shape_lab_ab_script.py tests/test_epex_ab_shape_lab.py -q -p no:cacheprovider
+```
+
+Result: `10 passed`.
+
+Decision log entry: `D-20260708-06`.
+
 Governance:
 
 - Decision log entry: `D-20260708-05`.

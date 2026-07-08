@@ -67,6 +67,15 @@ explicitly forbids OMPEX/HFC as input, target, loss, or gate. It is not wired
 into production or export and does not change the promotion-ready 2026-07-08
 candidate.
 
+Local A/B runner: `scripts/run_epex_shape_lab_ab.py` applies the lab to an
+hourly candidate while deriving monthly BASE/PEAK constraints from that same
+candidate. The 2026-07-08 trial wrote local lab-only evidence to
+`output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_shape_lab_ab_trial/`
+with `production_approved=false`, `ompex_used_in_selection=false`, 78 BASE and
+78 PEAK monthly constraints, max after-constraint error
+`1.666666804567285e-07`, and weighted negative hours `0`. Treat this as local
+research evidence only, not promotion evidence.
+
 Previous 2026-07-07 promotion-ready daily candidate:
 `output/phase14/20260707_asof20260706_lshape100_yoy150_amp150_2032/`.
 

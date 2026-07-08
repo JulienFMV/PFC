@@ -327,7 +327,7 @@ def project_delta_to_base_peak_nullspace(
         peak_forward_prices or {},
         country=country,
     )
-    constraints = _independent_rows(system.matrix)
+    constraints = system.matrix
     projected = _project_to_zero_constraints(values, constraints)
     residual = float(np.max(np.abs(constraints @ projected))) if constraints.size else 0.0
     return projected, residual
