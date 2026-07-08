@@ -4446,3 +4446,96 @@ Invariants not to break:
 - The remaining blocker is governance/production packaging, not another
   no-OMPEX shape sweep.
 
+## D-20260708-48 - T070 Staging Reproducibility Requires Night/Ramp Parameters
+
+Decision: extend `scripts/stage_epex_lab_adjusted_lt_candidate.py` to accept
+and persist `night_intensity` and `ramp_intensity`, then stage T070 from the
+audited 2026-07-08 baseline CSV with exact source provenance. This produces a
+NO-GO adjusted production manifest with `contract_pass=true`, proving the
+frontier can be reproduced through the staging path.
+
+Reason: T070 depends on `night_intensity=0.6` and `ramp_intensity=0.0`. The
+sweep executor and A/B runner already supported these parameters, but the
+production-staging path did not. Without this, the adjusted production manifest
+path could not reproduce the selected frontier candidate and would be
+incomplete for any future production chain.
+
+Implementation:
+
+- `scripts/stage_epex_lab_adjusted_lt_candidate.py`
+  - added `night_intensity` and `ramp_intensity` function parameters;
+  - added CLI flags `--night-intensity` and `--ramp-intensity`;
+  - passes both values to `run_ab`;
+  - records both values in `epex_lab_config`.
+- `tests/test_stage_epex_lab_adjusted_lt_candidate_script.py`
+  - verifies API and CLI propagation into the staging manifest and lab
+    manifest.
+
+Validation:
+
+- `python -m pytest tests/test_stage_epex_lab_adjusted_lt_candidate_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+- result: `23 passed, 1 skipped`
+
+T070 source export manifest:
+
+- command:
+  `python scripts/build_epex_lab_source_export_manifest.py --candidate-csv output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/ch_hfc_hourly_asof20260707_lshape100_yoy150_amp150_2032.csv --baseline-monthly-manifest output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/fan_asof20260707_lshape100_yoy150_amp150_2032.monthly_curve_manifest.json --selected-config .planning/phases/14-lt-audit-remediation/monthly_curve_selected_config_asof20260707_lshape100_yoy150_amp150_2032.json --source-hierarchy-policy .planning/phases/14-lt-audit-remediation/quote_conflict_source_hierarchy_policy_asof20260707_lshape100_yoy150_amp150_2032.json --capstone output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/promotion_triad_real_prod_check/promotion_decision_real_prod_triad.json --output output/phase14/t049_core_balance/t070_diagnostics/source_export_manifest_baseline_20260708.json`
+- source CSV sha256:
+  `12447bbaa9828c0ffed871e62c35f90b8c100fcfab8c80b00468ac846848d895`
+- source export manifest sha256:
+  `d662548e2e7605ba2b59e024afd3040f2724fe84c5f3c7d3491fbaa0e1909f1d`
+
+T070 staging command:
+
+`python scripts/stage_epex_lab_adjusted_lt_candidate.py --candidate-csv output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/ch_hfc_hourly_asof20260707_lshape100_yoy150_amp150_2032.csv --source-export-manifest output/phase14/t049_core_balance/t070_diagnostics/source_export_manifest_baseline_20260708.json --output-dir output/phase14/t049_core_balance/t070_diagnostics/staged_adjusted_candidate --spot-parquet output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_spot_refresh_20260708/epex_hourly_ch_energy_charts_20260708.parquet --valuation-timestamp 2026-07-07T00:00:00Z --weekend-intensity 0.75 --low-tail-intensity 0.25 --peak-subshape-intensity 1.0 --night-intensity 0.6 --ramp-intensity 0.0 --max-abs-delta-eur-mwh 2.75 --lookback-years 5 --baseline-monthly-manifest output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/fan_asof20260707_lshape100_yoy150_amp150_2032.monthly_curve_manifest.json --product-summary output/phase14/t049_core_balance/t070_diagnostics/product_normalization_with_policy/summary.json --powerbi-summary output/phase14/t049_core_balance/t070_diagnostics/powerbi_strict/summary_metrics.csv --source-hierarchy-policy .planning/phases/14-lt-audit-remediation/quote_conflict_source_hierarchy_policy_t070_asof20260707_t049_core_balance.json --independent-summary output/phase14/t049_core_balance/t070_w075_l025_p01_n06_r00_d275/independent_ab_comparison/ab_comparison_summary.json --governance-audit output/phase14/t049_core_balance/t070_w075_l025_p01_n06_r00_d275/governance_audit/epex_shape_lab_governance_audit.json`
+
+T070 staging result:
+
+- staged adjusted CSV sha256:
+  `f3d1f9d749823c9babd1104261670dcd115a63f797e6aed2e38ef480cbdf40cb`
+- source provenance manifest:
+  `output/phase14/t049_core_balance/t070_diagnostics/staged_adjusted_candidate/source_provenance_manifest.json`
+- source provenance manifest sha256:
+  `dbc3bb810dffba948e6eadfc237890a6ebea3887e57a85e4236fda5e60473d51`
+- adjusted production manifest NO-GO:
+  `output/phase14/t049_core_balance/t070_diagnostics/staged_adjusted_candidate/adjusted_production_manifest_no_go.json`
+- adjusted production manifest NO-GO sha256:
+  `0e09ea55a130bce73de8bf9ba6a163cbc124f656fdb7b00375c8b2ac4d249048`
+- `source_promotion_eligible=true`
+- `production_contract_blockers=[]`
+- `missing_production_contract_inputs=[]`
+- `adjusted_production_contract_pass=true`
+
+Readiness with NO-GO production manifest:
+
+- output:
+  `output/phase14/t049_core_balance/t070_diagnostics/promotion_readiness/decision_with_no_go_production_manifest.json`
+- exit code `1`, expected for NO-GO production
+- `strict_diagnostics_pass=true`
+- `production_chain_pass=false`
+- `missing_production_evidence=[]`
+- key PASS checks:
+  - adjusted production manifest bound;
+  - adjusted production manifest contract pass;
+  - adjusted production manifest source provenance pass;
+  - source provenance source/export/staged/lab hashes bound.
+- key FAIL checks:
+  - adjusted production manifest approved;
+  - adjusted production manifest run identity valid;
+  - local adjusted export/selected/capstone are not production-ready or
+    production-chain-bound.
+
+Rejected alternatives:
+
+- Treat T070 as unstaged because stage lacked night/ramp arguments.
+- Manually edit a staged manifest to inject night/ramp values.
+- Promote from local diagnostic bundle without a valid production run identity.
+
+Invariants not to break:
+
+- Staging remains lab-only and non-promotional.
+- CLI-built adjusted production manifests remain NO-GO by default.
+- Any real approval must come from a production path that supplies valid run
+  identity, 40-hex git commit, source provenance, and then uses the strict
+  adjusted production-chain builder.
+

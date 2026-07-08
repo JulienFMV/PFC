@@ -38,6 +38,8 @@ def stage_candidate(
     weekend_intensity: float = 0.5,
     low_tail_intensity: float = 0.25,
     peak_subshape_intensity: float = 0.75,
+    night_intensity: float = 0.0,
+    ramp_intensity: float = 0.0,
     max_abs_delta_eur_mwh: float = 3.0,
     negative_price_floor: float = -10.0,
     max_weighted_negative_hours: int = 0,
@@ -80,6 +82,8 @@ def stage_candidate(
         weekend_intensity=weekend_intensity,
         low_tail_intensity=low_tail_intensity,
         peak_subshape_intensity=peak_subshape_intensity,
+        night_intensity=night_intensity,
+        ramp_intensity=ramp_intensity,
         max_abs_delta_eur_mwh=max_abs_delta_eur_mwh,
         negative_price_floor=negative_price_floor,
         max_weighted_negative_hours=max_weighted_negative_hours,
@@ -137,6 +141,8 @@ def stage_candidate(
             "weekend_intensity": float(weekend_intensity),
             "low_tail_intensity": float(low_tail_intensity),
             "peak_subshape_intensity": float(peak_subshape_intensity),
+            "night_intensity": float(night_intensity),
+            "ramp_intensity": float(ramp_intensity),
             "max_abs_delta_eur_mwh": float(max_abs_delta_eur_mwh),
             "negative_price_floor": float(negative_price_floor),
             "max_weighted_negative_hours": int(max_weighted_negative_hours),
@@ -282,6 +288,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--weekend-intensity", type=float, default=0.5)
     parser.add_argument("--low-tail-intensity", type=float, default=0.25)
     parser.add_argument("--peak-subshape-intensity", type=float, default=0.75)
+    parser.add_argument("--night-intensity", type=float, default=0.0)
+    parser.add_argument("--ramp-intensity", type=float, default=0.0)
     parser.add_argument("--max-abs-delta-eur-mwh", type=float, default=3.0)
     parser.add_argument("--negative-price-floor", type=float, default=-10.0)
     parser.add_argument("--max-weighted-negative-hours", type=int, default=0)
@@ -305,6 +313,8 @@ def main(argv: list[str] | None = None) -> int:
         weekend_intensity=args.weekend_intensity,
         low_tail_intensity=args.low_tail_intensity,
         peak_subshape_intensity=args.peak_subshape_intensity,
+        night_intensity=args.night_intensity,
+        ramp_intensity=args.ramp_intensity,
         max_abs_delta_eur_mwh=args.max_abs_delta_eur_mwh,
         negative_price_floor=args.negative_price_floor,
         max_weighted_negative_hours=args.max_weighted_negative_hours,

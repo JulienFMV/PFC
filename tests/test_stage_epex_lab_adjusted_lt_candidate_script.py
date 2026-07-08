@@ -126,6 +126,8 @@ def test_stage_epex_lab_adjusted_candidate_from_fan_is_no_go_and_hash_bound(tmp_
         weekend_intensity=0.5,
         low_tail_intensity=0.25,
         peak_subshape_intensity=0.75,
+        night_intensity=0.4,
+        ramp_intensity=0.2,
         max_abs_delta_eur_mwh=3.0,
     )
 
@@ -145,6 +147,8 @@ def test_stage_epex_lab_adjusted_candidate_from_fan_is_no_go_and_hash_bound(tmp_
         "source_kind_fan_parquet_requires_audited_hourly_export"
     ]
     assert manifest["source_provenance_manifest_sha256"]
+    assert manifest["epex_lab_config"]["night_intensity"] == 0.4
+    assert manifest["epex_lab_config"]["ramp_intensity"] == 0.2
 
     stage_dir = tmp_path / "stage"
     assert (stage_dir / "lt_hourly_candidate.csv").exists()
@@ -157,6 +161,9 @@ def test_stage_epex_lab_adjusted_candidate_from_fan_is_no_go_and_hash_bound(tmp_
     assert source["source_promotion_eligible"] is False
     saved = json.loads((stage_dir / "staged_lt_epex_lab_candidate_manifest.json").read_text(encoding="utf-8"))
     assert saved == manifest
+    lab_manifest = json.loads((stage_dir / "epex_lab" / "ab_lab_manifest.json").read_text(encoding="utf-8"))
+    assert lab_manifest["config"]["night_intensity"] == 0.4
+    assert lab_manifest["config"]["ramp_intensity"] == 0.2
 
 
 def test_stage_epex_lab_adjusted_candidate_requires_single_source(tmp_path) -> None:
@@ -189,6 +196,10 @@ def test_stage_epex_lab_adjusted_candidate_cli_runs_from_fan(tmp_path) -> None:
             str(spot),
             "--valuation-timestamp",
             "2026-01-01T00:00:00Z",
+            "--night-intensity",
+            "0.3",
+            "--ramp-intensity",
+            "0.1",
             "--output-dir",
             str(tmp_path / "stage"),
         ]
@@ -196,6 +207,9 @@ def test_stage_epex_lab_adjusted_candidate_cli_runs_from_fan(tmp_path) -> None:
 
     assert rc == 0
     assert (tmp_path / "stage" / "staged_lt_epex_lab_candidate_manifest.json").exists()
+    manifest = json.loads((tmp_path / "stage" / "staged_lt_epex_lab_candidate_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["epex_lab_config"]["night_intensity"] == 0.3
+    assert manifest["epex_lab_config"]["ramp_intensity"] == 0.1
 
 
 def test_stage_epex_lab_adjusted_candidate_blocks_contract_from_raw_fan_even_when_evidence_is_supplied(

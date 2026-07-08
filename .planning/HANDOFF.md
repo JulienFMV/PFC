@@ -275,6 +275,29 @@ production-ready checks because they are not tied to a real adjusted production
 manifest/run identity. Remaining blocker: governance/production packaging, not
 another no-OMPEX shape sweep. Decision log entry: `D-20260708-47`.
 
+The production-staging path was then fixed for T070. New code in
+`scripts/stage_epex_lab_adjusted_lt_candidate.py` accepts `night_intensity` and
+`ramp_intensity`, passes them to the EPEX lab runner, and records them in
+`epex_lab_config`; tests in
+`tests/test_stage_epex_lab_adjusted_lt_candidate_script.py` cover API and CLI
+propagation. Validation: `23 passed, 1 skipped` for the stageer plus LT/CT
+import guard. T070 staging now reproduces the frontier CSV exactly:
+`output/phase14/t049_core_balance/t070_diagnostics/staged_adjusted_candidate/`
+has adjusted CSV sha256
+`f3d1f9d749823c9babd1104261670dcd115a63f797e6aed2e38ef480cbdf40cb`, source
+provenance manifest sha256
+`dbc3bb810dffba948e6eadfc237890a6ebea3887e57a85e4236fda5e60473d51`, and
+adjusted production manifest NO-GO sha256
+`0e09ea55a130bce73de8bf9ba6a163cbc124f656fdb7b00375c8b2ac4d249048`.
+Readiness with that NO-GO production manifest now has
+`missing_production_evidence=[]`, source provenance PASS, and
+`adjusted_production_contract_pass=true`, but remains
+`production_chain_pass=false` because the manifest is not approved, run identity
+is intentionally invalid/NO-GO, and local export/selected/capstone are not
+production-chain-bound. Remaining blocker: create a real approved adjusted
+production manifest from a production path, then use the strict adjusted
+production-chain builder. Decision log entry: `D-20260708-48`.
+
 Next-sweep policy hardening is committed in the local work after expert audit
 feedback. New EPEX sweep plans now include `selection_thresholds`,
 `scoring_policy`, and optional `max_abs_delta_grid`; the executor records EPEX

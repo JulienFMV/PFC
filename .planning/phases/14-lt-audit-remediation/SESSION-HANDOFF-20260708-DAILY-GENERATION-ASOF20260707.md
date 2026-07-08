@@ -2435,6 +2435,72 @@ new shape sweep.
 
 Decision log entry: `D-20260708-47`.
 
+The production-staging path was then fixed to reproduce T070. Before this
+change, `scripts/stage_epex_lab_adjusted_lt_candidate.py` could not pass
+`night_intensity` / `ramp_intensity` into the EPEX lab, even though T070 needs
+`night_intensity=0.6` and `ramp_intensity=0.0`.
+
+Code change:
+
+- `scripts/stage_epex_lab_adjusted_lt_candidate.py`
+  - added API parameters `night_intensity` and `ramp_intensity`;
+  - added CLI flags `--night-intensity` and `--ramp-intensity`;
+  - passes both into `run_ab`;
+  - records both in `epex_lab_config`.
+- `tests/test_stage_epex_lab_adjusted_lt_candidate_script.py`
+  verifies API and CLI propagation.
+
+Validation:
+
+`python -m pytest tests/test_stage_epex_lab_adjusted_lt_candidate_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+
+Result: `23 passed, 1 skipped`.
+
+Source export manifest for the audited baseline CSV:
+
+- output:
+  `output/phase14/t049_core_balance/t070_diagnostics/source_export_manifest_baseline_20260708.json`
+- source CSV sha256:
+  `12447bbaa9828c0ffed871e62c35f90b8c100fcfab8c80b00468ac846848d895`
+- manifest sha256:
+  `d662548e2e7605ba2b59e024afd3040f2724fe84c5f3c7d3491fbaa0e1909f1d`
+
+T070 staged adjusted candidate:
+
+- output root:
+  `output/phase14/t049_core_balance/t070_diagnostics/staged_adjusted_candidate/`
+- staged adjusted CSV sha256:
+  `f3d1f9d749823c9babd1104261670dcd115a63f797e6aed2e38ef480cbdf40cb`
+- source provenance manifest:
+  `output/phase14/t049_core_balance/t070_diagnostics/staged_adjusted_candidate/source_provenance_manifest.json`
+- source provenance manifest sha256:
+  `dbc3bb810dffba948e6eadfc237890a6ebea3887e57a85e4236fda5e60473d51`
+- adjusted production manifest NO-GO:
+  `output/phase14/t049_core_balance/t070_diagnostics/staged_adjusted_candidate/adjusted_production_manifest_no_go.json`
+- adjusted production manifest NO-GO sha256:
+  `0e09ea55a130bce73de8bf9ba6a163cbc124f656fdb7b00375c8b2ac4d249048`
+- `source_promotion_eligible=true`
+- `production_contract_blockers=[]`
+- `missing_production_contract_inputs=[]`
+- `adjusted_production_contract_pass=true`
+
+Readiness with the NO-GO production manifest:
+
+- output:
+  `output/phase14/t049_core_balance/t070_diagnostics/promotion_readiness/decision_with_no_go_production_manifest.json`
+- exit code `1`, expected for NO-GO production
+- `strict_diagnostics_pass=true`
+- `production_chain_pass=false`
+- `missing_production_evidence=[]`
+- source provenance and adjusted production manifest contract checks pass.
+- remaining FAIL checks:
+  - adjusted production manifest approval;
+  - adjusted production manifest run identity;
+  - local adjusted export/selected/capstone are not production-ready or
+    production-chain-bound.
+
+Decision log entry: `D-20260708-48`.
+
 Generated or refreshed local evidence, not default commit targets:
 
 - `data/eex_forwards_history.parquet`
