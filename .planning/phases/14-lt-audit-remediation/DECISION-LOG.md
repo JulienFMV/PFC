@@ -4391,3 +4391,58 @@ Invariants not to break:
 - T070 remains NO-GO production until adjusted production-chain evidence
   exists and passes.
 
+## D-20260708-47 - T070 Local Bundle Narrows Blocker To Adjusted Production Manifest
+
+Decision: package T070 strict diagnostic evidence into a local non-production
+bundle, then keep production readiness NO-GO. The local bundle is useful review
+evidence, not a production chain substitute.
+
+Reason: D45 proved T070 strict delivered-product and Power BI diagnostics pass,
+but the first readiness check had four missing production-chain artifacts. The
+existing bundle builder can package local adjusted export, selected artifact,
+and local capstone evidence while preserving explicit non-production flags.
+Rerunning readiness with that local bundle narrows missing evidence to the real
+production blocker: `adjusted_production_manifest`.
+
+Local bundle command:
+
+`python scripts/build_epex_lab_promotion_bundle.py --lab-manifest output/phase14/t049_core_balance/t070_w075_l025_p01_n06_r00_d275/ab_lab_manifest.json --baseline-monthly-manifest output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/fan_asof20260707_lshape100_yoy150_amp150_2032.monthly_curve_manifest.json --product-summary output/phase14/t049_core_balance/t070_diagnostics/product_normalization_with_policy/summary.json --powerbi-summary output/phase14/t049_core_balance/t070_diagnostics/powerbi_strict/summary_metrics.csv --source-hierarchy-policy .planning/phases/14-lt-audit-remediation/quote_conflict_source_hierarchy_policy_t070_asof20260707_t049_core_balance.json --independent-summary output/phase14/t049_core_balance/t070_w075_l025_p01_n06_r00_d275/independent_ab_comparison/ab_comparison_summary.json --governance-audit output/phase14/t049_core_balance/t070_w075_l025_p01_n06_r00_d275/governance_audit/epex_shape_lab_governance_audit.json --output-dir output/phase14/t049_core_balance/t070_diagnostics/local_promotion_bundle`
+
+Local bundle outputs:
+
+- `output/phase14/t049_core_balance/t070_diagnostics/local_promotion_bundle/adjusted_export_manifest.json`
+- `output/phase14/t049_core_balance/t070_diagnostics/local_promotion_bundle/adjusted_selected_artifact.json`
+- `output/phase14/t049_core_balance/t070_diagnostics/local_promotion_bundle/adjusted_local_capstone_no_go.json`
+
+Readiness command with local bundle:
+
+`python scripts/check_epex_lab_promotion_readiness.py --lab-manifest output/phase14/t049_core_balance/t070_w075_l025_p01_n06_r00_d275/ab_lab_manifest.json --governance-audit output/phase14/t049_core_balance/t070_w075_l025_p01_n06_r00_d275/governance_audit/epex_shape_lab_governance_audit.json --independent-summary output/phase14/t049_core_balance/t070_w075_l025_p01_n06_r00_d275/independent_ab_comparison/ab_comparison_summary.json --product-summary output/phase14/t049_core_balance/t070_diagnostics/product_normalization_with_policy/summary.json --powerbi-summary output/phase14/t049_core_balance/t070_diagnostics/powerbi_strict/summary_metrics.csv --adjusted-export-manifest output/phase14/t049_core_balance/t070_diagnostics/local_promotion_bundle/adjusted_export_manifest.json --adjusted-selected-config output/phase14/t049_core_balance/t070_diagnostics/local_promotion_bundle/adjusted_selected_artifact.json --adjusted-capstone output/phase14/t049_core_balance/t070_diagnostics/local_promotion_bundle/adjusted_local_capstone_no_go.json --output output/phase14/t049_core_balance/t070_diagnostics/promotion_readiness/decision_with_local_bundle.json`
+
+Readiness result:
+
+- exit code `1`, expected for NO-GO production
+- `strict_diagnostics_pass=true`
+- `production_chain_pass=false`
+- `approved=false`
+- `status=STRICT_DIAGNOSTICS_PASS_PRODUCTION_CHAIN_MISSING`
+- `missing_production_evidence=["adjusted_production_manifest"]`
+- local adjusted export/selected/capstone artifacts are present and hash-bound,
+  but their production-ready checks correctly fail because they are explicitly
+  local diagnostic artifacts.
+
+Rejected alternatives:
+
+- Treat the local bundle as a production chain.
+- Flip production approval flags without a valid production run identity,
+  production entrypoint, 40-hex git commit, and source provenance manifest.
+- Continue sweeping parameters before the production-chain decision is made.
+
+Invariants not to break:
+
+- Local bundle artifacts must remain `production_approved=false`.
+- T070 remains NO-GO production until a real adjusted production manifest
+  exists and the strict adjusted production-chain builder can bind export,
+  selected artifact, and capstone to it.
+- The remaining blocker is governance/production packaging, not another
+  no-OMPEX shape sweep.
+

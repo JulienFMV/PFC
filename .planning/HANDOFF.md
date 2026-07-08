@@ -260,6 +260,21 @@ error `+0.937722`. This is favorable advisory evidence on average errors, but
 it is not a model input, ranking signal, gate, or promotion authority. Decision
 log entry: `D-20260708-46`.
 
+T070 local non-production bundle was built under
+`output/phase14/t049_core_balance/t070_diagnostics/local_promotion_bundle/`.
+It contains `adjusted_export_manifest.json`, `adjusted_selected_artifact.json`,
+and `adjusted_local_capstone_no_go.json`, all local diagnostic evidence only.
+Readiness with this bundle wrote
+`output/phase14/t049_core_balance/t070_diagnostics/promotion_readiness/decision_with_local_bundle.json`;
+exit code `1` is expected. Result:
+`strict_diagnostics_pass=true`, `production_chain_pass=false`,
+`approved=false`, `status=STRICT_DIAGNOSTICS_PASS_PRODUCTION_CHAIN_MISSING`,
+and `missing_production_evidence=["adjusted_production_manifest"]`. The local
+export/selected/capstone artifacts are hash-bound but correctly fail
+production-ready checks because they are not tied to a real adjusted production
+manifest/run identity. Remaining blocker: governance/production packaging, not
+another no-OMPEX shape sweep. Decision log entry: `D-20260708-47`.
+
 Next-sweep policy hardening is committed in the local work after expert audit
 feedback. New EPEX sweep plans now include `selection_thresholds`,
 `scoring_policy`, and optional `max_abs_delta_grid`; the executor records EPEX

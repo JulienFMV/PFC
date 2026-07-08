@@ -2402,6 +2402,39 @@ T070 minus baseline advisory deltas:
 
 Decision log entry: `D-20260708-46`.
 
+A local non-production T070 bundle was then built to package the strict
+diagnostic evidence without pretending to create production approval.
+
+Bundle command:
+
+`python scripts/build_epex_lab_promotion_bundle.py --lab-manifest output/phase14/t049_core_balance/t070_w075_l025_p01_n06_r00_d275/ab_lab_manifest.json --baseline-monthly-manifest output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/fan_asof20260707_lshape100_yoy150_amp150_2032.monthly_curve_manifest.json --product-summary output/phase14/t049_core_balance/t070_diagnostics/product_normalization_with_policy/summary.json --powerbi-summary output/phase14/t049_core_balance/t070_diagnostics/powerbi_strict/summary_metrics.csv --source-hierarchy-policy .planning/phases/14-lt-audit-remediation/quote_conflict_source_hierarchy_policy_t070_asof20260707_t049_core_balance.json --independent-summary output/phase14/t049_core_balance/t070_w075_l025_p01_n06_r00_d275/independent_ab_comparison/ab_comparison_summary.json --governance-audit output/phase14/t049_core_balance/t070_w075_l025_p01_n06_r00_d275/governance_audit/epex_shape_lab_governance_audit.json --output-dir output/phase14/t049_core_balance/t070_diagnostics/local_promotion_bundle`
+
+Bundle outputs:
+
+- `output/phase14/t049_core_balance/t070_diagnostics/local_promotion_bundle/adjusted_export_manifest.json`
+- `output/phase14/t049_core_balance/t070_diagnostics/local_promotion_bundle/adjusted_selected_artifact.json`
+- `output/phase14/t049_core_balance/t070_diagnostics/local_promotion_bundle/adjusted_local_capstone_no_go.json`
+
+Readiness was rerun with the local bundle:
+
+`python scripts/check_epex_lab_promotion_readiness.py --lab-manifest output/phase14/t049_core_balance/t070_w075_l025_p01_n06_r00_d275/ab_lab_manifest.json --governance-audit output/phase14/t049_core_balance/t070_w075_l025_p01_n06_r00_d275/governance_audit/epex_shape_lab_governance_audit.json --independent-summary output/phase14/t049_core_balance/t070_w075_l025_p01_n06_r00_d275/independent_ab_comparison/ab_comparison_summary.json --product-summary output/phase14/t049_core_balance/t070_diagnostics/product_normalization_with_policy/summary.json --powerbi-summary output/phase14/t049_core_balance/t070_diagnostics/powerbi_strict/summary_metrics.csv --adjusted-export-manifest output/phase14/t049_core_balance/t070_diagnostics/local_promotion_bundle/adjusted_export_manifest.json --adjusted-selected-config output/phase14/t049_core_balance/t070_diagnostics/local_promotion_bundle/adjusted_selected_artifact.json --adjusted-capstone output/phase14/t049_core_balance/t070_diagnostics/local_promotion_bundle/adjusted_local_capstone_no_go.json --output output/phase14/t049_core_balance/t070_diagnostics/promotion_readiness/decision_with_local_bundle.json`
+
+Result:
+
+- exit code `1`, expected for NO-GO production
+- `strict_diagnostics_pass=true`
+- `production_chain_pass=false`
+- `approved=false`
+- `status=STRICT_DIAGNOSTICS_PASS_PRODUCTION_CHAIN_MISSING`
+- `missing_production_evidence=["adjusted_production_manifest"]`
+
+The local export/selected/capstone artifacts are present and hash-bound but
+correctly fail production-ready checks because they are local diagnostic
+artifacts. The remaining blocker is now governance/production packaging, not a
+new shape sweep.
+
+Decision log entry: `D-20260708-47`.
+
 Generated or refreshed local evidence, not default commit targets:
 
 - `data/eex_forwards_history.parquet`
