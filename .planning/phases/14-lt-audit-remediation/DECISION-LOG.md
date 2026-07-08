@@ -4265,3 +4265,83 @@ Invariants not to break:
 - OMPEX may be run only as an advisory post-check after no-OMPEX candidate
   selection; it must not influence ranking, thresholds, or promotion.
 
+## D-20260708-45 - T070 Strict Diagnostics Pass, Production Chain Still Missing
+
+Decision: record `t070_w075_l025_p01_n06_r00_d275` as the current strict
+diagnostic frontier, not a production candidate. It passes delivered-product
+normalization with an exact source-hierarchy policy and passes Power BI strict
+export, but production readiness remains NO-GO until the adjusted production
+chain exists.
+
+Reason: after T049/T050 identified `t070` as the no-OMPEX frontier, strict
+delivered-curve checks were run in isolated `output/phase14` paths. These
+checks prove the adjusted CSV is technically coherent at the delivered-product
+and dashboard boundary, but the promotion checker correctly rejects it because
+the adjusted production manifest, adjusted export manifest, adjusted selected
+artifact, and adjusted capstone do not exist.
+
+Source hierarchy policy:
+
+- `.planning/phases/14-lt-audit-remediation/quote_conflict_source_hierarchy_policy_t070_asof20260707_t049_core_balance.json`
+- policy sha256: `6c2f1b1f8bcf3bd732858a7e0b593c6e678d1e2758b5fc3c11f1bd5a4bbb462e`
+- bound adjusted CSV sha256:
+  `f3d1f9d749823c9babd1104261670dcd115a63f797e6aed2e38ef480cbdf40cb`
+- bound forwards sha256:
+  `a6244638c2234781853284ce2ad58d55d01265568cca6c85d4461f21446e8d76`
+- quote conflict identity hash:
+  `a28d7f15151e730dca2099335e1d7e75dcf52e3a77edb6871352f9942c882846`
+
+Delivered-product strict audit:
+
+- command:
+  `python scripts/audit_ch_product_normalization.py --csv output/phase14/t049_core_balance/t070_w075_l025_p01_n06_r00_d275/candidate_epex_shape_lab_adjusted.csv --forwards output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_sweep_v2/diagnostic_forwards_history_rebuilt_20260708.parquet --required-forward-date 2026-07-07 --source-hierarchy-policy .planning/phases/14-lt-audit-remediation/quote_conflict_source_hierarchy_policy_t070_asof20260707_t049_core_balance.json --output-csv output/phase14/t049_core_balance/t070_diagnostics/product_normalization_with_policy/gates.csv --summary-json output/phase14/t049_core_balance/t070_diagnostics/product_normalization_with_policy/summary.json`
+- result:
+  - `all_gates_pass=true`
+  - `critical_count=0`
+  - `unsupported_count=0`
+  - `quote_conflict_count=6`
+  - `accepted_quote_conflict_count=6`
+  - `blocking_quote_conflict_count=0`
+
+Power BI strict:
+
+- command:
+  `python scripts/build_powerbi_exports.py --csv output/phase14/t049_core_balance/t070_w075_l025_p01_n06_r00_d275/candidate_epex_shape_lab_adjusted.csv --forwards output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_sweep_v2/diagnostic_forwards_history_rebuilt_20260708.parquet --spot output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_spot_refresh_20260708/epex_hourly_ch_energy_charts_20260708.parquet --output-dir output/phase14/t049_core_balance/t070_diagnostics/powerbi_strict`
+- result:
+  - `powerbi_quality_gate_status=PASS`
+  - `shape_score_10=9`
+  - `hfc_vs_spot_score_10=9`
+  - `max_eex_base_error_eur_mwh=0.000000`
+  - `max_eex_peak_error_eur_mwh=0.000000`
+  - `weighted_negative_hours=0.000000`
+  - all critical flag counts `0`
+
+Promotion readiness:
+
+- output:
+  `output/phase14/t049_core_balance/t070_diagnostics/promotion_readiness/decision.json`
+- result:
+  - `approved=false`
+  - `strict_diagnostics_pass=true`
+  - `production_chain_pass=false`
+  - `status=STRICT_DIAGNOSTICS_PASS_PRODUCTION_CHAIN_MISSING`
+  - missing evidence:
+    - `adjusted_production_manifest`
+    - `adjusted_export_manifest`
+    - `adjusted_selected_config`
+    - `adjusted_capstone`
+
+Rejected alternatives:
+
+- Treat strict diagnostics as sufficient promotion evidence.
+- Reuse the T046 source-hierarchy policy for a different adjusted CSV hash.
+- Reuse the baseline selected config or capstone as authority for the adjusted
+  T070 hourly artifact.
+
+Invariants not to break:
+
+- The T070 source-hierarchy policy accepts only the exact bound CSV/forwards
+  hashes and quote conflict identity.
+- Strict diagnostics do not override the missing adjusted production chain.
+- OMPEX remains advisory-only and was not used in these diagnostics.
+

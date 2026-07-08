@@ -226,6 +226,27 @@ sweep: delivered-product normalization, strict Power BI export in isolated
 output, source-hierarchy binding, and optional OMPEX advisory only after the
 no-OMPEX package is frozen. Decision log entry: `D-20260708-44`.
 
+Those strict `t070` frontier diagnostics now pass, while production remains
+NO-GO. New hash-bound source hierarchy policy:
+`.planning/phases/14-lt-audit-remediation/quote_conflict_source_hierarchy_policy_t070_asof20260707_t049_core_balance.json`
+with policy sha256 `6c2f1b1f8bcf3bd732858a7e0b593c6e678d1e2758b5fc3c11f1bd5a4bbb462e`.
+Product normalization strict output:
+`output/phase14/t049_core_balance/t070_diagnostics/product_normalization_with_policy/summary.json`;
+result `all_gates_pass=true`, `critical_count=0`, `unsupported_count=0`,
+`accepted_quote_conflict_count=6`, `blocking_quote_conflict_count=0`. Power BI
+strict output:
+`output/phase14/t049_core_balance/t070_diagnostics/powerbi_strict/summary_metrics.csv`;
+result `powerbi_quality_gate_status=PASS`, shape score `9`, BASE/PEAK residuals
+`0`, weighted negative hours `0`, all critical flags `0`. Promotion readiness
+output:
+`output/phase14/t049_core_balance/t070_diagnostics/promotion_readiness/decision.json`;
+result `approved=false`, `strict_diagnostics_pass=true`,
+`production_chain_pass=false`,
+`status=STRICT_DIAGNOSTICS_PASS_PRODUCTION_CHAIN_MISSING`. Missing adjusted
+production evidence remains `adjusted_production_manifest`,
+`adjusted_export_manifest`, `adjusted_selected_config`, and
+`adjusted_capstone`. Decision log entry: `D-20260708-45`.
+
 Next-sweep policy hardening is committed in the local work after expert audit
 feedback. New EPEX sweep plans now include `selection_thresholds`,
 `scoring_policy`, and optional `max_abs_delta_grid`; the executor records EPEX

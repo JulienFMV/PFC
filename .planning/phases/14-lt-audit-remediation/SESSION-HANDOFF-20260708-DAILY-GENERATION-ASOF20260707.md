@@ -2323,6 +2323,59 @@ delivered-product normalization, Power BI strict export into an isolated
 `output/phase14/...` directory, source-hierarchy policy binding, and optional
 OMPEX advisory post-check only after the no-OMPEX diagnostic package is frozen.
 
+Those strict `t070` diagnostics were then run.
+
+Source hierarchy policy:
+
+- `.planning/phases/14-lt-audit-remediation/quote_conflict_source_hierarchy_policy_t070_asof20260707_t049_core_balance.json`
+- policy sha256:
+  `6c2f1b1f8bcf3bd732858a7e0b593c6e678d1e2758b5fc3c11f1bd5a4bbb462e`
+- adjusted CSV sha256:
+  `f3d1f9d749823c9babd1104261670dcd115a63f797e6aed2e38ef480cbdf40cb`
+- forwards sha256:
+  `a6244638c2234781853284ce2ad58d55d01265568cca6c85d4461f21446e8d76`
+- quote conflict identity hash:
+  `a28d7f15151e730dca2099335e1d7e75dcf52e3a77edb6871352f9942c882846`
+
+Delivered-product strict audit:
+
+- command:
+  `python scripts/audit_ch_product_normalization.py --csv output/phase14/t049_core_balance/t070_w075_l025_p01_n06_r00_d275/candidate_epex_shape_lab_adjusted.csv --forwards output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_sweep_v2/diagnostic_forwards_history_rebuilt_20260708.parquet --required-forward-date 2026-07-07 --source-hierarchy-policy .planning/phases/14-lt-audit-remediation/quote_conflict_source_hierarchy_policy_t070_asof20260707_t049_core_balance.json --output-csv output/phase14/t049_core_balance/t070_diagnostics/product_normalization_with_policy/gates.csv --summary-json output/phase14/t049_core_balance/t070_diagnostics/product_normalization_with_policy/summary.json`
+- result:
+  - `all_gates_pass=true`
+  - `critical_count=0`
+  - `unsupported_count=0`
+  - `quote_conflict_count=6`
+  - `accepted_quote_conflict_count=6`
+  - `blocking_quote_conflict_count=0`
+
+Power BI strict:
+
+- command:
+  `python scripts/build_powerbi_exports.py --csv output/phase14/t049_core_balance/t070_w075_l025_p01_n06_r00_d275/candidate_epex_shape_lab_adjusted.csv --forwards output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_sweep_v2/diagnostic_forwards_history_rebuilt_20260708.parquet --spot output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_spot_refresh_20260708/epex_hourly_ch_energy_charts_20260708.parquet --output-dir output/phase14/t049_core_balance/t070_diagnostics/powerbi_strict`
+- result:
+  - `powerbi_quality_gate_status=PASS`
+  - `shape_score_10=9`
+  - `hfc_vs_spot_score_10=9`
+  - `max_eex_base_error_eur_mwh=0.000000`
+  - `max_eex_peak_error_eur_mwh=0.000000`
+  - `weighted_negative_hours=0.000000`
+  - all critical flags `0`
+
+Promotion readiness:
+
+- command:
+  `python scripts/check_epex_lab_promotion_readiness.py --lab-manifest output/phase14/t049_core_balance/t070_w075_l025_p01_n06_r00_d275/ab_lab_manifest.json --governance-audit output/phase14/t049_core_balance/t070_w075_l025_p01_n06_r00_d275/governance_audit/epex_shape_lab_governance_audit.json --independent-summary output/phase14/t049_core_balance/t070_w075_l025_p01_n06_r00_d275/independent_ab_comparison/ab_comparison_summary.json --product-summary output/phase14/t049_core_balance/t070_diagnostics/product_normalization_with_policy/summary.json --powerbi-summary output/phase14/t049_core_balance/t070_diagnostics/powerbi_strict/summary_metrics.csv --output output/phase14/t049_core_balance/t070_diagnostics/promotion_readiness/decision.json`
+- result: exit code `1` as expected for NO-GO production;
+  `strict_diagnostics_pass=true`, `production_chain_pass=false`,
+  `approved=false`,
+  `status=STRICT_DIAGNOSTICS_PASS_PRODUCTION_CHAIN_MISSING`.
+- missing production evidence:
+  `adjusted_production_manifest`, `adjusted_export_manifest`,
+  `adjusted_selected_config`, `adjusted_capstone`.
+
+Decision log entry: `D-20260708-45`.
+
 Generated or refreshed local evidence, not default commit targets:
 
 - `data/eex_forwards_history.parquet`
