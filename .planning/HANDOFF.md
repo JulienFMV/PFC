@@ -123,6 +123,26 @@ as selection input. Run/select these trials only via independent no-OMPEX
 comparison and governance PASS; OMPEX can be advisory post-check only after a
 trial is frozen.
 
+The pre-registered sweep has now been executed with
+`scripts/execute_epex_shape_lab_sweep.py` and summarized in
+`output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_shape_lab_sweep_v1/sweep_execution_summary.json`.
+Result: 27/27 trials executed and eligible under independent no-OMPEX
+governance. The frozen best no-OMPEX trial is
+`trial_002_w0.25_l0.25_p0.50` with independent shape score
+`6.350975764045719`, duck-change mean `3.6754139784914535` EUR/MWh,
+solar-tail mean delta `-2.535581627746391` EUR/MWh, weekend mean delta
+`-0.6477966303078719` EUR/MWh, ramp p99 increase
+`2.0312658899999896` EUR/MWh, max monthly drift
+`1.1155913942688404e-07`, fan-width drift `0`, weighted negative hours `0`,
+and governance `PASS`. This remains lab-only and `production_approved=false`;
+OMPEX can be run only now as advisory post-check, not as a re-ranking signal.
+After read-only audit feedback, the executor was hardened against stale resume
+artifacts, malformed/tampered plans, output directories outside the sweep root,
+negative `--max-trials`, and ineligible `best_trial` reporting. Targeted
+validation now reports `37 passed, 1 skipped`, and a resume check on the
+existing sweep still reports `{"eligible_count": 27, "trial_count_executed":
+27}`.
+
 Previous 2026-07-07 promotion-ready daily candidate:
 `output/phase14/20260707_asof20260706_lshape100_yoy150_amp150_2032/`.
 

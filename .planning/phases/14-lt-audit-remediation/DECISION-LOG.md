@@ -1727,3 +1727,85 @@ Invariants not to break:
 - Generated sweep plan and future trial outputs remain local artifacts unless
   explicitly requested for packaging.
 
+## D-20260708-12 - Execute Pre-Registered No-OMPEX EPEX Sweep
+
+Decision: add and run a sweep executor for the pre-registered EPEX shape-lab
+plan, selecting the best trial only from independent no-OMPEX diagnostics and
+governance PASS evidence.
+
+Reason: after the initial A/B trial had already been compared to OMPEX as an
+advisory post-check, any further parameter choice needed to be frozen by an
+independent process that could not turn OMPEX into an implicit optimization
+target.
+
+Implementation:
+
+- Added `scripts/execute_epex_shape_lab_sweep.py`.
+- Added `tests/test_execute_epex_shape_lab_sweep_script.py`.
+- The executor validates the plan policy, candidate hash, EPEX spot hash,
+  lab-only status, and OMPEX exclusion before running trials.
+- Post-audit hardening rejects malformed plans, duplicate trials, output
+  directories outside the sweep root, negative `--max-trials`, stale resume
+  manifests/comparisons/governance inputs, and reports `best_trial=null` when
+  no trial is eligible.
+- For each trial it runs the A/B adjustment, the independent baseline-vs-
+  adjusted comparison, and the governance audit.
+- It writes a JSON summary and CSV ranking without reading OMPEX/HFC inputs.
+
+2026-07-08 local execution:
+
+- plan:
+  `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_shape_lab_sweep_v1/pre_registered_sweep_plan.json`
+- summary:
+  `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_shape_lab_sweep_v1/sweep_execution_summary.json`
+- ranking:
+  `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_shape_lab_sweep_v1/sweep_execution_summary.csv`
+- `benchmark_policy=executed_independent_no_ompex`
+- `trial_count_planned=27`
+- `trial_count_executed=27`
+- `eligible_count=27`
+- `production_approved=false`
+- `ompex_used_in_model=false`
+- `ompex_used_in_selection=false`
+
+Best no-OMPEX trial:
+
+- `trial_id=trial_002_w0.25_l0.25_p0.50`
+- weekend intensity: `0.25`
+- low-tail intensity: `0.25`
+- peak-subshape intensity: `0.50`
+- independent shape score: `6.350975764045719`
+- duck-change mean: `3.6754139784914535` EUR/MWh
+- solar-tail mean delta: `-2.535581627746391` EUR/MWh
+- weekend mean delta: `-0.6477966303078719` EUR/MWh
+- ramp p99 increase: `2.0312658899999896` EUR/MWh
+- max monthly mean drift: `1.1155913942688404e-07` EUR/MWh
+- max fan-width drift: `0.0`
+- weighted negative hours: `0`
+- governance status: `PASS`
+- max after-constraint residual:
+  `1.6666673730014736e-07` EUR/MWh
+
+Validation:
+
+- `python -m pytest tests/test_execute_epex_shape_lab_sweep_script.py -q -p no:cacheprovider`
+  returned `5 passed`.
+- `python -m pytest tests/test_execute_epex_shape_lab_sweep_script.py tests/test_plan_epex_shape_lab_sweep_script.py tests/test_epex_ab_shape_lab.py tests/test_run_epex_shape_lab_ab_script.py tests/test_compare_epex_shape_lab_ab_script.py tests/test_audit_epex_shape_lab_governance_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  returned `37 passed, 1 skipped`.
+- Resume check on the existing 27-trial sweep returned:
+  `{"eligible_count": 27, "trial_count_executed": 27}`.
+
+Rejected alternatives:
+
+- Select from the grid using OMPEX deltas.
+- Promote the adjusted trial directly because governance passed.
+- Commit generated sweep outputs as repo evidence.
+
+Invariants not to break:
+
+- The selected sweep trial remains lab-only until regenerated through a
+  production/export/capstone path with artifact-bound policies.
+- OMPEX may be run only after this trial selection is frozen, and only as an
+  advisory benchmark.
+- Generated trial outputs remain local artifacts unless explicitly packaged.
+

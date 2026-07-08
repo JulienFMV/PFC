@@ -629,6 +629,87 @@ Next execution rule: run the planned trials and select using independent
 no-OMPEX comparison plus governance PASS only. OMPEX advisory comparison may be
 run after a trial is selected/frozen, not during parameter selection.
 
+## Executed Pre-Registered EPEX Sweep
+
+The pre-registered sweep was executed with a dedicated no-OMPEX executor:
+
+- `scripts/execute_epex_shape_lab_sweep.py`
+- `tests/test_execute_epex_shape_lab_sweep_script.py`
+
+The executor was hardened after read-only audit feedback. It now rejects
+malformed plans, duplicate trials, trial output directories outside the sweep
+root, negative `--max-trials`, and stale resume artifacts. It also returns
+`best_trial=null` when no trial is eligible, instead of promoting the top
+ineligible row.
+
+Local command:
+
+```powershell
+python scripts/execute_epex_shape_lab_sweep.py --plan-json output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_shape_lab_sweep_v1/pre_registered_sweep_plan.json --output-summary output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_shape_lab_sweep_v1/sweep_execution_summary.json
+```
+
+Local outputs:
+
+- summary:
+  `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_shape_lab_sweep_v1/sweep_execution_summary.json`
+- ranking:
+  `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_shape_lab_sweep_v1/sweep_execution_summary.csv`
+
+Execution result:
+
+- `benchmark_policy=executed_independent_no_ompex`
+- `trial_count_planned=27`
+- `trial_count_executed=27`
+- `eligible_count=27`
+- `production_approved=false`
+- `ompex_used_in_model=false`
+- `ompex_used_in_selection=false`
+
+Best selected no-OMPEX trial:
+
+- `trial_002_w0.25_l0.25_p0.50`
+- weekend intensity: `0.25`
+- low-tail intensity: `0.25`
+- peak-subshape intensity: `0.50`
+- independent shape score: `6.350975764045719`
+- duck-change mean: `3.6754139784914535` EUR/MWh
+- solar-tail mean delta: `-2.535581627746391` EUR/MWh
+- weekend mean delta: `-0.6477966303078719` EUR/MWh
+- ramp p99 increase: `2.0312658899999896` EUR/MWh
+- max monthly mean drift: `1.1155913942688404e-07` EUR/MWh
+- max fan-width drift: `0.0`
+- weighted negative hours: `0`
+- governance status: `PASS`
+
+Validation:
+
+```powershell
+python -m pytest tests/test_execute_epex_shape_lab_sweep_script.py tests/test_plan_epex_shape_lab_sweep_script.py tests/test_epex_ab_shape_lab.py tests/test_run_epex_shape_lab_ab_script.py tests/test_compare_epex_shape_lab_ab_script.py tests/test_audit_epex_shape_lab_governance_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result: `33 passed, 1 skipped`.
+
+After executor hardening, the targeted suite was rerun:
+
+```powershell
+python -m pytest tests/test_execute_epex_shape_lab_sweep_script.py tests/test_plan_epex_shape_lab_sweep_script.py tests/test_epex_ab_shape_lab.py tests/test_run_epex_shape_lab_ab_script.py tests/test_compare_epex_shape_lab_ab_script.py tests/test_audit_epex_shape_lab_governance_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result: `37 passed, 1 skipped`.
+
+Resume check on the existing sweep:
+
+```powershell
+python scripts/execute_epex_shape_lab_sweep.py --plan-json output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_shape_lab_sweep_v1/pre_registered_sweep_plan.json --output-summary output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_shape_lab_sweep_v1/sweep_execution_summary.json
+```
+
+Result: `{"eligible_count": 27, "trial_count_executed": 27}`.
+
+Next evidence rule: the selected trial is frozen for any OMPEX advisory
+post-check. Do not use OMPEX to re-rank or re-tune. This lab artifact is still
+NO-GO production until regenerated through production/export/capstone evidence
+with artifact-bound source hierarchy and selected-lambda/config manifests.
+
 Governance:
 
 - Decision log entry: `D-20260708-05`.
