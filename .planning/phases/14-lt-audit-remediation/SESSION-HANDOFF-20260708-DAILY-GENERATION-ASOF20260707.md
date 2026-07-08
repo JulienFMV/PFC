@@ -387,6 +387,57 @@ Result: `10 passed`.
 
 Decision log entry: `D-20260708-06`.
 
+## Independent A/B Comparison
+
+A local-only independent comparison script was added after the lab runner:
+
+- `scripts/compare_epex_shape_lab_ab.py`
+- `tests/test_compare_epex_shape_lab_ab_script.py`
+
+It compares baseline vs adjusted candidates without OMPEX and writes timestamp
+alignment, monthly drift, annual shape, calendar-bucket deltas, fan-width
+preservation, quantile-order, negative-hour, and ramp metrics.
+
+2026-07-08 local comparison:
+
+```powershell
+python scripts/compare_epex_shape_lab_ab.py --baseline-csv output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/ch_hfc_hourly_asof20260707_lshape100_yoy150_amp150_2032.csv --adjusted-csv output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_shape_lab_ab_trial/candidate_epex_shape_lab_adjusted.csv --output-dir output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_shape_lab_ab_trial/independent_ab_comparison
+```
+
+Result:
+
+- output:
+  `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_shape_lab_ab_trial/independent_ab_comparison/`
+- `benchmark_policy=independent_no_ompex`
+- `ompex_used_in_model=false`
+- `ompex_used_in_selection=false`
+- `n_hours=57025`
+- `finite_adjusted_ok=true`
+- `quantile_order_adjusted_ok=true`
+- `weighted_negative_hours_adjusted=0`
+- `max_abs_monthly_mean_delta_eur_mwh=9.722222239124298e-08`
+- `max_abs_width_delta_eur_mwh=0.0`
+- `max_abs_delta_eur_mwh=6.000000000000002`
+- solar-tail mean delta `-2.0652588766029956`
+- midday mean delta `-1.8175837490740738`
+- evening-ramp mean delta `0.9288002084175085`
+- weekend mean delta `-0.6855023410557364`
+- annual evening-minus-midday change is about `+2.75` EUR/MWh for 2027-2032
+
+Validation:
+
+```powershell
+python -m pytest tests/test_compare_epex_shape_lab_ab_script.py -q -p no:cacheprovider
+```
+
+Result: `2 passed`.
+
+Decision log entry: `D-20260708-07`.
+
+Next diagnostic step: run OMPEX comparison separately on the adjusted candidate
+as advisory-only evidence. Do not use the OMPEX result to select A/B
+parameters retroactively.
+
 Governance:
 
 - Decision log entry: `D-20260708-05`.

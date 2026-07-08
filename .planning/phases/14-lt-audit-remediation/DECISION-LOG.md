@@ -1378,3 +1378,69 @@ Invariants not to break:
 - A future production wiring step requires strict Power BI/product/source
   hierarchy/capstone gates on the adjusted candidate.
 
+## D-20260708-07 - Add Independent A/B Shape Comparison
+
+Decision: add an independent baseline-vs-adjusted comparison script for EPEX
+shape-lab trials, separate from OMPEX advisory benchmarking and from
+production promotion gates.
+
+Reason: the A/B runner can produce an adjusted candidate while preserving
+monthly constraints, but the next governance step is to quantify the shape
+effect without using OMPEX. The comparison must prove timestamp alignment,
+monthly mean drift, fan-width preservation, quantile ordering, negative-hour
+status, ramp changes, and calendar-bucket deltas before any external benchmark
+is consulted.
+
+Implementation:
+
+- Added `scripts/compare_epex_shape_lab_ab.py`.
+- Added `tests/test_compare_epex_shape_lab_ab_script.py`.
+- The script writes:
+  - `ab_comparison_summary.json`
+  - `aligned_baseline_adjusted.csv`
+  - `monthly_summary.csv`
+  - `annual_summary.csv`
+  - `calendar_delta_summary.csv`
+- The summary records `benchmark_policy=independent_no_ompex`,
+  `ompex_used_in_model=false`, and `ompex_used_in_selection=false`.
+
+2026-07-08 independent A/B comparison:
+
+- baseline:
+  `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/ch_hfc_hourly_asof20260707_lshape100_yoy150_amp150_2032.csv`
+- adjusted:
+  `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_shape_lab_ab_trial/candidate_epex_shape_lab_adjusted.csv`
+- output:
+  `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_shape_lab_ab_trial/independent_ab_comparison/`
+- `n_hours=57025`
+- `finite_adjusted_ok=true`
+- `quantile_order_adjusted_ok=true`
+- `weighted_negative_hours_adjusted=0`
+- `max_abs_monthly_mean_delta_eur_mwh=9.722222239124298e-08`
+- `max_abs_width_delta_eur_mwh=0.0`
+- `max_abs_delta_eur_mwh=6.000000000000002`
+- calendar effects:
+  - solar-tail mean delta `-2.0652588766029956`
+  - midday mean delta `-1.8175837490740738`
+  - evening-ramp mean delta `0.9288002084175085`
+  - weekend mean delta `-0.6855023410557364`
+- annual evening-minus-midday change is about `+2.75` EUR/MWh for 2027-2032.
+
+Validation:
+
+- `python -m pytest tests/test_compare_epex_shape_lab_ab_script.py -q -p no:cacheprovider`
+  returned `2 passed`.
+
+Rejected alternatives:
+
+- Use OMPEX comparison as the primary A/B decision metric.
+- Treat a lab-only A/B improvement as production promotion evidence.
+- Skip timestamp alignment and monthly-drift checks.
+
+Invariants not to break:
+
+- Independent A/B comparison comes before advisory OMPEX comparison.
+- OMPEX remains external read-only evidence only.
+- Generated comparison outputs stay local artifacts unless explicitly
+  requested for packaging.
+

@@ -76,6 +76,15 @@ with `production_approved=false`, `ompex_used_in_selection=false`, 78 BASE and
 `1.666666804567285e-07`, and weighted negative hours `0`. Treat this as local
 research evidence only, not promotion evidence.
 
+Independent A/B comparison: `scripts/compare_epex_shape_lab_ab.py` compares the
+baseline and adjusted lab candidates without OMPEX. The 2026-07-08 comparison
+under `epex_shape_lab_ab_trial/independent_ab_comparison/` reports
+`benchmark_policy=independent_no_ompex`, `max_abs_monthly_mean_delta_eur_mwh`
+`9.722222239124298e-08`, fan width drift `0`, quantile order OK, weighted
+negative hours `0`, solar-tail delta about `-2.07`, evening-ramp delta about
+`+0.93`, and annual duck change about `+2.75` EUR/MWh. OMPEX should only be run
+after this as advisory evidence, not as parameter-selection evidence.
+
 Previous 2026-07-07 promotion-ready daily candidate:
 `output/phase14/20260707_asof20260706_lshape100_yoy150_amp150_2032/`.
 
