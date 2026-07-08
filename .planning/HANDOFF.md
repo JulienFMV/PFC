@@ -247,6 +247,19 @@ production evidence remains `adjusted_production_manifest`,
 `adjusted_export_manifest`, `adjusted_selected_config`, and
 `adjusted_capstone`. Decision log entry: `D-20260708-45`.
 
+OMPEX 20260708 advisory was run only after T070 no-OMPEX selection and strict
+diagnostics were frozen. Outputs:
+`output/phase14/t049_core_balance/t070_diagnostics/ompex_advisory_baseline_20260708/benchmark_metrics.json`
+and
+`output/phase14/t049_core_balance/t070_diagnostics/ompex_advisory_t070_20260708/benchmark_metrics.json`.
+Alignment is `ompex_minus_1h_hourending`, overlap `39481` points. T070 minus
+baseline advisory deltas: MAE `-0.141892598541069`, RMSE
+`-0.171529868510628`, correlation `+0.0026155586617813`, p95 absolute error
+`-0.398625999999986`, inside p10/p90 `+0.00268483574377548`, max absolute
+error `+0.937722`. This is favorable advisory evidence on average errors, but
+it is not a model input, ranking signal, gate, or promotion authority. Decision
+log entry: `D-20260708-46`.
+
 Next-sweep policy hardening is committed in the local work after expert audit
 feedback. New EPEX sweep plans now include `selection_thresholds`,
 `scoring_policy`, and optional `max_abs_delta_grid`; the executor records EPEX

@@ -2376,6 +2376,32 @@ Promotion readiness:
 
 Decision log entry: `D-20260708-45`.
 
+OMPEX advisory was then run only after T070 no-OMPEX selection and strict
+diagnostics were frozen. It is not a model input, selection signal, gate, or
+promotion authority.
+
+Inputs and outputs:
+
+- OMPEX file:
+  `H:\Energy\GeCom\MARCHE & NEGOCE\Prix\Analyse HFC\HFC test\ER -HFC_OMPEX_15min\HFC_Ompex_20260708_101700.xlsx`
+- baseline advisory:
+  `output/phase14/t049_core_balance/t070_diagnostics/ompex_advisory_baseline_20260708/benchmark_metrics.json`
+- T070 advisory:
+  `output/phase14/t049_core_balance/t070_diagnostics/ompex_advisory_t070_20260708/benchmark_metrics.json`
+- alignment: `ompex_minus_1h_hourending`
+- overlap points: `39481`
+
+T070 minus baseline advisory deltas:
+
+- MAE `-0.141892598541069`
+- RMSE `-0.171529868510628`
+- correlation `+0.0026155586617813`
+- p95 absolute error `-0.398625999999986`
+- inside p10/p90 rate `+0.00268483574377548`
+- max absolute error `+0.937722`
+
+Decision log entry: `D-20260708-46`.
+
 Generated or refreshed local evidence, not default commit targets:
 
 - `data/eex_forwards_history.parquet`

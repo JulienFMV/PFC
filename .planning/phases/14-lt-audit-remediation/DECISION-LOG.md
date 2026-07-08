@@ -4345,3 +4345,49 @@ Invariants not to break:
 - Strict diagnostics do not override the missing adjusted production chain.
 - OMPEX remains advisory-only and was not used in these diagnostics.
 
+## D-20260708-46 - T070 OMPEX Advisory Is Favorable But Non-Gating
+
+Decision: record the OMPEX 2026-07-08 comparison for `t070` as advisory
+post-freeze evidence only. It supports the no-OMPEX frontier direction on
+average error metrics, but it does not change replacement, selection, or
+production readiness status.
+
+Reason: OMPEX is useful but imperfect external evidence. It must remain outside
+model inputs, parameter selection, thresholds, ranking, and promotion gates.
+The comparison was run only after T049/T050 no-OMPEX selection and after T070
+strict diagnostics were frozen.
+
+Inputs:
+
+- OMPEX file:
+  `H:\Energy\GeCom\MARCHE & NEGOCE\Prix\Analyse HFC\HFC test\ER -HFC_OMPEX_15min\HFC_Ompex_20260708_101700.xlsx`
+- baseline output:
+  `output/phase14/t049_core_balance/t070_diagnostics/ompex_advisory_baseline_20260708/benchmark_metrics.json`
+- T070 output:
+  `output/phase14/t049_core_balance/t070_diagnostics/ompex_advisory_t070_20260708/benchmark_metrics.json`
+- alignment: `ompex_minus_1h_hourending`
+- overlap points: `39481`
+
+T070 minus baseline advisory deltas:
+
+- MAE: `-0.141892598541069`
+- RMSE: `-0.171529868510628`
+- correlation: `+0.0026155586617813`
+- p95 absolute error: `-0.398625999999986`
+- inside p10/p90 rate: `+0.00268483574377548`
+- max absolute error: `+0.937722`
+
+Rejected alternatives:
+
+- Use OMPEX deltas to override the T046/T070 solar-tail no-OMPEX decision.
+- Add OMPEX as a gate to replacement or production readiness.
+- Tune another sweep against OMPEX.
+
+Invariants not to break:
+
+- OMPEX remains advisory-only and imperfect.
+- No OMPEX/HFC artifact may enter the LT model, loss, ranking, or promotion
+  authority.
+- T070 remains NO-GO production until adjusted production-chain evidence
+  exists and passes.
+
