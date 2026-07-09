@@ -263,15 +263,16 @@ Behavior:
 - Once production/export/selected/capstone evidence is present, readiness
   requires a queue summary.
 - A missing queue summary, invalid queue, duplicate plan id, overlapping
-  window, artifact-invalid plan, pending queue status, or queue that does not
-  include the bound locked-holdout plan SHA keeps readiness NO-GO.
+  window, artifact-invalid plan, or queue that does not include the bound
+  locked-holdout plan SHA keeps readiness NO-GO.
 - Queue failures route to `production_blocking_stage=locked_holdout_queue` and
   `next_required_step=fix_locked_holdout_queue_before_promotion_review`.
 
 Current implication:
 
 - The current real queue audit status is `WAITING_FOR_FUTURE_HOLDOUT_WINDOWS`.
-- Therefore it is not production promotion evidence.
+- This global queue status does not block T057 by itself when the queue is
+  otherwise valid and contains the bound T057 plan SHA.
 - This is separate from the queue audit being read-only: the audit does not
   approve production, but readiness now requires it as a consistency gate
   before any complete production bundle can be accepted.
@@ -312,13 +313,13 @@ Future approval follow-up:
   `output/phase14/t057_locked_t056_future_holdout/promotion_readiness_with_locked_holdout_current.json`
   reports `STRICT_DIAGNOSTICS_PASS_PRODUCTION_CHAIN_MISSING`,
   `production_blocking_stage=locked_holdout_coverage`, with failed checks
-  including `locked_holdout_pass` and `locked_holdout_queue_pass`.
+  including `locked_holdout_pass`; `locked_holdout_queue_pass` is PASS.
 - Future approval:
   `output/phase14/t057_locked_t056_future_holdout/future_approval_path_with_holdout_current.json`
   reports `NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING`,
   `blocking_stage=locked_holdout_coverage`, with remaining blockers including
-  `locked_holdout_pass` and `locked_holdout_queue_pass`, and
-  `locked_holdout_queue_policy.status=NO_GO_LOCKED_HOLDOUT_QUEUE_PENDING`.
+  `locked_holdout_pass`, and
+  `locked_holdout_queue_policy.status=LOCKED_HOLDOUT_QUEUE_PASS`.
 
 Validation:
 

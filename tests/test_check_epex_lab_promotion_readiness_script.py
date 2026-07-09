@@ -420,7 +420,7 @@ def _write_locked_holdout_queue(
     tmp_path,
     *,
     plan_sha: str | None = None,
-    status: str = "LOCKED_HOLDOUT_QUEUE_COMPLETE",
+    status: str = "WAITING_FOR_FUTURE_HOLDOUT_WINDOWS",
     duplicate_plan_count: int = 0,
     overlapping_window_count: int = 0,
     queue_issues: list[dict] | None = None,
@@ -830,19 +830,18 @@ def test_epex_lab_readiness_rejects_invalid_locked_holdout_queue(tmp_path) -> No
     assert summary["locked_holdout_queue_policy"]["checks"]["duplicate_plan_id_count_zero"] is False
 
 
-def test_epex_lab_readiness_rejects_pending_locked_holdout_queue(tmp_path) -> None:
+def test_epex_lab_readiness_accepts_pending_global_queue_when_bound_plan_is_present(tmp_path) -> None:
     paths = _write_approved_chain(tmp_path)
     queue = _write_locked_holdout_queue(tmp_path, status="WAITING_FOR_FUTURE_HOLDOUT_WINDOWS")
 
     summary = _check_readiness_for_chain(paths, tmp_path, locked_holdout_queue_summary=queue)
 
     checks = {check["name"]: check for check in summary["checks"]}
-    assert summary["approved"] is False
-    assert summary["production_chain_pass"] is False
-    assert summary["production_blocking_stage"] == "locked_holdout_queue"
-    assert checks["locked_holdout_queue_pass"]["status"] == "FAIL"
-    assert summary["locked_holdout_queue_policy"]["status"] == "NO_GO_LOCKED_HOLDOUT_QUEUE_PENDING"
-    assert summary["locked_holdout_queue_policy"]["checks"]["queue_status_complete"] is False
+    assert summary["approved"] is True
+    assert summary["production_chain_pass"] is True
+    assert checks["locked_holdout_queue_pass"]["status"] == "PASS"
+    assert summary["locked_holdout_queue_policy"]["status"] == "LOCKED_HOLDOUT_QUEUE_PASS"
+    assert summary["locked_holdout_queue_policy"]["queue_status"] == "WAITING_FOR_FUTURE_HOLDOUT_WINDOWS"
 
 
 def test_epex_lab_readiness_rejects_locked_holdout_queue_without_bound_plan(tmp_path) -> None:

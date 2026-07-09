@@ -7707,7 +7707,9 @@ Invariants:
 
 Decision: a complete adjusted production/export/selected/capstone chain must
 also provide a locked-holdout queue summary before readiness can return
-`PROMOTION_READY`.
+`PROMOTION_READY`; the queue summary is an integrity and plan-presence gate,
+not a requirement that every separately tracked future holdout line has already
+completed.
 
 Reason: Phase 14 now has multiple locked future holdout lines. A passing
 single-plan holdout is not enough if the operator queue is missing, invalid,
@@ -7722,8 +7724,8 @@ Implementation:
   `--locked-holdout-queue-summary`.
 - `locked_holdout_queue_pass` is listed in `required_production_checks`.
 - When a production bundle is present, readiness fails closed if the queue
-  summary is missing, invalid, pending, or does not contain the plan SHA from
-  the bound locked-holdout evidence.
+  summary is missing, invalid, or does not contain the plan SHA from the bound
+  locked-holdout evidence.
 - Queue failures route to
   `production_blocking_stage=locked_holdout_queue` and
   `next_required_step=fix_locked_holdout_queue_before_promotion_review`.
@@ -7733,8 +7735,10 @@ Implementation:
 - Future approval also propagates the readiness queue policy into
   `locked_holdout_queue_policy` and routes a queue-only failure to
   `blocking_stage=locked_holdout_queue`.
-- The current queue audit status `WAITING_FOR_FUTURE_HOLDOUT_WINDOWS` remains
-  NO-GO production evidence.
+- A global queue status such as `WAITING_FOR_FUTURE_HOLDOUT_WINDOWS` can pass
+  readiness when the queue is otherwise valid and contains the bound plan SHA.
+  This prevents the separate T061/T060 line from blocking T057/T056 promotion
+  after T057 eventually has its own passing holdout evidence.
 
 Rejected alternatives:
 
@@ -7742,8 +7746,8 @@ Rejected alternatives:
   exists.
 - Accept a production chain without a queue summary because the single
   locked-holdout artifact passed.
-- Let pending queue statuses pass readiness and rely on prose handoffs to
-  communicate the remaining wait state.
+- Require every queued future holdout line to complete before any one line can
+  enter promotion review.
 
 Invariants:
 

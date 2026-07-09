@@ -518,7 +518,6 @@ def _locked_holdout_queue_policy(
     if expected_plan_sha:
         checks["locked_holdout_plan_in_queue"] = str(expected_plan_sha) in plan_shas
     queue_status = queue.get("status")
-    checks["queue_status_complete"] = queue_status == "LOCKED_HOLDOUT_QUEUE_COMPLETE"
     passed = all(checks.values())
     return {
         "provided": True,
@@ -532,12 +531,6 @@ def _locked_holdout_queue_policy(
 
 
 def _locked_holdout_queue_no_go_status(queue_status: Any) -> str:
-    if queue_status in {
-        "WAITING_FOR_FUTURE_HOLDOUT_WINDOWS",
-        "WAITING_FOR_HOLDOUT_WINDOW_COMPLETION",
-        "WAITING_FOR_SPOT_REFRESH_AND_LOCKED_HOLDOUT_RUN",
-    }:
-        return "NO_GO_LOCKED_HOLDOUT_QUEUE_PENDING"
     return "NO_GO_LOCKED_HOLDOUT_QUEUE_INVALID"
 
 

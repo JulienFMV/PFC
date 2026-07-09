@@ -229,7 +229,7 @@ def _write_locked_holdout_queue(tmp_path: Path) -> Path:
         queue,
         {
             "schema_version": "epex_lab_locked_holdout_queue_audit.v1",
-            "status": "LOCKED_HOLDOUT_QUEUE_COMPLETE",
+            "status": "WAITING_FOR_FUTURE_HOLDOUT_WINDOWS",
             "read_only": True,
             "promotion_gate": False,
             "production_approved": False,

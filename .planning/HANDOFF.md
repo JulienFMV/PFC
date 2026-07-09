@@ -1482,15 +1482,16 @@ Latest readiness hardening makes the queue summary part of the production
 readiness contract. `scripts/check_epex_lab_promotion_readiness.py` now lists
 `locked_holdout_queue_pass` in `required_production_checks`. When a complete
 production/export/selected/capstone chain is present, readiness fails closed if
-the queue summary is missing, invalid, still pending, or does not contain the
-plan SHA from the bound locked-holdout evidence. Such failures route to
+the queue summary is missing, invalid, or does not contain the plan SHA from
+the bound locked-holdout evidence. Such failures route to
 `production_blocking_stage=locked_holdout_queue` and
 `next_required_step=fix_locked_holdout_queue_before_promotion_review`.
 
-The current queue audit remains `WAITING_FOR_FUTURE_HOLDOUT_WINDOWS`, so it is
-not promotion evidence. This is intentional: queue audit stays read-only and
-non-approving, while readiness uses it as a mandatory consistency gate before
-any production promotion review.
+The current queue audit remains `WAITING_FOR_FUTURE_HOLDOUT_WINDOWS`, but that
+global status does not block T057 by itself. This is intentional: queue audit
+stays read-only and non-approving, while readiness uses it as a mandatory
+consistency gate before any production promotion review. T057 still remains
+NO-GO because its locked holdout has not passed.
 
 Focused readiness validation:
 
@@ -1539,12 +1540,13 @@ Regenerated local operator outputs after this hardening:
 - `output/phase14/t057_locked_t056_future_holdout/promotion_readiness_with_locked_holdout_current.json`:
   `status=STRICT_DIAGNOSTICS_PASS_PRODUCTION_CHAIN_MISSING`,
   `production_blocking_stage=locked_holdout_coverage`, failed production
-  checks include `locked_holdout_pass` and `locked_holdout_queue_pass`.
+  checks include `locked_holdout_pass`; `locked_holdout_queue_pass` is now
+  PASS for the current queue.
 - `output/phase14/t057_locked_t056_future_holdout/future_approval_path_with_holdout_current.json`:
   `status=NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING`,
   `blocking_stage=locked_holdout_coverage`, remaining blockers include
-  `locked_holdout_pass` and `locked_holdout_queue_pass`; the JSON also includes
-  `locked_holdout_queue_policy.status=NO_GO_LOCKED_HOLDOUT_QUEUE_PENDING`.
+  `locked_holdout_pass`; the JSON also includes
+  `locked_holdout_queue_policy.status=LOCKED_HOLDOUT_QUEUE_PASS`.
 
 ## 2026-07-09 Adjusted Production Chain Builder Self-Reference Hardening
 
