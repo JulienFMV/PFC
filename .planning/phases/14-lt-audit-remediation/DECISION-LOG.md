@@ -5705,3 +5705,56 @@ Invariants not to break:
 - A source mismatch is a NO-GO input-integrity failure, not a model-quality
   result and not a reason to retune against the locked window.
 
+## D-20260709-69 - Verify T057 Candidate CSV Schema And Holdout Timestamp Coverage
+
+Decision: the T057 preflight now verifies that locked baseline and adjusted
+candidate CSVs are structurally usable by the no-OMPEX spot backtest before
+reporting `READY_TO_RUN_HOLDOUT_BACKTEST`.
+
+Reason: existence and SHA binding prove file identity but not usability. A
+hash-bound candidate CSV could still be missing required columns, contain
+malformed or duplicated timestamps, contain non-finite price/quantile values,
+or fail to cover the locked holdout timestamps. Those failures should be
+detected before the runner enters the backtest/audit chain.
+
+Implementation:
+
+- `scripts/check_epex_lab_locked_holdout_coverage.py` now checks both locked
+  candidate CSVs for:
+  - required `timestamp_ch` plus all backtest price/quantile columns;
+  - parseable CH timestamps using the same parser as the hourly export;
+  - no duplicate timestamps;
+  - finite numeric values in all required price/quantile columns;
+  - complete coverage of the locked UTC holdout window.
+- Coverage JSON now reports candidate missing holdout-hour counts and first/
+  last missing holdout timestamps for both baseline and adjusted.
+- `ready_to_run_backtest` requires every candidate schema/timestamp/value/
+  holdout-coverage check to pass.
+- Source/schema/timestamp/value/candidate-coverage failures remain classified
+  as `NO_GO_LOCKED_HOLDOUT_SOURCE_MISSING_OR_HASH_MISMATCH`.
+
+Validation:
+
+- `python -m pytest tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_epex_lab_locked_holdout_policy.py -q -p no:cacheprovider`
+  reported `23 passed`.
+- `python -m pytest tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_adjusted_production_chain_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_epex_lab_locked_holdout_policy.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_plan_epex_lab_locked_holdout_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  reported `94 passed, 1 skipped`.
+
+Operational result:
+
+- Regenerated current T057 runner remains
+  `WAITING_FOR_FULL_SPOT_COVERAGE`.
+- Both locked candidate CSVs pass schema/timestamp/value/holdout-coverage
+  checks, with `baseline_candidate_missing_holdout_hours=0` and
+  `adjusted_candidate_missing_holdout_hours=0`.
+
+Rejected alternatives:
+
+- Allow the backtest to discover malformed candidate CSVs at runtime.
+- Treat candidate schema/timestamp issues as spot coverage waits.
+
+Invariants not to break:
+
+- Candidate preflight remains read-only and non-promotional.
+- The locked T057 plan JSON remains unchanged.
+

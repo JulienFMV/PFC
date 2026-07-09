@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from scripts.check_epex_lab_locked_holdout_coverage import CANDIDATE_PRICE_COLUMNS
 from scripts.run_epex_lab_locked_holdout import main, run_locked_holdout
 
 
@@ -208,8 +209,8 @@ def test_run_epex_lab_locked_holdout_rejects_plan_hash_mismatch(tmp_path: Path) 
 def _write_plan(tmp_path: Path) -> Path:
     baseline = tmp_path / "baseline.csv"
     adjusted = tmp_path / "adjusted.csv"
-    baseline.write_text("baseline", encoding="utf-8")
-    adjusted.write_text("adjusted", encoding="utf-8")
+    _write_candidate_csv(baseline)
+    _write_candidate_csv(adjusted)
     baseline_sha = _sha256(baseline)
     adjusted_sha = _sha256(adjusted)
     path = tmp_path / "plan.json"
@@ -246,6 +247,21 @@ def _write_plan(tmp_path: Path) -> Path:
         encoding="utf-8",
     )
     return path
+
+
+def _write_candidate_csv(path: Path) -> None:
+    utc = pd.date_range("2026-07-10T00:00:00Z", periods=4, freq="h")
+    local = utc.tz_convert("Europe/Zurich")
+    offset = local.strftime("%z")
+    frame = pd.DataFrame(
+        {
+            "timestamp_ch": local.strftime("%d.%m.%Y %H:%M"),
+            "utc_offset_ch": "UTC" + offset.str.slice(0, 3) + ":" + offset.str.slice(3, 5),
+        }
+    )
+    for index, column in enumerate(CANDIDATE_PRICE_COLUMNS):
+        frame[column] = 50.0 + float(index)
+    frame.to_csv(path, index=False)
 
 
 def _sha256(path: Path) -> str:

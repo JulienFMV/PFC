@@ -18,13 +18,26 @@ import pandas as pd
 
 try:
     from scripts.epex_lab_locked_holdout_policy import build_locked_plan_identity
+    from scripts.export_local_test_ch_hourly_csv import _parse_timestamp_ch
 except ModuleNotFoundError:  # pragma: no cover - direct script execution
     from epex_lab_locked_holdout_policy import build_locked_plan_identity
+    from export_local_test_ch_hourly_csv import _parse_timestamp_ch
 
 
 PLAN_SCHEMA_VERSION = "epex_lab_locked_holdout_plan.v1"
 LOCKED_HOLDOUT_POLICY = "locked_future_no_ompex_holdout"
 SPOT_PRICE_COLUMN = "price_eur_mwh"
+CANDIDATE_TIMESTAMP_COLUMN = "timestamp_ch"
+CANDIDATE_PRICE_COLUMNS = [
+    "price_slow_eur_mwh",
+    "price_central_eur_mwh",
+    "price_fast_eur_mwh",
+    "price_weighted_mean_eur_mwh",
+    "structural_p10_eur_mwh",
+    "structural_p50_eur_mwh",
+    "structural_p90_eur_mwh",
+    "structural_width_eur_mwh",
+]
 
 
 def check_coverage(
@@ -58,6 +71,8 @@ def check_coverage(
     criteria = plan.get("pass_criteria") or {}
     baseline_source = _plan_source_file_status(plan, file_key="baseline_csv", criteria=criteria)
     adjusted_source = _plan_source_file_status(plan, file_key="adjusted_csv", criteria=criteria)
+    baseline_candidate = _candidate_csv_status(baseline_source["path"], expected=expected)
+    adjusted_candidate = _candidate_csv_status(adjusted_source["path"], expected=expected)
     min_hours = int(criteria.get("min_holdout_hours", len(expected)))
     coverage = {
         "schema_version": "epex_lab_locked_holdout_coverage.v1",
@@ -78,8 +93,14 @@ def check_coverage(
         "non_finite_holdout_price_rows": non_finite_price_rows,
         "baseline_csv": baseline_source["path"],
         "baseline_csv_sha256": baseline_source["expected_sha256"],
+        "baseline_candidate_missing_holdout_hours": baseline_candidate["missing_holdout_hours"],
+        "baseline_candidate_first_missing_holdout_utc": baseline_candidate["first_missing_holdout_utc"],
+        "baseline_candidate_last_missing_holdout_utc": baseline_candidate["last_missing_holdout_utc"],
         "adjusted_csv": adjusted_source["path"],
         "adjusted_csv_sha256": adjusted_source["expected_sha256"],
+        "adjusted_candidate_missing_holdout_hours": adjusted_candidate["missing_holdout_hours"],
+        "adjusted_candidate_first_missing_holdout_utc": adjusted_candidate["first_missing_holdout_utc"],
+        "adjusted_candidate_last_missing_holdout_utc": adjusted_candidate["last_missing_holdout_utc"],
         "missing_holdout_hours": int(len(missing)),
         "first_missing_holdout_utc": _iso(missing[0]) if len(missing) else None,
         "last_missing_holdout_utc": _iso(missing[-1]) if len(missing) else None,
@@ -95,10 +116,20 @@ def check_coverage(
             "baseline_csv_file_exists": baseline_source["file_exists"],
             "baseline_csv_sha256_present": baseline_source["expected_sha256_present"],
             "baseline_csv_sha256_bound": baseline_source["sha256_bound"],
+            "baseline_candidate_required_columns_present": baseline_candidate["required_columns_present"],
+            "baseline_candidate_timestamps_parseable": baseline_candidate["timestamps_parseable"],
+            "baseline_candidate_no_duplicate_timestamps": baseline_candidate["no_duplicate_timestamps"],
+            "baseline_candidate_price_columns_finite": baseline_candidate["price_columns_finite"],
+            "baseline_candidate_holdout_window_covered": baseline_candidate["holdout_window_covered"],
             "adjusted_csv_path_present": adjusted_source["path_present"],
             "adjusted_csv_file_exists": adjusted_source["file_exists"],
             "adjusted_csv_sha256_present": adjusted_source["expected_sha256_present"],
             "adjusted_csv_sha256_bound": adjusted_source["sha256_bound"],
+            "adjusted_candidate_required_columns_present": adjusted_candidate["required_columns_present"],
+            "adjusted_candidate_timestamps_parseable": adjusted_candidate["timestamps_parseable"],
+            "adjusted_candidate_no_duplicate_timestamps": adjusted_candidate["no_duplicate_timestamps"],
+            "adjusted_candidate_price_columns_finite": adjusted_candidate["price_columns_finite"],
+            "adjusted_candidate_holdout_window_covered": adjusted_candidate["holdout_window_covered"],
             "spot_parquet_non_empty": bool(len(spot)),
             "spot_price_column_present": price_column_present,
             "holdout_prices_finite": holdout_prices_finite,
@@ -115,10 +146,20 @@ def check_coverage(
         and checks["baseline_csv_file_exists"]
         and checks["baseline_csv_sha256_present"]
         and checks["baseline_csv_sha256_bound"]
+        and checks["baseline_candidate_required_columns_present"]
+        and checks["baseline_candidate_timestamps_parseable"]
+        and checks["baseline_candidate_no_duplicate_timestamps"]
+        and checks["baseline_candidate_price_columns_finite"]
+        and checks["baseline_candidate_holdout_window_covered"]
         and checks["adjusted_csv_path_present"]
         and checks["adjusted_csv_file_exists"]
         and checks["adjusted_csv_sha256_present"]
         and checks["adjusted_csv_sha256_bound"]
+        and checks["adjusted_candidate_required_columns_present"]
+        and checks["adjusted_candidate_timestamps_parseable"]
+        and checks["adjusted_candidate_no_duplicate_timestamps"]
+        and checks["adjusted_candidate_price_columns_finite"]
+        and checks["adjusted_candidate_holdout_window_covered"]
         and checks["spot_parquet_non_empty"]
         and checks["spot_price_column_present"]
         and checks["holdout_prices_finite"]
@@ -134,10 +175,20 @@ def check_coverage(
             "baseline_csv_file_exists",
             "baseline_csv_sha256_present",
             "baseline_csv_sha256_bound",
+            "baseline_candidate_required_columns_present",
+            "baseline_candidate_timestamps_parseable",
+            "baseline_candidate_no_duplicate_timestamps",
+            "baseline_candidate_price_columns_finite",
+            "baseline_candidate_holdout_window_covered",
             "adjusted_csv_path_present",
             "adjusted_csv_file_exists",
             "adjusted_csv_sha256_present",
             "adjusted_csv_sha256_bound",
+            "adjusted_candidate_required_columns_present",
+            "adjusted_candidate_timestamps_parseable",
+            "adjusted_candidate_no_duplicate_timestamps",
+            "adjusted_candidate_price_columns_finite",
+            "adjusted_candidate_holdout_window_covered",
         ]
     )
     coverage["status"] = (
@@ -175,6 +226,53 @@ def _plan_source_file_status(plan: dict[str, Any], *, file_key: str, criteria: d
         "expected_sha256_present": bool(str(expected_sha or "").strip()),
         "sha256_bound": bool(expected_sha and actual_sha and expected_sha == actual_sha),
     }
+
+
+def _candidate_csv_status(path_text: str | None, *, expected: pd.DatetimeIndex) -> dict[str, Any]:
+    missing_all = int(len(expected))
+    failed = {
+        "required_columns_present": False,
+        "timestamps_parseable": False,
+        "no_duplicate_timestamps": False,
+        "price_columns_finite": False,
+        "holdout_window_covered": False,
+        "missing_holdout_hours": missing_all,
+        "first_missing_holdout_utc": _iso(expected[0]) if len(expected) else None,
+        "last_missing_holdout_utc": _iso(expected[-1]) if len(expected) else None,
+    }
+    if not path_text:
+        return failed
+    path = Path(str(path_text))
+    if not path.exists():
+        return failed
+    try:
+        frame = pd.read_csv(path)
+    except (OSError, pd.errors.EmptyDataError, pd.errors.ParserError, UnicodeDecodeError):
+        return failed
+    required = [CANDIDATE_TIMESTAMP_COLUMN, *CANDIDATE_PRICE_COLUMNS]
+    if not set(required).issubset(frame.columns):
+        return failed
+    status = {**failed, "required_columns_present": True}
+    try:
+        ts = _parse_timestamp_ch(frame[CANDIDATE_TIMESTAMP_COLUMN], frame.get("utc_offset_ch"))
+        idx = pd.DatetimeIndex(ts).tz_convert("UTC")
+    except Exception:  # noqa: BLE001 - fail-closed for malformed candidate timestamps
+        return status
+    status["timestamps_parseable"] = True
+    status["no_duplicate_timestamps"] = not idx.has_duplicates
+    try:
+        numeric = frame[CANDIDATE_PRICE_COLUMNS].apply(pd.to_numeric, errors="coerce")
+        values = numeric.to_numpy(dtype="float64", na_value=np.nan)
+        status["price_columns_finite"] = bool(np.isfinite(values).all())
+    except (TypeError, ValueError):
+        status["price_columns_finite"] = False
+    observed_unique = pd.DatetimeIndex(idx.unique()).sort_values()
+    missing = expected.difference(observed_unique)
+    status["missing_holdout_hours"] = int(len(missing))
+    status["first_missing_holdout_utc"] = _iso(missing[0]) if len(missing) else None
+    status["last_missing_holdout_utc"] = _iso(missing[-1]) if len(missing) else None
+    status["holdout_window_covered"] = int(len(missing)) == 0
+    return status
 
 
 def _load_spot_frame(path: Path) -> pd.DataFrame:

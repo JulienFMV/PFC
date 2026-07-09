@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from scripts.check_epex_lab_locked_holdout_coverage import check_coverage, main
+from scripts.check_epex_lab_locked_holdout_coverage import CANDIDATE_PRICE_COLUMNS, check_coverage, main
 
 
 def test_check_epex_lab_locked_holdout_coverage_ready(tmp_path: Path) -> None:
@@ -176,6 +176,47 @@ def test_check_epex_lab_locked_holdout_coverage_blocks_adjusted_csv_hash_mismatc
     assert summary["checks"]["adjusted_csv_sha256_bound"] is False
 
 
+def test_check_epex_lab_locked_holdout_coverage_blocks_missing_candidate_column(tmp_path: Path) -> None:
+    plan = _write_plan(tmp_path, min_hours=4)
+    payload = json.loads(plan.read_text(encoding="utf-8"))
+    candidate = pd.read_csv(payload["adjusted_csv"]).drop(columns=["structural_width_eur_mwh"])
+    candidate.to_csv(payload["adjusted_csv"], index=False)
+    _rewrite_plan_candidate_hash(plan, file_key="adjusted_csv")
+    spot = tmp_path / "spot.parquet"
+    pd.DataFrame(
+        {"price_eur_mwh": [1.0, 2.0, 3.0, 4.0]},
+        index=pd.date_range("2026-07-10T00:00:00Z", periods=4, freq="h"),
+    ).to_parquet(spot)
+
+    summary = check_coverage(plan_json=plan, spot_parquet=spot)
+
+    assert summary["status"] == "NO_GO_LOCKED_HOLDOUT_SOURCE_MISSING_OR_HASH_MISMATCH"
+    assert summary["ready_to_run_backtest"] is False
+    assert summary["checks"]["adjusted_csv_sha256_bound"] is True
+    assert summary["checks"]["adjusted_candidate_required_columns_present"] is False
+
+
+def test_check_epex_lab_locked_holdout_coverage_blocks_candidate_holdout_gap(tmp_path: Path) -> None:
+    plan = _write_plan(tmp_path, min_hours=4)
+    payload = json.loads(plan.read_text(encoding="utf-8"))
+    candidate = pd.read_csv(payload["baseline_csv"]).iloc[:3]
+    candidate.to_csv(payload["baseline_csv"], index=False)
+    _rewrite_plan_candidate_hash(plan, file_key="baseline_csv")
+    spot = tmp_path / "spot.parquet"
+    pd.DataFrame(
+        {"price_eur_mwh": [1.0, 2.0, 3.0, 4.0]},
+        index=pd.date_range("2026-07-10T00:00:00Z", periods=4, freq="h"),
+    ).to_parquet(spot)
+
+    summary = check_coverage(plan_json=plan, spot_parquet=spot)
+
+    assert summary["status"] == "NO_GO_LOCKED_HOLDOUT_SOURCE_MISSING_OR_HASH_MISMATCH"
+    assert summary["ready_to_run_backtest"] is False
+    assert summary["checks"]["baseline_csv_sha256_bound"] is True
+    assert summary["checks"]["baseline_candidate_holdout_window_covered"] is False
+    assert summary["baseline_candidate_missing_holdout_hours"] == 1
+
+
 def test_check_epex_lab_locked_holdout_coverage_cli_exits_nonzero_when_waiting(tmp_path: Path) -> None:
     plan = _write_plan(tmp_path, min_hours=4)
     spot = tmp_path / "spot.parquet"
@@ -212,8 +253,8 @@ def _write_plan(
 ) -> Path:
     baseline = tmp_path / "baseline.csv"
     adjusted = tmp_path / "adjusted.csv"
-    baseline.write_text("baseline", encoding="utf-8")
-    adjusted.write_text("adjusted", encoding="utf-8")
+    _write_candidate_csv(baseline)
+    _write_candidate_csv(adjusted)
     path = tmp_path / "plan.json"
     path.write_text(
         json.dumps(
@@ -240,6 +281,28 @@ def _write_plan(
         encoding="utf-8",
     )
     return path
+
+
+def _write_candidate_csv(path: Path, *, periods: int = 4) -> None:
+    utc = pd.date_range("2026-07-10T00:00:00Z", periods=periods, freq="h")
+    local = utc.tz_convert("Europe/Zurich")
+    frame = pd.DataFrame(
+        {
+            "timestamp_ch": local.strftime("%d.%m.%Y %H:%M"),
+            "utc_offset_ch": "UTC" + local.strftime("%z").str.slice(0, 3) + ":" + local.strftime("%z").str.slice(3, 5),
+        }
+    )
+    for offset, column in enumerate(CANDIDATE_PRICE_COLUMNS):
+        frame[column] = 50.0 + float(offset)
+    frame.to_csv(path, index=False)
+
+
+def _rewrite_plan_candidate_hash(plan: Path, *, file_key: str) -> None:
+    payload = json.loads(plan.read_text(encoding="utf-8"))
+    sha_key = f"{file_key}_sha256"
+    payload[sha_key] = _sha256(Path(payload[file_key]))
+    payload.setdefault("pass_criteria", {})[sha_key] = payload[sha_key]
+    plan.write_text(json.dumps(payload), encoding="utf-8")
 
 
 def _sha256(path: Path) -> str:

@@ -634,6 +634,13 @@ Promotion evidence hardening:
 - Current regenerated local runner shows `baseline_csv_sha256_bound=true` and
   `adjusted_csv_sha256_bound=true`; the remaining blocker is still only future
   spot coverage.
+- Coverage preflight now also verifies that both locked candidate CSVs satisfy
+  the backtest schema before `READY_TO_RUN_HOLDOUT_BACKTEST`: required hourly
+  export columns, parseable CH timestamps, no duplicate timestamps, finite
+  price/quantile values, and complete locked holdout timestamp coverage.
+- Current regenerated local runner shows these candidate checks passing, with
+  `baseline_candidate_missing_holdout_hours=0` and
+  `adjusted_candidate_missing_holdout_hours=0`.
 - Regenerated future approval audit remains
   `NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING`, exit `1`, with
   `blocking_stage=locked_holdout_coverage` and a recommended runner command
@@ -662,3 +669,11 @@ python -m pytest tests/test_build_epex_lab_adjusted_production_manifest_script.p
 ```
 
 Result: `92 passed, 1 skipped`.
+
+Follow-up validation after candidate CSV schema/timestamp preflight:
+
+```powershell
+python -m pytest tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_adjusted_production_chain_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_epex_lab_locked_holdout_policy.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_plan_epex_lab_locked_holdout_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result: `94 passed, 1 skipped`.

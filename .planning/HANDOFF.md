@@ -253,9 +253,16 @@ to exist and match the plan hashes. Source mismatch is reported as
 `NO_GO_LOCKED_HOLDOUT_SOURCE_MISSING_OR_HASH_MISMATCH`, not as a spot-coverage
 wait. Current regenerated T057 evidence shows both source checks passing:
 `baseline_csv_sha256_bound=true` and `adjusted_csv_sha256_bound=true`.
+The same preflight now also verifies candidate CSV schema and holdout timestamp
+coverage before backtest: required hourly export columns, parseable CH
+timestamps, no duplicate timestamps, finite price/quantile columns, and full
+coverage of the locked UTC holdout window. Current regenerated T057 evidence
+shows these candidate checks passing, with
+`baseline_candidate_missing_holdout_hours=0` and
+`adjusted_candidate_missing_holdout_hours=0`.
 Validation after this hardening:
 `python -m pytest tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_adjusted_production_chain_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_epex_lab_locked_holdout_policy.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_plan_epex_lab_locked_holdout_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
-reported `92 passed, 1 skipped`.
+reported `94 passed, 1 skipped`.
 
 Expert-audit follow-up on 2026-07-09 made the T057 holdout CLIs fail-closed:
 
