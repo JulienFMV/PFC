@@ -7838,3 +7838,67 @@ Invariants:
 - T057 remains NO-GO until full locked-holdout coverage and the complete
   approved production/export/selected/capstone chain exist.
 
+## D-20260709-108 - T060 Delivered Audit Bundle Can Match T056 Without Entering Promotion
+
+Decision: accept an exact artifact-bound source hierarchy policy for the frozen
+T060/t007 challenger so it can be audited with the same delivered-product
+bundle as T056, while keeping T060 strictly lab-only and outside T057
+promotion.
+
+Reason: the next expert-aligned step after the future-path governance hardening
+ was to audit T060/t007 as a real delivered challenger rather than keep it as a
+ spot-score-only candidate. The raw audit showed the same six
+ quote-aware-vs-parent `QUOTE_CONFLICT` rows as T056, with the same conflict
+ identity hash, while strict Power BI was already passing. Binding the exact
+ CSV/forwards/conflict identity lets us distinguish a genuine delivered-audit
+ pass from a mere spot-backtest win.
+
+Evidence:
+
+- source hierarchy policy:
+  `.planning/phases/14-lt-audit-remediation/quote_conflict_source_hierarchy_policy_t060_asof20260707_cap_decompression.json`
+- policy sha256:
+  `1722bee6967371ae17b2ee8ae85e91dc87e9aede05a3d8b27ae5363956b72c94`
+- product audit with policy:
+  `output/phase14/t060_epex_only_cap_decompression/t007_diagnostics/product_normalization_with_policy/summary.json`
+  - `all_gates_pass=true`
+  - `critical_count=0`
+  - `unsupported_count=0`
+  - `accepted_quote_conflict_count=6`
+  - `blocking_quote_conflict_count=0`
+  - `quote_conflict_identity_hash=a28d7f15151e730dca2099335e1d7e75dcf52e3a77edb6871352f9942c882846`
+- strict Power BI summary:
+  `output/phase14/t060_epex_only_cap_decompression/t007_diagnostics/powerbi_strict/summary_metrics.csv`
+  - `powerbi_quality_gate_status=PASS`
+  - `weighted_negative_hours=0`
+  - critical flags `0`
+  - `monthly_path_warning_flags=4`
+- seasonal coherence report:
+  `output/phase14/t060_epex_only_cap_decompression/t007_diagnostics/seasonal_coherence/report.md`
+  - `critical=0`
+  - `warning=4`
+  - warnings remain confined to the 2027 Q1 residual / 2028 Q2->residual path seams
+- explainability diagnostic:
+  `output/phase14/t060_epex_only_cap_decompression/t007_diagnostics/shape_explainability_20260709/shape_explainability_summary.json`
+  - `status=DIAGNOSTIC_PASS`
+  - `raw_to_actual_abs_ratio=9.722023643424173` versus T056 `11.954567118833522`
+  - `cap_scale=0.1068765144489487` versus T056 `0.08689749250656693`
+  - `mean_abs_cap_loss_eur_mwh=6.038366152451975` versus T056 `6.367867353601689`
+- PNG diagnostics:
+  `output/phase14/t060_epex_only_cap_decompression/t007_diagnostics/canonical_ch_hfc_png_20260709/`
+
+Rejected alternatives:
+
+- Judge T060 only by no-OMPEX spot scores and skip delivered-product audit.
+- Reuse the T056 policy file even though the adjusted CSV hash differs.
+- Treat this source hierarchy approval as T060 promotion or as permission to
+  substitute T060 into T057.
+
+Invariants:
+
+- T060 remains lab-only and separate from T057/T056 promotion.
+- The source hierarchy policy is only a QUOTE_CONFLICT waiver for the exact
+  T060 CSV/forwards/conflict identity hash.
+- Selected-lambda artifact, future holdout, and adjusted production/export/
+  selected/capstone evidence are still required before any promotion path.
+

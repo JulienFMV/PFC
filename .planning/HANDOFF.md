@@ -1417,6 +1417,85 @@ Current expert-aligned sequence:
 
 Promotion remains NO-GO.
 
+## 2026-07-09 T060 Delivered Audit Bundle
+
+Following the expert re-audits, `T060/t007` was pushed through the same
+delivered bundle shape as `T056`, while remaining fully separate from T057.
+
+Selected challenger:
+
+- trial id:
+  `t007_w075_l02_p089_e005_n055_r00_d325`
+- adjusted CSV sha256:
+  `0a0fe8ce8c12bfeb64ac517ef60ac4d2850fbd1d13255c823c213c94c98391a6`
+- source hierarchy policy:
+  `.planning/phases/14-lt-audit-remediation/quote_conflict_source_hierarchy_policy_t060_asof20260707_cap_decompression.json`
+- policy sha256:
+  `1722bee6967371ae17b2ee8ae85e91dc87e9aede05a3d8b27ae5363956b72c94`
+
+Delivered-product audit without policy first showed the expected same six
+quote-aware conflicts as T056:
+
+- `quote_conflict_count=6`
+- `blocking_quote_conflict_count=6`
+- `quote_conflict_identity_hash=a28d7f15151e730dca2099335e1d7e75dcf52e3a77edb6871352f9942c882846`
+
+After binding the exact T060 artifact with the new policy:
+
+- product audit summary:
+  `output/phase14/t060_epex_only_cap_decompression/t007_diagnostics/product_normalization_with_policy/summary.json`
+  - `all_gates_pass=true`
+  - `critical_count=0`
+  - `unsupported_count=0`
+  - `accepted_quote_conflict_count=6`
+  - `blocking_quote_conflict_count=0`
+- strict Power BI summary:
+  `output/phase14/t060_epex_only_cap_decompression/t007_diagnostics/powerbi_strict/summary_metrics.csv`
+  - `powerbi_quality_gate_status=PASS`
+  - `weighted_negative_hours=0`
+  - `cross_year_month_shape_critical_flags=0`
+  - `monthly_path_warning_flags=4`
+- seasonal coherence:
+  `output/phase14/t060_epex_only_cap_decompression/t007_diagnostics/seasonal_coherence/report.md`
+  - `critical=0`
+  - `warning=4`
+  - same residual-path warning family as T056, concentrated in
+    `2027-Q1-RESIDUAL` and `2028-Q2->2028-RESIDUAL`
+- PNG diagnostics:
+  `output/phase14/t060_epex_only_cap_decompression/t007_diagnostics/canonical_ch_hfc_png_20260709/`
+
+Explainability comparison versus T056:
+
+- T060 explainability summary:
+  `output/phase14/t060_epex_only_cap_decompression/t007_diagnostics/shape_explainability_20260709/shape_explainability_summary.json`
+- T056 explainability summary:
+  `output/phase14/t056_postval_final_micro/t005_diagnostics/shape_explainability_20260709/shape_explainability_summary.json`
+- T060 improves compression but does not remove it:
+  - `raw_to_actual_abs_ratio`: `9.722023643424173` vs T056 `11.954567118833522`
+  - `cap_scale`: `0.1068765144489487` vs T056 `0.08689749250656693`
+  - `mean_abs_cap_loss_eur_mwh`: `6.038366152451975` vs T056 `6.367867353601689`
+  - `mean_abs_projection_loss_eur_mwh`: `3.4102465119939103` vs T056 `3.6112390551929443`
+  - `mean_abs_actual_delta_eur_mwh`: `0.722587125927225` vs T056 `0.606012689469531`
+
+Interpretation:
+
+- T060 is now auditable as a delivered challenger: product normalization passes
+  with an exact source hierarchy policy, strict Power BI passes, and PNG/shape
+  diagnostics are plausible.
+- T060 still does not become a promotion candidate from this alone. It remains
+  lab-only, requires its own T061 future holdout path, and still lacks the
+  adjusted production/export/selected/capstone evidence chain.
+- Relative to T056, the cap decompression is directionally useful: less raw
+  signal is crushed by projection/cap, but the residual synthetic-path warning
+  family is not removed.
+
+Recommended next expert step after this audit:
+
+1. Keep T057/T056 frozen for promotion.
+2. Keep T060/T061 separate.
+3. If additional modeling work is desired, focus on reducing the residual-path
+   seam warnings without sacrificing the improved compression profile of T060.
+
 ## 2026-07-09 T061 Separate Future Holdout For T060
 
 Created a separate future holdout line for the T060 EPEX-only cap
