@@ -7730,6 +7730,9 @@ Implementation:
 - `scripts/audit_epex_lab_future_approval_path.py` includes
   `locked_holdout_queue_pass` in its internal minimum production checks, so
   older or synthetic readiness JSON cannot omit the queue requirement.
+- Future approval also propagates the readiness queue policy into
+  `locked_holdout_queue_policy` and routes a queue-only failure to
+  `blocking_stage=locked_holdout_queue`.
 - The current queue audit status `WAITING_FOR_FUTURE_HOLDOUT_WINDOWS` remains
   NO-GO production evidence.
 

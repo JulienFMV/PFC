@@ -301,6 +301,8 @@ Future approval follow-up:
 - `scripts/audit_epex_lab_future_approval_path.py` now includes
   `locked_holdout_queue_pass` in its internal minimum production-check set, so
   old or synthetic readiness JSON cannot omit the queue requirement.
+- It propagates readiness queue details into `locked_holdout_queue_policy` and
+  routes a queue-only failure to `blocking_stage=locked_holdout_queue`.
 - Current local queue/readiness/future-approval outputs were regenerated.
 - Queue audit:
   `output/phase14/locked_holdout_queue_audit_20260709.json` reports
@@ -315,7 +317,8 @@ Future approval follow-up:
   `output/phase14/t057_locked_t056_future_holdout/future_approval_path_with_holdout_current.json`
   reports `NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING`,
   `blocking_stage=locked_holdout_coverage`, with remaining blockers including
-  `locked_holdout_pass` and `locked_holdout_queue_pass`.
+  `locked_holdout_pass` and `locked_holdout_queue_pass`, and
+  `locked_holdout_queue_policy.status=NO_GO_LOCKED_HOLDOUT_QUEUE_PENDING`.
 
 Validation:
 
@@ -325,7 +328,7 @@ pytest tests\test_audit_epex_lab_future_approval_path_script.py -q -p no:cachepr
 
 Result:
 
-`12 passed`
+`13 passed`
 
 Broader validation:
 
@@ -335,7 +338,7 @@ pytest tests\test_audit_epex_lab_future_approval_path_script.py tests\test_check
 
 Result:
 
-`101 passed, 1 skipped`
+`102 passed, 1 skipped`
 
 ## Production Chain Builder Follow-Up
 

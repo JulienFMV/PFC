@@ -58,6 +58,7 @@ def audit_future_approval_path(
     missing_or_failed = sorted(set(missing + missing_production_checks + failed_production_checks))
     spot_policy = _spot_policy(spot) if spot is not None else None
     holdout_policy = evaluate_locked_holdout_policy(locked_holdout) if locked_holdout is not None else None
+    queue_policy = _readiness_locked_holdout_queue_policy(checks)
     holdout_required = bool(readiness.get("approved") is True or readiness.get("production_chain_pass") is True)
     if holdout_required and holdout_policy is None:
         holdout_policy = {"provided": False, "pass": False, "status": "MISSING_LOCKED_HOLDOUT"}
@@ -76,11 +77,15 @@ def audit_future_approval_path(
             missing_or_failed = sorted(set(missing_or_failed + ["locked_holdout_sha_bound"]))
     if holdout_policy is not None and holdout_policy["pass"] is not True:
         missing_or_failed = sorted(set(missing_or_failed + ["locked_holdout_pass"]))
+    if queue_policy is not None and queue_policy["pass"] is not True:
+        missing_or_failed = sorted(set(missing_or_failed + ["locked_holdout_queue_pass"]))
 
     if spot_policy is not None and not spot_policy["pass"]:
         status = "NO_GO_SPOT_BACKTEST_POLICY_FAIL"
     elif holdout_policy is not None and not holdout_policy["pass"]:
         status = str(holdout_policy["status"])
+    elif queue_policy is not None and not queue_policy["pass"] and not missing and not missing_production_checks:
+        status = str(queue_policy["status"])
     elif missing_production_checks:
         status = "NO_GO_PRODUCTION_CHAIN_INCOMPLETE"
     elif readiness.get("approved") is True and readiness.get("status") == "PROMOTION_READY":
@@ -98,6 +103,7 @@ def audit_future_approval_path(
         failed_production_checks=failed_production_checks,
         spot_policy=spot_policy,
         holdout_policy=holdout_policy,
+        queue_policy=queue_policy,
     )
     recommended_commands = _recommended_commands(
         blocking_stage=blocking_stage,
@@ -130,6 +136,7 @@ def audit_future_approval_path(
         "spot_backtest_policy": spot_policy,
         "locked_holdout_summary": str(locked_holdout_summary) if locked_holdout_summary is not None else None,
         "locked_holdout_policy": holdout_policy,
+        "locked_holdout_queue_policy": queue_policy,
         "next_actions": _next_actions(
             status=status,
             missing=missing,
@@ -137,6 +144,7 @@ def audit_future_approval_path(
             failed_production_checks=failed_production_checks,
             spot_policy=spot_policy,
             holdout_policy=holdout_policy,
+            queue_policy=queue_policy,
         ),
         "note": (
             "This audit summarizes readiness evidence for review. It does not "
@@ -186,6 +194,27 @@ def _readiness_locked_holdout_sha(checks: dict[str, dict[str, Any]]) -> str | No
     return None
 
 
+def _readiness_locked_holdout_queue_policy(checks: dict[str, dict[str, Any]]) -> dict[str, Any] | None:
+    check = checks.get("locked_holdout_queue_pass")
+    if check is None:
+        return None
+    passed = check.get("status") == "PASS"
+    value = check.get("value")
+    if isinstance(value, dict):
+        status = str(value.get("status") or ("LOCKED_HOLDOUT_QUEUE_PASS" if passed else "NO_GO_LOCKED_HOLDOUT_QUEUE_INVALID"))
+        return {
+            **value,
+            "pass": bool(passed and value.get("pass") is not False),
+            "status": status,
+        }
+    return {
+        "provided": passed,
+        "pass": passed,
+        "status": "LOCKED_HOLDOUT_QUEUE_PASS" if passed else "NO_GO_LOCKED_HOLDOUT_QUEUE_INVALID",
+        "summary": value,
+    }
+
+
 def _required_production_checks(readiness: dict[str, Any]) -> list[str]:
     declared = readiness.get("required_production_checks")
     if not isinstance(declared, list):
@@ -215,6 +244,7 @@ def _next_actions(
     failed_production_checks: list[str],
     spot_policy: dict[str, Any] | None,
     holdout_policy: dict[str, Any] | None,
+    queue_policy: dict[str, Any] | None,
 ) -> list[str]:
     actions: list[str] = []
     if spot_policy is not None and not spot_policy["pass"]:
@@ -226,6 +256,11 @@ def _next_actions(
             actions.append("Fix the locked holdout plan policy or supplied spot parquet, then rerun preflight.")
         else:
             actions.append("Resolve locked holdout failure without retuning against the locked window.")
+    if queue_policy is not None and not queue_policy["pass"] and status.startswith("NO_GO_LOCKED_HOLDOUT_QUEUE"):
+        if status == "NO_GO_LOCKED_HOLDOUT_QUEUE_PENDING":
+            actions.append("Wait for locked holdout queue completion, then regenerate readiness and future approval.")
+        else:
+            actions.append("Fix locked holdout queue integrity before promotion review.")
     if missing:
         actions.append("Generate real adjusted production/export/selected/capstone evidence for missing items.")
     if missing_production_checks:
@@ -249,6 +284,7 @@ def _blocking_stage(
     failed_production_checks: list[str],
     spot_policy: dict[str, Any] | None,
     holdout_policy: dict[str, Any] | None,
+    queue_policy: dict[str, Any] | None,
 ) -> tuple[str, str]:
     if spot_policy is not None and not spot_policy["pass"]:
         return "spot_policy", "fix_spot_backtest_policy_flags"
@@ -258,6 +294,8 @@ def _blocking_stage(
         if status == "NO_GO_LOCKED_HOLDOUT_INPUT_INVALID":
             return "locked_holdout_input_invalid", "fix_locked_holdout_plan_or_spot_inputs_then_rerun_preflight"
         return "locked_holdout_failure", "resolve_locked_holdout_failure_without_retuning_locked_window"
+    if queue_policy is not None and not queue_policy["pass"] and status.startswith("NO_GO_LOCKED_HOLDOUT_QUEUE"):
+        return "locked_holdout_queue", "fix_locked_holdout_queue_before_promotion_review"
     if status == "NO_GO_STRICT_DIAGNOSTICS_FAIL":
         return "strict_diagnostics", "resolve_strict_diagnostic_failures"
     if missing:
