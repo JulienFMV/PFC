@@ -1203,6 +1203,38 @@ Conclusion:
 - Do not continue broad low-tail lowering unless the next no-OMPEX hypothesis
   directly targets post-valuation preservation.
 
+## 2026-07-09 EPEX Sweep Spot Backtest Path Hardening
+
+During the T059 full backtest, the first command with relative output paths
+failed before writing the final summary:
+
+- symptom: Windows/UNC `mkdir` failure under
+  `output\phase14\t059_epex_only_lowtail_cap_night_interactions_spot_backtests_full`
+- successful workaround used during T059: pass absolute `output_root`,
+  `output_summary`, and `selection_output_dir`
+
+Follow-up implemented:
+
+- `scripts/run_epex_shape_lab_sweep_spot_backtests.py` now resolves CLI paths
+  to absolute paths on entry.
+- Paths recorded in plans and sweep summaries are resolved against the repo
+  root when relative.
+- The run summary records resolved absolute output paths.
+- `tests/test_run_epex_shape_lab_sweep_spot_backtests_script.py` now includes
+  a regression for relative outputs from a changed cwd.
+
+Validation:
+
+```powershell
+python -m pytest tests/test_run_epex_shape_lab_sweep_spot_backtests_script.py tests/test_summarize_epex_shape_lab_spot_backtests_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result: `26 passed, 1 skipped`.
+
+This is orchestration hardening only. It does not change T059 plan parameters,
+candidate hashes, no-OMPEX policy, selection metrics, or the verdict that T059
+does not replace T056/t005.
+
 ## 2026-07-09 Expert Audit Follow-Up and T058 Lab Pre-Registration
 
 Read-only expert audits were launched after the T056/t005 diagnostics and

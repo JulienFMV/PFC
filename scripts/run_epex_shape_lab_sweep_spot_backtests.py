@@ -24,6 +24,9 @@ from scripts.backtest_epex_shape_lab_against_spot import backtest_against_spot
 from scripts.summarize_epex_shape_lab_spot_backtests import summarize_spot_backtests
 
 
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
 def run_sweep_spot_backtests(
     *,
     plan_json: Path,
@@ -39,13 +42,19 @@ def run_sweep_spot_backtests(
     max_auto_folds: int = 12,
     min_eval_hours: int = 24,
 ) -> dict[str, Any]:
+    plan_json = _resolve_cli_path(plan_json)
+    sweep_summary = _resolve_cli_path(sweep_summary)
+    output_root = _resolve_cli_path(output_root)
+    output_summary = _resolve_cli_path(output_summary)
+    incumbent_backtest = _resolve_cli_path(incumbent_backtest) if incumbent_backtest is not None else None
+    selection_output_dir = _resolve_cli_path(selection_output_dir) if selection_output_dir is not None else None
     plan = _read_json(plan_json)
     sweep = _read_json(sweep_summary)
     _validate_plan(plan)
     _validate_sweep(sweep)
 
-    candidate_csv = Path(str(plan["candidate_csv"]))
-    spot_parquet = Path(str(plan["spot_parquet"]))
+    candidate_csv = _resolve_recorded_path(plan["candidate_csv"])
+    spot_parquet = _resolve_recorded_path(plan["spot_parquet"])
     _verify_hash(candidate_csv, str(plan["candidate_csv_sha256"]), "candidate_csv")
     _verify_hash(spot_parquet, str(plan["spot_parquet_sha256"]), "spot_parquet")
 
@@ -56,7 +65,7 @@ def run_sweep_spot_backtests(
         if trial_id not in trial_map:
             raise ValueError(f"eligible trial {trial_id!r} is missing from the plan")
         trial = trial_map[trial_id]
-        adjusted_csv = Path(str(trial["output_dir"])) / "candidate_epex_shape_lab_adjusted.csv"
+        adjusted_csv = _resolve_recorded_path(trial["output_dir"]) / "candidate_epex_shape_lab_adjusted.csv"
         if not adjusted_csv.exists():
             raise FileNotFoundError(f"adjusted CSV missing for trial {trial_id}: {adjusted_csv}")
         trial_output = output_root / trial_id
@@ -152,7 +161,7 @@ def _validate_sweep(sweep: dict[str, Any]) -> None:
 
 
 def _eligible_trial_ids(sweep: dict[str, Any]) -> list[str]:
-    ranking = pd.read_csv(Path(str(sweep["ranking_csv"])))
+    ranking = pd.read_csv(_resolve_recorded_path(sweep["ranking_csv"]))
     if "trial_id" not in ranking.columns or "eligible_for_selection" not in ranking.columns:
         raise ValueError("sweep ranking CSV must include trial_id and eligible_for_selection")
     eligible = ranking[_bool_series(ranking["eligible_for_selection"])]
@@ -192,6 +201,20 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def _resolve_cli_path(path: Path) -> Path:
+    path = path.expanduser()
+    if path.is_absolute():
+        return path.resolve(strict=False)
+    return (Path.cwd() / path).resolve(strict=False)
+
+
+def _resolve_recorded_path(value: Any) -> Path:
+    path = Path(str(value)).expanduser()
+    if path.is_absolute():
+        return path.resolve(strict=False)
+    return (REPO_ROOT / path).resolve(strict=False)
 
 
 def _bool_series(values: pd.Series) -> pd.Series:

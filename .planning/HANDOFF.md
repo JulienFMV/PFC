@@ -1463,6 +1463,30 @@ Operational conclusion:
 - Next model-quality work should not continue broad low-tail lowering unless a
   new no-OMPEX hypothesis specifically protects post-valuation performance.
 
+## 2026-07-09 EPEX Sweep Spot Backtest Path Hardening
+
+During the T059 full spot-backtest run, the runner failed once with relative
+`output/...` paths on Windows/UNC path handling and then succeeded when the
+same output paths were passed as absolute paths. This was orchestration
+fragility only; it did not change T059 inputs or verdict.
+
+Follow-up:
+
+- `scripts/run_epex_shape_lab_sweep_spot_backtests.py` now resolves CLI paths
+  to absolute paths before running trials.
+- Relative paths recorded inside plans and sweep summaries are resolved
+  against the repo root.
+- A regression test verifies that relative output paths from a changed cwd are
+  converted to absolute backtest output paths.
+
+Validation:
+
+```powershell
+python -m pytest tests/test_run_epex_shape_lab_sweep_spot_backtests_script.py tests/test_summarize_epex_shape_lab_spot_backtests_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result: `26 passed, 1 skipped`.
+
 ## 2026-07-09 Expert Audit and T058 Lab Plan
 
 Expert read-only audits confirmed the current split of responsibilities:

@@ -6774,3 +6774,50 @@ Invariants:
   beats T056/t005 on core replacement metrics, especially post-valuation, and
   then obtains its own future holdout.
 
+## D-20260709-89 - EPEX Sweep Spot Backtest Runner Resolves Paths Up Front
+
+Decision: the EPEX shape-lab sweep spot-backtest runner resolves CLI paths to
+absolute paths before running trials, and resolves paths recorded in plans and
+sweep summaries against the repository root.
+
+Reason: during the full T059 backtest, the runner failed once with relative
+`output/...` paths on Windows/UNC path handling, then succeeded with absolute
+output paths. This was an operational fragility in the lab orchestration, not a
+model result. Future lab sweeps should not require operators to manually wrap
+output paths with `Resolve-Path`.
+
+Implementation:
+
+- `scripts/run_epex_shape_lab_sweep_spot_backtests.py` now resolves
+  `plan_json`, `sweep_summary`, `output_root`, `output_summary`,
+  `incumbent_backtest`, and `selection_output_dir` at entry.
+- Recorded `candidate_csv`, `spot_parquet`, trial `output_dir`, and
+  `ranking_csv` are resolved against the repo root when they are relative.
+- The run summary records the resolved absolute output paths.
+- Regression coverage verifies that relative output paths from a changed cwd
+  are passed to the backtest as absolute paths.
+
+Validation:
+
+- `python -m pytest tests/test_run_epex_shape_lab_sweep_spot_backtests_script.py -q -p no:cacheprovider`
+  reported `4 passed`.
+- `python -m pytest tests/test_summarize_epex_shape_lab_spot_backtests_script.py -q -p no:cacheprovider`
+  reported `5 passed`.
+- `python -m pytest tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  reported `17 passed, 1 skipped`.
+- Combined validation:
+  `python -m pytest tests/test_run_epex_shape_lab_sweep_spot_backtests_script.py tests/test_summarize_epex_shape_lab_spot_backtests_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  reported `26 passed, 1 skipped`.
+
+Rejected alternatives:
+
+- Keep documenting a manual `Resolve-Path` workaround for every future sweep.
+- Change the pre-registered T059 plan after execution to use absolute paths.
+
+Invariants:
+
+- This is orchestration hardening only; it does not alter trial parameters,
+  model inputs, candidate hashes, no-OMPEX policy, or replacement verdicts.
+- Plans and generated `output/` artifacts remain ignored unless explicitly
+  documented as durable planning files.
+

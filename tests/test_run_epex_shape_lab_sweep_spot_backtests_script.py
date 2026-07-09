@@ -77,6 +77,44 @@ def test_run_sweep_spot_backtests_reuses_current_backtest(tmp_path: Path, monkey
     assert summary["reused_existing_count"] == 1
 
 
+def test_run_sweep_spot_backtests_resolves_relative_output_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    candidate = tmp_path / "candidate.csv"
+    spot = tmp_path / "spot.parquet"
+    adjusted = tmp_path / "sweep" / "trial_true" / "candidate_epex_shape_lab_adjusted.csv"
+    _write_bytes(candidate, b"candidate")
+    _write_bytes(spot, b"spot")
+    _write_bytes(adjusted, b"adjusted")
+    plan_json = _write_plan(tmp_path, candidate, spot, ["trial_true"])
+    sweep_summary = _write_sweep_summary(tmp_path, ["trial_true"], [True])
+    seen_output_dirs: list[Path] = []
+
+    def fake_backtest(**kwargs):
+        output_dir = kwargs["output_dir"]
+        seen_output_dirs.append(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        summary = _backtest_payload(candidate, kwargs["adjusted_csv"], spot)
+        (output_dir / "spot_backtest_summary.json").write_text(json.dumps(summary), encoding="utf-8")
+        return summary
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("scripts.run_epex_shape_lab_sweep_spot_backtests.backtest_against_spot", fake_backtest)
+
+    summary = run_sweep_spot_backtests(
+        plan_json=plan_json,
+        sweep_summary=sweep_summary,
+        output_root=Path("spot_backtests"),
+        output_summary=Path("run_summary.json"),
+        resume=False,
+    )
+
+    assert seen_output_dirs == [tmp_path / "spot_backtests" / "trial_true"]
+    assert seen_output_dirs[0].is_absolute()
+    assert summary["output_root"] == str((tmp_path / "spot_backtests").resolve())
+    assert (tmp_path / "run_summary.json").exists()
+
+
 def test_run_sweep_spot_backtests_rejects_ompex_sweep(tmp_path: Path) -> None:
     candidate = tmp_path / "candidate.csv"
     spot = tmp_path / "spot.parquet"
