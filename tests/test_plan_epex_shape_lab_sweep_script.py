@@ -34,6 +34,10 @@ def test_plan_epex_shape_lab_sweep_is_pre_registered_and_no_ompex(tmp_path) -> N
     assert plan["trial_count"] == 4
     assert all("compare_hpfc_ompex_benchmark" not in trial["commands"]["run_ab"] for trial in plan["trials"])
     assert all("audit_governance_no_ompex" in trial["commands"] for trial in plan["trials"])
+    assert all("explain_adjustment_no_ompex" in trial["commands"] for trial in plan["trials"])
+    assert all("scripts/explain_epex_shape_lab_adjustment.py" in trial["commands"]["explain_adjustment_no_ompex"] for trial in plan["trials"])
+    assert all("compare_hpfc_ompex_benchmark" not in trial["commands"]["explain_adjustment_no_ompex"] for trial in plan["trials"])
+    assert "shape explainability with projection/cap/floor decomposition" in plan["selection_basis"]
     assert plan["selection_thresholds"]["max_epex_spot_age_days"] == 14.0
     assert plan["scoring_policy"]["midday_weight"] == 1.0
     assert plan["scoring_policy"]["ramp_penalty_weight"] == 1.0
@@ -67,6 +71,7 @@ def test_plan_epex_shape_lab_sweep_can_pre_register_delta_cap_grid(tmp_path) -> 
     assert plan["trial_count"] == 4
     assert {trial["parameters"]["max_abs_delta_eur_mwh"] for trial in plan["trials"]} == {2.0, 4.0}
     assert all("_d" in trial["trial_id"] for trial in plan["trials"])
+    assert all("--lab-manifest" in trial["commands"]["explain_adjustment_no_ompex"] for trial in plan["trials"])
 
 
 def test_plan_epex_shape_lab_sweep_can_pre_register_t047_night_ramp_dimensions(tmp_path) -> None:

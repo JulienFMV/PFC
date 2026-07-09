@@ -1452,6 +1452,53 @@ Result: `23 passed, 1 skipped`.
 Promotion remains NO-GO pending T057 full coverage and production-chain
 evidence.
 
+## 2026-07-09 T060 Cap Decompression Pre-Registration
+
+Added pre-registered no-OMPEX T060 planning files:
+
+- `.planning/phases/14-lt-audit-remediation/t060_epex_only_cap_decompression_grid.json`
+- `.planning/phases/14-lt-audit-remediation/t060_epex_only_cap_decompression_delta_grid.json`
+- `.planning/phases/14-lt-audit-remediation/t060_epex_only_cap_decompression_thresholds.json`
+- `.planning/phases/14-lt-audit-remediation/t060_epex_only_cap_decompression_scoring.json`
+
+Purpose:
+
+- test whether slight cap decompression improves useful weak-bucket shape after
+  the explainability diagnostic showed the `2.75` cap is the main compression
+  stage;
+- keep intensities near T056/t005 instead of broad retuning;
+- require per-trial no-OMPEX shape explainability.
+
+Planner change:
+
+- `scripts/plan_epex_shape_lab_sweep.py` now writes an
+  `explain_adjustment_no_ompex` command for every trial, pointing to
+  `scripts/explain_epex_shape_lab_adjustment.py`.
+- `selection_basis` includes shape explainability with
+  projection/cap/floor decomposition.
+
+Generated local plan under ignored output:
+
+`output/phase14/t060_epex_only_cap_decompression_plan.json`
+
+Plan facts:
+
+- `plan_id=t060_epex_only_cap_decompression`
+- `trial_count=16`
+- `benchmark_policy=pre_registered_independent_no_ompex`
+- baseline candidate SHA:
+  `12447bbaa9828c0ffed871e62c35f90b8c100fcfab8c80b00468ac846848d895`
+- EPEX spot parquet SHA:
+  `008f552e0cd684d42dcb95f87a2681054b1af338c6511ae77c1ffa81b421e32f`
+- cap grid: `[2.75, 3.0, 3.25, 3.5]`
+- low-tail grid: `[0.2, 0.25]`
+- night grid: `[0.5, 0.55]`
+- fixed weekend `0.75`, peak-subshape `0.89`, evening recovery `0.05`,
+  ramp `0.0`.
+
+T060 is a separate lab line. It does not change frozen T057 and is not
+promotion evidence.
+
 ## 2026-07-09 T057 Energy Charts Fail-Closed Spot Refresh
 
 Added helper:

@@ -7462,3 +7462,62 @@ Invariants:
 - Any correction still has to go through EPEX-only pre-registration, backtest,
   and locked future holdout evidence.
 
+## D-20260709-101 - Cap Decompression Must Be Pre-Registered And Explained
+
+Decision: the next EPEX-only cap experiment is T060, a separate lab line that
+slightly decompresses `max_abs_delta_eur_mwh` around the T056/t005 candidate
+and requires per-trial shape explainability.
+
+Reason: T056/t005 explainability shows the floor guard is not the active
+compressor. The main compression comes from the max-delta cap:
+
+- cap scale `0.08689749250656693`;
+- mean absolute cap loss `6.367867353601689`;
+- mean absolute floor-guard loss `0.0`.
+
+Therefore, more intensity-only tuning would be poorly targeted. The next
+hypothesis must test controlled cap decompression while keeping the rest of the
+candidate near T056/t005 and preserving no-OMPEX governance.
+
+Implementation:
+
+- Added T060 planning files:
+  - `.planning/phases/14-lt-audit-remediation/t060_epex_only_cap_decompression_grid.json`
+  - `.planning/phases/14-lt-audit-remediation/t060_epex_only_cap_decompression_delta_grid.json`
+  - `.planning/phases/14-lt-audit-remediation/t060_epex_only_cap_decompression_thresholds.json`
+  - `.planning/phases/14-lt-audit-remediation/t060_epex_only_cap_decompression_scoring.json`
+- `scripts/plan_epex_shape_lab_sweep.py` now emits an
+  `explain_adjustment_no_ompex` command for every trial.
+- The planner's `selection_basis` now includes shape explainability with
+  projection/cap/floor decomposition.
+
+Generated local T060 plan:
+
+- Output:
+  `output/phase14/t060_epex_only_cap_decompression_plan.json`
+- `plan_id=t060_epex_only_cap_decompression`
+- `trial_count=16`
+- `benchmark_policy=pre_registered_independent_no_ompex`
+- baseline candidate SHA:
+  `12447bbaa9828c0ffed871e62c35f90b8c100fcfab8c80b00468ac846848d895`
+- EPEX spot parquet SHA:
+  `008f552e0cd684d42dcb95f87a2681054b1af338c6511ae77c1ffa81b421e32f`
+- cap grid: `[2.75, 3.0, 3.25, 3.5]`
+- low-tail grid: `[0.2, 0.25]`
+- night grid: `[0.5, 0.55]`
+- fixed weekend `0.75`, peak-subshape `0.89`, evening recovery `0.05`,
+  ramp `0.0`.
+
+Rejected alternatives:
+
+- Increase intensities without changing the cap.
+- Treat OMPEX deltas as the cap target.
+- Mix T060 into the frozen T057 approval path.
+
+Invariants:
+
+- T060 is lab-only and no-OMPEX.
+- T060 does not change frozen T057, T056/t005, or production readiness.
+- Any T060 result must go through independent spot backtests, sensitivity
+  analysis, governance audit, and future holdout before promotion discussion.
+

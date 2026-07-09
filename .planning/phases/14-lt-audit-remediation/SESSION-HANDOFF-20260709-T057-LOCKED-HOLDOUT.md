@@ -1116,6 +1116,48 @@ pytest tests\test_explain_epex_shape_lab_adjustment_script.py tests\test_backtes
 
 Result: `23 passed, 1 skipped`.
 
+## 2026-07-09 Follow-Up - T060 Cap Decompression Pre-Registration
+
+Added T060 planning files:
+
+- `.planning/phases/14-lt-audit-remediation/t060_epex_only_cap_decompression_grid.json`
+- `.planning/phases/14-lt-audit-remediation/t060_epex_only_cap_decompression_delta_grid.json`
+- `.planning/phases/14-lt-audit-remediation/t060_epex_only_cap_decompression_thresholds.json`
+- `.planning/phases/14-lt-audit-remediation/t060_epex_only_cap_decompression_scoring.json`
+
+Planner update:
+
+- `scripts/plan_epex_shape_lab_sweep.py` now emits
+  `explain_adjustment_no_ompex` for every trial.
+- The command runs
+  `scripts/explain_epex_shape_lab_adjustment.py` against the trial's adjusted
+  CSV and lab manifest.
+- `selection_basis` now includes shape explainability with
+  projection/cap/floor decomposition.
+
+Generated local plan command:
+
+```powershell
+python scripts\plan_epex_shape_lab_sweep.py --candidate-csv output\phase14\20260708_asof20260707_lshape100_yoy150_amp150_2032\ch_hfc_hourly_asof20260707_lshape100_yoy150_amp150_2032.csv --spot-parquet output\phase14\20260708_asof20260707_lshape100_yoy150_amp150_2032\epex_spot_refresh_20260708\epex_hourly_ch_energy_charts_20260708.parquet --output-root output\phase14\t060_epex_only_cap_decompression --valuation-timestamp 2026-07-07T00:00:00Z --grid-json '@.planning\phases\14-lt-audit-remediation\t060_epex_only_cap_decompression_grid.json' --max-abs-delta-grid-json '@.planning\phases\14-lt-audit-remediation\t060_epex_only_cap_decompression_delta_grid.json' --selection-thresholds-json '@.planning\phases\14-lt-audit-remediation\t060_epex_only_cap_decompression_thresholds.json' --scoring-policy-json '@.planning\phases\14-lt-audit-remediation\t060_epex_only_cap_decompression_scoring.json' --plan-id t060_epex_only_cap_decompression --output-json output\phase14\t060_epex_only_cap_decompression_plan.json
+```
+
+Plan facts:
+
+- `plan_id=t060_epex_only_cap_decompression`
+- `trial_count=16`
+- `benchmark_policy=pre_registered_independent_no_ompex`
+- baseline candidate SHA:
+  `12447bbaa9828c0ffed871e62c35f90b8c100fcfab8c80b00468ac846848d895`
+- EPEX spot parquet SHA:
+  `008f552e0cd684d42dcb95f87a2681054b1af338c6511ae77c1ffa81b421e32f`
+- cap grid: `[2.75, 3.0, 3.25, 3.5]`
+- low-tail grid: `[0.2, 0.25]`
+- night grid: `[0.5, 0.55]`
+- fixed weekend `0.75`, peak-subshape `0.89`, evening recovery `0.05`,
+  ramp `0.0`.
+
+T060 is a separate lab line. It does not alter the frozen T057 approval path.
+
 ## 2026-07-09 Follow-Up - Production Chain Rebinds Holdout Policy
 
 `scripts/build_epex_lab_adjusted_production_chain.py` now recomputes

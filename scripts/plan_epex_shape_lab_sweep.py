@@ -110,6 +110,7 @@ def build_plan(
         adjusted_csv = trial_dir / "candidate_epex_shape_lab_adjusted.csv"
         comparison_dir = trial_dir / "independent_ab_comparison"
         governance_json = trial_dir / "governance_audit" / "epex_shape_lab_governance_audit.json"
+        explain_dir = trial_dir / "shape_explainability"
         trials.append(
             {
                 "trial_id": trial_id,
@@ -161,6 +162,20 @@ def build_plan(
                             str(comparison_dir),
                         ]
                     ),
+                    "explain_adjustment_no_ompex": _join_command(
+                        [
+                            "python",
+                            "scripts/explain_epex_shape_lab_adjustment.py",
+                            "--baseline-csv",
+                            str(candidate_csv),
+                            "--adjusted-csv",
+                            str(adjusted_csv),
+                            "--lab-manifest",
+                            str(trial_dir / "ab_lab_manifest.json"),
+                            "--output-dir",
+                            str(explain_dir),
+                        ]
+                    ),
                     "audit_governance_no_ompex": _join_command(
                         [
                             "python",
@@ -196,6 +211,7 @@ def build_plan(
             "EPEX spot freshness and coverage thresholds",
             "pre-registered ramp and negative price thresholds",
             "pre-registered night/ramp shape components when present",
+            "shape explainability with projection/cap/floor decomposition",
             "calendar shape effects",
             "governance PASS without OMPEX",
         ],
