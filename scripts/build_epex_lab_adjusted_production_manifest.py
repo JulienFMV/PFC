@@ -17,10 +17,16 @@ from typing import Any
 
 import pandas as pd
 
-from scripts.epex_lab_selection_policy import (
-    selection_policy_pass,
-    selection_policy_value,
-)
+try:
+    from scripts.epex_lab_selection_policy import (
+        selection_policy_pass,
+        selection_policy_value,
+    )
+except ModuleNotFoundError:  # pragma: no cover - direct script execution
+    from epex_lab_selection_policy import (
+        selection_policy_pass,
+        selection_policy_value,
+    )
 
 
 def build_manifest(

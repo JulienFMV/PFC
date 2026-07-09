@@ -68,6 +68,70 @@ def test_summarize_spot_backtests_selects_weak_bucket_but_does_not_replace_incum
     assert (tmp_path / "out" / "spot_backtest_trial_ranking.csv").exists()
 
 
+def test_summarize_spot_backtests_prefers_replacement_candidate_over_top_weak_bucket(tmp_path: Path) -> None:
+    sweep_summary = _write_sweep(tmp_path, ["trial_top_weak", "trial_replacement"])
+    backtest_root = tmp_path / "backtests"
+    _write_backtest(
+        backtest_root / "trial_top_weak" / "spot_backtest_summary.json",
+        overall=0.50,
+        night=0.20,
+        night_pos=10,
+        ramp=0.06,
+        ramp_pos=12,
+        evening=0.50,
+        solar=0.50,
+        weekend=0.35,
+        post=0.29,
+        sha="top-weak",
+    )
+    _write_backtest(
+        backtest_root / "trial_replacement" / "spot_backtest_summary.json",
+        overall=0.49,
+        night=0.18,
+        night_pos=10,
+        ramp=0.05,
+        ramp_pos=12,
+        evening=0.49,
+        solar=0.49,
+        weekend=0.34,
+        post=0.31,
+        sha="replacement",
+    )
+    incumbent = tmp_path / "incumbent.json"
+    _write_backtest(
+        incumbent,
+        overall=0.40,
+        night=0.03,
+        night_pos=5,
+        ramp=0.035,
+        ramp_pos=8,
+        evening=0.45,
+        solar=0.44,
+        weekend=0.29,
+        post=0.30,
+        sha="incumbent",
+    )
+
+    summary = summarize_spot_backtests(
+        sweep_summary=sweep_summary,
+        backtest_root=backtest_root,
+        output_dir=tmp_path / "out",
+        incumbent_backtest=incumbent,
+    )
+
+    assert summary["best_weak_bucket_trial"]["trial_id"] == "trial_top_weak"
+    assert summary["best_replacement_trial"]["trial_id"] == "trial_replacement"
+    assert summary["selected_trial"]["trial_id"] == "trial_replacement"
+    assert summary["selected_adjusted_csv_sha256"] == "replacement"
+    assert summary["replacement_candidate_count"] == 1
+    assert summary["replacement_verdict"]["replace_incumbent"] is True
+    ranking = pd.read_csv(tmp_path / "out" / "spot_backtest_trial_ranking.csv")
+    by_trial = ranking.set_index("trial_id")
+    assert bool(by_trial.loc["trial_top_weak", "weak_bucket_candidate"])
+    assert not bool(by_trial.loc["trial_top_weak", "replacement_candidate"])
+    assert bool(by_trial.loc["trial_replacement", "replacement_candidate"])
+
+
 def test_summarize_spot_backtests_rejects_ompex_backtest(tmp_path: Path) -> None:
     sweep_summary = _write_sweep(tmp_path, ["trial"])
     backtest_root = tmp_path / "backtests"
@@ -112,6 +176,24 @@ def test_summarize_spot_backtests_does_not_treat_false_string_as_eligible(tmp_pa
 
     assert summary["trial_count_from_sweep"] == 1
     assert summary["best_weak_bucket_trial"]["trial_id"] == "trial_true"
+
+
+def test_summarize_spot_backtests_marks_missing_backtest_not_replacement(tmp_path: Path) -> None:
+    sweep_summary = _write_sweep(tmp_path, ["trial_missing"])
+
+    summary = summarize_spot_backtests(
+        sweep_summary=sweep_summary,
+        backtest_root=tmp_path / "backtests",
+        output_dir=tmp_path / "out",
+    )
+
+    assert summary["replacement_candidate_count"] == 0
+    assert summary["selected_trial"] is None
+    ranking = pd.read_csv(tmp_path / "out" / "spot_backtest_trial_ranking.csv")
+    assert ranking.loc[0, "status"] == "MISSING_BACKTEST"
+    assert not bool(ranking.loc[0, "weak_bucket_candidate"])
+    assert not bool(ranking.loc[0, "replacement_candidate"])
+    assert str(ranking.loc[0, "degraded_vs_incumbent"]) in {"", "nan"}
 
 
 def _write_sweep(tmp_path: Path, trial_ids: list[str]) -> Path:

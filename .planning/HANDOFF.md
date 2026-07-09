@@ -2,7 +2,7 @@
 
 Latest active handoff:
 
-`.planning/phases/14-lt-audit-remediation/SESSION-HANDOFF-20260708-DAILY-GENERATION-ASOF20260707.md`
+`.planning/phases/14-lt-audit-remediation/SESSION-HANDOFF-20260709-T056-SELECTION-GOVERNANCE.md`
 
 Read order for new agents:
 
@@ -14,6 +14,47 @@ Read order for new agents:
 
 Do not treat older Phase 14 generated reports as accepted production evidence
 unless the latest handoff or decision log names them explicitly.
+
+Current Phase 14 EPEX lab status: T056 t005 is the best no-OMPEX replacement
+candidate and now has strict diagnostic evidence, but it is not production
+promoted. Selected trial:
+`t005_w075_l025_p089_e005_n055_r00`; adjusted CSV sha256:
+`5e603a4d5926f9265ca564615e69d0d7ee39f778f6f19b495706ab1b89cf69b6`.
+
+T056 selection evidence:
+
+- selection summary:
+  `output/phase14/t056_postval_final_micro_selection_summary/spot_backtest_selection_summary.json`
+- `replacement_verdict.replace_incumbent=true`
+- `selected_adjusted_csv_sha256=5e603a4d5926f9265ca564615e69d0d7ee39f778f6f19b495706ab1b89cf69b6`
+- OMPEX flags false for model, selection, and backtest.
+
+T056 strict diagnostics now pass:
+
+- source hierarchy policy:
+  `.planning/phases/14-lt-audit-remediation/quote_conflict_source_hierarchy_policy_t056_asof20260707_postval_final_micro.json`
+- product audit:
+  `output/phase14/t056_postval_final_micro/t005_diagnostics/product_normalization_with_policy/summary.json`
+  reports `all_gates_pass=true`, `critical_count=0`, `unsupported_count=0`,
+  `accepted_quote_conflict_count=6`, `blocking_quote_conflict_count=0`.
+- Power BI strict:
+  `output/phase14/t056_postval_final_micro/t005_diagnostics/powerbi_strict/summary_metrics.csv`
+  reports `powerbi_quality_gate_status=PASS`, `weighted_negative_hours=0`, and
+  no critical flags.
+- staged reproducibility:
+  `output/phase14/t056_postval_final_micro/t005_diagnostics/staged_adjusted_candidate_selection_guard/staged_lt_epex_lab_candidate_manifest.json`
+  regenerates the exact adjusted CSV sha256 and records source provenance.
+- readiness:
+  `output/phase14/t056_postval_final_micro/t005_diagnostics/promotion_readiness/decision_with_staged_manifest.json`
+  reports `strict_diagnostics_pass=true`,
+  `status=STRICT_DIAGNOSTICS_PASS_PRODUCTION_CHAIN_MISSING`, and
+  `production_chain_pass=false`.
+
+Do not promote T056 until a real approved adjusted production manifest with run
+identity exists and the adjusted export/selected/capstone chain is built from
+that approved manifest. The source hierarchy policy approval is only a
+QUOTE_CONFLICT waiver for the bound CSV/forwards/identity hash, not curve
+approval.
 
 Current daily generation: Wednesday 2026-07-08 was regenerated from the EEX
 workbook available on 2026-07-08. The latest usable CH/DE/FR quote row in that

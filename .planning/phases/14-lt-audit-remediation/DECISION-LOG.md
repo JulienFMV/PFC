@@ -4795,3 +4795,127 @@ Invariants not to break:
 - Generated T051-T054 artifacts remain local evidence and are not commit
   targets.
 
+## D-20260709-52 - T056 Replacement Selection Requires Explicit Selected Artifact
+
+Decision: EPEX lab spot-backtest selection now distinguishes the best weak
+bucket from the best replacement candidate. The selected artifact for promotion
+evidence is the first weak-bucket candidate that does not degrade any incumbent
+core metric, recorded explicitly as `selected_trial` and
+`selected_adjusted_csv_sha256`.
+
+Reason: T056 exposed a governance bug in the selection summary. The top weak
+bucket trial improved the ranking score but slightly degraded the
+post-valuation metric. A lower-ranked trial, T056 t005, beat the incumbent T046
+on every declared core metric and was the actual replacement candidate. The
+selection artifact must bind production evidence to that exact CSV hash instead
+of relying on an implicit top-ranked weak-bucket row.
+
+Validation:
+
+- T056 selected trial:
+  `t005_w075_l025_p089_e005_n055_r00`
+- selected adjusted CSV sha256:
+  `5e603a4d5926f9265ca564615e69d0d7ee39f778f6f19b495706ab1b89cf69b6`
+- selection summary:
+  `output/phase14/t056_postval_final_micro_selection_summary/spot_backtest_selection_summary.json`
+- selection summary sha256:
+  `b2a319ac91eff51947387bc2a1dcc4784b2f5bf5536ea861f2e63ab9fc5cf10d`
+- `replacement_candidate_count=1`
+- `replacement_verdict.replace_incumbent=true`
+- OMPEX flags remain false for model, selection, and backtest.
+
+T056 t005 improves the T046 incumbent on all declared core metrics:
+
+- overall `0.4506842423821014` vs `0.40548354103189205`
+- evening `0.4688940576897349` vs `0.45338812791781463`
+- solar-tail `0.46091530831501754` vs `0.4372953091304925`
+- weekend `0.3283653976588017` vs `0.2889611347370835`
+- post-valuation `0.3049947368951571` vs `0.3048038417338681`
+- night `0.16252506955713483` vs `0.03190894115068499`
+- ramp `0.053194830053255315` vs `0.035478178105887714`
+
+Rejected alternatives:
+
+- Select the top weak-bucket row even when it degrades a core metric.
+- Relax the post-valuation non-degradation requirement for T056.
+- Use OMPEX advisory performance to choose or override the selected artifact.
+
+Invariants not to break:
+
+- `selected_adjusted_csv_sha256` must match the exact adjusted CSV being
+  staged or promoted.
+- Replacement selection remains no-OMPEX and hash-bound.
+- Post-valuation remains a non-degradation veto, not a target for further
+  micro-tuning.
+
+## D-20260709-53 - T056 Diagnostics Pass But Production Promotion Remains NO-GO
+
+Decision: T056 t005 is the current no-OMPEX lab replacement candidate and has
+strict diagnostic evidence, but it remains NO-GO for production promotion until
+a real adjusted production run identity and the export/selected/capstone chain
+are approved and manifest-bound.
+
+Reason: the exact T056 adjusted CSV now passes product normalization with a
+hash-bound source hierarchy policy and strict Power BI gates. Reproducible
+staging from the 2026-07-07 baseline CSV regenerates the same adjusted CSV
+sha256 and records source provenance plus selection-policy pass. However, the
+available adjusted production manifest is intentionally a CLI/staging NO-GO
+artifact with no 40-hex production git commit and approval flags false.
+
+Evidence:
+
+- source hierarchy policy:
+  `.planning/phases/14-lt-audit-remediation/quote_conflict_source_hierarchy_policy_t056_asof20260707_postval_final_micro.json`
+- policy sha256:
+  `71abb1151bf4f46728baffbdb6e6398c4a9a70e7273c4cc22fdb6a4fdfa73962`
+- product audit with policy:
+  `output/phase14/t056_postval_final_micro/t005_diagnostics/product_normalization_with_policy/summary.json`
+  - `all_gates_pass=true`
+  - `critical_count=0`
+  - `unsupported_count=0`
+  - `accepted_quote_conflict_count=6`
+  - `blocking_quote_conflict_count=0`
+  - `quote_conflict_identity_hash=a28d7f15151e730dca2099335e1d7e75dcf52e3a77edb6871352f9942c882846`
+- strict Power BI summary:
+  `output/phase14/t056_postval_final_micro/t005_diagnostics/powerbi_strict/summary_metrics.csv`
+  - `powerbi_quality_gate_status=PASS`
+  - `weighted_negative_hours=0`
+  - critical flags `0`
+- staged reproducibility manifest:
+  `output/phase14/t056_postval_final_micro/t005_diagnostics/staged_adjusted_candidate_selection_guard/staged_lt_epex_lab_candidate_manifest.json`
+  - adjusted CSV sha256:
+    `5e603a4d5926f9265ca564615e69d0d7ee39f778f6f19b495706ab1b89cf69b6`
+  - source CSV sha256:
+    `12447bbaa9828c0ffed871e62c35f90b8c100fcfab8c80b00468ac846848d895`
+  - source provenance sha256:
+    `347d617a23cddd35e3f3a791d42b205e2989c04885fa03ebb23942d9d5c5d2e6`
+  - adjusted production manifest NO-GO sha256:
+    `052fdd1c3bc82cfe41f8e3600c9f577a1b571be99a2ba20123ad6118b7747c8d`
+- readiness with staged manifest:
+  `output/phase14/t056_postval_final_micro/t005_diagnostics/promotion_readiness/decision_with_staged_manifest.json`
+  - `strict_diagnostics_pass=true`
+  - `production_chain_pass=false`
+  - `status=STRICT_DIAGNOSTICS_PASS_PRODUCTION_CHAIN_MISSING`
+  - missing evidence:
+    `adjusted_export_manifest`, `adjusted_selected_config`,
+    `adjusted_capstone`
+
+Rejected alternatives:
+
+- Treat the source hierarchy policy `production_approved=true` as approval of
+  the curve itself.
+- Promote a CLI/staging manifest with `production_approved=false`.
+- Build export/selected/capstone artifacts before an approved adjusted
+  production manifest exists.
+- Use OMPEX as a promotion or selection gate.
+
+Invariants not to break:
+
+- Source hierarchy policy approval is only a QUOTE_CONFLICT/source hierarchy
+  waiver for the bound CSV/forwards/identity hash.
+- T056 promotion requires real production identity, source provenance,
+  selection-policy pass, approved adjusted production manifest, adjusted export
+  manifest, selected artifact, and capstone.
+- OMPEX remains advisory-only after freeze and never a model, calibration,
+  selection, or gate input.
+

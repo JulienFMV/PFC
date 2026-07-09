@@ -23,6 +23,13 @@ CORE_BUCKETS = {
     "solar_tail_mae_improvement_eur_mwh": "residual_level:solar_tail_mar_oct_10_16",
     "weekend_mae_improvement_eur_mwh": "residual_level:weekend",
 }
+CORE_REPLACEMENT_KEYS = [
+    "overall_mae_improvement_eur_mwh",
+    "evening_mae_improvement_eur_mwh",
+    "solar_tail_mae_improvement_eur_mwh",
+    "weekend_mae_improvement_eur_mwh",
+    "post_valuation_mae_improvement_eur_mwh",
+]
 
 
 def summarize_spot_backtests(
@@ -74,8 +81,14 @@ def summarize_spot_backtests(
     ranking_csv = output_dir / "spot_backtest_trial_ranking.csv"
     ranking.to_csv(ranking_csv, index=False)
     best_weak = _first_row(ranking[ranking["weak_bucket_candidate"].astype(bool)]) if not ranking.empty else None
+    best_replacement = (
+        _first_row(ranking[ranking["replacement_candidate"].astype(bool)])
+        if not ranking.empty and "replacement_candidate" in ranking.columns
+        else None
+    )
+    selected = best_replacement or best_weak
     best_overall = _first_row(ranking.sort_values("overall_mae_improvement_eur_mwh", ascending=False)) if not ranking.empty else None
-    replacement = _replacement_verdict(best_weak, incumbent)
+    replacement = _replacement_verdict(selected, incumbent)
     summary = {
         "schema_version": "epex_shape_lab_spot_backtest_summary.v1",
         "read_only": True,
@@ -91,7 +104,11 @@ def summarize_spot_backtests(
         "trial_count_summarized": int(len(rows)),
         "strict_pass_count": int(ranking["strict_lab_gate_pass"].sum()) if not ranking.empty else 0,
         "weak_bucket_candidate_count": int(ranking["weak_bucket_candidate"].sum()) if not ranking.empty else 0,
+        "replacement_candidate_count": int(ranking["replacement_candidate"].sum()) if not ranking.empty else 0,
+        "selected_trial": selected,
+        "selected_adjusted_csv_sha256": selected.get("adjusted_csv_sha256") if selected is not None else None,
         "best_weak_bucket_trial": best_weak,
+        "best_replacement_trial": best_replacement,
         "best_overall_trial": best_overall,
         "incumbent": incumbent,
         "replacement_verdict": replacement,
@@ -168,6 +185,10 @@ def _trial_row(
         and row["night_beats_incumbent"]
         and row["ramp_within_incumbent_tolerance"]
     )
+    row["degraded_vs_incumbent"] = ",".join(_degraded_vs_incumbent(row, incumbent))
+    row["replacement_candidate"] = bool(
+        incumbent is not None and row["weak_bucket_candidate"] and not row["degraded_vs_incumbent"]
+    )
     return row
 
 
@@ -196,16 +217,7 @@ def _replacement_verdict(best_weak: dict[str, Any] | None, incumbent: dict[str, 
         return {"status": "NO_WEAK_BUCKET_CANDIDATE", "replace_incumbent": False}
     if incumbent is None:
         return {"status": "NO_INCUMBENT_PROVIDED", "replace_incumbent": False}
-    degraded = []
-    for key in [
-        "overall_mae_improvement_eur_mwh",
-        "evening_mae_improvement_eur_mwh",
-        "solar_tail_mae_improvement_eur_mwh",
-        "weekend_mae_improvement_eur_mwh",
-        "post_valuation_mae_improvement_eur_mwh",
-    ]:
-        if float(best_weak[key]) < float(incumbent[key]):
-            degraded.append(key)
+    degraded = _degraded_vs_incumbent(best_weak, incumbent)
     if degraded:
         return {
             "status": "WEAK_BUCKET_GAIN_BUT_INCUMBENT_STILL_DOMINATES_CORE_METRICS",
@@ -213,6 +225,16 @@ def _replacement_verdict(best_weak: dict[str, Any] | None, incumbent: dict[str, 
             "degraded_vs_incumbent": degraded,
         }
     return {"status": "WEAK_BUCKET_AND_CORE_METRICS_BEAT_INCUMBENT", "replace_incumbent": True}
+
+
+def _degraded_vs_incumbent(row: dict[str, Any], incumbent: dict[str, Any] | None) -> list[str]:
+    if incumbent is None:
+        return []
+    degraded = []
+    for key in CORE_REPLACEMENT_KEYS:
+        if float(row[key]) < float(incumbent[key]):
+            degraded.append(key)
+    return degraded
 
 
 def _validate_backtest(summary: dict[str, Any], *, summary_path: Path) -> None:
@@ -246,13 +268,27 @@ def _post_valuation(summary: dict[str, Any]) -> float:
 
 
 def _missing_row(trial_id: str, summary_path: Path) -> dict[str, Any]:
-    return {
+    row = {
         "trial_id": trial_id,
         "summary_json": str(summary_path),
         "status": "MISSING_BACKTEST",
         "strict_lab_gate_pass": False,
+        "adjusted_csv_sha256": "",
+        "overall_mae_improvement_eur_mwh": 0.0,
+        "night_mae_improvement_eur_mwh": 0.0,
+        "night_positive_folds": 0,
+        "ramp_mae_improvement_eur_mwh": 0.0,
+        "ramp_positive_folds": 0,
+        "post_valuation_mae_improvement_eur_mwh": 0.0,
+        "night_beats_incumbent": False,
+        "ramp_within_incumbent_tolerance": False,
         "weak_bucket_candidate": False,
+        "degraded_vs_incumbent": "",
+        "replacement_candidate": False,
     }
+    for output_key in CORE_BUCKETS:
+        row[output_key] = 0.0
+    return row
 
 
 def _read_json(path: Path) -> dict[str, Any]:

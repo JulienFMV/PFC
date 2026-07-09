@@ -14,7 +14,10 @@ import re
 from pathlib import Path
 from typing import Any
 
-from scripts.epex_lab_selection_policy import selection_policy_manifest_value
+try:
+    from scripts.epex_lab_selection_policy import selection_policy_manifest_value
+except ModuleNotFoundError:  # pragma: no cover - direct script execution
+    from epex_lab_selection_policy import selection_policy_manifest_value
 
 
 def build_chain(
