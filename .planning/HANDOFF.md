@@ -1496,6 +1496,44 @@ Recommended next expert step after this audit:
 3. If additional modeling work is desired, focus on reducing the residual-path
    seam warnings without sacrificing the improved compression profile of T060.
 
+## 2026-07-09 T060 Sensitivity And Warning-Invariance Follow-Up
+
+Added read-only sensitivity artifact:
+
+`output/phase14/t060_epex_only_cap_decompression_sensitivity_20260709/sweep_sensitivity_summary.json`
+
+Key findings:
+
+- `max_abs_delta_eur_mwh=3.25` is the useful cap-decompression zone inside T060;
+  `2.75` underperforms and `3.5` is not selection-eligible.
+- `low_tail_intensity=0.2` dominates `0.25` on the mean replacement metrics.
+- `night_intensity=0.55` wins the replacement metrics and was correctly chosen
+  by the spot-backtest selector, while `night_intensity=0.5` remains slightly
+  better on solar-tail and compression.
+
+Most important structural finding:
+
+- the `monthly_path_warning_flags=4` issue is not an EPEX tuning target.
+- T056 monthly-path warnings and T060 monthly-path warnings are the same four
+  business warnings when compared on the warning keys
+  (`year`, `bucket`, `from_month`, `to_month`, `check_type`, `reason`):
+  - `2027-01->2027-Q1-RESIDUAL`
+  - `2027-Q1-RESIDUAL`
+  - `2027-Q1-RESIDUAL->2027-Q2`
+  - `2028-Q2->2028-RESIDUAL`
+- This is expected because the EPEX lab line conserves monthly BASE/PEAK means
+  to numerical zero:
+  - T060 `max_monthly_base_mean_abs_delta_eur_mwh=1.0215053768211307e-07`
+  - T060 `max_monthly_peak_mean_abs_delta_eur_mwh=1.6666666697256521e-07`
+
+Interpretation:
+
+- T060 improves the post-solver hourly-shape compression problem.
+- T060 does not and cannot repair the upstream residual monthly seam warning
+  family under the current monthly-conserving contract.
+- Therefore the next true modeling lever for those four warnings is upstream
+  monthly/residual formulation work, not more EPEX weekend/night/cap tuning.
+
 ## 2026-07-09 T061 Separate Future Holdout For T060
 
 Created a separate future holdout line for the T060 EPEX-only cap

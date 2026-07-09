@@ -7902,3 +7902,55 @@ Invariants:
 - Selected-lambda artifact, future holdout, and adjusted production/export/
   selected/capstone evidence are still required before any promotion path.
 
+## D-20260709-109 - T060 Monthly-Path Warnings Are Upstream-Monthly, Not EPEX Shape-Lab
+
+Decision: stop treating the four residual monthly-path warnings seen in T056/T060
+as an EPEX shape-lab tuning target. They are invariant under the current
+monthly-conserving EPEX adjustment and therefore belong to the upstream monthly
+curve / residual-bucket formulation, not to the post-solver hourly delta line.
+
+Reason: after T060/t007 was pushed through the same delivered bundle as T056,
+the `monthly_path_warning_flags=4` result remained. Comparing the warning rows
+between T056 and T060 shows the exact same four business warnings, even though
+T060 improves spot metrics and cap-compression explainability. This is
+consistent with the EPEX lab contract: monthly BASE/PEAK means are conserved to
+numerical zero, so a monthly-path audit keyed on month means cannot be repaired
+by changing hourly delta parameters alone.
+
+Evidence:
+
+- T060 sensitivity diagnostic:
+  `output/phase14/t060_epex_only_cap_decompression_sensitivity_20260709/sweep_sensitivity_summary.json`
+  - `max_abs_delta_eur_mwh=3.25` dominates the best weak-bucket/core results
+  - `low_tail_intensity=0.2` outperforms `0.25` on mean replacement metrics
+  - `night_intensity=0.55` wins the replacement metrics, while `0.5` remains
+    slightly better on solar-tail and compression
+- T056 monthly-path diagnostics:
+  `output/phase14/t056_postval_final_micro/t005_diagnostics/powerbi_strict/monthly_path_diagnostics.csv`
+- T060 monthly-path diagnostics:
+  `output/phase14/t060_epex_only_cap_decompression/t007_diagnostics/powerbi_strict/monthly_path_diagnostics.csv`
+- Warning-key comparison of the two files is equal on:
+  - `2027-01->2027-Q1-RESIDUAL` (`inter_bucket_seam`)
+  - `2027-Q1-RESIDUAL` (`adjacent_delta`)
+  - `2027-Q1-RESIDUAL->2027-Q2` (`inter_bucket_seam`)
+  - `2028-Q2->2028-RESIDUAL` (`inter_bucket_seam`)
+- T060 explainability still improves the post-solver compression profile versus
+  T056 (`raw_to_actual_abs_ratio 9.72` vs `11.95`), proving that the invariant
+  warnings are not a sign that T060 is ineffective overall.
+
+Rejected alternatives:
+
+- Keep retuning weekend/night/low-tail/cap parameters in the EPEX line hoping
+  to clear monthly-path warnings.
+- Relax the monthly-path warnings because T060 improves spot metrics.
+- Pretend T060 solved the residual monthly seams because the PNGs are better.
+
+Invariants:
+
+- Monthly solver authority remains the level authority; hourly EPEX overlays
+  cannot rewrite those monthly means.
+- Residual-bucket seam cleanup must happen upstream in the monthly/residual
+  formulation, not by post-solver month patching.
+- T060 remains useful as a weaker-compression challenger, but not as a fix for
+  the upstream residual seam warning family.
+
