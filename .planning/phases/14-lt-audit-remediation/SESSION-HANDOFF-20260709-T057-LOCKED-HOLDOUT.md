@@ -502,3 +502,24 @@ Context hygiene follow-up:
   lab adjusted candidate.
 - The T053/T054 search block is explicitly marked historical pre-T056 context.
   The active adjusted-candidate line remains T056/T057.
+
+Coverage identity follow-up:
+
+- `scripts/check_epex_lab_locked_holdout_coverage.py` now writes
+  `locked_plan_identity` to the coverage report, matching the identity carried
+  by runner/audit summaries.
+- The ready-state coverage `next_action` now points to the fail-closed
+  `scripts/run_epex_lab_locked_holdout.py` wrapper with a fresh output dir.
+- Current regenerated local output:
+  `output/phase14/t057_locked_t056_future_holdout/current_spot_runner/coverage_status.json`
+  remains `WAITING_FOR_FULL_SPOT_COVERAGE` and records T057 plan SHA
+  `f2b5ce94d7eb892ec4f0b2e46b209d09b078db8d15765009fba4ba0cb21ec1cd`.
+- The locked T057 plan JSON was not modified.
+
+Validation:
+
+```powershell
+python -m pytest tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_epex_lab_locked_holdout_policy.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result: `42 passed, 1 skipped`.

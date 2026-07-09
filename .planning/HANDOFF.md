@@ -163,6 +163,17 @@ and the recommended command still points to the locked T057 plan.
 Validation:
 `python -m pytest tests/test_epex_lab_locked_holdout_policy.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_adjusted_production_chain_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
 reported `73 passed, 1 skipped`.
+
+Coverage report hardening on 2026-07-09 extends the same plan identity to
+`scripts/check_epex_lab_locked_holdout_coverage.py`. The coverage JSON now
+contains `locked_plan_identity` with the locked T057 plan SHA and candidate
+hashes, so the coverage preflight, runner summary, audit, readiness, and future
+approval chain all refer back to the same frozen plan identity. The current
+regenerated coverage remains `WAITING_FOR_FULL_SPOT_COVERAGE`, with plan SHA
+`f2b5ce94d7eb892ec4f0b2e46b209d09b078db8d15765009fba4ba0cb21ec1cd`.
+Validation:
+`python -m pytest tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_epex_lab_locked_holdout_policy.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+reported `42 passed, 1 skipped`.
 Future approval audit CLI now exits `0` only when `approved=true`; all NO-GO
 states exit `1`. Validation:
 `python -m pytest tests/test_audit_epex_lab_future_approval_path_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_build_epex_lab_promotion_bundle_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`

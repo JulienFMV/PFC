@@ -5352,3 +5352,41 @@ Invariants not to break:
 - A passing locked holdout is necessary for packaging but is not production
   approval.
 
+## D-20260709-61 - Bind T057 Coverage Preflight To Frozen Plan Identity
+
+Decision: the T057 coverage preflight now emits the same locked plan identity
+as the runner and audit summaries.
+
+Reason: plan identity had been added to run/audit evidence, but the earlier
+coverage preflight still exposed only `plan_id` plus the spot parquet hash. For
+operator review and machine-readable traceability, the first T057 gate should
+also prove which frozen plan, window, and candidate lineage it evaluated.
+
+Implementation:
+
+- `scripts/check_epex_lab_locked_holdout_coverage.py` now writes
+  `locked_plan_identity`, including the plan JSON SHA, holdout window,
+  baseline/adjusted CSV hashes, lab manifest hash, and selection summary hash.
+- Its ready-state `next_action` points operators to the fail-closed
+  `scripts/run_epex_lab_locked_holdout.py` wrapper with a fresh output dir,
+  instead of the split backtest/audit commands.
+- The current coverage/runner report was regenerated and remains
+  `WAITING_FOR_FULL_SPOT_COVERAGE` for the locked T057 window.
+
+Validation:
+
+- `python -m pytest tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_epex_lab_locked_holdout_policy.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  reported `42 passed, 1 skipped`.
+
+Rejected alternatives:
+
+- Leave coverage as a weaker preflight artifact and rely on later runner/audit
+  summaries for plan identity.
+- Rewrite the locked T057 plan JSON to add new command text. The registered
+  plan SHA remains unchanged.
+
+Invariants not to break:
+
+- Coverage remains read-only and never approves production.
+- The locked T057 plan is immutable; coverage only reports its identity.
+

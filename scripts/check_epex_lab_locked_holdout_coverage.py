@@ -15,6 +15,11 @@ from typing import Any
 
 import pandas as pd
 
+try:
+    from scripts.epex_lab_locked_holdout_policy import build_locked_plan_identity
+except ModuleNotFoundError:  # pragma: no cover - direct script execution
+    from epex_lab_locked_holdout_policy import build_locked_plan_identity
+
 
 PLAN_SCHEMA_VERSION = "epex_lab_locked_holdout_plan.v1"
 
@@ -49,6 +54,7 @@ def check_coverage(
         "spot_parquet": str(spot_parquet),
         "spot_parquet_sha256": _sha256(spot_parquet),
         "plan_id": plan.get("plan_id"),
+        "locked_plan_identity": build_locked_plan_identity(plan, plan_json=plan_json),
         "holdout_start_utc": _iso(start),
         "holdout_end_utc": _iso(end),
         "expected_holdout_hours": int(len(expected)),
@@ -81,7 +87,7 @@ def check_coverage(
     coverage["ready_to_run_backtest"] = ready
     coverage["status"] = "READY_TO_RUN_HOLDOUT_BACKTEST" if ready else "WAITING_FOR_FULL_SPOT_COVERAGE"
     coverage["next_action"] = (
-        "Run the locked holdout backtest and audit commands from the plan."
+        "Run scripts/run_epex_lab_locked_holdout.py with the locked plan, refreshed spot parquet, and a fresh output dir."
         if ready
         else "Refresh the EPEX spot parquet after the holdout window is complete, then rerun this coverage check."
     )

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from pathlib import Path
 
 import pandas as pd
@@ -24,6 +25,9 @@ def test_check_epex_lab_locked_holdout_coverage_ready(tmp_path: Path) -> None:
     assert summary["observed_holdout_hours"] == 4
     assert summary["missing_holdout_hours"] == 0
     assert summary["checks"]["full_window_covered"] is True
+    assert summary["locked_plan_identity"]["plan_id"] == "test_holdout"
+    assert summary["locked_plan_identity"]["plan_json_sha256"] == _sha256(plan)
+    assert "run_epex_lab_locked_holdout.py" in summary["next_action"]
     assert (tmp_path / "coverage.json").exists()
 
 
@@ -119,3 +123,11 @@ def _write_plan(tmp_path: Path, *, min_hours: int) -> Path:
         encoding="utf-8",
     )
     return path
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
