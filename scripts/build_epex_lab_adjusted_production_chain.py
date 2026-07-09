@@ -286,8 +286,11 @@ def _locked_holdout_errors(production: dict[str, Any]) -> list[str]:
         holdout = _load_json(holdout_path)
     except (OSError, json.JSONDecodeError):
         return ["locked_holdout_summary_json"]
-    if evaluate_locked_holdout_policy(holdout).get("pass") is not True:
+    policy = evaluate_locked_holdout_policy(holdout)
+    if policy.get("pass") is not True:
         errors.append("locked_holdout_policy")
+    if production.get("locked_holdout_policy") != policy:
+        errors.append("locked_holdout_policy_bound")
     return errors
 
 

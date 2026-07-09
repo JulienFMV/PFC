@@ -1527,6 +1527,56 @@ Result: `26 passed`.
 
 Promotion status remains NO-GO.
 
+## 2026-07-09 Adjusted Production Chain Holdout Policy Rebinding
+
+The adjusted production-chain builder now rejects stale embedded locked-holdout
+policy metadata.
+
+Change:
+
+- `scripts/build_epex_lab_adjusted_production_chain.py` recomputes
+  `locked_holdout_policy` from the manifest's hash-bound
+  `locked_holdout_summary`.
+- It raises `locked_holdout_policy_bound` if the embedded policy object differs
+  from the recomputed policy.
+- This prevents export/selected/capstone artifacts from carrying stale or
+  hand-edited holdout policy metadata.
+
+Validation:
+
+```powershell
+pytest tests\test_build_epex_lab_adjusted_production_chain_script.py tests\test_build_epex_lab_adjusted_production_manifest_script.py -q -p no:cacheprovider
+```
+
+Result: `25 passed`.
+
+```powershell
+pytest tests\test_check_epex_lab_promotion_readiness_script.py tests\test_epex_lab_locked_holdout_policy.py -q -p no:cacheprovider
+```
+
+Result: `30 passed`.
+
+Promotion status remains NO-GO until T057 and the full production chain pass.
+
+## 2026-07-09 Expert Read-Only Audits
+
+Two read-only expert audits were launched after the T057 Energy Charts wrapper
+and production-chain hardening work.
+
+Consensus:
+
+- Production remains NO-GO.
+- Primary blocker is still full T057 observed EPEX spot coverage for
+  `2026-07-10T00:00:00Z` through `2026-07-24T00:00:00Z`.
+- Once coverage is complete, rerun the Energy Charts locked-holdout wrapper,
+  then rebuild adjusted production/export/selected/capstone evidence only if
+  T057 passes.
+- OMPEX remains advisory only and must not enter model inputs, lambda
+  selection, holdout scoring, or promotion gates.
+- Shape improvement work should focus on explainability diagnostics and
+  EPEX-only hypotheses, especially solar-tail/weekend/night/ramp contributions
+  and post-valuation tradeoffs.
+
 ## 2026-07-09 Promotion Readiness Recommended Commands
 
 Promotion readiness now mirrors future approval routing for T057 coverage

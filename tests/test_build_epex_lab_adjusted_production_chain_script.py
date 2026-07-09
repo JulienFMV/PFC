@@ -556,6 +556,38 @@ def test_adjusted_production_chain_rejects_tampered_locked_holdout_summary(tmp_p
         build_chain(adjusted_production_manifest=production_manifest, output_dir=tmp_path / "chain")
 
 
+def test_adjusted_production_chain_rejects_stale_locked_holdout_policy(tmp_path: Path) -> None:
+    lab, monthly, product, powerbi, policy, independent, governance, _ompex = _write_inputs(tmp_path)
+    adjusted_csv = json.loads(lab.read_text(encoding="utf-8"))["outputs"]["adjusted_csv"]
+    source_provenance = _write_source_provenance(tmp_path, lab=lab, adjusted_csv=adjusted_csv)
+    selection = _write_selection_summary(tmp_path)
+    locked_holdout = _write_locked_holdout(tmp_path)
+    production_manifest = tmp_path / "adjusted_production_manifest.json"
+    manifest = build_manifest(
+        lab_manifest=lab,
+        baseline_monthly_manifest=monthly,
+        product_summary=product,
+        powerbi_summary=powerbi,
+        source_hierarchy_policy=policy,
+        independent_summary=independent,
+        governance_audit=governance,
+        selection_summary=selection,
+        locked_holdout_summary=locked_holdout,
+        production_run_id="prod-run-1",
+        production_entrypoint="pfc_shaping.pipeline.production_phases",
+        git_commit="a" * 40,
+        source_provenance_manifest=source_provenance,
+        production_approved=True,
+        production_promotion_approved=True,
+        output=production_manifest,
+    )
+    manifest["locked_holdout_policy"] = {**manifest["locked_holdout_policy"], "status": "STALE"}
+    production_manifest.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="locked_holdout_policy_bound"):
+        build_chain(adjusted_production_manifest=production_manifest, output_dir=tmp_path / "chain")
+
+
 def test_adjusted_production_chain_builds_artifacts_that_unlock_readiness(tmp_path: Path) -> None:
     lab, monthly, product, powerbi, policy, independent, governance, ompex = _write_inputs(tmp_path)
     adjusted_csv = json.loads(lab.read_text(encoding="utf-8"))["outputs"]["adjusted_csv"]

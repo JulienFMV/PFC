@@ -1020,6 +1020,30 @@ Result: `112 passed, 1 skipped`.
 Current frozen T057 plan remains unchanged. Regenerated current T057 runner
 still exits `1` with `WAITING_FOR_FULL_SPOT_COVERAGE`.
 
+## 2026-07-09 Follow-Up - Production Chain Rebinds Holdout Policy
+
+`scripts/build_epex_lab_adjusted_production_chain.py` now recomputes
+`locked_holdout_policy` from the hash-bound locked holdout summary before
+building export/selected/capstone artifacts.
+
+It rejects an approved adjusted production manifest with
+`locked_holdout_policy_bound` if the embedded policy object is stale or
+hand-edited, even when the linked holdout summary itself still exists.
+
+Validation:
+
+```powershell
+pytest tests\test_build_epex_lab_adjusted_production_chain_script.py tests\test_build_epex_lab_adjusted_production_manifest_script.py -q -p no:cacheprovider
+```
+
+Result: `25 passed`.
+
+```powershell
+pytest tests\test_check_epex_lab_promotion_readiness_script.py tests\test_epex_lab_locked_holdout_policy.py -q -p no:cacheprovider
+```
+
+Result: `30 passed`.
+
 ## 2026-07-09 Follow-Up - Readiness Also Recommends The Wrapper
 
 `scripts/check_epex_lab_promotion_readiness.py` now emits
