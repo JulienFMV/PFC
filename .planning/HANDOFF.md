@@ -1472,6 +1472,65 @@ Operational conclusion:
 - The next action for both plans is `wait_without_retuning_candidate`.
 - Promotion remains NO-GO.
 
+## 2026-07-09 Energy Charts Pre-Window Guard
+
+Hardened the Energy Charts locked-holdout wrapper so it does not fetch spot data
+before the locked holdout window is complete.
+
+Changed:
+
+- `scripts/run_energy_charts_epex_locked_holdout.py`
+  - added optional `--as-of-utc` for deterministic operator/pre-window checks;
+  - computes `latest_required_holdout_utc = holdout_end_utc - 1h`;
+  - returns `LOCKED_HOLDOUT_WINDOW_NOT_COMPLETE` before fetching spot when
+    `as_of_utc <= latest_required_holdout_utc`;
+  - writes a run summary with `spot_fetch_ran=false`,
+    `locked_holdout_ran=false`, and `holdout_pass=false`.
+- `scripts/epex_lab_locked_holdout_policy.py`
+  - routes `LOCKED_HOLDOUT_WINDOW_NOT_COMPLETE` as
+    `NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING`, not as a model failure.
+- Tests updated:
+  - `tests/test_run_energy_charts_epex_locked_holdout_script.py`
+  - `tests/test_epex_lab_locked_holdout_policy.py`
+
+Validation:
+
+```powershell
+python -m pytest tests\test_run_energy_charts_epex_locked_holdout_script.py tests\test_epex_lab_locked_holdout_policy.py tests\test_audit_epex_lab_future_approval_path_script.py tests\test_check_epex_lab_promotion_readiness_script.py -q -p no:cacheprovider
+```
+
+Result: `48 passed`.
+
+```powershell
+python -m pytest tests\test_run_energy_charts_epex_locked_holdout_script.py tests\test_epex_lab_locked_holdout_policy.py tests\test_audit_epex_lab_locked_holdout_queue_script.py tests\test_discover_epex_spot_parquet_candidates_script.py tests\test_run_epex_lab_locked_holdout_script.py tests\test_audit_epex_lab_future_approval_path_script.py tests\test_check_epex_lab_promotion_readiness_script.py tests\test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result: `78 passed, 1 skipped`.
+
+Current local pre-window guard command:
+
+```powershell
+python scripts\run_energy_charts_epex_locked_holdout.py --plan-json .planning\phases\14-lt-audit-remediation\locked_holdout_plan_t057_t056_asof20260709.json --expected-plan-sha256 f2b5ce94d7eb892ec4f0b2e46b209d09b078db8d15765009fba4ba0cb21ec1cd --output-dir output\phase14\t057_locked_t056_future_holdout\energy_charts_pre_window_guard_20260709 --as-of-utc 2026-07-09T00:00:00Z
+```
+
+Expected exit: `1`.
+
+Observed:
+
+- `status=LOCKED_HOLDOUT_WINDOW_NOT_COMPLETE`
+- `spot_fetch_ran=false`
+- `locked_holdout_ran=false`
+- `holdout_pass=false`
+- `latest_required_holdout_utc=2026-07-23T23:00:00Z`
+- next action:
+  `Wait until the locked holdout window is complete, then refresh Energy Charts spot.`
+
+Operational conclusion:
+
+- Before the locked window is complete, the wrapper now produces only a
+  read-only status artifact and avoids unnecessary spot fetch artifacts.
+- Promotion remains NO-GO.
+
 ## 2026-07-09 EPEX Shape Explainability Diagnostic
 
 Added lab-only no-OMPEX diagnostic:

@@ -193,7 +193,7 @@ def _energy_charts_locked_holdout_policy(
             "spot_fetch_summary_matches_embedded": _spot_fetch_summary_matches_embedded(summary),
         }
     )
-    if summary.get("status") == "LOCKED_HOLDOUT_SPOT_WAITING":
+    if summary.get("status") in {"LOCKED_HOLDOUT_SPOT_WAITING", "LOCKED_HOLDOUT_WINDOW_NOT_COMPLETE"}:
         checks.update(
             {
                 "waiting_status": True,

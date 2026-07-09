@@ -9,6 +9,7 @@ written and the locked holdout runner is not called.
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import sys
@@ -32,6 +33,7 @@ def run_energy_charts_locked_holdout(
     expected_plan_sha256: str,
     output_dir: Path,
     bzn: str = "CH",
+    as_of_utc: str | None = None,
 ) -> dict[str, Any]:
     plan_json = _resolved_path(plan_json)
     output_dir = _resolved_path(output_dir)
@@ -70,6 +72,35 @@ def run_energy_charts_locked_holdout(
             {
                 "status": "NO_GO_LOCKED_HOLDOUT_PLAN_HASH_MISMATCH",
                 "next_action": "Do not fetch spot or run holdout; use the exact pre-registered locked plan hash.",
+            }
+        )
+        return _write_summary(output_dir, summary)
+
+    holdout_start = _to_utc(plan["holdout_start_utc"])
+    holdout_end = _to_utc(plan["holdout_end_utc"])
+    latest_required = holdout_end - timedelta(hours=1)
+    as_of = _to_utc(as_of_utc) if as_of_utc else datetime.now(tz=timezone.utc)
+    summary.update(
+        {
+            "as_of_utc": _iso(as_of),
+            "holdout_start_utc": _iso(holdout_start),
+            "holdout_end_utc": _iso(holdout_end),
+            "latest_required_holdout_utc": _iso(latest_required),
+        }
+    )
+    if holdout_end <= holdout_start:
+        summary.update(
+            {
+                "status": "NO_GO_LOCKED_HOLDOUT_PLAN_WINDOW_INVALID",
+                "next_action": "Fix the locked holdout plan window before fetching spot or running holdout.",
+            }
+        )
+        return _write_summary(output_dir, summary)
+    if as_of <= latest_required:
+        summary.update(
+            {
+                "status": "LOCKED_HOLDOUT_WINDOW_NOT_COMPLETE",
+                "next_action": "Wait until the locked holdout window is complete, then refresh Energy Charts spot.",
             }
         )
         return _write_summary(output_dir, summary)
@@ -147,6 +178,23 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _to_utc(value: Any) -> datetime:
+    if isinstance(value, datetime):
+        dt = value
+    else:
+        text = str(value)
+        if text.endswith("Z"):
+            text = f"{text[:-1]}+00:00"
+        dt = datetime.fromisoformat(text)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _iso(value: datetime) -> str:
+    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
 def _jsonable(value: Any) -> Any:
     if isinstance(value, dict):
         return {str(key): _jsonable(val) for key, val in value.items()}
@@ -163,12 +211,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--expected-plan-sha256", required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--bzn", default="CH")
+    parser.add_argument(
+        "--as-of-utc",
+        default=None,
+        help="Optional UTC timestamp used for pre-window guard testing. Defaults to current UTC time.",
+    )
     args = parser.parse_args(argv)
     summary = run_energy_charts_locked_holdout(
         plan_json=args.plan_json,
         expected_plan_sha256=args.expected_plan_sha256,
         output_dir=args.output_dir,
         bzn=args.bzn,
+        as_of_utc=args.as_of_utc,
     )
     print(json.dumps(_jsonable(summary), indent=2, sort_keys=True))
     return 0 if summary.get("status") == "LOCKED_HOLDOUT_PASS" and summary.get("holdout_pass") is True else 1

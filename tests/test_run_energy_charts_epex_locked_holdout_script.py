@@ -53,6 +53,7 @@ def test_run_energy_charts_locked_holdout_waits_on_partial_spot(
         plan_json=plan,
         expected_plan_sha256=plan_sha,
         output_dir=tmp_path / "run",
+        as_of_utc="2026-07-10T03:00:00Z",
     )
 
     assert summary["status"] == "LOCKED_HOLDOUT_SPOT_WAITING"
@@ -61,6 +62,31 @@ def test_run_energy_charts_locked_holdout_waits_on_partial_spot(
     assert summary["locked_holdout_ran"] is False
     assert runner_calls == []
     assert summary["next_action"] == "Refresh later."
+
+
+def test_run_energy_charts_locked_holdout_waits_before_window_complete(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    plan = _write_plan(tmp_path)
+    plan_sha = _sha256(plan)
+    calls: list[str] = []
+    monkeypatch.setattr(script, "fetch_hourly_spot", lambda **kwargs: calls.append("fetch"))
+    monkeypatch.setattr(script, "run_locked_holdout", lambda **kwargs: calls.append("run"))
+
+    summary = script.run_energy_charts_locked_holdout(
+        plan_json=plan,
+        expected_plan_sha256=plan_sha,
+        output_dir=tmp_path / "run",
+        as_of_utc="2026-07-10T00:30:00Z",
+    )
+
+    assert summary["status"] == "LOCKED_HOLDOUT_WINDOW_NOT_COMPLETE"
+    assert summary["spot_fetch_ran"] is False
+    assert summary["locked_holdout_ran"] is False
+    assert summary["as_of_utc"] == "2026-07-10T00:30:00Z"
+    assert summary["latest_required_holdout_utc"] == "2026-07-10T01:00:00Z"
+    assert calls == []
 
 
 def test_run_energy_charts_locked_holdout_runs_locked_runner_when_full(
@@ -98,6 +124,7 @@ def test_run_energy_charts_locked_holdout_runs_locked_runner_when_full(
         plan_json=plan,
         expected_plan_sha256=plan_sha,
         output_dir=tmp_path / "run",
+        as_of_utc="2026-07-10T03:00:00Z",
     )
 
     assert summary["status"] == "LOCKED_HOLDOUT_PASS"

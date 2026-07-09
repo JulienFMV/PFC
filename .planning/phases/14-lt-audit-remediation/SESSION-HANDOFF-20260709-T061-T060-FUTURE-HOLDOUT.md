@@ -181,6 +181,60 @@ Observed:
 - T057 next step: `wait_without_retuning_candidate`
 - T061 next step: `wait_without_retuning_candidate`
 
+## Energy Charts Pre-Window Guard Follow-Up
+
+Added a pre-window guard to:
+
+`scripts/run_energy_charts_epex_locked_holdout.py`
+
+Behavior:
+
+- verifies schema and exact plan SHA first;
+- computes `latest_required_holdout_utc = holdout_end_utc - 1h`;
+- if `as_of_utc <= latest_required_holdout_utc`, exits before Energy Charts
+  fetch with `LOCKED_HOLDOUT_WINDOW_NOT_COMPLETE`;
+- writes `spot_fetch_ran=false`, `locked_holdout_ran=false`, and
+  `holdout_pass=false`.
+
+Policy routing:
+
+- `scripts/epex_lab_locked_holdout_policy.py` maps
+  `LOCKED_HOLDOUT_WINDOW_NOT_COMPLETE` to
+  `NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING`.
+
+Validation:
+
+```powershell
+python -m pytest tests\test_run_energy_charts_epex_locked_holdout_script.py tests\test_epex_lab_locked_holdout_policy.py tests\test_audit_epex_lab_future_approval_path_script.py tests\test_check_epex_lab_promotion_readiness_script.py -q -p no:cacheprovider
+```
+
+Result:
+
+`48 passed`
+
+Broader validation:
+
+```powershell
+python -m pytest tests\test_run_energy_charts_epex_locked_holdout_script.py tests\test_epex_lab_locked_holdout_policy.py tests\test_audit_epex_lab_locked_holdout_queue_script.py tests\test_discover_epex_spot_parquet_candidates_script.py tests\test_run_epex_lab_locked_holdout_script.py tests\test_audit_epex_lab_future_approval_path_script.py tests\test_check_epex_lab_promotion_readiness_script.py tests\test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result:
+
+`78 passed, 1 skipped`
+
+Observed T057 pre-window command:
+
+```powershell
+python scripts\run_energy_charts_epex_locked_holdout.py --plan-json .planning\phases\14-lt-audit-remediation\locked_holdout_plan_t057_t056_asof20260709.json --expected-plan-sha256 f2b5ce94d7eb892ec4f0b2e46b209d09b078db8d15765009fba4ba0cb21ec1cd --output-dir output\phase14\t057_locked_t056_future_holdout\energy_charts_pre_window_guard_20260709 --as-of-utc 2026-07-09T00:00:00Z
+```
+
+Observed status:
+
+- `LOCKED_HOLDOUT_WINDOW_NOT_COMPLETE`
+- `spot_fetch_ran=false`
+- `locked_holdout_ran=false`
+- `latest_required_holdout_utc=2026-07-23T23:00:00Z`
+
 ## Next Steps
 
 1. Keep T057 frozen and wait for full T057 spot coverage.

@@ -7643,3 +7643,48 @@ Invariants:
 - Exact plan SHA remains mandatory for any runner command.
 - T057 and T061 remain separate evidence paths.
 
+## D-20260709-104 - Energy Charts Wrapper Must Not Fetch Before Window Completion
+
+Decision: the Energy Charts locked-holdout wrapper now stops before fetching
+spot data when the locked holdout window is not complete.
+
+Reason: before `latest_required_holdout_utc`, Energy Charts cannot contain the
+full frozen holdout window by construction. Fetching early creates unnecessary
+local artifacts and can confuse operators into treating a partial waiting state
+as meaningful model evidence.
+
+Implementation:
+
+- `scripts/run_energy_charts_epex_locked_holdout.py` accepts optional
+  `--as-of-utc`.
+- It computes `latest_required_holdout_utc = holdout_end_utc - 1h`.
+- If `as_of_utc <= latest_required_holdout_utc`, it writes
+  `LOCKED_HOLDOUT_WINDOW_NOT_COMPLETE` with:
+  - `spot_fetch_ran=false`;
+  - `locked_holdout_ran=false`;
+  - `holdout_pass=false`.
+- `scripts/epex_lab_locked_holdout_policy.py` routes this status as
+  `NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING`.
+
+Current observed T057 pre-window guard on `2026-07-09T00:00:00Z`:
+
+- plan SHA:
+  `f2b5ce94d7eb892ec4f0b2e46b209d09b078db8d15765009fba4ba0cb21ec1cd`
+- `status=LOCKED_HOLDOUT_WINDOW_NOT_COMPLETE`
+- `latest_required_holdout_utc=2026-07-23T23:00:00Z`
+- `spot_fetch_ran=false`
+- `locked_holdout_ran=false`
+
+Rejected alternatives:
+
+- Fetch Energy Charts early and rely on partial coverage failure.
+- Treat pre-window status as model failure.
+- Let operators infer the temporal status from separate queue-audit output.
+
+Invariants:
+
+- Exact plan SHA is still checked before any temporal decision.
+- Pre-window status is not promotion evidence.
+- No spot parquet should be written by this wrapper before the window is
+  complete.
+
