@@ -1363,6 +1363,60 @@ Result: `112 passed, 1 skipped`.
 Current frozen T057 plan remains unchanged. Regenerated current T057 runner
 still exits `1` with `WAITING_FOR_FULL_SPOT_COVERAGE`.
 
+## 2026-07-09 EPEX Shape Explainability Diagnostic
+
+Added lab-only no-OMPEX diagnostic:
+
+`scripts/explain_epex_shape_lab_adjustment.py`
+
+Purpose:
+
+- reconstruct raw EPEX shape-lab component contributions from
+  `epex_shape_templates.csv` and the lab manifest config;
+- compare raw component totals with the final adjusted-minus-baseline delta;
+- summarize deltas by bucket, component, month, and hour;
+- verify monthly BASE and EEX PEAK delta conservation;
+- keep the output explicitly non-promotional.
+
+Real T056/t005 diagnostic generated under ignored output:
+
+`output/phase14/t056_postval_final_micro/t005_diagnostics/shape_explainability_20260709/shape_explainability_summary.json`
+
+Result:
+
+- `status=DIAGNOSTIC_PASS`
+- `monthly_base_delta_conserved=true`
+- `monthly_peak_delta_conserved=true`
+- max monthly BASE mean absolute delta:
+  `9.555854647901084e-08`
+- max monthly PEAK mean absolute delta:
+  `8.333333436638669e-08`
+- no OMPEX usage flags are all false.
+
+Interpretation:
+
+- final actual deltas are small and constraint-preserving;
+- raw template contributions are materially larger than final projected
+  deltas, so projection/capping/floor mechanics are compressing the raw
+  component signal and should be reviewed before further tuning.
+
+Validation:
+
+```powershell
+pytest tests\test_explain_epex_shape_lab_adjustment_script.py -q -p no:cacheprovider
+```
+
+Result: `2 passed`.
+
+```powershell
+pytest tests\test_backtest_epex_shape_lab_against_spot_script.py tests\test_audit_epex_shape_lab_governance_script.py tests\test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result: `21 passed, 1 skipped`.
+
+Promotion remains NO-GO pending T057 full coverage and production-chain
+evidence.
+
 ## 2026-07-09 T057 Energy Charts Fail-Closed Spot Refresh
 
 Added helper:

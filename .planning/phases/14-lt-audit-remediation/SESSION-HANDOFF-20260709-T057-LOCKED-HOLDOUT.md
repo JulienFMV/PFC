@@ -1020,6 +1020,67 @@ Result: `112 passed, 1 skipped`.
 Current frozen T057 plan remains unchanged. Regenerated current T057 runner
 still exits `1` with `WAITING_FOR_FULL_SPOT_COVERAGE`.
 
+## 2026-07-09 Follow-Up - Shape Explainability Diagnostic
+
+Added:
+
+- `scripts/explain_epex_shape_lab_adjustment.py`
+- `tests/test_explain_epex_shape_lab_adjustment_script.py`
+
+The script is lab-only and no-OMPEX. It reconstructs raw EPEX shape-lab
+component contributions from `epex_shape_templates.csv` plus the lab manifest
+intensities, then compares them with the final adjusted-minus-baseline delta.
+
+Outputs:
+
+- `timestamp_component_contributions.csv`
+- `bucket_delta_summary.csv`
+- `component_delta_summary.csv`
+- `month_delta_summary.csv`
+- `hour_delta_summary.csv`
+- `shape_explainability_summary.json`
+
+Real T056/t005 command:
+
+```powershell
+python scripts\explain_epex_shape_lab_adjustment.py --baseline-csv output\phase14\t056_postval_final_micro\t005_diagnostics\staged_adjusted_candidate_selection_guard\lt_hourly_candidate.csv --adjusted-csv output\phase14\t056_postval_final_micro\t005_w075_l025_p089_e005_n055_r00\candidate_epex_shape_lab_adjusted.csv --lab-manifest output\phase14\t056_postval_final_micro\t005_diagnostics\staged_adjusted_candidate_selection_guard\epex_lab\ab_lab_manifest.json --output-dir output\phase14\t056_postval_final_micro\t005_diagnostics\shape_explainability_20260709
+```
+
+Result:
+
+- `status=DIAGNOSTIC_PASS`
+- `monthly_base_delta_conserved=true`
+- `monthly_peak_delta_conserved=true`
+- max monthly BASE mean absolute delta:
+  `9.555854647901084e-08`
+- max monthly PEAK mean absolute delta:
+  `8.333333436638669e-08`
+- `benchmark_policy=shape_explainability_no_ompex_diagnostic_only`
+- `promotion_gate=false`
+- `production_approved=false`
+- all OMPEX usage flags are false.
+
+Main diagnostic finding:
+
+- final actual deltas are constraint-preserving and small;
+- raw component contributions are much larger than the final projected delta,
+  so nullspace projection/capping/floor compression is a key explanation item
+  before any further tuning.
+
+Validation:
+
+```powershell
+pytest tests\test_explain_epex_shape_lab_adjustment_script.py -q -p no:cacheprovider
+```
+
+Result: `2 passed`.
+
+```powershell
+pytest tests\test_backtest_epex_shape_lab_against_spot_script.py tests\test_audit_epex_shape_lab_governance_script.py tests\test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result: `21 passed, 1 skipped`.
+
 ## 2026-07-09 Follow-Up - Production Chain Rebinds Holdout Policy
 
 `scripts/build_epex_lab_adjusted_production_chain.py` now recomputes

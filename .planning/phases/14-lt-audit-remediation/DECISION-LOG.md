@@ -7383,3 +7383,57 @@ Invariants:
 - Production promotion still requires the full adjusted production/export/
   selected/capstone chain.
 
+## D-20260709-100 - Shape Lab Needs Component Explainability Before More Tuning
+
+Decision: EPEX shape-lab candidates must have a lab-only explainability
+diagnostic that separates raw component contributions from final projected
+deltas before additional parameter tuning is treated as actionable.
+
+Reason: expert review identified that aggregate backtest improvement is not
+enough to understand whether gains come from solar-tail, weekend, night, ramp,
+or from an unintended level displacement. T056/t005 preserves BASE and PEAK
+levels, but its raw EPEX template contributions are much larger than the final
+projected/capped deltas. That compression needs to be visible before further
+EPEX-only hypotheses are tested.
+
+Implementation:
+
+- Added `scripts/explain_epex_shape_lab_adjustment.py`.
+- The script reads a baseline CSV, adjusted CSV, and lab manifest.
+- It reconstructs raw component contributions from
+  `epex_shape_templates.csv` and the manifest intensities.
+- It writes timestamp, bucket, component, month, and hour summaries.
+- It verifies monthly BASE and EEX PEAK delta conservation.
+- It sets `promotion_gate=false`, `production_approved=false`, and all OMPEX
+  usage flags to false.
+
+Real T056/t005 diagnostic:
+
+- Output:
+  `output/phase14/t056_postval_final_micro/t005_diagnostics/shape_explainability_20260709/shape_explainability_summary.json`
+- `status=DIAGNOSTIC_PASS`
+- max monthly BASE mean absolute delta:
+  `9.555854647901084e-08`
+- max monthly PEAK mean absolute delta:
+  `8.333333436638669e-08`
+
+Validation:
+
+- `pytest tests\test_explain_epex_shape_lab_adjustment_script.py -q -p no:cacheprovider`
+  reported `2 passed`.
+- `pytest tests\test_backtest_epex_shape_lab_against_spot_script.py tests\test_audit_epex_shape_lab_governance_script.py tests\test_lt_ct_imports.py -q -p no:cacheprovider`
+  reported `21 passed, 1 skipped`.
+
+Rejected alternatives:
+
+- Use OMPEX deltas to explain component quality.
+- Continue tuning from aggregate post-valuation score only.
+- Make explainability a promotion gate before T057 exists.
+
+Invariants:
+
+- This diagnostic is no-OMPEX and lab-only.
+- It does not change candidate selection, T057, or production readiness gates.
+- Any correction still has to go through EPEX-only pre-registration, backtest,
+  and locked future holdout evidence.
+
