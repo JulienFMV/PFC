@@ -409,3 +409,19 @@ Context hygiene follow-up:
   T056 against the locked window.
 - The `>= 0.0 EUR/MWh` T057 criterion is a non-degradation gate, not a material
   economic superiority proof.
+
+Operational recheck after these changes:
+
+- T057 plan SHA remains
+  `f2b5ce94d7eb892ec4f0b2e46b209d09b078db8d15765009fba4ba0cb21ec1cd`.
+- `git diff -- .planning/phases/14-lt-audit-remediation/locked_holdout_plan_t057_t056_asof20260709.json`
+  is empty.
+- `scripts/check_epex_lab_locked_holdout_coverage.py` against the current
+  2026-07-08 spot parquet exits `1`, expected while coverage is incomplete.
+- Staging/source/export/readiness targeted validation:
+
+```powershell
+python -m pytest tests/test_build_epex_lab_source_export_manifest_script.py tests/test_stage_epex_lab_adjusted_lt_candidate_script.py tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_adjusted_production_chain_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result: `60 passed, 1 skipped`.

@@ -190,6 +190,18 @@ promotion; FAIL requires a new pre-registered lineage rather than retuning T056
 against the locked window. The current T057 `>= 0.0 EUR/MWh` MAE criterion is a
 non-degradation gate, not a full economic superiority proof.
 
+Operational recheck after the context/plan-template changes:
+
+- locked T057 plan hash remains
+  `f2b5ce94d7eb892ec4f0b2e46b209d09b078db8d15765009fba4ba0cb21ec1cd`;
+- `git diff` shows no changes to
+  `.planning/phases/14-lt-audit-remediation/locked_holdout_plan_t057_t056_asof20260709.json`;
+- current coverage command against the 2026-07-08 spot parquet still exits
+  `1`, as expected, with `WAITING_FOR_FULL_SPOT_COVERAGE`;
+- source/staging/adjusted production-chain tests:
+  `python -m pytest tests/test_build_epex_lab_source_export_manifest_script.py tests/test_stage_epex_lab_adjusted_lt_candidate_script.py tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_adjusted_production_chain_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  reported `60 passed, 1 skipped`.
+
 Current daily generation: Wednesday 2026-07-08 was regenerated from the EEX
 workbook available on 2026-07-08. The latest usable CH/DE/FR quote row in that
 workbook is `2026-07-07`, so all new 2026-07-08 evidence is bound to
