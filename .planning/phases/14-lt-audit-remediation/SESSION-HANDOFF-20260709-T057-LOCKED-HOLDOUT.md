@@ -52,6 +52,17 @@ Code/tests/docs:
 - Reports missing hours, spot min/max, duplicate holdout rows, and whether it
   is ready to run the holdout backtest.
 
+`scripts/run_epex_lab_locked_holdout.py`
+
+- Preferred execution wrapper once future spot data is available.
+- Writes `coverage_status.json` first.
+- If coverage is incomplete, writes `locked_holdout_run_summary.json` and
+  stops with `backtest_ran=false`, `audit_ran=false`.
+- If coverage is complete, runs
+  `scripts/backtest_epex_shape_lab_against_spot.py` through the Python API,
+  then runs `scripts/audit_epex_lab_locked_holdout.py`.
+- Never approves production promotion.
+
 ## T057 Locked Plan
 
 Plan file:
@@ -121,12 +132,27 @@ Result:
 - expected holdout hours `336`
 - first missing holdout hour `2026-07-10T00:00:00Z`
 
+Runner check with the same incomplete spot parquet:
+
+```powershell
+python scripts/run_epex_lab_locked_holdout.py --plan-json .planning\phases\14-lt-audit-remediation\locked_holdout_plan_t057_t056_asof20260709.json --spot-parquet output\phase14\20260708_asof20260707_lshape100_yoy150_amp150_2032\epex_spot_refresh_20260708\epex_hourly_ch_energy_charts_20260708.parquet --output-dir output\phase14\t057_locked_t056_future_holdout\current_spot_runner
+```
+
+Result:
+
+- `status=WAITING_FOR_FULL_SPOT_COVERAGE`
+- `backtest_ran=false`
+- `audit_ran=false`
+- run summary:
+  `output/phase14/t057_locked_t056_future_holdout/current_spot_runner/locked_holdout_run_summary.json`
+
 ## Next Execution When Future Spot Exists
 
 After the refreshed EPEX spot parquet covers `2026-07-10T00:00:00Z` through
-`2026-07-24T00:00:00Z`, first run
-`scripts/check_epex_lab_locked_holdout_coverage.py`. Only if it reports
-`READY_TO_RUN_HOLDOUT_BACKTEST`, use the plan's
+`2026-07-24T00:00:00Z`, run `scripts/run_epex_lab_locked_holdout.py` with a
+fresh output dir. It will enforce coverage before backtest/audit. If manual
+execution is needed, first run `scripts/check_epex_lab_locked_holdout_coverage.py`.
+Only if it reports `READY_TO_RUN_HOLDOUT_BACKTEST`, use the plan's
 `commands.run_future_backtest_template`, replacing:
 
 - `<FUTURE_SPOT_PARQUET>`
