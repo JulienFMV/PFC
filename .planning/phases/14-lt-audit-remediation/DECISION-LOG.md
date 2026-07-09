@@ -4984,6 +4984,11 @@ Coverage status as of the 2026-07-08 spot parquet:
   `NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING`
 - consolidated future approval audit:
   `output/phase14/t057_locked_t056_future_holdout/future_approval_path_with_holdout_current.json`
+- readiness with locked holdout:
+  `output/phase14/t057_locked_t056_future_holdout/promotion_readiness_with_locked_holdout_current.json`
+- readiness locked holdout check:
+  `locked_holdout_pass=FAIL`,
+  `NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING`
 
 Rejected alternatives:
 

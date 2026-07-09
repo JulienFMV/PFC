@@ -71,6 +71,14 @@ Code/tests/docs:
 - A provided locked holdout blocks promotion unless it passed
   `LOCKED_HOLDOUT_PASS`.
 
+`scripts/check_epex_lab_promotion_readiness.py`
+
+- Now accepts `--locked-holdout-summary`.
+- A complete adjusted production/export/selected/capstone bundle cannot be
+  `PROMOTION_READY` unless the locked holdout has passed.
+- Diagnostic-only readiness can still report strict diagnostics separately
+  from production readiness.
+
 ## T057 Locked Plan
 
 Plan file:
@@ -170,6 +178,20 @@ Result:
   `adjusted_export_manifest`, `adjusted_selected_config`,
   `adjusted_capstone`, `adjusted_production_manifest_approved`, and
   `adjusted_production_manifest_run_identity_valid`.
+
+Promotion readiness with the current locked holdout run summary:
+
+```powershell
+python scripts/check_epex_lab_promotion_readiness.py --lab-manifest output\phase14\t056_postval_final_micro\t005_w075_l025_p089_e005_n055_r00\ab_lab_manifest.json --governance-audit output\phase14\t056_postval_final_micro\t005_w075_l025_p089_e005_n055_r00\governance_audit\epex_shape_lab_governance_audit.json --independent-summary output\phase14\t056_postval_final_micro\t005_w075_l025_p089_e005_n055_r00\independent_ab_comparison\ab_comparison_summary.json --product-summary output\phase14\t056_postval_final_micro\t005_diagnostics\product_normalization_with_policy\summary.json --powerbi-summary output\phase14\t056_postval_final_micro\t005_diagnostics\powerbi_strict\summary_metrics.csv --adjusted-production-manifest output\phase14\t056_postval_final_micro\t005_diagnostics\staged_adjusted_candidate_selection_guard\adjusted_production_manifest_no_go.json --locked-holdout-summary output\phase14\t057_locked_t056_future_holdout\current_spot_runner\locked_holdout_run_summary.json --output output\phase14\t057_locked_t056_future_holdout\promotion_readiness_with_locked_holdout_current.json
+```
+
+Result:
+
+- command exits `1`, as expected for not approved;
+- `strict_diagnostics_pass=true`;
+- `production_chain_pass=false`;
+- `locked_holdout_pass=FAIL`;
+- `locked_holdout_policy.status=NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING`.
 
 ## Next Execution When Future Spot Exists
 

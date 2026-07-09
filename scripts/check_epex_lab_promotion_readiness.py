@@ -36,6 +36,7 @@ def check_readiness(
     adjusted_export_manifest: Path | None = None,
     adjusted_selected_config: Path | None = None,
     adjusted_capstone: Path | None = None,
+    locked_holdout_summary: Path | None = None,
     output: Path | None = None,
 ) -> dict[str, Any]:
     lab = _load_json(lab_manifest)
@@ -102,6 +103,24 @@ def check_readiness(
     missing_production_evidence = [
         name for name, path in production_paths.items() if path is None or not path.exists()
     ]
+    production_bundle_complete = not missing_production_evidence
+    locked_holdout_required = bool(production_bundle_complete or locked_holdout_summary is not None)
+    locked_holdout_policy = None
+    locked_holdout_valid = not locked_holdout_required
+    if locked_holdout_summary is not None and locked_holdout_summary.exists():
+        locked_holdout_policy = _locked_holdout_policy(_load_json(locked_holdout_summary))
+        locked_holdout_valid = locked_holdout_policy.get("pass") is True
+    elif locked_holdout_required:
+        locked_holdout_policy = {"provided": False, "pass": False, "status": "MISSING_LOCKED_HOLDOUT"}
+        locked_holdout_valid = False
+    if locked_holdout_required:
+        checks.append(
+            _check(
+                "locked_holdout_pass",
+                locked_holdout_valid,
+                locked_holdout_policy,
+            )
+        )
     if adjusted_capstone is not None and adjusted_capstone.exists():
         capstone = _load_json(adjusted_capstone)
         capstone_schema_ok = bool(capstone.get("schema_version"))
@@ -340,6 +359,7 @@ def check_readiness(
     strict_diagnostics_pass = all(check["status"] == "PASS" for check in diagnostics_checks)
     production_chain_pass = (
         not missing_production_evidence
+        and locked_holdout_valid
         and production_manifest_approved
         and export_manifest_production_ready
         and selected_artifact_production_ready
@@ -368,6 +388,8 @@ def check_readiness(
         "product_summary": str(product_summary),
         "powerbi_summary": str(powerbi_summary),
         "ompex_advisory_delta": str(ompex_advisory_delta) if ompex_advisory_delta is not None else None,
+        "locked_holdout_summary": str(locked_holdout_summary) if locked_holdout_summary is not None else None,
+        "locked_holdout_policy": locked_holdout_policy,
     }
     if output is not None:
         output.parent.mkdir(parents=True, exist_ok=True)
@@ -400,6 +422,54 @@ def _powerbi_critical_count(summary: dict[str, str]) -> int:
         if key.endswith("_critical_flags"):
             total += int(float(value))
     return total
+
+
+def _locked_holdout_policy(summary: dict[str, Any] | None) -> dict[str, Any]:
+    if summary is None:
+        return {"provided": False, "pass": False, "status": "MISSING_LOCKED_HOLDOUT"}
+    schema = summary.get("schema_version")
+    checks = {
+        "promotion_gate_false": summary.get("promotion_gate") is False,
+        "production_approved_false": summary.get("production_approved") is False,
+        "ompex_not_model": summary.get("ompex_used_in_model") is False,
+        "ompex_not_selection": summary.get("ompex_used_in_selection") is False,
+        "ompex_not_backtest": summary.get("ompex_used_in_backtest") is False,
+    }
+    if schema == "epex_lab_locked_holdout_run.v1":
+        checks.update(
+            {
+                "coverage_ready": summary.get("coverage_ready") is True,
+                "backtest_ran": summary.get("backtest_ran") is True,
+                "audit_ran": summary.get("audit_ran") is True,
+                "holdout_pass": summary.get("holdout_pass") is True,
+                "status_pass": summary.get("status") == "LOCKED_HOLDOUT_PASS",
+            }
+        )
+        status = (
+            "NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING"
+            if summary.get("status") == "WAITING_FOR_FULL_SPOT_COVERAGE"
+            else "NO_GO_LOCKED_HOLDOUT_FAIL"
+        )
+    elif schema == "epex_lab_locked_holdout_audit.v1":
+        checks.update(
+            {
+                "holdout_pass": summary.get("holdout_pass") is True,
+                "status_pass": summary.get("status") == "LOCKED_HOLDOUT_PASS",
+            }
+        )
+        status = "NO_GO_LOCKED_HOLDOUT_FAIL"
+    else:
+        checks["known_schema"] = False
+        status = "NO_GO_LOCKED_HOLDOUT_POLICY_INVALID"
+    passed = all(checks.values())
+    return {
+        "provided": True,
+        "schema_version": schema,
+        "summary": summary.get("status"),
+        "pass": passed,
+        "status": "LOCKED_HOLDOUT_PASS" if passed else status,
+        "checks": checks,
+    }
 
 
 def _same_path(left: Any, right: Any) -> bool:
@@ -713,6 +783,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--adjusted-export-manifest", type=Path, default=None)
     parser.add_argument("--adjusted-selected-config", type=Path, default=None)
     parser.add_argument("--adjusted-capstone", type=Path, default=None)
+    parser.add_argument("--locked-holdout-summary", type=Path, default=None)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
 
@@ -727,6 +798,7 @@ def main(argv: list[str] | None = None) -> int:
         adjusted_export_manifest=args.adjusted_export_manifest,
         adjusted_selected_config=args.adjusted_selected_config,
         adjusted_capstone=args.adjusted_capstone,
+        locked_holdout_summary=args.locked_holdout_summary,
         output=args.output,
     )
     print(json.dumps(summary, indent=2, sort_keys=True, default=str))

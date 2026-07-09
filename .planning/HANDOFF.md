@@ -94,6 +94,11 @@ The consolidated future approval audit with this run summary is
 `output/phase14/t057_locked_t056_future_holdout/future_approval_path_with_holdout_current.json`;
 it reports `NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING` and includes
 `locked_holdout_pass` in `remaining_blockers`.
+The readiness checker also accepts `--locked-holdout-summary`; current enriched
+readiness output is
+`output/phase14/t057_locked_t056_future_holdout/promotion_readiness_with_locked_holdout_current.json`
+and includes `locked_holdout_pass=FAIL` with
+`NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING`.
 
 Current daily generation: Wednesday 2026-07-08 was regenerated from the EEX
 workbook available on 2026-07-08. The latest usable CH/DE/FR quote row in that
