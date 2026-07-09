@@ -5888,3 +5888,66 @@ Invariants not to break:
   exists and the locked holdout run/audit pass.
 - The locked T057 plan JSON remains unchanged.
 
+## D-20260709-72 - Require Explicit CH UTC Offsets For T057 Candidate CSVs
+
+Decision: T057 candidate CSV preflight now requires `utc_offset_ch` for both
+locked baseline and adjusted hourly CSVs, and downstream policy requires the
+corresponding candidate checks before any holdout evidence can pass.
+
+Reason: CH local timestamps can be ambiguous around DST transitions. The
+hourly export parser can use explicit offsets to distinguish repeated local
+hours, but falling back to offset inference weakens the locked holdout evidence.
+For T057 promotion evidence, candidate timestamps must be unambiguous at the
+source CSV level.
+
+Implementation:
+
+- `scripts/check_epex_lab_locked_holdout_coverage.py` now treats
+  `utc_offset_ch` as a required candidate CSV column.
+- Coverage checks now include `baseline_candidate_utc_offset_present` and
+  `adjusted_candidate_utc_offset_present`.
+- `ready_to_run_backtest` and source-comparability preflight require both
+  offset checks to pass.
+- `scripts/epex_lab_locked_holdout_policy.py` now requires
+  `<prefix>_utc_offset_present` inside candidate coverage checks.
+- Passing holdout fixtures in manifest/chain/readiness/future-approval tests
+  now include the new offset checks.
+- Coverage tests now reject:
+  - missing `utc_offset_ch`;
+  - duplicate candidate timestamps after CH-to-UTC parsing;
+  - non-finite candidate price/quantile values.
+- Coverage tests now accept a DST fall-back case with two local `02:00` rows
+  only when explicit offsets distinguish them.
+
+Validation:
+
+- `python -m pytest tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_epex_lab_locked_holdout_policy.py -q -p no:cacheprovider`
+  reported `26 passed`.
+- `python -m pytest tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_adjusted_production_chain_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_epex_lab_locked_holdout_policy.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_plan_epex_lab_locked_holdout_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  reported `102 passed, 1 skipped`.
+
+Operational result:
+
+- Regenerated current T057 runner remains
+  `WAITING_FOR_FULL_SPOT_COVERAGE`, exit `1`.
+- Current locked baseline and adjusted CSVs pass the new offset checks:
+  `baseline_candidate_utc_offset_present=true` and
+  `adjusted_candidate_utc_offset_present=true`.
+- Regenerated future approval audit remains
+  `NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING`; the remaining holdout blocker is
+  still future spot coverage.
+
+Rejected alternatives:
+
+- Allow the parser's DST inference path for T057 promotion evidence.
+- Treat missing offsets as a spot-coverage wait instead of a candidate source
+  comparability failure.
+
+Invariants not to break:
+
+- OMPEX remains benchmark/advisory only and is not a model, selection, or gate
+  input.
+- The locked T057 plan JSON remains unchanged.
+- Offset/timestamp/data-quality failures are source-comparability NO-GO
+  conditions, not tuning signals against the locked window.
+

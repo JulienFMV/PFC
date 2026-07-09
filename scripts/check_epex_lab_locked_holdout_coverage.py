@@ -28,6 +28,7 @@ PLAN_SCHEMA_VERSION = "epex_lab_locked_holdout_plan.v1"
 LOCKED_HOLDOUT_POLICY = "locked_future_no_ompex_holdout"
 SPOT_PRICE_COLUMN = "price_eur_mwh"
 CANDIDATE_TIMESTAMP_COLUMN = "timestamp_ch"
+CANDIDATE_UTC_OFFSET_COLUMN = "utc_offset_ch"
 CANDIDATE_PRICE_COLUMNS = [
     "price_slow_eur_mwh",
     "price_central_eur_mwh",
@@ -130,6 +131,7 @@ def check_coverage(
             "baseline_csv_sha256_present": baseline_source["expected_sha256_present"],
             "baseline_csv_sha256_bound": baseline_source["sha256_bound"],
             "baseline_candidate_required_columns_present": baseline_candidate["required_columns_present"],
+            "baseline_candidate_utc_offset_present": baseline_candidate["utc_offset_present"],
             "baseline_candidate_timestamps_parseable": baseline_candidate["timestamps_parseable"],
             "baseline_candidate_no_duplicate_timestamps": baseline_candidate["no_duplicate_timestamps"],
             "baseline_candidate_price_columns_finite": baseline_candidate["price_columns_finite"],
@@ -139,6 +141,7 @@ def check_coverage(
             "adjusted_csv_sha256_present": adjusted_source["expected_sha256_present"],
             "adjusted_csv_sha256_bound": adjusted_source["sha256_bound"],
             "adjusted_candidate_required_columns_present": adjusted_candidate["required_columns_present"],
+            "adjusted_candidate_utc_offset_present": adjusted_candidate["utc_offset_present"],
             "adjusted_candidate_timestamps_parseable": adjusted_candidate["timestamps_parseable"],
             "adjusted_candidate_no_duplicate_timestamps": adjusted_candidate["no_duplicate_timestamps"],
             "adjusted_candidate_price_columns_finite": adjusted_candidate["price_columns_finite"],
@@ -161,6 +164,7 @@ def check_coverage(
         and checks["baseline_csv_sha256_present"]
         and checks["baseline_csv_sha256_bound"]
         and checks["baseline_candidate_required_columns_present"]
+        and checks["baseline_candidate_utc_offset_present"]
         and checks["baseline_candidate_timestamps_parseable"]
         and checks["baseline_candidate_no_duplicate_timestamps"]
         and checks["baseline_candidate_price_columns_finite"]
@@ -170,6 +174,7 @@ def check_coverage(
         and checks["adjusted_csv_sha256_present"]
         and checks["adjusted_csv_sha256_bound"]
         and checks["adjusted_candidate_required_columns_present"]
+        and checks["adjusted_candidate_utc_offset_present"]
         and checks["adjusted_candidate_timestamps_parseable"]
         and checks["adjusted_candidate_no_duplicate_timestamps"]
         and checks["adjusted_candidate_price_columns_finite"]
@@ -191,6 +196,7 @@ def check_coverage(
             "baseline_csv_sha256_present",
             "baseline_csv_sha256_bound",
             "baseline_candidate_required_columns_present",
+            "baseline_candidate_utc_offset_present",
             "baseline_candidate_timestamps_parseable",
             "baseline_candidate_no_duplicate_timestamps",
             "baseline_candidate_price_columns_finite",
@@ -200,6 +206,7 @@ def check_coverage(
             "adjusted_csv_sha256_present",
             "adjusted_csv_sha256_bound",
             "adjusted_candidate_required_columns_present",
+            "adjusted_candidate_utc_offset_present",
             "adjusted_candidate_timestamps_parseable",
             "adjusted_candidate_no_duplicate_timestamps",
             "adjusted_candidate_price_columns_finite",
@@ -248,6 +255,7 @@ def _candidate_csv_status(path_text: str | None, *, expected: pd.DatetimeIndex) 
     missing_all = int(len(expected))
     failed = {
         "required_columns_present": False,
+        "utc_offset_present": False,
         "timestamps_parseable": False,
         "no_duplicate_timestamps": False,
         "price_columns_finite": False,
@@ -269,12 +277,12 @@ def _candidate_csv_status(path_text: str | None, *, expected: pd.DatetimeIndex) 
         frame = pd.read_csv(path)
     except (OSError, pd.errors.EmptyDataError, pd.errors.ParserError, UnicodeDecodeError):
         return failed
-    required = [CANDIDATE_TIMESTAMP_COLUMN, *CANDIDATE_PRICE_COLUMNS]
+    required = [CANDIDATE_TIMESTAMP_COLUMN, CANDIDATE_UTC_OFFSET_COLUMN, *CANDIDATE_PRICE_COLUMNS]
     if not set(required).issubset(frame.columns):
         return failed
-    status = {**failed, "required_columns_present": True}
+    status = {**failed, "required_columns_present": True, "utc_offset_present": True}
     try:
-        ts = _parse_timestamp_ch(frame[CANDIDATE_TIMESTAMP_COLUMN], frame.get("utc_offset_ch"))
+        ts = _parse_timestamp_ch(frame[CANDIDATE_TIMESTAMP_COLUMN], frame[CANDIDATE_UTC_OFFSET_COLUMN])
         idx = pd.DatetimeIndex(ts).tz_convert("UTC")
     except Exception:  # noqa: BLE001 - fail-closed for malformed candidate timestamps
         return status

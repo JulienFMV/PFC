@@ -28,6 +28,8 @@ def test_check_epex_lab_locked_holdout_coverage_ready(tmp_path: Path) -> None:
     assert summary["checks"]["plan_benchmark_policy_locked"] is True
     assert summary["checks"]["baseline_csv_sha256_bound"] is True
     assert summary["checks"]["adjusted_csv_sha256_bound"] is True
+    assert summary["checks"]["baseline_candidate_utc_offset_present"] is True
+    assert summary["checks"]["adjusted_candidate_utc_offset_present"] is True
     assert summary["checks"]["candidate_timestamp_sets_identical"] is True
     assert summary["checks"]["spot_price_column_present"] is True
     assert summary["checks"]["holdout_prices_finite"] is True
@@ -197,6 +199,71 @@ def test_check_epex_lab_locked_holdout_coverage_blocks_missing_candidate_column(
     assert summary["checks"]["adjusted_candidate_required_columns_present"] is False
 
 
+def test_check_epex_lab_locked_holdout_coverage_blocks_missing_candidate_utc_offset(tmp_path: Path) -> None:
+    plan = _write_plan(tmp_path, min_hours=4)
+    payload = json.loads(plan.read_text(encoding="utf-8"))
+    candidate = pd.read_csv(payload["adjusted_csv"]).drop(columns=["utc_offset_ch"])
+    candidate.to_csv(payload["adjusted_csv"], index=False)
+    _rewrite_plan_candidate_hash(plan, file_key="adjusted_csv")
+    spot = tmp_path / "spot.parquet"
+    pd.DataFrame(
+        {"price_eur_mwh": [1.0, 2.0, 3.0, 4.0]},
+        index=pd.date_range("2026-07-10T00:00:00Z", periods=4, freq="h"),
+    ).to_parquet(spot)
+
+    summary = check_coverage(plan_json=plan, spot_parquet=spot)
+
+    assert summary["status"] == "NO_GO_LOCKED_HOLDOUT_SOURCE_MISSING_OR_HASH_MISMATCH"
+    assert summary["ready_to_run_backtest"] is False
+    assert summary["checks"]["adjusted_csv_sha256_bound"] is True
+    assert summary["checks"]["adjusted_candidate_required_columns_present"] is False
+    assert summary["checks"]["adjusted_candidate_utc_offset_present"] is False
+
+
+def test_check_epex_lab_locked_holdout_coverage_blocks_candidate_duplicate_timestamps(tmp_path: Path) -> None:
+    plan = _write_plan(tmp_path, min_hours=4)
+    payload = json.loads(plan.read_text(encoding="utf-8"))
+    candidate = pd.read_csv(payload["baseline_csv"])
+    candidate.loc[1, "timestamp_ch"] = candidate.loc[0, "timestamp_ch"]
+    candidate.loc[1, "utc_offset_ch"] = candidate.loc[0, "utc_offset_ch"]
+    candidate.to_csv(payload["baseline_csv"], index=False)
+    _rewrite_plan_candidate_hash(plan, file_key="baseline_csv")
+    spot = tmp_path / "spot.parquet"
+    pd.DataFrame(
+        {"price_eur_mwh": [1.0, 2.0, 3.0, 4.0]},
+        index=pd.date_range("2026-07-10T00:00:00Z", periods=4, freq="h"),
+    ).to_parquet(spot)
+
+    summary = check_coverage(plan_json=plan, spot_parquet=spot)
+
+    assert summary["status"] == "NO_GO_LOCKED_HOLDOUT_SOURCE_MISSING_OR_HASH_MISMATCH"
+    assert summary["ready_to_run_backtest"] is False
+    assert summary["checks"]["baseline_candidate_no_duplicate_timestamps"] is False
+
+
+def test_check_epex_lab_locked_holdout_coverage_blocks_candidate_non_finite_prices(tmp_path: Path) -> None:
+    plan = _write_plan(tmp_path, min_hours=4)
+    payload = json.loads(plan.read_text(encoding="utf-8"))
+    candidate = pd.read_csv(payload["adjusted_csv"])
+    candidate["price_central_eur_mwh"] = candidate["price_central_eur_mwh"].astype("object")
+    candidate["structural_p90_eur_mwh"] = candidate["structural_p90_eur_mwh"].astype("object")
+    candidate.loc[0, "price_central_eur_mwh"] = "nan"
+    candidate.loc[1, "structural_p90_eur_mwh"] = "inf"
+    candidate.to_csv(payload["adjusted_csv"], index=False)
+    _rewrite_plan_candidate_hash(plan, file_key="adjusted_csv")
+    spot = tmp_path / "spot.parquet"
+    pd.DataFrame(
+        {"price_eur_mwh": [1.0, 2.0, 3.0, 4.0]},
+        index=pd.date_range("2026-07-10T00:00:00Z", periods=4, freq="h"),
+    ).to_parquet(spot)
+
+    summary = check_coverage(plan_json=plan, spot_parquet=spot)
+
+    assert summary["status"] == "NO_GO_LOCKED_HOLDOUT_SOURCE_MISSING_OR_HASH_MISMATCH"
+    assert summary["ready_to_run_backtest"] is False
+    assert summary["checks"]["adjusted_candidate_price_columns_finite"] is False
+
+
 def test_check_epex_lab_locked_holdout_coverage_blocks_candidate_holdout_gap(tmp_path: Path) -> None:
     plan = _write_plan(tmp_path, min_hours=4)
     payload = json.loads(plan.read_text(encoding="utf-8"))
@@ -238,6 +305,52 @@ def test_check_epex_lab_locked_holdout_coverage_blocks_candidate_timestamp_set_m
     assert summary["checks"]["candidate_timestamp_sets_identical"] is False
 
 
+def test_check_epex_lab_locked_holdout_coverage_accepts_dst_fallback_with_explicit_offsets(tmp_path: Path) -> None:
+    baseline = tmp_path / "baseline.csv"
+    adjusted = tmp_path / "adjusted.csv"
+    _write_candidate_csv(
+        baseline,
+        local_timestamps=[
+            "25.10.2026 01:00",
+            "25.10.2026 02:00",
+            "25.10.2026 02:00",
+            "25.10.2026 03:00",
+        ],
+        utc_offsets=["UTC+02:00", "UTC+02:00", "UTC+01:00", "UTC+01:00"],
+    )
+    _write_candidate_csv(
+        adjusted,
+        local_timestamps=[
+            "25.10.2026 01:00",
+            "25.10.2026 02:00",
+            "25.10.2026 02:00",
+            "25.10.2026 03:00",
+        ],
+        utc_offsets=["UTC+02:00", "UTC+02:00", "UTC+01:00", "UTC+01:00"],
+    )
+    plan = _write_plan(
+        tmp_path,
+        min_hours=4,
+        holdout_start_utc="2026-10-24T23:00:00Z",
+        holdout_end_utc="2026-10-25T03:00:00Z",
+        baseline=baseline,
+        adjusted=adjusted,
+    )
+    spot = tmp_path / "spot.parquet"
+    pd.DataFrame(
+        {"price_eur_mwh": [1.0, 2.0, 3.0, 4.0]},
+        index=pd.date_range("2026-10-24T23:00:00Z", periods=4, freq="h"),
+    ).to_parquet(spot)
+
+    summary = check_coverage(plan_json=plan, spot_parquet=spot)
+
+    assert summary["status"] == "READY_TO_RUN_HOLDOUT_BACKTEST"
+    assert summary["ready_to_run_backtest"] is True
+    assert summary["checks"]["baseline_candidate_no_duplicate_timestamps"] is True
+    assert summary["checks"]["candidate_timestamp_sets_identical"] is True
+    assert summary["baseline_candidate_timestamp_count"] == 4
+
+
 def test_check_epex_lab_locked_holdout_coverage_cli_exits_nonzero_when_waiting(tmp_path: Path) -> None:
     plan = _write_plan(tmp_path, min_hours=4)
     spot = tmp_path / "spot.parquet"
@@ -271,11 +384,17 @@ def _write_plan(
     *,
     min_hours: int,
     benchmark_policy: str = "locked_future_no_ompex_holdout",
+    holdout_start_utc: str = "2026-07-10T00:00:00Z",
+    holdout_end_utc: str = "2026-07-10T04:00:00Z",
+    baseline: Path | None = None,
+    adjusted: Path | None = None,
 ) -> Path:
-    baseline = tmp_path / "baseline.csv"
-    adjusted = tmp_path / "adjusted.csv"
-    _write_candidate_csv(baseline)
-    _write_candidate_csv(adjusted)
+    baseline = baseline or tmp_path / "baseline.csv"
+    adjusted = adjusted or tmp_path / "adjusted.csv"
+    if not baseline.exists():
+        _write_candidate_csv(baseline)
+    if not adjusted.exists():
+        _write_candidate_csv(adjusted)
     path = tmp_path / "plan.json"
     path.write_text(
         json.dumps(
@@ -286,8 +405,8 @@ def _write_plan(
                 "ompex_used_in_model": False,
                 "ompex_used_in_selection": False,
                 "ompex_used_in_backtest": False,
-                "holdout_start_utc": "2026-07-10T00:00:00Z",
-                "holdout_end_utc": "2026-07-10T04:00:00Z",
+                "holdout_start_utc": holdout_start_utc,
+                "holdout_end_utc": holdout_end_utc,
                 "baseline_csv": str(baseline),
                 "baseline_csv_sha256": _sha256(baseline),
                 "adjusted_csv": str(adjusted),
@@ -304,13 +423,26 @@ def _write_plan(
     return path
 
 
-def _write_candidate_csv(path: Path, *, periods: int = 4) -> None:
-    utc = pd.date_range("2026-07-10T00:00:00Z", periods=periods, freq="h")
-    local = utc.tz_convert("Europe/Zurich")
+def _write_candidate_csv(
+    path: Path,
+    *,
+    periods: int = 4,
+    local_timestamps: list[str] | None = None,
+    utc_offsets: list[str] | None = None,
+) -> None:
+    if local_timestamps is None:
+        utc = pd.date_range("2026-07-10T00:00:00Z", periods=periods, freq="h")
+        local = utc.tz_convert("Europe/Zurich")
+        local_timestamps = list(local.strftime("%d.%m.%Y %H:%M"))
+        utc_offsets = list(
+            "UTC" + local.strftime("%z").str.slice(0, 3) + ":" + local.strftime("%z").str.slice(3, 5)
+        )
+    if utc_offsets is None or len(local_timestamps) != len(utc_offsets):
+        raise ValueError("local_timestamps and utc_offsets must have the same length")
     frame = pd.DataFrame(
         {
-            "timestamp_ch": local.strftime("%d.%m.%Y %H:%M"),
-            "utc_offset_ch": "UTC" + local.strftime("%z").str.slice(0, 3) + ":" + local.strftime("%z").str.slice(3, 5),
+            "timestamp_ch": local_timestamps,
+            "utc_offset_ch": utc_offsets,
         }
     )
     for offset, column in enumerate(CANDIDATE_PRICE_COLUMNS):

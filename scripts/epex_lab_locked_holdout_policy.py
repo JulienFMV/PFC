@@ -181,6 +181,7 @@ def _candidate_coverage_checks_pass(checks: dict[str, Any], *, prefix: str) -> b
         checks.get(name) is True
         for name in [
             f"{prefix}_required_columns_present",
+            f"{prefix}_utc_offset_present",
             f"{prefix}_timestamps_parseable",
             f"{prefix}_no_duplicate_timestamps",
             f"{prefix}_price_columns_finite",

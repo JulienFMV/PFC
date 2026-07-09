@@ -1071,3 +1071,41 @@ Regenerated future approval audit remains
 are true on the current T057 runner; the remaining holdout blocker is still
 future spot coverage.
 
+## 2026-07-09 T057 Explicit UTC Offset Follow-Up
+
+The accepted P2 from the read-only data audit has been addressed:
+`utc_offset_ch` is now required for locked baseline and adjusted candidate CSVs.
+This closes the DST ambiguity fallback for promotion evidence.
+
+Implementation summary:
+
+- `scripts/check_epex_lab_locked_holdout_coverage.py` requires
+  `utc_offset_ch` and reports `baseline_candidate_utc_offset_present` /
+  `adjusted_candidate_utc_offset_present`.
+- `scripts/epex_lab_locked_holdout_policy.py` requires the new offset checks in
+  downstream candidate coverage policy.
+- Tests now cover missing offset, duplicate parsed candidate timestamps,
+  non-finite candidate prices/quantiles, and a DST fall-back case with repeated
+  local `02:00` rows distinguished by explicit offsets.
+
+Validation:
+
+```powershell
+python -m pytest tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_epex_lab_locked_holdout_policy.py -q -p no:cacheprovider
+```
+
+Result: `26 passed`.
+
+```powershell
+python -m pytest tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_adjusted_production_chain_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_epex_lab_locked_holdout_policy.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_plan_epex_lab_locked_holdout_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result: `102 passed, 1 skipped`.
+
+Current regenerated T057 runner remains
+`WAITING_FOR_FULL_SPOT_COVERAGE`, exit `1`, with
+`baseline_candidate_utc_offset_present=true` and
+`adjusted_candidate_utc_offset_present=true`. Regenerated future approval audit
+remains `NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING`; the remaining holdout blocker
+is still future spot coverage.
+
