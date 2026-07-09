@@ -1235,6 +1235,93 @@ This is orchestration hardening only. It does not change T059 plan parameters,
 candidate hashes, no-OMPEX policy, selection metrics, or the verdict that T059
 does not replace T056/t005.
 
+## 2026-07-09 T059 Parameter Sensitivity Diagnostic
+
+Added script:
+
+`scripts/analyze_epex_shape_lab_sweep_sensitivity.py`
+
+Function:
+
+- read a pre-registered no-OMPEX sweep plan;
+- read a no-OMPEX spot-backtest selection summary;
+- join trial parameters with realized metrics;
+- write parameter-response, correlation, merged trial, and summary artifacts;
+- remain read-only, lab-only, non-promotional, and OMPEX-free.
+
+Test:
+
+`tests/test_analyze_epex_shape_lab_sweep_sensitivity_script.py`
+
+Validation:
+
+```powershell
+python -m pytest tests/test_analyze_epex_shape_lab_sweep_sensitivity_script.py -q -p no:cacheprovider
+```
+
+Result: `2 passed`.
+
+T059 analysis command:
+
+```powershell
+python scripts\analyze_epex_shape_lab_sweep_sensitivity.py --plan-json output\phase14\t059_epex_only_lowtail_cap_night_interactions_plan.json --selection-summary output\phase14\t059_epex_only_lowtail_cap_night_interactions_selection_full\spot_backtest_selection_summary.json --output-dir output\phase14\t059_epex_only_lowtail_cap_night_interactions_sensitivity
+```
+
+Result:
+
+- `trial_count=36`
+- sensitivity summary:
+  `output/phase14/t059_epex_only_lowtail_cap_night_interactions_sensitivity/sweep_sensitivity_summary.json`
+- sensitivity summary SHA256:
+  `ea7207b0601dd4f41aa4856122673fa15ed51f82f8435b972e83f796e011b28f`
+- generated ignored files:
+  `trial_parameter_metrics.csv`, `parameter_sensitivity.csv`,
+  `parameter_metric_correlations.csv`, `sweep_sensitivity_summary.json`
+
+Summary facts:
+
+- `strict_pass_count=36`
+- `weak_bucket_candidate_count=5`
+- `replacement_candidate_count=0`
+- `next_hypothesis_hint=protect_post_valuation_before_expanding_weak_bucket_gains`
+- best overall/weak-bucket trial:
+  `t009_w075_l01_p089_e005_n055_r00_d275`
+- best post-valuation trial:
+  `t036_w075_l025_p089_e005_n055_r00_d275`
+
+Parameter reading:
+
+- `low_tail=0.10`:
+  - mean overall `0.4211366018533048`
+  - max overall `0.4651499923241654`
+  - mean post-valuation `0.2693469754455386`
+  - max post-valuation `0.2982706620743691`
+  - weak-bucket count `3`
+- `low_tail=0.25`:
+  - mean overall `0.4081703024032563`
+  - max overall `0.4506842423821014`
+  - mean post-valuation `0.2748380302045977`
+  - max post-valuation `0.3049947368951571`
+  - weak-bucket count `0`
+- `max_abs_delta=2.75` is strongest in this grid:
+  - mean overall `0.4551527817163272`
+  - mean post-valuation `0.2988511662559723`
+- Pearson correlations in this local grid include:
+  - `low_tail_intensity` vs overall: `-0.14369962714720416`
+  - `low_tail_intensity` vs post-valuation: `0.09254128382051807`
+  - `max_abs_delta_eur_mwh` vs overall: `0.9878837595660808`
+  - `max_abs_delta_eur_mwh` vs post-valuation: `0.9907428993390084`
+  - `night_intensity` vs night: `0.5817850976590491`
+
+Operational conclusion:
+
+- T059 quantitatively confirms the tradeoff: lower low-tail improves
+  weak-bucket score but does not preserve post-valuation.
+- Next model-quality line should be pre-registered only if it has a specific
+  no-OMPEX hypothesis for preserving post-valuation while keeping targeted
+  weak-bucket gains.
+- T056/t005 and locked T057 remain unchanged.
+
 ## 2026-07-09 Expert Audit Follow-Up and T058 Lab Pre-Registration
 
 Read-only expert audits were launched after the T056/t005 diagnostics and

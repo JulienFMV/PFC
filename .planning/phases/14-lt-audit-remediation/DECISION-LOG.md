@@ -6821,3 +6821,76 @@ Invariants:
 - Plans and generated `output/` artifacts remain ignored unless explicitly
   documented as durable planning files.
 
+## D-20260709-90 - T059 Sensitivity Confirms Post-Valuation Protection Is The Next Hypothesis
+
+Decision: before any further EPEX-only shape sweep, quantify parameter
+sensitivity against both weak-bucket gains and post-valuation performance. For
+T059, the result is that additional low-tail lowering should not continue
+unless the next pre-registered hypothesis explicitly protects post-valuation.
+
+Reason: T059 produced weak-bucket gains but no replacement candidate. The
+selection verdict alone says post-valuation degraded; the sensitivity analysis
+explains the parameter direction behind that tradeoff. Lower
+`low_tail_intensity` improves overall and weak-bucket metrics, while the
+incumbent-like `low_tail_intensity=0.25` remains best for post-valuation.
+
+Implementation:
+
+- Added `scripts/analyze_epex_shape_lab_sweep_sensitivity.py`.
+- The diagnostic reads a pre-registered plan and spot-backtest selection
+  summary, verifies no-OMPEX/non-promotional policy, joins trial parameters
+  to realized metrics, and writes:
+  - `trial_parameter_metrics.csv`
+  - `parameter_sensitivity.csv`
+  - `parameter_metric_correlations.csv`
+  - `sweep_sensitivity_summary.json`
+- Added `tests/test_analyze_epex_shape_lab_sweep_sensitivity_script.py`.
+
+T059 output:
+
+- sensitivity summary:
+  `output/phase14/t059_epex_only_lowtail_cap_night_interactions_sensitivity/sweep_sensitivity_summary.json`
+- summary SHA256:
+  `ea7207b0601dd4f41aa4856122673fa15ed51f82f8435b972e83f796e011b28f`
+- `trial_count=36`, `strict_pass_count=36`,
+  `weak_bucket_candidate_count=5`, `replacement_candidate_count=0`.
+- `next_hypothesis_hint=protect_post_valuation_before_expanding_weak_bucket_gains`.
+
+Key T059 sensitivity facts:
+
+- Best overall/weak-bucket trial remains
+  `t009_w075_l01_p089_e005_n055_r00_d275`.
+- Best post-valuation trial is
+  `t036_w075_l025_p089_e005_n055_r00_d275`, matching the incumbent T056/t005
+  parameter neighborhood.
+- By low-tail group:
+  - `low_tail=0.10`: mean overall `0.4211366018533048`, max overall
+    `0.4651499923241654`, mean post-valuation `0.2693469754455386`,
+    max post-valuation `0.2982706620743691`, weak-bucket count `3`.
+  - `low_tail=0.25`: mean overall `0.4081703024032563`, max overall
+    `0.4506842423821014`, mean post-valuation `0.2748380302045977`,
+    max post-valuation `0.3049947368951571`, weak-bucket count `0`.
+- Cap response is strongly positive in this grid:
+  `max_abs_delta=2.75` has mean overall `0.4551527817163272` and mean
+  post-valuation `0.2988511662559723`, while `2.25` has mean overall
+  `0.3737966216631755` and mean post-valuation `0.2452047508400532`.
+
+Validation:
+
+- `python -m pytest tests/test_analyze_epex_shape_lab_sweep_sensitivity_script.py -q -p no:cacheprovider`
+  reported `2 passed`.
+
+Rejected alternatives:
+
+- Launch another broad low-tail sweep without first explaining the
+  post-valuation degradation.
+- Select the best weak-bucket trial despite a lower post-valuation metric.
+- Use OMPEX advisory discrepancies as the next tuning target.
+
+Invariants:
+
+- T059 remains lab-only, no-OMPEX, non-promotional.
+- T056/t005 and locked T057 remain frozen.
+- Future replacement attempts must beat the incumbent on core replacement
+  metrics, especially post-valuation, before any promotion-path work.
+

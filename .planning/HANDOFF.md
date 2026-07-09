@@ -1487,6 +1487,64 @@ python -m pytest tests/test_run_epex_shape_lab_sweep_spot_backtests_script.py te
 
 Result: `26 passed, 1 skipped`.
 
+## 2026-07-09 T059 Parameter Sensitivity Diagnostic
+
+Added no-OMPEX lab diagnostic:
+
+`scripts/analyze_epex_shape_lab_sweep_sensitivity.py`
+
+Purpose:
+
+- join a pre-registered sweep plan with the spot-backtest ranking;
+- quantify parameter response for weak-bucket and post-valuation metrics;
+- keep the result read-only, no-OMPEX, non-promotional.
+
+T059 command:
+
+```powershell
+python scripts\analyze_epex_shape_lab_sweep_sensitivity.py --plan-json output\phase14\t059_epex_only_lowtail_cap_night_interactions_plan.json --selection-summary output\phase14\t059_epex_only_lowtail_cap_night_interactions_selection_full\spot_backtest_selection_summary.json --output-dir output\phase14\t059_epex_only_lowtail_cap_night_interactions_sensitivity
+```
+
+Generated ignored summary:
+
+`output/phase14/t059_epex_only_lowtail_cap_night_interactions_sensitivity/sweep_sensitivity_summary.json`
+
+SHA256:
+
+`ea7207b0601dd4f41aa4856122673fa15ed51f82f8435b972e83f796e011b28f`
+
+Key result:
+
+- `trial_count=36`
+- `strict_pass_count=36`
+- `weak_bucket_candidate_count=5`
+- `replacement_candidate_count=0`
+- `next_hypothesis_hint=protect_post_valuation_before_expanding_weak_bucket_gains`
+- best overall/weak-bucket trial:
+  `t009_w075_l01_p089_e005_n055_r00_d275`
+- best post-valuation trial:
+  `t036_w075_l025_p089_e005_n055_r00_d275`, the incumbent-like parameter
+  neighborhood.
+
+Interpretation:
+
+- Lower `low_tail_intensity` improves weak historical buckets but hurts the
+  post-valuation metric.
+- `low_tail=0.10` max overall is `0.4651499923241654`, but max
+  post-valuation is only `0.2982706620743691`.
+- `low_tail=0.25` max overall is `0.4506842423821014`, but max
+  post-valuation is `0.3049947368951571`, matching the incumbent.
+- Next EPEX-only research should target post-valuation preservation first,
+  not broader low-tail lowering.
+
+Validation:
+
+```powershell
+python -m pytest tests/test_analyze_epex_shape_lab_sweep_sensitivity_script.py -q -p no:cacheprovider
+```
+
+Result: `2 passed`.
+
 ## 2026-07-09 Expert Audit and T058 Lab Plan
 
 Expert read-only audits confirmed the current split of responsibilities:
