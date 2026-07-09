@@ -181,6 +181,7 @@ def check_coverage(
         },
     }
     checks = coverage["checks"]
+    coverage["blocking_checks"] = sorted(name for name, passed in checks.items() if passed is not True)
     ready = bool(
         checks["plan_no_ompex"]
         and checks["plan_benchmark_policy_locked"]
@@ -243,11 +244,24 @@ def check_coverage(
             "candidate_timestamp_count_matches_plan",
         ]
     )
+    input_policy_ok = all(
+        checks[name]
+        for name in [
+            "plan_no_ompex",
+            "plan_benchmark_policy_locked",
+            "spot_parquet_non_empty",
+            "spot_price_column_present",
+            "holdout_prices_finite",
+            "no_duplicate_holdout_rows",
+        ]
+    )
     coverage["status"] = (
         "READY_TO_RUN_HOLDOUT_BACKTEST"
         if ready
         else "NO_GO_LOCKED_HOLDOUT_SOURCE_MISSING_OR_HASH_MISMATCH"
         if not source_files_ok
+        else "NO_GO_LOCKED_HOLDOUT_INPUT_INVALID"
+        if not input_policy_ok
         else "WAITING_FOR_FULL_SPOT_COVERAGE"
     )
     coverage["next_action"] = (
@@ -255,6 +269,8 @@ def check_coverage(
         if ready
         else "Fix the locked baseline/adjusted CSV paths or hashes before running the holdout."
         if not source_files_ok
+        else "Fix the locked holdout plan policy or supplied spot parquet before running the holdout."
+        if not input_policy_ok
         else "Refresh the EPEX spot parquet after the holdout window is complete, then rerun this coverage check."
     )
     if output is not None:

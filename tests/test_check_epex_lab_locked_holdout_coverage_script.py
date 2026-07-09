@@ -88,7 +88,7 @@ def test_check_epex_lab_locked_holdout_coverage_waits_for_missing_hours(tmp_path
     assert summary["checks"]["full_window_covered"] is False
 
 
-def test_check_epex_lab_locked_holdout_coverage_waits_without_price_column(tmp_path: Path) -> None:
+def test_check_epex_lab_locked_holdout_coverage_blocks_missing_price_column(tmp_path: Path) -> None:
     plan = _write_plan(tmp_path, min_hours=4)
     spot = tmp_path / "spot.parquet"
     pd.DataFrame(
@@ -98,16 +98,17 @@ def test_check_epex_lab_locked_holdout_coverage_waits_without_price_column(tmp_p
 
     summary = check_coverage(plan_json=plan, spot_parquet=spot)
 
-    assert summary["status"] == "WAITING_FOR_FULL_SPOT_COVERAGE"
+    assert summary["status"] == "NO_GO_LOCKED_HOLDOUT_INPUT_INVALID"
     assert summary["ready_to_run_backtest"] is False
     assert summary["missing_holdout_hours"] == 0
     assert summary["checks"]["full_window_covered"] is True
     assert summary["checks"]["spot_price_column_present"] is False
     assert summary["checks"]["holdout_prices_finite"] is False
     assert summary["non_finite_holdout_price_rows"] is None
+    assert "spot_price_column_present" in summary["blocking_checks"]
 
 
-def test_check_epex_lab_locked_holdout_coverage_waits_for_non_finite_prices(tmp_path: Path) -> None:
+def test_check_epex_lab_locked_holdout_coverage_blocks_non_finite_prices(tmp_path: Path) -> None:
     plan = _write_plan(tmp_path, min_hours=4)
     spot = tmp_path / "spot.parquet"
     pd.DataFrame(
@@ -117,16 +118,17 @@ def test_check_epex_lab_locked_holdout_coverage_waits_for_non_finite_prices(tmp_
 
     summary = check_coverage(plan_json=plan, spot_parquet=spot)
 
-    assert summary["status"] == "WAITING_FOR_FULL_SPOT_COVERAGE"
+    assert summary["status"] == "NO_GO_LOCKED_HOLDOUT_INPUT_INVALID"
     assert summary["ready_to_run_backtest"] is False
     assert summary["missing_holdout_hours"] == 0
     assert summary["checks"]["full_window_covered"] is True
     assert summary["checks"]["spot_price_column_present"] is True
     assert summary["checks"]["holdout_prices_finite"] is False
     assert summary["non_finite_holdout_price_rows"] == 2
+    assert "holdout_prices_finite" in summary["blocking_checks"]
 
 
-def test_check_epex_lab_locked_holdout_coverage_waits_for_wrong_benchmark_policy(tmp_path: Path) -> None:
+def test_check_epex_lab_locked_holdout_coverage_blocks_wrong_benchmark_policy(tmp_path: Path) -> None:
     plan = _write_plan(tmp_path, min_hours=4, benchmark_policy="ad_hoc_holdout")
     spot = tmp_path / "spot.parquet"
     pd.DataFrame(
@@ -136,11 +138,39 @@ def test_check_epex_lab_locked_holdout_coverage_waits_for_wrong_benchmark_policy
 
     summary = check_coverage(plan_json=plan, spot_parquet=spot)
 
-    assert summary["status"] == "WAITING_FOR_FULL_SPOT_COVERAGE"
+    assert summary["status"] == "NO_GO_LOCKED_HOLDOUT_INPUT_INVALID"
     assert summary["ready_to_run_backtest"] is False
     assert summary["missing_holdout_hours"] == 0
     assert summary["checks"]["plan_benchmark_policy_locked"] is False
     assert summary["checks"]["full_window_covered"] is True
+    assert "plan_benchmark_policy_locked" in summary["blocking_checks"]
+
+
+def test_check_epex_lab_locked_holdout_coverage_blocks_duplicate_spot_rows(tmp_path: Path) -> None:
+    plan = _write_plan(tmp_path, min_hours=4)
+    spot = tmp_path / "spot.parquet"
+    pd.DataFrame(
+        {"price_eur_mwh": [1.0, 2.0, 2.5, 3.0, 4.0]},
+        index=pd.to_datetime(
+            [
+                "2026-07-10T00:00:00Z",
+                "2026-07-10T01:00:00Z",
+                "2026-07-10T01:00:00Z",
+                "2026-07-10T02:00:00Z",
+                "2026-07-10T03:00:00Z",
+            ]
+        ),
+    ).to_parquet(spot)
+
+    summary = check_coverage(plan_json=plan, spot_parquet=spot)
+
+    assert summary["status"] == "NO_GO_LOCKED_HOLDOUT_INPUT_INVALID"
+    assert summary["ready_to_run_backtest"] is False
+    assert summary["missing_holdout_hours"] == 0
+    assert summary["duplicate_holdout_rows"] == 1
+    assert summary["checks"]["full_window_covered"] is True
+    assert summary["checks"]["no_duplicate_holdout_rows"] is False
+    assert "no_duplicate_holdout_rows" in summary["blocking_checks"]
 
 
 def test_check_epex_lab_locked_holdout_coverage_blocks_missing_baseline_csv(tmp_path: Path) -> None:

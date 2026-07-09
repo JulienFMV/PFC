@@ -6164,3 +6164,56 @@ Invariants not to break:
 - The plan builder remains no-OMPEX: selection/lab artifacts are provenance
   evidence, not model inputs or benchmark gates.
 
+## D-20260709-77 - Separate Invalid Holdout Inputs From Future Spot Waiting
+
+Decision: the locked EPEX lab holdout coverage preflight now distinguishes
+invalid plan/spot inputs from a genuinely incomplete future spot window.
+
+Reason: a wrong benchmark policy, missing spot price column, non-finite spot
+prices, or duplicate holdout spot rows are not waiting conditions. Reporting
+them as `WAITING_FOR_FULL_SPOT_COVERAGE` can hide actionable evidence defects
+behind the normal T057 future-data blocker.
+
+Implementation:
+
+- `scripts/check_epex_lab_locked_holdout_coverage.py` now emits
+  `blocking_checks`, listing every failed coverage check.
+- Source/candidate path/hash/timestamp failures still report
+  `NO_GO_LOCKED_HOLDOUT_SOURCE_MISSING_OR_HASH_MISMATCH`.
+- Invalid plan or spot inputs now report
+  `NO_GO_LOCKED_HOLDOUT_INPUT_INVALID`.
+- True future spot incompleteness still reports
+  `WAITING_FOR_FULL_SPOT_COVERAGE`.
+- Tests cover missing spot price column, non-finite spot prices, wrong locked
+  benchmark policy, and duplicate holdout spot rows.
+
+Validation:
+
+- `python -m pytest tests/test_check_epex_lab_locked_holdout_coverage_script.py -q -p no:cacheprovider`
+  reported `18 passed`.
+- `python -m pytest tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_epex_lab_locked_holdout_policy.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  reported `68 passed, 1 skipped`.
+- `python -m pytest tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_adjusted_production_chain_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_epex_lab_locked_holdout_policy.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_plan_epex_lab_locked_holdout_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  reported `109 passed, 1 skipped`.
+
+Operational result:
+
+- Current frozen T057 plan remains unchanged.
+- Regenerated current T057 runner remains
+  `WAITING_FOR_FULL_SPOT_COVERAGE`, exit `1`.
+- The regenerated current coverage now reports only `full_window_covered` and
+  `min_holdout_hours_met` in `blocking_checks`, confirming the live blocker is
+  future spot coverage rather than invalid inputs.
+
+Rejected alternatives:
+
+- Keep invalid plan/spot inputs under the generic future-coverage waiting
+  status.
+- Collapse source/hash failures and spot-policy failures into one NO-GO code.
+
+Invariants:
+
+- The existing locked T057 plan JSON remains unchanged.
+- The new status is diagnostic routing only; it does not relax PASS criteria or
+  approve promotion.
+

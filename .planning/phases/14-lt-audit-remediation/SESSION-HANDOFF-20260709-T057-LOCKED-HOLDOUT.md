@@ -910,3 +910,40 @@ Result: `108 passed, 1 skipped`.
 
 Current frozen T057 plan remains unchanged and already includes both artifacts.
 Regenerated runner remains `WAITING_FOR_FULL_SPOT_COVERAGE`, exit `1`.
+
+Follow-up after locked holdout coverage status routing:
+
+- `scripts/check_epex_lab_locked_holdout_coverage.py` now emits
+  `blocking_checks`.
+- Source/candidate path/hash/timestamp failures remain
+  `NO_GO_LOCKED_HOLDOUT_SOURCE_MISSING_OR_HASH_MISMATCH`.
+- Invalid plan or spot inputs now report
+  `NO_GO_LOCKED_HOLDOUT_INPUT_INVALID`.
+- True future spot incompleteness still reports
+  `WAITING_FOR_FULL_SPOT_COVERAGE`.
+- Tests cover missing spot price column, non-finite prices, wrong locked
+  benchmark policy, and duplicate holdout spot rows.
+
+Validation:
+
+```powershell
+python -m pytest tests/test_check_epex_lab_locked_holdout_coverage_script.py -q -p no:cacheprovider
+```
+
+Result: `18 passed`.
+
+```powershell
+python -m pytest tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_epex_lab_locked_holdout_policy.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result: `68 passed, 1 skipped`.
+
+```powershell
+python -m pytest tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_adjusted_production_chain_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_epex_lab_locked_holdout_policy.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_plan_epex_lab_locked_holdout_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result: `109 passed, 1 skipped`.
+
+Current frozen T057 plan remains unchanged. Regenerated current T057 runner
+still exits `1` with `WAITING_FOR_FULL_SPOT_COVERAGE`; coverage
+`blocking_checks` are only `full_window_covered` and `min_holdout_hours_met`.
