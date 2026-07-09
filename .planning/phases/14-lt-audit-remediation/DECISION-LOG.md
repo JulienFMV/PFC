@@ -7797,3 +7797,44 @@ Invariants:
 - Queue evidence remains required by readiness for complete production chains.
 - OMPEX remains advisory-only and forbidden from production gates.
 
+## D-20260709-107 - Future Approval Must Reject Approved Readiness With Failed Production Checks
+
+Decision: `scripts/audit_epex_lab_future_approval_path.py` must fail closed
+when readiness declares `approved=true` / `status=PROMOTION_READY` but any
+required production check is still in `FAIL`.
+
+Reason: a read-only expert roast found a residual P0 in the future approval
+audit. The script already computed `failed_production_checks`, but the status
+ladder could still return `PROMOTION_READY_CANDIDATE` whenever the locked
+holdout and queue were green and the readiness payload self-declared promotion
+ready. That would allow a synthetic or stale readiness JSON to overstate the
+production state of the adjusted EPEX path.
+
+Implementation:
+
+- Updated `scripts/audit_epex_lab_future_approval_path.py` so
+  `missing_production_checks` or `failed_production_checks` both route to
+  `NO_GO_PRODUCTION_CHAIN_INCOMPLETE`.
+- Added regression
+  `test_future_approval_path_blocks_approved_payload_with_failed_production_check`
+  in `tests/test_audit_epex_lab_future_approval_path_script.py`.
+- Validation:
+  - `pytest tests\test_audit_epex_lab_future_approval_path_script.py -q -p no:cacheprovider`
+    -> `15 passed`
+  - `pytest tests\test_audit_epex_lab_future_approval_path_script.py tests\test_check_epex_lab_promotion_readiness_script.py tests\test_audit_epex_lab_locked_holdout_queue_script.py tests\test_epex_lab_locked_holdout_policy.py tests\test_build_epex_lab_adjusted_production_manifest_script.py tests\test_build_epex_lab_adjusted_production_chain_script.py tests\test_lt_ct_imports.py -q -p no:cacheprovider`
+    -> `104 passed, 1 skipped`
+
+Rejected alternatives:
+
+- Trust `approved=true` from readiness once holdout and queue are green.
+- Treat failed production checks as informational while promotion-ready status
+  is present.
+- Push this guard only into readiness and leave future approval permissive.
+
+Invariants:
+
+- Future approval remains a read-only summary and never promotes artifacts.
+- A green queue cannot compensate for failed production-chain checks.
+- T057 remains NO-GO until full locked-holdout coverage and the complete
+  approved production/export/selected/capstone chain exist.
+

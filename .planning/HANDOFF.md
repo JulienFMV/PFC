@@ -1363,6 +1363,60 @@ Result: `112 passed, 1 skipped`.
 Current frozen T057 plan remains unchanged. Regenerated current T057 runner
 still exits `1` with `WAITING_FOR_FULL_SPOT_COVERAGE`.
 
+## 2026-07-09 Expert Roast Follow-Up - Future Approval Fail-Closed
+
+Three read-only expert audits were run after commit `96b534e486`.
+
+- Governance roast found one remaining P0: future approval could still emit
+  `PROMOTION_READY_CANDIDATE` when readiness self-declared
+  `approved=true/status=PROMOTION_READY` even though required production checks
+  were present and failing.
+- Quant/shaping roast recommended not to retune T056 again; the next challenger
+  work should be a full delivered audit bundle for `T060/t007`, kept strictly
+  separate from T057 promotion.
+- Operator roast confirmed the current T057 line is now blocked by time and
+  missing real evidence, not by queue governance: do not refresh forwards on
+  the frozen T057 path; wait for the full holdout window, then run the canonical
+  Energy Charts wrapper and only afterwards build the true production chain if
+  T057 passes.
+
+Implemented fail-closed fix:
+
+- `scripts/audit_epex_lab_future_approval_path.py` now routes any non-empty
+  `failed_production_checks` to `NO_GO_PRODUCTION_CHAIN_INCOMPLETE`, even if
+  readiness claims promotion ready.
+- Added regression:
+  `test_future_approval_path_blocks_approved_payload_with_failed_production_check`
+  in `tests/test_audit_epex_lab_future_approval_path_script.py`.
+
+Validation:
+
+```powershell
+pytest tests\test_audit_epex_lab_future_approval_path_script.py -q -p no:cacheprovider
+```
+
+Result: `15 passed`.
+
+```powershell
+pytest tests\test_audit_epex_lab_future_approval_path_script.py tests\test_check_epex_lab_promotion_readiness_script.py tests\test_audit_epex_lab_locked_holdout_queue_script.py tests\test_epex_lab_locked_holdout_policy.py tests\test_build_epex_lab_adjusted_production_manifest_script.py tests\test_build_epex_lab_adjusted_production_chain_script.py tests\test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result: `104 passed, 1 skipped`.
+
+Current expert-aligned sequence:
+
+1. Keep T057/T056 frozen; no newer-forward regeneration on that approval line.
+2. Wait for full T057 spot coverage through the pre-registered holdout window.
+3. Run the canonical `scripts\run_energy_charts_epex_locked_holdout.py` wrapper
+   for T057 with the bound plan SHA only when the window is complete.
+4. If T057 passes, build the true adjusted production/export/selected/capstone
+   chain and rerun readiness + future approval.
+5. Keep `T060/t007` as a separate lab challenger under `T061`; audit it as a
+   delivered candidate if we want the next modeling branch, but do not mix it
+   into T057 promotion.
+
+Promotion remains NO-GO.
+
 ## 2026-07-09 T061 Separate Future Holdout For T060
 
 Created a separate future holdout line for the T060 EPEX-only cap

@@ -379,6 +379,30 @@ def test_future_approval_path_allows_promotion_ready_with_passing_locked_holdout
     assert summary["recommended_commands"] == {}
 
 
+def test_future_approval_path_blocks_approved_payload_with_failed_production_check(tmp_path: Path) -> None:
+    holdout = _write_locked_holdout_run(tmp_path)
+    payload = _readiness_payload(approved=True, production=True)
+    for check in payload["checks"]:
+        if isinstance(check.get("value"), dict) and "locked_holdout_summary_sha256" in check["value"]:
+            check["value"]["locked_holdout_summary_sha256"] = _sha256(holdout)
+        if check.get("name") == "adjusted_capstone_approved":
+            check["status"] = "FAIL"
+            check["value"] = False
+    readiness = _write_json(tmp_path / "readiness.json", payload)
+
+    summary = audit_future_approval_path(
+        readiness_json=readiness,
+        locked_holdout_summary=holdout,
+        output=tmp_path / "out.json",
+    )
+
+    assert summary["status"] == "NO_GO_PRODUCTION_CHAIN_INCOMPLETE"
+    assert summary["approved"] is False
+    assert summary["failed_production_checks"] == ["adjusted_capstone_approved"]
+    assert "adjusted_capstone_approved" in summary["remaining_blockers"]
+    assert summary["blocking_stage"] == "production_checks"
+
+
 def test_future_approval_path_routes_locked_holdout_queue_pending(tmp_path: Path) -> None:
     holdout = _write_locked_holdout_run(tmp_path)
     payload = _readiness_payload(approved=True, production=True)

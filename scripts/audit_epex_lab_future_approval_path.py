@@ -86,7 +86,7 @@ def audit_future_approval_path(
         status = str(holdout_policy["status"])
     elif queue_policy is not None and not queue_policy["pass"] and not missing and not missing_production_checks:
         status = str(queue_policy["status"])
-    elif missing_production_checks:
+    elif missing_production_checks or failed_production_checks:
         status = "NO_GO_PRODUCTION_CHAIN_INCOMPLETE"
     elif readiness.get("approved") is True and readiness.get("status") == "PROMOTION_READY":
         status = "PROMOTION_READY_CANDIDATE"
