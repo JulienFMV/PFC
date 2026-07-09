@@ -295,3 +295,10 @@ python -m pytest tests/test_build_epex_lab_adjusted_production_manifest_script.p
 ```
 
 Result: `59 passed, 1 skipped`.
+
+Follow-up proof coverage added explicit tests that readiness rejects divergent
+selected-artifact holdout SHA, divergent capstone holdout SHA, and
+`locked_holdout_policy_pass=false` on an otherwise hash-bound production
+manifest. Future approval also now has an explicit test for
+`production_chain_pass=true` without a holdout even when `approved=false`.
+The same targeted command reported `63 passed, 1 skipped`.

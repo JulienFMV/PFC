@@ -111,6 +111,24 @@ def test_future_approval_path_blocks_promotion_ready_without_locked_holdout(tmp_
     assert "locked_holdout_pass" in summary["remaining_blockers"]
 
 
+def test_future_approval_path_blocks_production_chain_pass_without_locked_holdout_even_if_not_approved(
+    tmp_path: Path,
+) -> None:
+    readiness = _write_json(
+        tmp_path / "readiness.json",
+        _readiness_payload(approved=False, production=True),
+    )
+
+    summary = audit_future_approval_path(
+        readiness_json=readiness,
+        output=tmp_path / "out.json",
+    )
+
+    assert summary["status"] == "MISSING_LOCKED_HOLDOUT"
+    assert summary["approved"] is False
+    assert "locked_holdout_pass" in summary["remaining_blockers"]
+
+
 def test_future_approval_path_blocks_when_locked_holdout_coverage_pending(tmp_path: Path) -> None:
     readiness = _write_json(
         tmp_path / "readiness.json",
