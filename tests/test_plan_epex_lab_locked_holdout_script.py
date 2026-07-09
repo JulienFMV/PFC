@@ -64,6 +64,31 @@ def test_plan_epex_lab_locked_holdout_binds_selected_no_ompex_candidate(tmp_path
     assert (tmp_path / "plan.json").exists()
 
 
+def test_plan_epex_lab_locked_holdout_resolves_relative_paths(tmp_path: Path, monkeypatch) -> None:
+    work = tmp_path / "space dir"
+    work.mkdir()
+    baseline = work / "baseline.csv"
+    adjusted = work / "adjusted.csv"
+    _write_candidate_csv(baseline)
+    _write_candidate_csv(adjusted)
+    monkeypatch.chdir(work)
+
+    plan = build_plan(
+        baseline_csv=Path("baseline.csv"),
+        adjusted_csv=Path("adjusted.csv"),
+        output=Path("plan.json"),
+        frozen_at_utc="2026-07-09T00:00:00Z",
+        holdout_start_utc="2026-07-10T00:00:00Z",
+        holdout_end_utc="2026-07-24T00:00:00Z",
+    )
+
+    assert plan["baseline_csv"] == str(baseline.resolve())
+    assert plan["adjusted_csv"] == str(adjusted.resolve())
+    assert f'--baseline-csv "{baseline.resolve()}"' in plan["commands"]["run_future_backtest_template"]
+    assert f'--adjusted-csv "{adjusted.resolve()}"' in plan["commands"]["run_future_backtest_template"]
+    assert (work / "plan.json").exists()
+
+
 def test_plan_epex_lab_locked_holdout_rejects_unbound_selection(tmp_path: Path) -> None:
     baseline = tmp_path / "baseline.csv"
     adjusted = tmp_path / "adjusted.csv"

@@ -44,6 +44,11 @@ def build_plan(
     min_holdout_hours: int = 168,
     min_residual_mae_improvement_eur_mwh: float = 0.0,
 ) -> dict[str, Any]:
+    baseline_csv = _resolved_path(baseline_csv)
+    adjusted_csv = _resolved_path(adjusted_csv)
+    output = _resolved_path(output) if output is not None else None
+    selection_summary = _resolved_path(selection_summary) if selection_summary is not None else None
+    lab_manifest = _resolved_path(lab_manifest) if lab_manifest is not None else None
     frozen_at = _utc_text(frozen_at_utc)
     holdout_start = _utc_text(holdout_start_utc)
     holdout_end = _utc_text(holdout_end_utc)
@@ -329,6 +334,10 @@ def _load_json(path: Path | None) -> dict[str, Any]:
     if path is None:
         return {}
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _resolved_path(path: Path) -> Path:
+    return path.expanduser().resolve(strict=False)
 
 
 def _join_command(parts: list[str]) -> str:

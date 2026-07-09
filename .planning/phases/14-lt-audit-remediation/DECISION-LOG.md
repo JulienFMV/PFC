@@ -6069,3 +6069,49 @@ Invariants not to break:
 - Future plan timestamp identity is no-OMPEX and source-only; it is not a
   model/selection/gate input beyond source comparability.
 
+## D-20260709-75 - Resolve Paths In Future Locked Holdout Plans
+
+Decision: future locked EPEX lab holdout plans now store resolved filesystem
+paths for baseline CSV, adjusted CSV, optional selection summary, optional lab
+manifest, and output-bound command templates.
+
+Reason: D73 made generated evidence less cwd-sensitive, but the plan builder
+itself still preserved relative CSV paths when called from a relative working
+directory. Future locked plans should freeze source locations in a way that can
+be audited from another working directory without depending on caller cwd.
+
+Implementation:
+
+- `scripts/plan_epex_lab_locked_holdout.py` resolves `baseline_csv`,
+  `adjusted_csv`, optional `selection_summary`, optional `lab_manifest`, and
+  optional `output` before hashing, reading, writing, or building command
+  templates.
+- Existing command quoting now protects resolved paths with spaces.
+- `tests/test_plan_epex_lab_locked_holdout_script.py` covers a relative-path
+  build from a directory containing a space, and asserts the plan stores
+  resolved paths and quoted command arguments.
+
+Validation:
+
+- `python -m pytest tests/test_plan_epex_lab_locked_holdout_script.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_epex_lab_locked_holdout_policy.py -q -p no:cacheprovider`
+  reported `32 passed`.
+- `python -m pytest tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_adjusted_production_chain_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_epex_lab_locked_holdout_policy.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_plan_epex_lab_locked_holdout_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  reported `106 passed, 1 skipped`.
+
+Operational result:
+
+- Current frozen T057 plan remains unchanged and backward-compatible.
+- Regenerated current T057 runner remains
+  `WAITING_FOR_FULL_SPOT_COVERAGE`, exit `1`.
+
+Rejected alternatives:
+
+- Continue allowing future locked plans to store relative source paths.
+- Modify the frozen T057 plan retroactively.
+
+Invariants not to break:
+
+- The existing locked T057 plan JSON remains unchanged.
+- Path resolution is provenance hardening only; it does not change model
+  inputs, selection inputs, or holdout pass criteria.
+

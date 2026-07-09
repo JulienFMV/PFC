@@ -846,3 +846,33 @@ regenerated runner reports `expected_candidate_timestamp_set_sha256=null`,
 both plan-match checks true, and still `WAITING_FOR_FULL_SPOT_COVERAGE`.
 Regenerated future approval audit remains
 `NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING`.
+
+Follow-up after future locked plan path resolution:
+
+- New locked EPEX lab holdout plans now resolve source/evidence paths at plan
+  creation time.
+- `scripts/plan_epex_lab_locked_holdout.py` resolves `baseline_csv`,
+  `adjusted_csv`, optional `selection_summary`, optional `lab_manifest`, and
+  optional `output` before hashing, reading, writing, or building command
+  templates.
+- Command templates now carry resolved paths, with existing quoting protecting
+  spaces.
+- Relative-path plan-builder test covers a working directory with a space and
+  verifies resolved stored paths plus quoted command arguments.
+
+Validation:
+
+```powershell
+python -m pytest tests/test_plan_epex_lab_locked_holdout_script.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_epex_lab_locked_holdout_policy.py -q -p no:cacheprovider
+```
+
+Result: `32 passed`.
+
+```powershell
+python -m pytest tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_adjusted_production_chain_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_epex_lab_locked_holdout_policy.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_plan_epex_lab_locked_holdout_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result: `106 passed, 1 skipped`.
+
+Current frozen T057 plan remains unchanged and backward-compatible; regenerated
+runner remains `WAITING_FOR_FULL_SPOT_COVERAGE`, exit `1`.
