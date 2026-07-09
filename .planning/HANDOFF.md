@@ -1431,6 +1431,8 @@ Purpose:
   artifacts exist locally and match the plan hashes;
 - discover locked holdout plans with `--plan-glob` so T057/T061 cannot be
   accidentally omitted from the queue audit;
+- block duplicate `plan_id` values and overlapping holdout windows before any
+  wait/run recommendation;
 - classify each plan as waiting for start, in-window, or ready for spot refresh;
 - emit exact Energy Charts locked-holdout commands with plan SHA binding;
 - never fetch spot, run a holdout, tune a candidate, or approve production.
@@ -1441,7 +1443,8 @@ Validation:
 python -m pytest tests\test_audit_epex_lab_locked_holdout_queue_script.py -q -p no:cacheprovider
 ```
 
-Result after glob support and artifact-mismatch CLI exit checks: `7 passed`.
+Result after glob support, artifact-mismatch CLI exit checks, and queue-level
+duplicate/overlap checks: `10 passed`.
 
 ```powershell
 python -m pytest tests\test_audit_epex_lab_locked_holdout_queue_script.py tests\test_discover_epex_spot_parquet_candidates_script.py tests\test_plan_epex_lab_locked_holdout_script.py tests\test_run_epex_lab_locked_holdout_script.py tests\test_run_energy_charts_epex_locked_holdout_script.py tests\test_check_epex_lab_promotion_readiness_script.py tests\test_audit_epex_lab_future_approval_path_script.py tests\test_lt_ct_imports.py -q -p no:cacheprovider
@@ -1466,6 +1469,15 @@ python -m pytest tests\test_audit_epex_lab_locked_holdout_queue_script.py tests\
 
 Result: `87 passed, 1 skipped`.
 
+Latest validation after adding duplicate `plan_id` and overlapping-window queue
+checks:
+
+```powershell
+python -m pytest tests\test_audit_epex_lab_locked_holdout_queue_script.py tests\test_discover_epex_spot_parquet_candidates_script.py tests\test_plan_epex_lab_locked_holdout_script.py tests\test_run_epex_lab_locked_holdout_script.py tests\test_run_energy_charts_epex_locked_holdout_script.py tests\test_epex_lab_locked_holdout_policy.py tests\test_check_epex_lab_promotion_readiness_script.py tests\test_audit_epex_lab_future_approval_path_script.py tests\test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result: `90 passed, 1 skipped`.
+
 Current local queue audit command:
 
 ```powershell
@@ -1482,6 +1494,9 @@ Result:
 - `invalid_plan_count=0`
 - `policy_invalid_plan_count=0`
 - `artifact_invalid_plan_count=0`
+- `duplicate_plan_id_count=0`
+- `overlapping_window_count=0`
+- `queue_issues=[]`
 - T057 artifact checks all true for baseline CSV, adjusted CSV, lab manifest,
   and selection summary hash binding.
 - T061 artifact checks all true for baseline CSV, adjusted CSV, lab manifest,

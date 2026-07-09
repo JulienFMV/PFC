@@ -46,6 +46,9 @@ def audit_queue(
         for plan_json in plan_jsons
     ]
     rows.sort(key=lambda row: (row.get("holdout_start_utc") or "", row.get("plan_id") or ""))
+    queue_issues = _queue_issues(rows)
+    duplicate_plan_id_count = sum(1 for issue in queue_issues if issue["issue"] == "duplicate_plan_id")
+    overlapping_window_count = sum(1 for issue in queue_issues if issue["issue"] == "overlapping_holdout_window")
     invalid_count = sum(1 for row in rows if row["blocking_stage"] == "locked_holdout_plan_invalid")
     policy_invalid_count = sum(1 for row in rows if row["blocking_stage"] == "locked_holdout_plan_policy_invalid")
     artifact_invalid_count = sum(
@@ -56,7 +59,11 @@ def audit_queue(
     future_count = sum(1 for row in rows if row["temporal_status"] == "WAITING_FOR_HOLDOUT_START")
     status = (
         "NO_GO_LOCKED_HOLDOUT_QUEUE_INVALID"
-        if invalid_count or policy_invalid_count or artifact_invalid_count
+        if invalid_count
+        or policy_invalid_count
+        or artifact_invalid_count
+        or duplicate_plan_id_count
+        or overlapping_window_count
         else "WAITING_FOR_SPOT_REFRESH_AND_LOCKED_HOLDOUT_RUN"
         if due_count
         else "WAITING_FOR_HOLDOUT_WINDOW_COMPLETION"
@@ -76,9 +83,12 @@ def audit_queue(
         "invalid_plan_count": invalid_count,
         "policy_invalid_plan_count": policy_invalid_count,
         "artifact_invalid_plan_count": artifact_invalid_count,
+        "duplicate_plan_id_count": duplicate_plan_id_count,
+        "overlapping_window_count": overlapping_window_count,
         "future_window_count": future_count,
         "active_window_count": active_count,
         "spot_refresh_due_count": due_count,
+        "queue_issues": queue_issues,
         "search_roots": [str(_resolved_path(root)) for root in roots],
         "plans": rows,
         "next_actions": _next_actions(rows),
@@ -339,6 +349,51 @@ def _collect_plan_jsons(
     return deduped
 
 
+def _queue_issues(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    issues: list[dict[str, Any]] = []
+    by_plan_id: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        plan_id = str(row.get("plan_id") or "")
+        by_plan_id.setdefault(plan_id, []).append(row)
+    for plan_id, group in sorted(by_plan_id.items()):
+        if plan_id and len(group) > 1:
+            issues.append(
+                {
+                    "issue": "duplicate_plan_id",
+                    "plan_id": plan_id,
+                    "plan_jsons": [row.get("plan_json") for row in group],
+                    "plan_json_sha256": [row.get("plan_json_sha256") for row in group],
+                }
+            )
+
+    valid_windows = [
+        row
+        for row in rows
+        if row.get("schema_ok") is True
+        and row.get("holdout_start_utc")
+        and row.get("holdout_end_utc")
+    ]
+    valid_windows.sort(key=lambda row: (row["holdout_start_utc"], row["holdout_end_utc"], row.get("plan_id") or ""))
+    for previous, current in zip(valid_windows, valid_windows[1:]):
+        previous_end = _to_utc(previous["holdout_end_utc"])
+        current_start = _to_utc(current["holdout_start_utc"])
+        if previous_end > current_start:
+            issues.append(
+                {
+                    "issue": "overlapping_holdout_window",
+                    "left_plan_id": previous.get("plan_id"),
+                    "left_plan_json": previous.get("plan_json"),
+                    "left_holdout_start_utc": previous.get("holdout_start_utc"),
+                    "left_holdout_end_utc": previous.get("holdout_end_utc"),
+                    "right_plan_id": current.get("plan_id"),
+                    "right_plan_json": current.get("plan_json"),
+                    "right_holdout_start_utc": current.get("holdout_start_utc"),
+                    "right_holdout_end_utc": current.get("holdout_end_utc"),
+                }
+            )
+    return issues
+
+
 def _next_actions(rows: list[dict[str, Any]]) -> list[dict[str, str | bool | None]]:
     return [
         {
@@ -433,6 +488,8 @@ def main(argv: list[str] | None = None) -> int:
         if summary["invalid_plan_count"] == 0
         and summary["policy_invalid_plan_count"] == 0
         and summary["artifact_invalid_plan_count"] == 0
+        and summary["duplicate_plan_id_count"] == 0
+        and summary["overlapping_window_count"] == 0
         else 1
     )
 

@@ -159,6 +159,9 @@ The CLI supports `--plan-glob` and deduplicates resolved paths, so Phase 14
 operators can audit every tracked `locked_holdout_plan_*.json` without
 hand-listing T057 and T061.
 
+The queue audit also blocks duplicate `plan_id` values and overlapping holdout
+windows before recommending wait or run actions.
+
 Test:
 
 ```powershell
@@ -167,7 +170,7 @@ python -m pytest tests\test_audit_epex_lab_locked_holdout_queue_script.py -q -p 
 
 Result:
 
-`7 passed`
+`10 passed`
 
 Current local queue audit:
 
@@ -185,6 +188,9 @@ Observed:
 - `invalid_plan_count=0`
 - `policy_invalid_plan_count=0`
 - `artifact_invalid_plan_count=0`
+- `duplicate_plan_id_count=0`
+- `overlapping_window_count=0`
+- `queue_issues=[]`
 - T057 source artifacts are all present and hash-bound.
 - T061 source artifacts are all present and hash-bound.
 - T057 next step: `wait_without_retuning_candidate`

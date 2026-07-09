@@ -7625,6 +7625,8 @@ Implementation:
   tracked `locked_holdout_plan_*.json` can be audited without hand-listing
   T057/T061.
 - The CLI exits non-zero for policy-invalid or artifact-invalid plans.
+- The queue audit blocks duplicate `plan_id` values and overlapping holdout
+  windows before recommending wait or run actions.
 - Current queue audit output is local-only at
   `output/phase14/locked_holdout_queue_audit_20260709.json`.
 
@@ -7635,6 +7637,9 @@ Current observed status on `2026-07-09T00:00:00Z`:
 - `future_window_count=2`
 - `spot_refresh_due_count=0`
 - `artifact_invalid_plan_count=0`
+- `duplicate_plan_id_count=0`
+- `overlapping_window_count=0`
+- `queue_issues=[]`
 - T057 next step: `wait_without_retuning_candidate`
 - T061 next step: `wait_without_retuning_candidate`
 

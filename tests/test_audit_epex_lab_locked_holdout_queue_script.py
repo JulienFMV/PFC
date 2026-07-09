@@ -34,6 +34,9 @@ def test_audit_locked_holdout_queue_waits_before_future_windows(tmp_path: Path) 
     assert summary["plan_count"] == 2
     assert summary["future_window_count"] == 2
     assert summary["spot_refresh_due_count"] == 0
+    assert summary["duplicate_plan_id_count"] == 0
+    assert summary["overlapping_window_count"] == 0
+    assert summary["queue_issues"] == []
     assert [row["plan_id"] for row in summary["plans"]] == [
         "t057_locked_t056_future_holdout",
         "t061_locked_t060_future_holdout",
@@ -210,6 +213,83 @@ def test_audit_locked_holdout_queue_cli_returns_nonzero_for_tampered_artifact(tm
     summary = json.loads((tmp_path / "queue.json").read_text(encoding="utf-8"))
     assert summary["artifact_invalid_plan_count"] == 1
     assert summary["plans"][0]["artifact_checks"]["lab_manifest_sha256_bound"] is False
+
+
+def test_audit_locked_holdout_queue_blocks_duplicate_plan_id(tmp_path: Path) -> None:
+    first = _write_plan(
+        tmp_path / "first.json",
+        plan_id="duplicate",
+        start="2026-07-10T00:00:00Z",
+        end="2026-07-24T00:00:00Z",
+    )
+    second = _write_plan(
+        tmp_path / "second.json",
+        plan_id="duplicate",
+        start="2026-07-24T00:00:00Z",
+        end="2026-08-07T00:00:00Z",
+    )
+
+    summary = audit_queue(plan_jsons=[first, second], as_of_utc="2026-07-09T00:00:00Z")
+
+    assert summary["status"] == "NO_GO_LOCKED_HOLDOUT_QUEUE_INVALID"
+    assert summary["duplicate_plan_id_count"] == 1
+    assert summary["queue_issues"][0]["issue"] == "duplicate_plan_id"
+    assert summary["queue_issues"][0]["plan_id"] == "duplicate"
+
+
+def test_audit_locked_holdout_queue_blocks_overlapping_windows(tmp_path: Path) -> None:
+    first = _write_plan(
+        tmp_path / "first.json",
+        plan_id="first",
+        start="2026-07-10T00:00:00Z",
+        end="2026-07-24T00:00:00Z",
+    )
+    second = _write_plan(
+        tmp_path / "second.json",
+        plan_id="second",
+        start="2026-07-23T00:00:00Z",
+        end="2026-08-06T00:00:00Z",
+    )
+
+    summary = audit_queue(plan_jsons=[first, second], as_of_utc="2026-07-09T00:00:00Z")
+
+    assert summary["status"] == "NO_GO_LOCKED_HOLDOUT_QUEUE_INVALID"
+    assert summary["overlapping_window_count"] == 1
+    assert summary["queue_issues"][0]["issue"] == "overlapping_holdout_window"
+    assert summary["queue_issues"][0]["left_plan_id"] == "first"
+    assert summary["queue_issues"][0]["right_plan_id"] == "second"
+
+
+def test_audit_locked_holdout_queue_cli_returns_nonzero_for_queue_issue(tmp_path: Path) -> None:
+    first = _write_plan(
+        tmp_path / "first.json",
+        plan_id="first",
+        start="2026-07-10T00:00:00Z",
+        end="2026-07-24T00:00:00Z",
+    )
+    second = _write_plan(
+        tmp_path / "second.json",
+        plan_id="second",
+        start="2026-07-23T00:00:00Z",
+        end="2026-08-06T00:00:00Z",
+    )
+
+    code = main(
+        [
+            "--plan-json",
+            str(first),
+            "--plan-json",
+            str(second),
+            "--output",
+            str(tmp_path / "queue.json"),
+            "--as-of-utc",
+            "2026-07-09T00:00:00Z",
+        ]
+    )
+
+    assert code == 1
+    summary = json.loads((tmp_path / "queue.json").read_text(encoding="utf-8"))
+    assert summary["overlapping_window_count"] == 1
 
 
 def _write_plan(
