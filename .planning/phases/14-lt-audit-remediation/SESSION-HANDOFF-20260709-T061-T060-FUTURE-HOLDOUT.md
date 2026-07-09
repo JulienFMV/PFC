@@ -250,6 +250,52 @@ Observed status:
 - `locked_holdout_ran=false`
 - `latest_required_holdout_utc=2026-07-23T23:00:00Z`
 
+## Readiness Queue Guard Follow-Up
+
+Added a promotion-readiness guard to:
+
+`scripts/check_epex_lab_promotion_readiness.py`
+
+Behavior:
+
+- CLI accepts `--locked-holdout-queue-summary`.
+- `required_production_checks` now includes `locked_holdout_queue_pass`.
+- Once production/export/selected/capstone evidence is present, readiness
+  requires a queue summary.
+- A missing queue summary, invalid queue, duplicate plan id, overlapping
+  window, artifact-invalid plan, pending queue status, or queue that does not
+  include the bound locked-holdout plan SHA keeps readiness NO-GO.
+- Queue failures route to `production_blocking_stage=locked_holdout_queue` and
+  `next_required_step=fix_locked_holdout_queue_before_promotion_review`.
+
+Current implication:
+
+- The current real queue audit status is `WAITING_FOR_FUTURE_HOLDOUT_WINDOWS`.
+- Therefore it is not production promotion evidence.
+- This is separate from the queue audit being read-only: the audit does not
+  approve production, but readiness now requires it as a consistency gate
+  before any complete production bundle can be accepted.
+
+Focused validation:
+
+```powershell
+python -m pytest tests\test_check_epex_lab_promotion_readiness_script.py -q -p no:cacheprovider
+```
+
+Result:
+
+`21 passed`
+
+Broader validation:
+
+```powershell
+python -m pytest tests\test_audit_epex_lab_locked_holdout_queue_script.py tests\test_discover_epex_spot_parquet_candidates_script.py tests\test_plan_epex_lab_locked_holdout_script.py tests\test_run_epex_lab_locked_holdout_script.py tests\test_run_energy_charts_epex_locked_holdout_script.py tests\test_epex_lab_locked_holdout_policy.py tests\test_check_epex_lab_promotion_readiness_script.py tests\test_audit_epex_lab_future_approval_path_script.py tests\test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result:
+
+`96 passed, 1 skipped`
+
 ## Next Steps
 
 1. Keep T057 frozen and wait for full T057 spot coverage.

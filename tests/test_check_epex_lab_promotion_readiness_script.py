@@ -5,7 +5,7 @@ import hashlib
 
 import pandas as pd
 
-from scripts.check_epex_lab_promotion_readiness import REQUIRED_PRODUCTION_CHECKS, check_readiness
+from scripts.check_epex_lab_promotion_readiness import REQUIRED_PRODUCTION_CHECKS, check_readiness, main as readiness_main
 from scripts.epex_lab_locked_holdout_policy import build_locked_plan_identity
 
 
@@ -398,7 +398,7 @@ def _write_approved_chain(
     }
 
 
-def _check_readiness_for_chain(paths, tmp_path, output_name="decision.json"):
+def _check_readiness_for_chain(paths, tmp_path, output_name="decision.json", locked_holdout_queue_summary=None):
     return check_readiness(
         lab_manifest=paths["lab"],
         governance_audit=paths["governance"],
@@ -411,8 +411,42 @@ def _check_readiness_for_chain(paths, tmp_path, output_name="decision.json"):
         adjusted_selected_config=paths["selected_config"],
         adjusted_capstone=paths["capstone"],
         locked_holdout_summary=paths["locked_holdout"],
+        locked_holdout_queue_summary=locked_holdout_queue_summary,
         output=tmp_path / output_name,
     )
+
+
+def _write_locked_holdout_queue(
+    tmp_path,
+    *,
+    plan_sha: str | None = None,
+    status: str = "LOCKED_HOLDOUT_QUEUE_COMPLETE",
+    duplicate_plan_count: int = 0,
+    overlapping_window_count: int = 0,
+    queue_issues: list[dict] | None = None,
+):
+    queue = tmp_path / "locked_holdout_queue.json"
+    if plan_sha is None:
+        plan_sha = _sha256(tmp_path / "locked_plan.json")
+    _write_json(
+        queue,
+        {
+            "schema_version": "epex_lab_locked_holdout_queue_audit.v1",
+            "status": status,
+            "read_only": True,
+            "promotion_gate": False,
+            "production_approved": False,
+            "plan_count": 1,
+            "invalid_plan_count": 0,
+            "policy_invalid_plan_count": 0,
+            "artifact_invalid_plan_count": 0,
+            "duplicate_plan_id_count": duplicate_plan_count,
+            "overlapping_window_count": overlapping_window_count,
+            "queue_issues": list(queue_issues or []),
+            "plans": [{"plan_id": "test_locked_holdout", "plan_json_sha256": plan_sha}],
+        },
+    )
+    return queue
 
 
 def test_epex_lab_readiness_reports_no_go_when_production_chain_missing(tmp_path) -> None:
@@ -601,6 +635,7 @@ def test_epex_lab_readiness_can_pass_with_separate_approved_production_chain(tmp
             **run_identity,
         },
     )
+    locked_holdout_queue = _write_locked_holdout_queue(tmp_path)
 
     summary = check_readiness(
         lab_manifest=lab,
@@ -614,6 +649,7 @@ def test_epex_lab_readiness_can_pass_with_separate_approved_production_chain(tmp
         adjusted_selected_config=selected_config,
         adjusted_capstone=capstone,
         locked_holdout_summary=locked_holdout,
+        locked_holdout_queue_summary=locked_holdout_queue,
         output=tmp_path / "decision.json",
     )
 
@@ -640,6 +676,7 @@ def test_epex_lab_readiness_can_pass_with_separate_approved_production_chain(tmp
         adjusted_selected_config=selected_config,
         adjusted_capstone=capstone,
         locked_holdout_summary=locked_holdout,
+        locked_holdout_queue_summary=locked_holdout_queue,
         output=tmp_path / "decision_changed_holdout.json",
     )
     changed_checks = {check["name"]: check["status"] for check in changed_summary["checks"]}
@@ -757,6 +794,130 @@ def test_epex_lab_readiness_rejects_divergent_export_locked_holdout_hash(tmp_pat
     assert summary["production_chain_pass"] is False
     assert summary["required_production_checks"] == REQUIRED_PRODUCTION_CHECKS
     assert checks["adjusted_export_manifest_production_chain_bound"] == "FAIL"
+
+
+def test_epex_lab_readiness_accepts_valid_locked_holdout_queue(tmp_path) -> None:
+    paths = _write_approved_chain(tmp_path)
+    queue = _write_locked_holdout_queue(tmp_path)
+
+    summary = _check_readiness_for_chain(paths, tmp_path, locked_holdout_queue_summary=queue)
+
+    checks = {check["name"]: check for check in summary["checks"]}
+    assert summary["approved"] is True
+    assert summary["production_chain_pass"] is True
+    assert summary["locked_holdout_queue_policy"]["status"] == "LOCKED_HOLDOUT_QUEUE_PASS"
+    assert checks["locked_holdout_queue_pass"]["status"] == "PASS"
+    assert checks["locked_holdout_queue_pass"]["value"]["checks"]["locked_holdout_plan_in_queue"] is True
+
+
+def test_epex_lab_readiness_rejects_invalid_locked_holdout_queue(tmp_path) -> None:
+    paths = _write_approved_chain(tmp_path)
+    queue = _write_locked_holdout_queue(
+        tmp_path,
+        duplicate_plan_count=1,
+        queue_issues=[{"issue": "duplicate_plan_id", "plan_id": "test_locked_holdout"}],
+    )
+
+    summary = _check_readiness_for_chain(paths, tmp_path, locked_holdout_queue_summary=queue)
+
+    checks = {check["name"]: check for check in summary["checks"]}
+    assert summary["approved"] is False
+    assert summary["production_chain_pass"] is False
+    assert summary["production_blocking_stage"] == "locked_holdout_queue"
+    assert summary["next_required_step"] == "fix_locked_holdout_queue_before_promotion_review"
+    assert checks["locked_holdout_queue_pass"]["status"] == "FAIL"
+    assert summary["locked_holdout_queue_policy"]["status"] == "NO_GO_LOCKED_HOLDOUT_QUEUE_INVALID"
+    assert summary["locked_holdout_queue_policy"]["checks"]["duplicate_plan_id_count_zero"] is False
+
+
+def test_epex_lab_readiness_rejects_pending_locked_holdout_queue(tmp_path) -> None:
+    paths = _write_approved_chain(tmp_path)
+    queue = _write_locked_holdout_queue(tmp_path, status="WAITING_FOR_FUTURE_HOLDOUT_WINDOWS")
+
+    summary = _check_readiness_for_chain(paths, tmp_path, locked_holdout_queue_summary=queue)
+
+    checks = {check["name"]: check for check in summary["checks"]}
+    assert summary["approved"] is False
+    assert summary["production_chain_pass"] is False
+    assert summary["production_blocking_stage"] == "locked_holdout_queue"
+    assert checks["locked_holdout_queue_pass"]["status"] == "FAIL"
+    assert summary["locked_holdout_queue_policy"]["status"] == "NO_GO_LOCKED_HOLDOUT_QUEUE_PENDING"
+    assert summary["locked_holdout_queue_policy"]["checks"]["queue_status_complete"] is False
+
+
+def test_epex_lab_readiness_rejects_locked_holdout_queue_without_bound_plan(tmp_path) -> None:
+    paths = _write_approved_chain(tmp_path)
+    queue = _write_locked_holdout_queue(tmp_path, plan_sha="0" * 64)
+
+    summary = _check_readiness_for_chain(paths, tmp_path, locked_holdout_queue_summary=queue)
+
+    checks = {check["name"]: check for check in summary["checks"]}
+    assert summary["approved"] is False
+    assert summary["production_chain_pass"] is False
+    assert summary["production_blocking_stage"] == "locked_holdout_queue"
+    assert checks["locked_holdout_queue_pass"]["status"] == "FAIL"
+    assert summary["locked_holdout_queue_policy"]["checks"]["locked_holdout_plan_in_queue"] is False
+
+
+def test_epex_lab_readiness_rejects_missing_locked_holdout_queue_summary(tmp_path) -> None:
+    paths = _write_approved_chain(tmp_path)
+    missing_queue = tmp_path / "missing_queue.json"
+
+    summary = _check_readiness_for_chain(paths, tmp_path, locked_holdout_queue_summary=missing_queue)
+
+    checks = {check["name"]: check for check in summary["checks"]}
+    assert summary["approved"] is False
+    assert summary["production_chain_pass"] is False
+    assert summary["production_blocking_stage"] == "locked_holdout_queue"
+    assert checks["locked_holdout_queue_pass"]["status"] == "FAIL"
+    assert summary["locked_holdout_queue_policy"]["status"] == "MISSING_LOCKED_HOLDOUT_QUEUE_SUMMARY"
+
+
+def test_epex_lab_readiness_cli_applies_locked_holdout_queue_summary(tmp_path) -> None:
+    paths = _write_approved_chain(tmp_path)
+    queue = _write_locked_holdout_queue(
+        tmp_path,
+        overlapping_window_count=1,
+        queue_issues=[{"issue": "overlapping_holdout_window", "left_plan_id": "a", "right_plan_id": "b"}],
+    )
+    output = tmp_path / "cli_decision.json"
+
+    code = readiness_main(
+        [
+            "--lab-manifest",
+            str(paths["lab"]),
+            "--governance-audit",
+            str(paths["governance"]),
+            "--independent-summary",
+            str(paths["independent"]),
+            "--product-summary",
+            str(paths["product"]),
+            "--powerbi-summary",
+            str(paths["powerbi"]),
+            "--ompex-advisory-delta",
+            str(paths["ompex"]),
+            "--adjusted-production-manifest",
+            str(paths["production_manifest"]),
+            "--adjusted-export-manifest",
+            str(paths["export_manifest"]),
+            "--adjusted-selected-config",
+            str(paths["selected_config"]),
+            "--adjusted-capstone",
+            str(paths["capstone"]),
+            "--locked-holdout-summary",
+            str(paths["locked_holdout"]),
+            "--locked-holdout-queue-summary",
+            str(queue),
+            "--output",
+            str(output),
+        ]
+    )
+
+    summary = json.loads(output.read_text(encoding="utf-8"))
+    assert code == 1
+    assert summary["approved"] is False
+    assert summary["production_blocking_stage"] == "locked_holdout_queue"
+    assert summary["locked_holdout_queue_policy"]["checks"]["overlapping_window_count_zero"] is False
 
 
 def test_epex_lab_readiness_rejects_divergent_selected_locked_holdout_hash(tmp_path) -> None:

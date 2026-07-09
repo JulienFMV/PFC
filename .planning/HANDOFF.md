@@ -2,7 +2,7 @@
 
 Latest active handoff:
 
-`.planning/phases/14-lt-audit-remediation/SESSION-HANDOFF-20260709-T057-LOCKED-HOLDOUT.md`
+`.planning/phases/14-lt-audit-remediation/SESSION-HANDOFF-20260709-T061-T060-FUTURE-HOLDOUT.md`
 
 Read order for new agents:
 
@@ -1477,6 +1477,36 @@ python -m pytest tests\test_audit_epex_lab_locked_holdout_queue_script.py tests\
 ```
 
 Result: `90 passed, 1 skipped`.
+
+Latest readiness hardening makes the queue summary part of the production
+readiness contract. `scripts/check_epex_lab_promotion_readiness.py` now lists
+`locked_holdout_queue_pass` in `required_production_checks`. When a complete
+production/export/selected/capstone chain is present, readiness fails closed if
+the queue summary is missing, invalid, still pending, or does not contain the
+plan SHA from the bound locked-holdout evidence. Such failures route to
+`production_blocking_stage=locked_holdout_queue` and
+`next_required_step=fix_locked_holdout_queue_before_promotion_review`.
+
+The current queue audit remains `WAITING_FOR_FUTURE_HOLDOUT_WINDOWS`, so it is
+not promotion evidence. This is intentional: queue audit stays read-only and
+non-approving, while readiness uses it as a mandatory consistency gate before
+any production promotion review.
+
+Focused readiness validation:
+
+```powershell
+python -m pytest tests\test_check_epex_lab_promotion_readiness_script.py -q -p no:cacheprovider
+```
+
+Result: `21 passed`.
+
+Broader validation after the readiness queue guard:
+
+```powershell
+python -m pytest tests\test_audit_epex_lab_locked_holdout_queue_script.py tests\test_discover_epex_spot_parquet_candidates_script.py tests\test_plan_epex_lab_locked_holdout_script.py tests\test_run_epex_lab_locked_holdout_script.py tests\test_run_energy_charts_epex_locked_holdout_script.py tests\test_epex_lab_locked_holdout_policy.py tests\test_check_epex_lab_promotion_readiness_script.py tests\test_audit_epex_lab_future_approval_path_script.py tests\test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result: `96 passed, 1 skipped`.
 
 Current local queue audit command:
 

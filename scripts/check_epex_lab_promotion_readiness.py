@@ -37,6 +37,7 @@ REQUIRED_PRODUCTION_CHECKS = [
     "adjusted_capstone_approved",
     "adjusted_capstone_production_chain_bound",
     "locked_holdout_pass",
+    "locked_holdout_queue_pass",
 ]
 
 
@@ -53,6 +54,7 @@ def check_readiness(
     adjusted_selected_config: Path | None = None,
     adjusted_capstone: Path | None = None,
     locked_holdout_summary: Path | None = None,
+    locked_holdout_queue_summary: Path | None = None,
     output: Path | None = None,
 ) -> dict[str, Any]:
     lab = _load_json(lab_manifest)
@@ -137,6 +139,37 @@ def check_readiness(
                 "locked_holdout_pass",
                 locked_holdout_valid,
                 locked_holdout_policy,
+            )
+        )
+    locked_holdout_queue_policy = None
+    locked_holdout_queue_valid = True
+    locked_holdout_queue_required = bool(production_bundle_complete or locked_holdout_queue_summary is not None)
+    if locked_holdout_queue_summary is not None and locked_holdout_queue_summary.exists():
+        locked_holdout_queue_policy = _locked_holdout_queue_policy(
+            _load_json(locked_holdout_queue_summary),
+            locked_holdout_policy=locked_holdout_policy,
+        )
+        locked_holdout_queue_valid = locked_holdout_queue_policy["pass"] is True
+        checks.append(
+            _check(
+                "locked_holdout_queue_pass",
+                locked_holdout_queue_valid,
+                locked_holdout_queue_policy,
+            )
+        )
+    elif locked_holdout_queue_required:
+        locked_holdout_queue_policy = {
+            "provided": False,
+            "pass": False,
+            "status": "MISSING_LOCKED_HOLDOUT_QUEUE_SUMMARY",
+            "path": str(locked_holdout_queue_summary) if locked_holdout_queue_summary is not None else None,
+        }
+        locked_holdout_queue_valid = False
+        checks.append(
+            _check(
+                "locked_holdout_queue_pass",
+                locked_holdout_queue_valid,
+                locked_holdout_queue_policy,
             )
         )
     if adjusted_capstone is not None and adjusted_capstone.exists():
@@ -389,6 +422,7 @@ def check_readiness(
     production_chain_pass = (
         not missing_production_evidence
         and locked_holdout_valid
+        and locked_holdout_queue_valid
         and production_manifest_approved
         and export_manifest_production_ready
         and selected_artifact_production_ready
@@ -407,6 +441,7 @@ def check_readiness(
         missing_production_checks=missing_production_checks,
         failed_production_checks=failed_production_checks,
         locked_holdout_policy=locked_holdout_policy,
+        locked_holdout_queue_policy=locked_holdout_queue_policy,
     )
     recommended_commands = _recommended_commands(
         production_blocking_stage=production_blocking_stage,
@@ -442,11 +477,68 @@ def check_readiness(
         "ompex_advisory_delta": str(ompex_advisory_delta) if ompex_advisory_delta is not None else None,
         "locked_holdout_summary": str(locked_holdout_summary) if locked_holdout_summary is not None else None,
         "locked_holdout_policy": locked_holdout_policy,
+        "locked_holdout_queue_summary": (
+            str(locked_holdout_queue_summary) if locked_holdout_queue_summary is not None else None
+        ),
+        "locked_holdout_queue_policy": locked_holdout_queue_policy,
     }
     if output is not None:
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(json.dumps(summary, indent=2, sort_keys=True, default=str) + "\n", encoding="utf-8")
     return summary
+
+
+def _locked_holdout_queue_policy(
+    queue: dict[str, Any],
+    *,
+    locked_holdout_policy: dict[str, Any] | None,
+) -> dict[str, Any]:
+    checks = {
+        "schema_version": queue.get("schema_version") == "epex_lab_locked_holdout_queue_audit.v1",
+        "read_only": queue.get("read_only") is True,
+        "promotion_gate_false": queue.get("promotion_gate") is False,
+        "production_approved_false": queue.get("production_approved") is False,
+        "invalid_plan_count_zero": int(queue.get("invalid_plan_count", -1)) == 0,
+        "policy_invalid_plan_count_zero": int(queue.get("policy_invalid_plan_count", -1)) == 0,
+        "artifact_invalid_plan_count_zero": int(queue.get("artifact_invalid_plan_count", -1)) == 0,
+        "duplicate_plan_id_count_zero": int(queue.get("duplicate_plan_id_count", -1)) == 0,
+        "overlapping_window_count_zero": int(queue.get("overlapping_window_count", -1)) == 0,
+        "queue_issues_empty": list(queue.get("queue_issues") or []) == [],
+    }
+    expected_plan_sha = None
+    if locked_holdout_policy is not None:
+        expected_plan_sha = locked_holdout_policy.get("plan_json_sha256") or locked_holdout_policy.get(
+            "expected_plan_json_sha256"
+        )
+    plan_shas = {
+        str(row.get("plan_json_sha256"))
+        for row in queue.get("plans", [])
+        if isinstance(row, dict) and row.get("plan_json_sha256")
+    }
+    if expected_plan_sha:
+        checks["locked_holdout_plan_in_queue"] = str(expected_plan_sha) in plan_shas
+    queue_status = queue.get("status")
+    checks["queue_status_complete"] = queue_status == "LOCKED_HOLDOUT_QUEUE_COMPLETE"
+    passed = all(checks.values())
+    return {
+        "provided": True,
+        "pass": passed,
+        "status": "LOCKED_HOLDOUT_QUEUE_PASS" if passed else _locked_holdout_queue_no_go_status(queue_status),
+        "queue_status": queue_status,
+        "plan_count": queue.get("plan_count"),
+        "expected_locked_holdout_plan_sha256": expected_plan_sha,
+        "checks": checks,
+    }
+
+
+def _locked_holdout_queue_no_go_status(queue_status: Any) -> str:
+    if queue_status in {
+        "WAITING_FOR_FUTURE_HOLDOUT_WINDOWS",
+        "WAITING_FOR_HOLDOUT_WINDOW_COMPLETION",
+        "WAITING_FOR_SPOT_REFRESH_AND_LOCKED_HOLDOUT_RUN",
+    }:
+        return "NO_GO_LOCKED_HOLDOUT_QUEUE_PENDING"
+    return "NO_GO_LOCKED_HOLDOUT_QUEUE_INVALID"
 
 
 def _production_blocking_route(
@@ -457,6 +549,7 @@ def _production_blocking_route(
     missing_production_checks: list[str],
     failed_production_checks: list[str],
     locked_holdout_policy: dict[str, Any] | None,
+    locked_holdout_queue_policy: dict[str, Any] | None,
 ) -> tuple[str, str]:
     if approved:
         return "promotion_ready", "run_independent_capstone_review"
@@ -471,6 +564,8 @@ def _production_blocking_route(
         if status == "NO_GO_LOCKED_HOLDOUT_INPUT_INVALID":
             return "locked_holdout_input_invalid", "fix_locked_holdout_plan_or_spot_inputs_then_rerun_preflight"
         return "locked_holdout_failure", "resolve_locked_holdout_failure_without_retuning_locked_window"
+    if locked_holdout_queue_policy is not None and locked_holdout_queue_policy.get("pass") is not True:
+        return "locked_holdout_queue", "fix_locked_holdout_queue_before_promotion_review"
     if missing_production_evidence:
         return "production_evidence", "generate_adjusted_production_export_selected_capstone_evidence"
     if missing_production_checks:
@@ -915,6 +1010,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--adjusted-selected-config", type=Path, default=None)
     parser.add_argument("--adjusted-capstone", type=Path, default=None)
     parser.add_argument("--locked-holdout-summary", type=Path, default=None)
+    parser.add_argument("--locked-holdout-queue-summary", type=Path, default=None)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
 
@@ -930,6 +1026,7 @@ def main(argv: list[str] | None = None) -> int:
         adjusted_selected_config=args.adjusted_selected_config,
         adjusted_capstone=args.adjusted_capstone,
         locked_holdout_summary=args.locked_holdout_summary,
+        locked_holdout_queue_summary=args.locked_holdout_queue_summary,
         output=args.output,
     )
     print(json.dumps(summary, indent=2, sort_keys=True, default=str))

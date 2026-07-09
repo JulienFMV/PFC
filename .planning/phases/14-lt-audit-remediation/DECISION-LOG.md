@@ -7703,3 +7703,47 @@ Invariants:
 - No spot parquet should be written by this wrapper before the window is
   complete.
 
+## D-20260709-105 - Promotion Readiness Requires Locked Holdout Queue Evidence
+
+Decision: a complete adjusted production/export/selected/capstone chain must
+also provide a locked-holdout queue summary before readiness can return
+`PROMOTION_READY`.
+
+Reason: Phase 14 now has multiple locked future holdout lines. A passing
+single-plan holdout is not enough if the operator queue is missing, invalid,
+ambiguous, overlapping, or still pending. The promotion review must prove that
+the bound locked holdout plan SHA is present in the audited queue and that the
+queue itself has no duplicate plan ids, overlapping windows, policy-invalid
+plans, or hash-mismatched source artifacts.
+
+Implementation:
+
+- `scripts/check_epex_lab_promotion_readiness.py` now accepts
+  `--locked-holdout-queue-summary`.
+- `locked_holdout_queue_pass` is listed in `required_production_checks`.
+- When a production bundle is present, readiness fails closed if the queue
+  summary is missing, invalid, pending, or does not contain the plan SHA from
+  the bound locked-holdout evidence.
+- Queue failures route to
+  `production_blocking_stage=locked_holdout_queue` and
+  `next_required_step=fix_locked_holdout_queue_before_promotion_review`.
+- The current queue audit status `WAITING_FOR_FUTURE_HOLDOUT_WINDOWS` remains
+  NO-GO production evidence.
+
+Rejected alternatives:
+
+- Treat the queue audit as an optional operator aide after production evidence
+  exists.
+- Accept a production chain without a queue summary because the single
+  locked-holdout artifact passed.
+- Let pending queue statuses pass readiness and rely on prose handoffs to
+  communicate the remaining wait state.
+
+Invariants:
+
+- Queue audit remains read-only and cannot approve production by itself.
+- Queue evidence must not fetch spot data, run holdouts, tune candidates, or
+  use OMPEX as input, selection target, backtest truth, or promotion gate.
+- T057 and T061 remain separate evidence paths; one line cannot approve or
+  substitute for the other.
+
