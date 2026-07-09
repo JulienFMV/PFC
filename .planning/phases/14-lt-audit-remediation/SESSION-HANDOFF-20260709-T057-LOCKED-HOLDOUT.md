@@ -313,3 +313,13 @@ python -m pytest tests/test_audit_epex_lab_future_approval_path_script.py tests/
 
 Result: `37 passed, 1 skipped`. The current regenerated approval audit remains
 `NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING`.
+
+The local promotion bundle path was also covered end-to-end: local bundle plus
+readiness is audited as `NO_GO_PRODUCTION_CHAIN_INCOMPLETE` and still exposes
+locked-holdout production checks as required. Validation:
+
+```powershell
+python -m pytest tests/test_build_epex_lab_promotion_bundle_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result: `38 passed, 1 skipped`.

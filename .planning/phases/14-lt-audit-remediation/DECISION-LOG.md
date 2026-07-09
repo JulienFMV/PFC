@@ -5106,6 +5106,12 @@ Validation:
   `python -m pytest tests/test_audit_epex_lab_future_approval_path_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
   reported `37 passed, 1 skipped`; regenerated current future approval audit
   remains `NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING`.
+- Added a local-promotion-bundle integration check proving that a local
+  diagnostic bundle plus readiness remains
+  `NO_GO_PRODUCTION_CHAIN_INCOMPLETE` under the future approval audit and still
+  lists locked-holdout production checks as required. Targeted validation:
+  `python -m pytest tests/test_build_epex_lab_promotion_bundle_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  reported `38 passed, 1 skipped`.
 
 Current regenerated evidence remains NO-GO:
 

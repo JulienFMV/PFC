@@ -4,6 +4,7 @@ import json
 
 import pandas as pd
 
+from scripts.audit_epex_lab_future_approval_path import audit_future_approval_path
 from scripts.build_epex_lab_promotion_bundle import build_bundle
 from scripts.check_epex_lab_promotion_readiness import check_readiness
 
@@ -117,3 +118,13 @@ def test_build_epex_lab_promotion_bundle_is_non_production_and_checker_bound(tmp
     assert readiness["strict_diagnostics_pass"] is True
     assert readiness["approved"] is False
     assert readiness["missing_production_evidence"] == ["adjusted_production_manifest"]
+
+    future_audit = audit_future_approval_path(
+        readiness_json=tmp_path / "decision.json",
+        output=tmp_path / "future_approval.json",
+    )
+
+    assert future_audit["approved"] is False
+    assert future_audit["status"] == "NO_GO_PRODUCTION_CHAIN_INCOMPLETE"
+    assert "adjusted_production_manifest" in future_audit["remaining_blockers"]
+    assert "locked_holdout_pass" in future_audit["required_production_checks"]

@@ -135,6 +135,11 @@ check set. Targeted validation:
 `python -m pytest tests/test_audit_epex_lab_future_approval_path_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
 reported `37 passed, 1 skipped`; regenerated current approval audit remains
 `NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING`.
+The local promotion bundle path is also covered: local bundle + readiness is
+audited as `NO_GO_PRODUCTION_CHAIN_INCOMPLETE` and still lists locked-holdout
+production checks as required. Validation:
+`python -m pytest tests/test_build_epex_lab_promotion_bundle_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+reported `38 passed, 1 skipped`.
 
 Current daily generation: Wednesday 2026-07-08 was regenerated from the EEX
 workbook available on 2026-07-08. The latest usable CH/DE/FR quote row in that
