@@ -6115,3 +6115,52 @@ Invariants not to break:
 - Path resolution is provenance hardening only; it does not change model
   inputs, selection inputs, or holdout pass criteria.
 
+## D-20260709-76 - Require Selection And Lab Manifest For Future Locked Plans
+
+Decision: newly generated locked EPEX lab holdout plans must include a
+selection summary and a lab manifest. Plans without either artifact are rejected
+at build time.
+
+Reason: a locked holdout plan is supposed to freeze an already selected,
+no-OMPEX adjusted candidate plus its lab configuration before future spot rows
+exist. Allowing a plan with no selection summary or no lab manifest weakens
+the promotion evidence chain by permitting a future holdout to be pre-registered
+without candidate-selection proof or config provenance.
+
+Implementation:
+
+- `scripts/plan_epex_lab_locked_holdout.py` now raises when
+  `selection_summary` is absent.
+- It also raises when `lab_manifest` is absent.
+- The CLI now requires `--selection-summary` and `--lab-manifest`.
+- Tests cover both missing-artifact failures while preserving existing
+  unbound-selection and timestamp-set mismatch failures.
+
+Validation:
+
+- `python -m pytest tests/test_plan_epex_lab_locked_holdout_script.py -q -p no:cacheprovider`
+  reported `6 passed`.
+- `python -m pytest tests/test_plan_epex_lab_locked_holdout_script.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_epex_lab_locked_holdout_policy.py tests/test_run_epex_lab_locked_holdout_script.py -q -p no:cacheprovider`
+  reported `39 passed`.
+- `python -m pytest tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_adjusted_production_chain_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_epex_lab_locked_holdout_policy.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_plan_epex_lab_locked_holdout_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  reported `108 passed, 1 skipped`.
+
+Operational result:
+
+- Current frozen T057 plan remains unchanged and already includes both
+  `selection_summary` and `lab_manifest`.
+- Regenerated current T057 runner remains
+  `WAITING_FOR_FULL_SPOT_COVERAGE`, exit `1`.
+
+Rejected alternatives:
+
+- Keep selection/lab manifest optional and rely on downstream production-chain
+  checks to catch missing provenance later.
+- Modify the already frozen T057 plan retroactively.
+
+Invariants not to break:
+
+- The existing locked T057 plan JSON remains unchanged.
+- The plan builder remains no-OMPEX: selection/lab artifacts are provenance
+  evidence, not model inputs or benchmark gates.
+

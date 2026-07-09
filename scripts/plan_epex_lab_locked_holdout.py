@@ -67,6 +67,10 @@ def build_plan(
         baseline_csv=baseline_csv,
         adjusted_csv=adjusted_csv,
     )
+    if selection_summary is None:
+        raise ValueError("selection_summary is required for a locked holdout plan")
+    if lab_manifest is None:
+        raise ValueError("lab_manifest is required for a locked holdout plan")
     selection = _load_json(selection_summary) if selection_summary is not None else None
     selection_policy = _selection_policy(selection, adjusted_sha) if selection is not None else None
     if selection_policy is not None and selection_policy["pass"] is not True:
@@ -354,8 +358,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--baseline-csv", type=Path, required=True)
     parser.add_argument("--adjusted-csv", type=Path, required=True)
-    parser.add_argument("--selection-summary", type=Path, default=None)
-    parser.add_argument("--lab-manifest", type=Path, default=None)
+    parser.add_argument("--selection-summary", type=Path, required=True)
+    parser.add_argument("--lab-manifest", type=Path, required=True)
     parser.add_argument("--plan-id", default="t057_locked_t056_future_holdout")
     parser.add_argument("--frozen-at-utc", required=True)
     parser.add_argument("--holdout-start-utc", required=True)

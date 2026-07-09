@@ -1211,3 +1211,38 @@ Result: `106 passed, 1 skipped`.
 Current frozen T057 plan remains unchanged and backward-compatible; regenerated
 runner remains `WAITING_FOR_FULL_SPOT_COVERAGE`, exit `1`.
 
+## 2026-07-09 Future Locked Plan Selection/Lab Manifest Follow-Up
+
+New locked EPEX lab holdout plans must now include both candidate-selection
+evidence and lab-config provenance.
+
+- `scripts/plan_epex_lab_locked_holdout.py` rejects missing
+  `selection_summary`.
+- It also rejects missing `lab_manifest`.
+- The CLI now requires `--selection-summary` and `--lab-manifest`.
+- Tests cover both missing-artifact failures, plus existing unbound-selection
+  and timestamp-set mismatch failures.
+
+Validation:
+
+```powershell
+python -m pytest tests/test_plan_epex_lab_locked_holdout_script.py -q -p no:cacheprovider
+```
+
+Result: `6 passed`.
+
+```powershell
+python -m pytest tests/test_plan_epex_lab_locked_holdout_script.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_epex_lab_locked_holdout_policy.py tests/test_run_epex_lab_locked_holdout_script.py -q -p no:cacheprovider
+```
+
+Result: `39 passed`.
+
+```powershell
+python -m pytest tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_adjusted_production_chain_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_epex_lab_locked_holdout_policy.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_plan_epex_lab_locked_holdout_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result: `108 passed, 1 skipped`.
+
+Current frozen T057 plan remains unchanged and already includes both artifacts.
+Regenerated runner remains `WAITING_FOR_FULL_SPOT_COVERAGE`, exit `1`.
+

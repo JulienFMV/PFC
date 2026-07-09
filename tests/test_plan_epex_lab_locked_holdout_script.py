@@ -71,11 +71,15 @@ def test_plan_epex_lab_locked_holdout_resolves_relative_paths(tmp_path: Path, mo
     adjusted = work / "adjusted.csv"
     _write_candidate_csv(baseline)
     _write_candidate_csv(adjusted)
+    selection = _write_selection_summary(work, adjusted)
+    lab_manifest = _write_lab_manifest(work)
     monkeypatch.chdir(work)
 
     plan = build_plan(
         baseline_csv=Path("baseline.csv"),
         adjusted_csv=Path("adjusted.csv"),
+        selection_summary=selection.relative_to(work),
+        lab_manifest=lab_manifest.relative_to(work),
         output=Path("plan.json"),
         frozen_at_utc="2026-07-09T00:00:00Z",
         holdout_start_utc="2026-07-10T00:00:00Z",
@@ -89,12 +93,49 @@ def test_plan_epex_lab_locked_holdout_resolves_relative_paths(tmp_path: Path, mo
     assert (work / "plan.json").exists()
 
 
+def test_plan_epex_lab_locked_holdout_rejects_missing_selection_summary(tmp_path: Path) -> None:
+    baseline = tmp_path / "baseline.csv"
+    adjusted = tmp_path / "adjusted.csv"
+    _write_candidate_csv(baseline)
+    _write_candidate_csv(adjusted)
+    lab_manifest = _write_lab_manifest(tmp_path)
+
+    with pytest.raises(ValueError, match="selection_summary is required"):
+        build_plan(
+            baseline_csv=baseline,
+            adjusted_csv=adjusted,
+            lab_manifest=lab_manifest,
+            frozen_at_utc="2026-07-09T00:00:00Z",
+            holdout_start_utc="2026-07-10T00:00:00Z",
+            holdout_end_utc="2026-07-24T00:00:00Z",
+        )
+
+
+def test_plan_epex_lab_locked_holdout_rejects_missing_lab_manifest(tmp_path: Path) -> None:
+    baseline = tmp_path / "baseline.csv"
+    adjusted = tmp_path / "adjusted.csv"
+    _write_candidate_csv(baseline)
+    _write_candidate_csv(adjusted)
+    selection = _write_selection_summary(tmp_path, adjusted)
+
+    with pytest.raises(ValueError, match="lab_manifest is required"):
+        build_plan(
+            baseline_csv=baseline,
+            adjusted_csv=adjusted,
+            selection_summary=selection,
+            frozen_at_utc="2026-07-09T00:00:00Z",
+            holdout_start_utc="2026-07-10T00:00:00Z",
+            holdout_end_utc="2026-07-24T00:00:00Z",
+        )
+
+
 def test_plan_epex_lab_locked_holdout_rejects_unbound_selection(tmp_path: Path) -> None:
     baseline = tmp_path / "baseline.csv"
     adjusted = tmp_path / "adjusted.csv"
     _write_candidate_csv(baseline)
     _write_candidate_csv(adjusted)
     selection = tmp_path / "selection.json"
+    lab_manifest = _write_lab_manifest(tmp_path)
     selection.write_text(
         json.dumps(
             {
@@ -113,6 +154,7 @@ def test_plan_epex_lab_locked_holdout_rejects_unbound_selection(tmp_path: Path) 
             baseline_csv=baseline,
             adjusted_csv=adjusted,
             selection_summary=selection,
+            lab_manifest=lab_manifest,
             frozen_at_utc="2026-07-09T00:00:00Z",
             holdout_start_utc="2026-07-10T00:00:00Z",
             holdout_end_utc="2026-07-24T00:00:00Z",
@@ -124,11 +166,15 @@ def test_plan_epex_lab_locked_holdout_rejects_timestamp_set_mismatch(tmp_path: P
     adjusted = tmp_path / "adjusted.csv"
     _write_candidate_csv(baseline)
     _write_candidate_csv(adjusted, periods=5)
+    selection = _write_selection_summary(tmp_path, adjusted)
+    lab_manifest = _write_lab_manifest(tmp_path)
 
     with pytest.raises(ValueError, match="timestamp identities"):
         build_plan(
             baseline_csv=baseline,
             adjusted_csv=adjusted,
+            selection_summary=selection,
+            lab_manifest=lab_manifest,
             frozen_at_utc="2026-07-09T00:00:00Z",
             holdout_start_utc="2026-07-10T00:00:00Z",
             holdout_end_utc="2026-07-24T00:00:00Z",
@@ -140,6 +186,31 @@ def _write_candidate_csv(path: Path, *, periods: int = 4) -> None:
     for hour in range(periods):
         rows.append(f"10.07.2026 {hour + 2:02d}:00,UTC+02:00")
     path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+
+
+def _write_selection_summary(tmp_path: Path, adjusted: Path) -> Path:
+    adjusted_sha = _sha256(adjusted)
+    selection = tmp_path / "selection.json"
+    selection.write_text(
+        json.dumps(
+            {
+                "replacement_verdict": {"replace_incumbent": True},
+                "selected_adjusted_csv_sha256": adjusted_sha,
+                "selected_trial": {"adjusted_csv_sha256": adjusted_sha},
+                "ompex_used_in_model": False,
+                "ompex_used_in_selection": False,
+                "ompex_used_in_backtest": False,
+            }
+        ),
+        encoding="utf-8",
+    )
+    return selection
+
+
+def _write_lab_manifest(tmp_path: Path) -> Path:
+    lab_manifest = tmp_path / "lab.json"
+    lab_manifest.write_text(json.dumps({"config": {"weekend_intensity": 0.75}}), encoding="utf-8")
+    return lab_manifest
 
 
 def _sha256(path: Path) -> str:
