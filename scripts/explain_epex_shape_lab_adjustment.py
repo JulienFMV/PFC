@@ -20,11 +20,17 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from pfc_shaping.lt.model.epex_shape_lab import project_delta_to_base_peak_nullspace  # noqa: E402
 from pfc_shaping.lt.model.shape_constraints import eex_peak_mask  # noqa: E402
 from scripts.export_local_test_ch_hourly_csv import _parse_timestamp_ch  # noqa: E402
 
 
 PRICE = "price_weighted_mean_eur_mwh"
+SCENARIO_PRICE_COLUMNS = [
+    "price_slow_eur_mwh",
+    "price_central_eur_mwh",
+    "price_fast_eur_mwh",
+]
 TEMPLATE_COMPONENTS = {
     "weekend": "weekend_delta_eur_mwh",
     "low_tail": "low_tail_delta_eur_mwh",
@@ -40,6 +46,11 @@ INTENSITY_KEYS = {
     "evening_recovery": "evening_recovery_intensity",
     "night": "night_intensity",
     "ramp": "ramp_intensity",
+}
+GUARD_CONFIG_DEFAULTS = {
+    "max_abs_delta_eur_mwh": 0.0,
+    "negative_price_floor": -30.0,
+    "max_weighted_negative_hours": 0.0,
 }
 
 
@@ -59,6 +70,7 @@ def explain_adjustment(
     joined = _join_candidates(baseline, adjusted)
     templates = _load_templates(templates_path)
     explained = _attach_component_contributions(joined, templates, config)
+    explained, stage_summary = _attach_stage_decomposition(explained, baseline, config)
 
     by_bucket = _bucket_summary(explained)
     by_component = _component_summary(explained)
@@ -103,6 +115,7 @@ def explain_adjustment(
         "strict_checks": strict_checks,
         "conservation": conservation,
         "compression_summary": _compression_summary(explained, by_bucket),
+        "stage_decomposition_summary": stage_summary,
         "component_totals": _component_totals(by_component),
         "bucket_delta_summary": _bucket_totals(by_bucket),
         "outputs": {
@@ -142,7 +155,10 @@ def _load_candidate(path: Path, *, label: str) -> pd.DataFrame:
     if out.index.has_duplicates:
         raise ValueError(f"{label} candidate has duplicate timestamps")
     out = out.sort_index()
-    return out[[PRICE]]
+    columns = [PRICE, *[column for column in SCENARIO_PRICE_COLUMNS if column in out.columns]]
+    for column in columns:
+        out[column] = pd.to_numeric(out[column], errors="raise")
+    return out[columns]
 
 
 def _join_candidates(baseline: pd.DataFrame, adjusted: pd.DataFrame) -> pd.DataFrame:
@@ -222,6 +238,114 @@ def _attach_component_contributions(
     return merged[ordered]
 
 
+def _attach_stage_decomposition(
+    explained: pd.DataFrame,
+    baseline: pd.DataFrame,
+    config: dict[str, float],
+) -> tuple[pd.DataFrame, dict[str, Any]]:
+    out = explained.copy()
+    ts_ch = pd.DatetimeIndex(pd.to_datetime(out["timestamp_utc"], utc=True)).tz_convert("Europe/Zurich")
+    raw = out["raw_total_delta_eur_mwh"].to_numpy(dtype=float)
+    base_constraints, peak_constraints = _derive_baseline_constraints(baseline, ts_ch=ts_ch)
+    projected, constraint_residual = project_delta_to_base_peak_nullspace(
+        raw,
+        ts_ch=ts_ch,
+        base_forward_prices=base_constraints,
+        peak_forward_prices=peak_constraints,
+        country="CH",
+        require_monthly_base_constraints=True,
+    )
+    max_abs_delta = float(config.get("max_abs_delta_eur_mwh", 0.0))
+    max_projected = _array_max_abs(projected)
+    cap_scale = 1.0
+    capped = projected.copy()
+    if max_projected > max_abs_delta > 0.0:
+        cap_scale = float(max_abs_delta / max_projected)
+        capped = projected * cap_scale
+    guarded, floor_scale, exact_floor_guard = _apply_floor_guard_if_possible(baseline, capped, config)
+    actual = out["actual_delta_eur_mwh"].to_numpy(dtype=float)
+
+    out["projected_delta_eur_mwh"] = projected
+    out["capped_projected_delta_eur_mwh"] = capped
+    out["guarded_reconstructed_delta_eur_mwh"] = guarded
+    out["projection_loss_eur_mwh"] = projected - raw
+    out["cap_loss_eur_mwh"] = capped - projected
+    out["floor_guard_loss_eur_mwh"] = guarded - capped
+    out["unexplained_delta_eur_mwh"] = actual - guarded
+
+    summary = {
+        "projection_constraint_residual_eur_mwh": float(constraint_residual),
+        "max_abs_raw_total_delta_eur_mwh": _array_max_abs(raw),
+        "max_abs_projected_delta_eur_mwh": _array_max_abs(projected),
+        "max_abs_capped_projected_delta_eur_mwh": _array_max_abs(capped),
+        "max_abs_guarded_reconstructed_delta_eur_mwh": _array_max_abs(guarded),
+        "cap_scale": float(cap_scale),
+        "floor_guard_scale": float(floor_scale),
+        "floor_guard_exact_from_scenario_columns": bool(exact_floor_guard),
+        "mean_abs_projection_loss_eur_mwh": _array_mean_abs(projected - raw),
+        "mean_abs_cap_loss_eur_mwh": _array_mean_abs(capped - projected),
+        "mean_abs_floor_guard_loss_eur_mwh": _array_mean_abs(guarded - capped),
+        "mean_abs_unexplained_delta_eur_mwh": _array_mean_abs(actual - guarded),
+    }
+    return out, summary
+
+
+def _derive_baseline_constraints(
+    baseline: pd.DataFrame,
+    *,
+    ts_ch: pd.DatetimeIndex,
+) -> tuple[dict[str, float], dict[str, float]]:
+    months = pd.PeriodIndex(ts_ch.strftime("%Y-%m"), freq="M")
+    values = baseline[PRICE].to_numpy(dtype=float)
+    base = {str(month): float(values[months == month].mean()) for month in sorted(months.unique())}
+    peak_mask = eex_peak_mask(ts_ch.tz_convert("UTC"), country="CH")
+    peak: dict[str, float] = {}
+    for month in sorted(months.unique()):
+        mask = (months == month) & peak_mask
+        if bool(mask.any()):
+            peak[str(month)] = float(values[mask].mean())
+    return base, peak
+
+
+def _apply_floor_guard_if_possible(
+    baseline: pd.DataFrame,
+    capped_delta: np.ndarray,
+    config: dict[str, float],
+) -> tuple[np.ndarray, float, bool]:
+    floor = float(config.get("negative_price_floor", GUARD_CONFIG_DEFAULTS["negative_price_floor"]))
+    max_negative = int(config.get("max_weighted_negative_hours", GUARD_CONFIG_DEFAULTS["max_weighted_negative_hours"]))
+    has_scenarios = all(column in baseline.columns for column in SCENARIO_PRICE_COLUMNS)
+    if has_scenarios:
+        price_matrix = baseline[[*SCENARIO_PRICE_COLUMNS, PRICE]].to_numpy(dtype=float)
+    else:
+        price_matrix = baseline[[PRICE]].to_numpy(dtype=float)
+    if _floor_guard_ok(price_matrix, capped_delta, floor=floor, max_negative=max_negative):
+        return capped_delta, 1.0, has_scenarios
+    lo = 0.0
+    hi = 1.0
+    for _ in range(30):
+        mid = (lo + hi) / 2.0
+        if _floor_guard_ok(price_matrix, mid * capped_delta, floor=floor, max_negative=max_negative):
+            lo = mid
+        else:
+            hi = mid
+    return capped_delta * lo, float(lo), has_scenarios
+
+
+def _floor_guard_ok(
+    price_matrix: np.ndarray,
+    delta: np.ndarray,
+    *,
+    floor: float,
+    max_negative: int,
+) -> bool:
+    shifted = price_matrix + np.asarray(delta, dtype=float)[:, None]
+    min_price = float(np.min(shifted)) if shifted.size else float("nan")
+    weighted = shifted[:, -1] if shifted.size else np.array([], dtype=float)
+    weighted_negative_hours = int((weighted < 0.0).sum())
+    return bool(min_price >= floor - 1e-9 and weighted_negative_hours <= max_negative)
+
+
 def _bucket_summary(frame: pd.DataFrame) -> pd.DataFrame:
     masks = {
         "all": pd.Series(True, index=frame.index),
@@ -284,6 +408,14 @@ def _summary_row(frame: pd.DataFrame, labels: dict[str, Any]) -> dict[str, Any]:
         "raw_to_actual_abs_ratio": _safe_ratio(_mean(raw.abs()), _mean(actual.abs())),
         "projection_residual_to_raw_abs_ratio": _safe_ratio(_mean(projection.abs()), _mean(raw.abs())),
     }
+    for col in [
+        "projection_loss_eur_mwh",
+        "cap_loss_eur_mwh",
+        "floor_guard_loss_eur_mwh",
+        "unexplained_delta_eur_mwh",
+    ]:
+        if col in frame.columns:
+            row[f"mean_abs_{col}"] = _mean(frame[col].astype(float).abs())
     for component in TEMPLATE_COMPONENTS:
         col = f"{component}_raw_contribution_eur_mwh"
         row[f"mean_{component}_raw_contribution_eur_mwh"] = _mean(frame[col].astype(float))
@@ -308,6 +440,13 @@ def _strict_checks(frame: pd.DataFrame, conservation: dict[str, Any]) -> dict[st
             "raw_total_delta_eur_mwh",
             "projection_residual_eur_mwh",
             *[f"{component}_raw_contribution_eur_mwh" for component in TEMPLATE_COMPONENTS],
+            "projected_delta_eur_mwh",
+            "capped_projected_delta_eur_mwh",
+            "guarded_reconstructed_delta_eur_mwh",
+            "projection_loss_eur_mwh",
+            "cap_loss_eur_mwh",
+            "floor_guard_loss_eur_mwh",
+            "unexplained_delta_eur_mwh",
         ]
     ].to_numpy(dtype=float)
     return {
@@ -352,6 +491,8 @@ def _lab_config(manifest: dict[str, Any]) -> dict[str, float]:
     config: dict[str, float] = {}
     for key in INTENSITY_KEYS.values():
         config[key] = float(raw.get(key, 0.0))
+    for key, default in GUARD_CONFIG_DEFAULTS.items():
+        config[key] = float(raw.get(key, default))
     return config
 
 
@@ -403,6 +544,10 @@ def _bucket_totals(bucket_summary: pd.DataFrame) -> dict[str, Any]:
                 row.get("projection_residual_to_raw_abs_ratio")
             ),
             "dominant_raw_component": _dominant_component(row),
+            "mean_abs_projection_loss_eur_mwh": _none_if_nan(row.get("mean_abs_projection_loss_eur_mwh")),
+            "mean_abs_cap_loss_eur_mwh": _none_if_nan(row.get("mean_abs_cap_loss_eur_mwh")),
+            "mean_abs_floor_guard_loss_eur_mwh": _none_if_nan(row.get("mean_abs_floor_guard_loss_eur_mwh")),
+            "mean_abs_unexplained_delta_eur_mwh": _none_if_nan(row.get("mean_abs_unexplained_delta_eur_mwh")),
         }
         for row in bucket_summary.to_dict(orient="records")
     }
@@ -418,6 +563,16 @@ def _max(values: pd.Series) -> float:
 
 def _quantile(values: pd.Series, q: float) -> float:
     return float(values.quantile(q)) if len(values) else float("nan")
+
+
+def _array_mean_abs(values: np.ndarray) -> float:
+    arr = np.asarray(values, dtype=float)
+    return float(np.mean(np.abs(arr))) if len(arr) else float("nan")
+
+
+def _array_max_abs(values: np.ndarray) -> float:
+    arr = np.asarray(values, dtype=float)
+    return float(np.max(np.abs(arr))) if len(arr) else 0.0
 
 
 def _safe_ratio(numerator: float, denominator: float) -> float | None:

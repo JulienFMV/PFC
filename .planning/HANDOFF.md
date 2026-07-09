@@ -1407,6 +1407,17 @@ Interpretation:
   - most compressed bucket `night_00_05` with ratio
     `0.9563567714561076`;
   - all 9 diagnostic buckets have compression ratio at or above `0.75`.
+- stage decomposition now separates projection, max-delta cap, and floor guard:
+  - projection constraint residual `1.6153745008296028e-14`;
+  - max raw delta `35.81471201388889`;
+  - max projected delta `31.6464827773043`;
+  - max capped/final reconstructed delta `2.75`;
+  - cap scale `0.08689749250656693`;
+  - floor guard scale `1.0`;
+  - mean absolute projection loss `3.6112390551929443`;
+  - mean absolute cap loss `6.367867353601689`;
+  - mean absolute floor-guard loss `0.0`;
+  - mean absolute unexplained delta `2.480501238010863e-07`.
 
 Validation:
 
@@ -1429,6 +1440,14 @@ pytest tests\test_explain_epex_shape_lab_adjustment_script.py -q -p no:cacheprov
 ```
 
 Result: `2 passed`.
+
+Latest focused validation after adding stage decomposition:
+
+```powershell
+pytest tests\test_explain_epex_shape_lab_adjustment_script.py tests\test_backtest_epex_shape_lab_against_spot_script.py tests\test_audit_epex_shape_lab_governance_script.py tests\test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result: `23 passed, 1 skipped`.
 
 Promotion remains NO-GO pending T057 full coverage and production-chain
 evidence.

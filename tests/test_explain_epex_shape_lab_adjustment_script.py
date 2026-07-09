@@ -15,6 +15,9 @@ def _write_candidate(path: Path, timestamps: pd.DatetimeIndex, delta: np.ndarray
         {
             "timestamp_ch": timestamps.strftime("%d.%m.%Y %H:%M"),
             "utc_offset_ch": timestamps.strftime("UTC%z"),
+            "price_slow_eur_mwh": values - 2.0,
+            "price_central_eur_mwh": values,
+            "price_fast_eur_mwh": values + 2.0,
             "price_weighted_mean_eur_mwh": values,
         }
     )
@@ -53,6 +56,9 @@ def _write_manifest(path: Path, templates: Path) -> None:
                     "evening_recovery_intensity": 0.0,
                     "night_intensity": 1.0,
                     "ramp_intensity": 0.0,
+                    "max_abs_delta_eur_mwh": 3.0,
+                    "negative_price_floor": -30.0,
+                    "max_weighted_negative_hours": 0,
                 },
                 "outputs": {"templates_csv": str(templates)},
             },
@@ -91,6 +97,8 @@ def test_explain_epex_shape_lab_adjustment_reports_component_buckets(tmp_path: P
     assert summary["bucket_delta_summary"]["weekend"]["projection_residual_to_raw_abs_ratio"] is not None
     assert summary["compression_summary"]["projection_residual_to_raw_abs_ratio"] is not None
     assert summary["compression_summary"]["high_compression_bucket_count"] > 0
+    assert summary["stage_decomposition_summary"]["floor_guard_exact_from_scenario_columns"] is True
+    assert summary["stage_decomposition_summary"]["max_abs_capped_projected_delta_eur_mwh"] <= 3.0 + 1e-9
     assert summary["strict_checks"]["monthly_base_delta_conserved"] is True
     assert (tmp_path / "out" / "bucket_delta_summary.csv").exists()
     written = json.loads((tmp_path / "out" / "shape_explainability_summary.json").read_text(encoding="utf-8"))
