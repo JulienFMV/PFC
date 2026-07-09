@@ -47,12 +47,13 @@ def audit_queue(
     rows.sort(key=lambda row: (row.get("holdout_start_utc") or "", row.get("plan_id") or ""))
     invalid_count = sum(1 for row in rows if row["blocking_stage"] == "locked_holdout_plan_invalid")
     policy_invalid_count = sum(1 for row in rows if row["blocking_stage"] == "locked_holdout_plan_policy_invalid")
+    artifact_invalid_count = sum(1 for row in rows if row["blocking_stage"] == "locked_holdout_artifact_missing_or_hash_mismatch")
     due_count = sum(1 for row in rows if row["blocking_stage"] == "refresh_spot_and_run_locked_holdout")
     active_count = sum(1 for row in rows if row["temporal_status"] == "IN_HOLDOUT_WINDOW")
     future_count = sum(1 for row in rows if row["temporal_status"] == "WAITING_FOR_HOLDOUT_START")
     status = (
         "NO_GO_LOCKED_HOLDOUT_QUEUE_INVALID"
-        if invalid_count or policy_invalid_count
+        if invalid_count or policy_invalid_count or artifact_invalid_count
         else "WAITING_FOR_SPOT_REFRESH_AND_LOCKED_HOLDOUT_RUN"
         if due_count
         else "WAITING_FOR_HOLDOUT_WINDOW_COMPLETION"
@@ -71,6 +72,7 @@ def audit_queue(
         "plan_count": len(rows),
         "invalid_plan_count": invalid_count,
         "policy_invalid_plan_count": policy_invalid_count,
+        "artifact_invalid_plan_count": artifact_invalid_count,
         "future_window_count": future_count,
         "active_window_count": active_count,
         "spot_refresh_due_count": due_count,
@@ -107,6 +109,13 @@ def _plan_status(
     latest_required = expected[-1] if len(expected) else None
     policy_checks = _policy_checks(plan)
     policy_ok = all(policy_checks.values())
+    artifact_status = _artifact_status(plan, plan_json=plan_json)
+    artifact_checks = {
+        key: value
+        for key, value in artifact_status.items()
+        if key.endswith("_present") or key.endswith("_exists") or key.endswith("_sha256_bound")
+    }
+    artifacts_ok = all(artifact_checks.values())
     temporal_status = _temporal_status(as_of=as_of, start=start, latest_required=latest_required)
     if not schema_ok or start is None or end is None or end <= start:
         blocking_stage = "locked_holdout_plan_invalid"
@@ -114,6 +123,9 @@ def _plan_status(
     elif not policy_ok:
         blocking_stage = "locked_holdout_plan_policy_invalid"
         next_required_step = "fix_locked_holdout_plan_policy_before_waiting_or_running"
+    elif not artifacts_ok:
+        blocking_stage = "locked_holdout_artifact_missing_or_hash_mismatch"
+        next_required_step = "restore_or_regenerate_locked_candidate_artifacts_without_retuning_holdout"
     elif temporal_status == "WAITING_FOR_HOLDOUT_START":
         blocking_stage = "wait_for_holdout_window_start"
         next_required_step = "wait_without_retuning_candidate"
@@ -152,6 +164,8 @@ def _plan_status(
         "production_approved": plan.get("production_approved"),
         "promotion_gate": plan.get("promotion_gate"),
         "policy_checks": policy_checks,
+        "artifact_status": artifact_status,
+        "artifact_checks": artifact_checks,
         "recommended_commands": commands,
     }
 
@@ -231,6 +245,72 @@ def _recommended_commands(
             ]
         )
     return commands
+
+
+def _artifact_status(plan: dict[str, Any], *, plan_json: Path) -> dict[str, Any]:
+    baseline = _file_binding_status(plan, plan_json=plan_json, path_key="baseline_csv")
+    adjusted = _file_binding_status(plan, plan_json=plan_json, path_key="adjusted_csv")
+    lab_manifest = _file_binding_status(plan, plan_json=plan_json, path_key="lab_manifest")
+    selection_summary = _file_binding_status(plan, plan_json=plan_json, path_key="selection_summary")
+    return {
+        "baseline_csv": baseline,
+        "adjusted_csv": adjusted,
+        "lab_manifest": lab_manifest,
+        "selection_summary": selection_summary,
+        "baseline_csv_present": baseline["path_present"],
+        "baseline_csv_exists": baseline["file_exists"],
+        "baseline_csv_sha256_bound": baseline["sha256_bound"],
+        "adjusted_csv_present": adjusted["path_present"],
+        "adjusted_csv_exists": adjusted["file_exists"],
+        "adjusted_csv_sha256_bound": adjusted["sha256_bound"],
+        "lab_manifest_present": lab_manifest["path_present"],
+        "lab_manifest_exists": lab_manifest["file_exists"],
+        "lab_manifest_sha256_bound": lab_manifest["sha256_bound"],
+        "selection_summary_present": selection_summary["path_present"],
+        "selection_summary_exists": selection_summary["file_exists"],
+        "selection_summary_sha256_bound": selection_summary["sha256_bound"],
+    }
+
+
+def _file_binding_status(plan: dict[str, Any], *, plan_json: Path, path_key: str) -> dict[str, Any]:
+    raw_path = plan.get(path_key)
+    expected_sha = plan.get(f"{path_key}_sha256")
+    resolved = _resolve_plan_path(raw_path, plan_json=plan_json) if raw_path else None
+    exists = bool(resolved is not None and resolved.exists())
+    actual_sha = _sha256(resolved) if resolved is not None and exists else None
+    return {
+        "path": str(raw_path) if raw_path else None,
+        "resolved_path": str(resolved) if resolved is not None else None,
+        "path_present": bool(str(raw_path or "").strip()),
+        "expected_sha256": expected_sha,
+        "expected_sha256_present": bool(str(expected_sha or "").strip()),
+        "file_exists": exists,
+        "actual_sha256": actual_sha,
+        "sha256_bound": bool(expected_sha and actual_sha and expected_sha == actual_sha),
+    }
+
+
+def _resolve_plan_path(value: Any, *, plan_json: Path) -> Path:
+    raw = Path(str(value)).expanduser()
+    if raw.is_absolute():
+        return _resolved_path(raw)
+    candidates = []
+    repo_root = _repo_root_for_plan(plan_json)
+    if repo_root is not None:
+        candidates.append(repo_root / raw)
+    candidates.extend([Path.cwd() / raw, plan_json.parent / raw, raw])
+    for candidate in candidates:
+        resolved = _resolved_path(candidate)
+        if resolved.exists():
+            return resolved
+    return _resolved_path(candidates[0])
+
+
+def _repo_root_for_plan(plan_json: Path) -> Path | None:
+    for parent in [plan_json.parent, *plan_json.parents]:
+        if (parent / ".git").exists() or (parent / "AGENTS.md").exists():
+            return parent
+    return None
 
 
 def _next_actions(rows: list[dict[str, Any]]) -> list[dict[str, str | bool | None]]:

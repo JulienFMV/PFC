@@ -7618,6 +7618,9 @@ Implementation:
 - Added `tests/test_audit_epex_lab_locked_holdout_queue_script.py`.
 - The audit emits exact plan SHA values, temporal status, blocking stage,
   next required step, and recommended read-only/operator commands.
+- The audit verifies that bound baseline CSV, adjusted CSV, lab manifest, and
+  selection summary artifacts exist locally and match their plan hashes before
+  allowing a temporal wait/run status.
 - Current queue audit output is local-only at
   `output/phase14/locked_holdout_queue_audit_20260709.json`.
 
@@ -7627,6 +7630,7 @@ Current observed status on `2026-07-09T00:00:00Z`:
 - `plan_count=2`
 - `future_window_count=2`
 - `spot_refresh_due_count=0`
+- `artifact_invalid_plan_count=0`
 - T057 next step: `wait_without_retuning_candidate`
 - T061 next step: `wait_without_retuning_candidate`
 
@@ -7640,6 +7644,8 @@ Invariants:
 
 - Queue audit is read-only and cannot approve production.
 - It must not fetch spot data or run locked holdout backtests.
+- Missing or hash-mismatched locked candidate artifacts must block before any
+  wait/run recommendation.
 - Exact plan SHA remains mandatory for any runner command.
 - T057 and T061 remain separate evidence paths.
 

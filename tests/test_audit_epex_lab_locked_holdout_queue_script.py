@@ -13,14 +13,12 @@ def test_audit_locked_holdout_queue_waits_before_future_windows(tmp_path: Path) 
         plan_id="t057_locked_t056_future_holdout",
         start="2026-07-10T00:00:00Z",
         end="2026-07-24T00:00:00Z",
-        adjusted_sha="t056-sha",
     )
     t061 = _write_plan(
         tmp_path / "locked_holdout_plan_t061.json",
         plan_id="t061_locked_t060_future_holdout",
         start="2026-07-24T00:00:00Z",
         end="2026-08-07T00:00:00Z",
-        adjusted_sha="t060-sha",
     )
 
     summary = audit_queue(
@@ -47,6 +45,10 @@ def test_audit_locked_holdout_queue_waits_before_future_windows(tmp_path: Path) 
     assert first["ready_for_spot_refresh"] is False
     assert first["promotion_gate"] is False
     assert first["production_approved"] is False
+    assert first["artifact_checks"]["baseline_csv_sha256_bound"] is True
+    assert first["artifact_checks"]["adjusted_csv_sha256_bound"] is True
+    assert first["artifact_checks"]["lab_manifest_sha256_bound"] is True
+    assert first["artifact_checks"]["selection_summary_sha256_bound"] is True
     assert "run_energy_charts_epex_locked_holdout.py" in first["recommended_commands"][
         "run_energy_charts_locked_holdout"
     ]
@@ -102,6 +104,27 @@ def test_audit_locked_holdout_queue_blocks_policy_invalid_plan(tmp_path: Path) -
     assert summary["plans"][0]["policy_checks"]["ompex_not_selection"] is False
 
 
+def test_audit_locked_holdout_queue_blocks_missing_or_tampered_artifact(tmp_path: Path) -> None:
+    plan = _write_plan(
+        tmp_path / "bad_artifact.json",
+        plan_id="bad_artifact",
+        start="2026-07-10T00:00:00Z",
+        end="2026-07-24T00:00:00Z",
+    )
+    payload = json.loads(plan.read_text(encoding="utf-8"))
+    Path(payload["adjusted_csv"]).write_text("tampered\n", encoding="utf-8")
+
+    summary = audit_queue(plan_jsons=[plan], as_of_utc="2026-07-09T00:00:00Z")
+
+    assert summary["status"] == "NO_GO_LOCKED_HOLDOUT_QUEUE_INVALID"
+    assert summary["artifact_invalid_plan_count"] == 1
+    assert summary["plans"][0]["blocking_stage"] == "locked_holdout_artifact_missing_or_hash_mismatch"
+    assert summary["plans"][0]["artifact_checks"]["adjusted_csv_sha256_bound"] is False
+    assert summary["plans"][0]["next_required_step"] == (
+        "restore_or_regenerate_locked_candidate_artifacts_without_retuning_holdout"
+    )
+
+
 def test_audit_locked_holdout_queue_cli_returns_nonzero_for_invalid_policy(tmp_path: Path) -> None:
     plan = _write_plan(
         tmp_path / "bad.json",
@@ -134,10 +157,10 @@ def _write_plan(
     plan_id: str,
     start: str,
     end: str,
-    adjusted_sha: str = "adjusted-sha",
     ompex_used_in_selection: bool = False,
     production_approved: bool = False,
 ) -> Path:
+    artifacts = _write_artifacts(path.parent)
     path.write_text(
         json.dumps(
             {
@@ -153,14 +176,44 @@ def _write_plan(
                 "frozen_at_utc": "2026-07-09T00:00:00Z",
                 "holdout_start_utc": start,
                 "holdout_end_utc": end,
+                "baseline_csv": str(artifacts["baseline_csv"]),
                 "baseline_csv_sha256": "baseline-sha",
-                "adjusted_csv_sha256": adjusted_sha,
+                "adjusted_csv": str(artifacts["adjusted_csv"]),
+                "adjusted_csv_sha256": artifacts["adjusted_csv_sha256"],
+                "lab_manifest": str(artifacts["lab_manifest"]),
+                "lab_manifest_sha256": artifacts["lab_manifest_sha256"],
+                "selection_summary": str(artifacts["selection_summary"]),
+                "selection_summary_sha256": artifacts["selection_summary_sha256"],
                 "selection_policy": {"pass": True},
             }
         ),
         encoding="utf-8",
     )
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["baseline_csv_sha256"] = artifacts["baseline_csv_sha256"]
+    path.write_text(json.dumps(payload), encoding="utf-8")
     return path
+
+
+def _write_artifacts(tmp_path: Path) -> dict[str, str | Path]:
+    baseline = tmp_path / "baseline.csv"
+    adjusted = tmp_path / "adjusted.csv"
+    lab_manifest = tmp_path / "lab_manifest.json"
+    selection_summary = tmp_path / "selection_summary.json"
+    baseline.write_text("baseline\n", encoding="utf-8")
+    adjusted.write_text("adjusted-sha", encoding="utf-8")
+    lab_manifest.write_text('{"config":{}}\n', encoding="utf-8")
+    selection_summary.write_text('{"replacement_verdict":{"replace_incumbent":true}}\n', encoding="utf-8")
+    return {
+        "baseline_csv": baseline,
+        "baseline_csv_sha256": _sha256(baseline),
+        "adjusted_csv": adjusted,
+        "adjusted_csv_sha256": _sha256(adjusted),
+        "lab_manifest": lab_manifest,
+        "lab_manifest_sha256": _sha256(lab_manifest),
+        "selection_summary": selection_summary,
+        "selection_summary_sha256": _sha256(selection_summary),
+    }
 
 
 def _sha256(path: Path) -> str:

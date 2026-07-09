@@ -1427,6 +1427,8 @@ Purpose:
 
 - summarize multiple locked holdout plans in one operator-facing JSON;
 - compute and expose exact plan SHA values;
+- verify bound baseline, adjusted, lab-manifest, and selection-summary
+  artifacts exist locally and match the plan hashes;
 - classify each plan as waiting for start, in-window, or ready for spot refresh;
 - emit exact Energy Charts locked-holdout commands with plan SHA binding;
 - never fetch spot, run a holdout, tune a candidate, or approve production.
@@ -1437,13 +1439,21 @@ Validation:
 python -m pytest tests\test_audit_epex_lab_locked_holdout_queue_script.py -q -p no:cacheprovider
 ```
 
-Result: `4 passed`.
+Result: `5 passed`.
 
 ```powershell
 python -m pytest tests\test_audit_epex_lab_locked_holdout_queue_script.py tests\test_discover_epex_spot_parquet_candidates_script.py tests\test_plan_epex_lab_locked_holdout_script.py tests\test_run_epex_lab_locked_holdout_script.py tests\test_run_energy_charts_epex_locked_holdout_script.py tests\test_check_epex_lab_promotion_readiness_script.py tests\test_audit_epex_lab_future_approval_path_script.py tests\test_lt_ct_imports.py -q -p no:cacheprovider
 ```
 
 Result: `67 passed, 1 skipped`.
+
+Latest focused validation after adding locked artifact hash checks:
+
+```powershell
+python -m pytest tests\test_audit_epex_lab_locked_holdout_queue_script.py tests\test_discover_epex_spot_parquet_candidates_script.py tests\test_plan_epex_lab_locked_holdout_script.py tests\test_run_epex_lab_locked_holdout_script.py tests\test_run_energy_charts_epex_locked_holdout_script.py tests\test_epex_lab_locked_holdout_policy.py tests\test_check_epex_lab_promotion_readiness_script.py tests\test_audit_epex_lab_future_approval_path_script.py tests\test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result: `85 passed, 1 skipped`.
 
 Current local queue audit command:
 
@@ -1460,6 +1470,11 @@ Result:
 - `spot_refresh_due_count=0`
 - `invalid_plan_count=0`
 - `policy_invalid_plan_count=0`
+- `artifact_invalid_plan_count=0`
+- T057 artifact checks all true for baseline CSV, adjusted CSV, lab manifest,
+  and selection summary hash binding.
+- T061 artifact checks all true for baseline CSV, adjusted CSV, lab manifest,
+  and selection summary hash binding.
 - T057 plan SHA:
   `f2b5ce94d7eb892ec4f0b2e46b209d09b078db8d15765009fba4ba0cb21ec1cd`
 - T061 plan SHA:

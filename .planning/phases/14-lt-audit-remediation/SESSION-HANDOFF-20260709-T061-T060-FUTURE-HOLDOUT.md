@@ -150,8 +150,10 @@ Added:
 
 This read-only helper summarizes multiple locked holdout plans, computes exact
 plan SHA values, classifies each window by `as_of_utc`, and emits exact
-operator commands. It does not fetch spot data, run backtests, tune candidates,
-or approve production.
+operator commands. It also verifies that the bound baseline CSV, adjusted CSV,
+lab manifest, and selection summary artifacts exist locally and match the plan
+hashes. It does not fetch spot data, run backtests, tune candidates, or approve
+production.
 
 Test:
 
@@ -161,7 +163,7 @@ python -m pytest tests\test_audit_epex_lab_locked_holdout_queue_script.py -q -p 
 
 Result:
 
-`4 passed`
+`5 passed`
 
 Current local queue audit:
 
@@ -178,6 +180,9 @@ Observed:
 - `spot_refresh_due_count=0`
 - `invalid_plan_count=0`
 - `policy_invalid_plan_count=0`
+- `artifact_invalid_plan_count=0`
+- T057 source artifacts are all present and hash-bound.
+- T061 source artifacts are all present and hash-bound.
 - T057 next step: `wait_without_retuning_candidate`
 - T061 next step: `wait_without_retuning_candidate`
 
