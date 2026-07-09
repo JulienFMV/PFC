@@ -94,9 +94,16 @@ def locked_holdout_policy(summary: dict[str, Any] | None) -> dict[str, Any]:
         )
         checks.update(_linked_backtest_checks(summary))
         checks.update(_linked_audit_checks(summary))
+        summary_status = summary.get("status")
         status = (
             "NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING"
-            if summary.get("status") == "WAITING_FOR_FULL_SPOT_COVERAGE"
+            if summary_status == "WAITING_FOR_FULL_SPOT_COVERAGE"
+            else str(summary_status)
+            if summary_status
+            in {
+                "NO_GO_LOCKED_HOLDOUT_PLAN_HASH_MISMATCH",
+                "NO_GO_LOCKED_HOLDOUT_SOURCE_MISSING_OR_HASH_MISMATCH",
+            }
             else "NO_GO_LOCKED_HOLDOUT_FAIL"
         )
     elif schema == AUDIT_SCHEMA_VERSION:

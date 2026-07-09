@@ -5656,3 +5656,52 @@ Invariants not to break:
 - A plan-hash mismatch is a hard NO-GO and cannot fall through to coverage or
   backtest.
 
+## D-20260709-68 - Verify Locked Baseline And Adjusted CSVs Before T057 Backtest
+
+Decision: the T057 coverage preflight now verifies that the locked baseline
+and adjusted CSV files exist and match the hashes recorded in the holdout plan
+before allowing `READY_TO_RUN_HOLDOUT_BACKTEST`.
+
+Reason: spot coverage, price validity, and plan-hash anchoring are not enough
+if the baseline or adjusted candidate files referenced by the plan have been
+moved, deleted, or modified after freeze. The runner should fail before any
+backtest attempt when source candidate evidence no longer matches the locked
+plan.
+
+Implementation:
+
+- `scripts/check_epex_lab_locked_holdout_coverage.py` now reports:
+  - `baseline_csv`
+  - `baseline_csv_sha256`
+  - `adjusted_csv`
+  - `adjusted_csv_sha256`
+  - path-present, file-exists, hash-present, and hash-bound checks for both
+    source CSVs.
+- `ready_to_run_backtest` requires all source CSV checks to pass.
+- Source path/hash failures now report
+  `NO_GO_LOCKED_HOLDOUT_SOURCE_MISSING_OR_HASH_MISMATCH` instead of being
+  hidden as a spot-coverage wait state.
+- `scripts/run_epex_lab_locked_holdout.py` propagates the coverage status into
+  the run summary when preflight is not ready.
+- `scripts/epex_lab_locked_holdout_policy.py` propagates source mismatch status
+  instead of collapsing it into a generic holdout failure.
+
+Validation:
+
+- `python -m pytest tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_epex_lab_locked_holdout_policy.py -q -p no:cacheprovider`
+  reported `21 passed`.
+- `python -m pytest tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_adjusted_production_chain_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_epex_lab_locked_holdout_policy.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_plan_epex_lab_locked_holdout_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  reported `92 passed, 1 skipped`.
+
+Rejected alternatives:
+
+- Let the later spot backtest fail on missing candidate files.
+- Trust path strings in the plan without recomputing file hashes before the
+  locked holdout run.
+
+Invariants not to break:
+
+- The locked T057 plan JSON remains unchanged.
+- A source mismatch is a NO-GO input-integrity failure, not a model-quality
+  result and not a reason to retune against the locked window.
+

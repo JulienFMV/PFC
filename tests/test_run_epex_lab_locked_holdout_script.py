@@ -92,8 +92,8 @@ def test_run_epex_lab_locked_holdout_runs_backtest_and_audit_when_ready(
             "valuation_timestamp_utc": "2026-07-09T00:00:00+00:00",
             "status": "DIAGNOSTIC_PASS",
             "source_hashes": {
-                "baseline_csv": "base",
-                "adjusted_csv": "adjusted",
+                "baseline_csv": _sha256(Path(kwargs["baseline_csv"])),
+                "adjusted_csv": _sha256(Path(kwargs["adjusted_csv"])),
             },
             "post_valuation_metrics": {"residual_mae_improvement_eur_mwh": 1.0},
             "outputs": {"post_valuation_timestamp_residuals_csv": str(output_dir / "post.csv")},
@@ -154,8 +154,8 @@ def test_run_epex_lab_locked_holdout_cli_exits_zero_when_holdout_passes(
             "valuation_timestamp_utc": "2026-07-09T00:00:00+00:00",
             "status": "DIAGNOSTIC_PASS",
             "source_hashes": {
-                "baseline_csv": "base",
-                "adjusted_csv": "adjusted",
+                "baseline_csv": _sha256(Path(kwargs["baseline_csv"])),
+                "adjusted_csv": _sha256(Path(kwargs["adjusted_csv"])),
             },
             "post_valuation_metrics": {"residual_mae_improvement_eur_mwh": 1.0},
             "outputs": {"post_valuation_timestamp_residuals_csv": str(output_dir / "post.csv")},
@@ -210,6 +210,8 @@ def _write_plan(tmp_path: Path) -> Path:
     adjusted = tmp_path / "adjusted.csv"
     baseline.write_text("baseline", encoding="utf-8")
     adjusted.write_text("adjusted", encoding="utf-8")
+    baseline_sha = _sha256(baseline)
+    adjusted_sha = _sha256(adjusted)
     path = tmp_path / "plan.json"
     path.write_text(
         json.dumps(
@@ -233,8 +235,8 @@ def _write_plan(tmp_path: Path) -> Path:
                     "min_eval_hours": 24,
                 },
                 "pass_criteria": {
-                    "baseline_csv_sha256": "base",
-                    "adjusted_csv_sha256": "adjusted",
+                    "baseline_csv_sha256": baseline_sha,
+                    "adjusted_csv_sha256": adjusted_sha,
                     "strict_lab_gate_pass": True,
                     "min_holdout_hours": 4,
                     "min_residual_mae_improvement_eur_mwh": 0.0,

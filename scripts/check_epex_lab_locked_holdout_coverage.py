@@ -56,6 +56,8 @@ def check_coverage(
         non_finite_price_rows = int((~finite_mask).sum())
     holdout_prices_finite = bool(price_column_present and non_finite_price_rows == 0)
     criteria = plan.get("pass_criteria") or {}
+    baseline_source = _plan_source_file_status(plan, file_key="baseline_csv", criteria=criteria)
+    adjusted_source = _plan_source_file_status(plan, file_key="adjusted_csv", criteria=criteria)
     min_hours = int(criteria.get("min_holdout_hours", len(expected)))
     coverage = {
         "schema_version": "epex_lab_locked_holdout_coverage.v1",
@@ -74,6 +76,10 @@ def check_coverage(
         "duplicate_holdout_rows": extra_duplicates,
         "spot_price_column": SPOT_PRICE_COLUMN,
         "non_finite_holdout_price_rows": non_finite_price_rows,
+        "baseline_csv": baseline_source["path"],
+        "baseline_csv_sha256": baseline_source["expected_sha256"],
+        "adjusted_csv": adjusted_source["path"],
+        "adjusted_csv_sha256": adjusted_source["expected_sha256"],
         "missing_holdout_hours": int(len(missing)),
         "first_missing_holdout_utc": _iso(missing[0]) if len(missing) else None,
         "last_missing_holdout_utc": _iso(missing[-1]) if len(missing) else None,
@@ -85,6 +91,14 @@ def check_coverage(
             and plan.get("ompex_used_in_selection") is False
             and plan.get("ompex_used_in_backtest") is False,
             "plan_benchmark_policy_locked": plan.get("benchmark_policy") == LOCKED_HOLDOUT_POLICY,
+            "baseline_csv_path_present": baseline_source["path_present"],
+            "baseline_csv_file_exists": baseline_source["file_exists"],
+            "baseline_csv_sha256_present": baseline_source["expected_sha256_present"],
+            "baseline_csv_sha256_bound": baseline_source["sha256_bound"],
+            "adjusted_csv_path_present": adjusted_source["path_present"],
+            "adjusted_csv_file_exists": adjusted_source["file_exists"],
+            "adjusted_csv_sha256_present": adjusted_source["expected_sha256_present"],
+            "adjusted_csv_sha256_bound": adjusted_source["sha256_bound"],
             "spot_parquet_non_empty": bool(len(spot)),
             "spot_price_column_present": price_column_present,
             "holdout_prices_finite": holdout_prices_finite,
@@ -97,6 +111,14 @@ def check_coverage(
     ready = bool(
         checks["plan_no_ompex"]
         and checks["plan_benchmark_policy_locked"]
+        and checks["baseline_csv_path_present"]
+        and checks["baseline_csv_file_exists"]
+        and checks["baseline_csv_sha256_present"]
+        and checks["baseline_csv_sha256_bound"]
+        and checks["adjusted_csv_path_present"]
+        and checks["adjusted_csv_file_exists"]
+        and checks["adjusted_csv_sha256_present"]
+        and checks["adjusted_csv_sha256_bound"]
         and checks["spot_parquet_non_empty"]
         and checks["spot_price_column_present"]
         and checks["holdout_prices_finite"]
@@ -105,16 +127,54 @@ def check_coverage(
         and checks["no_duplicate_holdout_rows"]
     )
     coverage["ready_to_run_backtest"] = ready
-    coverage["status"] = "READY_TO_RUN_HOLDOUT_BACKTEST" if ready else "WAITING_FOR_FULL_SPOT_COVERAGE"
+    source_files_ok = all(
+        checks[name]
+        for name in [
+            "baseline_csv_path_present",
+            "baseline_csv_file_exists",
+            "baseline_csv_sha256_present",
+            "baseline_csv_sha256_bound",
+            "adjusted_csv_path_present",
+            "adjusted_csv_file_exists",
+            "adjusted_csv_sha256_present",
+            "adjusted_csv_sha256_bound",
+        ]
+    )
+    coverage["status"] = (
+        "READY_TO_RUN_HOLDOUT_BACKTEST"
+        if ready
+        else "NO_GO_LOCKED_HOLDOUT_SOURCE_MISSING_OR_HASH_MISMATCH"
+        if not source_files_ok
+        else "WAITING_FOR_FULL_SPOT_COVERAGE"
+    )
     coverage["next_action"] = (
         "Run scripts/run_epex_lab_locked_holdout.py with the locked plan, expected plan SHA, refreshed spot parquet, and a fresh output dir."
         if ready
+        else "Fix the locked baseline/adjusted CSV paths or hashes before running the holdout."
+        if not source_files_ok
         else "Refresh the EPEX spot parquet after the holdout window is complete, then rerun this coverage check."
     )
     if output is not None:
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(json.dumps(_jsonable(coverage), indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return coverage
+
+
+def _plan_source_file_status(plan: dict[str, Any], *, file_key: str, criteria: dict[str, Any]) -> dict[str, Any]:
+    path_text = plan.get(file_key)
+    expected_sha = plan.get(f"{file_key}_sha256") or criteria.get(f"{file_key}_sha256")
+    path = Path(str(path_text)) if path_text else None
+    file_exists = bool(path is not None and path.exists())
+    actual_sha = _sha256(path) if path is not None and file_exists else None
+    return {
+        "path": str(path_text) if path_text else None,
+        "expected_sha256": expected_sha,
+        "actual_sha256": actual_sha,
+        "path_present": bool(str(path_text or "").strip()),
+        "file_exists": file_exists,
+        "expected_sha256_present": bool(str(expected_sha or "").strip()),
+        "sha256_bound": bool(expected_sha and actual_sha and expected_sha == actual_sha),
+    }
 
 
 def _load_spot_frame(path: Path) -> pd.DataFrame:

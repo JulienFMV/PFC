@@ -626,6 +626,14 @@ Promotion evidence hardening:
   `2026-07-08T23:00:00Z`, observed holdout hours `0`, expected `336`, and
   `coverage_status_sha256`, `expected_plan_json_sha256`, and
   `actual_plan_json_sha256` present.
+- Coverage preflight now also verifies locked source CSV integrity before
+  `READY_TO_RUN_HOLDOUT_BACKTEST`: baseline/adjusted paths must be present,
+  files must exist, expected hashes must be present, and actual hashes must
+  match the locked plan. Source failures report
+  `NO_GO_LOCKED_HOLDOUT_SOURCE_MISSING_OR_HASH_MISMATCH`.
+- Current regenerated local runner shows `baseline_csv_sha256_bound=true` and
+  `adjusted_csv_sha256_bound=true`; the remaining blocker is still only future
+  spot coverage.
 - Regenerated future approval audit remains
   `NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING`, exit `1`, with
   `blocking_stage=locked_holdout_coverage` and a recommended runner command
@@ -646,3 +654,11 @@ python -m pytest tests/test_build_epex_lab_adjusted_production_manifest_script.p
 ```
 
 Result: `90 passed, 1 skipped`.
+
+Follow-up validation after source CSV preflight binding:
+
+```powershell
+python -m pytest tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_adjusted_production_chain_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_epex_lab_locked_holdout_policy.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_plan_epex_lab_locked_holdout_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result: `92 passed, 1 skipped`.

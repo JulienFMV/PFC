@@ -246,6 +246,16 @@ Current regenerated T057 runner still exits `1` with
 `WAITING_FOR_FULL_SPOT_COVERAGE`, spot max `2026-07-08T23:00:00Z`, observed
 holdout hours `0`, expected `336`, and `coverage_status_sha256`,
 `expected_plan_json_sha256`, and `actual_plan_json_sha256` present.
+Additional preflight source-integrity hardening now verifies the locked
+baseline and adjusted CSV paths before any T057 backtest can run. Coverage JSON
+reports both paths and hashes, and `ready_to_run_backtest` requires both files
+to exist and match the plan hashes. Source mismatch is reported as
+`NO_GO_LOCKED_HOLDOUT_SOURCE_MISSING_OR_HASH_MISMATCH`, not as a spot-coverage
+wait. Current regenerated T057 evidence shows both source checks passing:
+`baseline_csv_sha256_bound=true` and `adjusted_csv_sha256_bound=true`.
+Validation after this hardening:
+`python -m pytest tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_adjusted_production_chain_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_epex_lab_locked_holdout_policy.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_plan_epex_lab_locked_holdout_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+reported `92 passed, 1 skipped`.
 
 Expert-audit follow-up on 2026-07-09 made the T057 holdout CLIs fail-closed:
 

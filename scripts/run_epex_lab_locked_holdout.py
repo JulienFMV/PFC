@@ -81,7 +81,7 @@ def run_locked_holdout(
     if coverage.get("ready_to_run_backtest") is not True:
         run_summary.update(
             {
-                "status": "WAITING_FOR_FULL_SPOT_COVERAGE",
+                "status": coverage.get("status") or "WAITING_FOR_FULL_SPOT_COVERAGE",
                 "backtest_ran": False,
                 "audit_ran": False,
                 "next_action": coverage.get("next_action"),
