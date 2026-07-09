@@ -59,6 +59,7 @@ def check_coverage(
     spot_frame = _load_spot_frame(spot_parquet)
     spot = spot_frame.index
     expected = pd.date_range(start, end, freq="h", inclusive="left")
+    latest_required = expected[-1] if len(expected) else None
     observed_mask = (spot >= start) & (spot < end)
     observed = spot[observed_mask]
     observed_unique = pd.DatetimeIndex(observed.unique()).sort_values()
@@ -124,6 +125,7 @@ def check_coverage(
         "locked_plan_identity": build_locked_plan_identity(plan, plan_json=plan_json),
         "holdout_start_utc": _iso(start),
         "holdout_end_utc": _iso(end),
+        "latest_required_holdout_utc": _iso(latest_required),
         "expected_holdout_hours": int(len(expected)),
         "observed_holdout_hours": int(len(observed_unique)),
         "duplicate_holdout_rows": extra_duplicates,
@@ -157,6 +159,10 @@ def check_coverage(
         "min_required_holdout_hours": min_hours,
         "spot_min_utc": _iso(spot.min()) if len(spot) else None,
         "spot_max_utc": _iso(spot.max()) if len(spot) else None,
+        "spot_hours_until_holdout_start": _positive_hours_between(spot.max(), start) if len(spot) else None,
+        "spot_hours_until_latest_required_holdout": (
+            _positive_hours_between(spot.max(), latest_required) if len(spot) and latest_required is not None else None
+        ),
         "checks": {
             "plan_no_ompex": plan.get("ompex_used_in_model") is False
             and plan.get("ompex_used_in_selection") is False
@@ -407,6 +413,11 @@ def _iso(value: Any) -> str:
     if value is None:
         return None
     return _to_utc(value).isoformat().replace("+00:00", "Z")
+
+
+def _positive_hours_between(left: Any, right: Any) -> float:
+    delta_hours = (_to_utc(right) - _to_utc(left)).total_seconds() / 3600.0
+    return float(max(0.0, delta_hours))
 
 
 def _sha256(path: Path) -> str:

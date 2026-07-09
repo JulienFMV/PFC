@@ -1508,6 +1508,46 @@ Operational next steps:
 4. Execute T058 only as a separate EPEX-only lab branch; it is not part of the
    frozen T057 approval path.
 
+## 2026-07-09 T057 Coverage Lag Diagnostics
+
+T057 coverage preflight now includes informational spot-lag fields to make the
+WAITING state easier to interpret.
+
+- `scripts/check_epex_lab_locked_holdout_coverage.py` emits
+  `latest_required_holdout_utc`, `spot_hours_until_holdout_start`, and
+  `spot_hours_until_latest_required_holdout`.
+- These fields are informational only and do not alter
+  `ready_to_run_backtest` or `blocking_checks`.
+
+Validation:
+
+```powershell
+python -m pytest tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_epex_lab_locked_holdout_policy.py -q -p no:cacheprovider
+```
+
+Result: `38 passed`.
+
+Current T057 recheck command:
+
+```powershell
+python scripts\check_epex_lab_locked_holdout_coverage.py --plan-json .planning\phases\14-lt-audit-remediation\locked_holdout_plan_t057_t056_asof20260709.json --spot-parquet output\phase14\20260708_asof20260707_lshape100_yoy150_amp150_2032\epex_spot_refresh_20260708\epex_hourly_ch_energy_charts_20260708.parquet --output output\phase14\t057_locked_t056_future_holdout\coverage_status_20260709_lag_recheck.json
+```
+
+Result remains expected NO-GO/waiting:
+
+- `status=WAITING_FOR_FULL_SPOT_COVERAGE`
+- `observed_holdout_hours=0`
+- `expected_holdout_hours=336`
+- `missing_holdout_hours=336`
+- `spot_max_utc=2026-07-08T23:00:00Z`
+- `holdout_start_utc=2026-07-10T00:00:00Z`
+- `latest_required_holdout_utc=2026-07-23T23:00:00Z`
+- `spot_hours_until_holdout_start=25.0`
+- `spot_hours_until_latest_required_holdout=360.0`
+- `blocking_checks=["full_window_covered", "min_holdout_hours_met"]`
+
+The locked T057 plan and candidate hashes remain unchanged.
+
 ## 2026-07-09 Promotion Readiness Routing Follow-Up
 
 EPEX lab promotion readiness now emits machine-readable production blocking

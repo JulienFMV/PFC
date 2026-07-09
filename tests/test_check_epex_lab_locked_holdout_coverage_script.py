@@ -24,6 +24,9 @@ def test_check_epex_lab_locked_holdout_coverage_ready(tmp_path: Path) -> None:
     assert summary["expected_holdout_hours"] == 4
     assert summary["observed_holdout_hours"] == 4
     assert summary["missing_holdout_hours"] == 0
+    assert summary["latest_required_holdout_utc"] == "2026-07-10T03:00:00Z"
+    assert summary["spot_hours_until_holdout_start"] == 0.0
+    assert summary["spot_hours_until_latest_required_holdout"] == 0.0
     assert summary["non_finite_holdout_price_rows"] == 0
     assert summary["checks"]["plan_benchmark_policy_locked"] is True
     assert summary["checks"]["baseline_csv_sha256_bound"] is True
@@ -126,7 +129,27 @@ def test_check_epex_lab_locked_holdout_coverage_waits_for_missing_hours(tmp_path
     assert summary["observed_holdout_hours"] == 3
     assert summary["missing_holdout_hours"] == 1
     assert summary["first_missing_holdout_utc"] == "2026-07-10T02:00:00Z"
+    assert summary["latest_required_holdout_utc"] == "2026-07-10T03:00:00Z"
+    assert summary["spot_hours_until_holdout_start"] == 0.0
+    assert summary["spot_hours_until_latest_required_holdout"] == 0.0
     assert summary["checks"]["full_window_covered"] is False
+
+
+def test_check_epex_lab_locked_holdout_coverage_reports_spot_lag_before_window(tmp_path: Path) -> None:
+    plan = _write_plan(tmp_path, min_hours=4)
+    spot = tmp_path / "spot.parquet"
+    pd.DataFrame(
+        {"price_eur_mwh": [1.0, 2.0]},
+        index=pd.date_range("2026-07-09T21:00:00Z", periods=2, freq="h"),
+    ).to_parquet(spot)
+
+    summary = check_coverage(plan_json=plan, spot_parquet=spot)
+
+    assert summary["status"] == "WAITING_FOR_FULL_SPOT_COVERAGE"
+    assert summary["latest_required_holdout_utc"] == "2026-07-10T03:00:00Z"
+    assert summary["spot_max_utc"] == "2026-07-09T22:00:00Z"
+    assert summary["spot_hours_until_holdout_start"] == 2.0
+    assert summary["spot_hours_until_latest_required_holdout"] == 5.0
 
 
 def test_check_epex_lab_locked_holdout_coverage_blocks_missing_price_column(tmp_path: Path) -> None:

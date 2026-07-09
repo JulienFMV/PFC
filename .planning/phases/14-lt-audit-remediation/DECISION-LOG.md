@@ -6589,3 +6589,36 @@ Invariants:
 - T057 failure, if any, must be documented; it must not be used as a tuning
   target for the locked T056/t005 line.
 
+## D-20260709-85 - T057 Coverage Lag Diagnostics Are Informational
+
+Decision: T057 coverage preflight reports may include explicit lag fields
+between the supplied spot parquet maximum timestamp and the locked holdout
+window, but these fields are informational only.
+
+Reason: operators need to know whether a refreshed spot parquet is merely
+waiting for future rows or is malformed. The existing blocking checks already
+decide readiness; explicit lag fields make the WAITING state easier to
+interpret without weakening the locked-holdout gate.
+
+Implementation:
+
+- `scripts/check_epex_lab_locked_holdout_coverage.py` now emits:
+  `latest_required_holdout_utc`, `spot_hours_until_holdout_start`, and
+  `spot_hours_until_latest_required_holdout`.
+- These fields do not participate in `ready_to_run_backtest` and do not change
+  `blocking_checks`.
+- Rechecking the current T057 spot parquet still reports
+  `WAITING_FOR_FULL_SPOT_COVERAGE`.
+
+Rejected alternatives:
+
+- Treat the lag fields as pass/fail gates.
+- Relax `full_window_covered` or `min_holdout_hours_met` before the locked
+  window is fully covered.
+
+Invariants:
+
+- T057 still requires complete locked future spot coverage before any holdout
+  backtest can run.
+- The locked T057 plan and candidate hashes remain unchanged.
+

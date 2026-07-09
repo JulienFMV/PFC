@@ -1302,6 +1302,58 @@ Operational conclusion:
   change the T057 promotion path.
 - Git output artifacts remain ignored under `output/phase14/`.
 
+## 2026-07-09 T057 Coverage Lag Diagnostic Hardening
+
+`scripts/check_epex_lab_locked_holdout_coverage.py` now emits informational
+spot-lag fields:
+
+- `latest_required_holdout_utc`
+- `spot_hours_until_holdout_start`
+- `spot_hours_until_latest_required_holdout`
+
+These fields are for operator diagnostics only. They do not change
+`ready_to_run_backtest`, `blocking_checks`, or any promotion gate.
+
+Code/test changes:
+
+- `scripts/check_epex_lab_locked_holdout_coverage.py`
+- `tests/test_check_epex_lab_locked_holdout_coverage_script.py`
+
+Validation:
+
+```powershell
+python -m pytest tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_epex_lab_locked_holdout_policy.py -q -p no:cacheprovider
+```
+
+Result: `38 passed`.
+
+Current T057 recheck:
+
+```powershell
+python scripts\check_epex_lab_locked_holdout_coverage.py --plan-json .planning\phases\14-lt-audit-remediation\locked_holdout_plan_t057_t056_asof20260709.json --spot-parquet output\phase14\20260708_asof20260707_lshape100_yoy150_amp150_2032\epex_spot_refresh_20260708\epex_hourly_ch_energy_charts_20260708.parquet --output output\phase14\t057_locked_t056_future_holdout\coverage_status_20260709_lag_recheck.json
+```
+
+Result:
+
+- Exit `1`, as expected while coverage is incomplete.
+- `status=WAITING_FOR_FULL_SPOT_COVERAGE`
+- `observed_holdout_hours=0`
+- `expected_holdout_hours=336`
+- `missing_holdout_hours=336`
+- `first_missing_holdout_utc=2026-07-10T00:00:00Z`
+- `last_missing_holdout_utc=2026-07-23T23:00:00Z`
+- `spot_max_utc=2026-07-08T23:00:00Z`
+- `latest_required_holdout_utc=2026-07-23T23:00:00Z`
+- `spot_hours_until_holdout_start=25.0`
+- `spot_hours_until_latest_required_holdout=360.0`
+- `blocking_checks=["full_window_covered", "min_holdout_hours_met"]`
+
+Operational conclusion:
+
+- T057 remains NO-GO/waiting until a refreshed spot parquet covers
+  `2026-07-10T00:00:00Z` through `2026-07-23T23:00:00Z`.
+- The locked plan SHA and candidate hashes are unchanged.
+
 Follow-up after expert roasts on production evidence and OMPEX advisory
 governance:
 
