@@ -1,5 +1,20 @@
 # Implementation Context — Phase 5bis
 
+# Current Context Notice - Phase 14 Supersedes This File
+
+This file is historical Phase 5bis context and is not the active Phase 14
+handoff. For current LT audit/remediation work, read these files first:
+
+1. `AGENTS.md`
+2. `.planning/HANDOFF.md`
+3. `.planning/phases/14-lt-audit-remediation/DECISION-LOG.md`
+4. the latest `SESSION-HANDOFF-YYYYMMDD-*.md` named in `.planning/HANDOFF.md`
+
+Do not treat the 2026-06-18 residual-anchor prompt as the target architecture
+for Phase 14. The active target is the 2026-06-19 monthly solver reform:
+one monthly BASE solver with hard CH EEX constraints, external information only
+as zero-mean shape, and no individual month patches after the solver.
+
 ## Why this phase, why now
 
 FMV n'arrive pas à pricer correctement les profile deals industriels — typiquement

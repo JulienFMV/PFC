@@ -172,6 +172,23 @@ python -m pytest tests/test_audit_epex_lab_future_approval_path_script.py tests/
 
 Results: `12 passed` and `62 passed, 1 skipped`. Current real coverage and
 runner commands against the 2026-07-08 spot parquet both exit `1` as expected.
+The already locked T057 plan JSON was not rewritten. For future locked plans,
+`scripts/plan_epex_lab_locked_holdout.py` now also emits
+`commands.run_locked_holdout_template`, pointing to the fail-closed wrapper
+`scripts/run_epex_lab_locked_holdout.py`, while keeping the separate backtest
+and audit templates for traceability. Validation:
+`python -m pytest tests/test_plan_epex_lab_locked_holdout_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_audit_epex_lab_locked_holdout_script.py -q -p no:cacheprovider`
+reported `14 passed`.
+
+Context hygiene: `.planning/CONTEXT.md` is historical Phase 5bis context and
+now has a top-level notice pointing agents back to this handoff, the Phase 14
+decision log, and the latest session handoff. The 2026-06-18 residual-anchor
+external audit prompt is historical diagnostic context only; the active Phase
+14 target architecture is the 2026-06-19 monthly solver reform. T057 outcome
+policy is explicit: PASS permits only the next packaging step, not automatic
+promotion; FAIL requires a new pre-registered lineage rather than retuning T056
+against the locked window. The current T057 `>= 0.0 EUR/MWh` MAE criterion is a
+non-degradation gate, not a full economic superiority proof.
 
 Current daily generation: Wednesday 2026-07-08 was regenerated from the EEX
 workbook available on 2026-07-08. The latest usable CH/DE/FR quote row in that

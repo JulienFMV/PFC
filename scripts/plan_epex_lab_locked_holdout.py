@@ -105,6 +105,18 @@ def build_plan(
             "ompex_used_in_backtest": False,
         },
         "commands": {
+            "run_locked_holdout_template": _join_command(
+                [
+                    "python",
+                    "scripts/run_epex_lab_locked_holdout.py",
+                    "--plan-json",
+                    str(output or "<T057_PLAN_JSON>"),
+                    "--spot-parquet",
+                    "<FUTURE_SPOT_PARQUET>",
+                    "--output-dir",
+                    "<T057_HOLDOUT_OUTPUT_DIR>",
+                ]
+            ),
             "run_future_backtest_template": _join_command(
                 [
                     "python",
