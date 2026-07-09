@@ -207,6 +207,38 @@ def test_future_approval_path_blocks_synthetic_ready_payload_missing_production_
     assert "Regenerate readiness with the full required production-check set before promotion review." in summary["next_actions"]
 
 
+def test_future_approval_path_keeps_internal_required_checks_when_readiness_declares_subset(
+    tmp_path: Path,
+) -> None:
+    readiness = _write_json(
+        tmp_path / "readiness.json",
+        {
+            "schema_version": "epex_lab_promotion_readiness.v1",
+            "approved": True,
+            "status": "PROMOTION_READY",
+            "strict_diagnostics_pass": True,
+            "production_chain_pass": True,
+            "selected_adjusted_csv": "adjusted.csv",
+            "missing_production_evidence": [],
+            "required_production_checks": ["locked_holdout_pass"],
+            "checks": [
+                {"name": "locked_holdout_pass", "status": "PASS", "value": True},
+            ],
+        },
+    )
+    holdout = _write_json(tmp_path / "holdout.json", _locked_holdout_run_payload())
+
+    summary = audit_future_approval_path(
+        readiness_json=readiness,
+        locked_holdout_summary=holdout,
+        output=tmp_path / "out.json",
+    )
+
+    assert summary["approved"] is False
+    assert "adjusted_production_manifest_approved" in summary["required_production_checks"]
+    assert "adjusted_production_manifest_approved" in summary["missing_production_checks"]
+
+
 def test_future_approval_path_blocks_bad_spot_policy(tmp_path: Path) -> None:
     readiness = _write_json(tmp_path / "readiness.json", _readiness_payload())
     spot = _write_json(tmp_path / "spot.json", _spot_payload(ompex_used_in_backtest=True))

@@ -24,6 +24,20 @@ except ModuleNotFoundError:  # pragma: no cover - direct script execution
     from epex_lab_selection_policy import selection_policy_manifest_value
 
 
+REQUIRED_PRODUCTION_CHECKS = [
+    "adjusted_production_manifest_approved",
+    "adjusted_production_manifest_run_identity_valid",
+    "adjusted_production_manifest_locked_holdout_bound",
+    "adjusted_export_manifest_production_ready",
+    "adjusted_export_manifest_production_chain_bound",
+    "adjusted_selected_artifact_production_ready",
+    "adjusted_selected_artifact_production_chain_bound",
+    "adjusted_capstone_approved",
+    "adjusted_capstone_production_chain_bound",
+    "locked_holdout_pass",
+]
+
+
 def check_readiness(
     *,
     lab_manifest: Path,
@@ -393,6 +407,7 @@ def check_readiness(
         "strict_diagnostics_pass": bool(strict_diagnostics_pass),
         "production_chain_pass": bool(production_chain_pass),
         "missing_production_evidence": missing_production_evidence,
+        "required_production_checks": REQUIRED_PRODUCTION_CHECKS,
         "checks": checks,
         "selected_adjusted_csv": (lab.get("outputs") or {}).get("adjusted_csv"),
         "lab_manifest": str(lab_manifest),

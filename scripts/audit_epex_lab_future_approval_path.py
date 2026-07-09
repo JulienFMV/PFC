@@ -44,9 +44,10 @@ def audit_future_approval_path(
     spot = _read_json(spot_backtest_summary) if spot_backtest_summary is not None else None
     locked_holdout = _read_json(locked_holdout_summary) if locked_holdout_summary is not None else None
     checks = {str(check.get("name")): check for check in readiness.get("checks", [])}
+    required_checks = _required_production_checks(readiness)
     failed_checks = [name for name, check in checks.items() if check.get("status") != "PASS"]
-    missing_production_checks = [name for name in PRODUCTION_CHECKS if name not in checks]
-    failed_production_checks = [name for name in PRODUCTION_CHECKS if name in failed_checks]
+    missing_production_checks = [name for name in required_checks if name not in checks]
+    failed_production_checks = [name for name in required_checks if name in failed_checks]
     missing = list(readiness.get("missing_production_evidence") or [])
     missing_or_failed = sorted(set(missing + missing_production_checks + failed_production_checks))
     spot_policy = _spot_policy(spot) if spot is not None else None
@@ -104,7 +105,7 @@ def audit_future_approval_path(
         "failed_checks": failed_checks,
         "remaining_blockers": missing_or_failed,
         "required_production_evidence": REQUIRED_PRODUCTION_EVIDENCE,
-        "required_production_checks": PRODUCTION_CHECKS,
+        "required_production_checks": required_checks,
         "spot_backtest_policy": spot_policy,
         "locked_holdout_summary": str(locked_holdout_summary) if locked_holdout_summary is not None else None,
         "locked_holdout_policy": holdout_policy,
@@ -209,6 +210,17 @@ def _readiness_locked_holdout_sha(checks: dict[str, dict[str, Any]]) -> str | No
             if isinstance(candidate, str) and candidate:
                 return candidate
     return None
+
+
+def _required_production_checks(readiness: dict[str, Any]) -> list[str]:
+    declared = readiness.get("required_production_checks")
+    if not isinstance(declared, list):
+        return list(PRODUCTION_CHECKS)
+    combined = list(PRODUCTION_CHECKS)
+    for item in declared:
+        if isinstance(item, str) and item not in combined:
+            combined.append(item)
+    return combined
 
 
 def _sha256(path: Path) -> str:

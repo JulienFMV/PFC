@@ -323,3 +323,15 @@ python -m pytest tests/test_build_epex_lab_promotion_bundle_script.py tests/test
 ```
 
 Result: `38 passed, 1 skipped`.
+
+Readiness now publishes `required_production_checks` directly. Future approval
+uses the union of the readiness-declared checks and its own internal minimum
+set, so a synthetic readiness payload cannot remove mandatory production
+checks. Validation:
+
+```powershell
+python -m pytest tests/test_check_epex_lab_promotion_readiness_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_build_epex_lab_promotion_bundle_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result: `39 passed, 1 skipped`. Current regenerated readiness and future
+approval audit remain `NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING`.

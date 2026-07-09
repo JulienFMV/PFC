@@ -5112,6 +5112,12 @@ Validation:
   lists locked-holdout production checks as required. Targeted validation:
   `python -m pytest tests/test_build_epex_lab_promotion_bundle_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
   reported `38 passed, 1 skipped`.
+- Readiness now emits `required_production_checks`; future approval uses the
+  union of the readiness-declared checks and its internal minimum required set,
+  so a synthetic readiness payload cannot narrow the production contract.
+  Targeted validation:
+  `python -m pytest tests/test_check_epex_lab_promotion_readiness_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_build_epex_lab_promotion_bundle_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  reported `39 passed, 1 skipped`.
 
 Current regenerated evidence remains NO-GO:
 

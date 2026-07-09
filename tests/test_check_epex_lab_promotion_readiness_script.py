@@ -5,7 +5,7 @@ import hashlib
 
 import pandas as pd
 
-from scripts.check_epex_lab_promotion_readiness import check_readiness
+from scripts.check_epex_lab_promotion_readiness import REQUIRED_PRODUCTION_CHECKS, check_readiness
 
 
 def _write_json(path, payload) -> None:
@@ -499,6 +499,7 @@ def test_epex_lab_readiness_can_pass_with_separate_approved_production_chain(tmp
     assert summary["strict_diagnostics_pass"] is True
     assert summary["production_chain_pass"] is True
     assert summary["status"] == "PROMOTION_READY"
+    assert summary["required_production_checks"] == REQUIRED_PRODUCTION_CHECKS
 
     holdout_payload = json.loads(locked_holdout.read_text(encoding="utf-8"))
     holdout_payload["same_path_hash_change"] = True
@@ -630,6 +631,7 @@ def test_epex_lab_readiness_rejects_divergent_export_locked_holdout_hash(tmp_pat
     checks = {check["name"]: check["status"] for check in summary["checks"]}
     assert summary["approved"] is False
     assert summary["production_chain_pass"] is False
+    assert summary["required_production_checks"] == REQUIRED_PRODUCTION_CHECKS
     assert checks["adjusted_export_manifest_production_chain_bound"] == "FAIL"
 
 
