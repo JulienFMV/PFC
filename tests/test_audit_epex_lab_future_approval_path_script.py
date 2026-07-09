@@ -82,7 +82,7 @@ def test_future_approval_path_reports_no_go_blockers(tmp_path: Path) -> None:
     assert summary["next_actions"]
 
 
-def test_future_approval_path_reports_promotion_ready_candidate(tmp_path: Path) -> None:
+def test_future_approval_path_blocks_promotion_ready_without_locked_holdout(tmp_path: Path) -> None:
     readiness = _write_json(
         tmp_path / "readiness.json",
         _readiness_payload(approved=True, production=True),
@@ -93,9 +93,9 @@ def test_future_approval_path_reports_promotion_ready_candidate(tmp_path: Path) 
         output=tmp_path / "out.json",
     )
 
-    assert summary["status"] == "PROMOTION_READY_CANDIDATE"
-    assert summary["approved"] is True
-    assert summary["remaining_blockers"] == []
+    assert summary["status"] == "MISSING_LOCKED_HOLDOUT"
+    assert summary["approved"] is False
+    assert "locked_holdout_pass" in summary["remaining_blockers"]
 
 
 def test_future_approval_path_blocks_when_locked_holdout_coverage_pending(tmp_path: Path) -> None:

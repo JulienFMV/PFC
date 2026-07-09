@@ -50,6 +50,10 @@ def build_chain(
         "adjusted_csv_sha256": _sha256(adjusted_csv),
         "adjusted_production_manifest": str(adjusted_production_manifest),
         "adjusted_production_manifest_sha256": production_sha,
+        "locked_holdout_summary": production.get("locked_holdout_summary"),
+        "locked_holdout_summary_sha256": production.get("locked_holdout_summary_sha256"),
+        "locked_holdout_policy_pass": production.get("locked_holdout_policy_pass"),
+        "locked_holdout_policy": production.get("locked_holdout_policy"),
         **run_identity,
     }
 
@@ -99,6 +103,10 @@ def build_chain(
         "adjusted_csv_sha256": _sha256(adjusted_csv),
         "adjusted_production_manifest": str(adjusted_production_manifest),
         "adjusted_production_manifest_sha256": production_sha,
+        "locked_holdout_summary": production.get("locked_holdout_summary"),
+        "locked_holdout_summary_sha256": production.get("locked_holdout_summary_sha256"),
+        "locked_holdout_policy_pass": production.get("locked_holdout_policy_pass"),
+        "locked_holdout_policy": production.get("locked_holdout_policy"),
         "adjusted_export_manifest": str(export_path),
         "adjusted_export_manifest_sha256": _sha256(export_path),
         "adjusted_selected_artifact": str(selected_path),
@@ -119,7 +127,13 @@ def _production_manifest_errors(production: dict[str, Any], path: Path) -> list[
     errors: list[str] = []
     if production.get("schema_version") != "epex_lab_adjusted_production_manifest.v1":
         errors.append("schema_version")
-    for key in ["production_approved", "production_promotion_approved", "contract_pass", "source_provenance_pass"]:
+    for key in [
+        "production_approved",
+        "production_promotion_approved",
+        "contract_pass",
+        "source_provenance_pass",
+        "locked_holdout_policy_pass",
+    ]:
         if production.get(key) is not True:
             errors.append(key)
     if not _same_path(production.get("adjusted_production_manifest"), path) and production.get("adjusted_production_manifest") is not None:
@@ -142,8 +156,59 @@ def _production_manifest_errors(production: dict[str, Any], path: Path) -> list[
     selection_value = selection_policy_manifest_value(production, adjusted_csv=adjusted_csv)
     if selection_value.get("validated") is not True:
         errors.append(str(selection_value.get("error") or "selection_policy_pass"))
+    errors.extend(_locked_holdout_errors(production))
     errors.extend(_source_provenance_errors(production, adjusted_csv))
     return errors
+
+
+def _locked_holdout_errors(production: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    holdout_text = str(production.get("locked_holdout_summary") or "").strip()
+    if not holdout_text:
+        return ["locked_holdout_summary"]
+    holdout_path = Path(holdout_text)
+    if not holdout_path.exists():
+        return ["locked_holdout_summary_missing"]
+    if production.get("locked_holdout_summary_sha256") != _sha256(holdout_path):
+        return ["locked_holdout_summary_sha256"]
+    try:
+        holdout = _load_json(holdout_path)
+    except (OSError, json.JSONDecodeError):
+        return ["locked_holdout_summary_json"]
+    if _locked_holdout_policy(holdout).get("pass") is not True:
+        errors.append("locked_holdout_policy")
+    return errors
+
+
+def _locked_holdout_policy(summary: dict[str, Any]) -> dict[str, Any]:
+    schema = summary.get("schema_version")
+    checks = {
+        "promotion_gate_false": summary.get("promotion_gate") is False,
+        "production_approved_false": summary.get("production_approved") is False,
+        "ompex_not_model": summary.get("ompex_used_in_model") is False,
+        "ompex_not_selection": summary.get("ompex_used_in_selection") is False,
+        "ompex_not_backtest": summary.get("ompex_used_in_backtest") is False,
+    }
+    if schema == "epex_lab_locked_holdout_run.v1":
+        checks.update(
+            {
+                "coverage_ready": summary.get("coverage_ready") is True,
+                "backtest_ran": summary.get("backtest_ran") is True,
+                "audit_ran": summary.get("audit_ran") is True,
+                "holdout_pass": summary.get("holdout_pass") is True,
+                "status_pass": summary.get("status") == "LOCKED_HOLDOUT_PASS",
+            }
+        )
+    elif schema == "epex_lab_locked_holdout_audit.v1":
+        checks.update(
+            {
+                "holdout_pass": summary.get("holdout_pass") is True,
+                "status_pass": summary.get("status") == "LOCKED_HOLDOUT_PASS",
+            }
+        )
+    else:
+        checks["known_schema"] = False
+    return {"pass": all(checks.values()), "checks": checks}
 
 
 def _source_provenance_errors(production: dict[str, Any], adjusted_csv: Path) -> list[str]:

@@ -48,6 +48,10 @@ def audit_future_approval_path(
     missing_or_failed = sorted(set(missing + failed_production_checks))
     spot_policy = _spot_policy(spot) if spot is not None else None
     holdout_policy = _locked_holdout_policy(locked_holdout) if locked_holdout is not None else None
+    holdout_required = bool(readiness.get("approved") is True or readiness.get("production_chain_pass") is True)
+    if holdout_required and holdout_policy is None:
+        holdout_policy = {"provided": False, "pass": False, "status": "MISSING_LOCKED_HOLDOUT"}
+        missing_or_failed = sorted(set(missing_or_failed + ["locked_holdout_pass"]))
     if holdout_policy is not None and holdout_policy["pass"] is not True:
         missing_or_failed = sorted(set(missing_or_failed + ["locked_holdout_pass"]))
 

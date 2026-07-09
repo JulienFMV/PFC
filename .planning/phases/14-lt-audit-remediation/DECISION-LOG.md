@@ -5005,3 +5005,59 @@ Invariants not to break:
 - A passing T057 holdout can support scientific confidence but still does not
   replace the required adjusted production/export/selected/capstone chain.
 
+## D-20260709-55 - Bind T057 Holdout Into Adjusted Production Artifacts
+
+Decision: any adjusted EPEX lab production approval must now carry a passing
+locked T057 holdout as hash-bound evidence. The adjusted production manifest
+requires a valid `locked_holdout_summary` before setting
+`production_approved=true`, and the export, selected artifact, and capstone
+must propagate the same `locked_holdout_summary_sha256`.
+
+Reason: readiness already blocked promotion without T057, but the approved
+artifact builders could still package an approved production/export/selected
+chain without carrying the holdout proof. That made the proof too easy to
+attach as a sidecar after the fact. The T057 evidence must be part of the
+artifact chain itself.
+
+Implementation:
+
+- `scripts/build_epex_lab_adjusted_production_manifest.py`
+  - added `--locked-holdout-summary`;
+  - validates run or audit schemas as read-only, non-promotional, no-OMPEX,
+    and `LOCKED_HOLDOUT_PASS`;
+  - raises on requested production approval without a passing holdout;
+  - keeps NO-GO diagnostic manifests possible without T057.
+- `scripts/build_epex_lab_adjusted_production_chain.py`
+  - rejects approved manifests missing a bound passing holdout;
+  - revalidates the holdout file hash and policy;
+  - propagates holdout fields into export, selected, and capstone artifacts.
+- `scripts/check_epex_lab_promotion_readiness.py`
+  - checks that production/export/selected/capstone are bound to the same
+    locked holdout hash.
+- `scripts/audit_epex_lab_future_approval_path.py`
+  - refuses a `PROMOTION_READY` readiness payload unless a passing locked
+    holdout is provided.
+
+Validation:
+
+- `python -m pytest tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_adjusted_production_chain_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  reported `53 passed, 1 skipped`.
+- `python scripts/build_epex_lab_adjusted_production_manifest.py --help`
+  exposes `--locked-holdout-summary`.
+- `python scripts/build_epex_lab_adjusted_production_chain.py --help` passes.
+
+Rejected alternatives:
+
+- Keep T057 only as a readiness sidecar.
+- Allow artifact builders to emit approved chains before the holdout is
+  complete.
+- Make T057 mandatory for intermediate NO-GO diagnostic manifests.
+
+Invariants not to break:
+
+- T057 remains read-only and non-promotional by itself.
+- OMPEX remains benchmark/advisory-only and cannot be model, selection, or
+  holdout gate input.
+- Diagnostic NO-GO manifests may still be built before T057 coverage is
+  complete, but cannot claim production approval.
+

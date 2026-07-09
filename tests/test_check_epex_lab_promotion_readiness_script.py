@@ -262,6 +262,12 @@ def test_epex_lab_readiness_can_pass_with_separate_approved_production_chain(tmp
     export_manifest = tmp_path / "export.json"
     selected_config = tmp_path / "selected.json"
     capstone = tmp_path / "capstone.json"
+    locked_holdout = _write_locked_holdout(tmp_path)
+    locked_holdout_fields = {
+        "locked_holdout_summary": str(locked_holdout),
+        "locked_holdout_summary_sha256": _sha256(locked_holdout),
+        "locked_holdout_policy_pass": True,
+    }
     run_identity = {
         "production_run_id": "prod-run-1",
         "production_entrypoint": "pfc_shaping.pipeline.production_phases",
@@ -284,6 +290,7 @@ def test_epex_lab_readiness_can_pass_with_separate_approved_production_chain(tmp
             "source_provenance_manifest_sha256": _sha256(source_provenance),
             "adjusted_csv": adjusted_csv,
             "adjusted_csv_sha256": _sha256(tmp_path / "adjusted.csv"),
+            **locked_holdout_fields,
             **run_identity,
         },
     )
@@ -298,6 +305,7 @@ def test_epex_lab_readiness_can_pass_with_separate_approved_production_chain(tmp
             "adjusted_csv_sha256": _sha256(tmp_path / "adjusted.csv"),
             "adjusted_production_manifest": str(production_manifest),
             "adjusted_production_manifest_sha256": production_manifest_sha,
+            **locked_holdout_fields,
             **run_identity,
         },
     )
@@ -312,6 +320,7 @@ def test_epex_lab_readiness_can_pass_with_separate_approved_production_chain(tmp
             "selected_adjusted_csv_sha256": _sha256(tmp_path / "adjusted.csv"),
             "adjusted_production_manifest": str(production_manifest),
             "adjusted_production_manifest_sha256": production_manifest_sha,
+            **locked_holdout_fields,
             **run_identity,
         },
     )
@@ -329,10 +338,10 @@ def test_epex_lab_readiness_can_pass_with_separate_approved_production_chain(tmp
             "adjusted_export_manifest_sha256": export_manifest_sha,
             "adjusted_selected_artifact": str(selected_config),
             "adjusted_selected_artifact_sha256": selected_config_sha,
+            **locked_holdout_fields,
             **run_identity,
         },
     )
-    locked_holdout = _write_locked_holdout(tmp_path)
 
     summary = check_readiness(
         lab_manifest=lab,

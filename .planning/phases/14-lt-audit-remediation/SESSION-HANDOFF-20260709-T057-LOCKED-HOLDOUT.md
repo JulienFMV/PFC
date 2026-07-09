@@ -217,3 +217,58 @@ complete yet. T056 remains diagnostic-pass but NO-GO production until both:
 
 - locked holdout evidence is available and passes;
 - real adjusted production/export/selected/capstone chain is approved.
+
+## 2026-07-09 Follow-Up Hardening
+
+The T057 holdout is now part of the adjusted production artifact contract, not
+only a readiness sidecar.
+
+Changed files:
+
+- `scripts/build_epex_lab_adjusted_production_manifest.py`
+  - added `--locked-holdout-summary`;
+  - production approval requests now require a passing locked holdout run or
+    audit summary;
+  - the holdout policy requires read-only/non-promotional status, no OMPEX
+    flags, and `LOCKED_HOLDOUT_PASS`;
+  - diagnostic NO-GO manifests can still be built without T057.
+- `scripts/build_epex_lab_adjusted_production_chain.py`
+  - rejects approved adjusted production manifests without a bound passing
+    holdout;
+  - revalidates the holdout summary hash and policy;
+  - propagates holdout path/hash/policy fields into export, selected artifact,
+    and capstone.
+- `scripts/check_epex_lab_promotion_readiness.py`
+  - verifies that production/export/selected/capstone carry the same locked
+    holdout hash.
+- `scripts/audit_epex_lab_future_approval_path.py`
+  - refuses a `PROMOTION_READY` readiness payload unless a passing locked
+    holdout is provided.
+- Tests updated:
+  - `tests/test_build_epex_lab_adjusted_production_manifest_script.py`
+  - `tests/test_build_epex_lab_adjusted_production_chain_script.py`
+  - `tests/test_check_epex_lab_promotion_readiness_script.py`
+  - `tests/test_audit_epex_lab_future_approval_path_script.py`
+
+Validation:
+
+```powershell
+python -m pytest tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_adjusted_production_chain_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result: `53 passed, 1 skipped`.
+
+CLI help was also checked:
+
+```powershell
+python scripts/build_epex_lab_adjusted_production_manifest.py --help
+python scripts/build_epex_lab_adjusted_production_chain.py --help
+```
+
+Operational impact:
+
+- T057 remains NO-GO until the future spot window is complete.
+- Once T057 passes, the passing run/audit summary must be supplied when
+  building any approved adjusted production manifest.
+- The production/export/selected/capstone chain must preserve the exact
+  `locked_holdout_summary_sha256`.

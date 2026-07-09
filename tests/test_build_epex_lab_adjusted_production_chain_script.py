@@ -155,6 +155,27 @@ def _write_selection_summary(tmp_path: Path) -> Path:
     return selection
 
 
+def _write_locked_holdout(tmp_path: Path, *, passed: bool = True) -> Path:
+    locked_holdout = tmp_path / "locked_holdout.json"
+    _write_json(
+        locked_holdout,
+        {
+            "schema_version": "epex_lab_locked_holdout_run.v1",
+            "status": "LOCKED_HOLDOUT_PASS" if passed else "WAITING_FOR_FULL_SPOT_COVERAGE",
+            "promotion_gate": False,
+            "production_approved": False,
+            "ompex_used_in_model": False,
+            "ompex_used_in_selection": False,
+            "ompex_used_in_backtest": False,
+            "coverage_ready": passed,
+            "backtest_ran": passed,
+            "audit_ran": passed,
+            "holdout_pass": passed,
+        },
+    )
+    return locked_holdout
+
+
 def test_adjusted_production_chain_rejects_no_go_manifest(tmp_path: Path) -> None:
     adjusted_csv = tmp_path / "adjusted.csv"
     adjusted_csv.write_text("timestamp_ch,price_weighted_mean_eur_mwh\n", encoding="utf-8")
@@ -214,6 +235,7 @@ def test_adjusted_production_chain_rejects_tampered_source_provenance(tmp_path: 
     adjusted_csv = json.loads(lab.read_text(encoding="utf-8"))["outputs"]["adjusted_csv"]
     source_provenance = _write_source_provenance(tmp_path, lab=lab, adjusted_csv=adjusted_csv)
     selection = _write_selection_summary(tmp_path)
+    locked_holdout = _write_locked_holdout(tmp_path)
     source = json.loads(source_provenance.read_text(encoding="utf-8"))
     source["source_sha256"] = "0" * 64
     source_provenance.write_text(json.dumps(source), encoding="utf-8")
@@ -227,6 +249,7 @@ def test_adjusted_production_chain_rejects_tampered_source_provenance(tmp_path: 
         independent_summary=independent,
         governance_audit=governance,
         selection_summary=selection,
+        locked_holdout_summary=locked_holdout,
         production_run_id="prod-run-1",
         production_entrypoint="pfc_shaping.pipeline.production_phases",
         git_commit="a" * 40,
@@ -245,6 +268,7 @@ def test_adjusted_production_chain_rejects_self_attested_selection_policy(tmp_pa
     adjusted_csv = json.loads(lab.read_text(encoding="utf-8"))["outputs"]["adjusted_csv"]
     source_provenance = _write_source_provenance(tmp_path, lab=lab, adjusted_csv=adjusted_csv)
     selection = _write_selection_summary(tmp_path)
+    locked_holdout = _write_locked_holdout(tmp_path)
     production_manifest = tmp_path / "adjusted_production_manifest.json"
     build_manifest(
         lab_manifest=lab,
@@ -255,6 +279,7 @@ def test_adjusted_production_chain_rejects_self_attested_selection_policy(tmp_pa
         independent_summary=independent,
         governance_audit=governance,
         selection_summary=selection,
+        locked_holdout_summary=locked_holdout,
         production_run_id="prod-run-1",
         production_entrypoint="pfc_shaping.pipeline.production_phases",
         git_commit="a" * 40,
@@ -278,6 +303,7 @@ def test_adjusted_production_chain_rejects_tampered_selection_summary(tmp_path: 
     adjusted_csv = json.loads(lab.read_text(encoding="utf-8"))["outputs"]["adjusted_csv"]
     source_provenance = _write_source_provenance(tmp_path, lab=lab, adjusted_csv=adjusted_csv)
     selection = _write_selection_summary(tmp_path)
+    locked_holdout = _write_locked_holdout(tmp_path)
     production_manifest = tmp_path / "adjusted_production_manifest.json"
     build_manifest(
         lab_manifest=lab,
@@ -288,6 +314,7 @@ def test_adjusted_production_chain_rejects_tampered_selection_summary(tmp_path: 
         independent_summary=independent,
         governance_audit=governance,
         selection_summary=selection,
+        locked_holdout_summary=locked_holdout,
         production_run_id="prod-run-1",
         production_entrypoint="pfc_shaping.pipeline.production_phases",
         git_commit="a" * 40,
@@ -304,11 +331,41 @@ def test_adjusted_production_chain_rejects_tampered_selection_summary(tmp_path: 
         build_chain(adjusted_production_manifest=production_manifest, output_dir=tmp_path / "chain")
 
 
-def test_adjusted_production_chain_builds_artifacts_that_unlock_readiness(tmp_path: Path) -> None:
-    lab, monthly, product, powerbi, policy, independent, governance, ompex = _write_inputs(tmp_path)
+def test_adjusted_production_chain_rejects_approved_manifest_without_locked_holdout(tmp_path: Path) -> None:
+    adjusted_csv = tmp_path / "adjusted.csv"
+    adjusted_csv.write_text("timestamp_ch,price_weighted_mean_eur_mwh\n", encoding="utf-8")
+    production_manifest = tmp_path / "prod.json"
+    _write_json(
+        production_manifest,
+        {
+            "schema_version": "epex_lab_adjusted_production_manifest.v1",
+            "production_approved": True,
+            "production_promotion_approved": True,
+            "contract_pass": True,
+            "source_provenance_pass": True,
+            "source_kind": "candidate_csv",
+            "source_promotion_eligible": True,
+            "adjusted_csv": str(adjusted_csv),
+            "adjusted_csv_sha256": _sha256(adjusted_csv),
+            "production_run_id": "prod-run-1",
+            "production_entrypoint": "pfc_shaping.pipeline.production_phases",
+            "git_commit": "a" * 40,
+            "ompex_used_in_model": False,
+            "ompex_used_in_selection": False,
+            "selection_policy_pass": True,
+        },
+    )
+
+    with pytest.raises(ValueError, match="locked_holdout"):
+        build_chain(adjusted_production_manifest=production_manifest, output_dir=tmp_path / "chain")
+
+
+def test_adjusted_production_chain_rejects_tampered_locked_holdout_summary(tmp_path: Path) -> None:
+    lab, monthly, product, powerbi, policy, independent, governance, _ompex = _write_inputs(tmp_path)
     adjusted_csv = json.loads(lab.read_text(encoding="utf-8"))["outputs"]["adjusted_csv"]
     source_provenance = _write_source_provenance(tmp_path, lab=lab, adjusted_csv=adjusted_csv)
     selection = _write_selection_summary(tmp_path)
+    locked_holdout = _write_locked_holdout(tmp_path)
     production_manifest = tmp_path / "adjusted_production_manifest.json"
     build_manifest(
         lab_manifest=lab,
@@ -319,6 +376,40 @@ def test_adjusted_production_chain_builds_artifacts_that_unlock_readiness(tmp_pa
         independent_summary=independent,
         governance_audit=governance,
         selection_summary=selection,
+        locked_holdout_summary=locked_holdout,
+        production_run_id="prod-run-1",
+        production_entrypoint="pfc_shaping.pipeline.production_phases",
+        git_commit="a" * 40,
+        source_provenance_manifest=source_provenance,
+        production_approved=True,
+        production_promotion_approved=True,
+        output=production_manifest,
+    )
+    holdout_payload = json.loads(locked_holdout.read_text(encoding="utf-8"))
+    holdout_payload["holdout_pass"] = False
+    locked_holdout.write_text(json.dumps(holdout_payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="locked_holdout_summary_sha256"):
+        build_chain(adjusted_production_manifest=production_manifest, output_dir=tmp_path / "chain")
+
+
+def test_adjusted_production_chain_builds_artifacts_that_unlock_readiness(tmp_path: Path) -> None:
+    lab, monthly, product, powerbi, policy, independent, governance, ompex = _write_inputs(tmp_path)
+    adjusted_csv = json.loads(lab.read_text(encoding="utf-8"))["outputs"]["adjusted_csv"]
+    source_provenance = _write_source_provenance(tmp_path, lab=lab, adjusted_csv=adjusted_csv)
+    selection = _write_selection_summary(tmp_path)
+    locked_holdout = _write_locked_holdout(tmp_path)
+    production_manifest = tmp_path / "adjusted_production_manifest.json"
+    build_manifest(
+        lab_manifest=lab,
+        baseline_monthly_manifest=monthly,
+        product_summary=product,
+        powerbi_summary=powerbi,
+        source_hierarchy_policy=policy,
+        independent_summary=independent,
+        governance_audit=governance,
+        selection_summary=selection,
+        locked_holdout_summary=locked_holdout,
         production_run_id="prod-run-1",
         production_entrypoint="pfc_shaping.pipeline.production_phases",
         git_commit="a" * 40,
@@ -339,6 +430,9 @@ def test_adjusted_production_chain_builds_artifacts_that_unlock_readiness(tmp_pa
     assert export_manifest["production_approved"] is True
     assert selected["selection_status"] == "PRODUCTION_APPROVED"
     assert capstone["approved"] is True
+    assert export_manifest["locked_holdout_summary_sha256"] == _sha256(locked_holdout)
+    assert selected["locked_holdout_summary_sha256"] == _sha256(locked_holdout)
+    assert capstone["locked_holdout_summary_sha256"] == _sha256(locked_holdout)
     assert export_manifest["adjusted_production_manifest_sha256"] == _sha256(production_manifest)
     assert capstone["adjusted_selected_artifact_sha256"] == _sha256(paths["adjusted_selected_artifact"])
 
@@ -353,6 +447,7 @@ def test_adjusted_production_chain_builds_artifacts_that_unlock_readiness(tmp_pa
         adjusted_export_manifest=paths["adjusted_export_manifest"],
         adjusted_selected_config=paths["adjusted_selected_artifact"],
         adjusted_capstone=paths["adjusted_capstone"],
+        locked_holdout_summary=locked_holdout,
         output=tmp_path / "decision.json",
     )
 

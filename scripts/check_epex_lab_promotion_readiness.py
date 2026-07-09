@@ -107,9 +107,11 @@ def check_readiness(
     locked_holdout_required = bool(production_bundle_complete or locked_holdout_summary is not None)
     locked_holdout_policy = None
     locked_holdout_valid = not locked_holdout_required
+    locked_holdout_sha256 = None
     if locked_holdout_summary is not None and locked_holdout_summary.exists():
         locked_holdout_policy = _locked_holdout_policy(_load_json(locked_holdout_summary))
         locked_holdout_valid = locked_holdout_policy.get("pass") is True
+        locked_holdout_sha256 = _sha256(locked_holdout_summary)
     elif locked_holdout_required:
         locked_holdout_policy = {"provided": False, "pass": False, "status": "MISSING_LOCKED_HOLDOUT"}
         locked_holdout_valid = False
@@ -153,6 +155,11 @@ def check_readiness(
         )
         selection_policy_valid = selection_policy_value.get("validated") is True
         production_manifest_identity_valid = _production_run_identity_valid(production_manifest)
+        production_manifest_locked_holdout_bound = _artifact_bound_to_locked_holdout(
+            production_manifest,
+            locked_holdout_path=locked_holdout_summary,
+            locked_holdout_sha256=locked_holdout_sha256,
+        )
         production_manifest_approved = (
             production_manifest.get("schema_version") == "epex_lab_adjusted_production_manifest.v1"
             and production_manifest.get("production_approved") is True
@@ -161,6 +168,7 @@ def check_readiness(
             and production_manifest.get("source_provenance_pass") is True
             and selection_policy_valid
             and production_manifest_bound
+            and production_manifest_locked_holdout_bound
             and source_provenance_valid
             and production_manifest_identity_valid
         )
@@ -207,6 +215,11 @@ def check_readiness(
                     "adjusted_production_manifest_run_identity_valid",
                     production_manifest_identity_valid,
                     _production_run_identity_value(production_manifest),
+                ),
+                _check(
+                    "adjusted_production_manifest_locked_holdout_bound",
+                    production_manifest_locked_holdout_bound,
+                    _locked_holdout_binding_value(production_manifest),
                 ),
             ]
         )
@@ -534,7 +547,35 @@ def _artifact_bound_to_production_manifest(
     path_bound = _same_path(artifact.get("adjusted_production_manifest"), production_manifest_path)
     sha_bound = artifact.get("adjusted_production_manifest_sha256") == production_manifest_sha256
     identity_bound = _production_run_identity_matches(artifact, production_manifest)
-    return bool((path_bound or sha_bound) and identity_bound)
+    holdout_bound = _artifact_locked_holdout_matches_production(artifact, production_manifest)
+    return bool((path_bound or sha_bound) and identity_bound and holdout_bound)
+
+
+def _artifact_bound_to_locked_holdout(
+    artifact: dict[str, Any] | None,
+    *,
+    locked_holdout_path: Path | None,
+    locked_holdout_sha256: str | None,
+) -> bool:
+    if artifact is None or locked_holdout_sha256 is None:
+        return False
+    path_bound = _same_path(artifact.get("locked_holdout_summary"), locked_holdout_path)
+    sha_bound = artifact.get("locked_holdout_summary_sha256") == locked_holdout_sha256
+    policy_bound = artifact.get("locked_holdout_policy_pass") is True
+    return bool((path_bound or sha_bound) and policy_bound)
+
+
+def _artifact_locked_holdout_matches_production(
+    artifact: dict[str, Any],
+    production_manifest: dict[str, Any],
+) -> bool:
+    expected_sha = production_manifest.get("locked_holdout_summary_sha256")
+    if not expected_sha or production_manifest.get("locked_holdout_policy_pass") is not True:
+        return False
+    return bool(
+        artifact.get("locked_holdout_policy_pass") is True
+        and artifact.get("locked_holdout_summary_sha256") == expected_sha
+    )
 
 
 def _production_run_identity_matches(artifact: dict[str, Any], production_manifest: dict[str, Any]) -> bool:
@@ -587,6 +628,18 @@ def _production_chain_binding_value(artifact: dict[str, Any] | None) -> dict[str
         "production_run_id": artifact.get("production_run_id"),
         "production_entrypoint": artifact.get("production_entrypoint"),
         "git_commit": artifact.get("git_commit"),
+        "locked_holdout_summary": artifact.get("locked_holdout_summary"),
+        "locked_holdout_summary_sha256": artifact.get("locked_holdout_summary_sha256"),
+        "locked_holdout_policy_pass": artifact.get("locked_holdout_policy_pass"),
+    }
+
+
+def _locked_holdout_binding_value(artifact: dict[str, Any] | None) -> dict[str, Any]:
+    artifact = artifact or {}
+    return {
+        "locked_holdout_summary": artifact.get("locked_holdout_summary"),
+        "locked_holdout_summary_sha256": artifact.get("locked_holdout_summary_sha256"),
+        "locked_holdout_policy_pass": artifact.get("locked_holdout_policy_pass"),
     }
 
 

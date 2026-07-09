@@ -100,6 +100,23 @@ readiness output is
 and includes `locked_holdout_pass=FAIL` with
 `NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING`.
 
+Follow-up hardening on 2026-07-09 binds T057 into the adjusted production
+artifact chain. `scripts/build_epex_lab_adjusted_production_manifest.py` now
+accepts `--locked-holdout-summary` and refuses requested production approval
+unless the holdout run/audit is passing, read-only, non-promotional, and
+no-OMPEX. NO-GO diagnostic manifests remain allowed without T057. The adjusted
+chain builder now rejects approved manifests without a bound passing holdout
+and propagates `locked_holdout_summary_sha256` into export, selected artifact,
+and capstone. Readiness verifies the same holdout hash across
+production/export/selected/capstone, and future approval audit refuses
+`PROMOTION_READY` without a passing locked holdout.
+
+Validation for this hardening:
+`python -m pytest tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_adjusted_production_chain_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+reported `53 passed, 1 skipped`. CLI help was checked for
+`scripts/build_epex_lab_adjusted_production_manifest.py` and
+`scripts/build_epex_lab_adjusted_production_chain.py`.
+
 Current daily generation: Wednesday 2026-07-08 was regenerated from the EEX
 workbook available on 2026-07-08. The latest usable CH/DE/FR quote row in that
 workbook is `2026-07-07`, so all new 2026-07-08 evidence is bound to

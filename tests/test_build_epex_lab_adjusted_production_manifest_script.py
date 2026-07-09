@@ -171,6 +171,27 @@ def _write_selection_summary(
     return selection
 
 
+def _write_locked_holdout(tmp_path, *, passed: bool = True):
+    locked_holdout = tmp_path / "locked_holdout.json"
+    _write_json(
+        locked_holdout,
+        {
+            "schema_version": "epex_lab_locked_holdout_run.v1",
+            "status": "LOCKED_HOLDOUT_PASS" if passed else "WAITING_FOR_FULL_SPOT_COVERAGE",
+            "promotion_gate": False,
+            "production_approved": False,
+            "ompex_used_in_model": False,
+            "ompex_used_in_selection": False,
+            "ompex_used_in_backtest": False,
+            "coverage_ready": passed,
+            "backtest_ran": passed,
+            "audit_ran": passed,
+            "holdout_pass": passed,
+        },
+    )
+    return locked_holdout
+
+
 def test_adjusted_production_manifest_builder_is_no_go_by_default(tmp_path) -> None:
     lab, monthly, product, powerbi, policy, independent, governance, _ompex = _write_inputs(tmp_path)
 
@@ -197,6 +218,7 @@ def test_adjusted_production_manifest_builder_is_no_go_by_default(tmp_path) -> N
     assert manifest["lab_manifest_sha256"]
     checks = {check["name"]: check["status"] for check in manifest["checks"]}
     assert checks["source_provenance_manifest_present"] == "FAIL"
+    assert "locked_holdout_pass" not in checks
 
 
 def test_default_adjusted_production_manifest_does_not_unlock_readiness(tmp_path) -> None:
@@ -281,6 +303,7 @@ def test_adjusted_production_manifest_approval_rejects_invalid_git_commit(tmp_pa
     adjusted_csv = json.loads(lab.read_text(encoding="utf-8"))["outputs"]["adjusted_csv"]
     source = _write_source_provenance(tmp_path, lab, adjusted_csv, source_kind="candidate_csv")
     selection = _write_selection_summary(tmp_path, adjusted_csv)
+    locked_holdout = _write_locked_holdout(tmp_path)
 
     with pytest.raises(ValueError, match="git_commit_must_be_40_hex"):
         build_manifest(
@@ -296,6 +319,61 @@ def test_adjusted_production_manifest_approval_rejects_invalid_git_commit(tmp_pa
             production_entrypoint="pfc_shaping.pipeline.production_phases",
             git_commit="not-a-commit",
             source_provenance_manifest=source,
+            locked_holdout_summary=locked_holdout,
+            production_approved=True,
+            production_promotion_approved=True,
+            output=tmp_path / "adjusted_production_manifest.json",
+        )
+
+
+def test_adjusted_production_manifest_approval_requires_locked_holdout(tmp_path) -> None:
+    lab, monthly, product, powerbi, policy, independent, governance, _ompex = _write_inputs(tmp_path)
+    adjusted_csv = json.loads(lab.read_text(encoding="utf-8"))["outputs"]["adjusted_csv"]
+    source = _write_source_provenance(tmp_path, lab, adjusted_csv, source_kind="candidate_csv")
+    selection = _write_selection_summary(tmp_path, adjusted_csv)
+
+    with pytest.raises(ValueError, match="locked holdout pass"):
+        build_manifest(
+            lab_manifest=lab,
+            baseline_monthly_manifest=monthly,
+            product_summary=product,
+            powerbi_summary=powerbi,
+            source_hierarchy_policy=policy,
+            independent_summary=independent,
+            governance_audit=governance,
+            selection_summary=selection,
+            production_run_id="prod-run-1",
+            production_entrypoint="pfc_shaping.pipeline.production_phases",
+            git_commit="a" * 40,
+            source_provenance_manifest=source,
+            production_approved=True,
+            production_promotion_approved=True,
+            output=tmp_path / "adjusted_production_manifest.json",
+        )
+
+
+def test_adjusted_production_manifest_approval_rejects_failed_locked_holdout(tmp_path) -> None:
+    lab, monthly, product, powerbi, policy, independent, governance, _ompex = _write_inputs(tmp_path)
+    adjusted_csv = json.loads(lab.read_text(encoding="utf-8"))["outputs"]["adjusted_csv"]
+    source = _write_source_provenance(tmp_path, lab, adjusted_csv, source_kind="candidate_csv")
+    selection = _write_selection_summary(tmp_path, adjusted_csv)
+    locked_holdout = _write_locked_holdout(tmp_path, passed=False)
+
+    with pytest.raises(ValueError, match="NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING"):
+        build_manifest(
+            lab_manifest=lab,
+            baseline_monthly_manifest=monthly,
+            product_summary=product,
+            powerbi_summary=powerbi,
+            source_hierarchy_policy=policy,
+            independent_summary=independent,
+            governance_audit=governance,
+            selection_summary=selection,
+            locked_holdout_summary=locked_holdout,
+            production_run_id="prod-run-1",
+            production_entrypoint="pfc_shaping.pipeline.production_phases",
+            git_commit="a" * 40,
+            source_provenance_manifest=source,
             production_approved=True,
             production_promotion_approved=True,
             output=tmp_path / "adjusted_production_manifest.json",
@@ -307,6 +385,7 @@ def test_adjusted_production_manifest_can_be_approved_with_candidate_csv_source_
     adjusted_csv = json.loads(lab.read_text(encoding="utf-8"))["outputs"]["adjusted_csv"]
     source = _write_source_provenance(tmp_path, lab, adjusted_csv, source_kind="candidate_csv")
     selection = _write_selection_summary(tmp_path, adjusted_csv)
+    locked_holdout = _write_locked_holdout(tmp_path)
 
     manifest = build_manifest(
         lab_manifest=lab,
@@ -317,6 +396,7 @@ def test_adjusted_production_manifest_can_be_approved_with_candidate_csv_source_
         independent_summary=independent,
         governance_audit=governance,
         selection_summary=selection,
+        locked_holdout_summary=locked_holdout,
         production_run_id="prod-run-1",
         production_entrypoint="pfc_shaping.pipeline.production_phases",
         git_commit="a" * 40,
@@ -330,6 +410,8 @@ def test_adjusted_production_manifest_can_be_approved_with_candidate_csv_source_
     assert manifest["source_kind"] == "candidate_csv"
     assert manifest["source_provenance_pass"] is True
     assert manifest["selection_policy_pass"] is True
+    assert manifest["locked_holdout_policy_pass"] is True
+    assert manifest["locked_holdout_summary_sha256"] == _sha256(locked_holdout)
     assert manifest["production_approved"] is True
     assert manifest["production_promotion_approved"] is True
 
@@ -339,6 +421,7 @@ def test_adjusted_production_manifest_approval_requires_selection_policy(tmp_pat
     adjusted_csv = json.loads(lab.read_text(encoding="utf-8"))["outputs"]["adjusted_csv"]
     source = _write_source_provenance(tmp_path, lab, adjusted_csv, source_kind="candidate_csv")
     selection = _write_selection_summary(tmp_path, adjusted_csv, replace_incumbent=False)
+    locked_holdout = _write_locked_holdout(tmp_path)
 
     manifest = build_manifest(
         lab_manifest=lab,
@@ -349,6 +432,7 @@ def test_adjusted_production_manifest_approval_requires_selection_policy(tmp_pat
         independent_summary=independent,
         governance_audit=governance,
         selection_summary=selection,
+        locked_holdout_summary=locked_holdout,
         production_run_id="prod-run-1",
         production_entrypoint="pfc_shaping.pipeline.production_phases",
         git_commit="a" * 40,
@@ -371,6 +455,7 @@ def test_adjusted_production_manifest_selection_policy_requires_explicit_no_ompe
     adjusted_csv = json.loads(lab.read_text(encoding="utf-8"))["outputs"]["adjusted_csv"]
     source = _write_source_provenance(tmp_path, lab, adjusted_csv, source_kind="candidate_csv")
     selection = _write_selection_summary(tmp_path, adjusted_csv, include_ompex_flags=False)
+    locked_holdout = _write_locked_holdout(tmp_path)
 
     manifest = build_manifest(
         lab_manifest=lab,
@@ -381,6 +466,7 @@ def test_adjusted_production_manifest_selection_policy_requires_explicit_no_ompe
         independent_summary=independent,
         governance_audit=governance,
         selection_summary=selection,
+        locked_holdout_summary=locked_holdout,
         production_run_id="prod-run-1",
         production_entrypoint="pfc_shaping.pipeline.production_phases",
         git_commit="a" * 40,
@@ -401,6 +487,7 @@ def test_adjusted_production_manifest_selection_policy_rejects_ompex_flags(tmp_p
     adjusted_csv = json.loads(lab.read_text(encoding="utf-8"))["outputs"]["adjusted_csv"]
     source = _write_source_provenance(tmp_path, lab, adjusted_csv, source_kind="candidate_csv")
     selection = _write_selection_summary(tmp_path, adjusted_csv, ompex_used_in_backtest=True)
+    locked_holdout = _write_locked_holdout(tmp_path)
 
     manifest = build_manifest(
         lab_manifest=lab,
@@ -411,6 +498,7 @@ def test_adjusted_production_manifest_selection_policy_rejects_ompex_flags(tmp_p
         independent_summary=independent,
         governance_audit=governance,
         selection_summary=selection,
+        locked_holdout_summary=locked_holdout,
         production_run_id="prod-run-1",
         production_entrypoint="pfc_shaping.pipeline.production_phases",
         git_commit="a" * 40,
@@ -431,6 +519,7 @@ def test_adjusted_production_manifest_selection_policy_requires_selected_sha_mat
     adjusted_csv = json.loads(lab.read_text(encoding="utf-8"))["outputs"]["adjusted_csv"]
     source = _write_source_provenance(tmp_path, lab, adjusted_csv, source_kind="candidate_csv")
     selection = _write_selection_summary(tmp_path, adjusted_csv, selected_sha="0" * 64)
+    locked_holdout = _write_locked_holdout(tmp_path)
 
     manifest = build_manifest(
         lab_manifest=lab,
@@ -441,6 +530,7 @@ def test_adjusted_production_manifest_selection_policy_requires_selected_sha_mat
         independent_summary=independent,
         governance_audit=governance,
         selection_summary=selection,
+        locked_holdout_summary=locked_holdout,
         production_run_id="prod-run-1",
         production_entrypoint="pfc_shaping.pipeline.production_phases",
         git_commit="a" * 40,
@@ -461,6 +551,7 @@ def test_adjusted_production_manifest_rejects_fan_source_provenance(tmp_path) ->
     adjusted_csv = json.loads(lab.read_text(encoding="utf-8"))["outputs"]["adjusted_csv"]
     source = _write_source_provenance(tmp_path, lab, adjusted_csv, source_kind="fan_parquet")
     selection = _write_selection_summary(tmp_path, adjusted_csv)
+    locked_holdout = _write_locked_holdout(tmp_path)
 
     manifest = build_manifest(
         lab_manifest=lab,
@@ -471,6 +562,7 @@ def test_adjusted_production_manifest_rejects_fan_source_provenance(tmp_path) ->
         independent_summary=independent,
         governance_audit=governance,
         selection_summary=selection,
+        locked_holdout_summary=locked_holdout,
         production_run_id="prod-run-1",
         production_entrypoint="pfc_shaping.pipeline.production_phases",
         git_commit="a" * 40,

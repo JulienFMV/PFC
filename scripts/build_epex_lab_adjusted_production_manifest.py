@@ -40,6 +40,7 @@ def build_manifest(
     governance_audit: Path,
     output: Path,
     selection_summary: Path | None = None,
+    locked_holdout_summary: Path | None = None,
     production_run_id: str | None = None,
     production_entrypoint: str | None = None,
     git_commit: str | None = None,
@@ -55,6 +56,7 @@ def build_manifest(
     independent = _load_json(independent_summary)
     governance = _load_json(governance_audit)
     selection = _load_json(selection_summary) if selection_summary is not None else None
+    locked_holdout = _load_json(locked_holdout_summary) if locked_holdout_summary is not None else None
     source_provenance = _load_json(source_provenance_manifest) if source_provenance_manifest is not None else None
 
     adjusted_csv = Path(str((lab.get("outputs") or {}).get("adjusted_csv", "")))
@@ -75,6 +77,12 @@ def build_manifest(
     )
     contract_pass = all(check["status"] == "PASS" for check in checks)
     selection_policy_ok = selection_policy_pass(selection, adjusted_csv=adjusted_csv)
+    locked_holdout_policy = _locked_holdout_policy(locked_holdout)
+    locked_holdout_required = bool(production_approved or production_promotion_approved)
+    locked_holdout_ok = bool(locked_holdout_policy.get("pass") is True)
+    if locked_holdout_summary is not None or locked_holdout_required:
+        checks.append(_check("locked_holdout_pass", locked_holdout_ok, locked_holdout_policy))
+        contract_pass = all(check["status"] == "PASS" for check in checks)
     if production_approved or production_promotion_approved:
         identity_errors = _production_identity_errors(
             production_run_id=production_run_id,
@@ -87,8 +95,14 @@ def build_manifest(
                 "production approval requires complete valid run identity: "
                 + ", ".join(identity_errors)
             )
+        if not locked_holdout_ok:
+            raise ValueError(
+                "production approval requires locked holdout pass: "
+                + str(locked_holdout_policy.get("status"))
+            )
     approved = bool(production_approved and production_promotion_approved and contract_pass)
     approved = bool(approved and selection_policy_ok)
+    approved = bool(approved and locked_holdout_ok)
 
     manifest: dict[str, Any] = {
         "schema_version": "epex_lab_adjusted_production_manifest.v1",
@@ -122,6 +136,12 @@ def build_manifest(
         "selection_summary": str(selection_summary) if selection_summary is not None else None,
         "selection_summary_sha256": _sha256(selection_summary) if selection_summary is not None else None,
         "selection_policy_pass": selection_policy_ok,
+        "locked_holdout_summary": str(locked_holdout_summary) if locked_holdout_summary is not None else None,
+        "locked_holdout_summary_sha256": (
+            _sha256(locked_holdout_summary) if locked_holdout_summary is not None else None
+        ),
+        "locked_holdout_policy_pass": locked_holdout_ok,
+        "locked_holdout_policy": locked_holdout_policy,
         "source_provenance_manifest": str(source_provenance_manifest) if source_provenance_manifest is not None else None,
         "source_provenance_manifest_sha256": (
             _sha256(source_provenance_manifest) if source_provenance_manifest is not None else None
@@ -335,6 +355,54 @@ def _source_provenance_pass(source_provenance: dict[str, Any] | None, adjusted_c
     return all(check["status"] == "PASS" for check in _source_provenance_checks(source_provenance, adjusted_csv))
 
 
+def _locked_holdout_policy(summary: dict[str, Any] | None) -> dict[str, Any]:
+    if summary is None:
+        return {"provided": False, "pass": False, "status": "MISSING_LOCKED_HOLDOUT"}
+    schema = summary.get("schema_version")
+    checks = {
+        "promotion_gate_false": summary.get("promotion_gate") is False,
+        "production_approved_false": summary.get("production_approved") is False,
+        "ompex_not_model": summary.get("ompex_used_in_model") is False,
+        "ompex_not_selection": summary.get("ompex_used_in_selection") is False,
+        "ompex_not_backtest": summary.get("ompex_used_in_backtest") is False,
+    }
+    if schema == "epex_lab_locked_holdout_run.v1":
+        checks.update(
+            {
+                "coverage_ready": summary.get("coverage_ready") is True,
+                "backtest_ran": summary.get("backtest_ran") is True,
+                "audit_ran": summary.get("audit_ran") is True,
+                "holdout_pass": summary.get("holdout_pass") is True,
+                "status_pass": summary.get("status") == "LOCKED_HOLDOUT_PASS",
+            }
+        )
+        status = (
+            "NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING"
+            if summary.get("status") == "WAITING_FOR_FULL_SPOT_COVERAGE"
+            else "NO_GO_LOCKED_HOLDOUT_FAIL"
+        )
+    elif schema == "epex_lab_locked_holdout_audit.v1":
+        checks.update(
+            {
+                "holdout_pass": summary.get("holdout_pass") is True,
+                "status_pass": summary.get("status") == "LOCKED_HOLDOUT_PASS",
+            }
+        )
+        status = "NO_GO_LOCKED_HOLDOUT_FAIL"
+    else:
+        checks["known_schema"] = False
+        status = "NO_GO_LOCKED_HOLDOUT_POLICY_INVALID"
+    passed = all(checks.values())
+    return {
+        "provided": True,
+        "schema_version": schema,
+        "summary": summary.get("status"),
+        "pass": passed,
+        "status": "LOCKED_HOLDOUT_PASS" if passed else status,
+        "checks": checks,
+    }
+
+
 def _check(name: str, passed: bool, value: Any) -> dict[str, Any]:
     return {"name": name, "status": "PASS" if passed else "FAIL", "value": value}
 
@@ -413,6 +481,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--independent-summary", type=Path, required=True)
     parser.add_argument("--governance-audit", type=Path, required=True)
     parser.add_argument("--selection-summary", type=Path, default=None)
+    parser.add_argument("--locked-holdout-summary", type=Path, default=None)
     parser.add_argument("--production-run-id", default=None)
     parser.add_argument("--production-entrypoint", default=None)
     parser.add_argument("--git-commit", default=None)
@@ -428,6 +497,7 @@ def main(argv: list[str] | None = None) -> int:
         independent_summary=args.independent_summary,
         governance_audit=args.governance_audit,
         selection_summary=args.selection_summary,
+        locked_holdout_summary=args.locked_holdout_summary,
         production_run_id=args.production_run_id,
         production_entrypoint=args.production_entrypoint,
         git_commit=args.git_commit,
