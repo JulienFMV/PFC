@@ -4919,3 +4919,62 @@ Invariants not to break:
 - OMPEX remains advisory-only after freeze and never a model, calibration,
   selection, or gate input.
 
+## D-20260709-54 - Lock T057 Future Holdout Before Any Further T056 Tuning
+
+Decision: freeze T056 t005 as the current no-OMPEX candidate and pre-register a
+future locked holdout, T057, before any further EPEX lab tuning or production
+promotion attempt. The T057 plan binds the exact baseline CSV, adjusted CSV,
+selection summary, lab manifest, holdout window, and pass criteria.
+
+Reason: T056 t005 is the first no-OMPEX replacement candidate, but the
+post-valuation edge over T046 is very small and based on a short observed
+window. Further micro-tuning against that window would overfit. A future
+holdout must be frozen before the future spot rows are known, then audited
+without OMPEX and without changing candidate parameters.
+
+Pre-registered plan:
+
+- plan:
+  `.planning/phases/14-lt-audit-remediation/locked_holdout_plan_t057_t056_asof20260709.json`
+- plan sha256:
+  `f2b5ce94d7eb892ec4f0b2e46b209d09b078db8d15765009fba4ba0cb21ec1cd`
+- plan id:
+  `t057_locked_t056_future_holdout`
+- frozen at:
+  `2026-07-09T00:00:00Z`
+- holdout window:
+  `2026-07-10T00:00:00Z` to `2026-07-24T00:00:00Z`
+- baseline CSV sha256:
+  `12447bbaa9828c0ffed871e62c35f90b8c100fcfab8c80b00468ac846848d895`
+- adjusted CSV sha256:
+  `5e603a4d5926f9265ca564615e69d0d7ee39f778f6f19b495706ab1b89cf69b6`
+- selection summary sha256:
+  `b2a319ac91eff51947387bc2a1dcc4784b2f5bf5536ea861f2e63ab9fc5cf10d`
+- lab manifest sha256:
+  `013a11ba0e6a0a2f32eeb78493e154731ab736542710bd5b31e148c37e7716bc`
+- minimum holdout hours:
+  `300`
+- minimum residual MAE improvement:
+  `0.0 EUR/MWh`
+
+Implementation:
+
+- Added `scripts/plan_epex_lab_locked_holdout.py`.
+- Added `scripts/audit_epex_lab_locked_holdout.py`.
+- Added tests for no-OMPEX hash binding and holdout pass/fail audit.
+
+Rejected alternatives:
+
+- Continue tuning T056 against the short post-valuation sample.
+- Use OMPEX as a future holdout gate or target.
+- Treat the locked holdout as production approval by itself.
+- Edit the T057 plan after the holdout window starts; create a new plan if a
+  different future window is needed.
+
+Invariants not to break:
+
+- T057 evaluates the exact selected T056 adjusted CSV hash only.
+- T057 audit remains lab-only, read-only, no-OMPEX, and non-promotional.
+- A passing T057 holdout can support scientific confidence but still does not
+  replace the required adjusted production/export/selected/capstone chain.
+

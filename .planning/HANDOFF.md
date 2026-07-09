@@ -2,7 +2,7 @@
 
 Latest active handoff:
 
-`.planning/phases/14-lt-audit-remediation/SESSION-HANDOFF-20260709-T056-SELECTION-GOVERNANCE.md`
+`.planning/phases/14-lt-audit-remediation/SESSION-HANDOFF-20260709-T057-LOCKED-HOLDOUT.md`
 
 Read order for new agents:
 
@@ -55,6 +55,30 @@ identity exists and the adjusted export/selected/capstone chain is built from
 that approved manifest. The source hierarchy policy approval is only a
 QUOTE_CONFLICT waiver for the bound CSV/forwards/identity hash, not curve
 approval.
+
+T057 future holdout is now pre-registered and locked:
+
+- plan:
+  `.planning/phases/14-lt-audit-remediation/locked_holdout_plan_t057_t056_asof20260709.json`
+- plan sha256:
+  `f2b5ce94d7eb892ec4f0b2e46b209d09b078db8d15765009fba4ba0cb21ec1cd`
+- frozen at:
+  `2026-07-09T00:00:00Z`
+- holdout window:
+  `2026-07-10T00:00:00Z` to `2026-07-24T00:00:00Z`
+- baseline CSV sha256:
+  `12447bbaa9828c0ffed871e62c35f90b8c100fcfab8c80b00468ac846848d895`
+- adjusted CSV sha256:
+  `5e603a4d5926f9265ca564615e69d0d7ee39f778f6f19b495706ab1b89cf69b6`
+- pass criteria:
+  at least `300` holdout hours and residual MAE improvement `>= 0.0 EUR/MWh`
+  on the locked future no-OMPEX window.
+
+When future EPEX spot data covers the window, run the plan's backtest command
+with a refreshed future spot parquet, then run
+`scripts/audit_epex_lab_locked_holdout.py` against the plan and the generated
+`spot_backtest_summary.json`. Do not edit the plan after the holdout window
+starts; create a new plan if the window or criteria must change.
 
 Current daily generation: Wednesday 2026-07-08 was regenerated from the EEX
 workbook available on 2026-07-08. The latest usable CH/DE/FR quote row in that

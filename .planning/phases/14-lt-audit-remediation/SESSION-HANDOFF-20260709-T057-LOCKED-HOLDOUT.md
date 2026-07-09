@@ -1,0 +1,122 @@
+# Session Handoff - 2026-07-09 - T057 Locked Holdout
+
+## Scope
+
+Phase 14 LT only. No CT code touched. No Power BI data files touched. OMPEX
+remains benchmark/advisory only and is explicitly forbidden as model,
+calibration, selection, backtest, or gate input.
+
+Objective advanced: after T056 t005 became the current no-OMPEX lab replacement
+candidate, freeze it before further tuning and pre-register a future holdout.
+
+## Changed Files
+
+Code/tests/docs:
+
+- `scripts/plan_epex_lab_locked_holdout.py`
+- `scripts/audit_epex_lab_locked_holdout.py`
+- `tests/test_plan_epex_lab_locked_holdout_script.py`
+- `tests/test_audit_epex_lab_locked_holdout_script.py`
+- `.planning/HANDOFF.md`
+- `.planning/phases/14-lt-audit-remediation/DECISION-LOG.md`
+- `.planning/phases/14-lt-audit-remediation/locked_holdout_plan_t057_t056_asof20260709.json`
+- `.planning/phases/14-lt-audit-remediation/SESSION-HANDOFF-20260709-T057-LOCKED-HOLDOUT.md`
+
+## New Tools
+
+`scripts/plan_epex_lab_locked_holdout.py`
+
+- Builds a read-only, lab-only, no-OMPEX plan.
+- Binds baseline CSV hash, adjusted CSV hash, selection summary hash, and lab
+  manifest hash.
+- Rejects a selection summary that is not replacement-approved, no-OMPEX, and
+  bound to the exact adjusted CSV hash.
+- Emits command templates for future backtest and holdout audit.
+
+`scripts/audit_epex_lab_locked_holdout.py`
+
+- Audits a completed spot backtest against the locked plan.
+- Recomputes holdout metrics from
+  `post_valuation_timestamp_residuals.csv` inside the pre-registered future
+  window.
+- Requires exact baseline/adjusted CSV hash binding, no-OMPEX flags,
+  lab-only status, strict lab gate pass, minimum holdout hours, and
+  non-degraded residual MAE.
+- Does not approve production promotion.
+
+## T057 Locked Plan
+
+Plan file:
+
+`.planning/phases/14-lt-audit-remediation/locked_holdout_plan_t057_t056_asof20260709.json`
+
+Plan sha256:
+
+`f2b5ce94d7eb892ec4f0b2e46b209d09b078db8d15765009fba4ba0cb21ec1cd`
+
+Frozen candidate:
+
+- plan id: `t057_locked_t056_future_holdout`
+- frozen at: `2026-07-09T00:00:00Z`
+- holdout window: `2026-07-10T00:00:00Z` to `2026-07-24T00:00:00Z`
+- baseline CSV:
+  `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/ch_hfc_hourly_asof20260707_lshape100_yoy150_amp150_2032.csv`
+- baseline CSV sha256:
+  `12447bbaa9828c0ffed871e62c35f90b8c100fcfab8c80b00468ac846848d895`
+- adjusted CSV:
+  `output/phase14/t056_postval_final_micro/t005_w075_l025_p089_e005_n055_r00/candidate_epex_shape_lab_adjusted.csv`
+- adjusted CSV sha256:
+  `5e603a4d5926f9265ca564615e69d0d7ee39f778f6f19b495706ab1b89cf69b6`
+- selection summary:
+  `output/phase14/t056_postval_final_micro_selection_summary/spot_backtest_selection_summary.json`
+- selection summary sha256:
+  `b2a319ac91eff51947387bc2a1dcc4784b2f5bf5536ea861f2e63ab9fc5cf10d`
+- lab manifest sha256:
+  `013a11ba0e6a0a2f32eeb78493e154731ab736542710bd5b31e148c37e7716bc`
+
+Pass criteria:
+
+- future backtest `benchmark_policy=rolling_origin_epex_spot_no_ompex_lab_only`;
+- all OMPEX flags false;
+- `strict_lab_gate_pass=true`;
+- at least `300` hours in the planned holdout window;
+- residual MAE improvement `>= 0.0 EUR/MWh`;
+- exact baseline and adjusted CSV hashes.
+
+## Commands Already Run
+
+Plan generation:
+
+```powershell
+python scripts/plan_epex_lab_locked_holdout.py --baseline-csv output\phase14\20260708_asof20260707_lshape100_yoy150_amp150_2032\ch_hfc_hourly_asof20260707_lshape100_yoy150_amp150_2032.csv --adjusted-csv output\phase14\t056_postval_final_micro\t005_w075_l025_p089_e005_n055_r00\candidate_epex_shape_lab_adjusted.csv --selection-summary output\phase14\t056_postval_final_micro_selection_summary\spot_backtest_selection_summary.json --lab-manifest output\phase14\t056_postval_final_micro\t005_w075_l025_p089_e005_n055_r00\ab_lab_manifest.json --plan-id t057_locked_t056_future_holdout --frozen-at-utc 2026-07-09T00:00:00Z --holdout-start-utc 2026-07-10T00:00:00Z --holdout-end-utc 2026-07-24T00:00:00Z --valuation-timestamp-utc 2026-07-09T00:00:00Z --embargo-days 1 --eval-days 14 --min-holdout-hours 300 --min-residual-mae-improvement-eur-mwh 0.0 --output .planning\phases\14-lt-audit-remediation\locked_holdout_plan_t057_t056_asof20260709.json
+```
+
+Initial targeted tests:
+
+```powershell
+python -m pytest tests/test_plan_epex_lab_locked_holdout_script.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_summarize_epex_shape_lab_spot_backtests_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result: `34 passed, 1 skipped`.
+
+## Next Execution When Future Spot Exists
+
+After the refreshed EPEX spot parquet covers `2026-07-10T00:00:00Z` through
+`2026-07-24T00:00:00Z`, use the plan's
+`commands.run_future_backtest_template`, replacing:
+
+- `<FUTURE_SPOT_PARQUET>`
+- `<T057_HOLDOUT_OUTPUT_DIR>`
+
+Then run the plan's `commands.audit_future_holdout_template`.
+
+Do not edit the locked plan after the holdout window starts. If the future
+window or criteria are wrong, create a new plan with a new id and document why.
+
+## Current Status
+
+T057 is pre-registered but not executed because the future spot window is not
+complete yet. T056 remains diagnostic-pass but NO-GO production until both:
+
+- locked holdout evidence is available and passes;
+- real adjusted production/export/selected/capstone chain is approved.
