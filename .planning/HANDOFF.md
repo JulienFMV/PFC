@@ -206,6 +206,9 @@ Future approval audit now emits machine-readable next-step routing:
 `blocking_stage` and `next_required_step`. The current T057 audit remains
 NO-GO and now reports `blocking_stage=locked_holdout_coverage` with
 `next_required_step=wait_for_full_spot_coverage_then_run_locked_holdout`.
+It also includes `recommended_commands.run_locked_holdout` with the fail-closed
+wrapper command and placeholders for `<FRESH_FUTURE_SPOT_PARQUET>` and
+`<T057_HOLDOUT_OUTPUT_DIR>`.
 Validation:
 `python -m pytest tests/test_audit_epex_lab_future_approval_path_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_build_epex_lab_promotion_bundle_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
 reported `41 passed, 1 skipped`; regenerating the current T057 future-approval

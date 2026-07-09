@@ -434,6 +434,7 @@ Future approval next-step routing:
   `NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING`, exits `1`, and reports:
   - `blocking_stage=locked_holdout_coverage`
   - `next_required_step=wait_for_full_spot_coverage_then_run_locked_holdout`
+  - `recommended_commands.run_locked_holdout=python scripts/run_epex_lab_locked_holdout.py --plan-json .planning\phases\14-lt-audit-remediation\locked_holdout_plan_t057_t056_asof20260709.json --spot-parquet <FRESH_FUTURE_SPOT_PARQUET> --output-dir <T057_HOLDOUT_OUTPUT_DIR>`
 
 Validation:
 

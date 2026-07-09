@@ -93,6 +93,10 @@ def audit_future_approval_path(
         spot_policy=spot_policy,
         holdout_policy=holdout_policy,
     )
+    recommended_commands = _recommended_commands(
+        blocking_stage=blocking_stage,
+        holdout_policy=holdout_policy,
+    )
 
     summary = {
         "schema_version": "epex_lab_future_approval_path_audit.v1",
@@ -102,6 +106,7 @@ def audit_future_approval_path(
         "status": status,
         "blocking_stage": blocking_stage,
         "next_required_step": next_required_step,
+        "recommended_commands": recommended_commands,
         "readiness_json": str(readiness_json),
         "readiness_status": readiness.get("status"),
         "readiness_approved": bool(readiness.get("approved")),
@@ -202,6 +207,9 @@ def _locked_holdout_policy(summary: dict[str, Any] | None) -> dict[str, Any]:
         "summary": summary.get("status"),
         "pass": passed,
         "status": "LOCKED_HOLDOUT_PASS" if passed else status,
+        "plan_json": summary.get("plan_json"),
+        "spot_parquet": summary.get("spot_parquet"),
+        "output_dir": summary.get("output_dir"),
         "checks": checks,
     }
 
@@ -301,6 +309,28 @@ def _blocking_stage(
     if status == "PROMOTION_READY_CANDIDATE":
         return "promotion_ready_candidate", "run_independent_capstone_review"
     return "unclassified", "investigate_readiness_state"
+
+
+def _recommended_commands(
+    *,
+    blocking_stage: str,
+    holdout_policy: dict[str, Any] | None,
+) -> dict[str, str]:
+    if blocking_stage != "locked_holdout_coverage":
+        return {}
+    plan_json = (
+        str(holdout_policy.get("plan_json"))
+        if holdout_policy is not None and holdout_policy.get("plan_json")
+        else "<T057_PLAN_JSON>"
+    )
+    return {
+        "run_locked_holdout": (
+            "python scripts/run_epex_lab_locked_holdout.py "
+            f"--plan-json {plan_json} "
+            "--spot-parquet <FRESH_FUTURE_SPOT_PARQUET> "
+            "--output-dir <T057_HOLDOUT_OUTPUT_DIR>"
+        )
+    }
 
 
 def _read_json(path: Path | None) -> dict[str, Any]:

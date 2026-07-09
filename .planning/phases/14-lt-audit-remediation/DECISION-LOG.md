@@ -5255,7 +5255,8 @@ Invariants not to break:
 
 Decision: `scripts/audit_epex_lab_future_approval_path.py` now emits
 `blocking_stage` and `next_required_step` in addition to the existing
-human-readable `next_actions`.
+human-readable `next_actions`. For `locked_holdout_coverage`, it also emits a
+`recommended_commands.run_locked_holdout` template.
 
 Reason: `status`, `remaining_blockers`, and `next_actions` were sufficient for
 manual review but awkward for automation. The next operational step should be
@@ -5272,6 +5273,9 @@ Implementation:
     `generate_adjusted_production_export_selected_capstone_evidence`;
   - `spot_policy` / `fix_spot_backtest_policy_flags`;
   - `promotion_ready_candidate` / `run_independent_capstone_review`.
+- Added `recommended_commands.run_locked_holdout` for the T057 coverage
+  waiting state, using the fail-closed wrapper and placeholders for
+  `<FRESH_FUTURE_SPOT_PARQUET>` and `<T057_HOLDOUT_OUTPUT_DIR>`.
 - Current T057 future approval audit remains
   `NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING` and now reports
   `blocking_stage=locked_holdout_coverage`.
@@ -5284,6 +5288,8 @@ Validation:
   `output/phase14/t057_locked_t056_future_holdout/future_approval_path_with_holdout_current.json`
   exits `1` as expected and reports
   `next_required_step=wait_for_full_spot_coverage_then_run_locked_holdout`.
+  It also prints the recommended wrapper command with the locked T057 plan
+  path.
 
 Rejected alternatives:
 

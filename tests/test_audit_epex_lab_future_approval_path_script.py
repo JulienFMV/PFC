@@ -61,6 +61,9 @@ def _locked_holdout_run_payload(**overrides) -> dict:
         "backtest_ran": True,
         "audit_ran": True,
         "holdout_pass": True,
+        "plan_json": "plan.json",
+        "spot_parquet": "spot.parquet",
+        "output_dir": "out",
     }
     payload.update(overrides)
     return payload
@@ -161,6 +164,12 @@ def test_future_approval_path_blocks_when_locked_holdout_coverage_pending(tmp_pa
     assert summary["locked_holdout_policy"]["checks"]["coverage_ready"] is False
     assert summary["blocking_stage"] == "locked_holdout_coverage"
     assert summary["next_required_step"] == "wait_for_full_spot_coverage_then_run_locked_holdout"
+    assert summary["recommended_commands"]["run_locked_holdout"] == (
+        "python scripts/run_epex_lab_locked_holdout.py "
+        "--plan-json plan.json "
+        "--spot-parquet <FRESH_FUTURE_SPOT_PARQUET> "
+        "--output-dir <T057_HOLDOUT_OUTPUT_DIR>"
+    )
 
 
 def test_future_approval_path_allows_promotion_ready_with_passing_locked_holdout(tmp_path: Path) -> None:
@@ -182,6 +191,7 @@ def test_future_approval_path_allows_promotion_ready_with_passing_locked_holdout
     assert summary["locked_holdout_policy"]["pass"] is True
     assert summary["blocking_stage"] == "promotion_ready_candidate"
     assert summary["next_required_step"] == "run_independent_capstone_review"
+    assert summary["recommended_commands"] == {}
 
 
 def test_future_approval_path_blocks_synthetic_ready_payload_missing_production_checks(tmp_path: Path) -> None:
