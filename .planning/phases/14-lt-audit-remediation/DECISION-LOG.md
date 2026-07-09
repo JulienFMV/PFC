@@ -5513,3 +5513,99 @@ Invariants not to break:
 - A locked-holdout PASS remains only a prerequisite for packaging, not
   production approval.
 
+## D-20260709-65 - Require Finite Spot Prices Before T057 Holdout Backtest
+
+Decision: the T057 locked-holdout coverage preflight now requires the future
+EPEX spot parquet to contain `price_eur_mwh` and finite prices on all observed
+holdout rows before reporting `READY_TO_RUN_HOLDOUT_BACKTEST`.
+
+Reason: timestamp coverage alone is insufficient evidence that the spot file
+can support a realized-price backtest. A parquet with the full hourly index but
+missing, null, non-numeric, or infinite prices should remain fail-closed before
+the wrapper attempts the backtest/audit chain.
+
+Implementation:
+
+- `scripts/check_epex_lab_locked_holdout_coverage.py` now reports:
+  - `spot_price_column`
+  - `non_finite_holdout_price_rows`
+  - `checks.plan_benchmark_policy_locked`
+  - `checks.spot_price_column_present`
+  - `checks.holdout_prices_finite`
+- `ready_to_run_backtest` requires the locked benchmark policy, both new spot
+  price checks, no-OMPEX, full-window coverage, minimum hours, and no
+  duplicate holdout rows.
+- Tests cover a ready spot parquet, a full-window parquet without
+  `price_eur_mwh`, a full-window parquet with non-numeric/`inf` prices, and a
+  wrong benchmark policy.
+
+Validation:
+
+- `python -m pytest tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_adjusted_production_chain_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_epex_lab_locked_holdout_policy.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  reported `86 passed, 1 skipped`.
+
+Rejected alternatives:
+
+- Let the backtest fail later on missing or invalid prices.
+- Treat a complete timestamp index as enough to enter the locked holdout
+  backtest.
+
+Invariants not to break:
+
+- Coverage remains a preflight only; it does not approve production.
+- The locked T057 plan JSON remains frozen and unchanged.
+
+## D-20260709-66 - Require Wrapper Run Summary For Promotion Holdout Evidence
+
+Decision: downstream promotion policy now accepts only
+`epex_lab_locked_holdout_run.v1` wrapper summaries as passable locked-holdout
+evidence. A standalone `epex_lab_locked_holdout_audit.v1` can remain a
+diagnostic artifact, but it cannot satisfy the production holdout policy by
+itself.
+
+Reason: an audit-only artifact does not prove that the fail-closed coverage
+preflight ran, that the full window was ready, or that the runner connected
+coverage, backtest, audit, and plan identity in one evidence chain. Promotion
+evidence must be the wrapper summary generated after coverage passed.
+
+Implementation:
+
+- `scripts/run_epex_lab_locked_holdout.py` now writes
+  `coverage_status_sha256`.
+- `scripts/epex_lab_locked_holdout_policy.py` now requires passable run
+  summaries to have:
+  - `benchmark_policy=locked_future_no_ompex_holdout`;
+  - embedded coverage status `READY_TO_RUN_HOLDOUT_BACKTEST`;
+  - full-window coverage, minimum hours, no duplicate holdout rows,
+    `price_eur_mwh` present, and finite holdout prices;
+  - `coverage_status.json`, `spot_backtest_summary.json`, and
+    `locked_holdout_audit.json` hash-bound to the run summary;
+  - linked backtest content with schema
+    `epex_shape_lab_spot_backtest.v1`, `DIAGNOSTIC_PASS`, strict lab gate
+    pass, no-OMPEX, and lab-only flags;
+  - linked audit content with schema `epex_lab_locked_holdout_audit.v1`,
+    `LOCKED_HOLDOUT_PASS`, no-OMPEX/lab-only flags, the same locked plan
+    identity, and the same linked backtest path/hash.
+- `scripts/audit_epex_lab_locked_holdout.py` now explicitly requires
+  `summary.status=DIAGNOSTIC_PASS` and `strict_lab_gate_pass=true`.
+
+Validation:
+
+- `python -m pytest tests/test_epex_lab_locked_holdout_policy.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_run_epex_lab_locked_holdout_script.py -q -p no:cacheprovider`
+  reported `23 passed`.
+- `python -m pytest tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_adjusted_production_chain_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_epex_lab_locked_holdout_policy.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  reported `86 passed, 1 skipped`.
+
+Rejected alternatives:
+
+- Accept audit-only JSON as production holdout evidence.
+- Trust linked file hashes without opening and checking linked evidence
+  content.
+
+Invariants not to break:
+
+- Locked holdout PASS remains prerequisite evidence only, not automatic
+  production approval.
+- Coverage-pending runner summaries remain useful NO-GO evidence but cannot
+  pass the promotion policy.
+

@@ -32,21 +32,31 @@ def _write_plan(tmp_path: Path) -> Path:
 def _passing_run_summary(tmp_path: Path) -> dict:
     plan = _write_plan(tmp_path)
     plan_payload = json.loads(plan.read_text(encoding="utf-8"))
-    backtest = _write_json(tmp_path / "spot_backtest_summary.json", {"status": "DIAGNOSTIC_PASS"})
-    audit = _write_json(tmp_path / "locked_holdout_audit.json", {"status": "LOCKED_HOLDOUT_PASS"})
+    identity = build_locked_plan_identity(plan_payload, plan_json=plan)
+    coverage_payload = _ready_coverage()
+    coverage = _write_json(tmp_path / "coverage_status.json", coverage_payload)
+    backtest = _write_json(tmp_path / "spot_backtest_summary.json", _passing_backtest())
+    audit = _write_json(
+        tmp_path / "locked_holdout_audit.json",
+        _passing_audit(identity=identity, backtest=backtest),
+    )
     return {
         "schema_version": "epex_lab_locked_holdout_run.v1",
         "status": "LOCKED_HOLDOUT_PASS",
+        "benchmark_policy": "locked_future_no_ompex_holdout",
         "promotion_gate": False,
         "production_approved": False,
         "ompex_used_in_model": False,
         "ompex_used_in_selection": False,
         "ompex_used_in_backtest": False,
+        "coverage_status": str(coverage),
+        "coverage_status_sha256": _sha256(coverage),
+        "coverage": coverage_payload,
         "coverage_ready": True,
         "backtest_ran": True,
         "audit_ran": True,
         "holdout_pass": True,
-        "locked_plan_identity": build_locked_plan_identity(plan_payload, plan_json=plan),
+        "locked_plan_identity": identity,
         "spot_backtest_summary": str(backtest),
         "spot_backtest_summary_sha256": _sha256(backtest),
         "locked_holdout_audit": str(audit),
@@ -95,6 +105,75 @@ def test_locked_holdout_policy_rejects_tampered_backtest_summary(tmp_path: Path)
 
     assert policy["pass"] is False
     assert policy["checks"]["spot_backtest_summary_sha256_bound"] is False
+
+
+def test_locked_holdout_policy_rejects_audit_only_summary(tmp_path: Path) -> None:
+    summary = _passing_run_summary(tmp_path)
+    audit = json.loads(Path(summary["locked_holdout_audit"]).read_text(encoding="utf-8"))
+
+    policy = locked_holdout_policy(audit)
+
+    assert policy["pass"] is False
+    assert policy["status"] == "NO_GO_LOCKED_HOLDOUT_RUN_SUMMARY_REQUIRED"
+    assert policy["checks"]["run_summary_schema_required"] is False
+
+
+def test_locked_holdout_policy_rejects_coverage_file_mismatch(tmp_path: Path) -> None:
+    summary = _passing_run_summary(tmp_path)
+    coverage = Path(summary["coverage_status"])
+    coverage.write_text(json.dumps({"status": "READY_TO_RUN_HOLDOUT_BACKTEST"}), encoding="utf-8")
+    summary["coverage_status_sha256"] = _sha256(coverage)
+
+    policy = locked_holdout_policy(summary)
+
+    assert policy["pass"] is False
+    assert policy["checks"]["coverage_status_matches_embedded"] is False
+
+
+def _ready_coverage() -> dict:
+    return {
+        "status": "READY_TO_RUN_HOLDOUT_BACKTEST",
+        "ready_to_run_backtest": True,
+        "checks": {
+            "full_window_covered": True,
+            "min_holdout_hours_met": True,
+            "no_duplicate_holdout_rows": True,
+            "spot_price_column_present": True,
+            "holdout_prices_finite": True,
+        },
+    }
+
+
+def _passing_backtest() -> dict:
+    return {
+        "schema_version": "epex_shape_lab_spot_backtest.v1",
+        "status": "DIAGNOSTIC_PASS",
+        "read_only": True,
+        "promotion_gate": False,
+        "production_approved": False,
+        "independent_production_evidence": False,
+        "benchmark_policy": "rolling_origin_epex_spot_no_ompex_lab_only",
+        "ompex_used_in_model": False,
+        "ompex_used_in_selection": False,
+        "ompex_used_in_backtest": False,
+        "strict_lab_gate_pass": True,
+    }
+
+
+def _passing_audit(*, identity: dict, backtest: Path) -> dict:
+    return {
+        "schema_version": "epex_lab_locked_holdout_audit.v1",
+        "status": "LOCKED_HOLDOUT_PASS",
+        "holdout_pass": True,
+        "promotion_gate": False,
+        "production_approved": False,
+        "ompex_used_in_model": False,
+        "ompex_used_in_selection": False,
+        "ompex_used_in_backtest": False,
+        "locked_plan_identity": identity,
+        "spot_backtest_summary": str(backtest),
+        "spot_backtest_summary_sha256": _sha256(backtest),
+    }
 
 
 def _sha256(path: Path) -> str:

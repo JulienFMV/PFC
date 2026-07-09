@@ -194,24 +194,29 @@ def _write_locked_holdout(tmp_path, *, passed: bool = True, schema: str = "run")
     locked_holdout = tmp_path / "locked_holdout.json"
     plan = _write_locked_plan(tmp_path)
     plan_payload = json.loads(plan.read_text(encoding="utf-8"))
+    identity = build_locked_plan_identity(plan_payload, plan_json=plan)
+    coverage_payload = _ready_coverage(passed=passed)
+    coverage = tmp_path / "coverage_status.json"
+    _write_json(coverage, coverage_payload)
     post_csv = tmp_path / "post.csv"
     post_csv.write_text("timestamp_utc,baseline_abs_error_eur_mwh,adjusted_abs_error_eur_mwh\n", encoding="utf-8")
     backtest = tmp_path / "spot_backtest_summary.json"
-    _write_json(backtest, {"status": "DIAGNOSTIC_PASS"})
+    _write_json(backtest, _passing_backtest(passed=passed))
     audit = tmp_path / "locked_holdout_audit.json"
-    _write_json(audit, {"status": "LOCKED_HOLDOUT_PASS"})
+    _write_json(audit, _passing_audit(identity=identity, backtest=backtest, passed=passed))
     payload = {
         "schema_version": "epex_lab_locked_holdout_audit.v1"
         if schema == "audit"
         else "epex_lab_locked_holdout_run.v1",
         "status": "LOCKED_HOLDOUT_PASS" if passed else "WAITING_FOR_FULL_SPOT_COVERAGE",
+        "benchmark_policy": "locked_future_no_ompex_holdout",
         "promotion_gate": False,
         "production_approved": False,
         "ompex_used_in_model": False,
         "ompex_used_in_selection": False,
         "ompex_used_in_backtest": False,
         "holdout_pass": passed,
-        "locked_plan_identity": build_locked_plan_identity(plan_payload, plan_json=plan),
+        "locked_plan_identity": identity,
         "spot_backtest_summary": str(backtest),
         "spot_backtest_summary_sha256": _sha256(backtest),
         "post_valuation_timestamp_residuals_csv": str(post_csv),
@@ -220,6 +225,9 @@ def _write_locked_holdout(tmp_path, *, passed: bool = True, schema: str = "run")
     if schema != "audit":
         payload.update(
             {
+                "coverage_status": str(coverage),
+                "coverage_status_sha256": _sha256(coverage),
+                "coverage": coverage_payload,
                 "coverage_ready": passed,
                 "backtest_ran": passed,
                 "audit_ran": passed,
@@ -229,6 +237,52 @@ def _write_locked_holdout(tmp_path, *, passed: bool = True, schema: str = "run")
         )
     _write_json(locked_holdout, payload)
     return locked_holdout
+
+
+def _ready_coverage(*, passed: bool = True):
+    return {
+        "status": "READY_TO_RUN_HOLDOUT_BACKTEST" if passed else "WAITING_FOR_FULL_SPOT_COVERAGE",
+        "ready_to_run_backtest": passed,
+        "checks": {
+            "full_window_covered": passed,
+            "min_holdout_hours_met": passed,
+            "no_duplicate_holdout_rows": passed,
+            "spot_price_column_present": passed,
+            "holdout_prices_finite": passed,
+        },
+    }
+
+
+def _passing_backtest(*, passed: bool = True):
+    return {
+        "schema_version": "epex_shape_lab_spot_backtest.v1",
+        "status": "DIAGNOSTIC_PASS" if passed else "DIAGNOSTIC_FAIL",
+        "read_only": True,
+        "promotion_gate": False,
+        "production_approved": False,
+        "independent_production_evidence": False,
+        "benchmark_policy": "rolling_origin_epex_spot_no_ompex_lab_only",
+        "ompex_used_in_model": False,
+        "ompex_used_in_selection": False,
+        "ompex_used_in_backtest": False,
+        "strict_lab_gate_pass": passed,
+    }
+
+
+def _passing_audit(*, identity: dict, backtest: Path, passed: bool = True):
+    return {
+        "schema_version": "epex_lab_locked_holdout_audit.v1",
+        "status": "LOCKED_HOLDOUT_PASS" if passed else "NO_GO_LOCKED_HOLDOUT_FAIL",
+        "holdout_pass": passed,
+        "promotion_gate": False,
+        "production_approved": False,
+        "ompex_used_in_model": False,
+        "ompex_used_in_selection": False,
+        "ompex_used_in_backtest": False,
+        "locked_plan_identity": identity,
+        "spot_backtest_summary": str(backtest),
+        "spot_backtest_summary_sha256": _sha256(backtest),
+    }
 
 
 def test_adjusted_production_manifest_builder_is_no_go_by_default(tmp_path) -> None:
@@ -448,34 +502,32 @@ def test_adjusted_production_manifest_no_go_diagnostic_allows_missing_locked_hol
     assert "locked_holdout_pass" not in checks
 
 
-def test_adjusted_production_manifest_accepts_locked_holdout_audit_schema(tmp_path) -> None:
+def test_adjusted_production_manifest_rejects_locked_holdout_audit_schema(tmp_path) -> None:
     lab, monthly, product, powerbi, policy, independent, governance, _ompex = _write_inputs(tmp_path)
     adjusted_csv = json.loads(lab.read_text(encoding="utf-8"))["outputs"]["adjusted_csv"]
     source = _write_source_provenance(tmp_path, lab, adjusted_csv, source_kind="candidate_csv")
     selection = _write_selection_summary(tmp_path, adjusted_csv)
     locked_holdout = _write_locked_holdout(tmp_path, schema="audit")
 
-    manifest = build_manifest(
-        lab_manifest=lab,
-        baseline_monthly_manifest=monthly,
-        product_summary=product,
-        powerbi_summary=powerbi,
-        source_hierarchy_policy=policy,
-        independent_summary=independent,
-        governance_audit=governance,
-        selection_summary=selection,
-        locked_holdout_summary=locked_holdout,
-        production_run_id="prod-run-1",
-        production_entrypoint="pfc_shaping.pipeline.production_phases",
-        git_commit="a" * 40,
-        source_provenance_manifest=source,
-        production_approved=True,
-        production_promotion_approved=True,
-        output=tmp_path / "adjusted_production_manifest.json",
-    )
-
-    assert manifest["locked_holdout_policy_pass"] is True
-    assert manifest["production_approved"] is True
+    with pytest.raises(ValueError, match="NO_GO_LOCKED_HOLDOUT_RUN_SUMMARY_REQUIRED"):
+        build_manifest(
+            lab_manifest=lab,
+            baseline_monthly_manifest=monthly,
+            product_summary=product,
+            powerbi_summary=powerbi,
+            source_hierarchy_policy=policy,
+            independent_summary=independent,
+            governance_audit=governance,
+            selection_summary=selection,
+            locked_holdout_summary=locked_holdout,
+            production_run_id="prod-run-1",
+            production_entrypoint="pfc_shaping.pipeline.production_phases",
+            git_commit="a" * 40,
+            source_provenance_manifest=source,
+            production_approved=True,
+            production_promotion_approved=True,
+            output=tmp_path / "adjusted_production_manifest.json",
+        )
 
 
 def test_adjusted_production_manifest_can_be_approved_with_candidate_csv_source_provenance(tmp_path) -> None:

@@ -55,7 +55,9 @@ def audit_holdout(
         and summary.get("ompex_used_in_selection") is False
         and summary.get("ompex_used_in_backtest") is False,
         "summary_lab_only": summary.get("promotion_gate") is False and summary.get("production_approved") is False,
-        "strict_lab_gate_pass": summary.get("strict_lab_gate_pass") is criteria.get("strict_lab_gate_pass"),
+        "summary_status_pass": summary.get("status") == "DIAGNOSTIC_PASS",
+        "strict_lab_gate_pass": summary.get("strict_lab_gate_pass") is True
+        and criteria.get("strict_lab_gate_pass") is True,
         "baseline_csv_sha256_bound": (summary.get("source_hashes") or {}).get("baseline_csv")
         == criteria.get("baseline_csv_sha256"),
         "adjusted_csv_sha256_bound": (summary.get("source_hashes") or {}).get("adjusted_csv")

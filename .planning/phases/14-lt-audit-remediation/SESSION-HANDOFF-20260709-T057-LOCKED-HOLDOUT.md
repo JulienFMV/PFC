@@ -581,3 +581,52 @@ python -m pytest tests/test_epex_lab_locked_holdout_policy.py tests/test_backtes
 ```
 
 Result: `82 passed, 1 skipped`.
+
+Coverage value-usability follow-up:
+
+- `scripts/check_epex_lab_locked_holdout_coverage.py` now requires the future
+  EPEX spot parquet to contain `price_eur_mwh`.
+- It also requires all observed holdout-window prices to be finite before
+  setting `ready_to_run_backtest=true`.
+- It requires `benchmark_policy=locked_future_no_ompex_holdout` in the locked
+  plan before reporting `READY_TO_RUN_HOLDOUT_BACKTEST`.
+- The coverage JSON now reports `spot_price_column`,
+  `non_finite_holdout_price_rows`,
+  `checks.plan_benchmark_policy_locked`,
+  `checks.spot_price_column_present`, and
+  `checks.holdout_prices_finite`.
+- A full timestamp window without usable prices remains fail-closed with
+  `WAITING_FOR_FULL_SPOT_COVERAGE` and CLI exit `1`.
+- The locked T057 plan JSON was not modified.
+
+Promotion evidence hardening:
+
+- `scripts/run_epex_lab_locked_holdout.py` now writes
+  `coverage_status_sha256`.
+- `scripts/epex_lab_locked_holdout_policy.py` now accepts only
+  `epex_lab_locked_holdout_run.v1` as passable promotion holdout evidence.
+  Standalone `epex_lab_locked_holdout_audit.v1` remains diagnostic evidence
+  but is rejected by production policy with
+  `NO_GO_LOCKED_HOLDOUT_RUN_SUMMARY_REQUIRED`.
+- Passable run summaries must hash-bind `coverage_status.json`,
+  `spot_backtest_summary.json`, and `locked_holdout_audit.json`.
+- The shared policy opens linked backtest/audit JSON and verifies schema,
+  PASS statuses, no-OMPEX/lab-only flags, strict lab gate pass, and the same
+  locked plan identity.
+- `scripts/audit_epex_lab_locked_holdout.py` now explicitly requires
+  `summary.status=DIAGNOSTIC_PASS` and `strict_lab_gate_pass=true`.
+- Regenerated current local runner remains
+  `WAITING_FOR_FULL_SPOT_COVERAGE`, exit `1`, with spot max
+  `2026-07-08T23:00:00Z`, observed holdout hours `0`, expected `336`, and
+  `coverage_status_sha256` present.
+- Regenerated future approval audit remains
+  `NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING`, exit `1`, with
+  `blocking_stage=locked_holdout_coverage`.
+
+Validation:
+
+```powershell
+python -m pytest tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_adjusted_production_chain_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_epex_lab_locked_holdout_policy.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result: `86 passed, 1 skipped`.

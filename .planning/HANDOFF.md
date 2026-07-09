@@ -209,6 +209,30 @@ reported `41 passed, 1 skipped`. The current command against T057 evidence
 returns exit `1` as expected because status remains
 `NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING`.
 
+T057 coverage preflight now also verifies spot value usability before
+unlocking the backtest. `scripts/check_epex_lab_locked_holdout_coverage.py`
+requires the plan benchmark policy to be `locked_future_no_ompex_holdout`,
+requires `price_eur_mwh` to be present in the refreshed EPEX spot parquet, and
+requires all observed holdout-window prices to be finite. A complete hourly
+index without the locked policy or usable prices remains
+`WAITING_FOR_FULL_SPOT_COVERAGE` and the CLI exits `1`.
+
+Expert-audit hardening also tightened downstream holdout evidence: passable
+promotion policy now accepts only `epex_lab_locked_holdout_run.v1` summaries
+from `scripts/run_epex_lab_locked_holdout.py`, not audit-only JSON sidecars.
+The run summary must hash-bind `coverage_status.json`, the backtest summary,
+and the locked-holdout audit; the shared policy opens those linked JSON files
+and verifies schema/status/no-OMPEX/lab-only flags plus the same locked plan
+identity. `scripts/audit_epex_lab_locked_holdout.py` now requires
+`DIAGNOSTIC_PASS` and `strict_lab_gate_pass=true`.
+
+Validation:
+`python -m pytest tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_adjusted_production_chain_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_epex_lab_locked_holdout_policy.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+reported `86 passed, 1 skipped`.
+Current regenerated T057 runner still exits `1` with
+`WAITING_FOR_FULL_SPOT_COVERAGE`, spot max `2026-07-08T23:00:00Z`, observed
+holdout hours `0`, expected `336`, and `coverage_status_sha256` present.
+
 Expert-audit follow-up on 2026-07-09 made the T057 holdout CLIs fail-closed:
 
 - `scripts/check_epex_lab_locked_holdout_coverage.py` exits `0` only when

@@ -13,6 +13,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
 try:
@@ -22,6 +23,8 @@ except ModuleNotFoundError:  # pragma: no cover - direct script execution
 
 
 PLAN_SCHEMA_VERSION = "epex_lab_locked_holdout_plan.v1"
+LOCKED_HOLDOUT_POLICY = "locked_future_no_ompex_holdout"
+SPOT_PRICE_COLUMN = "price_eur_mwh"
 
 
 def check_coverage(
@@ -37,12 +40,21 @@ def check_coverage(
     end = _to_utc(plan["holdout_end_utc"])
     if end <= start:
         raise ValueError("holdout_end_utc must be after holdout_start_utc")
-    spot = _load_spot_index(spot_parquet)
+    spot_frame = _load_spot_frame(spot_parquet)
+    spot = spot_frame.index
     expected = pd.date_range(start, end, freq="h", inclusive="left")
-    observed = spot[(spot >= start) & (spot < end)]
+    observed_mask = (spot >= start) & (spot < end)
+    observed = spot[observed_mask]
     observed_unique = pd.DatetimeIndex(observed.unique()).sort_values()
     missing = expected.difference(observed_unique)
     extra_duplicates = int(len(observed) - len(observed_unique))
+    price_column_present = SPOT_PRICE_COLUMN in spot_frame.columns
+    non_finite_price_rows = None
+    if price_column_present:
+        holdout_prices = pd.to_numeric(spot_frame.loc[observed_mask, SPOT_PRICE_COLUMN], errors="coerce")
+        finite_mask = np.isfinite(holdout_prices.to_numpy(dtype="float64", na_value=np.nan))
+        non_finite_price_rows = int((~finite_mask).sum())
+    holdout_prices_finite = bool(price_column_present and non_finite_price_rows == 0)
     criteria = plan.get("pass_criteria") or {}
     min_hours = int(criteria.get("min_holdout_hours", len(expected)))
     coverage = {
@@ -60,6 +72,8 @@ def check_coverage(
         "expected_holdout_hours": int(len(expected)),
         "observed_holdout_hours": int(len(observed_unique)),
         "duplicate_holdout_rows": extra_duplicates,
+        "spot_price_column": SPOT_PRICE_COLUMN,
+        "non_finite_holdout_price_rows": non_finite_price_rows,
         "missing_holdout_hours": int(len(missing)),
         "first_missing_holdout_utc": _iso(missing[0]) if len(missing) else None,
         "last_missing_holdout_utc": _iso(missing[-1]) if len(missing) else None,
@@ -70,7 +84,10 @@ def check_coverage(
             "plan_no_ompex": plan.get("ompex_used_in_model") is False
             and plan.get("ompex_used_in_selection") is False
             and plan.get("ompex_used_in_backtest") is False,
+            "plan_benchmark_policy_locked": plan.get("benchmark_policy") == LOCKED_HOLDOUT_POLICY,
             "spot_parquet_non_empty": bool(len(spot)),
+            "spot_price_column_present": price_column_present,
+            "holdout_prices_finite": holdout_prices_finite,
             "full_window_covered": int(len(missing)) == 0,
             "min_holdout_hours_met": int(len(observed_unique)) >= min_hours,
             "no_duplicate_holdout_rows": extra_duplicates == 0,
@@ -79,7 +96,10 @@ def check_coverage(
     checks = coverage["checks"]
     ready = bool(
         checks["plan_no_ompex"]
+        and checks["plan_benchmark_policy_locked"]
         and checks["spot_parquet_non_empty"]
+        and checks["spot_price_column_present"]
+        and checks["holdout_prices_finite"]
         and checks["full_window_covered"]
         and checks["min_holdout_hours_met"]
         and checks["no_duplicate_holdout_rows"]
@@ -97,7 +117,7 @@ def check_coverage(
     return coverage
 
 
-def _load_spot_index(path: Path) -> pd.DatetimeIndex:
+def _load_spot_frame(path: Path) -> pd.DataFrame:
     frame = pd.read_parquet(path)
     if not isinstance(frame.index, pd.DatetimeIndex):
         raise ValueError("spot parquet must use a DatetimeIndex")
@@ -106,7 +126,9 @@ def _load_spot_index(path: Path) -> pd.DatetimeIndex:
         idx = idx.tz_localize("UTC")
     else:
         idx = idx.tz_convert("UTC")
-    return pd.DatetimeIndex(idx).sort_values()
+    frame = frame.copy()
+    frame.index = pd.DatetimeIndex(idx)
+    return frame.sort_index()
 
 
 def _to_utc(value: Any) -> pd.Timestamp:

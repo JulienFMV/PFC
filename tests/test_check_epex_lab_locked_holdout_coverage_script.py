@@ -24,6 +24,10 @@ def test_check_epex_lab_locked_holdout_coverage_ready(tmp_path: Path) -> None:
     assert summary["expected_holdout_hours"] == 4
     assert summary["observed_holdout_hours"] == 4
     assert summary["missing_holdout_hours"] == 0
+    assert summary["non_finite_holdout_price_rows"] == 0
+    assert summary["checks"]["plan_benchmark_policy_locked"] is True
+    assert summary["checks"]["spot_price_column_present"] is True
+    assert summary["checks"]["holdout_prices_finite"] is True
     assert summary["checks"]["full_window_covered"] is True
     assert summary["locked_plan_identity"]["plan_id"] == "test_holdout"
     assert summary["locked_plan_identity"]["plan_json_sha256"] == _sha256(plan)
@@ -77,6 +81,61 @@ def test_check_epex_lab_locked_holdout_coverage_waits_for_missing_hours(tmp_path
     assert summary["checks"]["full_window_covered"] is False
 
 
+def test_check_epex_lab_locked_holdout_coverage_waits_without_price_column(tmp_path: Path) -> None:
+    plan = _write_plan(tmp_path, min_hours=4)
+    spot = tmp_path / "spot.parquet"
+    pd.DataFrame(
+        {"other_price": [1.0, 2.0, 3.0, 4.0]},
+        index=pd.date_range("2026-07-10T00:00:00Z", periods=4, freq="h"),
+    ).to_parquet(spot)
+
+    summary = check_coverage(plan_json=plan, spot_parquet=spot)
+
+    assert summary["status"] == "WAITING_FOR_FULL_SPOT_COVERAGE"
+    assert summary["ready_to_run_backtest"] is False
+    assert summary["missing_holdout_hours"] == 0
+    assert summary["checks"]["full_window_covered"] is True
+    assert summary["checks"]["spot_price_column_present"] is False
+    assert summary["checks"]["holdout_prices_finite"] is False
+    assert summary["non_finite_holdout_price_rows"] is None
+
+
+def test_check_epex_lab_locked_holdout_coverage_waits_for_non_finite_prices(tmp_path: Path) -> None:
+    plan = _write_plan(tmp_path, min_hours=4)
+    spot = tmp_path / "spot.parquet"
+    pd.DataFrame(
+        {"price_eur_mwh": ["1.0", "2.0", "bad", "inf"]},
+        index=pd.date_range("2026-07-10T00:00:00Z", periods=4, freq="h"),
+    ).to_parquet(spot)
+
+    summary = check_coverage(plan_json=plan, spot_parquet=spot)
+
+    assert summary["status"] == "WAITING_FOR_FULL_SPOT_COVERAGE"
+    assert summary["ready_to_run_backtest"] is False
+    assert summary["missing_holdout_hours"] == 0
+    assert summary["checks"]["full_window_covered"] is True
+    assert summary["checks"]["spot_price_column_present"] is True
+    assert summary["checks"]["holdout_prices_finite"] is False
+    assert summary["non_finite_holdout_price_rows"] == 2
+
+
+def test_check_epex_lab_locked_holdout_coverage_waits_for_wrong_benchmark_policy(tmp_path: Path) -> None:
+    plan = _write_plan(tmp_path, min_hours=4, benchmark_policy="ad_hoc_holdout")
+    spot = tmp_path / "spot.parquet"
+    pd.DataFrame(
+        {"price_eur_mwh": [1.0, 2.0, 3.0, 4.0]},
+        index=pd.date_range("2026-07-10T00:00:00Z", periods=4, freq="h"),
+    ).to_parquet(spot)
+
+    summary = check_coverage(plan_json=plan, spot_parquet=spot)
+
+    assert summary["status"] == "WAITING_FOR_FULL_SPOT_COVERAGE"
+    assert summary["ready_to_run_backtest"] is False
+    assert summary["missing_holdout_hours"] == 0
+    assert summary["checks"]["plan_benchmark_policy_locked"] is False
+    assert summary["checks"]["full_window_covered"] is True
+
+
 def test_check_epex_lab_locked_holdout_coverage_cli_exits_nonzero_when_waiting(tmp_path: Path) -> None:
     plan = _write_plan(tmp_path, min_hours=4)
     spot = tmp_path / "spot.parquet"
@@ -105,13 +164,19 @@ def test_check_epex_lab_locked_holdout_coverage_cli_exits_nonzero_when_waiting(t
     assert code == 1
 
 
-def _write_plan(tmp_path: Path, *, min_hours: int) -> Path:
+def _write_plan(
+    tmp_path: Path,
+    *,
+    min_hours: int,
+    benchmark_policy: str = "locked_future_no_ompex_holdout",
+) -> Path:
     path = tmp_path / "plan.json"
     path.write_text(
         json.dumps(
             {
                 "schema_version": "epex_lab_locked_holdout_plan.v1",
                 "plan_id": "test_holdout",
+                "benchmark_policy": benchmark_policy,
                 "ompex_used_in_model": False,
                 "ompex_used_in_selection": False,
                 "ompex_used_in_backtest": False,

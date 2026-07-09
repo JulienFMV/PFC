@@ -41,6 +41,7 @@ def run_locked_holdout(
         "spot_parquet": str(spot_parquet),
         "output_dir": str(output_dir),
         "coverage_status": str(coverage_path),
+        "coverage_status_sha256": _sha256(coverage_path),
         "coverage_ready": bool(coverage.get("ready_to_run_backtest")),
         "coverage": coverage,
         "locked_plan_identity": build_locked_plan_identity(plan, plan_json=plan_json),

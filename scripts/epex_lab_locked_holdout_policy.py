@@ -11,6 +11,9 @@ from typing import Any
 PLAN_SCHEMA_VERSION = "epex_lab_locked_holdout_plan.v1"
 RUN_SCHEMA_VERSION = "epex_lab_locked_holdout_run.v1"
 AUDIT_SCHEMA_VERSION = "epex_lab_locked_holdout_audit.v1"
+LOCKED_HOLDOUT_POLICY = "locked_future_no_ompex_holdout"
+SPOT_BACKTEST_SCHEMA_VERSION = "epex_shape_lab_spot_backtest.v1"
+SPOT_BACKTEST_POLICY = "rolling_origin_epex_spot_no_ompex_lab_only"
 
 
 def build_locked_plan_identity(plan: dict[str, Any], *, plan_json: Path | None = None) -> dict[str, Any]:
@@ -49,9 +52,25 @@ def locked_holdout_policy(summary: dict[str, Any] | None) -> dict[str, Any]:
         "ompex_not_backtest": summary.get("ompex_used_in_backtest") is False,
     }
     if schema == RUN_SCHEMA_VERSION:
+        coverage = summary.get("coverage") if isinstance(summary.get("coverage"), dict) else {}
+        coverage_checks = coverage.get("checks") if isinstance(coverage.get("checks"), dict) else {}
         checks.update(
             {
+                "benchmark_policy_locked": summary.get("benchmark_policy") == LOCKED_HOLDOUT_POLICY,
                 "coverage_ready": summary.get("coverage_ready") is True,
+                "coverage_status_ready": coverage.get("status") == "READY_TO_RUN_HOLDOUT_BACKTEST",
+                "coverage_embedded_ready": coverage.get("ready_to_run_backtest") is True,
+                "coverage_full_window_covered": coverage_checks.get("full_window_covered") is True,
+                "coverage_min_holdout_hours_met": coverage_checks.get("min_holdout_hours_met") is True,
+                "coverage_no_duplicate_holdout_rows": coverage_checks.get("no_duplicate_holdout_rows") is True,
+                "coverage_spot_price_column_present": coverage_checks.get("spot_price_column_present") is True,
+                "coverage_holdout_prices_finite": coverage_checks.get("holdout_prices_finite") is True,
+                "coverage_status_sha256_bound": _file_sha_bound(
+                    summary,
+                    path_key="coverage_status",
+                    sha_key="coverage_status_sha256",
+                ),
+                "coverage_status_matches_embedded": _coverage_status_matches_embedded(summary),
                 "backtest_ran": summary.get("backtest_ran") is True,
                 "audit_ran": summary.get("audit_ran") is True,
                 "holdout_pass": summary.get("holdout_pass") is True,
@@ -68,29 +87,16 @@ def locked_holdout_policy(summary: dict[str, Any] | None) -> dict[str, Any]:
                 ),
             }
         )
+        checks.update(_linked_backtest_checks(summary))
+        checks.update(_linked_audit_checks(summary))
         status = (
             "NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING"
             if summary.get("status") == "WAITING_FOR_FULL_SPOT_COVERAGE"
             else "NO_GO_LOCKED_HOLDOUT_FAIL"
         )
     elif schema == AUDIT_SCHEMA_VERSION:
-        checks.update(
-            {
-                "holdout_pass": summary.get("holdout_pass") is True,
-                "status_pass": summary.get("status") == "LOCKED_HOLDOUT_PASS",
-                "spot_backtest_summary_sha256_bound": _file_sha_bound(
-                    summary,
-                    path_key="spot_backtest_summary",
-                    sha_key="spot_backtest_summary_sha256",
-                ),
-                "post_valuation_csv_sha256_bound": _file_sha_bound(
-                    summary,
-                    path_key="post_valuation_timestamp_residuals_csv",
-                    sha_key="post_valuation_timestamp_residuals_csv_sha256",
-                ),
-            }
-        )
-        status = "NO_GO_LOCKED_HOLDOUT_FAIL"
+        checks["run_summary_schema_required"] = False
+        status = "NO_GO_LOCKED_HOLDOUT_RUN_SUMMARY_REQUIRED"
     else:
         checks["known_schema"] = False
         status = "NO_GO_LOCKED_HOLDOUT_POLICY_INVALID"
@@ -115,10 +121,85 @@ def locked_holdout_policy(summary: dict[str, Any] | None) -> dict[str, Any]:
     }
 
 
+def _coverage_status_matches_embedded(summary: dict[str, Any]) -> bool:
+    coverage = summary.get("coverage")
+    if not isinstance(coverage, dict):
+        return False
+    linked = _read_bound_json(summary, path_key="coverage_status", sha_key="coverage_status_sha256")
+    return linked == coverage
+
+
+def _linked_backtest_checks(summary: dict[str, Any]) -> dict[str, bool]:
+    linked = _read_bound_json(
+        summary,
+        path_key="spot_backtest_summary",
+        sha_key="spot_backtest_summary_sha256",
+    )
+    if linked is None:
+        return {
+            "linked_backtest_json_readable": False,
+            "linked_backtest_schema": False,
+            "linked_backtest_status_pass": False,
+            "linked_backtest_strict_lab_gate_pass": False,
+            "linked_backtest_lab_only": False,
+            "linked_backtest_no_ompex": False,
+            "linked_backtest_policy": False,
+        }
+    return {
+        "linked_backtest_json_readable": True,
+        "linked_backtest_schema": linked.get("schema_version") == SPOT_BACKTEST_SCHEMA_VERSION,
+        "linked_backtest_status_pass": linked.get("status") == "DIAGNOSTIC_PASS",
+        "linked_backtest_strict_lab_gate_pass": linked.get("strict_lab_gate_pass") is True,
+        "linked_backtest_lab_only": linked.get("promotion_gate") is False
+        and linked.get("production_approved") is False
+        and linked.get("independent_production_evidence") is False,
+        "linked_backtest_no_ompex": linked.get("ompex_used_in_model") is False
+        and linked.get("ompex_used_in_selection") is False
+        and linked.get("ompex_used_in_backtest") is False,
+        "linked_backtest_policy": linked.get("benchmark_policy") == SPOT_BACKTEST_POLICY,
+    }
+
+
+def _linked_audit_checks(summary: dict[str, Any]) -> dict[str, bool]:
+    linked = _read_bound_json(
+        summary,
+        path_key="locked_holdout_audit",
+        sha_key="locked_holdout_audit_sha256",
+    )
+    if linked is None:
+        return {
+            "linked_audit_json_readable": False,
+            "linked_audit_schema": False,
+            "linked_audit_status_pass": False,
+            "linked_audit_holdout_pass": False,
+            "linked_audit_lab_only": False,
+            "linked_audit_no_ompex": False,
+            "linked_audit_identity_matches_run": False,
+            "linked_audit_backtest_path_matches_run": False,
+            "linked_audit_backtest_sha_matches_run": False,
+        }
+    return {
+        "linked_audit_json_readable": True,
+        "linked_audit_schema": linked.get("schema_version") == AUDIT_SCHEMA_VERSION,
+        "linked_audit_status_pass": linked.get("status") == "LOCKED_HOLDOUT_PASS",
+        "linked_audit_holdout_pass": linked.get("holdout_pass") is True,
+        "linked_audit_lab_only": linked.get("promotion_gate") is False and linked.get("production_approved") is False,
+        "linked_audit_no_ompex": linked.get("ompex_used_in_model") is False
+        and linked.get("ompex_used_in_selection") is False
+        and linked.get("ompex_used_in_backtest") is False,
+        "linked_audit_identity_matches_run": _same_identity(_identity(linked), _identity(summary)),
+        "linked_audit_backtest_path_matches_run": linked.get("spot_backtest_summary")
+        == summary.get("spot_backtest_summary"),
+        "linked_audit_backtest_sha_matches_run": linked.get("spot_backtest_summary_sha256")
+        == summary.get("spot_backtest_summary_sha256"),
+    }
+
+
 def _identity_checks(summary: dict[str, Any]) -> dict[str, bool]:
     identity = _identity(summary)
     checks = {
-        "locked_plan_identity_present": bool(identity),
+        "locked_plan_identity_present": isinstance(summary.get("locked_plan_identity"), dict)
+        and bool(summary.get("locked_plan_identity")),
         "plan_id_present": bool(str(identity.get("plan_id") or "").strip()),
         "plan_json_present": bool(str(identity.get("plan_json") or "").strip()),
         "plan_json_sha256_present": bool(str(identity.get("plan_json_sha256") or "").strip()),
@@ -163,6 +244,23 @@ def _identity_checks(summary: dict[str, Any]) -> dict[str, bool]:
     return checks
 
 
+def _same_identity(left: dict[str, Any], right: dict[str, Any]) -> bool:
+    keys = [
+        "plan_id",
+        "plan_schema_version",
+        "benchmark_policy",
+        "frozen_at_utc",
+        "holdout_start_utc",
+        "holdout_end_utc",
+        "baseline_csv_sha256",
+        "adjusted_csv_sha256",
+        "lab_manifest_sha256",
+        "selection_summary_sha256",
+        "plan_json_sha256",
+    ]
+    return all(left.get(key) == right.get(key) for key in keys)
+
+
 def _identity(summary: dict[str, Any]) -> dict[str, Any]:
     value = summary.get("locked_plan_identity")
     if isinstance(value, dict):
@@ -194,6 +292,16 @@ def _file_sha_bound(summary: dict[str, Any], *, path_key: str, sha_key: str) -> 
         return False
     path = Path(str(path_text))
     return path.exists() and expected_sha == _sha256(path)
+
+
+def _read_bound_json(summary: dict[str, Any], *, path_key: str, sha_key: str) -> dict[str, Any] | None:
+    if not _file_sha_bound(summary, path_key=path_key, sha_key=sha_key):
+        return None
+    try:
+        payload = json.loads(Path(str(summary[path_key])).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
 
 
 def _sha256(path: Path) -> str:

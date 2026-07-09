@@ -101,6 +101,28 @@ def test_audit_epex_lab_locked_holdout_rejects_non_lab_backtest_schema(tmp_path:
     assert audit["checks"]["summary_schema"] is False
 
 
+def test_audit_epex_lab_locked_holdout_rejects_diagnostic_fail_summary(tmp_path: Path) -> None:
+    plan = _write_plan(tmp_path)
+    post = tmp_path / "post.csv"
+    pd.DataFrame(
+        {
+            "timestamp_utc": pd.date_range("2026-07-10", periods=4, freq="h", tz="UTC").astype(str),
+            "baseline_abs_error_eur_mwh": [4.0, 4.0, 4.0, 4.0],
+            "adjusted_abs_error_eur_mwh": [3.0, 3.0, 3.0, 3.0],
+        }
+    ).to_csv(post, index=False)
+    summary = _write_summary(tmp_path, baseline_sha="base", adjusted_sha="adjusted")
+    payload = json.loads(summary.read_text(encoding="utf-8"))
+    payload["status"] = "DIAGNOSTIC_FAIL"
+    summary.write_text(json.dumps(payload), encoding="utf-8")
+
+    audit = audit_holdout(plan_json=plan, spot_backtest_summary=summary)
+
+    assert audit["status"] == "NO_GO_LOCKED_HOLDOUT_FAIL"
+    assert audit["holdout_pass"] is False
+    assert audit["checks"]["summary_status_pass"] is False
+
+
 def test_audit_epex_lab_locked_holdout_rejects_tampered_post_csv(tmp_path: Path) -> None:
     plan = _write_plan(tmp_path)
     post = tmp_path / "post.csv"
@@ -191,6 +213,7 @@ def _write_summary(
         json.dumps(
             {
                 "schema_version": schema_version,
+                "status": "DIAGNOSTIC_PASS",
                 "read_only": True,
                 "benchmark_policy": "rolling_origin_epex_spot_no_ompex_lab_only",
                 "promotion_gate": False,
