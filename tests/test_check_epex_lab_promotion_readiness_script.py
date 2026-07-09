@@ -156,7 +156,7 @@ def _write_locked_plan(tmp_path):
     return plan
 
 
-def _write_locked_holdout(tmp_path, *, passed: bool = True):
+def _write_locked_holdout(tmp_path, *, passed: bool = True, status: str | None = None):
     locked_holdout = tmp_path / "locked_holdout.json"
     plan = _write_locked_plan(tmp_path)
     plan_payload = json.loads(plan.read_text(encoding="utf-8"))
@@ -172,7 +172,7 @@ def _write_locked_holdout(tmp_path, *, passed: bool = True):
         locked_holdout,
         {
             "schema_version": "epex_lab_locked_holdout_run.v1",
-            "status": "LOCKED_HOLDOUT_PASS" if passed else "NO_GO_LOCKED_HOLDOUT_FAIL",
+            "status": status or ("LOCKED_HOLDOUT_PASS" if passed else "NO_GO_LOCKED_HOLDOUT_FAIL"),
             "benchmark_policy": "locked_future_no_ompex_holdout",
             "expected_plan_json_sha256": identity["plan_json_sha256"],
             "actual_plan_json_sha256": identity["plan_json_sha256"],
@@ -432,6 +432,8 @@ def test_epex_lab_readiness_reports_no_go_when_production_chain_missing(tmp_path
     assert summary["strict_diagnostics_pass"] is True
     assert summary["production_chain_pass"] is False
     assert summary["status"] == "STRICT_DIAGNOSTICS_PASS_PRODUCTION_CHAIN_MISSING"
+    assert summary["production_blocking_stage"] == "production_evidence"
+    assert summary["next_required_step"] == "generate_adjusted_production_export_selected_capstone_evidence"
     assert "adjusted_capstone" in summary["missing_production_evidence"]
 
 
@@ -619,6 +621,8 @@ def test_epex_lab_readiness_can_pass_with_separate_approved_production_chain(tmp
     assert summary["strict_diagnostics_pass"] is True
     assert summary["production_chain_pass"] is True
     assert summary["status"] == "PROMOTION_READY"
+    assert summary["production_blocking_stage"] == "promotion_ready"
+    assert summary["next_required_step"] == "run_independent_capstone_review"
     assert summary["required_production_checks"] == REQUIRED_PRODUCTION_CHECKS
 
     holdout_payload = json.loads(locked_holdout.read_text(encoding="utf-8"))
@@ -883,8 +887,29 @@ def test_epex_lab_readiness_requires_locked_holdout_for_complete_production_chai
     checks = {check["name"]: check for check in summary["checks"]}
     assert summary["approved"] is False
     assert summary["production_chain_pass"] is False
+    assert summary["production_blocking_stage"] == "locked_holdout_missing"
+    assert summary["next_required_step"] == "provide_passing_locked_holdout_summary"
     assert checks["locked_holdout_pass"]["status"] == "FAIL"
     assert checks["locked_holdout_pass"]["value"]["status"] == "MISSING_LOCKED_HOLDOUT"
+
+
+def test_epex_lab_readiness_routes_locked_holdout_input_invalid(tmp_path) -> None:
+    paths = _write_approved_chain(tmp_path)
+    paths["locked_holdout"] = _write_locked_holdout(
+        tmp_path,
+        passed=False,
+        status="NO_GO_LOCKED_HOLDOUT_INPUT_INVALID",
+    )
+
+    summary = _check_readiness_for_chain(paths, tmp_path, output_name="decision_input_invalid.json")
+
+    checks = {check["name"]: check for check in summary["checks"]}
+    assert summary["approved"] is False
+    assert summary["production_chain_pass"] is False
+    assert summary["production_blocking_stage"] == "locked_holdout_input_invalid"
+    assert summary["next_required_step"] == "fix_locked_holdout_plan_or_spot_inputs_then_rerun_preflight"
+    assert checks["locked_holdout_pass"]["status"] == "FAIL"
+    assert checks["locked_holdout_pass"]["value"]["status"] == "NO_GO_LOCKED_HOLDOUT_INPUT_INVALID"
 
 
 def test_epex_lab_readiness_rejects_self_attested_selection_policy(tmp_path) -> None:

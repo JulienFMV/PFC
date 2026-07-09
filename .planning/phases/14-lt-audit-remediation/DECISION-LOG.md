@@ -6314,3 +6314,55 @@ Invariants:
 - The existing locked T057 plan JSON remains unchanged.
 - Input-invalid routing remains fail-closed and does not approve promotion.
 
+## D-20260709-80 - Add Machine-Readable Routing To Promotion Readiness
+
+Decision: EPEX lab promotion readiness now emits machine-readable production
+blocking route fields.
+
+Reason: the future approval audit already routes T057 blockers, but operators
+also inspect readiness directly. A generic
+`STRICT_DIAGNOSTICS_PASS_PRODUCTION_CHAIN_MISSING` status is not specific
+enough to distinguish missing production artifacts, missing T057 evidence,
+future coverage waiting, invalid holdout inputs, or promotion-ready review.
+
+Implementation:
+
+- `scripts/check_epex_lab_promotion_readiness.py` now emits:
+  - `missing_production_checks`;
+  - `failed_production_checks`;
+  - `production_blocking_stage`;
+  - `next_required_step`.
+- Readiness routing distinguishes strict diagnostics, production evidence,
+  missing T057, T057 coverage waiting, T057 input-invalid, T057 failure,
+  production-check failures, and promotion-ready review.
+- Tests cover production-evidence missing, missing T057, input-invalid T057,
+  and promotion-ready routing.
+
+Validation:
+
+- `python -m pytest tests/test_check_epex_lab_promotion_readiness_script.py -q -p no:cacheprovider`
+  reported `14 passed`.
+- `python -m pytest tests/test_check_epex_lab_promotion_readiness_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_epex_lab_locked_holdout_policy.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  reported `85 passed, 1 skipped`.
+- `python -m pytest tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_adjusted_production_chain_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_epex_lab_locked_holdout_policy.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_plan_epex_lab_locked_holdout_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  reported `113 passed, 1 skipped`.
+
+Operational result:
+
+- Current frozen T057 plan remains unchanged.
+- Regenerated current T057 runner remains
+  `WAITING_FOR_FULL_SPOT_COVERAGE`, exit `1`.
+- Readiness consumers can now route NO-GO decisions before running the separate
+  future approval audit.
+
+Rejected alternatives:
+
+- Keep routing only in `audit_epex_lab_future_approval_path.py`.
+- Overload the existing readiness `status` string with many new values.
+
+Invariants:
+
+- Readiness routing is diagnostic metadata only; `approved` and
+  `production_chain_pass` remain the gates.
+- The existing locked T057 plan JSON remains unchanged.
+

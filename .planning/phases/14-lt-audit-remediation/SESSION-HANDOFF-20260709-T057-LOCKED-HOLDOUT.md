@@ -1019,3 +1019,37 @@ Result: `112 passed, 1 skipped`.
 
 Current frozen T057 plan remains unchanged. Regenerated current T057 runner
 still exits `1` with `WAITING_FOR_FULL_SPOT_COVERAGE`.
+
+Follow-up after promotion readiness routing:
+
+- `scripts/check_epex_lab_promotion_readiness.py` now emits
+  `missing_production_checks`, `failed_production_checks`,
+  `production_blocking_stage`, and `next_required_step`.
+- Routing distinguishes strict diagnostics, production evidence, missing T057,
+  T057 coverage waiting, T057 input-invalid, T057 failure, production-check
+  failures, and promotion-ready review.
+- Tests cover production-evidence missing, missing T057, input-invalid T057,
+  and promotion-ready routing.
+
+Validation:
+
+```powershell
+python -m pytest tests/test_check_epex_lab_promotion_readiness_script.py -q -p no:cacheprovider
+```
+
+Result: `14 passed`.
+
+```powershell
+python -m pytest tests/test_check_epex_lab_promotion_readiness_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_epex_lab_locked_holdout_policy.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result: `85 passed, 1 skipped`.
+
+```powershell
+python -m pytest tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_adjusted_production_chain_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_epex_lab_locked_holdout_policy.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_plan_epex_lab_locked_holdout_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result: `113 passed, 1 skipped`.
+
+Current frozen T057 plan remains unchanged. Regenerated current T057 runner
+still exits `1` with `WAITING_FOR_FULL_SPOT_COVERAGE`.

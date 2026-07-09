@@ -395,6 +395,19 @@ def check_readiness(
         and capstone_approved
     )
     approved = bool(strict_diagnostics_pass and production_chain_pass)
+    check_by_name = {str(check.get("name")): check for check in checks}
+    failed_production_checks = [
+        name for name in REQUIRED_PRODUCTION_CHECKS if (check_by_name.get(name) or {}).get("status") == "FAIL"
+    ]
+    missing_production_checks = [name for name in REQUIRED_PRODUCTION_CHECKS if name not in check_by_name]
+    production_blocking_stage, next_required_step = _production_blocking_route(
+        approved=approved,
+        strict_diagnostics_pass=bool(strict_diagnostics_pass),
+        missing_production_evidence=missing_production_evidence,
+        missing_production_checks=missing_production_checks,
+        failed_production_checks=failed_production_checks,
+        locked_holdout_policy=locked_holdout_policy,
+    )
     status = (
         "PROMOTION_READY"
         if approved
@@ -409,6 +422,10 @@ def check_readiness(
         "strict_diagnostics_pass": bool(strict_diagnostics_pass),
         "production_chain_pass": bool(production_chain_pass),
         "missing_production_evidence": missing_production_evidence,
+        "missing_production_checks": missing_production_checks,
+        "failed_production_checks": failed_production_checks,
+        "production_blocking_stage": production_blocking_stage,
+        "next_required_step": next_required_step,
         "required_production_checks": REQUIRED_PRODUCTION_CHECKS,
         "checks": checks,
         "selected_adjusted_csv": (lab.get("outputs") or {}).get("adjusted_csv"),
@@ -425,6 +442,37 @@ def check_readiness(
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(json.dumps(summary, indent=2, sort_keys=True, default=str) + "\n", encoding="utf-8")
     return summary
+
+
+def _production_blocking_route(
+    *,
+    approved: bool,
+    strict_diagnostics_pass: bool,
+    missing_production_evidence: list[str],
+    missing_production_checks: list[str],
+    failed_production_checks: list[str],
+    locked_holdout_policy: dict[str, Any] | None,
+) -> tuple[str, str]:
+    if approved:
+        return "promotion_ready", "run_independent_capstone_review"
+    if not strict_diagnostics_pass:
+        return "strict_diagnostics", "resolve_strict_diagnostic_failures"
+    if locked_holdout_policy is not None and locked_holdout_policy.get("pass") is not True:
+        status = str(locked_holdout_policy.get("status") or "")
+        if status == "MISSING_LOCKED_HOLDOUT":
+            return "locked_holdout_missing", "provide_passing_locked_holdout_summary"
+        if status == "NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING":
+            return "locked_holdout_coverage", "wait_for_full_spot_coverage_then_run_locked_holdout"
+        if status == "NO_GO_LOCKED_HOLDOUT_INPUT_INVALID":
+            return "locked_holdout_input_invalid", "fix_locked_holdout_plan_or_spot_inputs_then_rerun_preflight"
+        return "locked_holdout_failure", "resolve_locked_holdout_failure_without_retuning_locked_window"
+    if missing_production_evidence:
+        return "production_evidence", "generate_adjusted_production_export_selected_capstone_evidence"
+    if missing_production_checks:
+        return "readiness_contract", "regenerate_readiness_with_required_production_checks"
+    if failed_production_checks:
+        return "production_checks", "replace_local_diagnostic_flags_with_real_production_artifacts"
+    return "production_chain", "investigate_production_chain_failure"
 
 
 def _check(name: str, passed: bool, value: Any) -> dict[str, Any]:
