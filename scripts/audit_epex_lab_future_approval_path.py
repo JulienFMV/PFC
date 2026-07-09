@@ -285,7 +285,7 @@ def main(argv: list[str] | None = None) -> int:
         output=args.output,
     )
     print(json.dumps(summary, indent=2, sort_keys=True))
-    return 0
+    return 0 if summary["approved"] else 1
 
 
 if __name__ == "__main__":

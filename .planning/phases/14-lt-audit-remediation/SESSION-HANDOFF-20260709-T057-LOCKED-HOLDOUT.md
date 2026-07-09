@@ -335,3 +335,14 @@ python -m pytest tests/test_check_epex_lab_promotion_readiness_script.py tests/t
 
 Result: `39 passed, 1 skipped`. Current regenerated readiness and future
 approval audit remain `NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING`.
+
+Future approval audit CLI now exits `0` only for `approved=true`; all NO-GO
+states exit `1`. Validation:
+
+```powershell
+python -m pytest tests/test_audit_epex_lab_future_approval_path_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_build_epex_lab_promotion_bundle_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result: `41 passed, 1 skipped`. Running the current T057 command returns exit
+`1` as expected because status remains
+`NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING`.

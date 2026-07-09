@@ -146,6 +146,12 @@ allowing synthetic readiness payloads to remove required checks. Validation:
 `python -m pytest tests/test_check_epex_lab_promotion_readiness_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_build_epex_lab_promotion_bundle_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
 reported `39 passed, 1 skipped`. Regenerated current readiness and future
 approval audit remain `NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING`.
+Future approval audit CLI now exits `0` only when `approved=true`; all NO-GO
+states exit `1`. Validation:
+`python -m pytest tests/test_audit_epex_lab_future_approval_path_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_build_epex_lab_promotion_bundle_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+reported `41 passed, 1 skipped`. The current command against T057 evidence
+returns exit `1` as expected because status remains
+`NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING`.
 
 Current daily generation: Wednesday 2026-07-08 was regenerated from the EEX
 workbook available on 2026-07-08. The latest usable CH/DE/FR quote row in that

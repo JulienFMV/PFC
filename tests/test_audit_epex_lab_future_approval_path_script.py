@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from scripts.audit_epex_lab_future_approval_path import PRODUCTION_CHECKS, audit_future_approval_path
+from scripts.audit_epex_lab_future_approval_path import PRODUCTION_CHECKS, audit_future_approval_path, main
 
 
 def _write_json(path: Path, payload: dict) -> Path:
@@ -252,3 +252,40 @@ def test_future_approval_path_blocks_bad_spot_policy(tmp_path: Path) -> None:
     assert summary["status"] == "NO_GO_SPOT_BACKTEST_POLICY_FAIL"
     assert summary["spot_backtest_policy"]["pass"] is False
     assert summary["spot_backtest_policy"]["checks"]["ompex_not_backtest"] is False
+
+
+def test_future_approval_path_cli_exits_nonzero_for_no_go(tmp_path: Path) -> None:
+    readiness = _write_json(tmp_path / "readiness.json", _readiness_payload())
+
+    code = main(
+        [
+            "--readiness-json",
+            str(readiness),
+            "--output",
+            str(tmp_path / "out.json"),
+        ]
+    )
+
+    assert code == 1
+
+
+def test_future_approval_path_cli_exits_zero_for_promotion_ready_candidate(tmp_path: Path) -> None:
+    holdout = _write_json(tmp_path / "holdout.json", _locked_holdout_run_payload())
+    payload = _readiness_payload(approved=True, production=True)
+    for check in payload["checks"]:
+        if isinstance(check.get("value"), dict) and "locked_holdout_summary_sha256" in check["value"]:
+            check["value"]["locked_holdout_summary_sha256"] = _sha256(holdout)
+    readiness = _write_json(tmp_path / "readiness.json", payload)
+
+    code = main(
+        [
+            "--readiness-json",
+            str(readiness),
+            "--locked-holdout-summary",
+            str(holdout),
+            "--output",
+            str(tmp_path / "out.json"),
+        ]
+    )
+
+    assert code == 0

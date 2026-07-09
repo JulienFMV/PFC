@@ -5118,6 +5118,11 @@ Validation:
   Targeted validation:
   `python -m pytest tests/test_check_epex_lab_promotion_readiness_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_build_epex_lab_promotion_bundle_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
   reported `39 passed, 1 skipped`.
+- Future approval audit CLI now returns `0` only for `approved=true` and `1`
+  for every NO-GO status. Targeted validation:
+  `python -m pytest tests/test_audit_epex_lab_future_approval_path_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_build_epex_lab_promotion_bundle_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  reported `41 passed, 1 skipped`; the current T057 command exits `1` as
+  expected with `NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING`.
 
 Current regenerated evidence remains NO-GO:
 
