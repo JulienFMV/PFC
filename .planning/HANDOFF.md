@@ -1620,6 +1620,39 @@ python -m pytest tests/test_summarize_epex_shape_lab_spot_backtests_script.py -q
 
 Result: `6 passed`.
 
+## 2026-07-09 T057 Spot Discovery Rejection Counters
+
+T057 spot discovery now reports scan/rejection diagnostics:
+
+- `scanned_file_count`
+- `rejected_file_count`
+- `spot_like_rejected_file_count`
+- `rejection_reason_counts`
+
+Current refreshed discovery:
+
+`output/phase14/t057_locked_t056_future_holdout/spot_parquet_discovery_20260709_latest.json`
+
+Result:
+
+- `scanned_file_count=22`
+- `candidate_count=1`
+- `rejected_file_count=21`
+- `spot_like_rejected_file_count=1`
+- `rejection_reason_counts={"index_not_datetime":2,"missing_price_column_or_empty":18,"non_hourly_grid":1}`
+- best candidate remains
+  `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_spot_refresh_20260708/epex_hourly_ch_energy_charts_20260708.parquet`
+- `spot_max_utc=2026-07-08T23:00:00Z`
+- T057 coverage remains `0/336h`, `full_window_covered=false`
+
+Validation:
+
+```powershell
+python -m pytest tests/test_discover_epex_spot_parquet_candidates_script.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_epex_lab_locked_holdout_policy.py -q -p no:cacheprovider
+```
+
+Result: `42 passed`.
+
 ## 2026-07-09 Expert Audit and T058 Lab Plan
 
 Expert read-only audits confirmed the current split of responsibilities:

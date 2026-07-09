@@ -7000,3 +7000,55 @@ Invariants:
 - This is orchestration hardening only. It does not change T059 metrics,
   replacement guard status, no-OMPEX policy, or the no-replacement verdict.
 
+## D-20260709-93 - T057 Spot Discovery Must Report Scan And Rejection Counts
+
+Decision: T057 spot parquet discovery must report how many parquet files were
+scanned and why non-candidates were rejected.
+
+Reason: while T057 waits for future EPEX spot coverage, operators need to
+distinguish "no fresh hourly spot parquet exists" from "the helper did not
+scan the expected files" or "a spot-like parquet exists but was rejected as
+non-hourly." Candidate-only output hid useful diagnostics, especially because
+the local generation can include both hourly and 15-minute spot parquet files.
+
+Implementation:
+
+- `scripts/discover_epex_spot_parquet_candidates.py` now emits:
+  - `scanned_file_count`
+  - `rejected_file_count`
+  - `spot_like_rejected_file_count`
+  - `rejection_reason_counts`
+- The helper still returns candidate files only under `candidates`; rejection
+  counters are operator diagnostics and do not affect the locked holdout gate.
+
+Current T057 discovery result:
+
+- output:
+  `output/phase14/t057_locked_t056_future_holdout/spot_parquet_discovery_20260709_latest.json`
+- `scanned_file_count=22`
+- `candidate_count=1`
+- `rejected_file_count=21`
+- `spot_like_rejected_file_count=1`
+- `rejection_reason_counts={"index_not_datetime":2,"missing_price_column_or_empty":18,"non_hourly_grid":1}`
+- best candidate remains the 2026-07-08 hourly spot parquet with
+  `spot_max_utc=2026-07-08T23:00:00Z`, `observed_holdout_hours=0`,
+  `missing_holdout_hours=336`, and `full_window_covered=false`.
+
+Validation:
+
+- `python -m pytest tests/test_discover_epex_spot_parquet_candidates_script.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_epex_lab_locked_holdout_policy.py -q -p no:cacheprovider`
+  reported `42 passed`.
+
+Rejected alternatives:
+
+- Keep reporting candidate counts only.
+- Include every rejected parquet path in the default JSON, making the operator
+  artifact noisy.
+- Treat non-hourly spot-like files as acceptable for the locked hourly holdout.
+
+Invariants:
+
+- Discovery remains read-only and non-promotional.
+- T057 still requires the hourly coverage checker and locked runner to pass.
+- The locked T057 plan, hashes, and pass criteria remain unchanged.
+

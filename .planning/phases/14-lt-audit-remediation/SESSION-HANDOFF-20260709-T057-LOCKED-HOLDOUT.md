@@ -1414,6 +1414,54 @@ The verdict is unchanged:
   `post_valuation_mae_improvement_eur_mwh`
 - T056/t005 remains frozen for T057.
 
+## 2026-07-09 T057 Spot Discovery Rejection Counters
+
+Follow-up implemented while T057 still waits for future spot coverage:
+
+- `scripts/discover_epex_spot_parquet_candidates.py` now emits
+  `scanned_file_count`, `rejected_file_count`,
+  `spot_like_rejected_file_count`, and `rejection_reason_counts`.
+- Tests now assert these counters for:
+  - a missing-price parquet;
+  - a non-hourly spot-like parquet rejected by default;
+  - inclusive non-hourly mode;
+  - an empty search root.
+
+Validation:
+
+```powershell
+python -m pytest tests/test_discover_epex_spot_parquet_candidates_script.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_epex_lab_locked_holdout_policy.py -q -p no:cacheprovider
+```
+
+Result: `42 passed`.
+
+Refreshed T057 discovery command:
+
+```powershell
+python scripts\discover_epex_spot_parquet_candidates.py --plan-json .planning\phases\14-lt-audit-remediation\locked_holdout_plan_t057_t056_asof20260709.json --search-root output\phase14 --output-json output\phase14\t057_locked_t056_future_holdout\spot_parquet_discovery_20260709_latest.json --max-candidates 10
+```
+
+Result:
+
+- `scanned_file_count=22`
+- `candidate_count=1`
+- `rejected_file_count=21`
+- `spot_like_rejected_file_count=1`
+- `rejection_reason_counts={"index_not_datetime":2,"missing_price_column_or_empty":18,"non_hourly_grid":1}`
+- best candidate remains:
+  `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_spot_refresh_20260708/epex_hourly_ch_energy_charts_20260708.parquet`
+- best candidate `spot_max_utc=2026-07-08T23:00:00Z`
+- `observed_holdout_hours=0`
+- `missing_holdout_hours=336`
+- `full_window_covered=false`
+
+Operational conclusion:
+
+- T057 is still waiting for future hourly spot coverage.
+- The one spot-like rejected parquet is non-hourly; default discovery
+  correctly excludes it from the locked hourly holdout path.
+- This is operator diagnostics only and does not change T057 gates.
+
 ## 2026-07-09 Expert Audit Follow-Up and T058 Lab Pre-Registration
 
 Read-only expert audits were launched after the T056/t005 diagnostics and

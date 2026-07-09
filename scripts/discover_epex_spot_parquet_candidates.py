@@ -9,6 +9,7 @@ does not run a holdout backtest and does not approve production promotion.
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 import hashlib
 import json
 from pathlib import Path
@@ -40,6 +41,8 @@ def discover_candidates(
     plan_sha = _sha256(plan_json)
 
     rows = []
+    statuses = []
+    scanned_file_count = 0
     for root in search_roots:
         root = root.expanduser().resolve(strict=False)
         if not root.exists():
@@ -47,12 +50,14 @@ def discover_candidates(
         for path in root.rglob(pattern):
             if not path.is_file():
                 continue
+            scanned_file_count += 1
             status = _spot_status(
                 path,
                 expected=expected,
                 latest_required=latest_required,
                 require_hourly_grid=require_hourly_grid,
             )
+            statuses.append(status)
             if status["is_candidate"]:
                 rows.append(status)
 
@@ -83,7 +88,17 @@ def discover_candidates(
         "search_roots": [str(path.expanduser().resolve(strict=False)) for path in search_roots],
         "pattern": pattern,
         "require_hourly_grid": require_hourly_grid,
+        "scanned_file_count": scanned_file_count,
         "candidate_count": len(rows),
+        "rejected_file_count": int(len(statuses) - len(rows)),
+        "spot_like_rejected_file_count": int(
+            sum(
+                1
+                for status in statuses
+                if not status["is_candidate"] and status["has_price_column"] and status["datetime_index"]
+            )
+        ),
+        "rejection_reason_counts": _rejection_reason_counts(statuses),
         "returned_candidate_count": len(limited),
         "best_candidate": best,
         "candidates": limited,
@@ -98,6 +113,15 @@ def discover_candidates(
     output_json.parent.mkdir(parents=True, exist_ok=True)
     output_json.write_text(json.dumps(_jsonable(summary), indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return summary
+
+
+def _rejection_reason_counts(statuses: list[dict[str, Any]]) -> dict[str, int]:
+    counts = Counter(
+        str(status.get("rejection_reason") or "unknown")
+        for status in statuses
+        if not bool(status.get("is_candidate"))
+    )
+    return dict(sorted(counts.items()))
 
 
 def _spot_status(

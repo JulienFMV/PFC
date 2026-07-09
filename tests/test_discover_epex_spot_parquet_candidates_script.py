@@ -29,7 +29,11 @@ def test_discover_epex_spot_parquet_candidates_ranks_latest_spot(tmp_path: Path)
     )
 
     assert summary["schema_version"] == "epex_spot_parquet_discovery.v1"
+    assert summary["scanned_file_count"] == 3
     assert summary["candidate_count"] == 2
+    assert summary["rejected_file_count"] == 1
+    assert summary["spot_like_rejected_file_count"] == 0
+    assert summary["rejection_reason_counts"] == {"missing_price_column_or_empty": 1}
     assert summary["best_candidate"]["path"] == str(newer.resolve())
     assert summary["best_candidate"]["spot_max_utc"] == "2026-07-10T03:00:00Z"
     assert summary["best_candidate"]["spot_hours_until_latest_required_holdout"] == 0.0
@@ -64,7 +68,11 @@ def test_discover_epex_spot_parquet_candidates_prefers_hourly_grid_by_default(tm
     )
 
     assert summary["require_hourly_grid"] is True
+    assert summary["scanned_file_count"] == 2
     assert summary["candidate_count"] == 1
+    assert summary["rejected_file_count"] == 1
+    assert summary["spot_like_rejected_file_count"] == 1
+    assert summary["rejection_reason_counts"] == {"non_hourly_grid": 1}
     assert summary["best_candidate"]["path"] == str(hourly.resolve())
     assert summary["best_candidate"]["hourly_grid_compatible"] is True
 
@@ -77,6 +85,9 @@ def test_discover_epex_spot_parquet_candidates_prefers_hourly_grid_by_default(tm
 
     assert inclusive["require_hourly_grid"] is False
     assert inclusive["candidate_count"] == 2
+    assert inclusive["rejected_file_count"] == 0
+    assert inclusive["spot_like_rejected_file_count"] == 0
+    assert inclusive["rejection_reason_counts"] == {}
 
 
 def test_discover_epex_spot_parquet_candidates_reports_lag(tmp_path: Path) -> None:
@@ -121,6 +132,9 @@ def test_discover_epex_spot_parquet_candidates_cli_returns_nonzero_without_candi
     assert code == 1
     summary = json.loads((tmp_path / "discovery.json").read_text(encoding="utf-8"))
     assert summary["candidate_count"] == 0
+    assert summary["scanned_file_count"] == 0
+    assert summary["rejected_file_count"] == 0
+    assert summary["rejection_reason_counts"] == {}
     assert summary["recommended_commands"]["coverage_check"] is None
 
 
