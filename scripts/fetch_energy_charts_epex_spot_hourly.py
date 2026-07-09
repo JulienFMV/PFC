@@ -40,13 +40,8 @@ def fetch_hourly_spot(
     if end_utc <= start_utc:
         raise ValueError("end must be after start")
 
-    raw = _fetch_raw_prices(start=start, end=end, bzn=bzn)
-    hourly, coverage = _build_hourly_spot(
-        raw,
-        start_utc=start_utc,
-        end_utc=end_utc,
-    )
-    status = "OK" if coverage["full_window_covered"] else "PARTIAL_COVERAGE"
+    api_start = _api_start_date(start_utc)
+    api_end = _api_end_date(end_utc)
     output_parquet = output_parquet.resolve()
     summary = {
         "schema_version": SUMMARY_SCHEMA_VERSION,
@@ -57,11 +52,33 @@ def fetch_hourly_spot(
         "bzn": bzn,
         "start_utc": _iso(start_utc),
         "end_utc": _iso(end_utc),
+        "api_start": api_start,
+        "api_end": api_end,
         "output_parquet": str(output_parquet),
         "output_parquet_sha256": None,
-        "status": status,
-        **coverage,
     }
+    try:
+        raw = _fetch_raw_prices(start=api_start, end=api_end, bzn=bzn)
+    except Exception as exc:
+        summary.update(
+            {
+                "status": "SPOT_FETCH_ERROR",
+                "full_window_covered": False,
+                "fetch_error": f"{type(exc).__name__}: {exc}",
+                **_empty_coverage(start_utc=start_utc, end_utc=end_utc),
+                "next_action": "Refresh after Energy Charts publishes the requested window or verify API availability.",
+            }
+        )
+        _write_summary(summary_json, summary)
+        return summary
+
+    hourly, coverage = _build_hourly_spot(
+        raw,
+        start_utc=start_utc,
+        end_utc=end_utc,
+    )
+    status = "OK" if coverage["full_window_covered"] else "PARTIAL_COVERAGE"
+    summary.update({"status": status, **coverage})
 
     if not coverage["full_window_covered"] and not allow_partial:
         summary["next_action"] = "Choose a narrower end date or refresh after Energy Charts publishes the missing hours."
@@ -98,6 +115,23 @@ def _fetch_raw_prices(*, start: str, end: str, bzn: str) -> pd.DataFrame:
     frame = frame.dropna(subset=[PRICE_COLUMN])
     frame = frame[~frame.index.duplicated(keep="last")].sort_index()
     return frame
+
+
+def _empty_coverage(*, start_utc: pd.Timestamp, end_utc: pd.Timestamp) -> dict[str, Any]:
+    expected = pd.date_range(start_utc, end_utc, freq="h", inclusive="left")
+    latest_required = expected[-1] if len(expected) else None
+    return {
+        "expected_hour_count": int(len(expected)),
+        "observed_hour_count": 0,
+        "missing_hour_count": int(len(expected)),
+        "first_missing_utc": _iso(expected[0]) if len(expected) else None,
+        "last_missing_utc": _iso(expected[-1]) if len(expected) else None,
+        "spot_min_utc": None,
+        "spot_max_utc": None,
+        "latest_required_utc": _iso(latest_required),
+        "spot_hours_until_latest_required": None,
+        "raw_observation_count": 0,
+    }
 
 
 def _build_hourly_spot(
@@ -160,6 +194,16 @@ def _to_utc(value: str) -> pd.Timestamp:
 def _as_utc_index(index: pd.Index) -> pd.DatetimeIndex:
     dt_index = pd.DatetimeIndex(pd.to_datetime(index, utc=True))
     return dt_index.tz_convert("UTC")
+
+
+def _api_start_date(start_utc: pd.Timestamp) -> str:
+    return start_utc.date().isoformat()
+
+
+def _api_end_date(end_utc: pd.Timestamp) -> str:
+    if end_utc == end_utc.floor("D"):
+        return end_utc.date().isoformat()
+    return (end_utc.floor("D") + pd.Timedelta(days=1)).date().isoformat()
 
 
 def _iso(ts: pd.Timestamp | None) -> str | None:

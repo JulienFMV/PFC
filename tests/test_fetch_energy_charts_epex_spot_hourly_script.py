@@ -70,6 +70,57 @@ def test_fetch_hourly_spot_fails_closed_without_writing_partial_parquet(
     assert persisted["output_parquet_sha256"] is None
 
 
+def test_fetch_hourly_spot_uses_energy_charts_date_params(tmp_path: Path, monkeypatch) -> None:
+    calls: list[tuple[str, str, str]] = []
+
+    def fake_fetch(*, start, end, bzn):
+        calls.append((start, end, bzn))
+        return pd.DataFrame(
+            {"price_eur_mwh": [10.0]},
+            index=pd.to_datetime(["2026-07-10T01:00:00Z"], utc=True),
+        )
+
+    monkeypatch.setattr(script, "_fetch_raw_prices", fake_fetch)
+
+    summary = script.fetch_hourly_spot(
+        start="2026-07-10T01:00:00Z",
+        end="2026-07-10T02:00:00Z",
+        bzn="CH",
+        output_parquet=tmp_path / "spot.parquet",
+        summary_json=tmp_path / "summary.json",
+    )
+
+    assert calls == [("2026-07-10", "2026-07-11", "CH")]
+    assert summary["api_start"] == "2026-07-10"
+    assert summary["api_end"] == "2026-07-11"
+
+
+def test_fetch_hourly_spot_records_fetch_error_without_traceback(tmp_path: Path, monkeypatch) -> None:
+    def fake_fetch(*, start, end, bzn):
+        raise RuntimeError("not published")
+
+    monkeypatch.setattr(script, "_fetch_raw_prices", fake_fetch)
+    output = tmp_path / "spot.parquet"
+    summary_path = tmp_path / "summary.json"
+
+    summary = script.fetch_hourly_spot(
+        start="2026-07-10",
+        end="2026-07-10T02:00:00Z",
+        bzn="CH",
+        output_parquet=output,
+        summary_json=summary_path,
+    )
+
+    assert summary["status"] == "SPOT_FETCH_ERROR"
+    assert summary["full_window_covered"] is False
+    assert summary["expected_hour_count"] == 2
+    assert summary["missing_hour_count"] == 2
+    assert "RuntimeError: not published" == summary["fetch_error"]
+    assert not output.exists()
+    persisted = json.loads(summary_path.read_text(encoding="utf-8"))
+    assert persisted["status"] == "SPOT_FETCH_ERROR"
+
+
 def test_main_writes_complete_hourly_parquet(tmp_path: Path, monkeypatch) -> None:
     raw = pd.DataFrame(
         {"price_eur_mwh": [10.0, 20.0]},

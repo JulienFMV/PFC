@@ -7123,3 +7123,75 @@ Invariants:
 - This changes only refresh tooling and operator evidence; it does not change
   T056/t005, T059, model outputs, or the locked T057 plan.
 
+## D-20260709-95 - T057 Energy Charts Locked Runner Must Stop Before Partial Holdout
+
+Decision: the operator path for Energy Charts spot must be a single
+fail-closed wrapper that verifies the locked plan hash before any fetch, writes
+an explicit spot-fetch summary, and calls the locked T057 runner only when the
+full pre-registered window is available.
+
+Reason: after the fail-closed spot helper was added, the next operator risk was
+sequence error: fetching the right source but then manually wiring partial
+files into the holdout runner. The wrapper removes that ambiguity and records a
+machine-readable WAITING state.
+
+Implementation:
+
+- Added `scripts/run_energy_charts_epex_locked_holdout.py`.
+- The wrapper:
+  - rejects a plan SHA mismatch before fetching spot;
+  - fetches exactly the plan's `holdout_start_utc` to `holdout_end_utc`;
+  - writes no spot parquet unless Energy Charts covers every expected hour;
+  - writes `energy_charts_locked_holdout_run_summary.json`;
+  - sets `locked_holdout_ran=false` until full coverage exists;
+  - calls `scripts/run_epex_lab_locked_holdout.py` only after a complete
+    fail-closed spot parquet is created.
+- The spot helper now converts UTC bounds to Energy Charts date parameters
+  (`YYYY-MM-DD`) and records `SPOT_FETCH_ERROR` instead of raising a traceback
+  when the API has not published the requested future window.
+
+Current real operator run:
+
+```powershell
+python scripts\run_energy_charts_epex_locked_holdout.py --plan-json .planning\phases\14-lt-audit-remediation\locked_holdout_plan_t057_t056_asof20260709.json --expected-plan-sha256 f2b5ce94d7eb892ec4f0b2e46b209d09b078db8d15765009fba4ba0cb21ec1cd --output-dir output\phase14\t057_locked_t056_future_holdout\energy_charts_locked_runner_20260709 --bzn CH
+```
+
+Result:
+
+- exit `1` by design, captured during local execution;
+- `status=LOCKED_HOLDOUT_SPOT_WAITING`;
+- `spot_fetch.status=SPOT_FETCH_ERROR`;
+- Energy Charts URL used date parameters:
+  `start=2026-07-10`, `end=2026-07-24`;
+- API returned 404 for the unpublished future full window;
+- `expected_hour_count=336`;
+- `observed_hour_count=0`;
+- `missing_hour_count=336`;
+- `locked_holdout_ran=false`;
+- `holdout_pass=false`;
+- no spot parquet written.
+
+Validation:
+
+- `pytest tests\test_run_energy_charts_epex_locked_holdout_script.py -q -p no:cacheprovider`
+  reported `4 passed`.
+- `pytest tests\test_fetch_energy_charts_epex_spot_hourly_script.py tests\test_run_energy_charts_epex_locked_holdout_script.py -q -p no:cacheprovider`
+  reported `10 passed`.
+- `pytest tests\test_run_epex_lab_locked_holdout_script.py tests\test_check_epex_lab_locked_holdout_coverage_script.py -q -p no:cacheprovider`
+  reported `25 passed`.
+
+Rejected alternatives:
+
+- Keep the operator sequence as separate manual fetch, discovery, coverage,
+  and runner commands.
+- Let API 404s surface as tracebacks without a persisted run summary.
+- Allow a partial Energy Charts fetch to create a parquet by default.
+
+Invariants:
+
+- The wrapper is read-only/non-promotional and never approves production.
+- T057 still requires a complete future spot window and a passing locked
+  holdout audit.
+- A passing holdout still does not replace the required production/export/
+  selected/capstone evidence chain.
+

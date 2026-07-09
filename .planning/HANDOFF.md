@@ -1423,6 +1423,67 @@ Promotion status remains NO-GO. Next correct action is to refresh spot with the
 fail-closed helper after Energy Charts publishes the full T057 window, then run
 the locked T057 runner with the frozen plan SHA.
 
+## 2026-07-09 T057 Energy Charts Locked Runner Wrapper
+
+Added operator wrapper:
+
+`scripts/run_energy_charts_epex_locked_holdout.py`
+
+Purpose:
+
+- verify the frozen T057 plan SHA before any network fetch;
+- fetch the plan's full `holdout_start_utc` to `holdout_end_utc` from Energy
+  Charts with the fail-closed observed-hour helper;
+- write no spot parquet unless every expected hour is covered;
+- run `scripts/run_epex_lab_locked_holdout.py` only after full spot coverage;
+- persist `energy_charts_locked_holdout_run_summary.json` for WAITING and PASS
+  states.
+
+The spot fetch helper was also hardened to convert UTC bounds into Energy
+Charts `YYYY-MM-DD` API parameters and to persist `SPOT_FETCH_ERROR` instead
+of raising a traceback when the future full window is not yet published.
+
+Current operator command:
+
+```powershell
+python scripts\run_energy_charts_epex_locked_holdout.py --plan-json .planning\phases\14-lt-audit-remediation\locked_holdout_plan_t057_t056_asof20260709.json --expected-plan-sha256 f2b5ce94d7eb892ec4f0b2e46b209d09b078db8d15765009fba4ba0cb21ec1cd --output-dir output\phase14\t057_locked_t056_future_holdout\energy_charts_locked_runner_20260709 --bzn CH
+```
+
+Current result:
+
+- exit `1` by design;
+- `status=LOCKED_HOLDOUT_SPOT_WAITING`;
+- `spot_fetch.status=SPOT_FETCH_ERROR`;
+- Energy Charts request used `start=2026-07-10`, `end=2026-07-24`;
+- API returned 404 because the full future window is not published;
+- `expected_hour_count=336`, `observed_hour_count=0`,
+  `missing_hour_count=336`;
+- `locked_holdout_ran=false`;
+- no spot parquet written.
+
+Validation:
+
+```powershell
+pytest tests\test_run_energy_charts_epex_locked_holdout_script.py -q -p no:cacheprovider
+```
+
+Result: `4 passed`.
+
+```powershell
+pytest tests\test_fetch_energy_charts_epex_spot_hourly_script.py tests\test_run_energy_charts_epex_locked_holdout_script.py -q -p no:cacheprovider
+```
+
+Result: `10 passed`.
+
+```powershell
+pytest tests\test_run_epex_lab_locked_holdout_script.py tests\test_check_epex_lab_locked_holdout_coverage_script.py -q -p no:cacheprovider
+```
+
+Result: `25 passed`.
+
+Operational next action remains unchanged: rerun this wrapper after the full
+T057 spot window is published. Promotion remains NO-GO.
+
 ## 2026-07-09 Expert Audit + Discovery Coverage Follow-Up
 
 Read-only expert agents were launched for the next Phase 14 steps:
