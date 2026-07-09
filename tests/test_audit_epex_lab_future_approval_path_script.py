@@ -288,6 +288,13 @@ def test_future_approval_path_blocks_when_locked_holdout_coverage_pending(tmp_pa
     plan_json = str((tmp_path / "locked_plan.json").resolve())
     if any(char.isspace() for char in plan_json):
         plan_json = f'"{plan_json}"'
+    assert summary["recommended_commands"]["run_energy_charts_locked_holdout"] == (
+        "python scripts/run_energy_charts_epex_locked_holdout.py "
+        f"--plan-json {plan_json} "
+        f"--expected-plan-sha256 {_sha256(tmp_path / 'locked_plan.json')} "
+        "--output-dir <ENERGY_CHARTS_LOCKED_HOLDOUT_OUTPUT_DIR> "
+        "--bzn CH"
+    )
     assert summary["recommended_commands"]["run_locked_holdout"] == (
         "python scripts/run_epex_lab_locked_holdout.py "
         f"--plan-json {plan_json} "

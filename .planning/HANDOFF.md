@@ -1527,6 +1527,37 @@ Result: `26 passed`.
 
 Promotion status remains NO-GO.
 
+## 2026-07-09 Future Approval Recommended Commands
+
+Future approval routing now recommends the fail-closed Energy Charts wrapper
+when T057 is blocked on spot coverage.
+
+Change:
+
+- `scripts/audit_epex_lab_future_approval_path.py` emits
+  `recommended_commands.run_energy_charts_locked_holdout` for
+  `blocking_stage=locked_holdout_coverage`.
+- The existing `recommended_commands.run_locked_holdout` remains as a fallback
+  for a separately approved fresh future spot parquet.
+- `scripts/epex_lab_locked_holdout_policy.py` exposes wrapper `bzn` in policy
+  output so the recommended command can preserve the source zone.
+
+Validation:
+
+```powershell
+pytest tests\test_audit_epex_lab_future_approval_path_script.py tests\test_epex_lab_locked_holdout_policy.py -q -p no:cacheprovider
+```
+
+Result: `27 passed`.
+
+```powershell
+pytest tests\test_check_epex_lab_promotion_readiness_script.py -q -p no:cacheprovider
+```
+
+Result: `14 passed`.
+
+Promotion status remains NO-GO.
+
 ## 2026-07-09 Expert Audit + Discovery Coverage Follow-Up
 
 Read-only expert agents were launched for the next Phase 14 steps:

@@ -169,6 +169,7 @@ def locked_holdout_policy(summary: dict[str, Any] | None) -> dict[str, Any]:
         "adjusted_csv_sha256": _identity(summary).get("adjusted_csv_sha256"),
         "spot_parquet": summary.get("spot_parquet"),
         "output_dir": summary.get("output_dir"),
+        "bzn": summary.get("bzn"),
         "checks": checks,
     }
 

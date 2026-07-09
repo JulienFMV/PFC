@@ -7258,3 +7258,47 @@ Invariants:
   production/export/selected/capstone evidence chain.
 - T057 plan, hashes, and pass criteria remain unchanged.
 
+## D-20260709-97 - Future Approval Must Recommend The Fail-Closed Energy Charts Runner
+
+Decision: when future approval routing blocks on locked holdout coverage, the
+recommended commands must include the one-command fail-closed Energy Charts
+wrapper before the manual locked runner fallback.
+
+Reason: after the wrapper became valid policy evidence, leaving
+`scripts/run_epex_lab_locked_holdout.py` as the only recommended command still
+encouraged a manual sequence: source a spot parquet, run coverage, then run the
+holdout. The safer default is to rerun
+`scripts/run_energy_charts_epex_locked_holdout.py`, which verifies the plan
+hash, fetches observed spot, refuses partial parquet output, and only then
+calls the canonical locked holdout runner.
+
+Implementation:
+
+- `scripts/audit_epex_lab_future_approval_path.py` now emits
+  `recommended_commands.run_energy_charts_locked_holdout` when
+  `blocking_stage=locked_holdout_coverage`.
+- The existing `recommended_commands.run_locked_holdout` remains as an
+  explicit fallback for a separately approved fresh future spot parquet.
+- `locked_holdout_policy` now exposes the wrapper `bzn` value to command
+  generation when available.
+
+Validation:
+
+- `pytest tests\test_audit_epex_lab_future_approval_path_script.py tests\test_epex_lab_locked_holdout_policy.py -q -p no:cacheprovider`
+  reported `27 passed`.
+- `pytest tests\test_check_epex_lab_promotion_readiness_script.py -q -p no:cacheprovider`
+  reported `14 passed`.
+
+Rejected alternatives:
+
+- Replace the manual runner recommendation entirely.
+- Keep only the manual runner recommendation and rely on operator memory to
+  prefer the wrapper.
+
+Invariants:
+
+- The wrapper remains non-promotional and cannot approve production.
+- A manual fresh spot parquet still needs the canonical locked runner and
+  policy checks.
+- T057 plan and pass criteria remain unchanged.
+

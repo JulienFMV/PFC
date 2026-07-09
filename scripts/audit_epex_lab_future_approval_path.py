@@ -288,7 +288,26 @@ def _recommended_commands(
         and (holdout_policy.get("expected_plan_json_sha256") or holdout_policy.get("plan_json_sha256"))
         else "<T057_PLAN_JSON_SHA256>"
     )
+    energy_output_dir = (
+        str(holdout_policy.get("output_dir"))
+        if holdout_policy is not None
+        and holdout_policy.get("schema_version") == "energy_charts_epex_locked_holdout_run.v1"
+        and holdout_policy.get("output_dir")
+        else "<ENERGY_CHARTS_LOCKED_HOLDOUT_OUTPUT_DIR>"
+    )
+    bzn = (
+        str(holdout_policy.get("bzn"))
+        if holdout_policy is not None and holdout_policy.get("bzn")
+        else "CH"
+    )
     return {
+        "run_energy_charts_locked_holdout": (
+            "python scripts/run_energy_charts_epex_locked_holdout.py "
+            f"--plan-json {_quote_cli_arg(plan_json)} "
+            f"--expected-plan-sha256 {_quote_cli_arg(plan_sha)} "
+            f"--output-dir {_quote_cli_arg(energy_output_dir)} "
+            f"--bzn {_quote_cli_arg(bzn)}"
+        ),
         "run_locked_holdout": (
             "python scripts/run_epex_lab_locked_holdout.py "
             f"--plan-json {_quote_cli_arg(plan_json)} "

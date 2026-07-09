@@ -1020,6 +1020,39 @@ Result: `112 passed, 1 skipped`.
 Current frozen T057 plan remains unchanged. Regenerated current T057 runner
 still exits `1` with `WAITING_FOR_FULL_SPOT_COVERAGE`.
 
+## 2026-07-09 Follow-Up - Future Approval Recommends The Wrapper
+
+`scripts/audit_epex_lab_future_approval_path.py` now recommends the
+fail-closed Energy Charts wrapper when locked holdout coverage is the blocking
+stage.
+
+Recommended command shape:
+
+```powershell
+python scripts/run_energy_charts_epex_locked_holdout.py --plan-json <T057_PLAN_JSON> --expected-plan-sha256 <T057_PLAN_JSON_SHA256> --output-dir <ENERGY_CHARTS_LOCKED_HOLDOUT_OUTPUT_DIR> --bzn CH
+```
+
+The manual runner remains available as a fallback only when a separately
+approved fresh future spot parquet is supplied:
+
+```powershell
+python scripts/run_epex_lab_locked_holdout.py --plan-json <T057_PLAN_JSON> --expected-plan-sha256 <T057_PLAN_JSON_SHA256> --spot-parquet <FRESH_FUTURE_SPOT_PARQUET> --output-dir <T057_HOLDOUT_OUTPUT_DIR>
+```
+
+Validation:
+
+```powershell
+pytest tests\test_audit_epex_lab_future_approval_path_script.py tests\test_epex_lab_locked_holdout_policy.py -q -p no:cacheprovider
+```
+
+Result: `27 passed`.
+
+```powershell
+pytest tests\test_check_epex_lab_promotion_readiness_script.py -q -p no:cacheprovider
+```
+
+Result: `14 passed`.
+
 ## 2026-07-09 Follow-Up - Expert Audit And Fail-Closed Spot Refresh
 
 Read-only MIT/Roaster audit results:
