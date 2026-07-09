@@ -1354,6 +1354,53 @@ Operational conclusion:
   `2026-07-10T00:00:00Z` through `2026-07-23T23:00:00Z`.
 - The locked plan SHA and candidate hashes are unchanged.
 
+## 2026-07-09 T057 Spot Parquet Discovery Helper
+
+Added read-only helper:
+
+`scripts/discover_epex_spot_parquet_candidates.py`
+
+Purpose:
+
+- discover candidate EPEX spot parquets under one or more local roots;
+- rank candidates by `spot_max_utc`;
+- require exact hourly timestamps by default, so the 15-minute EPEX parquet is
+  not accidentally recommended for the hourly locked holdout runner;
+- emit recommended coverage and locked-holdout runner commands bound to the
+  locked plan SHA;
+- never run the holdout and never approve production.
+
+Code/test changes:
+
+- `scripts/discover_epex_spot_parquet_candidates.py`
+- `tests/test_discover_epex_spot_parquet_candidates_script.py`
+
+Validation:
+
+```powershell
+python -m pytest tests/test_discover_epex_spot_parquet_candidates_script.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_epex_lab_locked_holdout_policy.py -q -p no:cacheprovider
+```
+
+Result: `42 passed`.
+
+Current local discovery command:
+
+```powershell
+python scripts\discover_epex_spot_parquet_candidates.py --plan-json .planning\phases\14-lt-audit-remediation\locked_holdout_plan_t057_t056_asof20260709.json --search-root output\phase14 --output-json output\phase14\t057_locked_t056_future_holdout\spot_parquet_discovery_20260709.json --max-candidates 5
+```
+
+Result:
+
+- Exit `0`.
+- `candidate_count=1`
+- `require_hourly_grid=true`
+- best candidate:
+  `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_spot_refresh_20260708/epex_hourly_ch_energy_charts_20260708.parquet`
+- best candidate `spot_max_utc=2026-07-08T23:00:00Z`
+- best candidate `spot_hours_until_latest_required_holdout=360.0`
+- recommended commands point to the locked plan SHA
+  `f2b5ce94d7eb892ec4f0b2e46b209d09b078db8d15765009fba4ba0cb21ec1cd`.
+
 Follow-up after expert roasts on production evidence and OMPEX advisory
 governance:
 

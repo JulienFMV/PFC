@@ -6622,3 +6622,36 @@ Invariants:
   backtest can run.
 - The locked T057 plan and candidate hashes remain unchanged.
 
+## D-20260709-86 - T057 Spot Discovery Must Prefer Hourly Spot Parquet
+
+Decision: operator tooling for T057 may discover candidate spot parquet files
+under `output/phase14`, but the default discovery path must require exact
+hourly timestamps.
+
+Reason: the local generation writes both 15-minute and hourly EPEX spot
+parquets. T057 locked holdout tooling is built around the hourly EPEX spot
+input used by the lab backtests. Accidentally recommending the 15-minute
+parquet would make the operational handoff ambiguous.
+
+Implementation:
+
+- Added `scripts/discover_epex_spot_parquet_candidates.py`.
+- The helper is read-only, writes a discovery JSON, ranks candidate parquets
+  by `spot_max_utc`, and emits coverage/runner commands bound to the locked
+  plan SHA.
+- By default it requires `hourly_grid_compatible=true`; non-hourly parquets
+  require explicit `--include-non-hourly-spot`.
+- Current local discovery recommends
+  `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_spot_refresh_20260708/epex_hourly_ch_energy_charts_20260708.parquet`.
+
+Rejected alternatives:
+
+- Recommend the freshest parquet regardless of frequency.
+- Let the operator manually choose between 15-minute and hourly spot files.
+
+Invariants:
+
+- Discovery does not run the locked holdout.
+- Discovery does not approve production promotion.
+- T057 still requires the coverage check and runner gates to pass.
+

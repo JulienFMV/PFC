@@ -1548,6 +1548,46 @@ Result remains expected NO-GO/waiting:
 
 The locked T057 plan and candidate hashes remain unchanged.
 
+## 2026-07-09 T057 Spot Parquet Discovery Helper
+
+Added read-only helper:
+
+`scripts/discover_epex_spot_parquet_candidates.py`
+
+Purpose:
+
+- scan one or more roots for EPEX spot parquet candidates;
+- require exact hourly timestamps by default;
+- rank candidates by `spot_max_utc`;
+- write operator-ready coverage and locked-holdout runner commands bound to
+  the locked plan SHA;
+- never run the holdout and never approve production.
+
+Validation:
+
+```powershell
+python -m pytest tests/test_discover_epex_spot_parquet_candidates_script.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_epex_lab_locked_holdout_policy.py -q -p no:cacheprovider
+```
+
+Result: `42 passed`.
+
+Current local discovery command:
+
+```powershell
+python scripts\discover_epex_spot_parquet_candidates.py --plan-json .planning\phases\14-lt-audit-remediation\locked_holdout_plan_t057_t056_asof20260709.json --search-root output\phase14 --output-json output\phase14\t057_locked_t056_future_holdout\spot_parquet_discovery_20260709.json --max-candidates 5
+```
+
+Result:
+
+- `candidate_count=1`
+- `require_hourly_grid=true`
+- best candidate:
+  `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_spot_refresh_20260708/epex_hourly_ch_energy_charts_20260708.parquet`
+- best candidate `spot_max_utc=2026-07-08T23:00:00Z`
+- best candidate `spot_hours_until_latest_required_holdout=360.0`
+- 15-minute EPEX parquet is intentionally not returned by default; it requires
+  explicit `--include-non-hourly-spot`.
+
 ## 2026-07-09 Promotion Readiness Routing Follow-Up
 
 EPEX lab promotion readiness now emits machine-readable production blocking
