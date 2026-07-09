@@ -5390,3 +5390,43 @@ Invariants not to break:
 - Coverage remains read-only and never approves production.
 - The locked T057 plan is immutable; coverage only reports its identity.
 
+## D-20260709-62 - Require Lab Backtest Schema For T057 Holdout Audit
+
+Decision: `scripts/audit_epex_lab_locked_holdout.py` now rejects a holdout
+backtest summary unless it is explicitly the expected lab-only spot backtest
+schema.
+
+Reason: the locked holdout audit already checked policy, no-OMPEX flags,
+source hashes, valuation timestamp, and holdout metrics, but did not require
+the `spot_backtest_summary` JSON to declare the expected schema or lab-only
+evidence role. A handcrafted or stale JSON with compatible fields should not
+be able to satisfy the locked holdout audit.
+
+Implementation:
+
+- Added required checks:
+  - `schema_version=epex_shape_lab_spot_backtest.v1`
+  - `read_only=true`
+  - `independent_production_evidence=false`
+- Updated runner tests so mocked backtest summaries match the real backtest
+  contract.
+- Added a regression test proving that an otherwise good summary with the
+  wrong schema remains `NO_GO_LOCKED_HOLDOUT_FAIL`.
+
+Validation:
+
+- `python -m pytest tests/test_audit_epex_lab_locked_holdout_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_backtest_epex_shape_lab_against_spot_script.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_epex_lab_locked_holdout_policy.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  reported `45 passed, 1 skipped`.
+
+Rejected alternatives:
+
+- Rely only on the existing benchmark policy and no-OMPEX flags.
+- Loosen the runner tests instead of making mocked summaries match the real
+  backtest contract.
+
+Invariants not to break:
+
+- T057 audit remains read-only and non-promotional.
+- A passing backtest summary alone is not production approval; it only feeds
+  the locked holdout audit.
+

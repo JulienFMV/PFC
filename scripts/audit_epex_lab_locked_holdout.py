@@ -22,6 +22,7 @@ except ModuleNotFoundError:  # pragma: no cover - direct script execution
 
 PLAN_SCHEMA_VERSION = "epex_lab_locked_holdout_plan.v1"
 SUMMARY_POLICY = "rolling_origin_epex_spot_no_ompex_lab_only"
+SUMMARY_SCHEMA_VERSION = "epex_shape_lab_spot_backtest.v1"
 
 
 def audit_holdout(
@@ -46,6 +47,9 @@ def audit_holdout(
         "plan_no_ompex": plan.get("ompex_used_in_model") is False
         and plan.get("ompex_used_in_selection") is False
         and plan.get("ompex_used_in_backtest") is False,
+        "summary_schema": summary.get("schema_version") == SUMMARY_SCHEMA_VERSION,
+        "summary_read_only": summary.get("read_only") is True,
+        "summary_not_production_evidence": summary.get("independent_production_evidence") is False,
         "summary_policy": summary.get("benchmark_policy") == SUMMARY_POLICY,
         "summary_no_ompex": summary.get("ompex_used_in_model") is False
         and summary.get("ompex_used_in_selection") is False

@@ -71,9 +71,12 @@ def test_run_epex_lab_locked_holdout_runs_backtest_and_audit_when_ready(
             encoding="utf-8",
         )
         payload = {
+            "schema_version": "epex_shape_lab_spot_backtest.v1",
+            "read_only": True,
             "benchmark_policy": "rolling_origin_epex_spot_no_ompex_lab_only",
             "promotion_gate": False,
             "production_approved": False,
+            "independent_production_evidence": False,
             "ompex_used_in_model": False,
             "ompex_used_in_selection": False,
             "ompex_used_in_backtest": False,
@@ -124,9 +127,12 @@ def test_run_epex_lab_locked_holdout_cli_exits_zero_when_holdout_passes(
             encoding="utf-8",
         )
         payload = {
+            "schema_version": "epex_shape_lab_spot_backtest.v1",
+            "read_only": True,
             "benchmark_policy": "rolling_origin_epex_spot_no_ompex_lab_only",
             "promotion_gate": False,
             "production_approved": False,
+            "independent_production_evidence": False,
             "ompex_used_in_model": False,
             "ompex_used_in_selection": False,
             "ompex_used_in_backtest": False,

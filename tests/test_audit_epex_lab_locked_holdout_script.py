@@ -81,6 +81,25 @@ def test_audit_epex_lab_locked_holdout_fails_degraded_window(tmp_path: Path) -> 
     assert audit["checks"]["holdout_non_degraded"] is False
 
 
+def test_audit_epex_lab_locked_holdout_rejects_non_lab_backtest_schema(tmp_path: Path) -> None:
+    plan = _write_plan(tmp_path)
+    summary = _write_summary(tmp_path, baseline_sha="base", adjusted_sha="adjusted", schema_version="other.v1")
+    post = tmp_path / "post.csv"
+    pd.DataFrame(
+        {
+            "timestamp_utc": pd.date_range("2026-07-10", periods=4, freq="h", tz="UTC").astype(str),
+            "baseline_abs_error_eur_mwh": [4.0, 4.0, 4.0, 4.0],
+            "adjusted_abs_error_eur_mwh": [3.0, 3.0, 3.0, 3.0],
+        }
+    ).to_csv(post, index=False)
+
+    audit = audit_holdout(plan_json=plan, spot_backtest_summary=summary)
+
+    assert audit["status"] == "NO_GO_LOCKED_HOLDOUT_FAIL"
+    assert audit["holdout_pass"] is False
+    assert audit["checks"]["summary_schema"] is False
+
+
 def test_audit_epex_lab_locked_holdout_cli_exits_nonzero_when_failed(tmp_path: Path) -> None:
     plan = _write_plan(tmp_path)
     summary = _write_summary(tmp_path, baseline_sha="base", adjusted_sha="adjusted")
@@ -134,14 +153,23 @@ def _write_plan(tmp_path: Path) -> Path:
     return path
 
 
-def _write_summary(tmp_path: Path, *, baseline_sha: str, adjusted_sha: str) -> Path:
+def _write_summary(
+    tmp_path: Path,
+    *,
+    baseline_sha: str,
+    adjusted_sha: str,
+    schema_version: str = "epex_shape_lab_spot_backtest.v1",
+) -> Path:
     path = tmp_path / "summary.json"
     path.write_text(
         json.dumps(
             {
+                "schema_version": schema_version,
+                "read_only": True,
                 "benchmark_policy": "rolling_origin_epex_spot_no_ompex_lab_only",
                 "promotion_gate": False,
                 "production_approved": False,
+                "independent_production_evidence": False,
                 "ompex_used_in_model": False,
                 "ompex_used_in_selection": False,
                 "ompex_used_in_backtest": False,

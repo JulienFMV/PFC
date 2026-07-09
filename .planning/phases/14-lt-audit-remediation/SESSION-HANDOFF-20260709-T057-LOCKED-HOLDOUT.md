@@ -523,3 +523,21 @@ python -m pytest tests/test_check_epex_lab_locked_holdout_coverage_script.py tes
 ```
 
 Result: `42 passed, 1 skipped`.
+
+Holdout audit schema follow-up:
+
+- `scripts/audit_epex_lab_locked_holdout.py` now requires the spot backtest
+  summary to declare `schema_version=epex_shape_lab_spot_backtest.v1`,
+  `read_only=true`, and `independent_production_evidence=false`.
+- `tests/test_audit_epex_lab_locked_holdout_script.py` now covers rejection of
+  an otherwise good summary with a wrong schema.
+- `tests/test_run_epex_lab_locked_holdout_script.py` mocks were updated to
+  match the real backtest summary contract.
+
+Validation:
+
+```powershell
+python -m pytest tests/test_audit_epex_lab_locked_holdout_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_backtest_epex_shape_lab_against_spot_script.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_epex_lab_locked_holdout_policy.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result: `45 passed, 1 skipped`.

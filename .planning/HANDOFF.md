@@ -174,6 +174,15 @@ regenerated coverage remains `WAITING_FOR_FULL_SPOT_COVERAGE`, with plan SHA
 Validation:
 `python -m pytest tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_epex_lab_locked_holdout_policy.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
 reported `42 passed, 1 skipped`.
+
+T057 holdout audit schema hardening on 2026-07-09 requires the backtest summary
+to be the expected lab-only schema before a locked holdout can pass. The audit
+now checks `schema_version=epex_shape_lab_spot_backtest.v1`, `read_only=true`,
+and `independent_production_evidence=false` in addition to the existing
+no-OMPEX, lab-only, source-hash, valuation timestamp, and holdout metric
+checks. Validation:
+`python -m pytest tests/test_audit_epex_lab_locked_holdout_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_backtest_epex_shape_lab_against_spot_script.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_epex_lab_locked_holdout_policy.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+reported `45 passed, 1 skipped`.
 Future approval audit CLI now exits `0` only when `approved=true`; all NO-GO
 states exit `1`. Validation:
 `python -m pytest tests/test_audit_epex_lab_future_approval_path_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_build_epex_lab_promotion_bundle_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
