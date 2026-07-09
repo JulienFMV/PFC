@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from pathlib import Path
 
 import pandas as pd
@@ -89,6 +90,7 @@ def test_run_epex_lab_locked_holdout_runs_backtest_and_audit_when_ready(
             },
             "post_valuation_metrics": {"residual_mae_improvement_eur_mwh": 1.0},
             "outputs": {"post_valuation_timestamp_residuals_csv": str(output_dir / "post.csv")},
+            "output_hashes": {"post_valuation_timestamp_residuals_csv": _sha256(output_dir / "post.csv")},
         }
         (output_dir / "spot_backtest_summary.json").write_text(json.dumps(payload), encoding="utf-8")
         return payload
@@ -145,6 +147,7 @@ def test_run_epex_lab_locked_holdout_cli_exits_zero_when_holdout_passes(
             },
             "post_valuation_metrics": {"residual_mae_improvement_eur_mwh": 1.0},
             "outputs": {"post_valuation_timestamp_residuals_csv": str(output_dir / "post.csv")},
+            "output_hashes": {"post_valuation_timestamp_residuals_csv": _sha256(output_dir / "post.csv")},
         }
         (output_dir / "spot_backtest_summary.json").write_text(json.dumps(payload), encoding="utf-8")
         return payload
@@ -204,3 +207,11 @@ def _write_plan(tmp_path: Path) -> Path:
         encoding="utf-8",
     )
     return path
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()

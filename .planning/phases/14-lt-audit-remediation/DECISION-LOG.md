@@ -5430,3 +5430,45 @@ Invariants not to break:
 - A passing backtest summary alone is not production approval; it only feeds
   the locked holdout audit.
 
+## D-20260709-63 - Hash-Bind T057 Backtest Output CSVs
+
+Decision: the EPEX lab spot backtest summary now hash-binds its generated CSV
+outputs, and the T057 holdout audit requires the post-valuation residual CSV
+hash to match the summary before the holdout can pass.
+
+Reason: the locked holdout audit consumed the
+`post_valuation_timestamp_residuals_csv` path from the summary, but the summary
+did not previously attest the CSV content hash. A stale or modified residual
+CSV at the same path could therefore alter the holdout metrics after the
+summary was written.
+
+Implementation:
+
+- `scripts/backtest_epex_shape_lab_against_spot.py` now writes `output_hashes`
+  for:
+  - `rolling_spot_profile_folds_csv`
+  - `rolling_spot_bucket_metrics_csv`
+  - `candidate_month_hour_profiles_csv`
+  - `post_valuation_timestamp_residuals_csv`
+- `scripts/audit_epex_lab_locked_holdout.py` now checks
+  `post_valuation_csv_sha256_bound`.
+- Tests cover the happy path and a tampered post-valuation CSV after summary
+  creation.
+
+Validation:
+
+- `python -m pytest tests/test_backtest_epex_shape_lab_against_spot_script.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_epex_lab_locked_holdout_policy.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  reported `46 passed, 1 skipped`.
+
+Rejected alternatives:
+
+- Trust same-path CSV references without content hashes.
+- Hash-bind only the post-valuation CSV in the summary and leave other
+  generated diagnostic CSVs untracked.
+
+Invariants not to break:
+
+- Backtest remains lab-only and no-OMPEX.
+- Output hashes are evidence for auditability only; they do not approve
+  production.
+

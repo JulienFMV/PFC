@@ -162,6 +162,12 @@ def backtest_against_spot(
             "candidate_month_hour_profiles_csv": str(profile_csv),
             "post_valuation_timestamp_residuals_csv": str(post_csv),
         },
+        "output_hashes": {
+            "rolling_spot_profile_folds_csv": _sha256(fold_csv),
+            "rolling_spot_bucket_metrics_csv": _sha256(bucket_csv),
+            "candidate_month_hour_profiles_csv": _sha256(profile_csv),
+            "post_valuation_timestamp_residuals_csv": _sha256(post_csv),
+        },
         "status": "DIAGNOSTIC_PASS" if all(strict_checks.values()) else "DIAGNOSTIC_FAIL",
         "note": (
             "Lab-only no-OMPEX spot diagnostic. Historical rolling folds test "

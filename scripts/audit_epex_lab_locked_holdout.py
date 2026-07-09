@@ -63,6 +63,8 @@ def audit_holdout(
         "valuation_timestamp_bound": _utc_text(summary.get("valuation_timestamp_utc"))
         == _utc_text((plan.get("backtest") or {}).get("valuation_timestamp_utc")),
         "post_valuation_csv_present": post_csv.exists(),
+        "post_valuation_csv_sha256_bound": post_csv.exists()
+        and (summary.get("output_hashes") or {}).get("post_valuation_timestamp_residuals_csv") == _sha256(post_csv),
         "holdout_window_hours": int(metrics["hours"]) >= int(criteria.get("min_holdout_hours", 1)),
         "holdout_non_degraded": float(metrics.get("residual_mae_improvement_eur_mwh", float("-inf")))
         >= float(criteria.get("min_residual_mae_improvement_eur_mwh", 0.0)),
@@ -154,6 +156,16 @@ def _utc_text(value: Any) -> str:
 
 def _read_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _sha256(path: Path) -> str:
+    import hashlib
+
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _jsonable(value: Any) -> Any:

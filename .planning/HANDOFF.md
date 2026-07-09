@@ -183,6 +183,15 @@ no-OMPEX, lab-only, source-hash, valuation timestamp, and holdout metric
 checks. Validation:
 `python -m pytest tests/test_audit_epex_lab_locked_holdout_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_backtest_epex_shape_lab_against_spot_script.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_epex_lab_locked_holdout_policy.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
 reported `45 passed, 1 skipped`.
+
+T057 backtest-output binding on 2026-07-09 makes the realized spot backtest
+summary hash-bind its generated CSV outputs. `scripts/backtest_epex_shape_lab_against_spot.py`
+now writes `output_hashes` for rolling folds, bucket metrics, candidate
+profiles, and post-valuation residuals. `scripts/audit_epex_lab_locked_holdout.py`
+now rejects a locked holdout if the post-valuation residual CSV hash does not
+match the summary. Validation:
+`python -m pytest tests/test_backtest_epex_shape_lab_against_spot_script.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_epex_lab_locked_holdout_policy.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+reported `46 passed, 1 skipped`.
 Future approval audit CLI now exits `0` only when `approved=true`; all NO-GO
 states exit `1`. Validation:
 `python -m pytest tests/test_audit_epex_lab_future_approval_path_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_build_epex_lab_promotion_bundle_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`

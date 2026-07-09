@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from pathlib import Path
 
 import numpy as np
@@ -82,8 +83,11 @@ def test_backtest_epex_shape_lab_against_spot_reports_no_ompex_lab_only_gain(tmp
     assert summary["strict_lab_checks"]["rolling_folds_no_temporal_leak"] is True
     assert (tmp_path / "out" / "rolling_spot_profile_folds.csv").exists()
     assert (tmp_path / "out" / "rolling_spot_bucket_metrics.csv").exists()
+    post_csv = tmp_path / "out" / "post_valuation_timestamp_residuals.csv"
+    assert summary["output_hashes"]["post_valuation_timestamp_residuals_csv"] == _sha256(post_csv)
     written = json.loads((tmp_path / "out" / "spot_backtest_summary.json").read_text(encoding="utf-8"))
     assert written["strict_lab_gate_pass"] is True
+    assert written["output_hashes"] == summary["output_hashes"]
 
 
 def test_backtest_epex_shape_lab_against_spot_rejects_timestamp_mismatch(tmp_path: Path) -> None:
@@ -107,3 +111,11 @@ def test_backtest_epex_shape_lab_against_spot_rejects_timestamp_mismatch(tmp_pat
             rolling_cutoffs=["2025-01-01T00:00:00Z"],
             lookback_years=1,
         )
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()

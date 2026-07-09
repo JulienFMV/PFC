@@ -541,3 +541,22 @@ python -m pytest tests/test_audit_epex_lab_locked_holdout_script.py tests/test_r
 ```
 
 Result: `45 passed, 1 skipped`.
+
+Backtest output hash follow-up:
+
+- `scripts/backtest_epex_shape_lab_against_spot.py` now writes `output_hashes`
+  for every generated diagnostic CSV, including
+  `post_valuation_timestamp_residuals_csv`.
+- `scripts/audit_epex_lab_locked_holdout.py` now requires the post-valuation
+  residual CSV hash to match the summary via
+  `post_valuation_csv_sha256_bound`.
+- `tests/test_audit_epex_lab_locked_holdout_script.py` covers a tampered
+  post-valuation CSV after summary creation.
+
+Validation:
+
+```powershell
+python -m pytest tests/test_backtest_epex_shape_lab_against_spot_script.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_epex_lab_locked_holdout_policy.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result: `46 passed, 1 skipped`.
