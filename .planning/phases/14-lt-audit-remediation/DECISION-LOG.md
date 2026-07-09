@@ -6568,6 +6568,10 @@ Implementation:
   trials were spot-backtested, and the best weak-bucket trial did not beat the
   frozen T056/t005 incumbent on the core replacement metrics. Therefore T058
   first10 does not replace T056/t005.
+- A targeted12 subset around the T056/t005 neighborhood was then executed and
+  spot-backtested for the top signals. Its best weak-bucket trial improved
+  several historical buckets but remained weaker than T056/t005 on the
+  24-hour post-valuation metric, so it also does not replace T056/t005.
 
 Rejected alternatives:
 

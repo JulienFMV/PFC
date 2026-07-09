@@ -1458,6 +1458,46 @@ evidence and summarized against the frozen T056/t005 incumbent:
 - incumbent T056/t005 remains stronger on overall, evening, solar-tail,
   weekend, and post-valuation improvement.
 
+A targeted12 T058 subset was then executed around the T056/t005 neighborhood:
+
+- subset plan:
+  `output/phase14/t058_epex_only_shape_micro_targeted12_plan.json`
+- subset plan SHA256:
+  `9d38fc46232d7f669ffbbb8ddf8576a01c58281ecd3d228c009208213bc8e00c`
+- parent T058 plan SHA256:
+  `7818437211dc1b66c1645ffaf943ecbdfe1fe334ae0a51ac8910f94a5426e7d0`
+- subset summary:
+  `output/phase14/t058_epex_only_shape_micro_targeted12_summary.json`
+- `trial_count_executed=12`
+- `eligible_count=12`
+- best independent-shape trial:
+  `t064_w075_l015_p089_e005_n055_r00_d275`
+- best independent-shape score: `4.308883116813839`
+
+The top targeted12 signals were spot-backtested under no-OMPEX lab-only
+evidence:
+
+- backtest root:
+  `output/phase14/t058_epex_only_shape_micro_targeted12_spot_backtests`
+- selection summary:
+  `output/phase14/t058_epex_only_shape_micro_targeted12_selection/spot_backtest_selection_summary.json`
+- strict pass count: `5`
+- best weak-bucket trial:
+  `t064_w075_l015_p089_e005_n055_r00_d275`
+- best weak-bucket adjusted CSV SHA:
+  `9255a81e770184a4192f7ede1d3051c5283b802ade1f1b58d06d0eca3c485e34`
+- best weak-bucket metrics: overall improvement `0.4599653156253434`,
+  evening `0.48163132451829344`, night `0.17317636817961332`, ramp
+  `0.06009215161278314`, solar-tail `0.46799710365738634`, weekend
+  `0.329903771232736`, post-valuation `0.3007021210797465`.
+- incumbent T056/t005 post-valuation remains stronger at
+  `0.3049947368951571`, so the replacement verdict is
+  `WEAK_BUCKET_GAIN_BUT_INCUMBENT_STILL_DOMINATES_CORE_METRICS` and
+  `replace_incumbent=false`.
+- `t082_w075_l025_p089_e005_n055_r00_d275` reproduces the T056/t005 adjusted
+  CSV SHA `5e603a4d5926f9265ca564615e69d0d7ee39f778f6f19b495706ab1b89cf69b6`,
+  confirming the targeted subset includes the incumbent-equivalent point.
+
 Operational next steps:
 
 1. Do not retune T056/t005 before T057.

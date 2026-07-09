@@ -1204,12 +1204,102 @@ Result:
 - Frozen T056/t005 incumbent remains stronger on overall, evening, solar-tail,
   weekend, and post-valuation improvement.
 
+Targeted12 T058 subset around the T056/t005 neighborhood:
+
+- subset plan:
+  `output/phase14/t058_epex_only_shape_micro_targeted12_plan.json`
+- subset plan SHA256:
+  `9d38fc46232d7f669ffbbb8ddf8576a01c58281ecd3d228c009208213bc8e00c`
+- parent plan SHA256:
+  `7818437211dc1b66c1645ffaf943ecbdfe1fe334ae0a51ac8910f94a5426e7d0`
+- selected trial IDs:
+  - `t074_w075_l025_p087_e005_n045_r00_d275`
+  - `t076_w075_l025_p087_e005_n055_r00_d275`
+  - `t078_w075_l025_p087_e005_n065_r00_d275`
+  - `t080_w075_l025_p089_e005_n045_r00_d275`
+  - `t082_w075_l025_p089_e005_n055_r00_d275`
+  - `t084_w075_l025_p089_e005_n065_r00_d275`
+  - `t086_w075_l025_p091_e005_n045_r00_d275`
+  - `t088_w075_l025_p091_e005_n055_r00_d275`
+  - `t090_w075_l025_p091_e005_n065_r00_d275`
+  - `t064_w075_l015_p089_e005_n055_r00_d275`
+  - `t136_w085_l025_p089_e005_n055_r00_d275`
+  - `t028_w065_l025_p089_e005_n055_r00_d275`
+
+Command:
+
+```powershell
+python scripts\execute_epex_shape_lab_sweep.py --plan-json output\phase14\t058_epex_only_shape_micro_targeted12_plan.json --output-summary output\phase14\t058_epex_only_shape_micro_targeted12_summary.json
+```
+
+Result:
+
+```json
+{"eligible_count": 12, "trial_count_executed": 12}
+```
+
+Targeted12 independent summary:
+
+- `benchmark_policy=executed_independent_no_ompex`
+- best independent-shape trial:
+  `t064_w075_l015_p089_e005_n055_r00_d275`
+- best independent-shape score: `4.308883116813839`
+- best independent deltas: midday `-1.0216925744107743`, solar-tail
+  `-1.117485511164918`, weekend `-0.3991375853253855`, ramp p99 increase
+  `0.828056589999985`, min adjusted price `-3.941188`.
+
+Top targeted12 spot backtests:
+
+- Backtested:
+  `t064_w075_l015_p089_e005_n055_r00_d275`,
+  `t080_w075_l025_p089_e005_n045_r00_d275`,
+  `t086_w075_l025_p091_e005_n045_r00_d275`,
+  `t074_w075_l025_p087_e005_n045_r00_d275`, and
+  `t082_w075_l025_p089_e005_n055_r00_d275`.
+- All five returned `status=DIAGNOSTIC_PASS`,
+  `strict_lab_gate_pass=true`,
+  `benchmark_policy=rolling_origin_epex_spot_no_ompex_lab_only`, and all
+  OMPEX usage flags false.
+- `t082_w075_l025_p089_e005_n055_r00_d275` reproduces the frozen T056/t005
+  adjusted CSV SHA:
+  `5e603a4d5926f9265ca564615e69d0d7ee39f778f6f19b495706ab1b89cf69b6`.
+
+Targeted12 selection summary against frozen T056/t005 incumbent:
+
+```powershell
+python scripts\summarize_epex_shape_lab_spot_backtests.py --sweep-summary output\phase14\t058_epex_only_shape_micro_targeted12_summary.json --backtest-root output\phase14\t058_epex_only_shape_micro_targeted12_spot_backtests --output-dir output\phase14\t058_epex_only_shape_micro_targeted12_selection --incumbent-backtest output\phase14\t056_postval_final_micro_spot_backtests\t005_w075_l025_p089_e005_n055_r00\spot_backtest_summary.json
+```
+
+Result:
+
+- `replacement_verdict.status=WEAK_BUCKET_GAIN_BUT_INCUMBENT_STILL_DOMINATES_CORE_METRICS`
+- `replace_incumbent=false`
+- `replacement_candidate_count=0`
+- `strict_pass_count=5`
+- best weak-bucket trial:
+  `t064_w075_l015_p089_e005_n055_r00_d275`
+- best weak-bucket adjusted CSV SHA:
+  `9255a81e770184a4192f7ede1d3051c5283b802ade1f1b58d06d0eca3c485e34`
+- best weak-bucket metrics: overall `0.4599653156253434`, evening
+  `0.48163132451829344`, night `0.17317636817961332`, ramp
+  `0.06009215161278314`, solar-tail `0.46799710365738634`, weekend
+  `0.329903771232736`, post-valuation `0.3007021210797465`.
+- Frozen T056/t005 incumbent metrics: overall `0.4506842423821014`,
+  evening `0.4688940576897349`, night `0.16252506955713483`, ramp
+  `0.053194830053255315`, solar-tail `0.46091530831501754`, weekend
+  `0.3283653976588017`, post-valuation `0.3049947368951571`.
+- Interpretation: `t064` improves the historical rolling buckets versus
+  T056/t005 but is worse on the available post-valuation 24h check. The
+  conservative replacement policy therefore keeps T056/t005 frozen for T057.
+
 Operational conclusion:
 
 - T056/t005 and T057 remain frozen.
 - T058 is a lab-only, no-OMPEX research branch. The first10 slice does not
-  justify replacing T056/t005. A full sweep can be resumed later, but it does
-  not change the T057 promotion path.
+  justify replacing T056/t005. The targeted12 subset finds a historically
+  stronger candidate but still does not justify replacement because
+  post-valuation is weaker. A full sweep can be resumed later, but it does not
+  change the T057 promotion path.
 - Git output artifacts remain ignored under `output/phase14/`.
 
 Follow-up after expert roasts on production evidence and OMPEX advisory
