@@ -220,6 +220,8 @@ def _next_actions(
     if holdout_policy is not None and not holdout_policy["pass"]:
         if status == "NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING":
             actions.append("Wait for full locked holdout spot coverage, then rerun the locked holdout runner.")
+        elif status == "NO_GO_LOCKED_HOLDOUT_INPUT_INVALID":
+            actions.append("Fix the locked holdout plan policy or supplied spot parquet, then rerun preflight.")
         else:
             actions.append("Resolve locked holdout failure without retuning against the locked window.")
     if missing:
@@ -251,6 +253,8 @@ def _blocking_stage(
     if holdout_policy is not None and not holdout_policy["pass"]:
         if status == "NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING":
             return "locked_holdout_coverage", "wait_for_full_spot_coverage_then_run_locked_holdout"
+        if status == "NO_GO_LOCKED_HOLDOUT_INPUT_INVALID":
+            return "locked_holdout_input_invalid", "fix_locked_holdout_plan_or_spot_inputs_then_rerun_preflight"
         return "locked_holdout_failure", "resolve_locked_holdout_failure_without_retuning_locked_window"
     if status == "NO_GO_STRICT_DIAGNOSTICS_FAIL":
         return "strict_diagnostics", "resolve_strict_diagnostic_failures"

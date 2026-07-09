@@ -6266,3 +6266,51 @@ Invariants:
 - This policy is evidence hardening only; it does not change the holdout
   objective, the model, or OMPEX constraints.
 
+## D-20260709-79 - Preserve Locked Holdout Input-Invalid Routing
+
+Decision: locked holdout policy and future approval audit now preserve
+`NO_GO_LOCKED_HOLDOUT_INPUT_INVALID` instead of collapsing it into a generic
+holdout failure.
+
+Reason: D77 introduced a distinct status for invalid plan/spot inputs. If
+downstream promotion evidence routes that state as a generic holdout fail, the
+operator loses the distinction between "fix the supplied plan/spot evidence"
+and "the locked holdout model result failed".
+
+Implementation:
+
+- `scripts/epex_lab_locked_holdout_policy.py` preserves
+  `NO_GO_LOCKED_HOLDOUT_INPUT_INVALID`.
+- `scripts/audit_epex_lab_future_approval_path.py` routes it to
+  `blocking_stage=locked_holdout_input_invalid`.
+- The future approval audit emits
+  `next_required_step=fix_locked_holdout_plan_or_spot_inputs_then_rerun_preflight`.
+- Tests cover policy status preservation and future-approval routing.
+
+Validation:
+
+- `python -m pytest tests/test_epex_lab_locked_holdout_policy.py tests/test_audit_epex_lab_future_approval_path_script.py -q -p no:cacheprovider`
+  reported `24 passed`.
+- `python -m pytest tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_epex_lab_locked_holdout_policy.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  reported `71 passed, 1 skipped`.
+- `python -m pytest tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_adjusted_production_chain_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_epex_lab_locked_holdout_policy.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_plan_epex_lab_locked_holdout_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  reported `112 passed, 1 skipped`.
+
+Operational result:
+
+- Current frozen T057 plan remains unchanged.
+- Regenerated current T057 runner remains
+  `WAITING_FOR_FULL_SPOT_COVERAGE`, exit `1`; the live blocker is still future
+  spot coverage, not invalid input evidence.
+
+Rejected alternatives:
+
+- Continue collapsing input-invalid evidence into
+  `NO_GO_LOCKED_HOLDOUT_FAIL`.
+- Reuse the coverage-waiting recommended runner command for invalid inputs.
+
+Invariants:
+
+- The existing locked T057 plan JSON remains unchanged.
+- Input-invalid routing remains fail-closed and does not approve promotion.
+

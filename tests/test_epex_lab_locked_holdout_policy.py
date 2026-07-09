@@ -226,6 +226,20 @@ def test_locked_holdout_policy_rejects_expected_plan_sha_mismatch(tmp_path: Path
     assert policy["checks"]["expected_plan_json_sha256_bound"] is False
 
 
+def test_locked_holdout_policy_preserves_input_invalid_status(tmp_path: Path) -> None:
+    summary = _passing_run_summary(tmp_path)
+    summary["status"] = "NO_GO_LOCKED_HOLDOUT_INPUT_INVALID"
+    summary["coverage_ready"] = False
+    summary["backtest_ran"] = False
+    summary["audit_ran"] = False
+    summary["holdout_pass"] = False
+
+    policy = locked_holdout_policy(summary)
+
+    assert policy["pass"] is False
+    assert policy["status"] == "NO_GO_LOCKED_HOLDOUT_INPUT_INVALID"
+
+
 def _ready_coverage(*, identity: dict) -> dict:
     timestamp_set_sha256 = "c" * 64
     return {

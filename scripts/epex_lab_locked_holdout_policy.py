@@ -137,6 +137,7 @@ def locked_holdout_policy(summary: dict[str, Any] | None) -> dict[str, Any]:
             in {
                 "NO_GO_LOCKED_HOLDOUT_PLAN_HASH_MISMATCH",
                 "NO_GO_LOCKED_HOLDOUT_SOURCE_MISSING_OR_HASH_MISMATCH",
+                "NO_GO_LOCKED_HOLDOUT_INPUT_INVALID",
             }
             else "NO_GO_LOCKED_HOLDOUT_FAIL"
         )

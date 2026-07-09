@@ -297,6 +297,34 @@ def test_future_approval_path_blocks_when_locked_holdout_coverage_pending(tmp_pa
     )
 
 
+def test_future_approval_path_routes_locked_holdout_input_invalid(tmp_path: Path) -> None:
+    readiness = _write_json(
+        tmp_path / "readiness.json",
+        _readiness_payload(approved=True, production=True),
+    )
+    holdout = _write_locked_holdout_run(
+        tmp_path,
+        status="NO_GO_LOCKED_HOLDOUT_INPUT_INVALID",
+        coverage_ready=False,
+        backtest_ran=False,
+        audit_ran=False,
+        holdout_pass=False,
+    )
+
+    summary = audit_future_approval_path(
+        readiness_json=readiness,
+        locked_holdout_summary=holdout,
+        output=tmp_path / "out.json",
+    )
+
+    assert summary["status"] == "NO_GO_LOCKED_HOLDOUT_INPUT_INVALID"
+    assert summary["approved"] is False
+    assert summary["blocking_stage"] == "locked_holdout_input_invalid"
+    assert summary["next_required_step"] == "fix_locked_holdout_plan_or_spot_inputs_then_rerun_preflight"
+    assert summary["recommended_commands"] == {}
+    assert "Fix the locked holdout plan policy or supplied spot parquet" in summary["next_actions"][0]
+
+
 def test_future_approval_path_allows_promotion_ready_with_passing_locked_holdout(tmp_path: Path) -> None:
     holdout = _write_locked_holdout_run(tmp_path)
     payload = _readiness_payload(approved=True, production=True)

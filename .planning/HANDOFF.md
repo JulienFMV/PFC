@@ -1328,3 +1328,38 @@ still exits `1` with `WAITING_FOR_FULL_SPOT_COVERAGE`; coverage
 `blocking_checks` are `full_window_covered` and `min_holdout_hours_met`, so a
 future PASS must be generated after full spot coverage with empty blockers.
 
+## 2026-07-09 Locked Holdout Input-Invalid Routing Follow-Up
+
+Locked holdout policy and future approval audit now preserve
+`NO_GO_LOCKED_HOLDOUT_INPUT_INVALID`.
+
+- `scripts/epex_lab_locked_holdout_policy.py` preserves the input-invalid
+  status instead of collapsing it into generic holdout failure.
+- `scripts/audit_epex_lab_future_approval_path.py` routes it to
+  `blocking_stage=locked_holdout_input_invalid`.
+- The audit emits
+  `next_required_step=fix_locked_holdout_plan_or_spot_inputs_then_rerun_preflight`.
+
+Validation:
+
+```powershell
+python -m pytest tests/test_epex_lab_locked_holdout_policy.py tests/test_audit_epex_lab_future_approval_path_script.py -q -p no:cacheprovider
+```
+
+Result: `24 passed`.
+
+```powershell
+python -m pytest tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_epex_lab_locked_holdout_policy.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result: `71 passed, 1 skipped`.
+
+```powershell
+python -m pytest tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_adjusted_production_chain_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_epex_lab_locked_holdout_policy.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_plan_epex_lab_locked_holdout_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result: `112 passed, 1 skipped`.
+
+Current frozen T057 plan remains unchanged. Regenerated current T057 runner
+still exits `1` with `WAITING_FOR_FULL_SPOT_COVERAGE`.
+
