@@ -1020,6 +1020,79 @@ Result: `112 passed, 1 skipped`.
 Current frozen T057 plan remains unchanged. Regenerated current T057 runner
 still exits `1` with `WAITING_FOR_FULL_SPOT_COVERAGE`.
 
+Follow-up after expert roasts on production evidence and OMPEX advisory
+governance:
+
+- Read-only governance audit found two P1 issues:
+  - `build_epex_lab_adjusted_production_chain.py` trusted approved manifests
+    without reopening strict evidence files.
+  - the production manifest did not require the source hierarchy policy used
+    by the product audit to be the same policy cited by the manifest.
+- Read-only quant/model audit confirmed T056/t005 remains the best no-OMPEX
+  candidate, but OMPEX must stay advisory only. It also asked for explicit
+  advisory flags in OMPEX benchmark output before official desk comparison.
+- `scripts/build_epex_lab_adjusted_production_manifest.py` now requires the
+  product summary's `source_hierarchy_policy` block to match the exact policy
+  path/SHA and to report `ACCEPTED_PRODUCTION_APPROVED`,
+  `production_approved=true`, and zero blocking quote conflicts.
+- `scripts/build_epex_lab_adjusted_production_chain.py` now reloads and
+  hash-validates strict evidence from the approved manifest before building
+  export/selected/capstone artifacts. It rechecks monthly solver authority,
+  product gates, Power BI strict gates, governance PASS, independent no-OMPEX,
+  and source hierarchy policy binding.
+- `scripts/compare_hpfc_ompex_benchmark.py` now writes explicit
+  `promotion_gate=false`, `production_approved=false`,
+  `ompex_used_in_selection=false`, and `ompex_used_in_backtest=false`.
+- `scripts/audit_epex_lab_future_approval_path.py` now rejects optional spot
+  sidecars unless `benchmark_policy` is
+  `rolling_origin_epex_spot_no_ompex_lab_only`.
+
+Changed files in this follow-up:
+
+- `.planning/phases/14-lt-audit-remediation/DECISION-LOG.md`
+- `.planning/phases/14-lt-audit-remediation/SESSION-HANDOFF-20260709-T057-LOCKED-HOLDOUT.md`
+- `scripts/audit_epex_lab_future_approval_path.py`
+- `scripts/build_epex_lab_adjusted_production_chain.py`
+- `scripts/build_epex_lab_adjusted_production_manifest.py`
+- `scripts/compare_hpfc_ompex_benchmark.py`
+- `tests/test_audit_epex_lab_future_approval_path_script.py`
+- `tests/test_build_epex_lab_adjusted_production_chain_script.py`
+- `tests/test_build_epex_lab_adjusted_production_manifest_script.py`
+- `tests/test_compare_hpfc_ompex_benchmark_script.py`
+
+Validation:
+
+```powershell
+python -m pytest tests/test_compare_hpfc_ompex_benchmark_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_adjusted_production_chain_script.py -q -p no:cacheprovider
+```
+
+Result: `37 passed`.
+
+```powershell
+python -m pytest tests/test_compare_hpfc_ompex_benchmark_script.py tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_adjusted_production_chain_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_epex_lab_locked_holdout_policy.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_plan_epex_lab_locked_holdout_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result: `117 passed, 1 skipped`.
+
+```powershell
+python scripts/run_epex_lab_locked_holdout.py --plan-json .planning\phases\14-lt-audit-remediation\locked_holdout_plan_t057_t056_asof20260709.json --expected-plan-sha256 f2b5ce94d7eb892ec4f0b2e46b209d09b078db8d15765009fba4ba0cb21ec1cd --spot-parquet output\phase14\20260708_asof20260707_lshape100_yoy150_amp150_2032\epex_spot_refresh_20260708\epex_hourly_ch_energy_charts_20260708.parquet --output-dir output\phase14\t057_locked_t056_future_holdout\current_spot_runner
+```
+
+Result: exit `1` as expected. Wrapper validation accepted this. Status remains
+`WAITING_FOR_FULL_SPOT_COVERAGE`; observed holdout hours `0`, expected `336`;
+blocking checks are `full_window_covered` and `min_holdout_hours_met`.
+
+Operational status after this follow-up:
+
+- Current frozen T057 plan JSON remains unchanged.
+- Promotion remains NO-GO until future EPEX spot covers
+  `2026-07-10T00:00:00Z` to `2026-07-24T00:00:00Z`, the locked holdout
+  runner passes, and approved production/export/selected/capstone artifacts
+  are rebuilt from revalidated strict evidence.
+- Next useful desk-side optional step is an OMPEX advisory comparison against
+  the frozen T056/t005 adjusted CSV only after the candidate is fixed by hash;
+  it must not feed model tuning, lambda selection, backtest, or promotion.
+
 Follow-up after promotion readiness routing:
 
 - `scripts/check_epex_lab_promotion_readiness.py` now emits

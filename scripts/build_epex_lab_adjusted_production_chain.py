@@ -14,6 +14,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
+
 try:
     from scripts.epex_lab_selection_policy import selection_policy_manifest_value
     from scripts.epex_lab_locked_holdout_policy import locked_holdout_policy as evaluate_locked_holdout_policy
@@ -158,9 +160,116 @@ def _production_manifest_errors(production: dict[str, Any], path: Path) -> list[
     selection_value = selection_policy_manifest_value(production, adjusted_csv=adjusted_csv)
     if selection_value.get("validated") is not True:
         errors.append(str(selection_value.get("error") or "selection_policy_pass"))
+    errors.extend(_strict_evidence_errors(production))
     errors.extend(_locked_holdout_errors(production))
     errors.extend(_source_provenance_errors(production, adjusted_csv))
     return errors
+
+
+def _strict_evidence_errors(production: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    monthly = _load_json_evidence(production, "baseline_monthly_manifest", errors)
+    product = _load_json_evidence(production, "product_summary", errors)
+    policy = _load_json_evidence(production, "source_hierarchy_policy", errors)
+    independent = _load_json_evidence(production, "independent_summary", errors)
+    governance = _load_json_evidence(production, "governance_audit", errors)
+    powerbi = _load_powerbi_evidence(production, "powerbi_summary", errors)
+
+    if monthly is not None:
+        if monthly.get("monthly_level_authority") != "solver":
+            errors.append("baseline_monthly_manifest_monthly_level_authority")
+        for key in ["monthly_solution_hash", "active_constraints_hash", "active_config_hash"]:
+            if not str(monthly.get(key) or "").strip():
+                errors.append(f"baseline_monthly_manifest_{key}")
+    if product is not None:
+        if product.get("all_gates_pass") is not True:
+            errors.append("product_summary_all_gates_pass")
+        if int(product.get("critical_count", -1)) != 0:
+            errors.append("product_summary_critical_count")
+        if int(product.get("unsupported_count", -1)) != 0:
+            errors.append("product_summary_unsupported_count")
+        if int(product.get("blocking_quote_conflict_count", -1)) != 0:
+            errors.append("product_summary_blocking_quote_conflict_count")
+    if policy is not None and policy.get("production_approved") is not True:
+        errors.append("source_hierarchy_policy_production_approved")
+    if product is not None and policy is not None:
+        product_policy = product.get("source_hierarchy_policy")
+        if not isinstance(product_policy, dict):
+            errors.append("product_summary_source_hierarchy_policy")
+        else:
+            policy_path = Path(str(production.get("source_hierarchy_policy", "")))
+            policy_sha = production.get("source_hierarchy_policy_sha256")
+            if product_policy.get("sha256") != policy_sha:
+                errors.append("product_summary_source_hierarchy_policy_sha256")
+            if product_policy.get("path"):
+                try:
+                    if Path(str(product_policy.get("path"))).resolve() != policy_path.resolve():
+                        errors.append("product_summary_source_hierarchy_policy_path")
+                except (OSError, ValueError):
+                    errors.append("product_summary_source_hierarchy_policy_path")
+            if product_policy.get("status") != "ACCEPTED_PRODUCTION_APPROVED":
+                errors.append("product_summary_source_hierarchy_policy_status")
+            if product_policy.get("production_approved") is not True:
+                errors.append("product_summary_source_hierarchy_policy_production_approved")
+            if product_policy.get("blocking_quote_conflict_count") != 0:
+                errors.append("product_summary_source_hierarchy_policy_blocking_quote_conflict_count")
+    if independent is not None:
+        if not (
+            independent.get("benchmark_policy") == "independent_no_ompex"
+            and independent.get("ompex_used_in_model") is False
+            and independent.get("ompex_used_in_selection") is False
+        ):
+            errors.append("independent_summary_no_ompex")
+    if governance is not None and governance.get("status") != "PASS":
+        errors.append("governance_audit_status")
+    if powerbi is not None:
+        if powerbi.get("powerbi_quality_gate_status") != "PASS":
+            errors.append("powerbi_summary_quality_gate_status")
+        if _float_value(powerbi.get("weighted_negative_hours")) != 0.0:
+            errors.append("powerbi_summary_weighted_negative_hours")
+        if _powerbi_critical_count(powerbi) != 0:
+            errors.append("powerbi_summary_critical_flags")
+    return errors
+
+
+def _load_json_evidence(production: dict[str, Any], key: str, errors: list[str]) -> dict[str, Any] | None:
+    path_text = str(production.get(key) or "").strip()
+    sha_key = f"{key}_sha256"
+    if not path_text:
+        errors.append(key)
+        return None
+    path = Path(path_text)
+    if not path.exists():
+        errors.append(f"{key}_missing")
+        return None
+    if production.get(sha_key) != _sha256(path):
+        errors.append(sha_key)
+        return None
+    try:
+        return _load_json(path)
+    except (OSError, json.JSONDecodeError):
+        errors.append(f"{key}_json")
+        return None
+
+
+def _load_powerbi_evidence(production: dict[str, Any], key: str, errors: list[str]) -> dict[str, str] | None:
+    path_text = str(production.get(key) or "").strip()
+    sha_key = f"{key}_sha256"
+    if not path_text:
+        errors.append(key)
+        return None
+    path = Path(path_text)
+    if not path.exists():
+        errors.append(f"{key}_missing")
+        return None
+    if production.get(sha_key) != _sha256(path):
+        errors.append(sha_key)
+        return None
+    try:
+        return _load_powerbi_summary(path)
+    except (OSError, ValueError):
+        errors.append(f"{key}_csv")
+        return None
 
 
 def _locked_holdout_errors(production: dict[str, Any]) -> list[str]:
@@ -250,6 +359,32 @@ def _sha256(path: Path) -> str:
 def _same_path(left: Any, right: Any) -> bool:
     if left is None or right is None:
         return False
+
+
+def _load_powerbi_summary(path: Path) -> dict[str, str]:
+    frame = pd.read_csv(path)
+    if not {"metric", "value"}.issubset(frame.columns):
+        raise ValueError(f"Power BI summary must contain metric,value columns: {path}")
+    return {str(row["metric"]): str(row["value"]) for _, row in frame.iterrows()}
+
+
+def _float_value(value: Any) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float("nan")
+
+
+def _powerbi_critical_count(summary: dict[str, str]) -> int:
+    total = 0
+    for key, value in summary.items():
+        if "critical" not in key.lower():
+            continue
+        try:
+            total += int(float(value))
+        except (TypeError, ValueError):
+            total += 1
+    return total
     try:
         return Path(str(left)).resolve() == Path(str(right)).resolve()
     except (OSError, TypeError, ValueError):

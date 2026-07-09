@@ -168,7 +168,11 @@ def compare(
         "ompex_file": str(ompex_xlsx),
         "benchmark_policy": "advisory",
         "read_only": True,
+        "promotion_gate": False,
+        "production_approved": False,
         "ompex_used_in_model": False,
+        "ompex_used_in_selection": False,
+        "ompex_used_in_backtest": False,
         "ompex_quality_caveat": (
             "OMPEX is an external imperfect benchmark, not ground truth, "
             "not an optimizer target, and not a production promotion authority."

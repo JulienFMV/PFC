@@ -40,6 +40,10 @@ def test_compare_selects_hour_ending_alignment_and_marks_advisory(tmp_path) -> N
     assert summary["mae"] == 0.0
     assert summary["benchmark_policy"] == "advisory"
     assert summary["read_only"] is True
+    assert summary["promotion_gate"] is False
+    assert summary["production_approved"] is False
     assert summary["ompex_used_in_model"] is False
+    assert summary["ompex_used_in_selection"] is False
+    assert summary["ompex_used_in_backtest"] is False
     assert "imperfect benchmark" in str(summary["ompex_quality_caveat"])
     assert (tmp_path / "benchmark" / "alignment_sensitivity.csv").exists()

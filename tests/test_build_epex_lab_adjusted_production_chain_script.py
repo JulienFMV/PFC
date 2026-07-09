@@ -59,6 +59,7 @@ def _write_inputs(tmp_path: Path):
             "active_config_hash": "a" * 64,
         },
     )
+    _write_json(policy, {"production_approved": True})
     _write_json(
         product,
         {
@@ -66,6 +67,13 @@ def _write_inputs(tmp_path: Path):
             "critical_count": 0,
             "unsupported_count": 0,
             "blocking_quote_conflict_count": 0,
+            "source_hierarchy_policy": {
+                "path": str(policy),
+                "sha256": _sha256(policy),
+                "status": "ACCEPTED_PRODUCTION_APPROVED",
+                "production_approved": True,
+                "blocking_quote_conflict_count": 0,
+            },
         },
     )
     pd.DataFrame(
@@ -76,7 +84,6 @@ def _write_inputs(tmp_path: Path):
             {"metric": "cross_year_month_shape_critical_flags", "value": "0"},
         ]
     ).to_csv(powerbi, index=False)
-    _write_json(policy, {"production_approved": True})
     _write_json(
         independent,
         {
@@ -448,6 +455,42 @@ def test_adjusted_production_chain_rejects_tampered_selection_summary(tmp_path: 
     selection.write_text(json.dumps(selection_payload), encoding="utf-8")
 
     with pytest.raises(ValueError, match="selection_summary_sha256"):
+        build_chain(adjusted_production_manifest=production_manifest, output_dir=tmp_path / "chain")
+
+
+def test_adjusted_production_chain_revalidates_strict_product_evidence(tmp_path: Path) -> None:
+    lab, monthly, product, powerbi, policy, independent, governance, _ompex = _write_inputs(tmp_path)
+    adjusted_csv = json.loads(lab.read_text(encoding="utf-8"))["outputs"]["adjusted_csv"]
+    source_provenance = _write_source_provenance(tmp_path, lab=lab, adjusted_csv=adjusted_csv)
+    selection = _write_selection_summary(tmp_path)
+    locked_holdout = _write_locked_holdout(tmp_path)
+    production_manifest = tmp_path / "adjusted_production_manifest.json"
+    build_manifest(
+        lab_manifest=lab,
+        baseline_monthly_manifest=monthly,
+        product_summary=product,
+        powerbi_summary=powerbi,
+        source_hierarchy_policy=policy,
+        independent_summary=independent,
+        governance_audit=governance,
+        selection_summary=selection,
+        locked_holdout_summary=locked_holdout,
+        production_run_id="prod-run-1",
+        production_entrypoint="pfc_shaping.pipeline.production_phases",
+        git_commit="a" * 40,
+        source_provenance_manifest=source_provenance,
+        production_approved=True,
+        production_promotion_approved=True,
+        output=production_manifest,
+    )
+    product_payload = json.loads(product.read_text(encoding="utf-8"))
+    product_payload["all_gates_pass"] = False
+    product.write_text(json.dumps(product_payload), encoding="utf-8")
+    manifest = json.loads(production_manifest.read_text(encoding="utf-8"))
+    manifest["product_summary_sha256"] = _sha256(product)
+    production_manifest.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="product_summary_all_gates_pass"):
         build_chain(adjusted_production_manifest=production_manifest, output_dir=tmp_path / "chain")
 
 

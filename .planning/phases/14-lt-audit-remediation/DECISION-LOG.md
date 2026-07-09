@@ -6366,3 +6366,71 @@ Invariants:
   `production_chain_pass` remain the gates.
 - The existing locked T057 plan JSON remains unchanged.
 
+## D-20260709-81 - Revalidate Strict Evidence Before Production Chain Packaging
+
+Decision: the EPEX lab adjusted production chain no longer trusts an approved
+production manifest only through self-attested `contract_pass=true`. Before
+building export, selected, and capstone artifacts, it reloads and hash-validates
+the strict evidence referenced by the manifest.
+
+Reason: read-only expert audit found that a forged or tampered production
+manifest could claim approval while pointing to stale or altered strict
+evidence. Promotion evidence must remain manifest-backed by real product,
+Power BI, governance, independent, monthly, source-hierarchy, source
+provenance, selected-lambda, and locked-holdout artifacts.
+
+Implementation:
+
+- `scripts/build_epex_lab_adjusted_production_manifest.py` now requires the
+  product normalization summary to bind the exact source hierarchy policy path
+  and SHA, with `ACCEPTED_PRODUCTION_APPROVED`,
+  `production_approved=true`, and zero blocking quote conflicts.
+- `scripts/build_epex_lab_adjusted_production_chain.py` now reloads and
+  hash-validates the strict evidence paths in the approved manifest:
+  baseline monthly manifest, product summary, Power BI summary, governance
+  audit, independent summary, and source hierarchy policy.
+- The chain builder rechecks the minimum strict contents: solver monthly
+  authority and hashes, product pass/no critical/no unsupported/no blocking
+  quote conflicts, Power BI PASS/no negative/no critical flags, governance
+  PASS, independent no-OMPEX policy, and source hierarchy policy binding.
+- `scripts/compare_hpfc_ompex_benchmark.py` now writes explicit advisory
+  governance flags: `promotion_gate=false`, `production_approved=false`,
+  `ompex_used_in_selection=false`, and `ompex_used_in_backtest=false`.
+- `scripts/audit_epex_lab_future_approval_path.py` now rejects optional spot
+  sidecars whose benchmark policy is not
+  `rolling_origin_epex_spot_no_ompex_lab_only`.
+
+Validation:
+
+- `python -m pytest tests/test_compare_hpfc_ompex_benchmark_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_adjusted_production_chain_script.py -q -p no:cacheprovider`
+  reported `37 passed`.
+- `python -m pytest tests/test_compare_hpfc_ompex_benchmark_script.py tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_adjusted_production_chain_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_epex_lab_locked_holdout_policy.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_plan_epex_lab_locked_holdout_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  reported `117 passed, 1 skipped`.
+- The current T057 runner command with the locked plan SHA still exits `1`
+  and reports `WAITING_FOR_FULL_SPOT_COVERAGE`, observed holdout hours `0`,
+  expected holdout hours `336`, with blocking checks
+  `full_window_covered` and `min_holdout_hours_met`.
+
+Operational result:
+
+- Current frozen T057 plan remains unchanged.
+- OMPEX remains advisory only and cannot become a model, selection, backtest,
+  promotion, or production gate.
+- Promotion remains NO-GO until a future T057 run passes with full spot
+  coverage and the approved production/export/selected/capstone chain is built
+  from revalidated strict evidence.
+
+Rejected alternatives:
+
+- Trust `contract_pass=true` from an already approved manifest without
+  reopening the referenced strict evidence.
+- Let OMPEX comparison outputs omit selection/backtest/promotion flags because
+  the script name already says advisory.
+
+Invariants:
+
+- The existing locked T057 plan JSON remains unchanged.
+- OMPEX benchmark artifacts remain sidecars only.
+- Source hierarchy approval is a QUOTE_CONFLICT waiver for the exact bound
+  product summary and policy, not a curve approval.
+

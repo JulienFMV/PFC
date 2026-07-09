@@ -75,6 +75,7 @@ def build_manifest(
         governance=governance,
         source_provenance=source_provenance,
         selection=selection,
+        source_hierarchy_policy_path=source_hierarchy_policy,
         adjusted_csv=adjusted_csv,
     )
     contract_pass = all(check["status"] == "PASS" for check in checks)
@@ -179,6 +180,7 @@ def _contract_checks(
     governance: dict[str, Any],
     source_provenance: dict[str, Any] | None,
     selection: dict[str, Any] | None,
+    source_hierarchy_policy_path: Path,
     adjusted_csv: Path,
 ) -> list[dict[str, Any]]:
     checks = [
@@ -187,6 +189,11 @@ def _contract_checks(
         _check("lab_ompex_not_selection", lab.get("ompex_used_in_selection") is False, lab.get("ompex_used_in_selection")),
         _check("monthly_level_authority_solver", monthly.get("monthly_level_authority") == "solver", monthly.get("monthly_level_authority")),
         _check("source_hierarchy_policy_approved", policy.get("production_approved") is True, policy.get("production_approved")),
+        _check(
+            "source_hierarchy_policy_bound_to_product_summary",
+            _source_hierarchy_policy_bound_to_product_summary(product, policy_path=source_hierarchy_policy_path),
+            _source_hierarchy_policy_binding_value(product),
+        ),
         _check("governance_pass", governance.get("status") == "PASS", governance.get("status")),
         _check(
             "independent_no_ompex",
@@ -253,6 +260,32 @@ def _production_identity_errors(
     elif not source_provenance_manifest.exists():
         errors.append("source_provenance_manifest_missing")
     return errors
+
+
+def _source_hierarchy_policy_bound_to_product_summary(product: dict[str, Any], *, policy_path: Path) -> bool:
+    value = product.get("source_hierarchy_policy")
+    if not isinstance(value, dict):
+        return False
+    policy_sha = _sha256(policy_path)
+    if value.get("sha256") != policy_sha:
+        return False
+    policy_text = value.get("path")
+    if policy_text:
+        try:
+            if Path(str(policy_text)).resolve() != policy_path.resolve():
+                return False
+        except (OSError, ValueError):
+            return False
+    return bool(
+        value.get("production_approved") is True
+        and value.get("status") == "ACCEPTED_PRODUCTION_APPROVED"
+        and value.get("blocking_quote_conflict_count") == 0
+    )
+
+
+def _source_hierarchy_policy_binding_value(product: dict[str, Any]) -> dict[str, Any] | None:
+    value = product.get("source_hierarchy_policy")
+    return value if isinstance(value, dict) else None
 
 
 def _source_provenance_checks(source_provenance: dict[str, Any], adjusted_csv: Path) -> list[dict[str, Any]]:

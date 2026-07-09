@@ -49,6 +49,7 @@ def _write_inputs(tmp_path):
             "active_config_hash": "a" * 64,
         },
     )
+    _write_json(policy, {"production_approved": True})
     _write_json(
         product,
         {
@@ -56,6 +57,13 @@ def _write_inputs(tmp_path):
             "critical_count": 0,
             "unsupported_count": 0,
             "blocking_quote_conflict_count": 0,
+            "source_hierarchy_policy": {
+                "path": str(policy),
+                "sha256": _sha256(policy),
+                "status": "ACCEPTED_PRODUCTION_APPROVED",
+                "production_approved": True,
+                "blocking_quote_conflict_count": 0,
+            },
         },
     )
     pd.DataFrame(
@@ -65,7 +73,6 @@ def _write_inputs(tmp_path):
             {"metric": "monthly_path_critical_flags", "value": "0"},
         ]
     ).to_csv(powerbi, index=False)
-    _write_json(policy, {"production_approved": True})
     _write_json(
         independent,
         {
@@ -600,6 +607,42 @@ def test_adjusted_production_manifest_can_be_approved_with_candidate_csv_source_
     assert manifest["locked_holdout_summary_sha256"] == _sha256(locked_holdout)
     assert manifest["production_approved"] is True
     assert manifest["production_promotion_approved"] is True
+
+
+def test_adjusted_production_manifest_requires_product_summary_source_hierarchy_binding(tmp_path) -> None:
+    lab, monthly, product, powerbi, policy, independent, governance, _ompex = _write_inputs(tmp_path)
+    adjusted_csv = json.loads(lab.read_text(encoding="utf-8"))["outputs"]["adjusted_csv"]
+    product_payload = json.loads(product.read_text(encoding="utf-8"))
+    product_payload["source_hierarchy_policy"]["sha256"] = "0" * 64
+    _write_json(product, product_payload)
+    source = _write_source_provenance(tmp_path, lab, adjusted_csv, source_kind="candidate_csv")
+    selection = _write_selection_summary(tmp_path, adjusted_csv)
+    locked_holdout = _write_locked_holdout(tmp_path)
+
+    manifest = build_manifest(
+        lab_manifest=lab,
+        baseline_monthly_manifest=monthly,
+        product_summary=product,
+        powerbi_summary=powerbi,
+        source_hierarchy_policy=policy,
+        independent_summary=independent,
+        governance_audit=governance,
+        selection_summary=selection,
+        locked_holdout_summary=locked_holdout,
+        production_run_id="prod-run-1",
+        production_entrypoint="pfc_shaping.pipeline.production_phases",
+        git_commit="a" * 40,
+        source_provenance_manifest=source,
+        production_approved=True,
+        production_promotion_approved=True,
+        output=tmp_path / "adjusted_production_manifest.json",
+    )
+
+    check = next(item for item in manifest["checks"] if item["name"] == "source_hierarchy_policy_bound_to_product_summary")
+    assert check["status"] == "FAIL"
+    assert manifest["contract_pass"] is False
+    assert manifest["production_approved"] is False
+    assert manifest["production_promotion_approved"] is False
 
 
 def test_adjusted_production_manifest_approval_requires_selection_policy(tmp_path) -> None:

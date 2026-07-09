@@ -424,6 +424,22 @@ def test_future_approval_path_blocks_bad_spot_policy(tmp_path: Path) -> None:
     assert summary["blocking_stage"] == "spot_policy"
 
 
+def test_future_approval_path_rejects_unexpected_spot_benchmark_policy(tmp_path: Path) -> None:
+    readiness = _write_json(tmp_path / "readiness.json", _readiness_payload())
+    spot = _write_json(tmp_path / "spot.json", _spot_payload(benchmark_policy="advisory"))
+
+    summary = audit_future_approval_path(
+        readiness_json=readiness,
+        spot_backtest_summary=spot,
+        output=tmp_path / "out.json",
+    )
+
+    assert summary["status"] == "NO_GO_SPOT_BACKTEST_POLICY_FAIL"
+    assert summary["spot_backtest_policy"]["pass"] is False
+    assert summary["spot_backtest_policy"]["checks"]["benchmark_policy_no_ompex_lab_only"] is False
+    assert summary["blocking_stage"] == "spot_policy"
+
+
 def test_future_approval_path_cli_exits_nonzero_for_no_go(tmp_path: Path) -> None:
     readiness = _write_json(tmp_path / "readiness.json", _readiness_payload())
 

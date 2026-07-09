@@ -154,6 +154,7 @@ def _spot_policy(spot: dict[str, Any] | None) -> dict[str, Any]:
     checks = {
         "promotion_gate_false": spot.get("promotion_gate") is False,
         "production_approved_false": spot.get("production_approved") is False,
+        "benchmark_policy_no_ompex_lab_only": spot.get("benchmark_policy") == "rolling_origin_epex_spot_no_ompex_lab_only",
         "ompex_not_model": spot.get("ompex_used_in_model") is False,
         "ompex_not_selection": spot.get("ompex_used_in_selection") is False,
         "ompex_not_backtest": spot.get("ompex_used_in_backtest") is False,
