@@ -1484,6 +1484,49 @@ Result: `25 passed`.
 Operational next action remains unchanged: rerun this wrapper after the full
 T057 spot window is published. Promotion remains NO-GO.
 
+## 2026-07-09 T057 Wrapper Evidence Policy Routing
+
+Promotion/future-approval checks now understand the one-command Energy Charts
+wrapper summary.
+
+Changes:
+
+- `scripts/epex_lab_locked_holdout_policy.py` recognizes
+  `energy_charts_epex_locked_holdout_run.v1`.
+- `scripts/run_energy_charts_epex_locked_holdout.py` emits
+  `locked_plan_identity`, `benchmark_policy`, and no-OMPEX flags.
+- Wrapper `LOCKED_HOLDOUT_SPOT_WAITING` routes to
+  `NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING`.
+- Wrapper PASS is accepted only if it links to a hash-bound inner
+  `epex_lab_locked_holdout_run.v1` summary that passes the existing locked
+  holdout policy.
+
+Current real wrapper policy check:
+
+- input:
+  `output/phase14/t057_locked_t056_future_holdout/energy_charts_locked_runner_20260709/energy_charts_locked_holdout_run_summary.json`
+- `status=NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING`
+- `pass=false`
+- `operator_wrapper_status=LOCKED_HOLDOUT_SPOT_WAITING`
+- `spot_fetch_summary_matches_embedded=true`
+- `plan_identity_matches_plan_json=true`
+
+Validation:
+
+```powershell
+pytest tests\test_epex_lab_locked_holdout_policy.py -q -p no:cacheprovider
+```
+
+Result: `15 passed`.
+
+```powershell
+pytest tests\test_check_epex_lab_promotion_readiness_script.py tests\test_audit_epex_lab_future_approval_path_script.py -q -p no:cacheprovider
+```
+
+Result: `26 passed`.
+
+Promotion status remains NO-GO.
+
 ## 2026-07-09 Expert Audit + Discovery Coverage Follow-Up
 
 Read-only expert agents were launched for the next Phase 14 steps:

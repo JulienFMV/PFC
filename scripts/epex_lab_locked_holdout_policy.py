@@ -12,6 +12,7 @@ PLAN_SCHEMA_VERSION = "epex_lab_locked_holdout_plan.v1"
 RUN_SCHEMA_VERSION = "epex_lab_locked_holdout_run.v1"
 AUDIT_SCHEMA_VERSION = "epex_lab_locked_holdout_audit.v1"
 COVERAGE_SCHEMA_VERSION = "epex_lab_locked_holdout_coverage.v1"
+ENERGY_CHARTS_RUN_SCHEMA_VERSION = "energy_charts_epex_locked_holdout_run.v1"
 LOCKED_HOLDOUT_POLICY = "locked_future_no_ompex_holdout"
 SPOT_BACKTEST_SCHEMA_VERSION = "epex_shape_lab_spot_backtest.v1"
 SPOT_BACKTEST_POLICY = "rolling_origin_epex_spot_no_ompex_lab_only"
@@ -53,6 +54,8 @@ def locked_holdout_policy(summary: dict[str, Any] | None) -> dict[str, Any]:
         "ompex_not_selection": summary.get("ompex_used_in_selection") is False,
         "ompex_not_backtest": summary.get("ompex_used_in_backtest") is False,
     }
+    if schema == ENERGY_CHARTS_RUN_SCHEMA_VERSION:
+        return _energy_charts_locked_holdout_policy(summary, checks)
     if schema == RUN_SCHEMA_VERSION:
         coverage = summary.get("coverage") if isinstance(summary.get("coverage"), dict) else {}
         coverage_checks = coverage.get("checks") if isinstance(coverage.get("checks"), dict) else {}
@@ -168,6 +171,128 @@ def locked_holdout_policy(summary: dict[str, Any] | None) -> dict[str, Any]:
         "output_dir": summary.get("output_dir"),
         "checks": checks,
     }
+
+
+def _energy_charts_locked_holdout_policy(
+    summary: dict[str, Any],
+    checks: dict[str, bool],
+) -> dict[str, Any]:
+    checks.update(
+        {
+            "benchmark_policy_locked": summary.get("benchmark_policy") == LOCKED_HOLDOUT_POLICY,
+            "expected_plan_json_sha256_present": bool(str(summary.get("expected_plan_json_sha256") or "").strip()),
+            "actual_plan_json_sha256_present": bool(str(summary.get("actual_plan_json_sha256") or "").strip()),
+            "expected_plan_json_sha256_bound": _expected_plan_sha_bound(summary),
+            "spot_fetch_ran": summary.get("spot_fetch_ran") is True,
+            "spot_fetch_summary_sha256_bound": _file_sha_bound(
+                summary,
+                path_key="spot_fetch_summary",
+                sha_key="spot_fetch_summary_sha256",
+            ),
+            "spot_fetch_summary_matches_embedded": _spot_fetch_summary_matches_embedded(summary),
+        }
+    )
+    if summary.get("status") == "LOCKED_HOLDOUT_SPOT_WAITING":
+        checks.update(
+            {
+                "waiting_status": True,
+                "locked_holdout_not_run": summary.get("locked_holdout_ran") is False,
+                "holdout_pass_false": summary.get("holdout_pass") is False,
+            }
+        )
+        checks.update(_identity_checks(summary))
+        return _locked_holdout_policy_result(
+            summary,
+            checks,
+            passed=False,
+            status="NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING",
+            extra={"operator_wrapper_status": summary.get("status")},
+        )
+
+    linked = _read_bound_json(
+        summary,
+        path_key="locked_holdout_run_summary",
+        sha_key="locked_holdout_run_summary_sha256",
+    )
+    linked_policy = locked_holdout_policy(linked) if linked is not None else None
+    checks.update(
+        {
+            "locked_holdout_ran": summary.get("locked_holdout_ran") is True,
+            "linked_locked_holdout_run_summary_sha256_bound": linked is not None,
+            "linked_locked_holdout_embedded_matches": _linked_locked_holdout_matches_embedded(summary, linked),
+            "linked_locked_holdout_policy_pass": linked_policy is not None and linked_policy.get("pass") is True,
+            "status_matches_linked": linked is not None and summary.get("status") == linked.get("status"),
+            "holdout_pass_matches_linked": linked is not None
+            and summary.get("holdout_pass") is True
+            and linked.get("holdout_pass") is True,
+        }
+    )
+    checks.update(_identity_checks(summary))
+    passed = all(checks.values())
+    status = "LOCKED_HOLDOUT_PASS" if passed else (
+        linked_policy.get("status") if linked_policy is not None else "NO_GO_LOCKED_HOLDOUT_FAIL"
+    )
+    return _locked_holdout_policy_result(
+        summary,
+        checks,
+        passed=passed,
+        status=status,
+        extra={
+            "operator_wrapper_status": summary.get("status"),
+            "linked_locked_holdout_policy": linked_policy,
+        },
+    )
+
+
+def _locked_holdout_policy_result(
+    summary: dict[str, Any],
+    checks: dict[str, bool],
+    *,
+    passed: bool,
+    status: str,
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    result = {
+        "provided": True,
+        "schema_version": summary.get("schema_version"),
+        "summary": summary.get("status"),
+        "pass": passed,
+        "status": "LOCKED_HOLDOUT_PASS" if passed else status,
+        "plan_json": _identity(summary).get("plan_json"),
+        "plan_json_sha256": _identity(summary).get("plan_json_sha256"),
+        "expected_plan_json_sha256": summary.get("expected_plan_json_sha256"),
+        "actual_plan_json_sha256": summary.get("actual_plan_json_sha256"),
+        "plan_id": _identity(summary).get("plan_id"),
+        "holdout_start_utc": _identity(summary).get("holdout_start_utc"),
+        "holdout_end_utc": _identity(summary).get("holdout_end_utc"),
+        "baseline_csv_sha256": _identity(summary).get("baseline_csv_sha256"),
+        "adjusted_csv_sha256": _identity(summary).get("adjusted_csv_sha256"),
+        "spot_parquet": summary.get("spot_parquet"),
+        "output_dir": summary.get("output_dir"),
+        "checks": checks,
+    }
+    if extra:
+        result.update(extra)
+    return result
+
+
+def _spot_fetch_summary_matches_embedded(summary: dict[str, Any]) -> bool:
+    linked = _read_bound_json(
+        summary,
+        path_key="spot_fetch_summary",
+        sha_key="spot_fetch_summary_sha256",
+    )
+    return linked is not None and linked == summary.get("spot_fetch")
+
+
+def _linked_locked_holdout_matches_embedded(
+    summary: dict[str, Any],
+    linked: dict[str, Any] | None,
+) -> bool:
+    if linked is None:
+        return False
+    embedded = summary.get("locked_holdout")
+    return not isinstance(embedded, dict) or embedded == linked
 
 
 def _coverage_status_matches_embedded(summary: dict[str, Any]) -> bool:

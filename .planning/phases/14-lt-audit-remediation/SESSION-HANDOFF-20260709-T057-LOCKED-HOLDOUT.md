@@ -1168,6 +1168,58 @@ Result: `25 passed`.
 Recommended future command is now the one-command wrapper above. It should be
 rerun only after the full T057 window is expected to be available.
 
+## 2026-07-09 Follow-Up - Wrapper Evidence Accepted By Policy
+
+The shared locked holdout policy now recognizes the Energy Charts wrapper
+summary:
+
+- `scripts/epex_lab_locked_holdout_policy.py` supports
+  `energy_charts_epex_locked_holdout_run.v1`.
+- `LOCKED_HOLDOUT_SPOT_WAITING` maps to
+  `NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING`, so promotion readiness and future
+  approval path route it as a coverage wait rather than a generic schema
+  failure.
+- Future wrapper PASS can pass policy only if it links to a hash-bound inner
+  `epex_lab_locked_holdout_run.v1` summary that passes the existing strict
+  locked holdout policy.
+- `scripts/run_energy_charts_epex_locked_holdout.py` now emits
+  `locked_plan_identity`, `benchmark_policy`, and no-OMPEX flags.
+
+Current real wrapper policy check:
+
+```powershell
+@'
+import json
+from pathlib import Path
+from scripts.epex_lab_locked_holdout_policy import locked_holdout_policy
+p = Path('output/phase14/t057_locked_t056_future_holdout/energy_charts_locked_runner_20260709/energy_charts_locked_holdout_run_summary.json')
+policy = locked_holdout_policy(json.loads(p.read_text(encoding='utf-8')))
+print(policy['status'], policy['pass'])
+'@ | python -
+```
+
+Result:
+
+- `status=NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING`;
+- `pass=false`;
+- `operator_wrapper_status=LOCKED_HOLDOUT_SPOT_WAITING`;
+- `spot_fetch_summary_matches_embedded=true`;
+- `plan_identity_matches_plan_json=true`.
+
+Validation:
+
+```powershell
+pytest tests\test_epex_lab_locked_holdout_policy.py -q -p no:cacheprovider
+```
+
+Result: `15 passed`.
+
+```powershell
+pytest tests\test_check_epex_lab_promotion_readiness_script.py tests\test_audit_epex_lab_future_approval_path_script.py -q -p no:cacheprovider
+```
+
+Result: `26 passed`.
+
 ## 2026-07-09 Expert Audit + Discovery Coverage Follow-Up
 
 Read-only expert agents were launched after the latest user request for the

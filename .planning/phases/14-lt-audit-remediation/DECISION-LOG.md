@@ -7195,3 +7195,66 @@ Invariants:
 - A passing holdout still does not replace the required production/export/
   selected/capstone evidence chain.
 
+## D-20260709-96 - Promotion Readiness Must Understand Energy Charts Wrapper Evidence
+
+Decision: `locked_holdout_policy` must recognize
+`energy_charts_epex_locked_holdout_run.v1` summaries as first-class operator
+evidence, while preserving the canonical locked T057 runner as the only PASS
+source.
+
+Reason: after adding the one-command Energy Charts wrapper, promotion checks
+could receive its run summary. Treating that summary as an unknown schema would
+route an honest WAITING state as a generic failure. The policy now distinguishes
+coverage waiting from invalid/failing holdout evidence and can validate a future
+wrapper PASS only through a hash-bound inner
+`epex_lab_locked_holdout_run.v1` summary.
+
+Implementation:
+
+- `scripts/epex_lab_locked_holdout_policy.py` now supports
+  `energy_charts_epex_locked_holdout_run.v1`.
+- Wrapper `LOCKED_HOLDOUT_SPOT_WAITING` maps to
+  `NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING`.
+- Wrapper PASS is accepted only when:
+  - the wrapper is non-promotional and no-OMPEX;
+  - the spot-fetch summary hash matches the embedded spot-fetch payload;
+  - `locked_holdout_run_summary_sha256` matches the linked inner run summary;
+  - the embedded inner run, when present, matches the linked file;
+  - the linked inner run passes the existing locked holdout policy.
+- `scripts/run_energy_charts_epex_locked_holdout.py` now emits
+  `locked_plan_identity`, `benchmark_policy`, and no-OMPEX flags.
+
+Current real wrapper policy result:
+
+- input:
+  `output/phase14/t057_locked_t056_future_holdout/energy_charts_locked_runner_20260709/energy_charts_locked_holdout_run_summary.json`
+- `schema_version=energy_charts_epex_locked_holdout_run.v1`
+- `operator_wrapper_status=LOCKED_HOLDOUT_SPOT_WAITING`
+- `status=NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING`
+- `pass=false`
+- `spot_fetch_summary_matches_embedded=true`
+- `plan_identity_matches_plan_json=true`
+
+Validation:
+
+- `pytest tests\test_epex_lab_locked_holdout_policy.py -q -p no:cacheprovider`
+  reported `15 passed`.
+- `pytest tests\test_check_epex_lab_promotion_readiness_script.py tests\test_audit_epex_lab_future_approval_path_script.py -q -p no:cacheprovider`
+  reported `26 passed`.
+
+Rejected alternatives:
+
+- Keep the wrapper schema unknown and require operators to manually pass the
+  inner locked runner summary later.
+- Treat wrapper PASS as sufficient without validating the linked inner locked
+  holdout run.
+- Modify promotion readiness only, leaving future approval path with divergent
+  routing.
+
+Invariants:
+
+- The wrapper remains non-promotional.
+- Production promotion still requires locked holdout PASS and the complete
+  production/export/selected/capstone evidence chain.
+- T057 plan, hashes, and pass criteria remain unchanged.
+

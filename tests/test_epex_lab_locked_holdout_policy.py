@@ -240,6 +240,91 @@ def test_locked_holdout_policy_preserves_input_invalid_status(tmp_path: Path) ->
     assert policy["status"] == "NO_GO_LOCKED_HOLDOUT_INPUT_INVALID"
 
 
+def test_locked_holdout_policy_routes_energy_charts_wrapper_waiting_to_coverage_pending(tmp_path: Path) -> None:
+    run = _passing_run_summary(tmp_path)
+    spot_fetch = _write_json(
+        tmp_path / "spot_fetch_summary.json",
+        {
+            "schema_version": "energy_charts_epex_spot_hourly_fetch.v1",
+            "status": "SPOT_FETCH_ERROR",
+            "full_window_covered": False,
+            "expected_hour_count": 336,
+            "observed_hour_count": 0,
+        },
+    )
+    wrapper = {
+        "schema_version": "energy_charts_epex_locked_holdout_run.v1",
+        "status": "LOCKED_HOLDOUT_SPOT_WAITING",
+        "promotion_gate": False,
+        "production_approved": False,
+        "benchmark_policy": "locked_future_no_ompex_holdout",
+        "ompex_used_in_model": False,
+        "ompex_used_in_selection": False,
+        "ompex_used_in_backtest": False,
+        "expected_plan_json_sha256": run["expected_plan_json_sha256"],
+        "actual_plan_json_sha256": run["actual_plan_json_sha256"],
+        "locked_plan_identity": run["locked_plan_identity"],
+        "spot_fetch_ran": True,
+        "spot_fetch_summary": str(spot_fetch),
+        "spot_fetch_summary_sha256": _sha256(spot_fetch),
+        "spot_fetch": json.loads(spot_fetch.read_text(encoding="utf-8")),
+        "locked_holdout_ran": False,
+        "holdout_pass": False,
+    }
+
+    policy = locked_holdout_policy(wrapper)
+
+    assert policy["pass"] is False
+    assert policy["status"] == "NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING"
+    assert policy["operator_wrapper_status"] == "LOCKED_HOLDOUT_SPOT_WAITING"
+    assert policy["checks"]["spot_fetch_summary_matches_embedded"] is True
+    assert policy["checks"]["locked_holdout_not_run"] is True
+
+
+def test_locked_holdout_policy_accepts_energy_charts_wrapper_with_bound_passing_run(tmp_path: Path) -> None:
+    run = _passing_run_summary(tmp_path)
+    run_path = _write_json(tmp_path / "locked_holdout_run_summary.json", run)
+    spot_fetch = _write_json(
+        tmp_path / "spot_fetch_summary.json",
+        {
+            "schema_version": "energy_charts_epex_spot_hourly_fetch.v1",
+            "status": "OK",
+            "full_window_covered": True,
+            "expected_hour_count": 336,
+            "observed_hour_count": 336,
+        },
+    )
+    wrapper = {
+        "schema_version": "energy_charts_epex_locked_holdout_run.v1",
+        "status": "LOCKED_HOLDOUT_PASS",
+        "promotion_gate": False,
+        "production_approved": False,
+        "benchmark_policy": "locked_future_no_ompex_holdout",
+        "ompex_used_in_model": False,
+        "ompex_used_in_selection": False,
+        "ompex_used_in_backtest": False,
+        "expected_plan_json_sha256": run["expected_plan_json_sha256"],
+        "actual_plan_json_sha256": run["actual_plan_json_sha256"],
+        "locked_plan_identity": run["locked_plan_identity"],
+        "spot_fetch_ran": True,
+        "spot_fetch_summary": str(spot_fetch),
+        "spot_fetch_summary_sha256": _sha256(spot_fetch),
+        "spot_fetch": json.loads(spot_fetch.read_text(encoding="utf-8")),
+        "locked_holdout_ran": True,
+        "locked_holdout_run_summary": str(run_path),
+        "locked_holdout_run_summary_sha256": _sha256(run_path),
+        "locked_holdout": run,
+        "holdout_pass": True,
+    }
+
+    policy = locked_holdout_policy(wrapper)
+
+    assert policy["pass"] is True
+    assert policy["status"] == "LOCKED_HOLDOUT_PASS"
+    assert policy["checks"]["linked_locked_holdout_policy_pass"] is True
+    assert policy["checks"]["linked_locked_holdout_embedded_matches"] is True
+
+
 def _ready_coverage(*, identity: dict) -> dict:
     timestamp_set_sha256 = "c" * 64
     return {

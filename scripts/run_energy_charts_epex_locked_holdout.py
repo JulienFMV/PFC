@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from scripts.fetch_energy_charts_epex_spot_hourly import fetch_hourly_spot
 from scripts.run_epex_lab_locked_holdout import run_locked_holdout
+from scripts.epex_lab_locked_holdout_policy import build_locked_plan_identity
 
 
 SUMMARY_SCHEMA_VERSION = "energy_charts_epex_locked_holdout_run.v1"
@@ -47,6 +48,11 @@ def run_energy_charts_locked_holdout(
         "actual_plan_json_sha256": actual_plan_sha256,
         "output_dir": str(output_dir),
         "bzn": bzn,
+        "benchmark_policy": "locked_future_no_ompex_holdout",
+        "ompex_used_in_model": False,
+        "ompex_used_in_selection": False,
+        "ompex_used_in_backtest": False,
+        "locked_plan_identity": build_locked_plan_identity(plan, plan_json=plan_json),
         "spot_fetch_ran": False,
         "locked_holdout_ran": False,
         "holdout_pass": False,
