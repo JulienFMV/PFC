@@ -296,6 +296,43 @@ Result:
 
 `96 passed, 1 skipped`
 
+## Production Chain Builder Follow-Up
+
+Fixed a latent bug in:
+
+`scripts/build_epex_lab_adjusted_production_chain.py`
+
+Details:
+
+- `_same_path()` now performs raw string equality followed by resolved
+  filesystem path equality.
+- Removed unreachable path-comparison code that had been left after
+  `_powerbi_critical_count()`.
+- `tests/test_build_epex_lab_adjusted_production_chain_script.py` now covers a
+  resolved `adjusted_production_manifest` self reference and supplies the
+  required locked-holdout queue summary when asserting that chain artifacts can
+  unlock readiness.
+
+Validation:
+
+```powershell
+pytest tests\test_build_epex_lab_adjusted_production_chain_script.py -q -p no:cacheprovider
+```
+
+Result:
+
+`10 passed`
+
+Broader validation:
+
+```powershell
+pytest tests\test_build_epex_lab_adjusted_production_manifest_script.py tests\test_build_epex_lab_adjusted_production_chain_script.py tests\test_check_epex_lab_promotion_readiness_script.py tests\test_audit_epex_lab_future_approval_path_script.py tests\test_epex_lab_locked_holdout_policy.py tests\test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result:
+
+`91 passed, 1 skipped`
+
 ## Next Steps
 
 1. Keep T057 frozen and wait for full T057 spot coverage.

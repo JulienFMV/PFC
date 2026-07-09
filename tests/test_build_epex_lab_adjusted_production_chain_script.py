@@ -223,6 +223,34 @@ def _write_locked_holdout(tmp_path: Path, *, passed: bool = True) -> Path:
     return locked_holdout
 
 
+def _write_locked_holdout_queue(tmp_path: Path) -> Path:
+    queue = tmp_path / "locked_holdout_queue.json"
+    _write_json(
+        queue,
+        {
+            "schema_version": "epex_lab_locked_holdout_queue_audit.v1",
+            "status": "LOCKED_HOLDOUT_QUEUE_COMPLETE",
+            "read_only": True,
+            "promotion_gate": False,
+            "production_approved": False,
+            "plan_count": 1,
+            "invalid_plan_count": 0,
+            "policy_invalid_plan_count": 0,
+            "artifact_invalid_plan_count": 0,
+            "duplicate_plan_id_count": 0,
+            "overlapping_window_count": 0,
+            "queue_issues": [],
+            "plans": [
+                {
+                    "plan_id": "test_locked_holdout",
+                    "plan_json_sha256": _sha256(tmp_path / "locked_plan.json"),
+                }
+            ],
+        },
+    )
+    return queue
+
+
 def _ready_coverage(*, passed: bool = True, identity: dict) -> dict:
     timestamp_set_sha256 = "c" * 64 if passed else None
     return {
@@ -613,6 +641,10 @@ def test_adjusted_production_chain_builds_artifacts_that_unlock_readiness(tmp_pa
         production_promotion_approved=True,
         output=production_manifest,
     )
+    manifest = json.loads(production_manifest.read_text(encoding="utf-8"))
+    manifest["adjusted_production_manifest"] = str(production_manifest.resolve())
+    production_manifest.write_text(json.dumps(manifest), encoding="utf-8")
+    locked_holdout_queue = _write_locked_holdout_queue(tmp_path)
 
     paths = build_chain(
         adjusted_production_manifest=production_manifest,
@@ -643,6 +675,7 @@ def test_adjusted_production_chain_builds_artifacts_that_unlock_readiness(tmp_pa
         adjusted_selected_config=paths["adjusted_selected_artifact"],
         adjusted_capstone=paths["adjusted_capstone"],
         locked_holdout_summary=locked_holdout,
+        locked_holdout_queue_summary=locked_holdout_queue,
         output=tmp_path / "decision.json",
     )
 

@@ -362,6 +362,14 @@ def _sha256(path: Path) -> str:
 def _same_path(left: Any, right: Any) -> bool:
     if left is None or right is None:
         return False
+    left_text = str(left)
+    right_text = str(right)
+    if left_text == right_text:
+        return True
+    try:
+        return Path(left_text).resolve() == Path(right_text).resolve()
+    except (OSError, TypeError, ValueError):
+        return False
 
 
 def _load_powerbi_summary(path: Path) -> dict[str, str]:
@@ -388,10 +396,6 @@ def _powerbi_critical_count(summary: dict[str, str]) -> int:
         except (TypeError, ValueError):
             total += 1
     return total
-    try:
-        return Path(str(left)).resolve() == Path(str(right)).resolve()
-    except (OSError, TypeError, ValueError):
-        return False
 
 
 def _source_export_manifest_bound_to_csv(manifest_path: Path, source_csv: Path) -> bool:

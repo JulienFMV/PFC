@@ -7747,3 +7747,38 @@ Invariants:
 - T057 and T061 remain separate evidence paths; one line cannot approve or
   substitute for the other.
 
+## D-20260709-106 - Production Chain Builder Must Revalidate Resolved Self References
+
+Decision: the adjusted production chain builder must compare optional
+`adjusted_production_manifest` self references using resolved filesystem paths,
+not only raw strings.
+
+Reason: production manifests may be assembled by different operators or scripts
+using relative, absolute, or already-resolved paths. A valid manifest should not
+be rejected because the same file is represented differently, and a stale or
+wrong self reference must still be rejected before export/selected/capstone
+artifacts are built.
+
+Implementation:
+
+- Fixed `_same_path()` in `scripts/build_epex_lab_adjusted_production_chain.py`
+  so it performs string equality first, then resolved `Path` equality.
+- Removed unreachable path-comparison code that had been stranded after
+  `_powerbi_critical_count()`.
+- Updated the chain-builder test to exercise a resolved self reference and the
+  now-required locked-holdout queue readiness evidence.
+
+Rejected alternatives:
+
+- Remove the self-reference check because the manifest hash is already bound.
+- Accept only raw string path equality.
+- Keep readiness queue evidence out of the chain-builder readiness regression
+  test.
+
+Invariants:
+
+- The chain builder still cannot approve production by itself; it only packages
+  artifacts after an approved, contract-pass production manifest.
+- Queue evidence remains required by readiness for complete production chains.
+- OMPEX remains advisory-only and forbidden from production gates.
+

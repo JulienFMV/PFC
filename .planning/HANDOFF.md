@@ -1508,6 +1508,39 @@ python -m pytest tests\test_audit_epex_lab_locked_holdout_queue_script.py tests\
 
 Result: `96 passed, 1 skipped`.
 
+## 2026-07-09 Adjusted Production Chain Builder Self-Reference Hardening
+
+Fixed:
+
+- `scripts/build_epex_lab_adjusted_production_chain.py`
+
+The helper `_same_path()` now compares raw string equality and then resolved
+filesystem paths. This fixes a latent bug where valid optional
+`adjusted_production_manifest` self references could be rejected because the
+path comparison code was unreachable after `_powerbi_critical_count()`.
+
+Test update:
+
+- `tests/test_build_epex_lab_adjusted_production_chain_script.py` now exercises
+  a resolved self reference and supplies the required locked-holdout queue
+  summary when checking that generated chain artifacts unlock readiness.
+
+Focused validation:
+
+```powershell
+pytest tests\test_build_epex_lab_adjusted_production_chain_script.py -q -p no:cacheprovider
+```
+
+Result: `10 passed`.
+
+Broader validation:
+
+```powershell
+pytest tests\test_build_epex_lab_adjusted_production_manifest_script.py tests\test_build_epex_lab_adjusted_production_chain_script.py tests\test_check_epex_lab_promotion_readiness_script.py tests\test_audit_epex_lab_future_approval_path_script.py tests\test_epex_lab_locked_holdout_policy.py tests\test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result: `91 passed, 1 skipped`.
+
 Current local queue audit command:
 
 ```powershell
