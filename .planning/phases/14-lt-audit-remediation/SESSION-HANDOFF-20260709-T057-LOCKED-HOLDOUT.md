@@ -425,3 +425,20 @@ python -m pytest tests/test_build_epex_lab_source_export_manifest_script.py test
 ```
 
 Result: `60 passed, 1 skipped`.
+
+Future approval next-step routing:
+
+- `scripts/audit_epex_lab_future_approval_path.py` now emits
+  `blocking_stage` and `next_required_step`.
+- Current regenerated T057 audit remains
+  `NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING`, exits `1`, and reports:
+  - `blocking_stage=locked_holdout_coverage`
+  - `next_required_step=wait_for_full_spot_coverage_then_run_locked_holdout`
+
+Validation:
+
+```powershell
+python -m pytest tests/test_audit_epex_lab_future_approval_path_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_build_epex_lab_promotion_bundle_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result: `41 passed, 1 skipped`.

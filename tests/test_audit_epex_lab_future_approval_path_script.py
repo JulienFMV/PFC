@@ -93,6 +93,8 @@ def test_future_approval_path_reports_no_go_blockers(tmp_path: Path) -> None:
     assert "adjusted_capstone_approved" in summary["remaining_blockers"]
     assert summary["spot_backtest_policy"]["pass"] is True
     assert summary["required_production_checks"] == PRODUCTION_CHECKS
+    assert summary["blocking_stage"] == "production_evidence"
+    assert summary["next_required_step"] == "generate_adjusted_production_export_selected_capstone_evidence"
     assert summary["next_actions"]
 
 
@@ -157,6 +159,8 @@ def test_future_approval_path_blocks_when_locked_holdout_coverage_pending(tmp_pa
     assert "locked_holdout_pass" in summary["remaining_blockers"]
     assert summary["locked_holdout_policy"]["pass"] is False
     assert summary["locked_holdout_policy"]["checks"]["coverage_ready"] is False
+    assert summary["blocking_stage"] == "locked_holdout_coverage"
+    assert summary["next_required_step"] == "wait_for_full_spot_coverage_then_run_locked_holdout"
 
 
 def test_future_approval_path_allows_promotion_ready_with_passing_locked_holdout(tmp_path: Path) -> None:
@@ -176,6 +180,8 @@ def test_future_approval_path_allows_promotion_ready_with_passing_locked_holdout
     assert summary["status"] == "PROMOTION_READY_CANDIDATE"
     assert summary["approved"] is True
     assert summary["locked_holdout_policy"]["pass"] is True
+    assert summary["blocking_stage"] == "promotion_ready_candidate"
+    assert summary["next_required_step"] == "run_independent_capstone_review"
 
 
 def test_future_approval_path_blocks_synthetic_ready_payload_missing_production_checks(tmp_path: Path) -> None:
@@ -252,6 +258,7 @@ def test_future_approval_path_blocks_bad_spot_policy(tmp_path: Path) -> None:
     assert summary["status"] == "NO_GO_SPOT_BACKTEST_POLICY_FAIL"
     assert summary["spot_backtest_policy"]["pass"] is False
     assert summary["spot_backtest_policy"]["checks"]["ompex_not_backtest"] is False
+    assert summary["blocking_stage"] == "spot_policy"
 
 
 def test_future_approval_path_cli_exits_nonzero_for_no_go(tmp_path: Path) -> None:

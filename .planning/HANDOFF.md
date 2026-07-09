@@ -202,6 +202,15 @@ Operational recheck after the context/plan-template changes:
   `python -m pytest tests/test_build_epex_lab_source_export_manifest_script.py tests/test_stage_epex_lab_adjusted_lt_candidate_script.py tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_adjusted_production_chain_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
   reported `60 passed, 1 skipped`.
 
+Future approval audit now emits machine-readable next-step routing:
+`blocking_stage` and `next_required_step`. The current T057 audit remains
+NO-GO and now reports `blocking_stage=locked_holdout_coverage` with
+`next_required_step=wait_for_full_spot_coverage_then_run_locked_holdout`.
+Validation:
+`python -m pytest tests/test_audit_epex_lab_future_approval_path_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_build_epex_lab_promotion_bundle_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+reported `41 passed, 1 skipped`; regenerating the current T057 future-approval
+audit exits `1` as expected.
+
 Current daily generation: Wednesday 2026-07-08 was regenerated from the EEX
 workbook available on 2026-07-08. The latest usable CH/DE/FR quote row in that
 workbook is `2026-07-07`, so all new 2026-07-08 evidence is bound to

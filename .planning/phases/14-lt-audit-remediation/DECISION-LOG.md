@@ -5251,3 +5251,49 @@ Invariants not to break:
 - Production promotion still requires real, hash-bound production/export/
   selected/capstone evidence plus passing locked holdout binding.
 
+## D-20260709-59 - Publish Machine-Readable Future Approval Blocking Stage
+
+Decision: `scripts/audit_epex_lab_future_approval_path.py` now emits
+`blocking_stage` and `next_required_step` in addition to the existing
+human-readable `next_actions`.
+
+Reason: `status`, `remaining_blockers`, and `next_actions` were sufficient for
+manual review but awkward for automation. The next operational step should be
+machine-readable so a runner can distinguish waiting for locked holdout
+coverage from production-chain evidence generation, readiness contract repair,
+spot policy failure, or final capstone review without parsing prose.
+
+Implementation:
+
+- Added stable routing values such as:
+  - `locked_holdout_coverage` /
+    `wait_for_full_spot_coverage_then_run_locked_holdout`;
+  - `production_evidence` /
+    `generate_adjusted_production_export_selected_capstone_evidence`;
+  - `spot_policy` / `fix_spot_backtest_policy_flags`;
+  - `promotion_ready_candidate` / `run_independent_capstone_review`.
+- Current T057 future approval audit remains
+  `NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING` and now reports
+  `blocking_stage=locked_holdout_coverage`.
+
+Validation:
+
+- `python -m pytest tests/test_audit_epex_lab_future_approval_path_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_build_epex_lab_promotion_bundle_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  reported `41 passed, 1 skipped`.
+- Regenerating
+  `output/phase14/t057_locked_t056_future_holdout/future_approval_path_with_holdout_current.json`
+  exits `1` as expected and reports
+  `next_required_step=wait_for_full_spot_coverage_then_run_locked_holdout`.
+
+Rejected alternatives:
+
+- Keep only human-readable `next_actions`.
+- Encode next-step routing in the high-level `status` field and lose blocker
+  detail when several blockers coexist.
+
+Invariants not to break:
+
+- `approved=true` remains the only success condition for the CLI exit code.
+- The new routing fields are advisory diagnostics; they do not approve
+  production and do not override readiness or locked-holdout checks.
+

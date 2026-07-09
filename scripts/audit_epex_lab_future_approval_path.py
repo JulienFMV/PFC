@@ -85,6 +85,14 @@ def audit_future_approval_path(
         status = "NO_GO_PRODUCTION_CHAIN_INCOMPLETE"
     else:
         status = "NO_GO_UNCLASSIFIED"
+    blocking_stage, next_required_step = _blocking_stage(
+        status=status,
+        missing=missing,
+        missing_production_checks=missing_production_checks,
+        failed_production_checks=failed_production_checks,
+        spot_policy=spot_policy,
+        holdout_policy=holdout_policy,
+    )
 
     summary = {
         "schema_version": "epex_lab_future_approval_path_audit.v1",
@@ -92,6 +100,8 @@ def audit_future_approval_path(
         "promotion_gate": False,
         "approved": bool(status == "PROMOTION_READY_CANDIDATE"),
         "status": status,
+        "blocking_stage": blocking_stage,
+        "next_required_step": next_required_step,
         "readiness_json": str(readiness_json),
         "readiness_status": readiness.get("status"),
         "readiness_approved": bool(readiness.get("approved")),
@@ -263,6 +273,34 @@ def _next_actions(
     if not actions:
         actions.append("Investigate unclassified readiness state before promotion.")
     return actions
+
+
+def _blocking_stage(
+    *,
+    status: str,
+    missing: list[str],
+    missing_production_checks: list[str],
+    failed_production_checks: list[str],
+    spot_policy: dict[str, Any] | None,
+    holdout_policy: dict[str, Any] | None,
+) -> tuple[str, str]:
+    if spot_policy is not None and not spot_policy["pass"]:
+        return "spot_policy", "fix_spot_backtest_policy_flags"
+    if holdout_policy is not None and not holdout_policy["pass"]:
+        if status == "NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING":
+            return "locked_holdout_coverage", "wait_for_full_spot_coverage_then_run_locked_holdout"
+        return "locked_holdout_failure", "resolve_locked_holdout_failure_without_retuning_locked_window"
+    if status == "NO_GO_STRICT_DIAGNOSTICS_FAIL":
+        return "strict_diagnostics", "resolve_strict_diagnostic_failures"
+    if missing:
+        return "production_evidence", "generate_adjusted_production_export_selected_capstone_evidence"
+    if missing_production_checks:
+        return "readiness_contract", "regenerate_readiness_with_required_production_checks"
+    if failed_production_checks:
+        return "production_checks", "replace_local_diagnostic_flags_with_real_production_artifacts"
+    if status == "PROMOTION_READY_CANDIDATE":
+        return "promotion_ready_candidate", "run_independent_capstone_review"
+    return "unclassified", "investigate_readiness_state"
 
 
 def _read_json(path: Path | None) -> dict[str, Any]:
