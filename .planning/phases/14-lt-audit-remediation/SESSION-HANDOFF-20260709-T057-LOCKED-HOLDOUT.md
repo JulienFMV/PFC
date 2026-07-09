@@ -1144,6 +1144,58 @@ Operational status:
 - Promotion remains NO-GO until the future spot window is complete and the
   locked holdout passes.
 
+Follow-up OMPEX advisory comparison for the frozen T056/t005 candidate:
+
+- Purpose: desk benchmark only. OMPEX remains an imperfect external benchmark
+  and must not feed model tuning, lambda selection, backtest, promotion, or
+  production gates.
+- Candidate CSV:
+  `output/phase14/t056_postval_final_micro/t005_w075_l025_p089_e005_n055_r00/candidate_epex_shape_lab_adjusted.csv`
+- Candidate CSV sha256:
+  `5e603a4d5926f9265ca564615e69d0d7ee39f778f6f19b495706ab1b89cf69b6`
+- OMPEX workbook:
+  `H:\Energy\GeCom\MARCHE & NEGOCE\Prix\Analyse HFC\HFC test\ER -HFC_OMPEX_15min\HFC_Ompex_20260707_101700.xlsx`
+- Output directory, ignored by Git:
+  `output/phase14/t056_postval_final_micro/t005_diagnostics/ompex_advisory_20260707`
+
+Command:
+
+```powershell
+python scripts\compare_hpfc_ompex_benchmark.py --hpfc-csv output\phase14\t056_postval_final_micro\t005_w075_l025_p089_e005_n055_r00\candidate_epex_shape_lab_adjusted.csv --ompex-xlsx "H:\Energy\GeCom\MARCHE & NEGOCE\Prix\Analyse HFC\HFC test\ER -HFC_OMPEX_15min\HFC_Ompex_20260707_101700.xlsx" --output-dir output\phase14\t056_postval_final_micro\t005_diagnostics\ompex_advisory_20260707 --alignment auto
+```
+
+Result:
+
+- Exit `0`.
+- Alignment selected: `ompex_minus_1h_hourending`.
+- `benchmark_policy=advisory`, `read_only=true`, `promotion_gate=false`,
+  `production_approved=false`, `ompex_used_in_model=false`,
+  `ompex_used_in_selection=false`, `ompex_used_in_backtest=false`.
+- Overlap: `39481` hourly points from `2026-07-01 00:00:00` to
+  `2030-12-31 23:00:00`.
+- Summary metrics: HPFC mean `84.70786023920365`, OMPEX mean
+  `83.353833742813`, bias `1.354026496390669`, MAE
+  `12.309986329728224`, RMSE `16.244705381704232`, correlation
+  `0.8736510114242135`, p95 absolute error `32.742035`, max absolute error
+  `102.47320500000001`.
+- Advisory observations:
+  - overall level is close versus OMPEX, but OMPEX is not ground truth;
+  - largest hourly shape differences are around hours 16-19 and selected
+    2027-2028 months;
+  - the OMPEX-inside-P10/P90 rate is low (`0.15964641219827258`), so width
+    calibration remains worth reviewing with independent no-OMPEX evidence,
+    not by retuning to OMPEX.
+- Generated advisory files include `benchmark_metrics.json`,
+  `alignment_sensitivity.csv`, `by_year_month.csv`, `by_hour.csv`,
+  `by_bucket.csv`, `top_abs_differences.csv`,
+  `01_monthly_mean_hpfc_vs_ompex.png`, and `02_error_by_hour.png`.
+
+Operational conclusion:
+
+- This comparison supports desk review only.
+- It does not change T057 status; promotion remains NO-GO until locked future
+  spot coverage and production-chain evidence pass.
+
 Follow-up after promotion readiness routing:
 
 - `scripts/check_epex_lab_promotion_readiness.py` now emits
