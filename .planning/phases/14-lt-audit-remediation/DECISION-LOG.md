@@ -4961,7 +4961,21 @@ Implementation:
 
 - Added `scripts/plan_epex_lab_locked_holdout.py`.
 - Added `scripts/audit_epex_lab_locked_holdout.py`.
+- Added `scripts/check_epex_lab_locked_holdout_coverage.py`.
 - Added tests for no-OMPEX hash binding and holdout pass/fail audit.
+
+Coverage status as of the 2026-07-08 spot parquet:
+
+- command output:
+  `output/phase14/t057_locked_t056_future_holdout/coverage_status_current_spot.json`
+- status:
+  `WAITING_FOR_FULL_SPOT_COVERAGE`
+- spot max:
+  `2026-07-08T23:00:00Z`
+- observed holdout hours:
+  `0`
+- expected holdout hours:
+  `336`
 
 Rejected alternatives:
 

@@ -80,6 +80,12 @@ with a refreshed future spot parquet, then run
 `spot_backtest_summary.json`. Do not edit the plan after the holdout window
 starts; create a new plan if the window or criteria must change.
 
+Use `scripts/check_epex_lab_locked_holdout_coverage.py` before running the
+backtest. Current coverage check against the 2026-07-08 spot parquet wrote
+`output/phase14/t057_locked_t056_future_holdout/coverage_status_current_spot.json`
+and reports `WAITING_FOR_FULL_SPOT_COVERAGE`: spot max
+`2026-07-08T23:00:00Z`, observed holdout hours `0`, expected `336`.
+
 Current daily generation: Wednesday 2026-07-08 was regenerated from the EEX
 workbook available on 2026-07-08. The latest usable CH/DE/FR quote row in that
 workbook is `2026-07-07`, so all new 2026-07-08 evidence is bound to

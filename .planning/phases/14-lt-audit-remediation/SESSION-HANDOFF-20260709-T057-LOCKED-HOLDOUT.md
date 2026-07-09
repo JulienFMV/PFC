@@ -44,6 +44,14 @@ Code/tests/docs:
   non-degraded residual MAE.
 - Does not approve production promotion.
 
+`scripts/check_epex_lab_locked_holdout_coverage.py`
+
+- Reads the locked holdout plan and a candidate future EPEX spot parquet.
+- Verifies full hourly coverage for the pre-registered window before running
+  the backtest.
+- Reports missing hours, spot min/max, duplicate holdout rows, and whether it
+  is ready to run the holdout backtest.
+
 ## T057 Locked Plan
 
 Plan file:
@@ -99,10 +107,26 @@ python -m pytest tests/test_plan_epex_lab_locked_holdout_script.py tests/test_au
 
 Result: `34 passed, 1 skipped`.
 
+Coverage check with the currently available 2026-07-08 spot parquet:
+
+```powershell
+python scripts/check_epex_lab_locked_holdout_coverage.py --plan-json .planning\phases\14-lt-audit-remediation\locked_holdout_plan_t057_t056_asof20260709.json --spot-parquet output\phase14\20260708_asof20260707_lshape100_yoy150_amp150_2032\epex_spot_refresh_20260708\epex_hourly_ch_energy_charts_20260708.parquet --output output\phase14\t057_locked_t056_future_holdout\coverage_status_current_spot.json
+```
+
+Result:
+
+- `status=WAITING_FOR_FULL_SPOT_COVERAGE`
+- spot max `2026-07-08T23:00:00Z`
+- observed holdout hours `0`
+- expected holdout hours `336`
+- first missing holdout hour `2026-07-10T00:00:00Z`
+
 ## Next Execution When Future Spot Exists
 
 After the refreshed EPEX spot parquet covers `2026-07-10T00:00:00Z` through
-`2026-07-24T00:00:00Z`, use the plan's
+`2026-07-24T00:00:00Z`, first run
+`scripts/check_epex_lab_locked_holdout_coverage.py`. Only if it reports
+`READY_TO_RUN_HOLDOUT_BACKTEST`, use the plan's
 `commands.run_future_backtest_template`, replacing:
 
 - `<FUTURE_SPOT_PARQUET>`
