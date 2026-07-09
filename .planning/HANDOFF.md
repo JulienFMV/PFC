@@ -1363,6 +1363,57 @@ Result: `112 passed, 1 skipped`.
 Current frozen T057 plan remains unchanged. Regenerated current T057 runner
 still exits `1` with `WAITING_FOR_FULL_SPOT_COVERAGE`.
 
+## 2026-07-09 Expert Audit + Discovery Coverage Follow-Up
+
+Read-only expert agents were launched for the next Phase 14 steps:
+
+- Tesla audited promotion readiness and T057 evidence routing.
+- Cicero audited model-quality sequencing and OMPEX benchmark discipline.
+
+Consensus:
+
+- T056/t005 remains frozen for T057.
+- Promotion remains NO-GO.
+- The immediate blocker is still future EPEX spot coverage for the locked
+  T057 window plus the approved production/export/selected/capstone evidence
+  chain.
+- T058 is research-only and does not replace T056/t005.
+- OMPEX is useful for desk review but must remain outside model input,
+  selection, backtest truth, and promotion gates.
+
+Discovery helper follow-up:
+
+- `scripts/discover_epex_spot_parquet_candidates.py` now reports per-candidate
+  holdout coverage metrics:
+  `expected_holdout_hours`, `observed_holdout_hours`,
+  `missing_holdout_hours`, `first_missing_holdout_utc`,
+  `last_missing_holdout_utc`, and `full_window_covered`.
+- The current local discovery still finds one hourly candidate:
+  `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_spot_refresh_20260708/epex_hourly_ch_energy_charts_20260708.parquet`.
+- That candidate has `spot_max_utc=2026-07-08T23:00:00Z` and covers
+  `0/336` locked holdout hours:
+  `missing_holdout_hours=336`, `first_missing_holdout_utc=2026-07-10T00:00:00Z`,
+  `last_missing_holdout_utc=2026-07-23T23:00:00Z`,
+  `full_window_covered=false`.
+
+Validation:
+
+```powershell
+python -m pytest tests/test_discover_epex_spot_parquet_candidates_script.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_epex_lab_locked_holdout_policy.py -q -p no:cacheprovider
+```
+
+Result: `42 passed`.
+
+Next command when fresh spot data is available:
+
+```powershell
+python scripts\discover_epex_spot_parquet_candidates.py --plan-json .planning\phases\14-lt-audit-remediation\locked_holdout_plan_t057_t056_asof20260709.json --search-root output\phase14 --output-json output\phase14\t057_locked_t056_future_holdout\spot_parquet_discovery_<YYYYMMDD>.json --max-candidates 5
+```
+
+Only after a candidate reports full coverage through
+`2026-07-23T23:00:00Z`, run the locked holdout runner with the unchanged T057
+plan SHA.
+
 ## 2026-07-09 Expert Audit and T058 Lab Plan
 
 Expert read-only audits confirmed the current split of responsibilities:

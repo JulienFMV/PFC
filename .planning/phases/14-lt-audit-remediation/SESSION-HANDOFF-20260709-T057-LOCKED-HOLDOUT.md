@@ -1020,6 +1020,73 @@ Result: `112 passed, 1 skipped`.
 Current frozen T057 plan remains unchanged. Regenerated current T057 runner
 still exits `1` with `WAITING_FOR_FULL_SPOT_COVERAGE`.
 
+## 2026-07-09 Expert Audit + Discovery Coverage Follow-Up
+
+Read-only expert agents were launched after the latest user request for the
+next Phase 14 direction.
+
+Agent verdicts:
+
+- Tesla: promotion is still NO-GO. T056/t005 strict diagnostics pass, but the
+  production chain is incomplete and T057 is blocked by future spot coverage.
+  The locked plan SHA remains
+  `f2b5ce94d7eb892ec4f0b2e46b209d09b078db8d15765009fba4ba0cb21ec1cd`;
+  the adjusted CSV SHA remains
+  `5e603a4d5926f9265ca564615e69d0d7ee39f778f6f19b495706ab1b89cf69b6`.
+- Cicero: keep T056/t005 frozen for T057. Do not retune before the locked
+  future holdout. T058 is research-only; any replacement must be a separate
+  pre-registered EPEX-only lineage. OMPEX may explain shape differences after
+  selection, but must not be used as model input, tuning target, selection
+  metric, backtest truth, or promotion gate.
+
+Code/test follow-up:
+
+- `scripts/discover_epex_spot_parquet_candidates.py` now reports exact
+  holdout coverage metrics for each discovered parquet candidate:
+  `expected_holdout_hours`, `observed_holdout_hours`,
+  `missing_holdout_hours`, `first_missing_holdout_utc`,
+  `last_missing_holdout_utc`, and `full_window_covered`.
+- `tests/test_discover_epex_spot_parquet_candidates_script.py` now verifies
+  both full holdout coverage and the no-coverage lag case.
+
+Validation:
+
+```powershell
+python -m pytest tests/test_discover_epex_spot_parquet_candidates_script.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_epex_lab_locked_holdout_policy.py -q -p no:cacheprovider
+```
+
+Result: `42 passed`.
+
+Regenerated local discovery:
+
+```powershell
+python scripts\discover_epex_spot_parquet_candidates.py --plan-json .planning\phases\14-lt-audit-remediation\locked_holdout_plan_t057_t056_asof20260709.json --search-root output\phase14 --output-json output\phase14\t057_locked_t056_future_holdout\spot_parquet_discovery_20260709.json --max-candidates 5
+```
+
+Result:
+
+- `candidate_count=1`
+- best candidate:
+  `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_spot_refresh_20260708/epex_hourly_ch_energy_charts_20260708.parquet`
+- `spot_max_utc=2026-07-08T23:00:00Z`
+- `expected_holdout_hours=336`
+- `observed_holdout_hours=0`
+- `missing_holdout_hours=336`
+- `first_missing_holdout_utc=2026-07-10T00:00:00Z`
+- `last_missing_holdout_utc=2026-07-23T23:00:00Z`
+- `full_window_covered=false`
+- `spot_hours_until_latest_required_holdout=360.0`
+
+Operational conclusion:
+
+- The fresh helper makes the waiting state explicit per candidate, but does
+  not change gates.
+- Next promotion-readiness action remains: wait for a refreshed hourly EPEX
+  spot parquet covering the full locked T057 window, then run the locked
+  runner with the unchanged plan and expected plan SHA.
+- Do not use T057 outcome for tuning. If T057 fails after complete coverage,
+  document the failure and open a new pre-registered no-OMPEX lab lineage.
+
 ## 2026-07-09 Expert Audit Follow-Up and T058 Lab Pre-Registration
 
 Read-only expert audits were launched after the T056/t005 diagnostics and

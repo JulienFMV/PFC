@@ -33,6 +33,12 @@ def test_discover_epex_spot_parquet_candidates_ranks_latest_spot(tmp_path: Path)
     assert summary["best_candidate"]["path"] == str(newer.resolve())
     assert summary["best_candidate"]["spot_max_utc"] == "2026-07-10T03:00:00Z"
     assert summary["best_candidate"]["spot_hours_until_latest_required_holdout"] == 0.0
+    assert summary["best_candidate"]["expected_holdout_hours"] == 4
+    assert summary["best_candidate"]["observed_holdout_hours"] == 4
+    assert summary["best_candidate"]["missing_holdout_hours"] == 0
+    assert summary["best_candidate"]["first_missing_holdout_utc"] is None
+    assert summary["best_candidate"]["last_missing_holdout_utc"] is None
+    assert summary["best_candidate"]["full_window_covered"] is True
     assert summary["plan_json_sha256"] == _sha256(plan)
     assert "check_epex_lab_locked_holdout_coverage.py" in summary["recommended_commands"]["coverage_check"]
     assert "run_epex_lab_locked_holdout.py" in summary["recommended_commands"]["run_locked_holdout"]
@@ -88,6 +94,12 @@ def test_discover_epex_spot_parquet_candidates_reports_lag(tmp_path: Path) -> No
     assert summary["best_candidate"]["spot_max_utc"] == "2026-07-09T22:00:00Z"
     assert summary["latest_required_holdout_utc"] == "2026-07-10T03:00:00Z"
     assert summary["best_candidate"]["spot_hours_until_latest_required_holdout"] == 5.0
+    assert summary["best_candidate"]["expected_holdout_hours"] == 4
+    assert summary["best_candidate"]["observed_holdout_hours"] == 0
+    assert summary["best_candidate"]["missing_holdout_hours"] == 4
+    assert summary["best_candidate"]["first_missing_holdout_utc"] == "2026-07-10T00:00:00Z"
+    assert summary["best_candidate"]["last_missing_holdout_utc"] == "2026-07-10T03:00:00Z"
+    assert summary["best_candidate"]["full_window_covered"] is False
 
 
 def test_discover_epex_spot_parquet_candidates_cli_returns_nonzero_without_candidates(tmp_path: Path) -> None:

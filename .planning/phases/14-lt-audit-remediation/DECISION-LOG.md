@@ -6655,3 +6655,51 @@ Invariants:
 - Discovery does not approve production promotion.
 - T057 still requires the coverage check and runner gates to pass.
 
+## D-20260709-87 - T057 Spot Discovery Must Report Holdout Coverage Per Candidate
+
+Decision: the T057 spot parquet discovery helper must report exact locked
+holdout coverage metrics for each returned candidate, not only candidate
+freshness.
+
+Reason: ranking by latest timestamp helps locate the right parquet, but
+operators also need to see whether the candidate covers none, part, or all of
+the locked T057 window before running the coverage checker or runner. This is
+especially important while waiting for future EPEX spot rows after
+2026-07-10. Coverage reporting in discovery is diagnostic only; the locked
+coverage checker and runner remain the gates.
+
+Implementation:
+
+- `scripts/discover_epex_spot_parquet_candidates.py` now emits per-candidate
+  `expected_holdout_hours`, `observed_holdout_hours`,
+  `missing_holdout_hours`, `first_missing_holdout_utc`,
+  `last_missing_holdout_utc`, and `full_window_covered`.
+- Current local discovery against the 2026-07-08 hourly spot parquet reports
+  `expected_holdout_hours=336`, `observed_holdout_hours=0`,
+  `missing_holdout_hours=336`, `first_missing_holdout_utc=2026-07-10T00:00:00Z`,
+  `last_missing_holdout_utc=2026-07-23T23:00:00Z`, and
+  `full_window_covered=false`.
+- Expert read-only audit confirms the next promotion-readiness blocker is
+  still future spot coverage plus the approved production/export/selected/
+  capstone evidence chain; T058 remains research-only and OMPEX remains an
+  advisory sidecar only.
+
+Validation:
+
+- `python -m pytest tests/test_discover_epex_spot_parquet_candidates_script.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_epex_lab_locked_holdout_policy.py -q -p no:cacheprovider`
+  reported `42 passed`.
+
+Rejected alternatives:
+
+- Infer readiness from `spot_max_utc` alone.
+- Treat discovery `full_window_covered` as a promotion gate.
+- Retune T056/t005 or use T057 failures as a tuning target before the locked
+  holdout evidence is complete.
+
+Invariants:
+
+- Discovery remains read-only, non-promotional, and operator-facing.
+- The locked T057 plan JSON, hashes, window, and pass criteria remain
+  unchanged.
+- OMPEX benchmark artifacts remain post-selection advisory only.
+

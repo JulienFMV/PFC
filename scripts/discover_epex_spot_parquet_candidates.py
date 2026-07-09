@@ -47,7 +47,12 @@ def discover_candidates(
         for path in root.rglob(pattern):
             if not path.is_file():
                 continue
-            status = _spot_status(path, latest_required=latest_required, require_hourly_grid=require_hourly_grid)
+            status = _spot_status(
+                path,
+                expected=expected,
+                latest_required=latest_required,
+                require_hourly_grid=require_hourly_grid,
+            )
             if status["is_candidate"]:
                 rows.append(status)
 
@@ -95,7 +100,13 @@ def discover_candidates(
     return summary
 
 
-def _spot_status(path: Path, *, latest_required: pd.Timestamp | None, require_hourly_grid: bool) -> dict[str, Any]:
+def _spot_status(
+    path: Path,
+    *,
+    expected: pd.DatetimeIndex,
+    latest_required: pd.Timestamp | None,
+    require_hourly_grid: bool,
+) -> dict[str, Any]:
     base = {
         "path": str(path.expanduser().resolve(strict=False)),
         "last_write_time_utc": _iso(pd.Timestamp(path.stat().st_mtime, unit="s", tz="UTC")),
@@ -108,6 +119,12 @@ def _spot_status(path: Path, *, latest_required: pd.Timestamp | None, require_ho
         "datetime_index": False,
         "hourly_grid_compatible": False,
         "spot_hours_until_latest_required_holdout": None,
+        "expected_holdout_hours": int(len(expected)),
+        "observed_holdout_hours": 0,
+        "missing_holdout_hours": int(len(expected)),
+        "first_missing_holdout_utc": _iso(expected[0]) if len(expected) else None,
+        "last_missing_holdout_utc": _iso(expected[-1]) if len(expected) else None,
+        "full_window_covered": False,
     }
     try:
         frame = pd.read_parquet(path)
@@ -124,6 +141,7 @@ def _spot_status(path: Path, *, latest_required: pd.Timestamp | None, require_ho
     idx = pd.DatetimeIndex(idx).sort_values()
     spot_min = idx.min() if len(idx) else None
     spot_max = idx.max() if len(idx) else None
+    coverage = _holdout_coverage(idx, expected)
     hourly_grid = _hourly_grid_compatible(idx)
     is_candidate = bool(has_price and len(idx) and (hourly_grid or not require_hourly_grid))
     rejection_reason = None
@@ -146,6 +164,29 @@ def _spot_status(path: Path, *, latest_required: pd.Timestamp | None, require_ho
             if spot_max is not None and latest_required is not None
             else None
         ),
+        **coverage,
+    }
+
+
+def _holdout_coverage(index: pd.DatetimeIndex, expected: pd.DatetimeIndex) -> dict[str, Any]:
+    if not len(expected):
+        return {
+            "expected_holdout_hours": 0,
+            "observed_holdout_hours": 0,
+            "missing_holdout_hours": 0,
+            "first_missing_holdout_utc": None,
+            "last_missing_holdout_utc": None,
+            "full_window_covered": True,
+        }
+    observed = pd.DatetimeIndex(index.unique()).intersection(expected)
+    missing = expected.difference(observed)
+    return {
+        "expected_holdout_hours": int(len(expected)),
+        "observed_holdout_hours": int(len(observed)),
+        "missing_holdout_hours": int(len(missing)),
+        "first_missing_holdout_utc": _iso(missing[0]) if len(missing) else None,
+        "last_missing_holdout_utc": _iso(missing[-1]) if len(missing) else None,
+        "full_window_covered": len(missing) == 0,
     }
 
 
