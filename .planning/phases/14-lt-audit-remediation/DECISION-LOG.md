@@ -7052,3 +7052,74 @@ Invariants:
 - T057 still requires the hourly coverage checker and locked runner to pass.
 - The locked T057 plan, hashes, and pass criteria remain unchanged.
 
+## D-20260709-94 - T057 Energy Charts Spot Refresh Must Be Fail-Closed
+
+Decision: Energy Charts spot refreshes used for T057 discovery must be built
+from observed raw API timestamps only. The refresh helper must not rely on the
+project 15-minute cache loader's forward-fill behavior when fetching future
+spot windows.
+
+Reason: a manual 2026-07-09 refresh through the generic 15-minute loader
+appeared to produce hourly data through `2026-07-10T23:00:00Z`. A fail-closed
+raw API check showed Energy Charts only returned observed CH prices through
+`2026-07-09T21:00:00Z` for the tested request. Forward-filling to the requested
+end could therefore create artificial future spot prices and falsely improve
+T057 coverage diagnostics.
+
+Implementation:
+
+- Added `scripts/fetch_energy_charts_epex_spot_hourly.py`.
+- The helper calls Energy Charts price data, parses raw returned timestamps,
+  aggregates observed points to hourly `price_eur_mwh`, and writes no parquet
+  by default unless the requested window is fully covered.
+- `--allow-partial` is available only for diagnostic output and remains
+  non-promotional.
+- Removed the manually generated local 2026-07-09 parquets from ignored
+  `output/phase14/t057_locked_t056_future_holdout/epex_spot_refresh_20260709`
+  to avoid selecting a potentially forward-filled candidate.
+
+Current fail-closed refresh result:
+
+- command:
+  `python scripts\fetch_energy_charts_epex_spot_hourly.py --start 2026-07-09 --end 2026-07-11 --bzn CH --output-parquet output\phase14\t057_locked_t056_future_holdout\epex_spot_refresh_20260709\epex_hourly_ch_energy_charts_20260709_script.parquet --summary-json output\phase14\t057_locked_t056_future_holdout\epex_spot_refresh_20260709\epex_hourly_ch_energy_charts_20260709_script_summary.json`
+- exit `1` by design because full coverage was not available.
+- `status=PARTIAL_COVERAGE`
+- `observed_hour_count=22`
+- `expected_hour_count=48`
+- `missing_hour_count=26`
+- `spot_max_utc=2026-07-09T21:00:00Z`
+- no parquet was written.
+
+Current T057 discovery after removing the suspect local parquets:
+
+- output:
+  `output/phase14/t057_locked_t056_future_holdout/spot_parquet_discovery_20260709_failclosed.json`
+- `candidate_count=1`
+- best candidate is again the 2026-07-08 hourly parquet.
+- `observed_holdout_hours=0`
+- `missing_holdout_hours=336`
+- `spot_max_utc=2026-07-08T23:00:00Z`
+
+Validation:
+
+- `pytest tests\test_fetch_energy_charts_epex_spot_hourly_script.py`
+  reported `4 passed`.
+- `pytest tests\test_fetch_energy_charts_epex_spot_hourly_script.py tests\test_discover_epex_spot_parquet_candidates_script.py tests\test_check_epex_lab_locked_holdout_coverage_script.py`
+  reported `28 passed`.
+
+Rejected alternatives:
+
+- Keep the manually generated 2026-07-09 parquet and treat it as 24 observed
+  holdout hours.
+- Use the generic 15-minute cache fetcher for future holdout spot windows.
+- Write partial parquets by default and rely on downstream discovery to avoid
+  accidental promotion.
+
+Invariants:
+
+- T057 remains frozen and NO-GO until a fully observed future spot window is
+  available.
+- OMPEX remains benchmark/advisory only.
+- This changes only refresh tooling and operator evidence; it does not change
+  T056/t005, T059, model outputs, or the locked T057 plan.
+

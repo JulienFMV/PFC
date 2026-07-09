@@ -1363,6 +1363,66 @@ Result: `112 passed, 1 skipped`.
 Current frozen T057 plan remains unchanged. Regenerated current T057 runner
 still exits `1` with `WAITING_FOR_FULL_SPOT_COVERAGE`.
 
+## 2026-07-09 T057 Energy Charts Fail-Closed Spot Refresh
+
+Added helper:
+
+`scripts/fetch_energy_charts_epex_spot_hourly.py`
+
+Purpose:
+
+- fetch Energy Charts EPEX price data for a requested UTC window;
+- aggregate only observed returned timestamps to hourly `price_eur_mwh`;
+- write a T057-compatible parquet only when the requested window is fully
+  covered, unless `--allow-partial` is explicitly used for diagnostics;
+- avoid the generic 15-minute loader's forward-fill behavior for future spot
+  holdout windows.
+
+Operational finding:
+
+- A manual refresh on 2026-07-09 had appeared to create spot through
+  `2026-07-10T23:00:00Z`.
+- The new fail-closed raw API fetch for `2026-07-09` to `2026-07-11` found only
+  `22/48` observed hours, with `spot_max_utc=2026-07-09T21:00:00Z`.
+- The script exited `1` by design with `status=PARTIAL_COVERAGE` and wrote no
+  parquet.
+- The manually generated local 2026-07-09 parquets were removed from ignored
+  `output/phase14/t057_locked_t056_future_holdout/epex_spot_refresh_20260709`
+  to avoid selecting a potentially forward-filled candidate.
+
+Current fail-closed discovery:
+
+```powershell
+python scripts\discover_epex_spot_parquet_candidates.py --plan-json .planning\phases\14-lt-audit-remediation\locked_holdout_plan_t057_t056_asof20260709.json --search-root output\phase14 --output-json output\phase14\t057_locked_t056_future_holdout\spot_parquet_discovery_20260709_failclosed.json --max-candidates 10
+```
+
+Result:
+
+- `candidate_count=1`
+- best candidate is still
+  `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_spot_refresh_20260708/epex_hourly_ch_energy_charts_20260708.parquet`
+- `observed_holdout_hours=0`
+- `missing_holdout_hours=336`
+- `spot_max_utc=2026-07-08T23:00:00Z`
+
+Validation:
+
+```powershell
+pytest tests\test_fetch_energy_charts_epex_spot_hourly_script.py
+```
+
+Result: `4 passed`.
+
+```powershell
+pytest tests\test_fetch_energy_charts_epex_spot_hourly_script.py tests\test_discover_epex_spot_parquet_candidates_script.py tests\test_check_epex_lab_locked_holdout_coverage_script.py
+```
+
+Result: `28 passed`.
+
+Promotion status remains NO-GO. Next correct action is to refresh spot with the
+fail-closed helper after Energy Charts publishes the full T057 window, then run
+the locked T057 runner with the frozen plan SHA.
+
 ## 2026-07-09 Expert Audit + Discovery Coverage Follow-Up
 
 Read-only expert agents were launched for the next Phase 14 steps:

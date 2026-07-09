@@ -1020,6 +1020,92 @@ Result: `112 passed, 1 skipped`.
 Current frozen T057 plan remains unchanged. Regenerated current T057 runner
 still exits `1` with `WAITING_FOR_FULL_SPOT_COVERAGE`.
 
+## 2026-07-09 Follow-Up - Expert Audit And Fail-Closed Spot Refresh
+
+Read-only MIT/Roaster audit results:
+
+- Quant/backtest auditor verdict: NO-GO, wait for full EPEX spot coverage.
+  Do not run or validate T057 on partial coverage, do not modify the locked
+  plan, and do not retune T056/t005 with the T057 holdout window.
+- Governance auditor verdict: NO-GO production. T056/t005 remains the frozen
+  lab candidate, but production promotion still requires a passing locked
+  holdout plus real adjusted production/export/selected/capstone evidence.
+- OMPEX remains desk benchmark/advisory only and must not enter model,
+  calibration, selection, backtest, holdout, source hierarchy, or gates.
+
+Additional tooling:
+
+- Added `scripts/fetch_energy_charts_epex_spot_hourly.py`.
+- Added `tests/test_fetch_energy_charts_epex_spot_hourly_script.py`.
+- The helper fetches raw Energy Charts timestamps and aggregates only observed
+  prices to hourly `price_eur_mwh`.
+- It writes no parquet by default when the requested window is incomplete,
+  preventing accidental forward-fill of future spot prices.
+
+Important correction to local T057 diagnostics:
+
+- A manual 2026-07-09 refresh had produced local parquets that appeared to
+  cover `2026-07-10T00:00:00Z` to `2026-07-10T23:00:00Z`.
+- The fail-closed helper showed the raw Energy Charts response for
+  `2026-07-09` to `2026-07-11` only had observed CH prices through
+  `2026-07-09T21:00:00Z`.
+- The local manually generated 2026-07-09 parquets were removed from ignored
+  output to avoid selecting potentially forward-filled future spot data.
+
+Fail-closed refresh command:
+
+```powershell
+python scripts\fetch_energy_charts_epex_spot_hourly.py --start 2026-07-09 --end 2026-07-11 --bzn CH --output-parquet output\phase14\t057_locked_t056_future_holdout\epex_spot_refresh_20260709\epex_hourly_ch_energy_charts_20260709_script.parquet --summary-json output\phase14\t057_locked_t056_future_holdout\epex_spot_refresh_20260709\epex_hourly_ch_energy_charts_20260709_script_summary.json
+```
+
+Result:
+
+- exit `1` as designed;
+- `status=PARTIAL_COVERAGE`;
+- `observed_hour_count=22`;
+- `expected_hour_count=48`;
+- `missing_hour_count=26`;
+- `spot_max_utc=2026-07-09T21:00:00Z`;
+- no parquet written.
+
+Fail-closed T057 discovery:
+
+```powershell
+python scripts\discover_epex_spot_parquet_candidates.py --plan-json .planning\phases\14-lt-audit-remediation\locked_holdout_plan_t057_t056_asof20260709.json --search-root output\phase14 --output-json output\phase14\t057_locked_t056_future_holdout\spot_parquet_discovery_20260709_failclosed.json --max-candidates 10
+```
+
+Result:
+
+- `candidate_count=1`;
+- best candidate:
+  `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/epex_spot_refresh_20260708/epex_hourly_ch_energy_charts_20260708.parquet`;
+- `observed_holdout_hours=0`;
+- `missing_holdout_hours=336`;
+- `spot_max_utc=2026-07-08T23:00:00Z`.
+
+Validation:
+
+```powershell
+pytest tests\test_fetch_energy_charts_epex_spot_hourly_script.py
+```
+
+Result: `4 passed`.
+
+```powershell
+pytest tests\test_fetch_energy_charts_epex_spot_hourly_script.py tests\test_discover_epex_spot_parquet_candidates_script.py tests\test_check_epex_lab_locked_holdout_coverage_script.py
+```
+
+Result: `28 passed`.
+
+Operational next step:
+
+- Wait until Energy Charts or another approved EPEX spot parquet source covers
+  the full locked window `2026-07-10T00:00:00Z` to
+  `2026-07-23T23:00:00Z`.
+- Refresh with the fail-closed helper.
+- Run `scripts/run_epex_lab_locked_holdout.py` with the frozen plan SHA
+  `f2b5ce94d7eb892ec4f0b2e46b209d09b078db8d15765009fba4ba0cb21ec1cd`.
+
 ## 2026-07-09 Expert Audit + Discovery Coverage Follow-Up
 
 Read-only expert agents were launched after the latest user request for the
