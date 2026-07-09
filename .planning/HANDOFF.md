@@ -1499,6 +1499,38 @@ Plan facts:
 T060 is a separate lab line. It does not change frozen T057 and is not
 promotion evidence.
 
+T060 execution results:
+
+- `scripts/execute_epex_shape_lab_sweep.py` now runs
+  `explain_epex_shape_lab_adjustment.py` for every executed trial and writes
+  `explainability_count` plus cap/projection/floor metrics into the ranking.
+- Full T060 sweep:
+  `output/phase14/t060_epex_only_cap_decompression_summary_full.json`
+- `trial_count_executed=16`
+- `eligible_count=10`
+- `explainability_count=16`
+- best independent-shape trial:
+  `t003_w075_l02_p089_e005_n05_r00_d325`
+- no-OMPEX spot-backtest selection:
+  `output/phase14/t060_epex_only_cap_decompression_selection_full/spot_backtest_selection_summary.json`
+- `replacement_verdict.status=WEAK_BUCKET_AND_CORE_METRICS_BEAT_INCUMBENT`
+- `replace_incumbent=true` in lab diagnostics only.
+- selected spot-backtest trial:
+  `t007_w075_l02_p089_e005_n055_r00_d325`
+- selected adjusted CSV SHA:
+  `0a0fe8ce8c12bfeb64ac517ef60ac4d2850fbd1d13255c823c213c94c98391a6`
+- selected metrics:
+  - overall `0.5362165721168545`
+  - post-valuation `0.3526155364023289`
+  - evening `0.5598005946763284`
+  - solar-tail `0.5456001492329747`
+  - weekend `0.3879656335001635`
+  - night `0.19742555594807984`
+  - ramp `0.06516701458031711`
+- incumbent T056/t005 post-valuation remains `0.3049947368951571`, so T060
+  is a genuine lab challenger, but it still requires future holdout and full
+  production-chain evidence before promotion discussion.
+
 ## 2026-07-09 T057 Energy Charts Fail-Closed Spot Refresh
 
 Added helper:

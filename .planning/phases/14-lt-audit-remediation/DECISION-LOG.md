@@ -7490,6 +7490,9 @@ Implementation:
   `explain_adjustment_no_ompex` command for every trial.
 - The planner's `selection_basis` now includes shape explainability with
   projection/cap/floor decomposition.
+- `scripts/execute_epex_shape_lab_sweep.py` now runs the shape explainability
+  diagnostic for each executed trial and records cap/projection/floor metrics
+  in the sweep ranking.
 
 Generated local T060 plan:
 
@@ -7520,4 +7523,33 @@ Invariants:
 - T060 does not change frozen T057, T056/t005, or production readiness.
 - Any T060 result must go through independent spot backtests, sensitivity
   analysis, governance audit, and future holdout before promotion discussion.
+
+Execution result:
+
+- Full sweep summary:
+  `output/phase14/t060_epex_only_cap_decompression_summary_full.json`
+- `trial_count_executed=16`
+- `eligible_count=10`
+- `explainability_count=16`
+- best independent-shape trial:
+  `t003_w075_l02_p089_e005_n05_r00_d325`
+- spot-backtest selection:
+  `output/phase14/t060_epex_only_cap_decompression_selection_full/spot_backtest_selection_summary.json`
+- `replacement_verdict.status=WEAK_BUCKET_AND_CORE_METRICS_BEAT_INCUMBENT`
+- `replace_incumbent=true` in lab diagnostics only.
+- selected spot-backtest trial:
+  `t007_w075_l02_p089_e005_n055_r00_d325`
+- selected adjusted CSV SHA:
+  `0a0fe8ce8c12bfeb64ac517ef60ac4d2850fbd1d13255c823c213c94c98391a6`
+- selected post-valuation improvement `0.3526155364023289` versus incumbent
+  T056/t005 `0.3049947368951571`.
+- selected ramp improvement `0.06516701458031711` and ramp positive folds `12`.
+
+Execution invariants:
+
+- `benchmark_policy=executed_independent_no_ompex` for sweep execution.
+- `benchmark_policy=summarized_eligible_trials_no_ompex` for spot selection.
+- OMPEX usage flags remain false.
+- This is still not production evidence and does not alter the frozen T057
+  path.
 

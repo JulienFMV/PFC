@@ -1158,6 +1158,67 @@ Plan facts:
 
 T060 is a separate lab line. It does not alter the frozen T057 approval path.
 
+T060 execution:
+
+```powershell
+python scripts\execute_epex_shape_lab_sweep.py --plan-json output\phase14\t060_epex_only_cap_decompression_plan.json --output-summary output\phase14\t060_epex_only_cap_decompression_summary_full.json
+```
+
+Result:
+
+- `trial_count_executed=16`
+- `eligible_count=10`
+- `explainability_count=16` after executor hardening.
+- best independent-shape trial:
+  `t003_w075_l02_p089_e005_n05_r00_d325`
+- best independent-shape score: `4.86196282596047`
+- selected spot-backtest trial:
+  `t007_w075_l02_p089_e005_n055_r00_d325`
+- selected adjusted CSV SHA:
+  `0a0fe8ce8c12bfeb64ac517ef60ac4d2850fbd1d13255c823c213c94c98391a6`
+
+Spot-backtest selection:
+
+```powershell
+python scripts\run_epex_shape_lab_sweep_spot_backtests.py --plan-json output\phase14\t060_epex_only_cap_decompression_plan.json --sweep-summary output\phase14\t060_epex_only_cap_decompression_summary_full.json --output-root output\phase14\t060_epex_only_cap_decompression_spot_backtests_full --output-summary output\phase14\t060_epex_only_cap_decompression_spot_backtests_summary_full.json --incumbent-backtest output\phase14\t056_postval_final_micro_spot_backtests\t005_w075_l025_p089_e005_n055_r00\spot_backtest_summary.json --selection-output-dir output\phase14\t060_epex_only_cap_decompression_selection_full
+```
+
+Result:
+
+- `trial_count_backtested=10`
+- `replacement_candidate_count=6`
+- `weak_bucket_candidate_count=7`
+- `replacement_verdict.status=WEAK_BUCKET_AND_CORE_METRICS_BEAT_INCUMBENT`
+- `replace_incumbent=true` in lab diagnostics only.
+- selected metrics:
+  - overall `0.5362165721168545`
+  - post-valuation `0.3526155364023289`
+  - evening `0.5598005946763284`
+  - solar-tail `0.5456001492329747`
+  - weekend `0.3879656335001635`
+  - night `0.19742555594807984`
+  - ramp `0.06516701458031711`
+
+Sensitivity:
+
+```powershell
+python scripts\analyze_epex_shape_lab_sweep_sensitivity.py --plan-json output\phase14\t060_epex_only_cap_decompression_plan.json --selection-summary output\phase14\t060_epex_only_cap_decompression_selection_full\spot_backtest_selection_summary.json --output-dir output\phase14\t060_epex_only_cap_decompression_sensitivity
+```
+
+Result:
+
+- `replacement_candidate_count=6`
+- `next_hypothesis_hint=candidate_replacement_requires_full_strict_and_future_holdout_path`
+- cap `3.25` dominates eligible core metrics;
+- cap `3.5` has higher independent shape score but fails the ramp threshold.
+
+T060 conclusion:
+
+- T060 produces a genuine no-OMPEX lab challenger to T056/t005.
+- It is not production evidence.
+- Next step, if pursued, is a new frozen future holdout / approval path for the
+  T060 selected trial after T057 governance is not conflated with it.
+
 ## 2026-07-09 Follow-Up - Production Chain Rebinds Holdout Policy
 
 `scripts/build_epex_lab_adjusted_production_chain.py` now recomputes

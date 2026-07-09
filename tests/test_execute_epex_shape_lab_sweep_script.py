@@ -63,12 +63,17 @@ def test_execute_epex_shape_lab_sweep_runs_pre_registered_trials_without_ompex(t
     assert summary["benchmark_policy"] == "executed_independent_no_ompex"
     assert summary["ompex_used_in_selection"] is False
     assert summary["trial_count_executed"] == 1
+    assert summary["explainability_count"] == 1
     assert summary["eligible_count"] == 1
     assert "OMPEX" in summary["forbidden_selection_inputs"]
     assert (tmp_path / "summary.csv").exists()
     ranking = pd.read_csv(tmp_path / "summary.csv")
     assert ranking.loc[0, "evening_recovery_intensity"] == pytest.approx(0.5)
     assert "midday_mean_delta_eur_mwh" in ranking.columns
+    assert ranking.loc[0, "explainability_status"] == "DIAGNOSTIC_PASS"
+    assert "explain_cap_scale" in ranking.columns
+    assert "explain_mean_abs_cap_loss_eur_mwh" in ranking.columns
+    assert "explain_mean_abs_floor_guard_loss_eur_mwh" in ranking.columns
     assert summary["scoring_policy"]["midday_weight"] == pytest.approx(1.25)
 
 

@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from scripts.audit_epex_shape_lab_governance import audit_governance
 from scripts.compare_epex_shape_lab_ab import compare_ab
+from scripts.explain_epex_shape_lab_adjustment import explain_adjustment
 from scripts.run_epex_shape_lab_ab import run_ab
 
 
@@ -52,6 +53,8 @@ def execute_sweep(
         manifest_json = trial_dir / "ab_lab_manifest.json"
         adjusted_csv = trial_dir / "candidate_epex_shape_lab_adjusted.csv"
         independent_json = comparison_dir / "ab_comparison_summary.json"
+        explainability_dir = trial_dir / "shape_explainability"
+        explainability_json = explainability_dir / "shape_explainability_summary.json"
 
         manifest_current = resume and _manifest_matches_plan(
             manifest_json=manifest_json,
@@ -114,9 +117,28 @@ def execute_sweep(
                 output_json=governance_json,
             )
 
+        explainability_current = (
+            not reran_manifest
+            and resume
+            and _explainability_matches_plan(
+                explainability_json=explainability_json,
+                candidate_csv=candidate_csv,
+                adjusted_csv=adjusted_csv,
+                manifest_json=manifest_json,
+            )
+        )
+        if not explainability_current:
+            explain_adjustment(
+                baseline_csv=candidate_csv,
+                adjusted_csv=adjusted_csv,
+                lab_manifest=manifest_json,
+                output_dir=explainability_dir,
+            )
+
         lab = json.loads(manifest_json.read_text(encoding="utf-8"))
         independent = json.loads(independent_json.read_text(encoding="utf-8"))
         governance = json.loads(governance_json.read_text(encoding="utf-8"))
+        explainability = json.loads(explainability_json.read_text(encoding="utf-8"))
         calendar = _read_calendar_summary(comparison_dir / "calendar_delta_summary.csv")
         annual = _read_annual_summary(comparison_dir / "annual_summary.csv")
         rows.append(
@@ -125,6 +147,7 @@ def execute_sweep(
                 lab,
                 independent,
                 governance,
+                explainability,
                 calendar,
                 annual,
                 selection_thresholds=_selection_thresholds(plan),
@@ -156,6 +179,9 @@ def execute_sweep(
         "production_approved": False,
         "trial_count_planned": int(plan["trial_count"]),
         "trial_count_executed": int(len(rows)),
+        "explainability_count": int((ranking["explainability_status"] == "DIAGNOSTIC_PASS").sum())
+        if not ranking.empty and "explainability_status" in ranking.columns
+        else 0,
         "eligible_count": int(ranking["eligible_for_selection"].sum()) if not ranking.empty else 0,
         "ranking_csv": str(ranking_csv),
         "best_trial": _best_eligible_row(ranking),
@@ -357,6 +383,33 @@ def _governance_matches_plan(*, governance_json: Path, manifest_json: Path, inde
     )
 
 
+def _explainability_matches_plan(
+    *,
+    explainability_json: Path,
+    candidate_csv: Path,
+    adjusted_csv: Path,
+    manifest_json: Path,
+) -> bool:
+    if not explainability_json.exists():
+        return False
+    try:
+        explainability = json.loads(explainability_json.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return (
+        explainability.get("schema_version") == "epex_shape_lab_adjustment_explainability.v1"
+        and explainability.get("benchmark_policy") == "shape_explainability_no_ompex_diagnostic_only"
+        and explainability.get("production_approved") is False
+        and explainability.get("ompex_used_in_model") is False
+        and explainability.get("ompex_used_in_selection") is False
+        and explainability.get("ompex_used_in_backtest") is False
+        and _same_path(explainability.get("baseline_csv"), candidate_csv)
+        and _same_path(explainability.get("adjusted_csv"), adjusted_csv)
+        and _same_path(explainability.get("lab_manifest"), manifest_json)
+        and explainability.get("status") in {"DIAGNOSTIC_PASS", "DIAGNOSTIC_FAIL"}
+    )
+
+
 def _best_eligible_row(ranking: pd.DataFrame) -> dict[str, Any] | None:
     if ranking.empty:
         return None
@@ -427,6 +480,7 @@ def _trial_row(
     lab: dict[str, Any],
     independent: dict[str, Any],
     governance: dict[str, Any],
+    explainability: dict[str, Any],
     calendar: dict[str, float],
     annual: dict[str, float],
     *,
@@ -434,6 +488,8 @@ def _trial_row(
     scoring_policy: dict[str, float],
 ) -> dict[str, Any]:
     lab_audit = lab.get("audit") or {}
+    explainability_stage = explainability.get("stage_decomposition_summary") or {}
+    explainability_compression = explainability.get("compression_summary") or {}
     fit_info = lab.get("fit_info") or {}
     epex_age_days = _age_days(
         valuation_timestamp=fit_info.get("valuation_timestamp_utc")
@@ -497,6 +553,24 @@ def _trial_row(
         "night_mean_delta_eur_mwh": night_delta,
         "ramp_abs_p99_increase_eur_mwh": ramp_increase,
         "independent_shape_score": float(shape_score),
+        "explainability_status": explainability.get("status"),
+        "explain_cap_scale": _optional_float(explainability_stage.get("cap_scale")),
+        "explain_floor_guard_scale": _optional_float(explainability_stage.get("floor_guard_scale")),
+        "explain_mean_abs_projection_loss_eur_mwh": _optional_float(
+            explainability_stage.get("mean_abs_projection_loss_eur_mwh")
+        ),
+        "explain_mean_abs_cap_loss_eur_mwh": _optional_float(
+            explainability_stage.get("mean_abs_cap_loss_eur_mwh")
+        ),
+        "explain_mean_abs_floor_guard_loss_eur_mwh": _optional_float(
+            explainability_stage.get("mean_abs_floor_guard_loss_eur_mwh")
+        ),
+        "explain_raw_to_actual_abs_ratio": _optional_float(
+            explainability_compression.get("raw_to_actual_abs_ratio")
+        ),
+        "explain_projection_residual_to_raw_abs_ratio": _optional_float(
+            explainability_compression.get("projection_residual_to_raw_abs_ratio")
+        ),
         "lab_max_after_constraint_abs_error_eur_mwh": _optional_float(
             lab_audit.get("max_after_constraint_abs_error_eur_mwh")
         ),
