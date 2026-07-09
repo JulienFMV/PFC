@@ -142,6 +142,45 @@ False False
   `2026-07-24T00:00:00Z` to `2026-08-07T00:00:00Z`.
 - T060/T061 is not production evidence yet.
 
+## Queue Audit Follow-Up
+
+Added:
+
+`scripts/audit_epex_lab_locked_holdout_queue.py`
+
+This read-only helper summarizes multiple locked holdout plans, computes exact
+plan SHA values, classifies each window by `as_of_utc`, and emits exact
+operator commands. It does not fetch spot data, run backtests, tune candidates,
+or approve production.
+
+Test:
+
+```powershell
+python -m pytest tests\test_audit_epex_lab_locked_holdout_queue_script.py -q -p no:cacheprovider
+```
+
+Result:
+
+`4 passed`
+
+Current local queue audit:
+
+```powershell
+python scripts\audit_epex_lab_locked_holdout_queue.py --plan-json .planning\phases\14-lt-audit-remediation\locked_holdout_plan_t057_t056_asof20260709.json --plan-json .planning\phases\14-lt-audit-remediation\locked_holdout_plan_t061_t060_asof20260709.json --as-of-utc 2026-07-09T00:00:00Z --search-root output\phase14 --output output\phase14\locked_holdout_queue_audit_20260709.json
+```
+
+Observed:
+
+- `status=WAITING_FOR_FUTURE_HOLDOUT_WINDOWS`
+- `plan_count=2`
+- `future_window_count=2`
+- `active_window_count=0`
+- `spot_refresh_due_count=0`
+- `invalid_plan_count=0`
+- `policy_invalid_plan_count=0`
+- T057 next step: `wait_without_retuning_candidate`
+- T061 next step: `wait_without_retuning_candidate`
+
 ## Next Steps
 
 1. Keep T057 frozen and wait for full T057 spot coverage.

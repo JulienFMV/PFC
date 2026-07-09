@@ -7602,3 +7602,44 @@ Invariants:
 - Any future promotion requires complete future spot coverage, a passing locked
   holdout, and production/export/selected/capstone evidence.
 
+## D-20260709-103 - Locked Holdout Lines Need Queue-Level Audit
+
+Decision: T057 and T061 are tracked with a queue-level read-only audit instead
+of relying on ad hoc operator memory.
+
+Reason: Phase 14 now has at least two locked future holdout lines with different
+candidates, hashes, and windows. A single-plan command is not enough to prevent
+mistakes such as running the wrong SHA, confusing T057 and T061, or treating an
+in-window plan as completed evidence.
+
+Implementation:
+
+- Added `scripts/audit_epex_lab_locked_holdout_queue.py`.
+- Added `tests/test_audit_epex_lab_locked_holdout_queue_script.py`.
+- The audit emits exact plan SHA values, temporal status, blocking stage,
+  next required step, and recommended read-only/operator commands.
+- Current queue audit output is local-only at
+  `output/phase14/locked_holdout_queue_audit_20260709.json`.
+
+Current observed status on `2026-07-09T00:00:00Z`:
+
+- `status=WAITING_FOR_FUTURE_HOLDOUT_WINDOWS`
+- `plan_count=2`
+- `future_window_count=2`
+- `spot_refresh_due_count=0`
+- T057 next step: `wait_without_retuning_candidate`
+- T061 next step: `wait_without_retuning_candidate`
+
+Rejected alternatives:
+
+- Track the active holdout line manually in session prose only.
+- Reuse T057 helper outputs as implicit status for T061.
+- Run spot discovery or Energy Charts automatically before the window is due.
+
+Invariants:
+
+- Queue audit is read-only and cannot approve production.
+- It must not fetch spot data or run locked holdout backtests.
+- Exact plan SHA remains mandatory for any runner command.
+- T057 and T061 remain separate evidence paths.
+

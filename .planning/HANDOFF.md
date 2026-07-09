@@ -1417,6 +1417,61 @@ Operational conclusion:
 - T060/T061 remains lab/future-holdout evidence only. Promotion remains NO-GO
   until future holdout and production/export/selected/capstone evidence pass.
 
+## 2026-07-09 Locked Holdout Queue Audit
+
+Added read-only queue audit:
+
+`scripts/audit_epex_lab_locked_holdout_queue.py`
+
+Purpose:
+
+- summarize multiple locked holdout plans in one operator-facing JSON;
+- compute and expose exact plan SHA values;
+- classify each plan as waiting for start, in-window, or ready for spot refresh;
+- emit exact Energy Charts locked-holdout commands with plan SHA binding;
+- never fetch spot, run a holdout, tune a candidate, or approve production.
+
+Validation:
+
+```powershell
+python -m pytest tests\test_audit_epex_lab_locked_holdout_queue_script.py -q -p no:cacheprovider
+```
+
+Result: `4 passed`.
+
+```powershell
+python -m pytest tests\test_audit_epex_lab_locked_holdout_queue_script.py tests\test_discover_epex_spot_parquet_candidates_script.py tests\test_plan_epex_lab_locked_holdout_script.py tests\test_run_epex_lab_locked_holdout_script.py tests\test_run_energy_charts_epex_locked_holdout_script.py tests\test_check_epex_lab_promotion_readiness_script.py tests\test_audit_epex_lab_future_approval_path_script.py tests\test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result: `67 passed, 1 skipped`.
+
+Current local queue audit command:
+
+```powershell
+python scripts\audit_epex_lab_locked_holdout_queue.py --plan-json .planning\phases\14-lt-audit-remediation\locked_holdout_plan_t057_t056_asof20260709.json --plan-json .planning\phases\14-lt-audit-remediation\locked_holdout_plan_t061_t060_asof20260709.json --as-of-utc 2026-07-09T00:00:00Z --search-root output\phase14 --output output\phase14\locked_holdout_queue_audit_20260709.json
+```
+
+Result:
+
+- `status=WAITING_FOR_FUTURE_HOLDOUT_WINDOWS`
+- `plan_count=2`
+- `future_window_count=2`
+- `active_window_count=0`
+- `spot_refresh_due_count=0`
+- `invalid_plan_count=0`
+- `policy_invalid_plan_count=0`
+- T057 plan SHA:
+  `f2b5ce94d7eb892ec4f0b2e46b209d09b078db8d15765009fba4ba0cb21ec1cd`
+- T061 plan SHA:
+  `29a633cf56279eae817cd6c63872a476cc2c10b187f08c3952f73cdad76db135`
+
+Operational conclusion:
+
+- On `2026-07-09T00:00:00Z`, neither T057 nor T061 should be run as a
+  completed holdout.
+- The next action for both plans is `wait_without_retuning_candidate`.
+- Promotion remains NO-GO.
+
 ## 2026-07-09 EPEX Shape Explainability Diagnostic
 
 Added lab-only no-OMPEX diagnostic:
