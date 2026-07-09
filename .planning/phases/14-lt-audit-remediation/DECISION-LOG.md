@@ -5823,3 +5823,68 @@ Invariants not to break:
 - Timestamp-set mismatch is a source-comparability NO-GO, not a reason to tune
   against the locked window.
 
+## D-20260709-71 - Reject Self-Attested T057 Coverage Payloads In Policy
+
+Decision: the locked-holdout promotion policy now rejects passable T057 run
+summaries unless the embedded, hash-bound coverage payload carries typed raw
+evidence, not only boolean check flags.
+
+Reason: D70 made the preflight write timestamp-set identity evidence, but a
+synthetic run summary could still self-attest the boolean coverage checks if
+the downstream policy did not inspect the raw coverage fields. Promotion
+evidence must prove that it came from the coverage checker contract: schema,
+read-only/non-promotional scope, same locked-plan identity, source CSV hashes,
+and comparable candidate timestamp-set metadata.
+
+Implementation:
+
+- `scripts/epex_lab_locked_holdout_policy.py` now requires:
+  - `coverage.schema_version=epex_lab_locked_holdout_coverage.v1`;
+  - `coverage.read_only=true`, `coverage.promotion_gate=false`, and
+    `coverage.production_approved=false`;
+  - `coverage.locked_plan_identity` matching the run summary identity;
+  - coverage baseline/adjusted CSV SHA fields matching the locked identity;
+  - non-empty baseline/adjusted candidate timestamp-set SHA fields;
+  - explicit equality of the two timestamp-set SHA fields;
+  - positive and equal baseline/adjusted timestamp counts;
+  - equal non-empty baseline/adjusted timestamp min/max bounds.
+- Passing holdout fixtures in manifest/chain/readiness/future-approval tests
+  now include realistic raw coverage evidence.
+- `tests/test_epex_lab_locked_holdout_policy.py` now rejects coverage missing
+  raw candidate timestamp evidence and coverage whose embedded identity differs
+  from the run summary.
+
+Validation:
+
+- `python -m pytest tests/test_epex_lab_locked_holdout_policy.py tests/test_check_epex_lab_locked_holdout_coverage_script.py -q -p no:cacheprovider`
+  reported `22 passed`.
+- `python -m pytest tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_adjusted_production_chain_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_epex_lab_locked_holdout_policy.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_plan_epex_lab_locked_holdout_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  reported `98 passed, 1 skipped`.
+
+Operational result:
+
+- Regenerated future approval audit remains
+  `NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING`, exit `1`.
+- The new raw-coverage policy checks are true on the current real T057 runner:
+  `coverage_schema`, `coverage_read_only`, `coverage_identity_matches_run`,
+  `coverage_baseline_csv_sha256_matches_identity`,
+  `coverage_adjusted_csv_sha256_matches_identity`,
+  `coverage_candidate_timestamp_set_sha256_present`,
+  `coverage_candidate_timestamp_set_sha256_equal`,
+  `coverage_candidate_timestamp_counts_valid`, and
+  `coverage_candidate_timestamp_bounds_equal`.
+- The remaining holdout blocker is still future spot coverage, not candidate
+  comparability.
+
+Rejected alternatives:
+
+- Trust `coverage.checks` booleans as sufficient downstream promotion evidence.
+- Require only hash binding of `coverage_status.json` without validating that
+  the embedded payload follows the expected coverage schema contract.
+
+Invariants not to break:
+
+- T057 remains fail-closed and non-promotional until full future spot coverage
+  exists and the locked holdout run/audit pass.
+- The locked T057 plan JSON remains unchanged.
+

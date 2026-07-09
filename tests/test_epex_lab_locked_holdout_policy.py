@@ -33,7 +33,7 @@ def _passing_run_summary(tmp_path: Path) -> dict:
     plan = _write_plan(tmp_path)
     plan_payload = json.loads(plan.read_text(encoding="utf-8"))
     identity = build_locked_plan_identity(plan_payload, plan_json=plan)
-    coverage_payload = _ready_coverage()
+    coverage_payload = _ready_coverage(identity=identity)
     coverage = _write_json(tmp_path / "coverage_status.json", coverage_payload)
     backtest = _write_json(tmp_path / "spot_backtest_summary.json", _passing_backtest())
     audit = _write_json(
@@ -151,6 +151,46 @@ def test_locked_holdout_policy_rejects_coverage_without_candidate_checks(tmp_pat
     assert policy["checks"]["coverage_candidate_timestamp_sets_identical"] is False
 
 
+def test_locked_holdout_policy_rejects_coverage_without_raw_candidate_timestamp_evidence(tmp_path: Path) -> None:
+    summary = _passing_run_summary(tmp_path)
+    coverage = summary["coverage"]
+    for key in [
+        "baseline_candidate_timestamp_count",
+        "baseline_candidate_timestamp_min_utc",
+        "baseline_candidate_timestamp_max_utc",
+        "baseline_candidate_timestamp_set_sha256",
+        "adjusted_candidate_timestamp_count",
+        "adjusted_candidate_timestamp_min_utc",
+        "adjusted_candidate_timestamp_max_utc",
+        "adjusted_candidate_timestamp_set_sha256",
+    ]:
+        coverage.pop(key)
+    coverage_path = Path(summary["coverage_status"])
+    coverage_path.write_text(json.dumps(coverage), encoding="utf-8")
+    summary["coverage_status_sha256"] = _sha256(coverage_path)
+
+    policy = locked_holdout_policy(summary)
+
+    assert policy["pass"] is False
+    assert policy["checks"]["coverage_candidate_timestamp_set_sha256_present"] is False
+    assert policy["checks"]["coverage_candidate_timestamp_counts_valid"] is False
+    assert policy["checks"]["coverage_candidate_timestamp_bounds_equal"] is False
+
+
+def test_locked_holdout_policy_rejects_coverage_identity_mismatch(tmp_path: Path) -> None:
+    summary = _passing_run_summary(tmp_path)
+    coverage = summary["coverage"]
+    coverage["locked_plan_identity"] = {**coverage["locked_plan_identity"], "plan_id": "different"}
+    coverage_path = Path(summary["coverage_status"])
+    coverage_path.write_text(json.dumps(coverage), encoding="utf-8")
+    summary["coverage_status_sha256"] = _sha256(coverage_path)
+
+    policy = locked_holdout_policy(summary)
+
+    assert policy["pass"] is False
+    assert policy["checks"]["coverage_identity_matches_run"] is False
+
+
 def test_locked_holdout_policy_rejects_expected_plan_sha_mismatch(tmp_path: Path) -> None:
     summary = _passing_run_summary(tmp_path)
     summary["expected_plan_json_sha256"] = "0" * 64
@@ -161,8 +201,24 @@ def test_locked_holdout_policy_rejects_expected_plan_sha_mismatch(tmp_path: Path
     assert policy["checks"]["expected_plan_json_sha256_bound"] is False
 
 
-def _ready_coverage() -> dict:
+def _ready_coverage(*, identity: dict) -> dict:
+    timestamp_set_sha256 = "c" * 64
     return {
+        "schema_version": "epex_lab_locked_holdout_coverage.v1",
+        "read_only": True,
+        "promotion_gate": False,
+        "production_approved": False,
+        "locked_plan_identity": identity,
+        "baseline_csv_sha256": identity["baseline_csv_sha256"],
+        "adjusted_csv_sha256": identity["adjusted_csv_sha256"],
+        "baseline_candidate_timestamp_count": 4,
+        "baseline_candidate_timestamp_min_utc": "2026-07-10T00:00:00Z",
+        "baseline_candidate_timestamp_max_utc": "2026-07-10T03:00:00Z",
+        "baseline_candidate_timestamp_set_sha256": timestamp_set_sha256,
+        "adjusted_candidate_timestamp_count": 4,
+        "adjusted_candidate_timestamp_min_utc": "2026-07-10T00:00:00Z",
+        "adjusted_candidate_timestamp_max_utc": "2026-07-10T03:00:00Z",
+        "adjusted_candidate_timestamp_set_sha256": timestamp_set_sha256,
         "status": "READY_TO_RUN_HOLDOUT_BACKTEST",
         "ready_to_run_backtest": True,
         "checks": {

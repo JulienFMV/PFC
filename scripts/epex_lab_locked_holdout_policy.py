@@ -11,6 +11,7 @@ from typing import Any
 PLAN_SCHEMA_VERSION = "epex_lab_locked_holdout_plan.v1"
 RUN_SCHEMA_VERSION = "epex_lab_locked_holdout_run.v1"
 AUDIT_SCHEMA_VERSION = "epex_lab_locked_holdout_audit.v1"
+COVERAGE_SCHEMA_VERSION = "epex_lab_locked_holdout_coverage.v1"
 LOCKED_HOLDOUT_POLICY = "locked_future_no_ompex_holdout"
 SPOT_BACKTEST_SCHEMA_VERSION = "epex_shape_lab_spot_backtest.v1"
 SPOT_BACKTEST_POLICY = "rolling_origin_epex_spot_no_ompex_lab_only"
@@ -63,6 +64,19 @@ def locked_holdout_policy(summary: dict[str, Any] | None) -> dict[str, Any]:
                 "actual_plan_json_sha256_present": bool(str(summary.get("actual_plan_json_sha256") or "").strip()),
                 "expected_plan_json_sha256_bound": _expected_plan_sha_bound(summary),
                 "coverage_ready": summary.get("coverage_ready") is True,
+                "coverage_schema": coverage.get("schema_version") == COVERAGE_SCHEMA_VERSION,
+                "coverage_read_only": coverage.get("read_only") is True,
+                "coverage_promotion_gate_false": coverage.get("promotion_gate") is False,
+                "coverage_production_approved_false": coverage.get("production_approved") is False,
+                "coverage_identity_matches_run": _same_identity(_identity(coverage), _identity(summary)),
+                "coverage_baseline_csv_sha256_matches_identity": coverage.get("baseline_csv_sha256")
+                == _identity(summary).get("baseline_csv_sha256"),
+                "coverage_adjusted_csv_sha256_matches_identity": coverage.get("adjusted_csv_sha256")
+                == _identity(summary).get("adjusted_csv_sha256"),
+                "coverage_candidate_timestamp_set_sha256_present": _candidate_timestamp_set_sha256_present(coverage),
+                "coverage_candidate_timestamp_set_sha256_equal": _candidate_timestamp_set_sha256_equal(coverage),
+                "coverage_candidate_timestamp_counts_valid": _candidate_timestamp_counts_valid(coverage),
+                "coverage_candidate_timestamp_bounds_equal": _candidate_timestamp_bounds_equal(coverage),
                 "coverage_status_ready": coverage.get("status") == "READY_TO_RUN_HOLDOUT_BACKTEST",
                 "coverage_embedded_ready": coverage.get("ready_to_run_backtest") is True,
                 "coverage_full_window_covered": coverage_checks.get("full_window_covered") is True,
@@ -172,6 +186,40 @@ def _candidate_coverage_checks_pass(checks: dict[str, Any], *, prefix: str) -> b
             f"{prefix}_price_columns_finite",
             f"{prefix}_holdout_window_covered",
         ]
+    )
+
+
+def _candidate_timestamp_set_sha256_present(coverage: dict[str, Any]) -> bool:
+    return bool(
+        str(coverage.get("baseline_candidate_timestamp_set_sha256") or "").strip()
+        and str(coverage.get("adjusted_candidate_timestamp_set_sha256") or "").strip()
+    )
+
+
+def _candidate_timestamp_set_sha256_equal(coverage: dict[str, Any]) -> bool:
+    baseline = coverage.get("baseline_candidate_timestamp_set_sha256")
+    adjusted = coverage.get("adjusted_candidate_timestamp_set_sha256")
+    return bool(baseline and adjusted and baseline == adjusted)
+
+
+def _candidate_timestamp_counts_valid(coverage: dict[str, Any]) -> bool:
+    baseline = coverage.get("baseline_candidate_timestamp_count")
+    adjusted = coverage.get("adjusted_candidate_timestamp_count")
+    return isinstance(baseline, int) and isinstance(adjusted, int) and baseline > 0 and baseline == adjusted
+
+
+def _candidate_timestamp_bounds_equal(coverage: dict[str, Any]) -> bool:
+    keys = [
+        "baseline_candidate_timestamp_min_utc",
+        "baseline_candidate_timestamp_max_utc",
+        "adjusted_candidate_timestamp_min_utc",
+        "adjusted_candidate_timestamp_max_utc",
+    ]
+    if not all(str(coverage.get(key) or "").strip() for key in keys):
+        return False
+    return (
+        coverage.get("baseline_candidate_timestamp_min_utc") == coverage.get("adjusted_candidate_timestamp_min_utc")
+        and coverage.get("baseline_candidate_timestamp_max_utc") == coverage.get("adjusted_candidate_timestamp_max_utc")
     )
 
 

@@ -73,7 +73,7 @@ def _locked_holdout_run_payload(tmp_path: Path, **overrides) -> dict:
     plan = _write_locked_plan(tmp_path)
     plan_payload = json.loads(plan.read_text(encoding="utf-8"))
     identity = build_locked_plan_identity(plan_payload, plan_json=plan)
-    coverage_payload = _ready_coverage()
+    coverage_payload = _ready_coverage(identity=identity)
     coverage = _write_json(tmp_path / "coverage_status.json", coverage_payload)
     backtest = _write_json(tmp_path / "spot_backtest_summary.json", _passing_backtest())
     audit = _write_json(tmp_path / "locked_holdout_audit.json", _passing_audit(identity=identity, backtest=backtest))
@@ -108,8 +108,24 @@ def _locked_holdout_run_payload(tmp_path: Path, **overrides) -> dict:
     return payload
 
 
-def _ready_coverage() -> dict:
+def _ready_coverage(*, identity: dict) -> dict:
+    timestamp_set_sha256 = "c" * 64
     return {
+        "schema_version": "epex_lab_locked_holdout_coverage.v1",
+        "read_only": True,
+        "promotion_gate": False,
+        "production_approved": False,
+        "locked_plan_identity": identity,
+        "baseline_csv_sha256": identity["baseline_csv_sha256"],
+        "adjusted_csv_sha256": identity["adjusted_csv_sha256"],
+        "baseline_candidate_timestamp_count": 4,
+        "baseline_candidate_timestamp_min_utc": "2026-07-10T00:00:00Z",
+        "baseline_candidate_timestamp_max_utc": "2026-07-10T03:00:00Z",
+        "baseline_candidate_timestamp_set_sha256": timestamp_set_sha256,
+        "adjusted_candidate_timestamp_count": 4,
+        "adjusted_candidate_timestamp_min_utc": "2026-07-10T00:00:00Z",
+        "adjusted_candidate_timestamp_max_utc": "2026-07-10T03:00:00Z",
+        "adjusted_candidate_timestamp_set_sha256": timestamp_set_sha256,
         "status": "READY_TO_RUN_HOLDOUT_BACKTEST",
         "ready_to_run_backtest": True,
         "checks": {

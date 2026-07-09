@@ -705,3 +705,40 @@ python -m pytest tests/test_build_epex_lab_adjusted_production_manifest_script.p
 ```
 
 Result: `96 passed, 1 skipped`.
+
+Follow-up after self-attested coverage policy hardening:
+
+- Read-only expert audits after D70 returned GO overall and NO-GO promotion
+  until future spot coverage exists.
+- One P1 was accepted: the downstream policy was still too dependent on
+  boolean `coverage.checks` fields.
+- `scripts/epex_lab_locked_holdout_policy.py` now rejects passable run
+  summaries unless the embedded coverage payload also carries
+  `schema_version=epex_lab_locked_holdout_coverage.v1`, read-only/
+  non-promotional flags, locked-plan identity matching the run summary, source
+  CSV SHA fields matching identity, non-empty equal candidate timestamp-set SHA
+  fields, positive equal timestamp counts, and equal non-empty timestamp
+  min/max bounds.
+- Passing holdout fixtures in manifest/chain/readiness/future-approval tests
+  now include this raw coverage evidence.
+- New policy tests reject coverage without raw candidate timestamp evidence and
+  coverage whose embedded locked-plan identity does not match the run.
+
+Validation:
+
+```powershell
+python -m pytest tests/test_epex_lab_locked_holdout_policy.py tests/test_check_epex_lab_locked_holdout_coverage_script.py -q -p no:cacheprovider
+```
+
+Result: `22 passed`.
+
+```powershell
+python -m pytest tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_adjusted_production_chain_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_epex_lab_locked_holdout_policy.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_plan_epex_lab_locked_holdout_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result: `98 passed, 1 skipped`.
+
+Regenerated future approval audit remains
+`NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING`, exit `1`. The new raw-coverage checks
+are true on the current T057 runner; the remaining holdout blocker is still
+future spot coverage.

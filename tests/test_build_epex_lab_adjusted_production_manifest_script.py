@@ -195,7 +195,7 @@ def _write_locked_holdout(tmp_path, *, passed: bool = True, schema: str = "run")
     plan = _write_locked_plan(tmp_path)
     plan_payload = json.loads(plan.read_text(encoding="utf-8"))
     identity = build_locked_plan_identity(plan_payload, plan_json=plan)
-    coverage_payload = _ready_coverage(passed=passed)
+    coverage_payload = _ready_coverage(passed=passed, identity=identity)
     coverage = tmp_path / "coverage_status.json"
     _write_json(coverage, coverage_payload)
     post_csv = tmp_path / "post.csv"
@@ -241,8 +241,24 @@ def _write_locked_holdout(tmp_path, *, passed: bool = True, schema: str = "run")
     return locked_holdout
 
 
-def _ready_coverage(*, passed: bool = True):
+def _ready_coverage(*, passed: bool = True, identity: dict):
+    timestamp_set_sha256 = "c" * 64 if passed else None
     return {
+        "schema_version": "epex_lab_locked_holdout_coverage.v1",
+        "read_only": True,
+        "promotion_gate": False,
+        "production_approved": False,
+        "locked_plan_identity": identity,
+        "baseline_csv_sha256": identity["baseline_csv_sha256"],
+        "adjusted_csv_sha256": identity["adjusted_csv_sha256"],
+        "baseline_candidate_timestamp_count": 4 if passed else 0,
+        "baseline_candidate_timestamp_min_utc": "2026-07-10T00:00:00Z" if passed else None,
+        "baseline_candidate_timestamp_max_utc": "2026-07-10T03:00:00Z" if passed else None,
+        "baseline_candidate_timestamp_set_sha256": timestamp_set_sha256,
+        "adjusted_candidate_timestamp_count": 4 if passed else 0,
+        "adjusted_candidate_timestamp_min_utc": "2026-07-10T00:00:00Z" if passed else None,
+        "adjusted_candidate_timestamp_max_utc": "2026-07-10T03:00:00Z" if passed else None,
+        "adjusted_candidate_timestamp_set_sha256": timestamp_set_sha256,
         "status": "READY_TO_RUN_HOLDOUT_BACKTEST" if passed else "WAITING_FOR_FULL_SPOT_COVERAGE",
         "ready_to_run_backtest": passed,
         "checks": {
