@@ -201,16 +201,38 @@ def _readiness_locked_holdout_queue_policy(checks: dict[str, dict[str, Any]]) ->
     passed = check.get("status") == "PASS"
     value = check.get("value")
     if isinstance(value, dict):
-        status = str(value.get("status") or ("LOCKED_HOLDOUT_QUEUE_PASS" if passed else "NO_GO_LOCKED_HOLDOUT_QUEUE_INVALID"))
+        policy_checks = value.get("checks") if isinstance(value.get("checks"), dict) else {}
+        evidence_bound = bool(
+            value.get("expected_locked_holdout_plan_sha256")
+            and policy_checks.get("locked_holdout_plan_in_queue") is True
+        )
+        policy_pass = bool(
+            passed
+            and value.get("pass") is True
+            and value.get("status") == "LOCKED_HOLDOUT_QUEUE_PASS"
+            and evidence_bound
+        )
+        status = str(
+            value.get("status")
+            if not passed or policy_pass
+            else "NO_GO_LOCKED_HOLDOUT_QUEUE_UNBOUND"
+        )
         return {
             **value,
-            "pass": bool(passed and value.get("pass") is not False),
+            "pass": policy_pass,
             "status": status,
+            "checks": {
+                **policy_checks,
+                "expected_locked_holdout_plan_sha256_present": bool(
+                    value.get("expected_locked_holdout_plan_sha256")
+                ),
+                "locked_holdout_plan_in_queue": policy_checks.get("locked_holdout_plan_in_queue") is True,
+            },
         }
     return {
         "provided": passed,
-        "pass": passed,
-        "status": "LOCKED_HOLDOUT_QUEUE_PASS" if passed else "NO_GO_LOCKED_HOLDOUT_QUEUE_INVALID",
+        "pass": False,
+        "status": "NO_GO_LOCKED_HOLDOUT_QUEUE_UNBOUND" if passed else "NO_GO_LOCKED_HOLDOUT_QUEUE_INVALID",
         "summary": value,
     }
 

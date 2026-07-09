@@ -7735,6 +7735,11 @@ Implementation:
 - Future approval also propagates the readiness queue policy into
   `locked_holdout_queue_policy` and routes a queue-only failure to
   `blocking_stage=locked_holdout_queue`.
+- A synthetic readiness payload cannot self-attest queue success with a scalar
+  `locked_holdout_queue_pass=true`; future approval now requires the structured
+  queue policy payload, including the expected locked-holdout plan SHA and
+  `locked_holdout_plan_in_queue=true`, or it returns
+  `NO_GO_LOCKED_HOLDOUT_QUEUE_UNBOUND`.
 - A global queue status such as `WAITING_FOR_FUTURE_HOLDOUT_WINDOWS` can pass
   readiness when the queue is otherwise valid and contains the bound plan SHA.
   This prevents the separate T061/T060 line from blocking T057/T056 promotion

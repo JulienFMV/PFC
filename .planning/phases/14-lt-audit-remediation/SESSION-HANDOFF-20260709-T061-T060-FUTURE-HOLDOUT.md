@@ -304,6 +304,9 @@ Future approval follow-up:
   old or synthetic readiness JSON cannot omit the queue requirement.
 - It propagates readiness queue details into `locked_holdout_queue_policy` and
   routes a queue-only failure to `blocking_stage=locked_holdout_queue`.
+- It also rejects a synthetic scalar `locked_holdout_queue_pass=true` without
+  the structured queue policy payload as
+  `NO_GO_LOCKED_HOLDOUT_QUEUE_UNBOUND`.
 - Current local queue/readiness/future-approval outputs were regenerated.
 - Queue audit:
   `output/phase14/locked_holdout_queue_audit_20260709.json` reports

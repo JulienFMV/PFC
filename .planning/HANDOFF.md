@@ -1515,6 +1515,9 @@ set. This prevents an old or synthetic readiness JSON from dropping the queue
 requirement. It also propagates readiness queue details into
 `locked_holdout_queue_policy` and routes a queue-only failure to
 `blocking_stage=locked_holdout_queue`.
+It now rejects a synthetic scalar `locked_holdout_queue_pass=true` without the
+structured queue policy payload as
+`NO_GO_LOCKED_HOLDOUT_QUEUE_UNBOUND`.
 
 Targeted validation:
 
