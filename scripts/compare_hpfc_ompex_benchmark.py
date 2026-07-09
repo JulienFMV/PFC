@@ -97,6 +97,8 @@ def add_calendar(frame: pd.DataFrame) -> pd.DataFrame:
 
 def _metrics(joined: pd.DataFrame) -> dict[str, float | int | str]:
     err = joined["hpfc_eur_mwh"] - joined["ompex_eur_mwh"]
+    ramp = _ramp_frame(joined)
+    boundary = _boundary_jumps(joined)
     return {
         "n_points": int(len(joined)),
         "mae": float(err.abs().mean()),
@@ -115,6 +117,12 @@ def _metrics(joined: pd.DataFrame) -> dict[str, float | int | str]:
         "ompex_inside_p10_p90_rate": float(joined["ompex_inside_p10_p90"].mean())
         if joined["ompex_inside_p10_p90"].notna().any()
         else np.nan,
+        "ramp_n_points": int(len(ramp)),
+        "ramp_mae": float(ramp["abs_ramp_diff"].mean()) if not ramp.empty else np.nan,
+        "ramp_p95_abs_error": float(ramp["abs_ramp_diff"].quantile(0.95)) if not ramp.empty else np.nan,
+        "boundary_jump_n_points": int(len(boundary)),
+        "boundary_jump_mae": float(boundary["abs_jump_diff"].mean()) if not boundary.empty else np.nan,
+        "boundary_jump_p95_abs_error": float(boundary["abs_jump_diff"].quantile(0.95)) if not boundary.empty else np.nan,
     }
 
 
@@ -185,6 +193,12 @@ def compare(
     _aggregate(joined, ["hour"]).to_csv(output_dir / "by_hour.csv", index=False)
     _aggregate(joined, ["bucket"]).to_csv(output_dir / "by_bucket.csv", index=False)
     _aggregate(joined, ["is_weekend"]).to_csv(output_dir / "by_weekend.csv", index=False)
+    _ramp_metrics(joined).to_csv(output_dir / "ramp_metrics.csv", index=False)
+    _boundary_jumps(joined).to_csv(output_dir / "boundary_jumps.csv", index=False)
+    _month_hour_matrix(joined, value="diff_hpfc_minus_ompex", agg="mean").to_csv(
+        output_dir / "month_hour_bias_matrix.csv"
+    )
+    _month_hour_matrix(joined, value="abs_diff", agg="mean").to_csv(output_dir / "month_hour_mae_matrix.csv")
     joined.sort_values("abs_diff", ascending=False).head(100).reset_index(names="timestamp").to_csv(
         output_dir / "top_abs_differences.csv",
         index=False,
@@ -218,6 +232,120 @@ def _aggregate(frame: pd.DataFrame, keys: list[str]) -> pd.DataFrame:
     )
 
 
+def _ramp_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    ordered = frame.sort_index()
+    out = ordered[["hpfc_eur_mwh", "ompex_eur_mwh"]].diff().dropna()
+    if out.empty:
+        return pd.DataFrame(
+            columns=[
+                "timestamp",
+                "hour",
+                "hpfc_ramp_eur_mwh",
+                "ompex_ramp_eur_mwh",
+                "ramp_diff_hpfc_minus_ompex",
+                "abs_ramp_diff",
+            ]
+        )
+    out = out.rename(columns={"hpfc_eur_mwh": "hpfc_ramp_eur_mwh", "ompex_eur_mwh": "ompex_ramp_eur_mwh"})
+    out["ramp_diff_hpfc_minus_ompex"] = out["hpfc_ramp_eur_mwh"] - out["ompex_ramp_eur_mwh"]
+    out["abs_ramp_diff"] = out["ramp_diff_hpfc_minus_ompex"].abs()
+    out["hour"] = out.index.hour.astype(int)
+    return out.reset_index(names="timestamp")
+
+
+def _ramp_metrics(frame: pd.DataFrame) -> pd.DataFrame:
+    ramp = _ramp_frame(frame)
+    if ramp.empty:
+        return pd.DataFrame(
+            [
+                {
+                    "bucket": "all",
+                    "n": 0,
+                    "hpfc_ramp_mean": np.nan,
+                    "ompex_ramp_mean": np.nan,
+                    "ramp_bias": np.nan,
+                    "ramp_mae": np.nan,
+                    "ramp_p95_abs_error": np.nan,
+                    "ramp_max_abs_error": np.nan,
+                }
+            ]
+        )
+    rows = [
+        {
+            "bucket": "all",
+            "n": int(len(ramp)),
+            "hpfc_ramp_mean": float(ramp["hpfc_ramp_eur_mwh"].mean()),
+            "ompex_ramp_mean": float(ramp["ompex_ramp_eur_mwh"].mean()),
+            "ramp_bias": float(ramp["ramp_diff_hpfc_minus_ompex"].mean()),
+            "ramp_mae": float(ramp["abs_ramp_diff"].mean()),
+            "ramp_p95_abs_error": float(ramp["abs_ramp_diff"].quantile(0.95)),
+            "ramp_max_abs_error": float(ramp["abs_ramp_diff"].max()),
+        }
+    ]
+    by_hour = (
+        ramp.groupby("hour", dropna=False)
+        .agg(
+            n=("abs_ramp_diff", "size"),
+            hpfc_ramp_mean=("hpfc_ramp_eur_mwh", "mean"),
+            ompex_ramp_mean=("ompex_ramp_eur_mwh", "mean"),
+            ramp_bias=("ramp_diff_hpfc_minus_ompex", "mean"),
+            ramp_mae=("abs_ramp_diff", "mean"),
+            ramp_p95_abs_error=("abs_ramp_diff", lambda s: s.quantile(0.95)),
+            ramp_max_abs_error=("abs_ramp_diff", "max"),
+        )
+        .reset_index()
+    )
+    by_hour.insert(0, "bucket", "hour_" + by_hour["hour"].astype(str).str.zfill(2))
+    by_hour = by_hour.drop(columns=["hour"])
+    return pd.concat([pd.DataFrame(rows), by_hour], ignore_index=True)
+
+
+def _boundary_jumps(frame: pd.DataFrame) -> pd.DataFrame:
+    ordered = frame.sort_index()
+    if len(ordered) < 2:
+        return pd.DataFrame(
+            columns=[
+                "timestamp",
+                "previous_timestamp",
+                "hpfc_jump_eur_mwh",
+                "ompex_jump_eur_mwh",
+                "jump_diff_hpfc_minus_ompex",
+                "abs_jump_diff",
+            ]
+        )
+    prev = ordered.shift(1)
+    periods = pd.Series(ordered.index.to_period("M"), index=ordered.index)
+    previous_timestamps = pd.Series(ordered.index, index=ordered.index).shift(1)
+    boundary_mask = (periods != periods.shift(1)) & prev["hpfc_eur_mwh"].notna()
+    boundary = ordered.loc[boundary_mask, ["hpfc_eur_mwh", "ompex_eur_mwh"]].copy()
+    if boundary.empty:
+        return pd.DataFrame(
+            columns=[
+                "timestamp",
+                "previous_timestamp",
+                "hpfc_jump_eur_mwh",
+                "ompex_jump_eur_mwh",
+                "jump_diff_hpfc_minus_ompex",
+                "abs_jump_diff",
+            ]
+        )
+    previous = prev.loc[boundary.index, ["hpfc_eur_mwh", "ompex_eur_mwh"]]
+    out = pd.DataFrame(index=boundary.index)
+    out["previous_timestamp"] = previous_timestamps.loc[boundary.index].to_numpy()
+    out["hpfc_jump_eur_mwh"] = boundary["hpfc_eur_mwh"] - previous["hpfc_eur_mwh"]
+    out["ompex_jump_eur_mwh"] = boundary["ompex_eur_mwh"] - previous["ompex_eur_mwh"]
+    out["jump_diff_hpfc_minus_ompex"] = out["hpfc_jump_eur_mwh"] - out["ompex_jump_eur_mwh"]
+    out["abs_jump_diff"] = out["jump_diff_hpfc_minus_ompex"].abs()
+    return out.reset_index(names="timestamp")
+
+
+def _month_hour_matrix(frame: pd.DataFrame, *, value: str, agg: str) -> pd.DataFrame:
+    pivot = frame.pivot_table(index="year_month", columns="hour", values=value, aggfunc=agg)
+    pivot = pivot.reindex(columns=list(range(24)))
+    pivot.columns = [f"hour_{int(column):02d}" for column in pivot.columns]
+    return pivot
+
+
 def _write_plots(frame: pd.DataFrame, output_dir: Path) -> None:
     monthly = frame[["hpfc_eur_mwh", "ompex_eur_mwh"]].resample("MS").mean()
     fig, ax = plt.subplots(figsize=(12, 5))
@@ -243,6 +371,23 @@ def _write_plots(frame: pd.DataFrame, output_dir: Path) -> None:
     ax.legend()
     fig.tight_layout()
     fig.savefig(output_dir / "02_error_by_hour.png", dpi=140)
+    plt.close(fig)
+
+    matrix = _month_hour_matrix(frame, value="diff_hpfc_minus_ompex", agg="mean")
+    fig, ax = plt.subplots(figsize=(12, max(5, min(14, 0.18 * len(matrix)))))
+    im = ax.imshow(matrix.to_numpy(dtype="float64"), aspect="auto", cmap="coolwarm")
+    ax.set_title("Mean error by month and hour: HPFC minus OMPEX")
+    ax.set_xlabel("Hour")
+    ax.set_ylabel("Month")
+    ax.set_xticks(range(24))
+    ax.set_xticklabels([str(hour) for hour in range(24)])
+    step = max(1, len(matrix) // 18)
+    y_positions = list(range(0, len(matrix), step))
+    ax.set_yticks(y_positions)
+    ax.set_yticklabels([str(matrix.index[pos]) for pos in y_positions])
+    fig.colorbar(im, ax=ax, label="EUR/MWh")
+    fig.tight_layout()
+    fig.savefig(output_dir / "03_month_hour_bias_heatmap.png", dpi=140)
     plt.close(fig)
 
 

@@ -1178,17 +1178,44 @@ Result:
   `12.309986329728224`, RMSE `16.244705381704232`, correlation
   `0.8736510114242135`, p95 absolute error `32.742035`, max absolute error
   `102.47320500000001`.
+- Enriched advisory diagnostics after the latest script update:
+  - ramp points `39480`, ramp MAE `4.762832828672745`, ramp p95 absolute
+    error `16.592220749999992`;
+  - month-boundary jump points `53`, boundary jump MAE
+    `10.393110113207543`, boundary jump p95 absolute error
+    `41.01724999999999`;
+  - largest boundary discrepancies are mostly transitions into May, where
+    OMPEX has much sharper month-start jumps than the HPFC candidate.
 - Advisory observations:
   - overall level is close versus OMPEX, but OMPEX is not ground truth;
   - largest hourly shape differences are around hours 16-19 and selected
     2027-2028 months;
+  - month-hour heatmap confirms recurring advisory differences in selected
+    summer midday/late-afternoon blocks and some evening blocks;
   - the OMPEX-inside-P10/P90 rate is low (`0.15964641219827258`), so width
     calibration remains worth reviewing with independent no-OMPEX evidence,
     not by retuning to OMPEX.
 - Generated advisory files include `benchmark_metrics.json`,
   `alignment_sensitivity.csv`, `by_year_month.csv`, `by_hour.csv`,
-  `by_bucket.csv`, `top_abs_differences.csv`,
-  `01_monthly_mean_hpfc_vs_ompex.png`, and `02_error_by_hour.png`.
+  `by_bucket.csv`, `by_weekend.csv`, `ramp_metrics.csv`,
+  `boundary_jumps.csv`, `month_hour_bias_matrix.csv`,
+  `month_hour_mae_matrix.csv`, `top_abs_differences.csv`,
+  `01_monthly_mean_hpfc_vs_ompex.png`, `02_error_by_hour.png`, and
+  `03_month_hour_bias_heatmap.png`.
+
+Code/test validation for the enriched advisory script:
+
+```powershell
+python -m pytest tests/test_compare_hpfc_ompex_benchmark_script.py -q -p no:cacheprovider
+```
+
+Result: `1 passed`.
+
+```powershell
+python -m pytest tests/test_compare_hpfc_ompex_benchmark_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_audit_epex_shape_lab_governance_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_plan_epex_lab_locked_holdout_script.py tests/test_plan_epex_shape_lab_sweep_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result: `56 passed, 1 skipped`.
 
 Operational conclusion:
 

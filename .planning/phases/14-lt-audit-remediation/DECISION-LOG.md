@@ -6491,3 +6491,53 @@ Invariants:
 - Source path resolution is operational hardening only; it does not change
   candidate hashes, holdout window, model inputs, selection, or pass criteria.
 
+## D-20260709-83 - OMPEX Advisory Diagnostics Can Explain Shape, Not Select It
+
+Decision: the OMPEX comparison sidecar may include richer desk-review
+diagnostics such as ramp errors, month-boundary jumps, and month-hour heatmaps,
+but these diagnostics remain advisory only.
+
+Reason: the T056/t005 OMPEX comparison showed useful explanatory patterns in
+hourly shape, ramp, and month-boundary differences. These can help humans
+understand where the candidate differs from OMPEX, but OMPEX is an imperfect
+external benchmark and must not become a model input, lambda selector,
+backtest authority, promotion gate, or production approval signal.
+
+Implementation:
+
+- `scripts/compare_hpfc_ompex_benchmark.py` now writes:
+  `ramp_metrics.csv`, `boundary_jumps.csv`,
+  `month_hour_bias_matrix.csv`, `month_hour_mae_matrix.csv`, and
+  `03_month_hour_bias_heatmap.png`.
+- `benchmark_metrics.json` now includes ramp and month-boundary summary
+  metrics while preserving `benchmark_policy=advisory`,
+  `promotion_gate=false`, `production_approved=false`, and all OMPEX usage
+  flags false.
+- Tests assert the new advisory outputs exist and that a perfectly aligned
+  fixture has zero ramp error.
+
+Validation:
+
+- `python -m pytest tests/test_compare_hpfc_ompex_benchmark_script.py -q -p no:cacheprovider`
+  reported `1 passed`.
+- `python -m pytest tests/test_compare_hpfc_ompex_benchmark_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_audit_epex_shape_lab_governance_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_plan_epex_lab_locked_holdout_script.py tests/test_plan_epex_shape_lab_sweep_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  reported `56 passed, 1 skipped`.
+
+Operational result:
+
+- The regenerated T056/t005 OMPEX advisory sidecar remains under ignored
+  `output/` paths.
+- Promotion remains NO-GO until T057 future spot coverage and production-chain
+  evidence pass.
+
+Rejected alternatives:
+
+- Use OMPEX ramp or heatmap deltas as tuning targets.
+- Add OMPEX advisory metrics to candidate selection or readiness gates.
+
+Invariants:
+
+- OMPEX artifacts remain sidecars only.
+- Any model improvement motivated by these diagnostics must be justified and
+  validated with independent no-OMPEX evidence.
+

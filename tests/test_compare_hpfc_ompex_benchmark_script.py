@@ -38,6 +38,9 @@ def test_compare_selects_hour_ending_alignment_and_marks_advisory(tmp_path) -> N
 
     assert summary["alignment"] == "ompex_minus_1h_hourending"
     assert summary["mae"] == 0.0
+    assert summary["ramp_n_points"] == 5
+    assert summary["ramp_mae"] == 0.0
+    assert summary["boundary_jump_n_points"] == 0
     assert summary["benchmark_policy"] == "advisory"
     assert summary["read_only"] is True
     assert summary["promotion_gate"] is False
@@ -47,3 +50,7 @@ def test_compare_selects_hour_ending_alignment_and_marks_advisory(tmp_path) -> N
     assert summary["ompex_used_in_backtest"] is False
     assert "imperfect benchmark" in str(summary["ompex_quality_caveat"])
     assert (tmp_path / "benchmark" / "alignment_sensitivity.csv").exists()
+    assert (tmp_path / "benchmark" / "ramp_metrics.csv").exists()
+    assert (tmp_path / "benchmark" / "boundary_jumps.csv").exists()
+    assert (tmp_path / "benchmark" / "month_hour_bias_matrix.csv").exists()
+    assert (tmp_path / "benchmark" / "month_hour_mae_matrix.csv").exists()
