@@ -266,6 +266,7 @@ def _scoring_policy(plan: dict[str, Any]) -> dict[str, float]:
         "duck_weight": 1.0,
         "solar_tail_weight": 1.0,
         "weekend_weight": 1.0,
+        "midday_weight": 1.0,
         "night_weight": 0.5,
         "ramp_penalty_weight": 0.25,
     }
@@ -461,11 +462,13 @@ def _trial_row(
     )
     duck_change = float(annual.get("evening_minus_midday_change_mean_eur_mwh", 0.0))
     solar_tail_delta = float(calendar.get("solar_tail_mar_oct_10_16", 0.0))
+    midday_delta = float(calendar.get("midday_11_15", 0.0))
     weekend_delta = float(calendar.get("weekend", 0.0))
     night_delta = float(calendar.get("night_00_05", 0.0))
     shape_score = (
         scoring_policy["duck_weight"] * duck_change
         + scoring_policy["solar_tail_weight"] * max(0.0, -solar_tail_delta)
+        + scoring_policy["midday_weight"] * max(0.0, -midday_delta)
         + scoring_policy["weekend_weight"] * max(0.0, -weekend_delta)
         + scoring_policy["night_weight"] * abs(night_delta)
         - scoring_policy["ramp_penalty_weight"] * max(0.0, ramp_increase)
@@ -489,6 +492,7 @@ def _trial_row(
         "epex_fit_coverage_days": epex_coverage_days,
         "duck_change_mean_eur_mwh": duck_change,
         "solar_tail_mean_delta_eur_mwh": solar_tail_delta,
+        "midday_mean_delta_eur_mwh": midday_delta,
         "weekend_mean_delta_eur_mwh": weekend_delta,
         "night_mean_delta_eur_mwh": night_delta,
         "ramp_abs_p99_increase_eur_mwh": ramp_increase,

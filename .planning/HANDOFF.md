@@ -1401,7 +1401,7 @@ A separate lab-only T058 plan was pre-registered under ignored output:
 
 Plan SHA256:
 
-`24b3dbf3c97daf9d21ac59ed9eab9eb6892cdfc087e050bf3fe0f5661c21519e`
+`7818437211dc1b66c1645ffaf943ecbdfe1fe334ae0a51ac8910f94a5426e7d0`
 
 Plan facts:
 
@@ -1416,6 +1416,47 @@ Plan facts:
   `12447bbaa9828c0ffed871e62c35f90b8c100fcfab8c80b00468ac846848d895`
 - EPEX spot SHA:
   `008f552e0cd684d42dcb95f87a2681054b1af338c6511ae77c1ffa81b421e32f`
+- scoring policy includes `midday_weight=1.25`, `solar_tail_weight=1.5`,
+  and `weekend_weight=1.25`.
+- plan selection thresholds are restricted to executor-enforceable checks:
+  spot age, spot coverage, ramp p99 increase, and minimum adjusted price.
+  Realized MAE/fold-count decisions remain in the spot-backtest summarizer,
+  not in the sweep pre-filter.
+
+The first 10 T058 trials were executed as a controlled partial sweep:
+
+- sweep summary:
+  `output/phase14/t058_epex_only_shape_micro_summary_first10.json`
+- benchmark policy: `executed_independent_no_ompex`
+- `trial_count_executed=10`
+- `eligible_count=10`
+- best independent-shape trial:
+  `t002_w065_l015_p087_e005_n045_r00_d275`
+- best independent-shape trial metrics include shape score
+  `4.089226396580266`, midday mean delta `-0.9821475722222222`,
+  solar-tail mean delta `-1.0645568976773383`, weekend mean delta
+  `-0.3540212641799299`, ramp p99 increase `0.8039680399999583`, and min
+  adjusted price `-3.668281`.
+
+The top three first10 trials were spot-backtested under no-OMPEX lab-only
+evidence and summarized against the frozen T056/t005 incumbent:
+
+- backtest root:
+  `output/phase14/t058_epex_only_shape_micro_spot_backtests_first10`
+- selection summary:
+  `output/phase14/t058_epex_only_shape_micro_selection_first10/spot_backtest_selection_summary.json`
+- replacement verdict:
+  `WEAK_BUCKET_GAIN_BUT_INCUMBENT_STILL_DOMINATES_CORE_METRICS`
+- `replace_incumbent=false`
+- best weak-bucket trial:
+  `t004_w065_l015_p087_e005_n055_r00_d275`
+- best weak-bucket metrics: overall improvement `0.428104291871567`,
+  night improvement `0.17009783026880573`, ramp improvement
+  `0.05713664911100517`, solar-tail improvement `0.4270889440372494`,
+  weekend improvement `0.2945464419537373`, post-valuation improvement
+  `0.3033020021281363`.
+- incumbent T056/t005 remains stronger on overall, evening, solar-tail,
+  weekend, and post-valuation improvement.
 
 Operational next steps:
 

@@ -44,6 +44,7 @@ DEFAULT_SCORING_POLICY = {
     "duck_weight": 1.0,
     "solar_tail_weight": 1.0,
     "weekend_weight": 1.0,
+    "midday_weight": 1.0,
     "night_weight": 0.5,
     "ramp_penalty_weight": 1.0,
 }
@@ -76,8 +77,12 @@ def build_plan(
     cap_values = [float(v) for v in cap_values]
     if not cap_values:
         raise ValueError("max_abs_delta grid must contain at least one value")
-    thresholds = {**DEFAULT_SELECTION_THRESHOLDS, **(selection_thresholds or {})}
-    scoring = {**DEFAULT_SCORING_POLICY, **(scoring_policy or {})}
+    thresholds = _merge_known_float_policy(
+        DEFAULT_SELECTION_THRESHOLDS,
+        selection_thresholds,
+        label="selection thresholds",
+    )
+    scoring = _merge_known_float_policy(DEFAULT_SCORING_POLICY, scoring_policy, label="scoring policy")
     trials = []
     dimensions = [*INTENSITY_KEYS, "max_abs_delta_eur_mwh"]
     values_by_dimension = [grid[key] for key in INTENSITY_KEYS] + [cap_values]
@@ -212,6 +217,19 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def _merge_known_float_policy(
+    defaults: dict[str, float],
+    override: dict[str, float] | None,
+    *,
+    label: str,
+) -> dict[str, float]:
+    override = override or {}
+    unknown = sorted(set(override) - set(defaults))
+    if unknown:
+        raise ValueError(f"unknown {label} keys: {unknown}")
+    return {key: float(override.get(key, default)) for key, default in defaults.items()}
 
 
 def _compact_float(value: float) -> str:

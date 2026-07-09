@@ -1088,7 +1088,7 @@ a replacement for frozen T056/T057:
 
 Plan SHA256:
 
-`24b3dbf3c97daf9d21ac59ed9eab9eb6892cdfc087e050bf3fe0f5661c21519e`
+`7818437211dc1b66c1645ffaf943ecbdfe1fe334ae0a51ac8910f94a5426e7d0`
 
 Command path used: direct Python call into
 `scripts.plan_epex_shape_lab_sweep.main()` to avoid PowerShell JSON quoting
@@ -1119,16 +1119,97 @@ Plan facts:
   - `night_intensity`: `0.45`, `0.55`, `0.65`
   - `ramp_intensity`: `0.0`
   - `max_abs_delta_eur_mwh`: `2.5`, `2.75`
-- selection thresholds include minimum improvements for overall, solar-tail,
-  weekend, and midday MAE, plus fold-count thresholds for global, solar-tail,
-  and weekend improvements.
+- selection thresholds are restricted to executor-enforceable checks: spot age,
+  spot coverage, ramp p99 increase, and minimum adjusted price. Realized
+  MAE/fold-count decisions remain in the spot-backtest summarizer.
 - scoring policy upweights solar-tail, weekend, and midday.
+
+Executor contract hardening after T058 pre-registration:
+
+- `scripts/plan_epex_shape_lab_sweep.py` now rejects unknown selection
+  thresholds and scoring policy keys, preventing future pre-registered plans
+  from carrying fields that `execute_epex_shape_lab_sweep.py` cannot apply.
+- `scripts/execute_epex_shape_lab_sweep.py` now accepts `midday_weight`,
+  emits `midday_mean_delta_eur_mwh`, and includes the midday bucket in the
+  independent shape score.
+- Tests added/updated in
+  `tests/test_plan_epex_shape_lab_sweep_script.py` and
+  `tests/test_execute_epex_shape_lab_sweep_script.py`.
+
+Validation:
+
+```powershell
+python -m pytest tests/test_plan_epex_shape_lab_sweep_script.py tests/test_execute_epex_shape_lab_sweep_script.py tests/test_summarize_epex_shape_lab_spot_backtests_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result: `34 passed, 1 skipped`.
+
+Controlled T058 first10 execution:
+
+- A full sweep was started, confirmed slow, and stopped after 11 local trial
+  directories. No Python process remained running afterward.
+- A deterministic first10 summary was then generated with resume:
+
+```powershell
+python scripts\execute_epex_shape_lab_sweep.py --plan-json output\phase14\t058_epex_only_shape_micro_plan.json --output-summary output\phase14\t058_epex_only_shape_micro_summary_first10.json --max-trials 10
+```
+
+Result:
+
+```json
+{"eligible_count": 10, "trial_count_executed": 10}
+```
+
+First10 output facts:
+
+- `benchmark_policy=executed_independent_no_ompex`
+- `trial_count_executed=10`
+- `eligible_count=10`
+- best independent-shape trial:
+  `t002_w065_l015_p087_e005_n045_r00_d275`
+- best independent-shape score: `4.089226396580266`
+- best trial independent deltas: midday `-0.9821475722222222`,
+  solar-tail `-1.0645568976773383`, weekend `-0.3540212641799299`,
+  ramp p99 increase `0.8039680399999583`, min adjusted price `-3.668281`.
+
+Top-three first10 spot backtests:
+
+```powershell
+python scripts\backtest_epex_shape_lab_against_spot.py --baseline-csv output\phase14\20260708_asof20260707_lshape100_yoy150_amp150_2032\ch_hfc_hourly_asof20260707_lshape100_yoy150_amp150_2032.csv --adjusted-csv output\phase14\t058_epex_only_shape_micro\t002_w065_l015_p087_e005_n045_r00_d275\candidate_epex_shape_lab_adjusted.csv --spot-parquet output\phase14\20260708_asof20260707_lshape100_yoy150_amp150_2032\epex_spot_refresh_20260708\epex_hourly_ch_energy_charts_20260708.parquet --output-dir output\phase14\t058_epex_only_shape_micro_spot_backtests_first10\t002_w065_l015_p087_e005_n045_r00_d275 --valuation-timestamp 2026-07-07T00:00:00Z
+python scripts\backtest_epex_shape_lab_against_spot.py --baseline-csv output\phase14\20260708_asof20260707_lshape100_yoy150_amp150_2032\ch_hfc_hourly_asof20260707_lshape100_yoy150_amp150_2032.csv --adjusted-csv output\phase14\t058_epex_only_shape_micro\t008_w065_l015_p089_e005_n045_r00_d275\candidate_epex_shape_lab_adjusted.csv --spot-parquet output\phase14\20260708_asof20260707_lshape100_yoy150_amp150_2032\epex_spot_refresh_20260708\epex_hourly_ch_energy_charts_20260708.parquet --output-dir output\phase14\t058_epex_only_shape_micro_spot_backtests_first10\t008_w065_l015_p089_e005_n045_r00_d275 --valuation-timestamp 2026-07-07T00:00:00Z
+python scripts\backtest_epex_shape_lab_against_spot.py --baseline-csv output\phase14\20260708_asof20260707_lshape100_yoy150_amp150_2032\ch_hfc_hourly_asof20260707_lshape100_yoy150_amp150_2032.csv --adjusted-csv output\phase14\t058_epex_only_shape_micro\t004_w065_l015_p087_e005_n055_r00_d275\candidate_epex_shape_lab_adjusted.csv --spot-parquet output\phase14\20260708_asof20260707_lshape100_yoy150_amp150_2032\epex_spot_refresh_20260708\epex_hourly_ch_energy_charts_20260708.parquet --output-dir output\phase14\t058_epex_only_shape_micro_spot_backtests_first10\t004_w065_l015_p087_e005_n055_r00_d275 --valuation-timestamp 2026-07-07T00:00:00Z
+```
+
+All three returned `status=DIAGNOSTIC_PASS`, `strict_lab_gate_pass=true`,
+`benchmark_policy=rolling_origin_epex_spot_no_ompex_lab_only`, and all OMPEX
+usage flags false.
+
+T058 first10 selection summary against frozen T056/t005 incumbent:
+
+```powershell
+python scripts\summarize_epex_shape_lab_spot_backtests.py --sweep-summary output\phase14\t058_epex_only_shape_micro_summary_first10.json --backtest-root output\phase14\t058_epex_only_shape_micro_spot_backtests_first10 --output-dir output\phase14\t058_epex_only_shape_micro_selection_first10 --incumbent-backtest output\phase14\t056_postval_final_micro_spot_backtests\t005_w075_l025_p089_e005_n055_r00\spot_backtest_summary.json
+```
+
+Result:
+
+- `replacement_verdict.status=WEAK_BUCKET_GAIN_BUT_INCUMBENT_STILL_DOMINATES_CORE_METRICS`
+- `replace_incumbent=false`
+- `replacement_candidate_count=0`
+- best weak-bucket trial:
+  `t004_w065_l015_p087_e005_n055_r00_d275`
+- best weak-bucket metrics: overall `0.428104291871567`, night
+  `0.17009783026880573`, ramp `0.05713664911100517`, solar-tail
+  `0.4270889440372494`, weekend `0.2945464419537373`, post-valuation
+  `0.3033020021281363`.
+- Frozen T056/t005 incumbent remains stronger on overall, evening, solar-tail,
+  weekend, and post-valuation improvement.
 
 Operational conclusion:
 
 - T056/t005 and T057 remain frozen.
-- T058 is a lab-only, no-OMPEX research branch that may be executed later for
-  model improvement, but it does not change the T057 promotion path.
+- T058 is a lab-only, no-OMPEX research branch. The first10 slice does not
+  justify replacing T056/t005. A full sweep can be resumed later, but it does
+  not change the T057 promotion path.
 - Git output artifacts remain ignored under `output/phase14/`.
 
 Follow-up after expert roasts on production evidence and OMPEX advisory

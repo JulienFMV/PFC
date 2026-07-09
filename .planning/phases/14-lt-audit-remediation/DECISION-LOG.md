@@ -6558,12 +6558,16 @@ Implementation:
 - A lab-only T058 sweep plan was pre-registered under ignored output:
   `output/phase14/t058_epex_only_shape_micro_plan.json`.
 - Plan SHA256:
-  `24b3dbf3c97daf9d21ac59ed9eab9eb6892cdfc087e050bf3fe0f5661c21519e`.
+  `7818437211dc1b66c1645ffaf943ecbdfe1fe334ae0a51ac8910f94a5426e7d0`.
 - The plan contains 162 planned trials with EPEX-only inputs and
   `benchmark_policy=pre_registered_independent_no_ompex`.
 - The plan records `ompex_used_in_model=false` and
   `ompex_used_in_selection=false`. OMPEX may be used only as a post-selection
   advisory sidecar.
+- The first 10 trials were executed as a controlled partial sweep. Three top
+  trials were spot-backtested, and the best weak-bucket trial did not beat the
+  frozen T056/t005 incumbent on the core replacement metrics. Therefore T058
+  first10 does not replace T056/t005.
 
 Rejected alternatives:
 
@@ -6577,6 +6581,7 @@ Invariants:
 - T056/t005 and the T057 locked plan stay frozen.
 - T058 remains lab-only until it has independent no-OMPEX diagnostics and a
   separate approval path.
+- Partial T058 diagnostics cannot alter the frozen T057 promotion path.
 - T057 failure, if any, must be documented; it must not be used as a tuning
   target for the locked T056/t005 line.
 

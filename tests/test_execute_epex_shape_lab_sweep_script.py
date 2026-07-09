@@ -53,6 +53,7 @@ def test_execute_epex_shape_lab_sweep_runs_pre_registered_trials_without_ompex(t
             "peak_subshape_intensity": [0.25],
             "evening_recovery_intensity": [0.5],
         },
+        scoring_policy={"midday_weight": 1.25},
     )
     plan_json = tmp_path / "plan.json"
     plan_json.write_text(json.dumps(plan), encoding="utf-8")
@@ -67,6 +68,8 @@ def test_execute_epex_shape_lab_sweep_runs_pre_registered_trials_without_ompex(t
     assert (tmp_path / "summary.csv").exists()
     ranking = pd.read_csv(tmp_path / "summary.csv")
     assert ranking.loc[0, "evening_recovery_intensity"] == pytest.approx(0.5)
+    assert "midday_mean_delta_eur_mwh" in ranking.columns
+    assert summary["scoring_policy"]["midday_weight"] == pytest.approx(1.25)
 
 
 def test_execute_epex_shape_lab_sweep_rejects_negative_max_trials(tmp_path) -> None:
