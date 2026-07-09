@@ -128,6 +128,7 @@ def _ready_coverage(*, identity: dict) -> dict:
         "adjusted_candidate_timestamp_set_sha256": timestamp_set_sha256,
         "status": "READY_TO_RUN_HOLDOUT_BACKTEST",
         "ready_to_run_backtest": True,
+        "blocking_checks": [],
         "checks": {
             "baseline_csv_sha256_bound": True,
             "adjusted_csv_sha256_bound": True,

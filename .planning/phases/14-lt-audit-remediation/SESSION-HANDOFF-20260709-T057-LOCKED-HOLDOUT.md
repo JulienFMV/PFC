@@ -947,3 +947,42 @@ Result: `109 passed, 1 skipped`.
 Current frozen T057 plan remains unchanged. Regenerated current T057 runner
 still exits `1` with `WAITING_FOR_FULL_SPOT_COVERAGE`; coverage
 `blocking_checks` are only `full_window_covered` and `min_holdout_hours_met`.
+
+Follow-up after locked holdout policy blocking-checks hardening:
+
+- `scripts/epex_lab_locked_holdout_policy.py` now requires
+  `coverage_blocking_checks_clear`.
+- Passing locked holdout fixtures now include `blocking_checks=[]`.
+- A policy test rejects a run summary whose coverage lists
+  `full_window_covered` as a blocking check despite otherwise pass-like flags.
+
+Validation:
+
+```powershell
+python -m pytest tests/test_epex_lab_locked_holdout_policy.py tests/test_audit_epex_lab_future_approval_path_script.py -q -p no:cacheprovider
+```
+
+Result: `22 passed`.
+
+```powershell
+python -m pytest tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_epex_lab_locked_holdout_policy.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result: `69 passed, 1 skipped`.
+
+```powershell
+python -m pytest tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_adjusted_production_chain_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_epex_lab_locked_holdout_policy.py tests/test_audit_epex_lab_future_approval_path_script.py -q -p no:cacheprovider
+```
+
+Result: `57 passed`.
+
+```powershell
+python -m pytest tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_adjusted_production_chain_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_epex_lab_locked_holdout_policy.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_plan_epex_lab_locked_holdout_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result: `110 passed, 1 skipped`.
+
+Current frozen T057 plan remains unchanged. Regenerated current T057 runner
+still exits `1` with `WAITING_FOR_FULL_SPOT_COVERAGE`; coverage
+`blocking_checks` are `full_window_covered` and `min_holdout_hours_met`, so a
+future PASS must be generated after full spot coverage with empty blockers.

@@ -202,6 +202,20 @@ def test_locked_holdout_policy_rejects_coverage_identity_mismatch(tmp_path: Path
     assert policy["checks"]["coverage_identity_matches_run"] is False
 
 
+def test_locked_holdout_policy_rejects_coverage_with_blocking_checks(tmp_path: Path) -> None:
+    summary = _passing_run_summary(tmp_path)
+    coverage = summary["coverage"]
+    coverage["blocking_checks"] = ["full_window_covered"]
+    coverage_path = Path(summary["coverage_status"])
+    coverage_path.write_text(json.dumps(coverage), encoding="utf-8")
+    summary["coverage_status_sha256"] = _sha256(coverage_path)
+
+    policy = locked_holdout_policy(summary)
+
+    assert policy["pass"] is False
+    assert policy["checks"]["coverage_blocking_checks_clear"] is False
+
+
 def test_locked_holdout_policy_rejects_expected_plan_sha_mismatch(tmp_path: Path) -> None:
     summary = _passing_run_summary(tmp_path)
     summary["expected_plan_json_sha256"] = "0" * 64
@@ -232,6 +246,7 @@ def _ready_coverage(*, identity: dict) -> dict:
         "adjusted_candidate_timestamp_set_sha256": timestamp_set_sha256,
         "status": "READY_TO_RUN_HOLDOUT_BACKTEST",
         "ready_to_run_backtest": True,
+        "blocking_checks": [],
         "checks": {
             "baseline_csv_sha256_bound": True,
             "adjusted_csv_sha256_bound": True,

@@ -6217,3 +6217,52 @@ Invariants:
 - The new status is diagnostic routing only; it does not relax PASS criteria or
   approve promotion.
 
+## D-20260709-78 - Require Clear Blocking Checks In Passable Holdout Policy
+
+Decision: passable locked EPEX lab holdout run summaries must embed coverage
+evidence with `blocking_checks=[]`.
+
+Reason: D77 made coverage blockers explicit. The promotion policy should not
+accept a self-contradictory run summary that claims `coverage_ready=true` while
+its embedded coverage still lists failed checks.
+
+Implementation:
+
+- `scripts/epex_lab_locked_holdout_policy.py` now requires
+  `coverage_blocking_checks_clear`.
+- Passing test fixtures now include `blocking_checks=[]`.
+- A policy test rejects a run summary whose coverage lists
+  `full_window_covered` as a blocking check despite otherwise pass-like flags.
+
+Validation:
+
+- `python -m pytest tests/test_epex_lab_locked_holdout_policy.py tests/test_audit_epex_lab_future_approval_path_script.py -q -p no:cacheprovider`
+  reported `22 passed`.
+- `python -m pytest tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_epex_lab_locked_holdout_policy.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  reported `69 passed, 1 skipped`.
+- `python -m pytest tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_adjusted_production_chain_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_epex_lab_locked_holdout_policy.py tests/test_audit_epex_lab_future_approval_path_script.py -q -p no:cacheprovider`
+  reported `57 passed`.
+- `python -m pytest tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_adjusted_production_chain_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_epex_lab_locked_holdout_policy.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_plan_epex_lab_locked_holdout_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  reported `110 passed, 1 skipped`.
+
+Operational result:
+
+- Current frozen T057 plan remains unchanged.
+- Regenerated current T057 runner remains
+  `WAITING_FOR_FULL_SPOT_COVERAGE`, exit `1`, with coverage
+  `blocking_checks=["full_window_covered", "min_holdout_hours_met"]`.
+- A future passing T057 run must therefore be regenerated after full spot
+  coverage and must carry empty coverage blockers.
+
+Rejected alternatives:
+
+- Treat `blocking_checks` as informational only downstream.
+- Allow older pass-like fixtures without the D77 blocker field to remain
+  promotion-passable.
+
+Invariants:
+
+- The existing locked T057 plan JSON remains unchanged.
+- This policy is evidence hardening only; it does not change the holdout
+  objective, the model, or OMPEX constraints.
+

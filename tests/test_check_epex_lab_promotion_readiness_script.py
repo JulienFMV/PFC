@@ -218,6 +218,7 @@ def _ready_coverage(*, passed: bool = True, identity: dict):
         "adjusted_candidate_timestamp_set_sha256": timestamp_set_sha256,
         "status": "READY_TO_RUN_HOLDOUT_BACKTEST" if passed else "WAITING_FOR_FULL_SPOT_COVERAGE",
         "ready_to_run_backtest": passed,
+        "blocking_checks": [] if passed else ["full_window_covered", "min_holdout_hours_met"],
         "checks": {
             "baseline_csv_sha256_bound": passed,
             "adjusted_csv_sha256_bound": passed,

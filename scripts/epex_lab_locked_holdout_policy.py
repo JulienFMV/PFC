@@ -80,6 +80,7 @@ def locked_holdout_policy(summary: dict[str, Any] | None) -> dict[str, Any]:
                 "coverage_candidate_timestamp_bounds_equal": _candidate_timestamp_bounds_equal(coverage),
                 "coverage_status_ready": coverage.get("status") == "READY_TO_RUN_HOLDOUT_BACKTEST",
                 "coverage_embedded_ready": coverage.get("ready_to_run_backtest") is True,
+                "coverage_blocking_checks_clear": coverage.get("blocking_checks") == [],
                 "coverage_full_window_covered": coverage_checks.get("full_window_covered") is True,
                 "coverage_min_holdout_hours_met": coverage_checks.get("min_holdout_hours_met") is True,
                 "coverage_no_duplicate_holdout_rows": coverage_checks.get("no_duplicate_holdout_rows") is True,
