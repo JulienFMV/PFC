@@ -5148,3 +5148,49 @@ Invariants not to break:
   production artifact.
 - NO-GO diagnostics remain possible before T057 coverage is complete.
 
+## D-20260709-57 - Make T057 Holdout CLIs Fail-Closed
+
+Decision: T057 holdout command-line tools now return success only when their
+own gate is satisfied. Coverage returns `0` only when the locked window is
+ready to backtest, the runner returns `0` only for `LOCKED_HOLDOUT_PASS`, and
+the holdout audit returns `0` only when `holdout_pass=true`.
+
+Reason: an expert audit found that the JSON payloads were fail-closed, but
+the CLIs still returned `0` for `WAITING_FOR_FULL_SPOT_COVERAGE` or
+`NO_GO_LOCKED_HOLDOUT_FAIL`. A shell orchestrator, CI step, or promotion script
+using `&&` could therefore treat an incomplete or failed holdout as green.
+
+Implementation:
+
+- `scripts/check_epex_lab_locked_holdout_coverage.py`
+  - exits `1` unless `ready_to_run_backtest=true`.
+- `scripts/run_epex_lab_locked_holdout.py`
+  - exits `1` unless `status=LOCKED_HOLDOUT_PASS` and `holdout_pass=true`.
+- `scripts/audit_epex_lab_locked_holdout.py`
+  - exits `1` unless `holdout_pass=true`.
+- Added explicit CLI exit tests for pass and non-pass states.
+
+Validation:
+
+- `python -m pytest tests/test_run_epex_lab_locked_holdout_script.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_check_epex_lab_locked_holdout_coverage_script.py -q -p no:cacheprovider`
+  reported `12 passed`.
+- `python -m pytest tests/test_audit_epex_lab_future_approval_path_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_adjusted_production_chain_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  reported `62 passed, 1 skipped`.
+- Current real T057 coverage and runner commands against the 2026-07-08 spot
+  parquet both return exit `1`, as expected, while still writing their JSON
+  reports.
+
+Rejected alternatives:
+
+- Leave coverage/runner/audit as informational CLIs with unconditional exit
+  `0`.
+- Rely only on downstream readiness/future approval tools to catch a failed
+  holdout after a shell-level automation step has already advanced.
+
+Invariants not to break:
+
+- Python APIs still return structured summaries for read-only diagnostics.
+- T057 remains non-promotional and no-OMPEX.
+- Incomplete future spot coverage is a waiting state, not a promotion failure,
+  but it must not be a successful CLI gate.
+

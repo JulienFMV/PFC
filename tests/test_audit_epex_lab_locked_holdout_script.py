@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from scripts.audit_epex_lab_locked_holdout import audit_holdout
+from scripts.audit_epex_lab_locked_holdout import audit_holdout, main
 
 
 def test_audit_epex_lab_locked_holdout_passes_no_ompex_window(tmp_path: Path) -> None:
@@ -36,6 +36,32 @@ def test_audit_epex_lab_locked_holdout_passes_no_ompex_window(tmp_path: Path) ->
     assert (tmp_path / "audit.json").exists()
 
 
+def test_audit_epex_lab_locked_holdout_cli_exits_zero_when_passed(tmp_path: Path) -> None:
+    plan = _write_plan(tmp_path)
+    summary = _write_summary(tmp_path, baseline_sha="base", adjusted_sha="adjusted")
+    post = tmp_path / "post.csv"
+    pd.DataFrame(
+        {
+            "timestamp_utc": pd.date_range("2026-07-10", periods=4, freq="h", tz="UTC").astype(str),
+            "baseline_abs_error_eur_mwh": [4.0, 4.0, 4.0, 4.0],
+            "adjusted_abs_error_eur_mwh": [3.0, 3.5, 3.0, 3.5],
+        }
+    ).to_csv(post, index=False)
+
+    code = main(
+        [
+            "--plan-json",
+            str(plan),
+            "--spot-backtest-summary",
+            str(summary),
+            "--output",
+            str(tmp_path / "audit.json"),
+        ]
+    )
+
+    assert code == 0
+
+
 def test_audit_epex_lab_locked_holdout_fails_degraded_window(tmp_path: Path) -> None:
     plan = _write_plan(tmp_path)
     summary = _write_summary(tmp_path, baseline_sha="base", adjusted_sha="adjusted")
@@ -53,6 +79,32 @@ def test_audit_epex_lab_locked_holdout_fails_degraded_window(tmp_path: Path) -> 
     assert audit["status"] == "NO_GO_LOCKED_HOLDOUT_FAIL"
     assert audit["holdout_pass"] is False
     assert audit["checks"]["holdout_non_degraded"] is False
+
+
+def test_audit_epex_lab_locked_holdout_cli_exits_nonzero_when_failed(tmp_path: Path) -> None:
+    plan = _write_plan(tmp_path)
+    summary = _write_summary(tmp_path, baseline_sha="base", adjusted_sha="adjusted")
+    post = tmp_path / "post.csv"
+    pd.DataFrame(
+        {
+            "timestamp_utc": pd.date_range("2026-07-10", periods=4, freq="h", tz="UTC").astype(str),
+            "baseline_abs_error_eur_mwh": [3.0, 3.0, 3.0, 3.0],
+            "adjusted_abs_error_eur_mwh": [4.0, 4.0, 4.0, 4.0],
+        }
+    ).to_csv(post, index=False)
+
+    code = main(
+        [
+            "--plan-json",
+            str(plan),
+            "--spot-backtest-summary",
+            str(summary),
+            "--output",
+            str(tmp_path / "audit.json"),
+        ]
+    )
+
+    assert code == 1
 
 
 def _write_plan(tmp_path: Path) -> Path:

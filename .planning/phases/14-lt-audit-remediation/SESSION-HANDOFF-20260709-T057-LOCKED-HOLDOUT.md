@@ -346,3 +346,33 @@ python -m pytest tests/test_audit_epex_lab_future_approval_path_script.py tests/
 Result: `41 passed, 1 skipped`. Running the current T057 command returns exit
 `1` as expected because status remains
 `NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING`.
+
+Expert-audit follow-up on 2026-07-09:
+
+- `scripts/check_epex_lab_locked_holdout_coverage.py` now exits `1` unless the
+  locked future window is ready to backtest.
+- `scripts/run_epex_lab_locked_holdout.py` now exits `1` unless the final
+  runner summary is `LOCKED_HOLDOUT_PASS` with `holdout_pass=true`.
+- `scripts/audit_epex_lab_locked_holdout.py` now exits `1` unless the audit
+  has `holdout_pass=true`.
+- Tests now cover pass and non-pass CLI exit codes for all three T057 tools.
+
+Validation:
+
+```powershell
+python -m pytest tests/test_run_epex_lab_locked_holdout_script.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_check_epex_lab_locked_holdout_coverage_script.py -q -p no:cacheprovider
+```
+
+Result: `12 passed`.
+
+```powershell
+python -m pytest tests/test_audit_epex_lab_future_approval_path_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_adjusted_production_chain_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result: `62 passed, 1 skipped`.
+
+Current real checks against the 2026-07-08 spot parquet:
+
+- coverage CLI exits `1` with `WAITING_FOR_FULL_SPOT_COVERAGE`;
+- runner CLI exits `1` with `WAITING_FOR_FULL_SPOT_COVERAGE`;
+- both still write their JSON reports for auditability.

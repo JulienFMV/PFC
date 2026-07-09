@@ -126,7 +126,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     summary = run_locked_holdout(plan_json=args.plan_json, spot_parquet=args.spot_parquet, output_dir=args.output_dir)
     print(json.dumps(_jsonable(summary), indent=2, sort_keys=True))
-    return 0
+    return 0 if summary.get("status") == "LOCKED_HOLDOUT_PASS" and summary.get("holdout_pass") is True else 1
 
 
 if __name__ == "__main__":

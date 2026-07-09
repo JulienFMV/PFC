@@ -153,6 +153,26 @@ reported `41 passed, 1 skipped`. The current command against T057 evidence
 returns exit `1` as expected because status remains
 `NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING`.
 
+Expert-audit follow-up on 2026-07-09 made the T057 holdout CLIs fail-closed:
+
+- `scripts/check_epex_lab_locked_holdout_coverage.py` exits `0` only when
+  `ready_to_run_backtest=true`; incomplete coverage exits `1`.
+- `scripts/run_epex_lab_locked_holdout.py` exits `0` only for
+  `LOCKED_HOLDOUT_PASS` with `holdout_pass=true`; coverage-pending and failed
+  holdouts exit `1`.
+- `scripts/audit_epex_lab_locked_holdout.py` exits `0` only when
+  `holdout_pass=true`; `NO_GO_LOCKED_HOLDOUT_FAIL` exits `1`.
+
+Validation:
+
+```powershell
+python -m pytest tests/test_run_epex_lab_locked_holdout_script.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_check_epex_lab_locked_holdout_coverage_script.py -q -p no:cacheprovider
+python -m pytest tests/test_audit_epex_lab_future_approval_path_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_adjusted_production_chain_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Results: `12 passed` and `62 passed, 1 skipped`. Current real coverage and
+runner commands against the 2026-07-08 spot parquet both exit `1` as expected.
+
 Current daily generation: Wednesday 2026-07-08 was regenerated from the EEX
 workbook available on 2026-07-08. The latest usable CH/DE/FR quote row in that
 workbook is `2026-07-07`, so all new 2026-07-08 evidence is bound to

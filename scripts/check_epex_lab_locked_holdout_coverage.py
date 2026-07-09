@@ -148,7 +148,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     summary = check_coverage(plan_json=args.plan_json, spot_parquet=args.spot_parquet, output=args.output)
     print(json.dumps(_jsonable(summary), indent=2, sort_keys=True))
-    return 0
+    return 0 if summary.get("ready_to_run_backtest") is True else 1
 
 
 if __name__ == "__main__":
