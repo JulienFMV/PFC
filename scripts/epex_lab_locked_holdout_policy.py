@@ -56,6 +56,16 @@ def locked_holdout_policy(summary: dict[str, Any] | None) -> dict[str, Any]:
                 "audit_ran": summary.get("audit_ran") is True,
                 "holdout_pass": summary.get("holdout_pass") is True,
                 "status_pass": summary.get("status") == "LOCKED_HOLDOUT_PASS",
+                "spot_backtest_summary_sha256_bound": _file_sha_bound(
+                    summary,
+                    path_key="spot_backtest_summary",
+                    sha_key="spot_backtest_summary_sha256",
+                ),
+                "locked_holdout_audit_sha256_bound": _file_sha_bound(
+                    summary,
+                    path_key="locked_holdout_audit",
+                    sha_key="locked_holdout_audit_sha256",
+                ),
             }
         )
         status = (
@@ -68,6 +78,16 @@ def locked_holdout_policy(summary: dict[str, Any] | None) -> dict[str, Any]:
             {
                 "holdout_pass": summary.get("holdout_pass") is True,
                 "status_pass": summary.get("status") == "LOCKED_HOLDOUT_PASS",
+                "spot_backtest_summary_sha256_bound": _file_sha_bound(
+                    summary,
+                    path_key="spot_backtest_summary",
+                    sha_key="spot_backtest_summary_sha256",
+                ),
+                "post_valuation_csv_sha256_bound": _file_sha_bound(
+                    summary,
+                    path_key="post_valuation_timestamp_residuals_csv",
+                    sha_key="post_valuation_timestamp_residuals_csv_sha256",
+                ),
             }
         )
         status = "NO_GO_LOCKED_HOLDOUT_FAIL"
@@ -165,6 +185,15 @@ def _identity(summary: dict[str, Any]) -> dict[str, Any]:
         ]
         if summary.get(key) is not None
     }
+
+
+def _file_sha_bound(summary: dict[str, Any], *, path_key: str, sha_key: str) -> bool:
+    path_text = summary.get(path_key)
+    expected_sha = summary.get(sha_key)
+    if not path_text or not expected_sha:
+        return False
+    path = Path(str(path_text))
+    return path.exists() and expected_sha == _sha256(path)
 
 
 def _sha256(path: Path) -> str:

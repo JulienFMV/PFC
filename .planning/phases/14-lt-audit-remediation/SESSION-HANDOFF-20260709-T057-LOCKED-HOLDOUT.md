@@ -560,3 +560,24 @@ python -m pytest tests/test_backtest_epex_shape_lab_against_spot_script.py tests
 ```
 
 Result: `46 passed, 1 skipped`.
+
+Run/audit linked-evidence hash follow-up:
+
+- `scripts/run_epex_lab_locked_holdout.py` now writes
+  `spot_backtest_summary_sha256` and `locked_holdout_audit_sha256`.
+- `scripts/audit_epex_lab_locked_holdout.py` now writes
+  `spot_backtest_summary_sha256` and
+  `post_valuation_timestamp_residuals_csv_sha256`.
+- `scripts/epex_lab_locked_holdout_policy.py` requires those linked evidence
+  hashes for passable run/audit summaries.
+- Test helpers for adjusted production manifest, chain, readiness, and future
+  approval now create realistic linked evidence files for passing holdout
+  summaries.
+
+Validation:
+
+```powershell
+python -m pytest tests/test_epex_lab_locked_holdout_policy.py tests/test_backtest_epex_shape_lab_against_spot_script.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_adjusted_production_chain_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result: `82 passed, 1 skipped`.

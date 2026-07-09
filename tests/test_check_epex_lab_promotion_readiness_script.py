@@ -160,6 +160,10 @@ def _write_locked_holdout(tmp_path, *, passed: bool = True):
     locked_holdout = tmp_path / "locked_holdout.json"
     plan = _write_locked_plan(tmp_path)
     plan_payload = json.loads(plan.read_text(encoding="utf-8"))
+    backtest = tmp_path / "spot_backtest_summary.json"
+    _write_json(backtest, {"status": "DIAGNOSTIC_PASS"})
+    audit = tmp_path / "locked_holdout_audit.json"
+    _write_json(audit, {"status": "LOCKED_HOLDOUT_PASS"})
     _write_json(
         locked_holdout,
         {
@@ -175,6 +179,10 @@ def _write_locked_holdout(tmp_path, *, passed: bool = True):
             "audit_ran": passed,
             "holdout_pass": passed,
             "locked_plan_identity": build_locked_plan_identity(plan_payload, plan_json=plan),
+            "spot_backtest_summary": str(backtest),
+            "spot_backtest_summary_sha256": _sha256(backtest),
+            "locked_holdout_audit": str(audit),
+            "locked_holdout_audit_sha256": _sha256(audit),
         },
     )
     return locked_holdout

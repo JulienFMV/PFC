@@ -72,6 +72,8 @@ def _write_locked_plan(tmp_path: Path) -> Path:
 def _locked_holdout_run_payload(tmp_path: Path, **overrides) -> dict:
     plan = _write_locked_plan(tmp_path)
     plan_payload = json.loads(plan.read_text(encoding="utf-8"))
+    backtest = _write_json(tmp_path / "spot_backtest_summary.json", {"status": "DIAGNOSTIC_PASS"})
+    audit = _write_json(tmp_path / "locked_holdout_audit.json", {"status": "LOCKED_HOLDOUT_PASS"})
     payload = {
         "schema_version": "epex_lab_locked_holdout_run.v1",
         "status": "LOCKED_HOLDOUT_PASS",
@@ -88,6 +90,10 @@ def _locked_holdout_run_payload(tmp_path: Path, **overrides) -> dict:
         "plan_json": str(plan),
         "spot_parquet": "spot.parquet",
         "output_dir": "out",
+        "spot_backtest_summary": str(backtest),
+        "spot_backtest_summary_sha256": _sha256(backtest),
+        "locked_holdout_audit": str(audit),
+        "locked_holdout_audit_sha256": _sha256(audit),
     }
     payload.update(overrides)
     return payload

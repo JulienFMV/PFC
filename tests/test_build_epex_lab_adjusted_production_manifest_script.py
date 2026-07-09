@@ -194,6 +194,12 @@ def _write_locked_holdout(tmp_path, *, passed: bool = True, schema: str = "run")
     locked_holdout = tmp_path / "locked_holdout.json"
     plan = _write_locked_plan(tmp_path)
     plan_payload = json.loads(plan.read_text(encoding="utf-8"))
+    post_csv = tmp_path / "post.csv"
+    post_csv.write_text("timestamp_utc,baseline_abs_error_eur_mwh,adjusted_abs_error_eur_mwh\n", encoding="utf-8")
+    backtest = tmp_path / "spot_backtest_summary.json"
+    _write_json(backtest, {"status": "DIAGNOSTIC_PASS"})
+    audit = tmp_path / "locked_holdout_audit.json"
+    _write_json(audit, {"status": "LOCKED_HOLDOUT_PASS"})
     payload = {
         "schema_version": "epex_lab_locked_holdout_audit.v1"
         if schema == "audit"
@@ -206,6 +212,10 @@ def _write_locked_holdout(tmp_path, *, passed: bool = True, schema: str = "run")
         "ompex_used_in_backtest": False,
         "holdout_pass": passed,
         "locked_plan_identity": build_locked_plan_identity(plan_payload, plan_json=plan),
+        "spot_backtest_summary": str(backtest),
+        "spot_backtest_summary_sha256": _sha256(backtest),
+        "post_valuation_timestamp_residuals_csv": str(post_csv),
+        "post_valuation_timestamp_residuals_csv_sha256": _sha256(post_csv),
     }
     if schema != "audit":
         payload.update(
@@ -213,6 +223,8 @@ def _write_locked_holdout(tmp_path, *, passed: bool = True, schema: str = "run")
                 "coverage_ready": passed,
                 "backtest_ran": passed,
                 "audit_ran": passed,
+                "locked_holdout_audit": str(audit),
+                "locked_holdout_audit_sha256": _sha256(audit),
             }
         )
     _write_json(locked_holdout, payload)

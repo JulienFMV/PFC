@@ -192,6 +192,16 @@ now rejects a locked holdout if the post-valuation residual CSV hash does not
 match the summary. Validation:
 `python -m pytest tests/test_backtest_epex_shape_lab_against_spot_script.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_epex_lab_locked_holdout_policy.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
 reported `46 passed, 1 skipped`.
+
+T057 inter-artifact binding on 2026-07-09 also makes passable run/audit
+summaries hash-bind their referenced evidence files. A passing
+`epex_lab_locked_holdout_run.v1` must now carry valid hashes for
+`spot_backtest_summary` and `locked_holdout_audit`; a passing
+`epex_lab_locked_holdout_audit.v1` must carry valid hashes for
+`spot_backtest_summary` and the post-valuation residual CSV. The shared policy
+rejects tampered linked files. Validation:
+`python -m pytest tests/test_epex_lab_locked_holdout_policy.py tests/test_backtest_epex_shape_lab_against_spot_script.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_adjusted_production_chain_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+reported `82 passed, 1 skipped`.
 Future approval audit CLI now exits `0` only when `approved=true`; all NO-GO
 states exit `1`. Validation:
 `python -m pytest tests/test_audit_epex_lab_future_approval_path_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_build_epex_lab_promotion_bundle_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`

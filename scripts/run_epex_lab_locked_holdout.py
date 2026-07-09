@@ -82,7 +82,9 @@ def run_locked_holdout(
             "backtest_ran": True,
             "audit_ran": True,
             "spot_backtest_summary": str(backtest_summary_path),
+            "spot_backtest_summary_sha256": _sha256(backtest_summary_path),
             "locked_holdout_audit": str(audit_path),
+            "locked_holdout_audit_sha256": _sha256(audit_path),
             "spot_backtest_status": backtest.get("status"),
             "holdout_audit_status": audit.get("status"),
             "holdout_pass": bool(audit.get("holdout_pass")),
@@ -108,6 +110,16 @@ def _write_run_summary(output_dir: Path, run_summary: dict[str, Any]) -> dict[st
 
 def _read_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _sha256(path: Path) -> str:
+    import hashlib
+
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _jsonable(value: Any) -> Any:

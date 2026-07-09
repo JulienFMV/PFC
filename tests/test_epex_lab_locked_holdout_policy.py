@@ -32,6 +32,8 @@ def _write_plan(tmp_path: Path) -> Path:
 def _passing_run_summary(tmp_path: Path) -> dict:
     plan = _write_plan(tmp_path)
     plan_payload = json.loads(plan.read_text(encoding="utf-8"))
+    backtest = _write_json(tmp_path / "spot_backtest_summary.json", {"status": "DIAGNOSTIC_PASS"})
+    audit = _write_json(tmp_path / "locked_holdout_audit.json", {"status": "LOCKED_HOLDOUT_PASS"})
     return {
         "schema_version": "epex_lab_locked_holdout_run.v1",
         "status": "LOCKED_HOLDOUT_PASS",
@@ -45,6 +47,10 @@ def _passing_run_summary(tmp_path: Path) -> dict:
         "audit_ran": True,
         "holdout_pass": True,
         "locked_plan_identity": build_locked_plan_identity(plan_payload, plan_json=plan),
+        "spot_backtest_summary": str(backtest),
+        "spot_backtest_summary_sha256": _sha256(backtest),
+        "locked_holdout_audit": str(audit),
+        "locked_holdout_audit_sha256": _sha256(audit),
     }
 
 
@@ -78,3 +84,24 @@ def test_locked_holdout_policy_rejects_tampered_plan_after_summary(tmp_path: Pat
 
     assert policy["pass"] is False
     assert policy["checks"]["plan_json_file_sha_bound"] is False
+
+
+def test_locked_holdout_policy_rejects_tampered_backtest_summary(tmp_path: Path) -> None:
+    summary = _passing_run_summary(tmp_path)
+    backtest = Path(summary["spot_backtest_summary"])
+    backtest.write_text(json.dumps({"status": "DIAGNOSTIC_FAIL"}), encoding="utf-8")
+
+    policy = locked_holdout_policy(summary)
+
+    assert policy["pass"] is False
+    assert policy["checks"]["spot_backtest_summary_sha256_bound"] is False
+
+
+def _sha256(path: Path) -> str:
+    import hashlib
+
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()

@@ -5472,3 +5472,44 @@ Invariants not to break:
 - Output hashes are evidence for auditability only; they do not approve
   production.
 
+## D-20260709-64 - Hash-Bind T057 Run And Audit Linked Evidence
+
+Decision: passable locked-holdout run and audit summaries must now hash-bind
+the evidence files they reference.
+
+Reason: after binding the post-valuation CSV inside the backtest summary, the
+next weak link was the higher-level run/audit summaries. A passing run summary
+referenced `spot_backtest_summary.json` and `locked_holdout_audit.json` by
+path, but did not attest their contents. A passing audit summary referenced
+the backtest summary and residual CSV by path. These links should be content
+bound before downstream production packaging can trust them.
+
+Implementation:
+
+- `scripts/run_epex_lab_locked_holdout.py` now writes:
+  - `spot_backtest_summary_sha256`
+  - `locked_holdout_audit_sha256`
+- `scripts/audit_epex_lab_locked_holdout.py` now writes:
+  - `spot_backtest_summary_sha256`
+  - `post_valuation_timestamp_residuals_csv_sha256`
+- `scripts/epex_lab_locked_holdout_policy.py` now requires these hashes to
+  match existing files for passing run/audit summaries.
+- Tests now cover tampered linked backtest-summary evidence.
+
+Validation:
+
+- `python -m pytest tests/test_epex_lab_locked_holdout_policy.py tests/test_backtest_epex_shape_lab_against_spot_script.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_adjusted_production_chain_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  reported `82 passed, 1 skipped`.
+
+Rejected alternatives:
+
+- Trust linked evidence paths after the run summary is generated.
+- Require hashes only in the production manifest and not in upstream scientific
+  evidence.
+
+Invariants not to break:
+
+- Run/audit summaries remain read-only and non-promotional.
+- A locked-holdout PASS remains only a prerequisite for packaging, not
+  production approval.
+

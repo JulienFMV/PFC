@@ -84,7 +84,9 @@ def audit_holdout(
         "plan_json": str(plan_json),
         "locked_plan_identity": build_locked_plan_identity(plan, plan_json=plan_json),
         "spot_backtest_summary": str(spot_backtest_summary),
+        "spot_backtest_summary_sha256": _sha256(spot_backtest_summary),
         "post_valuation_timestamp_residuals_csv": str(post_csv),
+        "post_valuation_timestamp_residuals_csv_sha256": _sha256(post_csv) if post_csv.exists() else None,
         "checks": checks,
         "holdout_window": {
             "start_utc": plan.get("holdout_start_utc"),
