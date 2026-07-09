@@ -20,8 +20,10 @@ import pandas as pd
 
 try:
     from scripts.epex_lab_selection_policy import selection_policy_manifest_value
+    from scripts.epex_lab_locked_holdout_policy import locked_holdout_policy as evaluate_locked_holdout_policy
 except ModuleNotFoundError:  # pragma: no cover - direct script execution
     from epex_lab_selection_policy import selection_policy_manifest_value
+    from epex_lab_locked_holdout_policy import locked_holdout_policy as evaluate_locked_holdout_policy
 
 
 REQUIRED_PRODUCTION_CHECKS = [
@@ -123,7 +125,7 @@ def check_readiness(
     locked_holdout_valid = not locked_holdout_required
     locked_holdout_sha256 = None
     if locked_holdout_summary is not None and locked_holdout_summary.exists():
-        locked_holdout_policy = _locked_holdout_policy(_load_json(locked_holdout_summary))
+        locked_holdout_policy = evaluate_locked_holdout_policy(_load_json(locked_holdout_summary))
         locked_holdout_valid = locked_holdout_policy.get("pass") is True
         locked_holdout_sha256 = _sha256(locked_holdout_summary)
     elif locked_holdout_required:
@@ -450,54 +452,6 @@ def _powerbi_critical_count(summary: dict[str, str]) -> int:
         if key.endswith("_critical_flags"):
             total += int(float(value))
     return total
-
-
-def _locked_holdout_policy(summary: dict[str, Any] | None) -> dict[str, Any]:
-    if summary is None:
-        return {"provided": False, "pass": False, "status": "MISSING_LOCKED_HOLDOUT"}
-    schema = summary.get("schema_version")
-    checks = {
-        "promotion_gate_false": summary.get("promotion_gate") is False,
-        "production_approved_false": summary.get("production_approved") is False,
-        "ompex_not_model": summary.get("ompex_used_in_model") is False,
-        "ompex_not_selection": summary.get("ompex_used_in_selection") is False,
-        "ompex_not_backtest": summary.get("ompex_used_in_backtest") is False,
-    }
-    if schema == "epex_lab_locked_holdout_run.v1":
-        checks.update(
-            {
-                "coverage_ready": summary.get("coverage_ready") is True,
-                "backtest_ran": summary.get("backtest_ran") is True,
-                "audit_ran": summary.get("audit_ran") is True,
-                "holdout_pass": summary.get("holdout_pass") is True,
-                "status_pass": summary.get("status") == "LOCKED_HOLDOUT_PASS",
-            }
-        )
-        status = (
-            "NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING"
-            if summary.get("status") == "WAITING_FOR_FULL_SPOT_COVERAGE"
-            else "NO_GO_LOCKED_HOLDOUT_FAIL"
-        )
-    elif schema == "epex_lab_locked_holdout_audit.v1":
-        checks.update(
-            {
-                "holdout_pass": summary.get("holdout_pass") is True,
-                "status_pass": summary.get("status") == "LOCKED_HOLDOUT_PASS",
-            }
-        )
-        status = "NO_GO_LOCKED_HOLDOUT_FAIL"
-    else:
-        checks["known_schema"] = False
-        status = "NO_GO_LOCKED_HOLDOUT_POLICY_INVALID"
-    passed = all(checks.values())
-    return {
-        "provided": True,
-        "schema_version": schema,
-        "summary": summary.get("status"),
-        "pass": passed,
-        "status": "LOCKED_HOLDOUT_PASS" if passed else status,
-        "checks": checks,
-    }
 
 
 def _same_path(left: Any, right: Any) -> bool:

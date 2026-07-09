@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from scripts.audit_epex_lab_locked_holdout import audit_holdout
 from scripts.backtest_epex_shape_lab_against_spot import backtest_against_spot
 from scripts.check_epex_lab_locked_holdout_coverage import check_coverage
+from scripts.epex_lab_locked_holdout_policy import build_locked_plan_identity
 
 
 def run_locked_holdout(
@@ -42,6 +43,7 @@ def run_locked_holdout(
         "coverage_status": str(coverage_path),
         "coverage_ready": bool(coverage.get("ready_to_run_backtest")),
         "coverage": coverage,
+        "locked_plan_identity": build_locked_plan_identity(plan, plan_json=plan_json),
         "benchmark_policy": "locked_future_no_ompex_holdout",
         "ompex_used_in_model": False,
         "ompex_used_in_selection": False,

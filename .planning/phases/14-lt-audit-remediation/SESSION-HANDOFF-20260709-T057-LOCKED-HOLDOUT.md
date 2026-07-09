@@ -443,3 +443,54 @@ python -m pytest tests/test_audit_epex_lab_future_approval_path_script.py tests/
 ```
 
 Result: `41 passed, 1 skipped`.
+
+Additional expert-audit follow-up: locked holdout evidence is now bound to the
+frozen plan identity, not just to pass/no-OMPEX flags.
+
+Changed files:
+
+- `scripts/epex_lab_locked_holdout_policy.py`
+- `scripts/run_epex_lab_locked_holdout.py`
+- `scripts/audit_epex_lab_locked_holdout.py`
+- `scripts/build_epex_lab_adjusted_production_manifest.py`
+- `scripts/build_epex_lab_adjusted_production_chain.py`
+- `scripts/check_epex_lab_promotion_readiness.py`
+- `scripts/audit_epex_lab_future_approval_path.py`
+- `tests/test_epex_lab_locked_holdout_policy.py`
+- `tests/test_run_epex_lab_locked_holdout_script.py`
+- `tests/test_build_epex_lab_adjusted_production_manifest_script.py`
+- `tests/test_build_epex_lab_adjusted_production_chain_script.py`
+- `tests/test_check_epex_lab_promotion_readiness_script.py`
+- `tests/test_audit_epex_lab_future_approval_path_script.py`
+- `.planning/HANDOFF.md`
+- `.planning/phases/14-lt-audit-remediation/DECISION-LOG.md`
+- `.planning/phases/14-lt-audit-remediation/SESSION-HANDOFF-20260709-T057-LOCKED-HOLDOUT.md`
+
+Implementation notes:
+
+- Runner and audit outputs now include `locked_plan_identity` with:
+  `plan_id`, `plan_json_sha256`, window, baseline/adjusted CSV hashes, lab
+  manifest hash, and selection summary hash.
+- The shared policy recomputes the plan JSON SHA and compares the recorded
+  identity to the plan contents.
+- Production manifest, chain builder, readiness, and future approval all use
+  this shared policy.
+- The locked T057 plan JSON itself was not edited; SHA remains
+  `f2b5ce94d7eb892ec4f0b2e46b209d09b078db8d15765009fba4ba0cb21ec1cd`.
+
+Regenerated current local NO-GO artifacts:
+
+- `output/phase14/t057_locked_t056_future_holdout/current_spot_runner/locked_holdout_run_summary.json`
+- `output/phase14/t057_locked_t056_future_holdout/future_approval_path_with_holdout_current.json`
+
+Both remain local/generated output evidence. Current status remains
+`NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING`, with
+`blocking_stage=locked_holdout_coverage`.
+
+Validation:
+
+```powershell
+python -m pytest tests/test_epex_lab_locked_holdout_policy.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_adjusted_production_chain_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result: `73 passed, 1 skipped`.

@@ -14,6 +14,11 @@ from typing import Any
 
 import pandas as pd
 
+try:
+    from scripts.epex_lab_locked_holdout_policy import build_locked_plan_identity
+except ModuleNotFoundError:  # pragma: no cover - direct script execution
+    from epex_lab_locked_holdout_policy import build_locked_plan_identity
+
 
 PLAN_SCHEMA_VERSION = "epex_lab_locked_holdout_plan.v1"
 SUMMARY_POLICY = "rolling_origin_epex_spot_no_ompex_lab_only"
@@ -71,6 +76,7 @@ def audit_holdout(
         "status": status,
         "holdout_pass": bool(status == "LOCKED_HOLDOUT_PASS"),
         "plan_json": str(plan_json),
+        "locked_plan_identity": build_locked_plan_identity(plan, plan_json=plan_json),
         "spot_backtest_summary": str(spot_backtest_summary),
         "post_valuation_timestamp_residuals_csv": str(post_csv),
         "checks": checks,

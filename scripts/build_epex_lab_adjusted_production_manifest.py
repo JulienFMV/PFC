@@ -22,11 +22,13 @@ try:
         selection_policy_pass,
         selection_policy_value,
     )
+    from scripts.epex_lab_locked_holdout_policy import locked_holdout_policy as evaluate_locked_holdout_policy
 except ModuleNotFoundError:  # pragma: no cover - direct script execution
     from epex_lab_selection_policy import (
         selection_policy_pass,
         selection_policy_value,
     )
+    from epex_lab_locked_holdout_policy import locked_holdout_policy as evaluate_locked_holdout_policy
 
 
 def build_manifest(
@@ -77,7 +79,7 @@ def build_manifest(
     )
     contract_pass = all(check["status"] == "PASS" for check in checks)
     selection_policy_ok = selection_policy_pass(selection, adjusted_csv=adjusted_csv)
-    locked_holdout_policy = _locked_holdout_policy(locked_holdout)
+    locked_holdout_policy = evaluate_locked_holdout_policy(locked_holdout)
     locked_holdout_required = bool(production_approved or production_promotion_approved)
     locked_holdout_ok = bool(locked_holdout_policy.get("pass") is True)
     if locked_holdout_summary is not None or locked_holdout_required:
@@ -353,54 +355,6 @@ def _source_provenance_pass(source_provenance: dict[str, Any] | None, adjusted_c
     if source_provenance is None:
         return False
     return all(check["status"] == "PASS" for check in _source_provenance_checks(source_provenance, adjusted_csv))
-
-
-def _locked_holdout_policy(summary: dict[str, Any] | None) -> dict[str, Any]:
-    if summary is None:
-        return {"provided": False, "pass": False, "status": "MISSING_LOCKED_HOLDOUT"}
-    schema = summary.get("schema_version")
-    checks = {
-        "promotion_gate_false": summary.get("promotion_gate") is False,
-        "production_approved_false": summary.get("production_approved") is False,
-        "ompex_not_model": summary.get("ompex_used_in_model") is False,
-        "ompex_not_selection": summary.get("ompex_used_in_selection") is False,
-        "ompex_not_backtest": summary.get("ompex_used_in_backtest") is False,
-    }
-    if schema == "epex_lab_locked_holdout_run.v1":
-        checks.update(
-            {
-                "coverage_ready": summary.get("coverage_ready") is True,
-                "backtest_ran": summary.get("backtest_ran") is True,
-                "audit_ran": summary.get("audit_ran") is True,
-                "holdout_pass": summary.get("holdout_pass") is True,
-                "status_pass": summary.get("status") == "LOCKED_HOLDOUT_PASS",
-            }
-        )
-        status = (
-            "NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING"
-            if summary.get("status") == "WAITING_FOR_FULL_SPOT_COVERAGE"
-            else "NO_GO_LOCKED_HOLDOUT_FAIL"
-        )
-    elif schema == "epex_lab_locked_holdout_audit.v1":
-        checks.update(
-            {
-                "holdout_pass": summary.get("holdout_pass") is True,
-                "status_pass": summary.get("status") == "LOCKED_HOLDOUT_PASS",
-            }
-        )
-        status = "NO_GO_LOCKED_HOLDOUT_FAIL"
-    else:
-        checks["known_schema"] = False
-        status = "NO_GO_LOCKED_HOLDOUT_POLICY_INVALID"
-    passed = all(checks.values())
-    return {
-        "provided": True,
-        "schema_version": schema,
-        "summary": summary.get("status"),
-        "pass": passed,
-        "status": "LOCKED_HOLDOUT_PASS" if passed else status,
-        "checks": checks,
-    }
 
 
 def _check(name: str, passed: bool, value: Any) -> dict[str, Any]:

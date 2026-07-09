@@ -5303,3 +5303,52 @@ Invariants not to break:
 - The new routing fields are advisory diagnostics; they do not approve
   production and do not override readiness or locked-holdout checks.
 
+## D-20260709-60 - Bind Locked Holdout Evidence To Frozen Plan Identity
+
+Decision: locked-holdout evidence is now accepted only when it is bound to the
+frozen holdout plan identity, not merely when a JSON summary reports
+`LOCKED_HOLDOUT_PASS`.
+
+Reason: expert audit found a residual governance risk: downstream consumers
+could validate the pass/no-OMPEX flags of a holdout summary without proving it
+was the exact T057 plan, window, and candidate lineage. That would leave room
+for an accidental or stale passing holdout artifact to enter production
+packaging.
+
+Implementation:
+
+- Added `scripts/epex_lab_locked_holdout_policy.py` as the shared policy for
+  production manifest, chain, readiness, and future approval checks.
+- `scripts/run_epex_lab_locked_holdout.py` and
+  `scripts/audit_epex_lab_locked_holdout.py` now emit `locked_plan_identity`
+  with plan id, plan JSON SHA, holdout window, baseline/adjusted CSV hashes,
+  lab manifest hash, and selection summary hash.
+- The shared policy requires the recorded plan JSON SHA to match the current
+  plan file and requires the recorded identity to match the plan contents.
+- Current T057 future approval remains
+  `NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING`; the new identity checks pass, while
+  coverage/backtest/audit/pass checks correctly fail until future spot coverage
+  exists.
+
+Validation:
+
+- `python -m pytest tests/test_epex_lab_locked_holdout_policy.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_adjusted_production_chain_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  reported `73 passed, 1 skipped`.
+- Regenerated current T057 runner summary and future approval audit still exit
+  `1` as expected and report `blocking_stage=locked_holdout_coverage`.
+
+Rejected alternatives:
+
+- Trust any holdout summary with `LOCKED_HOLDOUT_PASS`.
+- Require only same-path binding without checking the plan JSON hash.
+- Rewrite the locked T057 plan JSON; its registered SHA remains unchanged.
+
+Invariants not to break:
+
+- T057 plan JSON stays locked. A changed window, criteria, or lineage requires
+  a new plan id.
+- OMPEX remains advisory-only and cannot enter model inputs, backtests,
+  selection, or gates.
+- A passing locked holdout is necessary for packaging but is not production
+  approval.
+

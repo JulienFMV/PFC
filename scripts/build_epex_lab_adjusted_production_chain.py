@@ -16,8 +16,10 @@ from typing import Any
 
 try:
     from scripts.epex_lab_selection_policy import selection_policy_manifest_value
+    from scripts.epex_lab_locked_holdout_policy import locked_holdout_policy as evaluate_locked_holdout_policy
 except ModuleNotFoundError:  # pragma: no cover - direct script execution
     from epex_lab_selection_policy import selection_policy_manifest_value
+    from epex_lab_locked_holdout_policy import locked_holdout_policy as evaluate_locked_holdout_policy
 
 
 def build_chain(
@@ -175,40 +177,9 @@ def _locked_holdout_errors(production: dict[str, Any]) -> list[str]:
         holdout = _load_json(holdout_path)
     except (OSError, json.JSONDecodeError):
         return ["locked_holdout_summary_json"]
-    if _locked_holdout_policy(holdout).get("pass") is not True:
+    if evaluate_locked_holdout_policy(holdout).get("pass") is not True:
         errors.append("locked_holdout_policy")
     return errors
-
-
-def _locked_holdout_policy(summary: dict[str, Any]) -> dict[str, Any]:
-    schema = summary.get("schema_version")
-    checks = {
-        "promotion_gate_false": summary.get("promotion_gate") is False,
-        "production_approved_false": summary.get("production_approved") is False,
-        "ompex_not_model": summary.get("ompex_used_in_model") is False,
-        "ompex_not_selection": summary.get("ompex_used_in_selection") is False,
-        "ompex_not_backtest": summary.get("ompex_used_in_backtest") is False,
-    }
-    if schema == "epex_lab_locked_holdout_run.v1":
-        checks.update(
-            {
-                "coverage_ready": summary.get("coverage_ready") is True,
-                "backtest_ran": summary.get("backtest_ran") is True,
-                "audit_ran": summary.get("audit_ran") is True,
-                "holdout_pass": summary.get("holdout_pass") is True,
-                "status_pass": summary.get("status") == "LOCKED_HOLDOUT_PASS",
-            }
-        )
-    elif schema == "epex_lab_locked_holdout_audit.v1":
-        checks.update(
-            {
-                "holdout_pass": summary.get("holdout_pass") is True,
-                "status_pass": summary.get("status") == "LOCKED_HOLDOUT_PASS",
-            }
-        )
-    else:
-        checks["known_schema"] = False
-    return {"pass": all(checks.values()), "checks": checks}
 
 
 def _source_provenance_errors(production: dict[str, Any], adjusted_csv: Path) -> list[str]:

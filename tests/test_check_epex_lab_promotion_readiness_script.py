@@ -6,6 +6,7 @@ import hashlib
 import pandas as pd
 
 from scripts.check_epex_lab_promotion_readiness import REQUIRED_PRODUCTION_CHECKS, check_readiness
+from scripts.epex_lab_locked_holdout_policy import build_locked_plan_identity
 
 
 def _write_json(path, payload) -> None:
@@ -137,8 +138,28 @@ def _write_selection_summary(tmp_path, *, adjusted_csv: str, replace_incumbent: 
     return selection
 
 
+def _write_locked_plan(tmp_path):
+    plan = tmp_path / "locked_plan.json"
+    payload = {
+        "schema_version": "epex_lab_locked_holdout_plan.v1",
+        "plan_id": "test_locked_holdout",
+        "benchmark_policy": "locked_future_no_ompex_holdout",
+        "frozen_at_utc": "2026-07-09T00:00:00Z",
+        "holdout_start_utc": "2026-07-10T00:00:00Z",
+        "holdout_end_utc": "2026-07-24T00:00:00Z",
+        "baseline_csv_sha256": "b" * 64,
+        "adjusted_csv_sha256": _sha256(tmp_path / "adjusted.csv"),
+        "lab_manifest_sha256": "l" * 64,
+        "selection_summary_sha256": "s" * 64,
+    }
+    _write_json(plan, payload)
+    return plan
+
+
 def _write_locked_holdout(tmp_path, *, passed: bool = True):
     locked_holdout = tmp_path / "locked_holdout.json"
+    plan = _write_locked_plan(tmp_path)
+    plan_payload = json.loads(plan.read_text(encoding="utf-8"))
     _write_json(
         locked_holdout,
         {
@@ -153,6 +174,7 @@ def _write_locked_holdout(tmp_path, *, passed: bool = True):
             "backtest_ran": passed,
             "audit_ran": passed,
             "holdout_pass": passed,
+            "locked_plan_identity": build_locked_plan_identity(plan_payload, plan_json=plan),
         },
     )
     return locked_holdout

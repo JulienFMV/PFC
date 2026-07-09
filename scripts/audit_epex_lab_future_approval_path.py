@@ -11,6 +11,11 @@ import json
 from pathlib import Path
 from typing import Any
 
+try:
+    from scripts.epex_lab_locked_holdout_policy import locked_holdout_policy as evaluate_locked_holdout_policy
+except ModuleNotFoundError:  # pragma: no cover - direct script execution
+    from epex_lab_locked_holdout_policy import locked_holdout_policy as evaluate_locked_holdout_policy
+
 
 PRODUCTION_CHECKS = [
     "adjusted_production_manifest_approved",
@@ -51,7 +56,7 @@ def audit_future_approval_path(
     missing = list(readiness.get("missing_production_evidence") or [])
     missing_or_failed = sorted(set(missing + missing_production_checks + failed_production_checks))
     spot_policy = _spot_policy(spot) if spot is not None else None
-    holdout_policy = _locked_holdout_policy(locked_holdout) if locked_holdout is not None else None
+    holdout_policy = evaluate_locked_holdout_policy(locked_holdout) if locked_holdout is not None else None
     holdout_required = bool(readiness.get("approved") is True or readiness.get("production_chain_pass") is True)
     if holdout_required and holdout_policy is None:
         holdout_policy = {"provided": False, "pass": False, "status": "MISSING_LOCKED_HOLDOUT"}
@@ -159,57 +164,6 @@ def _spot_policy(spot: dict[str, Any] | None) -> dict[str, Any]:
         "summary": spot.get("status"),
         "benchmark_policy": spot.get("benchmark_policy"),
         "pass": all(checks.values()),
-        "checks": checks,
-    }
-
-
-def _locked_holdout_policy(summary: dict[str, Any] | None) -> dict[str, Any]:
-    if summary is None:
-        return {"provided": False, "pass": True}
-    schema = summary.get("schema_version")
-    checks = {
-        "promotion_gate_false": summary.get("promotion_gate") is False,
-        "production_approved_false": summary.get("production_approved") is False,
-        "ompex_not_model": summary.get("ompex_used_in_model") is False,
-        "ompex_not_selection": summary.get("ompex_used_in_selection") is False,
-        "ompex_not_backtest": summary.get("ompex_used_in_backtest") is False,
-    }
-    if schema == "epex_lab_locked_holdout_run.v1":
-        checks.update(
-            {
-                "coverage_ready": summary.get("coverage_ready") is True,
-                "backtest_ran": summary.get("backtest_ran") is True,
-                "audit_ran": summary.get("audit_ran") is True,
-                "holdout_pass": summary.get("holdout_pass") is True,
-                "status_pass": summary.get("status") == "LOCKED_HOLDOUT_PASS",
-            }
-        )
-        status = (
-            "NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING"
-            if summary.get("status") == "WAITING_FOR_FULL_SPOT_COVERAGE"
-            else "NO_GO_LOCKED_HOLDOUT_FAIL"
-        )
-    elif schema == "epex_lab_locked_holdout_audit.v1":
-        checks.update(
-            {
-                "holdout_pass": summary.get("holdout_pass") is True,
-                "status_pass": summary.get("status") == "LOCKED_HOLDOUT_PASS",
-            }
-        )
-        status = "NO_GO_LOCKED_HOLDOUT_FAIL"
-    else:
-        checks["known_schema"] = False
-        status = "NO_GO_LOCKED_HOLDOUT_POLICY_INVALID"
-    passed = all(checks.values())
-    return {
-        "provided": True,
-        "schema_version": schema,
-        "summary": summary.get("status"),
-        "pass": passed,
-        "status": "LOCKED_HOLDOUT_PASS" if passed else status,
-        "plan_json": summary.get("plan_json"),
-        "spot_parquet": summary.get("spot_parquet"),
-        "output_dir": summary.get("output_dir"),
         "checks": checks,
     }
 

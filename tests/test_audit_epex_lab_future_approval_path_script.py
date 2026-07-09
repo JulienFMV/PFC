@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from scripts.audit_epex_lab_future_approval_path import PRODUCTION_CHECKS, audit_future_approval_path, main
+from scripts.epex_lab_locked_holdout_policy import build_locked_plan_identity
 
 
 def _write_json(path: Path, payload: dict) -> Path:
@@ -48,7 +49,29 @@ def _spot_payload(**overrides) -> dict:
     return payload
 
 
-def _locked_holdout_run_payload(**overrides) -> dict:
+def _write_locked_plan(tmp_path: Path) -> Path:
+    plan = tmp_path / "locked_plan.json"
+    _write_json(
+        plan,
+        {
+            "schema_version": "epex_lab_locked_holdout_plan.v1",
+            "plan_id": "test_locked_holdout",
+            "benchmark_policy": "locked_future_no_ompex_holdout",
+            "frozen_at_utc": "2026-07-09T00:00:00Z",
+            "holdout_start_utc": "2026-07-10T00:00:00Z",
+            "holdout_end_utc": "2026-07-24T00:00:00Z",
+            "baseline_csv_sha256": "b" * 64,
+            "adjusted_csv_sha256": "a" * 64,
+            "lab_manifest_sha256": "l" * 64,
+            "selection_summary_sha256": "s" * 64,
+        },
+    )
+    return plan
+
+
+def _locked_holdout_run_payload(tmp_path: Path, **overrides) -> dict:
+    plan = _write_locked_plan(tmp_path)
+    plan_payload = json.loads(plan.read_text(encoding="utf-8"))
     payload = {
         "schema_version": "epex_lab_locked_holdout_run.v1",
         "status": "LOCKED_HOLDOUT_PASS",
@@ -61,12 +84,17 @@ def _locked_holdout_run_payload(**overrides) -> dict:
         "backtest_ran": True,
         "audit_ran": True,
         "holdout_pass": True,
-        "plan_json": "plan.json",
+        "locked_plan_identity": build_locked_plan_identity(plan_payload, plan_json=plan),
+        "plan_json": str(plan),
         "spot_parquet": "spot.parquet",
         "output_dir": "out",
     }
     payload.update(overrides)
     return payload
+
+
+def _write_locked_holdout_run(tmp_path: Path, **overrides) -> Path:
+    return _write_json(tmp_path / "holdout.json", _locked_holdout_run_payload(tmp_path, **overrides))
 
 
 def _sha256(path: Path) -> str:
@@ -140,15 +168,13 @@ def test_future_approval_path_blocks_when_locked_holdout_coverage_pending(tmp_pa
         tmp_path / "readiness.json",
         _readiness_payload(approved=True, production=True),
     )
-    holdout = _write_json(
-        tmp_path / "holdout.json",
-        _locked_holdout_run_payload(
-            status="WAITING_FOR_FULL_SPOT_COVERAGE",
-            coverage_ready=False,
-            backtest_ran=False,
-            audit_ran=False,
-            holdout_pass=False,
-        ),
+    holdout = _write_locked_holdout_run(
+        tmp_path,
+        status="WAITING_FOR_FULL_SPOT_COVERAGE",
+        coverage_ready=False,
+        backtest_ran=False,
+        audit_ran=False,
+        holdout_pass=False,
     )
 
     summary = audit_future_approval_path(
@@ -166,14 +192,14 @@ def test_future_approval_path_blocks_when_locked_holdout_coverage_pending(tmp_pa
     assert summary["next_required_step"] == "wait_for_full_spot_coverage_then_run_locked_holdout"
     assert summary["recommended_commands"]["run_locked_holdout"] == (
         "python scripts/run_epex_lab_locked_holdout.py "
-        "--plan-json plan.json "
+        f"--plan-json {tmp_path / 'locked_plan.json'} "
         "--spot-parquet <FRESH_FUTURE_SPOT_PARQUET> "
         "--output-dir <T057_HOLDOUT_OUTPUT_DIR>"
     )
 
 
 def test_future_approval_path_allows_promotion_ready_with_passing_locked_holdout(tmp_path: Path) -> None:
-    holdout = _write_json(tmp_path / "holdout.json", _locked_holdout_run_payload())
+    holdout = _write_locked_holdout_run(tmp_path)
     payload = _readiness_payload(approved=True, production=True)
     for check in payload["checks"]:
         if isinstance(check.get("value"), dict) and "locked_holdout_summary_sha256" in check["value"]:
@@ -208,7 +234,7 @@ def test_future_approval_path_blocks_synthetic_ready_payload_missing_production_
             "checks": [],
         },
     )
-    holdout = _write_json(tmp_path / "holdout.json", _locked_holdout_run_payload())
+    holdout = _write_locked_holdout_run(tmp_path)
 
     summary = audit_future_approval_path(
         readiness_json=readiness,
@@ -242,7 +268,7 @@ def test_future_approval_path_keeps_internal_required_checks_when_readiness_decl
             ],
         },
     )
-    holdout = _write_json(tmp_path / "holdout.json", _locked_holdout_run_payload())
+    holdout = _write_locked_holdout_run(tmp_path)
 
     summary = audit_future_approval_path(
         readiness_json=readiness,
@@ -287,7 +313,7 @@ def test_future_approval_path_cli_exits_nonzero_for_no_go(tmp_path: Path) -> Non
 
 
 def test_future_approval_path_cli_exits_zero_for_promotion_ready_candidate(tmp_path: Path) -> None:
-    holdout = _write_json(tmp_path / "holdout.json", _locked_holdout_run_payload())
+    holdout = _write_locked_holdout_run(tmp_path)
     payload = _readiness_payload(approved=True, production=True)
     for check in payload["checks"]:
         if isinstance(check.get("value"), dict) and "locked_holdout_summary_sha256" in check["value"]:

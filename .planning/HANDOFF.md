@@ -146,6 +146,23 @@ allowing synthetic readiness payloads to remove required checks. Validation:
 `python -m pytest tests/test_check_epex_lab_promotion_readiness_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_build_epex_lab_promotion_bundle_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
 reported `39 passed, 1 skipped`. Regenerated current readiness and future
 approval audit remain `NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING`.
+
+Third expert-audit hardening on 2026-07-09 made the locked-holdout evidence
+plan-identity-bound, not just pass-flag-bound. `scripts/run_epex_lab_locked_holdout.py`
+and `scripts/audit_epex_lab_locked_holdout.py` now write a
+`locked_plan_identity` containing the plan id, plan JSON SHA, holdout window,
+baseline/adjusted CSV hashes, lab manifest hash, and selection summary hash.
+`scripts/epex_lab_locked_holdout_policy.py` centralizes the policy used by the
+production manifest builder, chain builder, readiness checker, and future
+approval audit. A future passing holdout is rejected if its plan JSON is
+missing, hash-mismatched, or no longer matches the recorded locked identity.
+The current regenerated runner/audit still remain fail-closed:
+`NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING`, `blocking_stage=locked_holdout_coverage`,
+and the recommended command still points to the locked T057 plan.
+
+Validation:
+`python -m pytest tests/test_epex_lab_locked_holdout_policy.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_adjusted_production_chain_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+reported `73 passed, 1 skipped`.
 Future approval audit CLI now exits `0` only when `approved=true`; all NO-GO
 states exit `1`. Validation:
 `python -m pytest tests/test_audit_epex_lab_future_approval_path_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_build_epex_lab_promotion_bundle_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
