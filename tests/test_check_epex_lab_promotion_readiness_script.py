@@ -234,6 +234,8 @@ def _ready_coverage(*, passed: bool = True, identity: dict):
             "adjusted_candidate_price_columns_finite": passed,
             "adjusted_candidate_holdout_window_covered": passed,
             "candidate_timestamp_sets_identical": passed,
+            "candidate_timestamp_set_matches_plan": passed,
+            "candidate_timestamp_count_matches_plan": passed,
             "full_window_covered": passed,
             "min_holdout_hours_met": passed,
             "no_duplicate_holdout_rows": passed,

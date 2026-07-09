@@ -810,3 +810,39 @@ exit `1`, but writes resolved UNC paths for `plan_json`, `spot_parquet`,
 `output_dir`, `coverage_status`, and `run_summary`. Regenerated future approval
 audit remains `NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING`, exit `1`, and its
 recommended command quotes the resolved locked plan path.
+
+Follow-up after future plan timestamp identity hardening:
+
+- New locked EPEX lab holdout plans now freeze candidate timestamp identity at
+  plan creation time.
+- `scripts/plan_epex_lab_locked_holdout.py` parses `timestamp_ch` plus
+  `utc_offset_ch` from baseline and adjusted CSVs.
+- Plan build fails if either candidate timestamp set is missing, unparseable,
+  duplicated, or different between baseline and adjusted.
+- New plans include `candidate_timestamp_identity` and copy
+  `candidate_timestamp_count` / `candidate_timestamp_set_sha256` into
+  `pass_criteria`.
+- `scripts/check_epex_lab_locked_holdout_coverage.py` enforces those optional
+  criteria via `candidate_timestamp_set_matches_plan` and
+  `candidate_timestamp_count_matches_plan`.
+- `scripts/epex_lab_locked_holdout_policy.py` requires those checks downstream.
+
+Validation:
+
+```powershell
+python -m pytest tests/test_plan_epex_lab_locked_holdout_script.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_epex_lab_locked_holdout_policy.py -q -p no:cacheprovider
+```
+
+Result: `31 passed`.
+
+```powershell
+python -m pytest tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_adjusted_production_chain_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_epex_lab_locked_holdout_policy.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_plan_epex_lab_locked_holdout_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result: `105 passed, 1 skipped`.
+
+Current frozen T057 plan remains unchanged and backward-compatible:
+regenerated runner reports `expected_candidate_timestamp_set_sha256=null`,
+both plan-match checks true, and still `WAITING_FOR_FULL_SPOT_COVERAGE`.
+Regenerated future approval audit remains
+`NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING`.

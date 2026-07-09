@@ -6009,3 +6009,63 @@ Invariants not to break:
   evaluated from their valid workspace.
 - The locked T057 plan JSON remains unchanged.
 
+## D-20260709-74 - Bind Future Locked Plans To Candidate Timestamp Identity
+
+Decision: newly generated locked EPEX lab holdout plans now capture the
+candidate timestamp-set identity, and coverage/policy checks enforce that
+identity when the plan provides it.
+
+Reason: D70-D73 made current T057 evidence compare baseline and adjusted
+timestamp sets, but future locked plans should freeze the expected timestamp
+population at plan creation time as well. That prevents later hash-bound CSVs
+with equal but unintended timestamp sets from passing a newly generated locked
+plan contract.
+
+Implementation:
+
+- `scripts/plan_epex_lab_locked_holdout.py` now parses `timestamp_ch` plus
+  `utc_offset_ch` from baseline and adjusted CSVs at plan build time.
+- Plan build fails closed if either CSV is missing timestamp evidence,
+  timestamps are unparseable, parsed UTC timestamps are duplicated, or the two
+  timestamp sets differ.
+- New plans include `candidate_timestamp_identity` with baseline/adjusted
+  counts, UTC min/max, timestamp-set SHA, and identity checks.
+- New plans also copy `candidate_timestamp_count` and
+  `candidate_timestamp_set_sha256` into `pass_criteria`.
+- `scripts/check_epex_lab_locked_holdout_coverage.py` now reads those optional
+  plan criteria and emits/enforces:
+  `candidate_timestamp_set_matches_plan` and
+  `candidate_timestamp_count_matches_plan`.
+- `scripts/epex_lab_locked_holdout_policy.py` requires those coverage checks
+  downstream.
+
+Validation:
+
+- `python -m pytest tests/test_plan_epex_lab_locked_holdout_script.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_epex_lab_locked_holdout_policy.py -q -p no:cacheprovider`
+  reported `31 passed`.
+- `python -m pytest tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_adjusted_production_chain_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_epex_lab_locked_holdout_policy.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_plan_epex_lab_locked_holdout_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  reported `105 passed, 1 skipped`.
+
+Operational result:
+
+- Current frozen T057 plan remains unchanged and is backward-compatible:
+  regenerated runner reports `expected_candidate_timestamp_set_sha256=null`
+  and both plan-match checks as `true`.
+- Regenerated current T057 runner remains
+  `WAITING_FOR_FULL_SPOT_COVERAGE`, exit `1`.
+- Regenerated future approval audit remains
+  `NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING`, exit `1`; the new downstream
+  plan-match checks are true.
+
+Rejected alternatives:
+
+- Keep timestamp-set identity only in coverage/audit evidence and not in future
+  locked plans.
+- Modify the already frozen T057 plan to add this identity retroactively.
+
+Invariants not to break:
+
+- The existing locked T057 plan JSON remains unchanged.
+- Future plan timestamp identity is no-OMPEX and source-only; it is not a
+  model/selection/gate input beyond source comparability.
+

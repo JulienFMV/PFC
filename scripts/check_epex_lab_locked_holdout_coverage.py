@@ -81,6 +81,25 @@ def check_coverage(
         and adjusted_candidate["timestamp_set_sha256"]
         and baseline_candidate["timestamp_set_sha256"] == adjusted_candidate["timestamp_set_sha256"]
     )
+    expected_candidate_timestamp_set_sha256 = (
+        criteria.get("candidate_timestamp_set_sha256")
+        or (plan.get("candidate_timestamp_identity") or {}).get("candidate_timestamp_set_sha256")
+    )
+    expected_candidate_timestamp_count = (
+        criteria.get("candidate_timestamp_count")
+        or (plan.get("candidate_timestamp_identity") or {}).get("candidate_timestamp_count")
+    )
+    candidate_timestamp_set_matches_plan = (
+        baseline_candidate["timestamp_set_sha256"] == adjusted_candidate["timestamp_set_sha256"]
+        == expected_candidate_timestamp_set_sha256
+        if expected_candidate_timestamp_set_sha256
+        else True
+    )
+    candidate_timestamp_count_matches_plan = (
+        baseline_candidate["timestamp_count"] == adjusted_candidate["timestamp_count"] == expected_candidate_timestamp_count
+        if expected_candidate_timestamp_count is not None
+        else True
+    )
     min_hours = int(criteria.get("min_holdout_hours", len(expected)))
     coverage = {
         "schema_version": "epex_lab_locked_holdout_coverage.v1",
@@ -114,6 +133,8 @@ def check_coverage(
         "adjusted_candidate_timestamp_min_utc": adjusted_candidate["timestamp_min_utc"],
         "adjusted_candidate_timestamp_max_utc": adjusted_candidate["timestamp_max_utc"],
         "adjusted_candidate_timestamp_set_sha256": adjusted_candidate["timestamp_set_sha256"],
+        "expected_candidate_timestamp_count": expected_candidate_timestamp_count,
+        "expected_candidate_timestamp_set_sha256": expected_candidate_timestamp_set_sha256,
         "adjusted_candidate_missing_holdout_hours": adjusted_candidate["missing_holdout_hours"],
         "adjusted_candidate_first_missing_holdout_utc": adjusted_candidate["first_missing_holdout_utc"],
         "adjusted_candidate_last_missing_holdout_utc": adjusted_candidate["last_missing_holdout_utc"],
@@ -149,6 +170,8 @@ def check_coverage(
             "adjusted_candidate_price_columns_finite": adjusted_candidate["price_columns_finite"],
             "adjusted_candidate_holdout_window_covered": adjusted_candidate["holdout_window_covered"],
             "candidate_timestamp_sets_identical": candidate_timestamp_sets_identical,
+            "candidate_timestamp_set_matches_plan": candidate_timestamp_set_matches_plan,
+            "candidate_timestamp_count_matches_plan": candidate_timestamp_count_matches_plan,
             "spot_parquet_non_empty": bool(len(spot)),
             "spot_price_column_present": price_column_present,
             "holdout_prices_finite": holdout_prices_finite,
@@ -182,6 +205,8 @@ def check_coverage(
         and checks["adjusted_candidate_price_columns_finite"]
         and checks["adjusted_candidate_holdout_window_covered"]
         and checks["candidate_timestamp_sets_identical"]
+        and checks["candidate_timestamp_set_matches_plan"]
+        and checks["candidate_timestamp_count_matches_plan"]
         and checks["spot_parquet_non_empty"]
         and checks["spot_price_column_present"]
         and checks["holdout_prices_finite"]
@@ -214,6 +239,8 @@ def check_coverage(
             "adjusted_candidate_price_columns_finite",
             "adjusted_candidate_holdout_window_covered",
             "candidate_timestamp_sets_identical",
+            "candidate_timestamp_set_matches_plan",
+            "candidate_timestamp_count_matches_plan",
         ]
     )
     coverage["status"] = (

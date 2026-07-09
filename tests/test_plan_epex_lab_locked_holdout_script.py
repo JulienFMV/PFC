@@ -11,8 +11,8 @@ from scripts.plan_epex_lab_locked_holdout import build_plan
 def test_plan_epex_lab_locked_holdout_binds_selected_no_ompex_candidate(tmp_path: Path) -> None:
     baseline = tmp_path / "baseline.csv"
     adjusted = tmp_path / "adjusted.csv"
-    baseline.write_text("baseline", encoding="utf-8")
-    adjusted.write_text("adjusted", encoding="utf-8")
+    _write_candidate_csv(baseline)
+    _write_candidate_csv(adjusted)
     adjusted_sha = _sha256(adjusted)
     selection = tmp_path / "selection.json"
     selection.write_text(
@@ -47,6 +47,11 @@ def test_plan_epex_lab_locked_holdout_binds_selected_no_ompex_candidate(tmp_path
     assert plan["benchmark_policy"] == "locked_future_no_ompex_holdout"
     assert plan["production_approved"] is False
     assert plan["adjusted_csv_sha256"] == adjusted_sha
+    assert plan["candidate_timestamp_identity"]["timestamp_sets_identical"] is True
+    assert plan["candidate_timestamp_identity"]["candidate_timestamp_count"] == 4
+    assert plan["pass_criteria"]["candidate_timestamp_set_sha256"] == plan["candidate_timestamp_identity"][
+        "candidate_timestamp_set_sha256"
+    ]
     assert plan["selection_policy"]["pass"] is True
     assert plan["locked_lab_config"] == {"weekend_intensity": 0.75}
     assert plan["pass_criteria"]["min_holdout_hours"] == 300
@@ -62,8 +67,8 @@ def test_plan_epex_lab_locked_holdout_binds_selected_no_ompex_candidate(tmp_path
 def test_plan_epex_lab_locked_holdout_rejects_unbound_selection(tmp_path: Path) -> None:
     baseline = tmp_path / "baseline.csv"
     adjusted = tmp_path / "adjusted.csv"
-    baseline.write_text("baseline", encoding="utf-8")
-    adjusted.write_text("adjusted", encoding="utf-8")
+    _write_candidate_csv(baseline)
+    _write_candidate_csv(adjusted)
     selection = tmp_path / "selection.json"
     selection.write_text(
         json.dumps(
@@ -87,6 +92,29 @@ def test_plan_epex_lab_locked_holdout_rejects_unbound_selection(tmp_path: Path) 
             holdout_start_utc="2026-07-10T00:00:00Z",
             holdout_end_utc="2026-07-24T00:00:00Z",
         )
+
+
+def test_plan_epex_lab_locked_holdout_rejects_timestamp_set_mismatch(tmp_path: Path) -> None:
+    baseline = tmp_path / "baseline.csv"
+    adjusted = tmp_path / "adjusted.csv"
+    _write_candidate_csv(baseline)
+    _write_candidate_csv(adjusted, periods=5)
+
+    with pytest.raises(ValueError, match="timestamp identities"):
+        build_plan(
+            baseline_csv=baseline,
+            adjusted_csv=adjusted,
+            frozen_at_utc="2026-07-09T00:00:00Z",
+            holdout_start_utc="2026-07-10T00:00:00Z",
+            holdout_end_utc="2026-07-24T00:00:00Z",
+        )
+
+
+def _write_candidate_csv(path: Path, *, periods: int = 4) -> None:
+    rows = ["timestamp_ch,utc_offset_ch"]
+    for hour in range(periods):
+        rows.append(f"10.07.2026 {hour + 2:02d}:00,UTC+02:00")
+    path.write_text("\n".join(rows) + "\n", encoding="utf-8")
 
 
 def _sha256(path: Path) -> str:

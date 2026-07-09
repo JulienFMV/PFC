@@ -13,9 +13,18 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
+
+try:
+    from scripts.export_local_test_ch_hourly_csv import _parse_timestamp_ch
+except ModuleNotFoundError:  # pragma: no cover - direct script execution
+    from export_local_test_ch_hourly_csv import _parse_timestamp_ch
+
 
 SCHEMA_VERSION = "epex_lab_locked_holdout_plan.v1"
 BENCHMARK_POLICY = "locked_future_no_ompex_holdout"
+CANDIDATE_TIMESTAMP_COLUMN = "timestamp_ch"
+CANDIDATE_UTC_OFFSET_COLUMN = "utc_offset_ch"
 
 
 def build_plan(
@@ -49,6 +58,10 @@ def build_plan(
 
     baseline_sha = _sha256(baseline_csv)
     adjusted_sha = _sha256(adjusted_csv)
+    candidate_timestamp_identity = _candidate_timestamp_identity(
+        baseline_csv=baseline_csv,
+        adjusted_csv=adjusted_csv,
+    )
     selection = _load_json(selection_summary) if selection_summary is not None else None
     selection_policy = _selection_policy(selection, adjusted_sha) if selection is not None else None
     if selection_policy is not None and selection_policy["pass"] is not True:
@@ -79,6 +92,7 @@ def build_plan(
         "baseline_csv_sha256": baseline_sha,
         "adjusted_csv": str(adjusted_csv),
         "adjusted_csv_sha256": adjusted_sha,
+        "candidate_timestamp_identity": candidate_timestamp_identity,
         "selection_summary": str(selection_summary) if selection_summary is not None else None,
         "selection_summary_sha256": _sha256(selection_summary) if selection_summary is not None else None,
         "selection_policy": selection_policy,
@@ -96,6 +110,8 @@ def build_plan(
         "pass_criteria": {
             "adjusted_csv_sha256": adjusted_sha,
             "baseline_csv_sha256": baseline_sha,
+            "candidate_timestamp_count": candidate_timestamp_identity["candidate_timestamp_count"],
+            "candidate_timestamp_set_sha256": candidate_timestamp_identity["candidate_timestamp_set_sha256"],
             "benchmark_policy": "rolling_origin_epex_spot_no_ompex_lab_only",
             "strict_lab_gate_pass": True,
             "min_holdout_hours": int(min_holdout_hours),
@@ -199,6 +215,84 @@ def _selection_policy(selection: dict[str, Any], adjusted_sha: str) -> dict[str,
         and selection.get("ompex_used_in_backtest") is False
     )
     return value
+
+
+def _candidate_timestamp_identity(*, baseline_csv: Path, adjusted_csv: Path) -> dict[str, Any]:
+    baseline = _candidate_timestamp_status(baseline_csv)
+    adjusted = _candidate_timestamp_status(adjusted_csv)
+    timestamp_sets_identical = bool(
+        baseline["timestamp_set_sha256"]
+        and adjusted["timestamp_set_sha256"]
+        and baseline["timestamp_set_sha256"] == adjusted["timestamp_set_sha256"]
+    )
+    checks = {
+        "baseline_required_columns_present": baseline["required_columns_present"],
+        "baseline_timestamps_parseable": baseline["timestamps_parseable"],
+        "baseline_no_duplicate_timestamps": baseline["no_duplicate_timestamps"],
+        "adjusted_required_columns_present": adjusted["required_columns_present"],
+        "adjusted_timestamps_parseable": adjusted["timestamps_parseable"],
+        "adjusted_no_duplicate_timestamps": adjusted["no_duplicate_timestamps"],
+        "timestamp_sets_identical": timestamp_sets_identical,
+    }
+    if not all(checks.values()):
+        raise ValueError("baseline and adjusted CSV timestamp identities must be parseable, unique, and identical")
+    return {
+        "baseline_timestamp_count": baseline["timestamp_count"],
+        "baseline_timestamp_min_utc": baseline["timestamp_min_utc"],
+        "baseline_timestamp_max_utc": baseline["timestamp_max_utc"],
+        "baseline_timestamp_set_sha256": baseline["timestamp_set_sha256"],
+        "adjusted_timestamp_count": adjusted["timestamp_count"],
+        "adjusted_timestamp_min_utc": adjusted["timestamp_min_utc"],
+        "adjusted_timestamp_max_utc": adjusted["timestamp_max_utc"],
+        "adjusted_timestamp_set_sha256": adjusted["timestamp_set_sha256"],
+        "candidate_timestamp_count": baseline["timestamp_count"],
+        "candidate_timestamp_min_utc": baseline["timestamp_min_utc"],
+        "candidate_timestamp_max_utc": baseline["timestamp_max_utc"],
+        "candidate_timestamp_set_sha256": baseline["timestamp_set_sha256"],
+        "timestamp_sets_identical": timestamp_sets_identical,
+        "checks": checks,
+    }
+
+
+def _candidate_timestamp_status(path: Path) -> dict[str, Any]:
+    failed = {
+        "required_columns_present": False,
+        "timestamps_parseable": False,
+        "no_duplicate_timestamps": False,
+        "timestamp_count": 0,
+        "timestamp_min_utc": None,
+        "timestamp_max_utc": None,
+        "timestamp_set_sha256": None,
+    }
+    try:
+        frame = pd.read_csv(path)
+    except (OSError, pd.errors.EmptyDataError, pd.errors.ParserError, UnicodeDecodeError):
+        return failed
+    required = {CANDIDATE_TIMESTAMP_COLUMN, CANDIDATE_UTC_OFFSET_COLUMN}
+    if not required.issubset(frame.columns):
+        return failed
+    status = {**failed, "required_columns_present": True}
+    try:
+        parsed = _parse_timestamp_ch(frame[CANDIDATE_TIMESTAMP_COLUMN], frame[CANDIDATE_UTC_OFFSET_COLUMN])
+        idx = pd.DatetimeIndex(parsed).tz_convert("UTC")
+    except Exception:  # noqa: BLE001 - fail closed for malformed timestamp evidence
+        return status
+    status["timestamps_parseable"] = True
+    status["no_duplicate_timestamps"] = not idx.has_duplicates
+    observed_unique = pd.DatetimeIndex(idx.unique()).sort_values()
+    status["timestamp_count"] = int(len(observed_unique))
+    status["timestamp_min_utc"] = _utc_text(observed_unique[0]) if len(observed_unique) else None
+    status["timestamp_max_utc"] = _utc_text(observed_unique[-1]) if len(observed_unique) else None
+    status["timestamp_set_sha256"] = _timestamp_index_sha256(observed_unique)
+    return status
+
+
+def _timestamp_index_sha256(index: pd.DatetimeIndex) -> str:
+    digest = hashlib.sha256()
+    for item in index:
+        digest.update(_utc_text(item).encode("utf-8"))
+        digest.update(b"\n")
+    return digest.hexdigest()
 
 
 def _utc_text(value: str) -> str:

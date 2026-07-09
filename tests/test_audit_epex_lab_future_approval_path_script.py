@@ -144,6 +144,8 @@ def _ready_coverage(*, identity: dict) -> dict:
             "adjusted_candidate_price_columns_finite": True,
             "adjusted_candidate_holdout_window_covered": True,
             "candidate_timestamp_sets_identical": True,
+            "candidate_timestamp_set_matches_plan": True,
+            "candidate_timestamp_count_matches_plan": True,
             "full_window_covered": True,
             "min_holdout_hours_met": True,
             "no_duplicate_holdout_rows": True,

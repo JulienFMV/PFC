@@ -97,6 +97,12 @@ def locked_holdout_policy(summary: dict[str, Any] | None) -> dict[str, Any]:
                 ),
                 "coverage_candidate_timestamp_sets_identical": coverage_checks.get("candidate_timestamp_sets_identical")
                 is True,
+                "coverage_candidate_timestamp_set_matches_plan": coverage_checks.get("candidate_timestamp_set_matches_plan")
+                is True,
+                "coverage_candidate_timestamp_count_matches_plan": coverage_checks.get(
+                    "candidate_timestamp_count_matches_plan"
+                )
+                is True,
                 "coverage_status_sha256_bound": _file_sha_bound(
                     summary,
                     path_key="coverage_status",
