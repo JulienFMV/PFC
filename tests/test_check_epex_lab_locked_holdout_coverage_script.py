@@ -42,6 +42,47 @@ def test_check_epex_lab_locked_holdout_coverage_ready(tmp_path: Path) -> None:
     assert (tmp_path / "coverage.json").exists()
 
 
+def test_check_epex_lab_locked_holdout_coverage_resolves_plan_sources_from_repo_root(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    repo = tmp_path / "repo with space"
+    plan_dir = repo / ".planning" / "phase14"
+    output_dir = repo / "output" / "phase14"
+    other_cwd = tmp_path / "other"
+    plan_dir.mkdir(parents=True)
+    output_dir.mkdir(parents=True)
+    other_cwd.mkdir()
+    (repo / "AGENTS.md").write_text("# repo root marker\n", encoding="utf-8")
+    plan = _write_plan(
+        plan_dir,
+        min_hours=4,
+        baseline=output_dir / "baseline.csv",
+        adjusted=output_dir / "adjusted.csv",
+    )
+    payload = json.loads(plan.read_text(encoding="utf-8"))
+    payload["baseline_csv"] = "output/phase14/baseline.csv"
+    payload["adjusted_csv"] = "output/phase14/adjusted.csv"
+    plan.write_text(json.dumps(payload), encoding="utf-8")
+    spot = repo / "spot.parquet"
+    pd.DataFrame(
+        {"price_eur_mwh": [1.0, 2.0, 3.0, 4.0]},
+        index=pd.date_range("2026-07-10T00:00:00Z", periods=4, freq="h"),
+    ).to_parquet(spot)
+    monkeypatch.chdir(other_cwd)
+
+    summary = check_coverage(plan_json=plan, spot_parquet=spot)
+
+    assert summary["status"] == "READY_TO_RUN_HOLDOUT_BACKTEST"
+    assert summary["checks"]["baseline_csv_file_exists"] is True
+    assert summary["checks"]["adjusted_csv_file_exists"] is True
+    assert summary["checks"]["baseline_csv_sha256_bound"] is True
+    assert summary["checks"]["adjusted_csv_sha256_bound"] is True
+    assert summary["baseline_csv"] == "output/phase14/baseline.csv"
+    assert summary["baseline_csv_resolved"] == str((output_dir / "baseline.csv").resolve())
+    assert summary["adjusted_csv_resolved"] == str((output_dir / "adjusted.csv").resolve())
+
+
 def test_check_epex_lab_locked_holdout_coverage_cli_exits_zero_when_ready(tmp_path: Path) -> None:
     plan = _write_plan(tmp_path, min_hours=4)
     spot = tmp_path / "spot.parquet"

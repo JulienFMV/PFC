@@ -6434,3 +6434,60 @@ Invariants:
 - Source hierarchy approval is a QUOTE_CONFLICT waiver for the exact bound
   product summary and policy, not a curve approval.
 
+## D-20260709-82 - Resolve Frozen Plan Source Paths From Repo Root
+
+Decision: locked holdout coverage preflight now resolves relative
+`baseline_csv` and `adjusted_csv` paths from the repository root inferred from
+the plan location, before falling back to the current working directory or plan
+directory.
+
+Reason: the frozen T057 plan intentionally remains unchanged and contains
+relative `output/...` source paths. If an operator runs the locked holdout
+command from outside the repository root, those paths could previously be
+interpreted relative to the wrong cwd and route the run to
+`NO_GO_LOCKED_HOLDOUT_SOURCE_MISSING_OR_HASH_MISMATCH`. That is not a
+promotion bypass, but it is an avoidable false NO-GO.
+
+Implementation:
+
+- `scripts/check_epex_lab_locked_holdout_coverage.py` now builds candidate
+  base directories from the resolved plan path: repo root marked by `.git` or
+  `AGENTS.md`, then cwd, then plan directory.
+- Source existence and SHA checks use the resolved source path while preserving
+  the original plan path string in the coverage identity.
+- Coverage output now also records `baseline_csv_resolved` and
+  `adjusted_csv_resolved` for operator diagnostics.
+- A regression test runs a plan with relative `output/...` source paths from a
+  different cwd and verifies that coverage still finds and SHA-binds both CSVs.
+
+Validation:
+
+- `python -m pytest tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_epex_lab_locked_holdout_policy.py -q -p no:cacheprovider`
+  reported `37 passed`.
+- `python -m pytest tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_epex_lab_locked_holdout_policy.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_adjusted_production_chain_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_plan_epex_lab_locked_holdout_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  reported `117 passed, 1 skipped`.
+- The current T057 runner command with the locked plan SHA still exits `1`
+  and reports `WAITING_FOR_FULL_SPOT_COVERAGE`, observed holdout hours `0`,
+  expected holdout hours `336`, with blocking checks
+  `full_window_covered` and `min_holdout_hours_met`.
+
+Operational result:
+
+- Current frozen T057 plan remains unchanged.
+- Current coverage output now exposes resolved absolute source paths for the
+  locked baseline and adjusted CSVs.
+- Promotion remains NO-GO until future spot coverage exists and the locked
+  holdout passes.
+
+Rejected alternatives:
+
+- Modify the frozen T057 plan retroactively to absolute source paths.
+- Continue requiring operators to run the command only from repo root while
+  reporting source path failures for cwd mistakes.
+
+Invariants:
+
+- The existing locked T057 plan JSON remains unchanged.
+- Source path resolution is operational hardening only; it does not change
+  candidate hashes, holdout window, model inputs, selection, or pass criteria.
+

@@ -72,10 +72,21 @@ def check_coverage(
         non_finite_price_rows = int((~finite_mask).sum())
     holdout_prices_finite = bool(price_column_present and non_finite_price_rows == 0)
     criteria = plan.get("pass_criteria") or {}
-    baseline_source = _plan_source_file_status(plan, file_key="baseline_csv", criteria=criteria)
-    adjusted_source = _plan_source_file_status(plan, file_key="adjusted_csv", criteria=criteria)
-    baseline_candidate = _candidate_csv_status(baseline_source["path"], expected=expected)
-    adjusted_candidate = _candidate_csv_status(adjusted_source["path"], expected=expected)
+    source_base_dirs = _plan_relative_base_dirs(plan_json)
+    baseline_source = _plan_source_file_status(
+        plan,
+        file_key="baseline_csv",
+        criteria=criteria,
+        base_dirs=source_base_dirs,
+    )
+    adjusted_source = _plan_source_file_status(
+        plan,
+        file_key="adjusted_csv",
+        criteria=criteria,
+        base_dirs=source_base_dirs,
+    )
+    baseline_candidate = _candidate_csv_status(baseline_source["resolved_path"], expected=expected)
+    adjusted_candidate = _candidate_csv_status(adjusted_source["resolved_path"], expected=expected)
     candidate_timestamp_sets_identical = bool(
         baseline_candidate["timestamp_set_sha256"]
         and adjusted_candidate["timestamp_set_sha256"]
@@ -119,6 +130,7 @@ def check_coverage(
         "spot_price_column": SPOT_PRICE_COLUMN,
         "non_finite_holdout_price_rows": non_finite_price_rows,
         "baseline_csv": baseline_source["path"],
+        "baseline_csv_resolved": baseline_source["resolved_path"],
         "baseline_csv_sha256": baseline_source["expected_sha256"],
         "baseline_candidate_timestamp_count": baseline_candidate["timestamp_count"],
         "baseline_candidate_timestamp_min_utc": baseline_candidate["timestamp_min_utc"],
@@ -128,6 +140,7 @@ def check_coverage(
         "baseline_candidate_first_missing_holdout_utc": baseline_candidate["first_missing_holdout_utc"],
         "baseline_candidate_last_missing_holdout_utc": baseline_candidate["last_missing_holdout_utc"],
         "adjusted_csv": adjusted_source["path"],
+        "adjusted_csv_resolved": adjusted_source["resolved_path"],
         "adjusted_csv_sha256": adjusted_source["expected_sha256"],
         "adjusted_candidate_timestamp_count": adjusted_candidate["timestamp_count"],
         "adjusted_candidate_timestamp_min_utc": adjusted_candidate["timestamp_min_utc"],
@@ -279,14 +292,21 @@ def check_coverage(
     return coverage
 
 
-def _plan_source_file_status(plan: dict[str, Any], *, file_key: str, criteria: dict[str, Any]) -> dict[str, Any]:
+def _plan_source_file_status(
+    plan: dict[str, Any],
+    *,
+    file_key: str,
+    criteria: dict[str, Any],
+    base_dirs: list[Path],
+) -> dict[str, Any]:
     path_text = plan.get(file_key)
     expected_sha = plan.get(f"{file_key}_sha256") or criteria.get(f"{file_key}_sha256")
-    path = Path(str(path_text)) if path_text else None
+    path = _resolve_plan_source_path(path_text, base_dirs=base_dirs) if path_text else None
     file_exists = bool(path is not None and path.exists())
     actual_sha = _sha256(path) if path is not None and file_exists else None
     return {
         "path": str(path_text) if path_text else None,
+        "resolved_path": str(path) if path is not None else None,
         "expected_sha256": expected_sha,
         "actual_sha256": actual_sha,
         "path_present": bool(str(path_text or "").strip()),
@@ -403,6 +423,44 @@ def _read_json(path: Path) -> dict[str, Any]:
 
 def _resolved_path(path: Path) -> Path:
     return path.expanduser().resolve(strict=False)
+
+
+def _plan_relative_base_dirs(plan_json: Path) -> list[Path]:
+    plan_dir = plan_json.parent
+    candidates: list[Path] = []
+    repo_root = _repo_root_for_plan(plan_json)
+    if repo_root is not None:
+        candidates.append(repo_root)
+    candidates.extend([Path.cwd(), plan_dir])
+    out: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        resolved = _resolved_path(candidate)
+        key = str(resolved).casefold()
+        if key not in seen:
+            seen.add(key)
+            out.append(resolved)
+    return out
+
+
+def _repo_root_for_plan(plan_json: Path) -> Path | None:
+    for parent in [plan_json.parent, *plan_json.parents]:
+        if (parent / ".git").exists() or (parent / "AGENTS.md").exists():
+            return parent
+    return None
+
+
+def _resolve_plan_source_path(path_text: Any, *, base_dirs: list[Path]) -> Path:
+    raw = Path(str(path_text)).expanduser()
+    if raw.is_absolute():
+        return _resolved_path(raw)
+    candidates = [base_dir / raw for base_dir in base_dirs]
+    candidates.append(raw)
+    for candidate in candidates:
+        resolved = _resolved_path(candidate)
+        if resolved.exists():
+            return resolved
+    return _resolved_path(candidates[0])
 
 
 def _jsonable(value: Any) -> Any:

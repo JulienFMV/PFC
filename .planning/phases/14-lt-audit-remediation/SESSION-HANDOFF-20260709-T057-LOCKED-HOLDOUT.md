@@ -1093,6 +1093,57 @@ Operational status after this follow-up:
   the frozen T056/t005 adjusted CSV only after the candidate is fixed by hash;
   it must not feed model tuning, lambda selection, backtest, or promotion.
 
+Follow-up after the remaining path-sensitivity audit finding:
+
+- `scripts/check_epex_lab_locked_holdout_coverage.py` now resolves relative
+  `baseline_csv` and `adjusted_csv` paths against the repo root inferred from
+  the resolved plan path before falling back to cwd or plan directory.
+- This keeps the frozen T057 plan unchanged while preventing a false
+  `NO_GO_LOCKED_HOLDOUT_SOURCE_MISSING_OR_HASH_MISMATCH` when the runner is
+  launched from outside the repo root.
+- Coverage output now includes `baseline_csv_resolved` and
+  `adjusted_csv_resolved` for operator diagnostics.
+- `tests/test_check_epex_lab_locked_holdout_coverage_script.py` includes a
+  regression where a plan under `.planning` stores `output/...` relative
+  source paths and `check_coverage` is called from a different cwd.
+
+Changed files in this follow-up:
+
+- `.planning/phases/14-lt-audit-remediation/DECISION-LOG.md`
+- `.planning/phases/14-lt-audit-remediation/SESSION-HANDOFF-20260709-T057-LOCKED-HOLDOUT.md`
+- `scripts/check_epex_lab_locked_holdout_coverage.py`
+- `tests/test_check_epex_lab_locked_holdout_coverage_script.py`
+
+Validation:
+
+```powershell
+python -m pytest tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_epex_lab_locked_holdout_policy.py -q -p no:cacheprovider
+```
+
+Result: `37 passed`.
+
+```powershell
+python -m pytest tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_epex_lab_locked_holdout_policy.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_adjusted_production_chain_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_plan_epex_lab_locked_holdout_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result: `117 passed, 1 skipped`.
+
+```powershell
+python scripts/run_epex_lab_locked_holdout.py --plan-json .planning\phases\14-lt-audit-remediation\locked_holdout_plan_t057_t056_asof20260709.json --expected-plan-sha256 f2b5ce94d7eb892ec4f0b2e46b209d09b078db8d15765009fba4ba0cb21ec1cd --spot-parquet output\phase14\20260708_asof20260707_lshape100_yoy150_amp150_2032\epex_spot_refresh_20260708\epex_hourly_ch_energy_charts_20260708.parquet --output-dir output\phase14\t057_locked_t056_future_holdout\current_spot_runner
+```
+
+Result: exit `1` as expected. Status remains
+`WAITING_FOR_FULL_SPOT_COVERAGE`; observed holdout hours `0`, expected `336`;
+blocking checks are `full_window_covered` and `min_holdout_hours_met`. The
+coverage report now also records resolved absolute source paths for both locked
+candidate CSVs.
+
+Operational status:
+
+- Current frozen T057 plan JSON remains unchanged.
+- Promotion remains NO-GO until the future spot window is complete and the
+  locked holdout passes.
+
 Follow-up after promotion readiness routing:
 
 - `scripts/check_epex_lab_promotion_readiness.py` now emits
