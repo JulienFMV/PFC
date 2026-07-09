@@ -7302,3 +7302,42 @@ Invariants:
   policy checks.
 - T057 plan and pass criteria remain unchanged.
 
+## D-20260709-98 - Promotion Readiness Must Recommend The Same T057 Wrapper
+
+Decision: promotion readiness output must include the same fail-closed Energy
+Charts wrapper recommendation as future approval routing when the blocking
+stage is locked holdout coverage.
+
+Reason: readiness is often the first operator-facing artifact reviewed before
+future approval. If readiness only reported `next_required_step` while future
+approval emitted a concrete command, operators could still fall back to manual
+spot handling. Both gates now point to the same safe default.
+
+Implementation:
+
+- `scripts/check_epex_lab_promotion_readiness.py` now emits
+  `recommended_commands` in its summary.
+- For `production_blocking_stage=locked_holdout_coverage`, it emits:
+  - `run_energy_charts_locked_holdout`;
+  - `run_locked_holdout` as a manual fallback for a separately approved fresh
+    spot parquet.
+- Other blocking stages keep `recommended_commands={}`.
+
+Validation:
+
+- `pytest tests\test_check_epex_lab_promotion_readiness_script.py tests\test_audit_epex_lab_future_approval_path_script.py tests\test_epex_lab_locked_holdout_policy.py -q -p no:cacheprovider`
+  reported `42 passed`.
+- `pytest tests\test_lt_ct_imports.py -q -p no:cacheprovider`
+  reported `17 passed, 1 skipped`.
+
+Rejected alternatives:
+
+- Keep command generation only in future approval.
+- Emit only the manual locked runner command from readiness.
+
+Invariants:
+
+- This is routing metadata only; it does not alter readiness PASS/FAIL logic.
+- The Energy Charts wrapper remains non-promotional and fail-closed.
+- T057 plan, hashes, and pass criteria remain unchanged.
+

@@ -1020,6 +1020,35 @@ Result: `112 passed, 1 skipped`.
 Current frozen T057 plan remains unchanged. Regenerated current T057 runner
 still exits `1` with `WAITING_FOR_FULL_SPOT_COVERAGE`.
 
+## 2026-07-09 Follow-Up - Readiness Also Recommends The Wrapper
+
+`scripts/check_epex_lab_promotion_readiness.py` now emits
+`recommended_commands` when `production_blocking_stage` is
+`locked_holdout_coverage`.
+
+The recommended command mirrors future approval routing:
+
+```powershell
+python scripts/run_energy_charts_epex_locked_holdout.py --plan-json <T057_PLAN_JSON> --expected-plan-sha256 <T057_PLAN_JSON_SHA256> --output-dir <ENERGY_CHARTS_LOCKED_HOLDOUT_OUTPUT_DIR> --bzn CH
+```
+
+The manual `run_epex_lab_locked_holdout.py` command remains a fallback only for
+a separately approved fresh future spot parquet.
+
+Validation:
+
+```powershell
+pytest tests\test_check_epex_lab_promotion_readiness_script.py tests\test_audit_epex_lab_future_approval_path_script.py tests\test_epex_lab_locked_holdout_policy.py -q -p no:cacheprovider
+```
+
+Result: `42 passed`.
+
+```powershell
+pytest tests\test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result: `17 passed, 1 skipped`.
+
 ## 2026-07-09 Follow-Up - Future Approval Recommends The Wrapper
 
 `scripts/audit_epex_lab_future_approval_path.py` now recommends the

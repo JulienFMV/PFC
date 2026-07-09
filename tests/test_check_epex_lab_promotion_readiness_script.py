@@ -893,6 +893,38 @@ def test_epex_lab_readiness_requires_locked_holdout_for_complete_production_chai
     assert checks["locked_holdout_pass"]["value"]["status"] == "MISSING_LOCKED_HOLDOUT"
 
 
+def test_epex_lab_readiness_recommends_energy_charts_runner_for_coverage_pending(tmp_path) -> None:
+    paths = _write_approved_chain(tmp_path)
+    paths["locked_holdout"] = _write_locked_holdout(
+        tmp_path,
+        passed=False,
+        status="WAITING_FOR_FULL_SPOT_COVERAGE",
+    )
+
+    summary = _check_readiness_for_chain(paths, tmp_path, output_name="decision_coverage_pending.json")
+
+    plan_json = str((tmp_path / "locked_plan.json").resolve())
+    if any(char.isspace() for char in plan_json):
+        plan_json = f'"{plan_json}"'
+    assert summary["approved"] is False
+    assert summary["production_blocking_stage"] == "locked_holdout_coverage"
+    assert summary["next_required_step"] == "wait_for_full_spot_coverage_then_run_locked_holdout"
+    assert summary["recommended_commands"]["run_energy_charts_locked_holdout"] == (
+        "python scripts/run_energy_charts_epex_locked_holdout.py "
+        f"--plan-json {plan_json} "
+        f"--expected-plan-sha256 {_sha256(tmp_path / 'locked_plan.json')} "
+        "--output-dir <ENERGY_CHARTS_LOCKED_HOLDOUT_OUTPUT_DIR> "
+        "--bzn CH"
+    )
+    assert summary["recommended_commands"]["run_locked_holdout"] == (
+        "python scripts/run_epex_lab_locked_holdout.py "
+        f"--plan-json {plan_json} "
+        f"--expected-plan-sha256 {_sha256(tmp_path / 'locked_plan.json')} "
+        "--spot-parquet <FRESH_FUTURE_SPOT_PARQUET> "
+        "--output-dir <T057_HOLDOUT_OUTPUT_DIR>"
+    )
+
+
 def test_epex_lab_readiness_routes_locked_holdout_input_invalid(tmp_path) -> None:
     paths = _write_approved_chain(tmp_path)
     paths["locked_holdout"] = _write_locked_holdout(

@@ -408,6 +408,10 @@ def check_readiness(
         failed_production_checks=failed_production_checks,
         locked_holdout_policy=locked_holdout_policy,
     )
+    recommended_commands = _recommended_commands(
+        production_blocking_stage=production_blocking_stage,
+        locked_holdout_policy=locked_holdout_policy,
+    )
     status = (
         "PROMOTION_READY"
         if approved
@@ -426,6 +430,7 @@ def check_readiness(
         "failed_production_checks": failed_production_checks,
         "production_blocking_stage": production_blocking_stage,
         "next_required_step": next_required_step,
+        "recommended_commands": recommended_commands,
         "required_production_checks": REQUIRED_PRODUCTION_CHECKS,
         "checks": checks,
         "selected_adjusted_csv": (lab.get("outputs") or {}).get("adjusted_csv"),
@@ -473,6 +478,62 @@ def _production_blocking_route(
     if failed_production_checks:
         return "production_checks", "replace_local_diagnostic_flags_with_real_production_artifacts"
     return "production_chain", "investigate_production_chain_failure"
+
+
+def _recommended_commands(
+    *,
+    production_blocking_stage: str,
+    locked_holdout_policy: dict[str, Any] | None,
+) -> dict[str, str]:
+    if production_blocking_stage != "locked_holdout_coverage":
+        return {}
+    plan_json = (
+        str(locked_holdout_policy.get("plan_json"))
+        if locked_holdout_policy is not None and locked_holdout_policy.get("plan_json")
+        else "<T057_PLAN_JSON>"
+    )
+    plan_sha = (
+        str(locked_holdout_policy.get("expected_plan_json_sha256") or locked_holdout_policy.get("plan_json_sha256"))
+        if locked_holdout_policy is not None
+        and (locked_holdout_policy.get("expected_plan_json_sha256") or locked_holdout_policy.get("plan_json_sha256"))
+        else "<T057_PLAN_JSON_SHA256>"
+    )
+    energy_output_dir = (
+        str(locked_holdout_policy.get("output_dir"))
+        if locked_holdout_policy is not None
+        and locked_holdout_policy.get("schema_version") == "energy_charts_epex_locked_holdout_run.v1"
+        and locked_holdout_policy.get("output_dir")
+        else "<ENERGY_CHARTS_LOCKED_HOLDOUT_OUTPUT_DIR>"
+    )
+    bzn = (
+        str(locked_holdout_policy.get("bzn"))
+        if locked_holdout_policy is not None and locked_holdout_policy.get("bzn")
+        else "CH"
+    )
+    return {
+        "run_energy_charts_locked_holdout": (
+            "python scripts/run_energy_charts_epex_locked_holdout.py "
+            f"--plan-json {_quote_cli_arg(plan_json)} "
+            f"--expected-plan-sha256 {_quote_cli_arg(plan_sha)} "
+            f"--output-dir {_quote_cli_arg(energy_output_dir)} "
+            f"--bzn {_quote_cli_arg(bzn)}"
+        ),
+        "run_locked_holdout": (
+            "python scripts/run_epex_lab_locked_holdout.py "
+            f"--plan-json {_quote_cli_arg(plan_json)} "
+            f"--expected-plan-sha256 {_quote_cli_arg(plan_sha)} "
+            "--spot-parquet <FRESH_FUTURE_SPOT_PARQUET> "
+            "--output-dir <T057_HOLDOUT_OUTPUT_DIR>"
+        ),
+    }
+
+
+def _quote_cli_arg(value: str) -> str:
+    if value.startswith("<") and value.endswith(">"):
+        return value
+    if not value or any(char.isspace() for char in value):
+        return '"' + value.replace('"', '\\"') + '"'
+    return value
 
 
 def _check(name: str, passed: bool, value: Any) -> dict[str, Any]:

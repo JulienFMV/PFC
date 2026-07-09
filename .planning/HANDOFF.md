@@ -1527,6 +1527,36 @@ Result: `26 passed`.
 
 Promotion status remains NO-GO.
 
+## 2026-07-09 Promotion Readiness Recommended Commands
+
+Promotion readiness now mirrors future approval routing for T057 coverage
+waiting states.
+
+Change:
+
+- `scripts/check_epex_lab_promotion_readiness.py` emits
+  `recommended_commands`.
+- For `production_blocking_stage=locked_holdout_coverage`, it recommends
+  `run_energy_charts_locked_holdout` first and keeps `run_locked_holdout` as a
+  manual fallback.
+- Other blocking stages keep an empty command map.
+
+Validation:
+
+```powershell
+pytest tests\test_check_epex_lab_promotion_readiness_script.py tests\test_audit_epex_lab_future_approval_path_script.py tests\test_epex_lab_locked_holdout_policy.py -q -p no:cacheprovider
+```
+
+Result: `42 passed`.
+
+```powershell
+pytest tests\test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result: `17 passed, 1 skipped`.
+
+Promotion status remains NO-GO.
+
 ## 2026-07-09 Future Approval Recommended Commands
 
 Future approval routing now recommends the fail-closed Energy Charts wrapper
