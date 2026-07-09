@@ -1545,6 +1545,46 @@ python -m pytest tests/test_analyze_epex_shape_lab_sweep_sensitivity_script.py -
 
 Result: `2 passed`.
 
+## 2026-07-09 Explicit Post-Valuation Replacement Guard
+
+The spot-backtest selection summary now exposes the replacement guard directly:
+
+- per trial: `post_valuation_gate_pass` and `core_metric_gate_pass`
+- summary-level: `replacement_guard`
+
+For T059, the enriched regenerated selection summary is:
+
+`output/phase14/t059_epex_only_lowtail_cap_night_interactions_selection_full/spot_backtest_selection_summary.json`
+
+SHA256:
+
+`dcf218c6f58f853aa02674f580748da24923bbba8a9f2da1c8c0f7d7f7e94f9b`
+
+Verdict remains unchanged:
+
+- `replacement_guard.status=CORE_METRIC_DEGRADATION`
+- `replacement_guard.pass=false`
+- degraded metric:
+  `post_valuation_mae_improvement_eur_mwh`
+- selected weak-bucket trial
+  `t009_w075_l01_p089_e005_n055_r00_d275` remains non-replacement.
+
+The T059 sensitivity summary was regenerated after this enrichment:
+
+`output/phase14/t059_epex_only_lowtail_cap_night_interactions_sensitivity/sweep_sensitivity_summary.json`
+
+SHA256:
+
+`ab442633f4029d35a21973695055fe5de2ebcf1604f259783537332f98d64e42`
+
+Validation:
+
+```powershell
+python -m pytest tests/test_summarize_epex_shape_lab_spot_backtests_script.py -q -p no:cacheprovider
+```
+
+Result: `5 passed`.
+
 ## 2026-07-09 Expert Audit and T058 Lab Plan
 
 Expert read-only audits confirmed the current split of responsibilities:

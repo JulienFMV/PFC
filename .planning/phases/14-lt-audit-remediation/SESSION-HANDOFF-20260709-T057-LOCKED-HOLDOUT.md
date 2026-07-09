@@ -1322,6 +1322,57 @@ Operational conclusion:
   weak-bucket gains.
 - T056/t005 and locked T057 remain unchanged.
 
+## 2026-07-09 Explicit Post-Valuation Replacement Guard
+
+Follow-up implemented after T059 sensitivity:
+
+- `scripts/summarize_epex_shape_lab_spot_backtests.py` now writes
+  `post_valuation_gate_pass` and `core_metric_gate_pass` for each ranked
+  trial.
+- It also writes a summary-level `replacement_guard` object containing the
+  replacement policy, required metrics, selected trial id, degraded metrics,
+  and pass/status.
+- This exposes the already-enforced rule that weak-bucket gains cannot replace
+  the incumbent if any core replacement metric degrades, especially
+  `post_valuation_mae_improvement_eur_mwh`.
+
+Test update:
+
+- `tests/test_summarize_epex_shape_lab_spot_backtests_script.py` now verifies
+  that a weak-bucket trial with lower post-valuation fails both
+  `post_valuation_gate_pass` and `core_metric_gate_pass`, while a true
+  replacement candidate passes both.
+
+Validation:
+
+```powershell
+python -m pytest tests/test_summarize_epex_shape_lab_spot_backtests_script.py -q -p no:cacheprovider
+```
+
+Result: `5 passed`.
+
+T059 was regenerated under ignored output with the explicit guard:
+
+- enriched selection summary:
+  `output/phase14/t059_epex_only_lowtail_cap_night_interactions_selection_full/spot_backtest_selection_summary.json`
+- selection summary SHA256:
+  `dcf218c6f58f853aa02674f580748da24923bbba8a9f2da1c8c0f7d7f7e94f9b`
+- enriched sensitivity summary:
+  `output/phase14/t059_epex_only_lowtail_cap_night_interactions_sensitivity/sweep_sensitivity_summary.json`
+- sensitivity summary SHA256:
+  `ab442633f4029d35a21973695055fe5de2ebcf1604f259783537332f98d64e42`
+
+T059 enriched verdict:
+
+- `replacement_guard.status=CORE_METRIC_DEGRADATION`
+- `replacement_guard.pass=false`
+- `replacement_guard.degraded_metrics=["post_valuation_mae_improvement_eur_mwh"]`
+- selected trial remains
+  `t009_w075_l01_p089_e005_n055_r00_d275`
+- selected trial has `post_valuation_gate_pass=false` and
+  `core_metric_gate_pass=false`
+- no replacement; T056/t005 remains frozen for T057.
+
 ## 2026-07-09 Expert Audit Follow-Up and T058 Lab Pre-Registration
 
 Read-only expert audits were launched after the T056/t005 diagnostics and

@@ -89,6 +89,7 @@ def summarize_spot_backtests(
     selected = best_replacement or best_weak
     best_overall = _first_row(ranking.sort_values("overall_mae_improvement_eur_mwh", ascending=False)) if not ranking.empty else None
     replacement = _replacement_verdict(selected, incumbent)
+    replacement_guard = _replacement_guard(selected, incumbent)
     summary = {
         "schema_version": "epex_shape_lab_spot_backtest_summary.v1",
         "read_only": True,
@@ -112,6 +113,7 @@ def summarize_spot_backtests(
         "best_overall_trial": best_overall,
         "incumbent": incumbent,
         "replacement_verdict": replacement,
+        "replacement_guard": replacement_guard,
         "selection_thresholds": {
             "min_night_positive_folds": int(min_night_positive_folds),
             "min_ramp_positive_folds": int(min_ramp_positive_folds),
@@ -185,9 +187,16 @@ def _trial_row(
         and row["night_beats_incumbent"]
         and row["ramp_within_incumbent_tolerance"]
     )
-    row["degraded_vs_incumbent"] = ",".join(_degraded_vs_incumbent(row, incumbent))
+    degraded = _degraded_vs_incumbent(row, incumbent)
+    row["degraded_vs_incumbent"] = ",".join(degraded)
+    row["post_valuation_gate_pass"] = bool(
+        incumbent is not None
+        and row["post_valuation_mae_improvement_eur_mwh"]
+        >= incumbent["post_valuation_mae_improvement_eur_mwh"]
+    )
+    row["core_metric_gate_pass"] = bool(incumbent is not None and not degraded)
     row["replacement_candidate"] = bool(
-        incumbent is not None and row["weak_bucket_candidate"] and not row["degraded_vs_incumbent"]
+        incumbent is not None and row["weak_bucket_candidate"] and row["core_metric_gate_pass"]
     )
     return row
 
@@ -225,6 +234,39 @@ def _replacement_verdict(best_weak: dict[str, Any] | None, incumbent: dict[str, 
             "degraded_vs_incumbent": degraded,
         }
     return {"status": "WEAK_BUCKET_AND_CORE_METRICS_BEAT_INCUMBENT", "replace_incumbent": True}
+
+
+def _replacement_guard(selected: dict[str, Any] | None, incumbent: dict[str, Any] | None) -> dict[str, Any]:
+    guard = {
+        "policy": (
+            "A selected sweep trial can replace the incumbent only when it is a "
+            "weak-bucket candidate and does not degrade any core replacement "
+            "metric, including post_valuation_mae_improvement_eur_mwh."
+        ),
+        "required_metrics": list(CORE_REPLACEMENT_KEYS),
+        "post_valuation_required": True,
+        "pass": False,
+        "status": None,
+        "selected_trial_id": selected.get("trial_id") if selected is not None else None,
+        "incumbent_summary_json": incumbent.get("summary_json") if incumbent is not None else None,
+        "degraded_metrics": [],
+    }
+    if selected is None:
+        return {**guard, "status": "NO_SELECTED_TRIAL"}
+    if incumbent is None:
+        return {**guard, "status": "NO_INCUMBENT_PROVIDED"}
+    degraded = _degraded_vs_incumbent(selected, incumbent)
+    weak_bucket = bool(_bool_value(selected.get("weak_bucket_candidate", False)))
+    if degraded:
+        return {
+            **guard,
+            "status": "CORE_METRIC_DEGRADATION",
+            "degraded_metrics": degraded,
+            "weak_bucket_candidate": weak_bucket,
+        }
+    if not weak_bucket:
+        return {**guard, "status": "NOT_WEAK_BUCKET_CANDIDATE", "weak_bucket_candidate": False}
+    return {**guard, "status": "PASS", "pass": True, "weak_bucket_candidate": True}
 
 
 def _degraded_vs_incumbent(row: dict[str, Any], incumbent: dict[str, Any] | None) -> list[str]:
@@ -284,6 +326,8 @@ def _missing_row(trial_id: str, summary_path: Path) -> dict[str, Any]:
         "ramp_within_incumbent_tolerance": False,
         "weak_bucket_candidate": False,
         "degraded_vs_incumbent": "",
+        "post_valuation_gate_pass": False,
+        "core_metric_gate_pass": False,
         "replacement_candidate": False,
     }
     for output_key in CORE_BUCKETS:

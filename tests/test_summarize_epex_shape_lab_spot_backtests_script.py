@@ -65,7 +65,21 @@ def test_summarize_spot_backtests_selects_weak_bucket_but_does_not_replace_incum
     assert summary["best_weak_bucket_trial"]["trial_id"] == "trial_good"
     assert summary["replacement_verdict"]["replace_incumbent"] is False
     assert summary["replacement_verdict"]["status"] == "WEAK_BUCKET_GAIN_BUT_INCUMBENT_STILL_DOMINATES_CORE_METRICS"
+    assert summary["replacement_guard"]["pass"] is False
+    assert summary["replacement_guard"]["status"] == "CORE_METRIC_DEGRADATION"
+    assert summary["replacement_guard"]["degraded_metrics"] == [
+        "overall_mae_improvement_eur_mwh",
+        "evening_mae_improvement_eur_mwh",
+        "solar_tail_mae_improvement_eur_mwh",
+        "weekend_mae_improvement_eur_mwh",
+        "post_valuation_mae_improvement_eur_mwh",
+    ]
     assert (tmp_path / "out" / "spot_backtest_trial_ranking.csv").exists()
+    ranking = pd.read_csv(tmp_path / "out" / "spot_backtest_trial_ranking.csv")
+    trial = ranking.set_index("trial_id").loc["trial_good"]
+    assert bool(trial["weak_bucket_candidate"])
+    assert not bool(trial["post_valuation_gate_pass"])
+    assert not bool(trial["core_metric_gate_pass"])
 
 
 def test_summarize_spot_backtests_prefers_replacement_candidate_over_top_weak_bucket(tmp_path: Path) -> None:
@@ -125,11 +139,18 @@ def test_summarize_spot_backtests_prefers_replacement_candidate_over_top_weak_bu
     assert summary["selected_adjusted_csv_sha256"] == "replacement"
     assert summary["replacement_candidate_count"] == 1
     assert summary["replacement_verdict"]["replace_incumbent"] is True
+    assert summary["replacement_guard"]["pass"] is True
+    assert summary["replacement_guard"]["status"] == "PASS"
+    assert summary["replacement_guard"]["degraded_metrics"] == []
     ranking = pd.read_csv(tmp_path / "out" / "spot_backtest_trial_ranking.csv")
     by_trial = ranking.set_index("trial_id")
     assert bool(by_trial.loc["trial_top_weak", "weak_bucket_candidate"])
     assert not bool(by_trial.loc["trial_top_weak", "replacement_candidate"])
+    assert not bool(by_trial.loc["trial_top_weak", "post_valuation_gate_pass"])
+    assert not bool(by_trial.loc["trial_top_weak", "core_metric_gate_pass"])
     assert bool(by_trial.loc["trial_replacement", "replacement_candidate"])
+    assert bool(by_trial.loc["trial_replacement", "post_valuation_gate_pass"])
+    assert bool(by_trial.loc["trial_replacement", "core_metric_gate_pass"])
 
 
 def test_summarize_spot_backtests_rejects_ompex_backtest(tmp_path: Path) -> None:

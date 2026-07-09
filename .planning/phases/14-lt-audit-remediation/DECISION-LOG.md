@@ -6894,3 +6894,60 @@ Invariants:
 - Future replacement attempts must beat the incumbent on core replacement
   metrics, especially post-valuation, before any promotion-path work.
 
+## D-20260709-91 - Sweep Selection Must Expose The Post-Valuation Replacement Guard
+
+Decision: EPEX lab spot-backtest selection summaries must expose the incumbent
+replacement guard explicitly, not only as a verdict string or
+`degraded_vs_incumbent` text.
+
+Reason: T058 and T059 both produced weak-bucket gains that were not
+replacement candidates because they degraded post-valuation. Future reviews
+need a machine-readable guard showing that weak-bucket gains are insufficient
+unless core metrics, especially `post_valuation_mae_improvement_eur_mwh`, also
+beat the incumbent.
+
+Implementation:
+
+- `scripts/summarize_epex_shape_lab_spot_backtests.py` now writes per-trial:
+  `post_valuation_gate_pass` and `core_metric_gate_pass`.
+- The selection summary now writes `replacement_guard` with:
+  - policy text;
+  - required core metrics;
+  - `post_valuation_required=true`;
+  - selected trial id;
+  - degraded metrics;
+  - pass/status.
+- T059 was regenerated under ignored output. The enriched selection summary is:
+  `output/phase14/t059_epex_only_lowtail_cap_night_interactions_selection_full/spot_backtest_selection_summary.json`
+  with SHA256
+  `dcf218c6f58f853aa02674f580748da24923bbba8a9f2da1c8c0f7d7f7e94f9b`.
+- The enriched T059 sensitivity summary is:
+  `output/phase14/t059_epex_only_lowtail_cap_night_interactions_sensitivity/sweep_sensitivity_summary.json`
+  with SHA256
+  `ab442633f4029d35a21973695055fe5de2ebcf1604f259783537332f98d64e42`.
+
+T059 enriched verdict:
+
+- `replacement_guard.status=CORE_METRIC_DEGRADATION`
+- `replacement_guard.pass=false`
+- `replacement_guard.degraded_metrics=["post_valuation_mae_improvement_eur_mwh"]`
+- selected weak-bucket trial
+  `t009_w075_l01_p089_e005_n055_r00_d275` remains non-replacement.
+
+Validation:
+
+- `python -m pytest tests/test_summarize_epex_shape_lab_spot_backtests_script.py -q -p no:cacheprovider`
+  reported `5 passed`.
+
+Rejected alternatives:
+
+- Keep post-valuation protection implicit in `replace_incumbent=false`.
+- Allow weak-bucket selection summaries to be read as candidate replacements
+  without inspecting every core metric.
+
+Invariants:
+
+- This exposes the existing replacement rule; it does not change model
+  outputs, trial ranking, no-OMPEX policy, or the T059 no-replacement verdict.
+- T056/t005 and locked T057 remain frozen.
+
