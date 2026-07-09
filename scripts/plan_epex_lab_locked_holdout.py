@@ -25,6 +25,9 @@ SCHEMA_VERSION = "epex_lab_locked_holdout_plan.v1"
 BENCHMARK_POLICY = "locked_future_no_ompex_holdout"
 CANDIDATE_TIMESTAMP_COLUMN = "timestamp_ch"
 CANDIDATE_UTC_OFFSET_COLUMN = "utc_offset_ch"
+LOCKED_HOLDOUT_PLAN_PLACEHOLDER = "<LOCKED_HOLDOUT_PLAN_JSON>"
+LOCKED_HOLDOUT_PLAN_SHA_PLACEHOLDER = "<LOCKED_HOLDOUT_PLAN_JSON_SHA256>"
+LOCKED_HOLDOUT_OUTPUT_DIR_PLACEHOLDER = "<LOCKED_HOLDOUT_OUTPUT_DIR>"
 
 
 def build_plan(
@@ -135,13 +138,13 @@ def build_plan(
                     "python",
                     "scripts/run_epex_lab_locked_holdout.py",
                     "--plan-json",
-                    str(output or "<T057_PLAN_JSON>"),
+                    str(output or LOCKED_HOLDOUT_PLAN_PLACEHOLDER),
                     "--expected-plan-sha256",
-                    "<T057_PLAN_JSON_SHA256>",
+                    LOCKED_HOLDOUT_PLAN_SHA_PLACEHOLDER,
                     "--spot-parquet",
                     "<FUTURE_SPOT_PARQUET>",
                     "--output-dir",
-                    "<T057_HOLDOUT_OUTPUT_DIR>",
+                    LOCKED_HOLDOUT_OUTPUT_DIR_PLACEHOLDER,
                 ]
             ),
             "run_future_backtest_template": _join_command(
@@ -155,7 +158,7 @@ def build_plan(
                     "--spot-parquet",
                     "<FUTURE_SPOT_PARQUET>",
                     "--output-dir",
-                    "<T057_HOLDOUT_OUTPUT_DIR>",
+                    LOCKED_HOLDOUT_OUTPUT_DIR_PLACEHOLDER,
                     "--valuation-timestamp",
                     valuation,
                     "--lookback-years",
@@ -175,16 +178,16 @@ def build_plan(
                     "python",
                     "scripts/audit_epex_lab_locked_holdout.py",
                     "--plan-json",
-                    str(output or "<T057_PLAN_JSON>"),
+                    str(output or LOCKED_HOLDOUT_PLAN_PLACEHOLDER),
                     "--spot-backtest-summary",
-                    "<T057_HOLDOUT_OUTPUT_DIR>/spot_backtest_summary.json",
+                    f"{LOCKED_HOLDOUT_OUTPUT_DIR_PLACEHOLDER}/spot_backtest_summary.json",
                     "--output",
-                    "<T057_HOLDOUT_OUTPUT_DIR>/locked_holdout_audit.json",
+                    f"{LOCKED_HOLDOUT_OUTPUT_DIR_PLACEHOLDER}/locked_holdout_audit.json",
                 ]
             ),
         },
         "note": (
-            "This pre-registration freezes the selected T056 candidate before "
+            "This pre-registration freezes the selected candidate before "
             "future spot rows are available. It must not be edited after the "
             "holdout window starts; create a new plan instead."
         ),

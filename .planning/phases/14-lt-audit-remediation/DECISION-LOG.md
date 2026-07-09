@@ -7553,3 +7553,52 @@ Execution invariants:
 - This is still not production evidence and does not alter the frozen T057
   path.
 
+## D-20260709-102 - T060 Requires A Separate Future Holdout Line
+
+Decision: T060/t007 is frozen into a separate T061 future holdout plan instead
+of being substituted into the already locked T057/T056 path.
+
+Reason: T060 is a stronger EPEX-only lab challenger than T056/t005 in the
+available diagnostic backtests, but those diagnostics are not production
+evidence. Reusing the T057 window or candidate slot would contaminate the
+frozen T057 decision and blur the audit trail. A challenger that may replace an
+incumbent must carry its own pre-registered future window, candidate hashes, and
+no-OMPEX evidence.
+
+Implementation:
+
+- Generalized `scripts/plan_epex_lab_locked_holdout.py` command placeholders
+  from T057-specific names to locked-holdout generic names:
+  `<LOCKED_HOLDOUT_PLAN_JSON>`, `<LOCKED_HOLDOUT_PLAN_JSON_SHA256>`, and
+  `<LOCKED_HOLDOUT_OUTPUT_DIR>`.
+- Generated
+  `.planning/phases/14-lt-audit-remediation/locked_holdout_plan_t061_t060_asof20260709.json`.
+- `plan_id=t061_locked_t060_future_holdout`.
+- Plan SHA256:
+  `29a633cf56279eae817cd6c63872a476cc2c10b187f08c3952f73cdad76db135`.
+- Frozen at `2026-07-09T00:00:00Z`.
+- Holdout window: `2026-07-24T00:00:00Z` to `2026-08-07T00:00:00Z`.
+- Valuation timestamp: `2026-07-07T00:00:00Z`.
+- Baseline CSV SHA256:
+  `12447bbaa9828c0ffed871e62c35f90b8c100fcfab8c80b00468ac846848d895`.
+- Adjusted CSV SHA256:
+  `0a0fe8ce8c12bfeb64ac517ef60ac4d2850fbd1d13255c823c213c94c98391a6`.
+- Selection policy is bound to the adjusted CSV and passes no-OMPEX replacement
+  checks, but `production_approved=false` and `promotion_gate=false`.
+
+Rejected alternatives:
+
+- Replace T056/t005 inside T057 with T060/t007.
+- Reuse T057's future window for T060.
+- Promote T060 directly from lab score improvements.
+- Use OMPEX as a ranking target or holdout truth.
+
+Invariants:
+
+- T057 remains unchanged and remains the only locked holdout for T056/t005.
+- T061 is a separate future evidence path and does not approve production.
+- OMPEX remains advisory only and is forbidden in model, selection, backtest,
+  holdout, and promotion gates.
+- Any future promotion requires complete future spot coverage, a passing locked
+  holdout, and production/export/selected/capstone evidence.
+

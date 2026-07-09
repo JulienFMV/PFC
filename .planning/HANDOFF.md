@@ -1363,6 +1363,60 @@ Result: `112 passed, 1 skipped`.
 Current frozen T057 plan remains unchanged. Regenerated current T057 runner
 still exits `1` with `WAITING_FOR_FULL_SPOT_COVERAGE`.
 
+## 2026-07-09 T061 Separate Future Holdout For T060
+
+Created a separate future holdout line for the T060 EPEX-only cap
+decompression challenger. This does not modify T057 and does not approve
+production.
+
+Code change:
+
+- `scripts/plan_epex_lab_locked_holdout.py` now emits generic locked-holdout
+  placeholders for newly generated plans:
+  `<LOCKED_HOLDOUT_PLAN_JSON>`,
+  `<LOCKED_HOLDOUT_PLAN_JSON_SHA256>`, and
+  `<LOCKED_HOLDOUT_OUTPUT_DIR>`.
+- `tests/test_plan_epex_lab_locked_holdout_script.py` validates those generic
+  placeholders and checks that new plans no longer carry a T056-specific note.
+
+Generated tracked plan:
+
+- `.planning/phases/14-lt-audit-remediation/locked_holdout_plan_t061_t060_asof20260709.json`
+- Plan SHA256:
+  `29a633cf56279eae817cd6c63872a476cc2c10b187f08c3952f73cdad76db135`
+- `plan_id=t061_locked_t060_future_holdout`
+- frozen at `2026-07-09T00:00:00Z`
+- holdout window `2026-07-24T00:00:00Z` to `2026-08-07T00:00:00Z`
+- valuation timestamp `2026-07-07T00:00:00Z`
+- baseline CSV SHA256:
+  `12447bbaa9828c0ffed871e62c35f90b8c100fcfab8c80b00468ac846848d895`
+- adjusted CSV SHA256:
+  `0a0fe8ce8c12bfeb64ac517ef60ac4d2850fbd1d13255c823c213c94c98391a6`
+- `selection_policy.pass=true`
+- `production_approved=false`, `promotion_gate=false`
+
+Validation so far:
+
+```powershell
+python -m pytest tests\test_plan_epex_lab_locked_holdout_script.py -q -p no:cacheprovider
+```
+
+Result: `6 passed`.
+
+```powershell
+python -m pytest tests\test_plan_epex_lab_locked_holdout_script.py tests\test_run_epex_lab_locked_holdout_script.py tests\test_audit_epex_lab_locked_holdout_script.py tests\test_check_epex_lab_promotion_readiness_script.py tests\test_audit_epex_lab_future_approval_path_script.py tests\test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result: `62 passed, 1 skipped`.
+
+Operational conclusion:
+
+- T057 remains frozen for T056/t005 and must not be retuned or replaced.
+- T061 is frozen separately for T060/t007 and cannot run until future EPEX spot
+  coverage exists for `2026-07-24` to `2026-08-07` UTC.
+- T060/T061 remains lab/future-holdout evidence only. Promotion remains NO-GO
+  until future holdout and production/export/selected/capstone evidence pass.
+
 ## 2026-07-09 EPEX Shape Explainability Diagnostic
 
 Added lab-only no-OMPEX diagnostic:
