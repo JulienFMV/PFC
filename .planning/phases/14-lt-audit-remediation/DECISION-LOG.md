@@ -6951,3 +6951,52 @@ Invariants:
   outputs, trial ranking, no-OMPEX policy, or the T059 no-replacement verdict.
 - T056/t005 and locked T057 remain frozen.
 
+## D-20260709-92 - Sweep Selection Paths Are Resolved Before Summary Generation
+
+Decision: the EPEX spot-backtest selection summarizer resolves CLI paths
+up front and resolves recorded ranking paths against the repository root.
+
+Reason: the T059 runner path issue showed that Phase 14 lab orchestration must
+not depend on the operator's current working directory. The summarizer also
+read `ranking_csv` from the sweep summary as a raw relative path. That worked
+from repo root but could fail or write ambiguous paths when launched from a
+different cwd or UNC representation.
+
+Implementation:
+
+- `scripts/summarize_epex_shape_lab_spot_backtests.py` resolves
+  `sweep_summary`, `backtest_root`, `output_dir`, and `incumbent_backtest`
+  through cwd-aware CLI path resolution.
+- Relative `ranking_csv` values recorded in sweep summaries are resolved
+  against the repository root.
+- The generated summary now records resolved paths.
+- A regression test patches `REPO_ROOT` to a temp repo and verifies that a
+  relative recorded `ranking_csv` and relative output paths are resolved.
+
+Regenerated T059 artifacts:
+
+- enriched selection summary:
+  `output/phase14/t059_epex_only_lowtail_cap_night_interactions_selection_full/spot_backtest_selection_summary.json`
+  with SHA256
+  `ea5c0401f04798d3fa665eda8cf0b9831f819811fd205b0c3cdb7625e203b073`.
+- enriched sensitivity summary:
+  `output/phase14/t059_epex_only_lowtail_cap_night_interactions_sensitivity/sweep_sensitivity_summary.json`
+  with SHA256
+  `9e0e57999c7f03c29f8eb98585f656c0a5419bd7f438ed9739d42ceff82cf89b`.
+
+Validation:
+
+- `python -m pytest tests/test_summarize_epex_shape_lab_spot_backtests_script.py -q -p no:cacheprovider`
+  reported `6 passed`.
+
+Rejected alternatives:
+
+- Require every operator to run the summarizer only from repo root.
+- Keep relative paths in generated selection summaries after resolving them
+  internally.
+
+Invariants:
+
+- This is orchestration hardening only. It does not change T059 metrics,
+  replacement guard status, no-OMPEX policy, or the no-replacement verdict.
+

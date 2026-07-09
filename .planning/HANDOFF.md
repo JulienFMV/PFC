@@ -1585,6 +1585,41 @@ python -m pytest tests/test_summarize_epex_shape_lab_spot_backtests_script.py -q
 
 Result: `5 passed`.
 
+## 2026-07-09 Sweep Selection Path Hardening
+
+The EPEX spot-backtest selection summarizer now resolves paths before summary
+generation:
+
+- CLI paths are resolved against cwd.
+- Relative `ranking_csv` recorded in sweep summaries is resolved against the
+  repo root.
+- Generated summaries record resolved paths.
+
+T059 was regenerated after this path hardening. These supersede the prior
+guard-only SHA values:
+
+- selection summary:
+  `output/phase14/t059_epex_only_lowtail_cap_night_interactions_selection_full/spot_backtest_selection_summary.json`
+  SHA256 `ea5c0401f04798d3fa665eda8cf0b9831f819811fd205b0c3cdb7625e203b073`
+- sensitivity summary:
+  `output/phase14/t059_epex_only_lowtail_cap_night_interactions_sensitivity/sweep_sensitivity_summary.json`
+  SHA256 `9e0e57999c7f03c29f8eb98585f656c0a5419bd7f438ed9739d42ceff82cf89b`
+
+Verdict unchanged:
+
+- `replacement_guard.status=CORE_METRIC_DEGRADATION`
+- degraded metric:
+  `post_valuation_mae_improvement_eur_mwh`
+- T056/t005 remains frozen for T057.
+
+Validation:
+
+```powershell
+python -m pytest tests/test_summarize_epex_shape_lab_spot_backtests_script.py -q -p no:cacheprovider
+```
+
+Result: `6 passed`.
+
 ## 2026-07-09 Expert Audit and T058 Lab Plan
 
 Expert read-only audits confirmed the current split of responsibilities:

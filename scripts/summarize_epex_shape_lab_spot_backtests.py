@@ -30,6 +30,7 @@ CORE_REPLACEMENT_KEYS = [
     "weekend_mae_improvement_eur_mwh",
     "post_valuation_mae_improvement_eur_mwh",
 ]
+REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 def summarize_spot_backtests(
@@ -42,6 +43,10 @@ def summarize_spot_backtests(
     min_ramp_positive_folds: int = 8,
     max_ramp_regression_eur_mwh: float = 0.002,
 ) -> dict[str, Any]:
+    sweep_summary = _resolve_cli_path(sweep_summary)
+    backtest_root = _resolve_cli_path(backtest_root)
+    output_dir = _resolve_cli_path(output_dir)
+    incumbent_backtest = _resolve_cli_path(incumbent_backtest) if incumbent_backtest is not None else None
     sweep = _read_json(sweep_summary)
     _validate_sweep(sweep)
     incumbent = _incumbent_row(incumbent_backtest) if incumbent_backtest is not None else None
@@ -138,7 +143,7 @@ def _validate_sweep(sweep: dict[str, Any]) -> None:
 
 
 def _eligible_trial_ids(sweep: dict[str, Any]) -> list[str]:
-    ranking_csv = Path(str(sweep["ranking_csv"]))
+    ranking_csv = _resolve_recorded_path(sweep["ranking_csv"])
     ranking = pd.read_csv(ranking_csv)
     if "eligible_for_selection" not in ranking.columns or "trial_id" not in ranking.columns:
         raise ValueError("sweep ranking CSV must include eligible_for_selection and trial_id")
@@ -337,6 +342,20 @@ def _missing_row(trial_id: str, summary_path: Path) -> dict[str, Any]:
 
 def _read_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _resolve_cli_path(path: Path) -> Path:
+    path = path.expanduser()
+    if path.is_absolute():
+        return path.resolve(strict=False)
+    return (Path.cwd() / path).resolve(strict=False)
+
+
+def _resolve_recorded_path(value: Any) -> Path:
+    path = Path(str(value)).expanduser()
+    if path.is_absolute():
+        return path.resolve(strict=False)
+    return (REPO_ROOT / path).resolve(strict=False)
 
 
 def _first_row(frame: pd.DataFrame) -> dict[str, Any] | None:

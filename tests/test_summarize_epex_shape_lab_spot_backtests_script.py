@@ -199,6 +199,41 @@ def test_summarize_spot_backtests_does_not_treat_false_string_as_eligible(tmp_pa
     assert summary["best_weak_bucket_trial"]["trial_id"] == "trial_true"
 
 
+def test_summarize_spot_backtests_resolves_relative_recorded_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ranking_csv = tmp_path / "sweep_ranking.csv"
+    ranking_csv.write_text("trial_id,eligible_for_selection\ntrial_true,True\n", encoding="utf-8")
+    sweep_summary = tmp_path / "sweep_summary.json"
+    sweep_summary.write_text(
+        json.dumps(
+            {
+                "benchmark_policy": "executed_independent_no_ompex",
+                "ompex_used_in_model": False,
+                "ompex_used_in_selection": False,
+                "production_approved": False,
+                "ranking_csv": "sweep_ranking.csv",
+            }
+        ),
+        encoding="utf-8",
+    )
+    backtest_root = tmp_path / "backtests"
+    _write_backtest(backtest_root / "trial_true" / "spot_backtest_summary.json", overall=1.0, night=1.0, ramp=1.0)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("scripts.summarize_epex_shape_lab_spot_backtests.REPO_ROOT", tmp_path)
+
+    summary = summarize_spot_backtests(
+        sweep_summary=sweep_summary,
+        backtest_root=Path("backtests"),
+        output_dir=Path("out"),
+    )
+
+    assert summary["trial_count_from_sweep"] == 1
+    assert summary["backtest_root"] == str((tmp_path / "backtests").resolve())
+    assert summary["ranking_csv"] == str((tmp_path / "out" / "spot_backtest_trial_ranking.csv").resolve())
+    assert (tmp_path / "out" / "spot_backtest_selection_summary.json").exists()
+
+
 def test_summarize_spot_backtests_marks_missing_backtest_not_replacement(tmp_path: Path) -> None:
     sweep_summary = _write_sweep(tmp_path, ["trial_missing"])
 

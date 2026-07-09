@@ -1373,6 +1373,47 @@ T059 enriched verdict:
   `core_metric_gate_pass=false`
 - no replacement; T056/t005 remains frozen for T057.
 
+## 2026-07-09 Sweep Selection Path Hardening
+
+Follow-up after explicit replacement guard:
+
+- `scripts/summarize_epex_shape_lab_spot_backtests.py` now resolves CLI paths
+  up front.
+- Relative `ranking_csv` paths recorded in sweep summaries are resolved
+  against the repo root.
+- Generated selection summaries now record resolved paths, matching the
+  path-hardening already applied to the sweep backtest runner.
+- `tests/test_summarize_epex_shape_lab_spot_backtests_script.py` now covers a
+  temp repo with a relative recorded `ranking_csv`, relative `backtest_root`,
+  and relative `output_dir`.
+
+Validation:
+
+```powershell
+python -m pytest tests/test_summarize_epex_shape_lab_spot_backtests_script.py -q -p no:cacheprovider
+```
+
+Result: `6 passed`.
+
+T059 regenerated artifacts after path hardening:
+
+- selection summary:
+  `output/phase14/t059_epex_only_lowtail_cap_night_interactions_selection_full/spot_backtest_selection_summary.json`
+- selection summary SHA256:
+  `ea5c0401f04798d3fa665eda8cf0b9831f819811fd205b0c3cdb7625e203b073`
+- sensitivity summary:
+  `output/phase14/t059_epex_only_lowtail_cap_night_interactions_sensitivity/sweep_sensitivity_summary.json`
+- sensitivity summary SHA256:
+  `9e0e57999c7f03c29f8eb98585f656c0a5419bd7f438ed9739d42ceff82cf89b`
+
+The verdict is unchanged:
+
+- `replacement_guard.status=CORE_METRIC_DEGRADATION`
+- `replacement_guard.pass=false`
+- degraded metric is still only
+  `post_valuation_mae_improvement_eur_mwh`
+- T056/t005 remains frozen for T057.
+
 ## 2026-07-09 Expert Audit Follow-Up and T058 Lab Pre-Registration
 
 Read-only expert audits were launched after the T056/t005 diagnostics and
