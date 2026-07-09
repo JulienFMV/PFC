@@ -4980,6 +4980,10 @@ Coverage status as of the 2026-07-08 spot parquet:
 - runner status with same incomplete spot:
   `WAITING_FOR_FULL_SPOT_COVERAGE`, `backtest_ran=false`,
   `audit_ran=false`
+- consolidated future approval status:
+  `NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING`
+- consolidated future approval audit:
+  `output/phase14/t057_locked_t056_future_holdout/future_approval_path_with_holdout_current.json`
 
 Rejected alternatives:
 

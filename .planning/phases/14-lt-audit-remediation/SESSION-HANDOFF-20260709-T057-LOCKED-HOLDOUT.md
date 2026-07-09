@@ -63,6 +63,14 @@ Code/tests/docs:
   then runs `scripts/audit_epex_lab_locked_holdout.py`.
 - Never approves production promotion.
 
+`scripts/audit_epex_lab_future_approval_path.py`
+
+- Now accepts `--locked-holdout-summary`.
+- The summary can be either a locked holdout runner summary or final holdout
+  audit.
+- A provided locked holdout blocks promotion unless it passed
+  `LOCKED_HOLDOUT_PASS`.
+
 ## T057 Locked Plan
 
 Plan file:
@@ -145,6 +153,23 @@ Result:
 - `audit_ran=false`
 - run summary:
   `output/phase14/t057_locked_t056_future_holdout/current_spot_runner/locked_holdout_run_summary.json`
+
+Consolidated approval-path audit using the current locked holdout run summary:
+
+```powershell
+python scripts/audit_epex_lab_future_approval_path.py --readiness-json output\phase14\t056_postval_final_micro\t005_diagnostics\promotion_readiness\decision_with_staged_manifest.json --locked-holdout-summary output\phase14\t057_locked_t056_future_holdout\current_spot_runner\locked_holdout_run_summary.json --output output\phase14\t057_locked_t056_future_holdout\future_approval_path_with_holdout_current.json
+```
+
+Result:
+
+- `status=NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING`
+- `strict_diagnostics_pass=true`
+- `production_chain_pass=false`
+- `locked_holdout_policy.pass=false`
+- `remaining_blockers` includes `locked_holdout_pass`,
+  `adjusted_export_manifest`, `adjusted_selected_config`,
+  `adjusted_capstone`, `adjusted_production_manifest_approved`, and
+  `adjusted_production_manifest_run_identity_valid`.
 
 ## Next Execution When Future Spot Exists
 

@@ -45,6 +45,24 @@ def _spot_payload(**overrides) -> dict:
     return payload
 
 
+def _locked_holdout_run_payload(**overrides) -> dict:
+    payload = {
+        "schema_version": "epex_lab_locked_holdout_run.v1",
+        "status": "LOCKED_HOLDOUT_PASS",
+        "promotion_gate": False,
+        "production_approved": False,
+        "ompex_used_in_model": False,
+        "ompex_used_in_selection": False,
+        "ompex_used_in_backtest": False,
+        "coverage_ready": True,
+        "backtest_ran": True,
+        "audit_ran": True,
+        "holdout_pass": True,
+    }
+    payload.update(overrides)
+    return payload
+
+
 def test_future_approval_path_reports_no_go_blockers(tmp_path: Path) -> None:
     readiness = _write_json(tmp_path / "readiness.json", _readiness_payload())
     spot = _write_json(tmp_path / "spot.json", _spot_payload())
@@ -78,6 +96,53 @@ def test_future_approval_path_reports_promotion_ready_candidate(tmp_path: Path) 
     assert summary["status"] == "PROMOTION_READY_CANDIDATE"
     assert summary["approved"] is True
     assert summary["remaining_blockers"] == []
+
+
+def test_future_approval_path_blocks_when_locked_holdout_coverage_pending(tmp_path: Path) -> None:
+    readiness = _write_json(
+        tmp_path / "readiness.json",
+        _readiness_payload(approved=True, production=True),
+    )
+    holdout = _write_json(
+        tmp_path / "holdout.json",
+        _locked_holdout_run_payload(
+            status="WAITING_FOR_FULL_SPOT_COVERAGE",
+            coverage_ready=False,
+            backtest_ran=False,
+            audit_ran=False,
+            holdout_pass=False,
+        ),
+    )
+
+    summary = audit_future_approval_path(
+        readiness_json=readiness,
+        locked_holdout_summary=holdout,
+        output=tmp_path / "out.json",
+    )
+
+    assert summary["status"] == "NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING"
+    assert summary["approved"] is False
+    assert "locked_holdout_pass" in summary["remaining_blockers"]
+    assert summary["locked_holdout_policy"]["pass"] is False
+    assert summary["locked_holdout_policy"]["checks"]["coverage_ready"] is False
+
+
+def test_future_approval_path_allows_promotion_ready_with_passing_locked_holdout(tmp_path: Path) -> None:
+    readiness = _write_json(
+        tmp_path / "readiness.json",
+        _readiness_payload(approved=True, production=True),
+    )
+    holdout = _write_json(tmp_path / "holdout.json", _locked_holdout_run_payload())
+
+    summary = audit_future_approval_path(
+        readiness_json=readiness,
+        locked_holdout_summary=holdout,
+        output=tmp_path / "out.json",
+    )
+
+    assert summary["status"] == "PROMOTION_READY_CANDIDATE"
+    assert summary["approved"] is True
+    assert summary["locked_holdout_policy"]["pass"] is True
 
 
 def test_future_approval_path_blocks_bad_spot_policy(tmp_path: Path) -> None:
