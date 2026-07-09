@@ -1087,6 +1087,122 @@ Operational conclusion:
 - Do not use T057 outcome for tuning. If T057 fails after complete coverage,
   document the failure and open a new pre-registered no-OMPEX lab lineage.
 
+## 2026-07-09 T059 EPEX-Only Low-Tail/Cap/Night Interaction Sweep
+
+Purpose:
+
+- Follow the T058 signal without touching frozen T056/t005 or T057.
+- Test whether lower low-tail intensity can preserve weak-bucket gains while
+  recovering the post-valuation metric.
+- Keep the line no-OMPEX, lab-only, non-promotional.
+
+Durable T059 parameter files:
+
+- `.planning/phases/14-lt-audit-remediation/t059_epex_only_lowtail_cap_night_interactions_grid.json`
+- `.planning/phases/14-lt-audit-remediation/t059_epex_only_lowtail_cap_night_interactions_delta_grid.json`
+- `.planning/phases/14-lt-audit-remediation/t059_epex_only_lowtail_cap_night_interactions_thresholds.json`
+- `.planning/phases/14-lt-audit-remediation/t059_epex_only_lowtail_cap_night_interactions_scoring.json`
+
+Plan command:
+
+```powershell
+python scripts\plan_epex_shape_lab_sweep.py --candidate-csv output\phase14\20260708_asof20260707_lshape100_yoy150_amp150_2032\ch_hfc_hourly_asof20260707_lshape100_yoy150_amp150_2032.csv --spot-parquet output\phase14\20260708_asof20260707_lshape100_yoy150_amp150_2032\epex_spot_refresh_20260708\epex_hourly_ch_energy_charts_20260708.parquet --output-root output\phase14\t059_epex_only_lowtail_cap_night_interactions --valuation-timestamp 2026-07-07T00:00:00Z --grid-json '@.planning\phases\14-lt-audit-remediation\t059_epex_only_lowtail_cap_night_interactions_grid.json' --max-abs-delta-grid-json '@.planning\phases\14-lt-audit-remediation\t059_epex_only_lowtail_cap_night_interactions_delta_grid.json' --selection-thresholds-json '@.planning\phases\14-lt-audit-remediation\t059_epex_only_lowtail_cap_night_interactions_thresholds.json' --scoring-policy-json '@.planning\phases\14-lt-audit-remediation\t059_epex_only_lowtail_cap_night_interactions_scoring.json' --plan-id t059_epex_only_lowtail_cap_night_interactions --output-json output\phase14\t059_epex_only_lowtail_cap_night_interactions_plan.json
+```
+
+Plan result:
+
+- `trial_count=36`
+- plan SHA256:
+  `56405a821f4c3bd91afce975c47beb0bf810736929fd6ccb27fd44dd852fb545`
+- `benchmark_policy=pre_registered_independent_no_ompex`
+- `activation_status=lab_only`
+- `production_approved=false`
+- `ompex_used_in_model=false`
+- `ompex_used_in_selection=false`
+
+Execution:
+
+```powershell
+python scripts\execute_epex_shape_lab_sweep.py --plan-json output\phase14\t059_epex_only_lowtail_cap_night_interactions_plan.json --output-summary output\phase14\t059_epex_only_lowtail_cap_night_interactions_summary_full.json
+```
+
+Result:
+
+- `trial_count_executed=36`
+- `eligible_count=36`
+- execution summary SHA256:
+  `79a17516deea1be9362a9a6e56497b1a9ec69715d900bfafd0fc53bb046900e3`
+
+Spot backtests:
+
+Initial full backtest command with relative output paths hit a Windows
+relative-path/UNC mkdir failure before writing the final summary. It was
+rerun successfully with absolute output paths, without changing the plan or
+inputs.
+
+Successful command shape:
+
+```powershell
+$root = (Resolve-Path .).Path
+$outRoot = Join-Path $root 'output\phase14\t059_epex_only_lowtail_cap_night_interactions_spot_backtests_full'
+$outSummary = Join-Path $root 'output\phase14\t059_epex_only_lowtail_cap_night_interactions_spot_backtests_summary_full.json'
+$selection = Join-Path $root 'output\phase14\t059_epex_only_lowtail_cap_night_interactions_selection_full'
+python scripts\run_epex_shape_lab_sweep_spot_backtests.py --plan-json output\phase14\t059_epex_only_lowtail_cap_night_interactions_plan.json --sweep-summary output\phase14\t059_epex_only_lowtail_cap_night_interactions_summary_full.json --output-root $outRoot --output-summary $outSummary --incumbent-backtest output\phase14\t056_postval_final_micro_spot_backtests\t005_w075_l025_p089_e005_n055_r00\spot_backtest_summary.json --selection-output-dir $selection
+```
+
+Result:
+
+- `trial_count_backtested=36`
+- spot-backtest orchestration summary SHA256:
+  `73aea816694ab8823e8523d6de74399bfcfbfda2d353db1e8d9c1bb7dc80de55`
+- selection summary SHA256:
+  `748b8c1103565e0fe6615cff6c1dbb8d82c9fce93f1975b7ed48dbf67e199fb9`
+
+Selection verdict:
+
+- `trial_count_summarized=36`
+- `strict_pass_count=36`
+- `replacement_candidate_count=0`
+- `replacement_verdict.replace_incumbent=false`
+- status:
+  `WEAK_BUCKET_GAIN_BUT_INCUMBENT_STILL_DOMINATES_CORE_METRICS`
+- degradation reason:
+  `post_valuation_mae_improvement_eur_mwh`
+
+Best weak-bucket trial:
+
+- `t009_w075_l01_p089_e005_n055_r00_d275`
+- adjusted CSV SHA256:
+  `9ed04191719005f723259d61e0946047535002d10dc5384b480bbe5c30599e1c`
+- overall improvement:
+  `0.4651499923241654`
+- solar-tail improvement:
+  `0.47194371091304294`
+- weekend improvement:
+  `0.330769951895787`
+- night improvement:
+  `0.17918873802407917`
+- ramp improvement:
+  `0.06397807990619993`
+- post-valuation improvement:
+  `0.29827066207436914`
+
+Incumbent T056/t005:
+
+- adjusted CSV SHA256:
+  `5e603a4d5926f9265ca564615e69d0d7ee39f778f6f19b495706ab1b89cf69b6`
+- post-valuation improvement:
+  `0.3049947368951571`
+
+Conclusion:
+
+- T059 confirms a monotonic-looking tradeoff: lowering low-tail/cap can improve
+  weak historical buckets, but it does not protect post-valuation enough to
+  replace T056/t005.
+- T056/t005 remains frozen for T057.
+- Do not continue broad low-tail lowering unless the next no-OMPEX hypothesis
+  directly targets post-valuation preservation.
+
 ## 2026-07-09 Expert Audit Follow-Up and T058 Lab Pre-Registration
 
 Read-only expert audits were launched after the T056/t005 diagnostics and

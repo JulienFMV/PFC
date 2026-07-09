@@ -6703,3 +6703,74 @@ Invariants:
   unchanged.
 - OMPEX benchmark artifacts remain post-selection advisory only.
 
+## D-20260709-88 - T059 Low-Tail Cap/Night Interaction Sweep Does Not Replace T056
+
+Decision: T059 is a separate EPEX-only research line and does not replace the
+frozen T056/t005 candidate or alter the locked T057 promotion path.
+
+Reason: the T058 targeted sweep showed that lower `low_tail_intensity` could
+improve weak historical buckets, but it degraded the post-valuation metric
+that protects the frozen candidate from overfitting. T059 therefore tested a
+narrow no-OMPEX interaction grid around T056/t005 and the T058 weak-bucket
+signal: fixed `weekend_intensity=0.75`, `peak_subshape_intensity=0.89`,
+`evening_recovery_intensity=0.05`, `ramp_intensity=0.0`, with
+`low_tail_intensity` in `[0.10, 0.15, 0.20, 0.25]`,
+`night_intensity` in `[0.45, 0.50, 0.55]`, and cap in
+`[2.25, 2.50, 2.75]`.
+
+Implementation:
+
+- Durable T059 parameter files:
+  - `.planning/phases/14-lt-audit-remediation/t059_epex_only_lowtail_cap_night_interactions_grid.json`
+  - `.planning/phases/14-lt-audit-remediation/t059_epex_only_lowtail_cap_night_interactions_delta_grid.json`
+  - `.planning/phases/14-lt-audit-remediation/t059_epex_only_lowtail_cap_night_interactions_thresholds.json`
+  - `.planning/phases/14-lt-audit-remediation/t059_epex_only_lowtail_cap_night_interactions_scoring.json`
+- Generated ignored plan:
+  `output/phase14/t059_epex_only_lowtail_cap_night_interactions_plan.json`
+  with SHA256
+  `56405a821f4c3bd91afce975c47beb0bf810736929fd6ccb27fd44dd852fb545`.
+- Full execution summary:
+  `output/phase14/t059_epex_only_lowtail_cap_night_interactions_summary_full.json`
+  with SHA256
+  `79a17516deea1be9362a9a6e56497b1a9ec69715d900bfafd0fc53bb046900e3`.
+- Full spot-backtest orchestration summary:
+  `output/phase14/t059_epex_only_lowtail_cap_night_interactions_spot_backtests_summary_full.json`
+  with SHA256
+  `73aea816694ab8823e8523d6de74399bfcfbfda2d353db1e8d9c1bb7dc80de55`.
+- Full selection summary:
+  `output/phase14/t059_epex_only_lowtail_cap_night_interactions_selection_full/spot_backtest_selection_summary.json`
+  with SHA256
+  `748b8c1103565e0fe6615cff6c1dbb8d82c9fce93f1975b7ed48dbf67e199fb9`.
+
+Result:
+
+- `trial_count=36`, `trial_count_executed=36`, `eligible_count=36`,
+  `trial_count_summarized=36`, and `strict_pass_count=36`.
+- `replacement_candidate_count=0`.
+- `replacement_verdict.replace_incumbent=false`.
+- Best weak-bucket trial:
+  `t009_w075_l01_p089_e005_n055_r00_d275`.
+- Best weak-bucket metrics:
+  overall `0.4651499923241654`, solar-tail `0.47194371091304294`,
+  weekend `0.330769951895787`, night `0.17918873802407917`, ramp
+  `0.06397807990619993`, but post-valuation only
+  `0.29827066207436914`.
+- T056/t005 incumbent remains better on post-valuation at
+  `0.3049947368951571`.
+
+Rejected alternatives:
+
+- Replace T056/t005 based on weak-bucket or overall gains while accepting
+  post-valuation degradation.
+- Retune the frozen T056/T057 path before T057 completes.
+- Use OMPEX advisory differences as the selection target for T059.
+
+Invariants:
+
+- T056/t005 and the T057 locked plan remain frozen.
+- T059 artifacts are lab-only, no-OMPEX, non-promotional, and ignored under
+  `output/`.
+- Any future replacement requires a new pre-registered no-OMPEX lineage that
+  beats T056/t005 on core replacement metrics, especially post-valuation, and
+  then obtains its own future holdout.
+

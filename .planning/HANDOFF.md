@@ -1414,6 +1414,55 @@ Only after a candidate reports full coverage through
 `2026-07-23T23:00:00Z`, run the locked holdout runner with the unchanged T057
 plan SHA.
 
+## 2026-07-09 T059 EPEX-Only Low-Tail/Cap/Night Interaction Sweep
+
+T059 was run as a separate no-OMPEX research line. It does not alter frozen
+T056/t005 or the locked T057 promotion path.
+
+Durable parameter files:
+
+- `.planning/phases/14-lt-audit-remediation/t059_epex_only_lowtail_cap_night_interactions_grid.json`
+- `.planning/phases/14-lt-audit-remediation/t059_epex_only_lowtail_cap_night_interactions_delta_grid.json`
+- `.planning/phases/14-lt-audit-remediation/t059_epex_only_lowtail_cap_night_interactions_thresholds.json`
+- `.planning/phases/14-lt-audit-remediation/t059_epex_only_lowtail_cap_night_interactions_scoring.json`
+
+Generated ignored artifacts:
+
+- plan:
+  `output/phase14/t059_epex_only_lowtail_cap_night_interactions_plan.json`
+  SHA256 `56405a821f4c3bd91afce975c47beb0bf810736929fd6ccb27fd44dd852fb545`
+- execution summary:
+  `output/phase14/t059_epex_only_lowtail_cap_night_interactions_summary_full.json`
+  SHA256 `79a17516deea1be9362a9a6e56497b1a9ec69715d900bfafd0fc53bb046900e3`
+- spot-backtest orchestration summary:
+  `output/phase14/t059_epex_only_lowtail_cap_night_interactions_spot_backtests_summary_full.json`
+  SHA256 `73aea816694ab8823e8523d6de74399bfcfbfda2d353db1e8d9c1bb7dc80de55`
+- selection summary:
+  `output/phase14/t059_epex_only_lowtail_cap_night_interactions_selection_full/spot_backtest_selection_summary.json`
+  SHA256 `748b8c1103565e0fe6615cff6c1dbb8d82c9fce93f1975b7ed48dbf67e199fb9`
+
+Verdict:
+
+- `trial_count=36`, `trial_count_executed=36`, `eligible_count=36`,
+  `strict_pass_count=36`.
+- `replacement_candidate_count=0`.
+- `replacement_verdict.replace_incumbent=false`.
+- Best weak-bucket trial is
+  `t009_w075_l01_p089_e005_n055_r00_d275`.
+- It improves weak buckets versus incumbent
+  (`overall=0.4651499923241654`, `solar_tail=0.47194371091304294`,
+  `night=0.17918873802407917`, `ramp=0.06397807990619993`) but loses
+  post-valuation (`0.29827066207436914` versus T056/t005
+  `0.3049947368951571`).
+
+Operational conclusion:
+
+- T059 confirms the tradeoff: lowering low-tail/cap improves weak historical
+  buckets but does not beat T056/t005 on the core post-valuation metric.
+- T056/t005 remains frozen for T057.
+- Next model-quality work should not continue broad low-tail lowering unless a
+  new no-OMPEX hypothesis specifically protects post-valuation performance.
+
 ## 2026-07-09 Expert Audit and T058 Lab Plan
 
 Expert read-only audits confirmed the current split of responsibilities:
