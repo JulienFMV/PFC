@@ -5100,6 +5100,12 @@ Validation:
   `locked_holdout_policy_pass` on an otherwise bound production manifest, and
   `production_chain_pass=true` without a holdout even when `approved=false`.
   The same command then reported `63 passed, 1 skipped`.
+- Follow-up reporting hardening made `scripts/audit_epex_lab_future_approval_path.py`
+  emit `required_production_checks` and an explicit next action when readiness
+  lacks the full production-check set. Targeted validation:
+  `python -m pytest tests/test_audit_epex_lab_future_approval_path_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  reported `37 passed, 1 skipped`; regenerated current future approval audit
+  remains `NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING`.
 
 Current regenerated evidence remains NO-GO:
 

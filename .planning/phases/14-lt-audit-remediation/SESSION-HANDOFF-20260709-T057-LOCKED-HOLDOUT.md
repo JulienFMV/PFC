@@ -302,3 +302,14 @@ selected-artifact holdout SHA, divergent capstone holdout SHA, and
 manifest. Future approval also now has an explicit test for
 `production_chain_pass=true` without a holdout even when `approved=false`.
 The same targeted command reported `63 passed, 1 skipped`.
+
+Future approval audit reporting now emits `required_production_checks` and adds
+the next action `Regenerate readiness with the full required production-check
+set before promotion review.` when checks are missing. Targeted validation:
+
+```powershell
+python -m pytest tests/test_audit_epex_lab_future_approval_path_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result: `37 passed, 1 skipped`. The current regenerated approval audit remains
+`NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING`.

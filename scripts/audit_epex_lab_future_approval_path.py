@@ -104,12 +104,14 @@ def audit_future_approval_path(
         "failed_checks": failed_checks,
         "remaining_blockers": missing_or_failed,
         "required_production_evidence": REQUIRED_PRODUCTION_EVIDENCE,
+        "required_production_checks": PRODUCTION_CHECKS,
         "spot_backtest_policy": spot_policy,
         "locked_holdout_summary": str(locked_holdout_summary) if locked_holdout_summary is not None else None,
         "locked_holdout_policy": holdout_policy,
         "next_actions": _next_actions(
             status=status,
             missing=missing,
+            missing_production_checks=missing_production_checks,
             failed_production_checks=failed_production_checks,
             spot_policy=spot_policy,
             holdout_policy=holdout_policy,
@@ -223,6 +225,7 @@ def _next_actions(
     *,
     status: str,
     missing: list[str],
+    missing_production_checks: list[str],
     failed_production_checks: list[str],
     spot_policy: dict[str, Any] | None,
     holdout_policy: dict[str, Any] | None,
@@ -237,6 +240,8 @@ def _next_actions(
             actions.append("Resolve locked holdout failure without retuning against the locked window.")
     if missing:
         actions.append("Generate real adjusted production/export/selected/capstone evidence for missing items.")
+    if missing_production_checks:
+        actions.append("Regenerate readiness with the full required production-check set before promotion review.")
     if failed_production_checks:
         actions.append("Replace local diagnostic approval flags with real production-approved adjusted artifacts.")
     if status == "NO_GO_STRICT_DIAGNOSTICS_FAIL":

@@ -92,6 +92,7 @@ def test_future_approval_path_reports_no_go_blockers(tmp_path: Path) -> None:
     assert "adjusted_production_manifest" in summary["remaining_blockers"]
     assert "adjusted_capstone_approved" in summary["remaining_blockers"]
     assert summary["spot_backtest_policy"]["pass"] is True
+    assert summary["required_production_checks"] == PRODUCTION_CHECKS
     assert summary["next_actions"]
 
 
@@ -203,6 +204,7 @@ def test_future_approval_path_blocks_synthetic_ready_payload_missing_production_
     assert summary["approved"] is False
     assert "adjusted_production_manifest_locked_holdout_bound" in summary["missing_production_checks"]
     assert "locked_holdout_sha_bound" in summary["remaining_blockers"]
+    assert "Regenerate readiness with the full required production-check set before promotion review." in summary["next_actions"]
 
 
 def test_future_approval_path_blocks_bad_spot_policy(tmp_path: Path) -> None:

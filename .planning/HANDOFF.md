@@ -129,6 +129,12 @@ reported `59 passed, 1 skipped`; after adding explicit tests for divergent
 selected/capstone holdout SHA, false holdout policy on the production manifest,
 and `production_chain_pass=true` without a holdout, it reported
 `63 passed, 1 skipped`.
+The future approval audit now also emits `required_production_checks` and a
+specific next action when readiness was generated without the full production
+check set. Targeted validation:
+`python -m pytest tests/test_audit_epex_lab_future_approval_path_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+reported `37 passed, 1 skipped`; regenerated current approval audit remains
+`NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING`.
 
 Current daily generation: Wednesday 2026-07-08 was regenerated from the EEX
 workbook available on 2026-07-08. The latest usable CH/DE/FR quote row in that
