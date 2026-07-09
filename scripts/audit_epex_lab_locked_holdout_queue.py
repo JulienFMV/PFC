@@ -9,6 +9,7 @@ fetch spot data, run backtests, or approve production promotion.
 from __future__ import annotations
 
 import argparse
+import glob
 import hashlib
 import json
 from pathlib import Path
@@ -47,7 +48,9 @@ def audit_queue(
     rows.sort(key=lambda row: (row.get("holdout_start_utc") or "", row.get("plan_id") or ""))
     invalid_count = sum(1 for row in rows if row["blocking_stage"] == "locked_holdout_plan_invalid")
     policy_invalid_count = sum(1 for row in rows if row["blocking_stage"] == "locked_holdout_plan_policy_invalid")
-    artifact_invalid_count = sum(1 for row in rows if row["blocking_stage"] == "locked_holdout_artifact_missing_or_hash_mismatch")
+    artifact_invalid_count = sum(
+        1 for row in rows if row["blocking_stage"] == "locked_holdout_artifact_missing_or_hash_mismatch"
+    )
     due_count = sum(1 for row in rows if row["blocking_stage"] == "refresh_spot_and_run_locked_holdout")
     active_count = sum(1 for row in rows if row["temporal_status"] == "IN_HOLDOUT_WINDOW")
     future_count = sum(1 for row in rows if row["temporal_status"] == "WAITING_FOR_HOLDOUT_START")
@@ -313,6 +316,29 @@ def _repo_root_for_plan(plan_json: Path) -> Path | None:
     return None
 
 
+def _collect_plan_jsons(
+    *,
+    plan_jsons: list[Path] | None,
+    plan_globs: list[str] | None,
+) -> list[Path]:
+    candidates: list[Path] = []
+    candidates.extend(plan_jsons or [])
+    for pattern in plan_globs or []:
+        candidates.extend(Path(match) for match in glob.glob(pattern, recursive=True))
+    deduped: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        resolved = _resolved_path(candidate)
+        key = str(resolved).casefold()
+        if key not in seen:
+            seen.add(key)
+            deduped.append(resolved)
+    deduped.sort(key=lambda path: str(path).casefold())
+    if not deduped:
+        raise ValueError("at least one plan JSON is required")
+    return deduped
+
+
 def _next_actions(rows: list[dict[str, Any]]) -> list[dict[str, str | bool | None]]:
     return [
         {
@@ -381,21 +407,34 @@ def _jsonable(value: Any) -> Any:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--plan-json", type=Path, action="append", required=True)
+    parser.add_argument("--plan-json", type=Path, action="append", default=None)
+    parser.add_argument(
+        "--plan-glob",
+        action="append",
+        default=None,
+        help="Glob pattern for locked holdout plans, e.g. .planning/phases/14-lt-audit-remediation/locked_holdout_plan_*.json.",
+    )
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--as-of-utc", default=None)
     parser.add_argument("--search-root", type=Path, action="append", default=None)
     parser.add_argument("--output-root", type=Path, default=Path("output/phase14"))
     args = parser.parse_args(argv)
+    plan_jsons = _collect_plan_jsons(plan_jsons=args.plan_json, plan_globs=args.plan_glob)
     summary = audit_queue(
-        plan_jsons=args.plan_json,
+        plan_jsons=plan_jsons,
         output=args.output,
         as_of_utc=args.as_of_utc,
         search_roots=args.search_root,
         output_root=args.output_root,
     )
     print(json.dumps(_jsonable(summary), indent=2, sort_keys=True))
-    return 0 if summary["invalid_plan_count"] == 0 and summary["policy_invalid_plan_count"] == 0 else 1
+    return (
+        0
+        if summary["invalid_plan_count"] == 0
+        and summary["policy_invalid_plan_count"] == 0
+        and summary["artifact_invalid_plan_count"] == 0
+        else 1
+    )
 
 
 if __name__ == "__main__":

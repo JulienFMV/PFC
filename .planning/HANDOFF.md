@@ -1429,6 +1429,8 @@ Purpose:
 - compute and expose exact plan SHA values;
 - verify bound baseline, adjusted, lab-manifest, and selection-summary
   artifacts exist locally and match the plan hashes;
+- discover locked holdout plans with `--plan-glob` so T057/T061 cannot be
+  accidentally omitted from the queue audit;
 - classify each plan as waiting for start, in-window, or ready for spot refresh;
 - emit exact Energy Charts locked-holdout commands with plan SHA binding;
 - never fetch spot, run a holdout, tune a candidate, or approve production.
@@ -1439,7 +1441,7 @@ Validation:
 python -m pytest tests\test_audit_epex_lab_locked_holdout_queue_script.py -q -p no:cacheprovider
 ```
 
-Result: `5 passed`.
+Result after glob support and artifact-mismatch CLI exit checks: `7 passed`.
 
 ```powershell
 python -m pytest tests\test_audit_epex_lab_locked_holdout_queue_script.py tests\test_discover_epex_spot_parquet_candidates_script.py tests\test_plan_epex_lab_locked_holdout_script.py tests\test_run_epex_lab_locked_holdout_script.py tests\test_run_energy_charts_epex_locked_holdout_script.py tests\test_check_epex_lab_promotion_readiness_script.py tests\test_audit_epex_lab_future_approval_path_script.py tests\test_lt_ct_imports.py -q -p no:cacheprovider
@@ -1455,10 +1457,19 @@ python -m pytest tests\test_audit_epex_lab_locked_holdout_queue_script.py tests\
 
 Result: `85 passed, 1 skipped`.
 
+Latest validation after adding `--plan-glob` and artifact-invalid CLI exit
+checks:
+
+```powershell
+python -m pytest tests\test_audit_epex_lab_locked_holdout_queue_script.py tests\test_discover_epex_spot_parquet_candidates_script.py tests\test_plan_epex_lab_locked_holdout_script.py tests\test_run_epex_lab_locked_holdout_script.py tests\test_run_energy_charts_epex_locked_holdout_script.py tests\test_epex_lab_locked_holdout_policy.py tests\test_check_epex_lab_promotion_readiness_script.py tests\test_audit_epex_lab_future_approval_path_script.py tests\test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result: `87 passed, 1 skipped`.
+
 Current local queue audit command:
 
 ```powershell
-python scripts\audit_epex_lab_locked_holdout_queue.py --plan-json .planning\phases\14-lt-audit-remediation\locked_holdout_plan_t057_t056_asof20260709.json --plan-json .planning\phases\14-lt-audit-remediation\locked_holdout_plan_t061_t060_asof20260709.json --as-of-utc 2026-07-09T00:00:00Z --search-root output\phase14 --output output\phase14\locked_holdout_queue_audit_20260709.json
+python scripts\audit_epex_lab_locked_holdout_queue.py --plan-glob ".planning\phases\14-lt-audit-remediation\locked_holdout_plan_*.json" --as-of-utc 2026-07-09T00:00:00Z --search-root output\phase14 --output output\phase14\locked_holdout_queue_audit_20260709.json
 ```
 
 Result:

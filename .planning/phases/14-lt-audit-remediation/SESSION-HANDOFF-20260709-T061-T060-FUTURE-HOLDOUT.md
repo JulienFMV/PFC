@@ -155,6 +155,10 @@ lab manifest, and selection summary artifacts exist locally and match the plan
 hashes. It does not fetch spot data, run backtests, tune candidates, or approve
 production.
 
+The CLI supports `--plan-glob` and deduplicates resolved paths, so Phase 14
+operators can audit every tracked `locked_holdout_plan_*.json` without
+hand-listing T057 and T061.
+
 Test:
 
 ```powershell
@@ -163,12 +167,12 @@ python -m pytest tests\test_audit_epex_lab_locked_holdout_queue_script.py -q -p 
 
 Result:
 
-`5 passed`
+`7 passed`
 
 Current local queue audit:
 
 ```powershell
-python scripts\audit_epex_lab_locked_holdout_queue.py --plan-json .planning\phases\14-lt-audit-remediation\locked_holdout_plan_t057_t056_asof20260709.json --plan-json .planning\phases\14-lt-audit-remediation\locked_holdout_plan_t061_t060_asof20260709.json --as-of-utc 2026-07-09T00:00:00Z --search-root output\phase14 --output output\phase14\locked_holdout_queue_audit_20260709.json
+python scripts\audit_epex_lab_locked_holdout_queue.py --plan-glob ".planning\phases\14-lt-audit-remediation\locked_holdout_plan_*.json" --as-of-utc 2026-07-09T00:00:00Z --search-root output\phase14 --output output\phase14\locked_holdout_queue_audit_20260709.json
 ```
 
 Observed:

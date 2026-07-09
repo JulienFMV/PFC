@@ -151,6 +151,67 @@ def test_audit_locked_holdout_queue_cli_returns_nonzero_for_invalid_policy(tmp_p
     assert summary["plans"][0]["policy_checks"]["production_approved_false"] is False
 
 
+def test_audit_locked_holdout_queue_cli_discovers_plans_by_glob(tmp_path: Path) -> None:
+    plans = tmp_path / "plans"
+    plans.mkdir()
+    _write_plan(
+        plans / "locked_holdout_plan_t057.json",
+        plan_id="t057",
+        start="2026-07-10T00:00:00Z",
+        end="2026-07-24T00:00:00Z",
+    )
+    _write_plan(
+        plans / "locked_holdout_plan_t061.json",
+        plan_id="t061",
+        start="2026-07-24T00:00:00Z",
+        end="2026-08-07T00:00:00Z",
+    )
+
+    code = main(
+        [
+            "--plan-glob",
+            str(plans / "locked_holdout_plan_*.json"),
+            "--output",
+            str(tmp_path / "queue.json"),
+            "--as-of-utc",
+            "2026-07-09T00:00:00Z",
+        ]
+    )
+
+    assert code == 0
+    summary = json.loads((tmp_path / "queue.json").read_text(encoding="utf-8"))
+    assert summary["plan_count"] == 2
+    assert [row["plan_id"] for row in summary["plans"]] == ["t057", "t061"]
+    assert summary["artifact_invalid_plan_count"] == 0
+
+
+def test_audit_locked_holdout_queue_cli_returns_nonzero_for_tampered_artifact(tmp_path: Path) -> None:
+    plan = _write_plan(
+        tmp_path / "bad_artifact.json",
+        plan_id="bad_artifact",
+        start="2026-07-10T00:00:00Z",
+        end="2026-07-24T00:00:00Z",
+    )
+    payload = json.loads(plan.read_text(encoding="utf-8"))
+    Path(payload["lab_manifest"]).write_text("tampered\n", encoding="utf-8")
+
+    code = main(
+        [
+            "--plan-json",
+            str(plan),
+            "--output",
+            str(tmp_path / "queue.json"),
+            "--as-of-utc",
+            "2026-07-09T00:00:00Z",
+        ]
+    )
+
+    assert code == 1
+    summary = json.loads((tmp_path / "queue.json").read_text(encoding="utf-8"))
+    assert summary["artifact_invalid_plan_count"] == 1
+    assert summary["plans"][0]["artifact_checks"]["lab_manifest_sha256_bound"] is False
+
+
 def _write_plan(
     path: Path,
     *,

@@ -7621,6 +7621,10 @@ Implementation:
 - The audit verifies that bound baseline CSV, adjusted CSV, lab manifest, and
   selection summary artifacts exist locally and match their plan hashes before
   allowing a temporal wait/run status.
+- The CLI supports `--plan-glob` and deduplicates resolved plan paths so every
+  tracked `locked_holdout_plan_*.json` can be audited without hand-listing
+  T057/T061.
+- The CLI exits non-zero for policy-invalid or artifact-invalid plans.
 - Current queue audit output is local-only at
   `output/phase14/locked_holdout_queue_audit_20260709.json`.
 
