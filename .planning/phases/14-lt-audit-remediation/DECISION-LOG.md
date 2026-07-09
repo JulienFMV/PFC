@@ -5758,3 +5758,68 @@ Invariants not to break:
 - Candidate preflight remains read-only and non-promotional.
 - The locked T057 plan JSON remains unchanged.
 
+## D-20260709-70 - Require T057 Candidate Timestamp-Set Identity
+
+Decision: the T057 preflight and downstream locked-holdout policy now require
+the locked baseline and adjusted candidate CSVs to expose the exact same
+timestamp set before the holdout can be considered passable promotion evidence.
+
+Reason: it is not enough for both CSVs to cover the locked holdout window
+independently. If the baseline and adjusted candidates carry different hourly
+timestamp populations, a later backtest could compare non-identical candidate
+surfaces or hide missing/non-comparable horizons outside the immediate holdout
+slice. The source-integrity preflight must prove that the locked comparison is
+timestamp-identical before the runner enters the backtest/audit chain.
+
+Implementation:
+
+- `scripts/check_epex_lab_locked_holdout_coverage.py` now reports, for both
+  locked candidate CSVs:
+  - unique timestamp count;
+  - min/max parsed UTC timestamp;
+  - SHA-256 of the sorted unique timestamp set.
+- Coverage checks now include `candidate_timestamp_sets_identical`, and
+  `ready_to_run_backtest` requires that check to pass.
+- `scripts/epex_lab_locked_holdout_policy.py` now requires the downstream
+  embedded coverage checks for:
+  - baseline and adjusted CSV hash binding;
+  - baseline and adjusted candidate schema/timestamp/value/holdout preflight;
+  - identical baseline/adjusted candidate timestamp-set SHA.
+- Passing holdout test fixtures were updated to carry the new coverage
+  evidence instead of relying only on `coverage_ready=true`.
+
+Validation:
+
+- `python -m pytest tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_adjusted_production_chain_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_epex_lab_locked_holdout_policy.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_plan_epex_lab_locked_holdout_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  reported `96 passed, 1 skipped`.
+
+Operational result:
+
+- Regenerated current T057 runner remains
+  `WAITING_FOR_FULL_SPOT_COVERAGE`, exit `1`.
+- Spot evidence is still unavailable for the locked future window:
+  `spot_max_utc=2026-07-08T23:00:00Z`, `observed_holdout_hours=0`,
+  `expected_holdout_hours=336`.
+- Locked baseline and adjusted candidate CSVs now both report
+  `timestamp_count=57025`, `timestamp_min_utc=2026-06-30T22:00:00Z`,
+  `timestamp_max_utc=2032-12-31T22:00:00Z`, and identical timestamp-set SHA
+  `c1ac9c621b1293e296f5789c342da5ecfee8444dc8fa0ad1030686079245020e`.
+- Regenerated future approval audit remains
+  `NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING`; the new candidate preflight checks
+  are true and the remaining holdout blocker is future spot coverage.
+
+Rejected alternatives:
+
+- Compare only the locked holdout slice and ignore divergent full-candidate
+  timestamp populations.
+- Trust `coverage_ready` without requiring the downstream policy to inspect the
+  specific candidate preflight checks.
+
+Invariants not to break:
+
+- OMPEX remains benchmark/advisory only and is not a model, selection, or gate
+  input.
+- The locked T057 plan JSON remains unchanged.
+- Timestamp-set mismatch is a source-comparability NO-GO, not a reason to tune
+  against the locked window.
+

@@ -70,6 +70,18 @@ def locked_holdout_policy(summary: dict[str, Any] | None) -> dict[str, Any]:
                 "coverage_no_duplicate_holdout_rows": coverage_checks.get("no_duplicate_holdout_rows") is True,
                 "coverage_spot_price_column_present": coverage_checks.get("spot_price_column_present") is True,
                 "coverage_holdout_prices_finite": coverage_checks.get("holdout_prices_finite") is True,
+                "coverage_baseline_csv_sha256_bound": coverage_checks.get("baseline_csv_sha256_bound") is True,
+                "coverage_adjusted_csv_sha256_bound": coverage_checks.get("adjusted_csv_sha256_bound") is True,
+                "coverage_baseline_candidate_schema_ready": _candidate_coverage_checks_pass(
+                    coverage_checks,
+                    prefix="baseline_candidate",
+                ),
+                "coverage_adjusted_candidate_schema_ready": _candidate_coverage_checks_pass(
+                    coverage_checks,
+                    prefix="adjusted_candidate",
+                ),
+                "coverage_candidate_timestamp_sets_identical": coverage_checks.get("candidate_timestamp_sets_identical")
+                is True,
                 "coverage_status_sha256_bound": _file_sha_bound(
                     summary,
                     path_key="coverage_status",
@@ -148,6 +160,19 @@ def _expected_plan_sha_bound(summary: dict[str, Any]) -> bool:
     actual = summary.get("actual_plan_json_sha256")
     identity_sha = _identity(summary).get("plan_json_sha256")
     return bool(expected and actual and identity_sha and expected == actual == identity_sha)
+
+
+def _candidate_coverage_checks_pass(checks: dict[str, Any], *, prefix: str) -> bool:
+    return all(
+        checks.get(name) is True
+        for name in [
+            f"{prefix}_required_columns_present",
+            f"{prefix}_timestamps_parseable",
+            f"{prefix}_no_duplicate_timestamps",
+            f"{prefix}_price_columns_finite",
+            f"{prefix}_holdout_window_covered",
+        ]
+    )
 
 
 def _linked_backtest_checks(summary: dict[str, Any]) -> dict[str, bool]:

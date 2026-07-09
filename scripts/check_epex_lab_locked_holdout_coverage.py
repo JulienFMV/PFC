@@ -73,6 +73,11 @@ def check_coverage(
     adjusted_source = _plan_source_file_status(plan, file_key="adjusted_csv", criteria=criteria)
     baseline_candidate = _candidate_csv_status(baseline_source["path"], expected=expected)
     adjusted_candidate = _candidate_csv_status(adjusted_source["path"], expected=expected)
+    candidate_timestamp_sets_identical = bool(
+        baseline_candidate["timestamp_set_sha256"]
+        and adjusted_candidate["timestamp_set_sha256"]
+        and baseline_candidate["timestamp_set_sha256"] == adjusted_candidate["timestamp_set_sha256"]
+    )
     min_hours = int(criteria.get("min_holdout_hours", len(expected)))
     coverage = {
         "schema_version": "epex_lab_locked_holdout_coverage.v1",
@@ -93,11 +98,19 @@ def check_coverage(
         "non_finite_holdout_price_rows": non_finite_price_rows,
         "baseline_csv": baseline_source["path"],
         "baseline_csv_sha256": baseline_source["expected_sha256"],
+        "baseline_candidate_timestamp_count": baseline_candidate["timestamp_count"],
+        "baseline_candidate_timestamp_min_utc": baseline_candidate["timestamp_min_utc"],
+        "baseline_candidate_timestamp_max_utc": baseline_candidate["timestamp_max_utc"],
+        "baseline_candidate_timestamp_set_sha256": baseline_candidate["timestamp_set_sha256"],
         "baseline_candidate_missing_holdout_hours": baseline_candidate["missing_holdout_hours"],
         "baseline_candidate_first_missing_holdout_utc": baseline_candidate["first_missing_holdout_utc"],
         "baseline_candidate_last_missing_holdout_utc": baseline_candidate["last_missing_holdout_utc"],
         "adjusted_csv": adjusted_source["path"],
         "adjusted_csv_sha256": adjusted_source["expected_sha256"],
+        "adjusted_candidate_timestamp_count": adjusted_candidate["timestamp_count"],
+        "adjusted_candidate_timestamp_min_utc": adjusted_candidate["timestamp_min_utc"],
+        "adjusted_candidate_timestamp_max_utc": adjusted_candidate["timestamp_max_utc"],
+        "adjusted_candidate_timestamp_set_sha256": adjusted_candidate["timestamp_set_sha256"],
         "adjusted_candidate_missing_holdout_hours": adjusted_candidate["missing_holdout_hours"],
         "adjusted_candidate_first_missing_holdout_utc": adjusted_candidate["first_missing_holdout_utc"],
         "adjusted_candidate_last_missing_holdout_utc": adjusted_candidate["last_missing_holdout_utc"],
@@ -130,6 +143,7 @@ def check_coverage(
             "adjusted_candidate_no_duplicate_timestamps": adjusted_candidate["no_duplicate_timestamps"],
             "adjusted_candidate_price_columns_finite": adjusted_candidate["price_columns_finite"],
             "adjusted_candidate_holdout_window_covered": adjusted_candidate["holdout_window_covered"],
+            "candidate_timestamp_sets_identical": candidate_timestamp_sets_identical,
             "spot_parquet_non_empty": bool(len(spot)),
             "spot_price_column_present": price_column_present,
             "holdout_prices_finite": holdout_prices_finite,
@@ -160,6 +174,7 @@ def check_coverage(
         and checks["adjusted_candidate_no_duplicate_timestamps"]
         and checks["adjusted_candidate_price_columns_finite"]
         and checks["adjusted_candidate_holdout_window_covered"]
+        and checks["candidate_timestamp_sets_identical"]
         and checks["spot_parquet_non_empty"]
         and checks["spot_price_column_present"]
         and checks["holdout_prices_finite"]
@@ -189,6 +204,7 @@ def check_coverage(
             "adjusted_candidate_no_duplicate_timestamps",
             "adjusted_candidate_price_columns_finite",
             "adjusted_candidate_holdout_window_covered",
+            "candidate_timestamp_sets_identical",
         ]
     )
     coverage["status"] = (
@@ -236,6 +252,10 @@ def _candidate_csv_status(path_text: str | None, *, expected: pd.DatetimeIndex) 
         "no_duplicate_timestamps": False,
         "price_columns_finite": False,
         "holdout_window_covered": False,
+        "timestamp_count": 0,
+        "timestamp_min_utc": None,
+        "timestamp_max_utc": None,
+        "timestamp_set_sha256": None,
         "missing_holdout_hours": missing_all,
         "first_missing_holdout_utc": _iso(expected[0]) if len(expected) else None,
         "last_missing_holdout_utc": _iso(expected[-1]) if len(expected) else None,
@@ -267,12 +287,24 @@ def _candidate_csv_status(path_text: str | None, *, expected: pd.DatetimeIndex) 
     except (TypeError, ValueError):
         status["price_columns_finite"] = False
     observed_unique = pd.DatetimeIndex(idx.unique()).sort_values()
+    status["timestamp_count"] = int(len(observed_unique))
+    status["timestamp_min_utc"] = _iso(observed_unique[0]) if len(observed_unique) else None
+    status["timestamp_max_utc"] = _iso(observed_unique[-1]) if len(observed_unique) else None
+    status["timestamp_set_sha256"] = _timestamp_index_sha256(observed_unique)
     missing = expected.difference(observed_unique)
     status["missing_holdout_hours"] = int(len(missing))
     status["first_missing_holdout_utc"] = _iso(missing[0]) if len(missing) else None
     status["last_missing_holdout_utc"] = _iso(missing[-1]) if len(missing) else None
     status["holdout_window_covered"] = int(len(missing)) == 0
     return status
+
+
+def _timestamp_index_sha256(index: pd.DatetimeIndex) -> str:
+    digest = hashlib.sha256()
+    for item in index:
+        digest.update(_iso(item).encode("utf-8"))
+        digest.update(b"\n")
+    return digest.hexdigest()
 
 
 def _load_spot_frame(path: Path) -> pd.DataFrame:

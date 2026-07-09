@@ -132,6 +132,25 @@ def test_locked_holdout_policy_rejects_coverage_file_mismatch(tmp_path: Path) ->
     assert policy["checks"]["coverage_status_matches_embedded"] is False
 
 
+def test_locked_holdout_policy_rejects_coverage_without_candidate_checks(tmp_path: Path) -> None:
+    summary = _passing_run_summary(tmp_path)
+    coverage = summary["coverage"]
+    for key in list(coverage["checks"]):
+        if key.startswith("baseline_candidate_") or key.startswith("adjusted_candidate_"):
+            coverage["checks"].pop(key)
+    coverage["checks"].pop("candidate_timestamp_sets_identical")
+    coverage_path = Path(summary["coverage_status"])
+    coverage_path.write_text(json.dumps(coverage), encoding="utf-8")
+    summary["coverage_status_sha256"] = _sha256(coverage_path)
+
+    policy = locked_holdout_policy(summary)
+
+    assert policy["pass"] is False
+    assert policy["checks"]["coverage_baseline_candidate_schema_ready"] is False
+    assert policy["checks"]["coverage_adjusted_candidate_schema_ready"] is False
+    assert policy["checks"]["coverage_candidate_timestamp_sets_identical"] is False
+
+
 def test_locked_holdout_policy_rejects_expected_plan_sha_mismatch(tmp_path: Path) -> None:
     summary = _passing_run_summary(tmp_path)
     summary["expected_plan_json_sha256"] = "0" * 64
@@ -147,6 +166,19 @@ def _ready_coverage() -> dict:
         "status": "READY_TO_RUN_HOLDOUT_BACKTEST",
         "ready_to_run_backtest": True,
         "checks": {
+            "baseline_csv_sha256_bound": True,
+            "adjusted_csv_sha256_bound": True,
+            "baseline_candidate_required_columns_present": True,
+            "baseline_candidate_timestamps_parseable": True,
+            "baseline_candidate_no_duplicate_timestamps": True,
+            "baseline_candidate_price_columns_finite": True,
+            "baseline_candidate_holdout_window_covered": True,
+            "adjusted_candidate_required_columns_present": True,
+            "adjusted_candidate_timestamps_parseable": True,
+            "adjusted_candidate_no_duplicate_timestamps": True,
+            "adjusted_candidate_price_columns_finite": True,
+            "adjusted_candidate_holdout_window_covered": True,
+            "candidate_timestamp_sets_identical": True,
             "full_window_covered": True,
             "min_holdout_hours_met": True,
             "no_duplicate_holdout_rows": True,

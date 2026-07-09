@@ -28,6 +28,7 @@ def test_check_epex_lab_locked_holdout_coverage_ready(tmp_path: Path) -> None:
     assert summary["checks"]["plan_benchmark_policy_locked"] is True
     assert summary["checks"]["baseline_csv_sha256_bound"] is True
     assert summary["checks"]["adjusted_csv_sha256_bound"] is True
+    assert summary["checks"]["candidate_timestamp_sets_identical"] is True
     assert summary["checks"]["spot_price_column_present"] is True
     assert summary["checks"]["holdout_prices_finite"] is True
     assert summary["checks"]["full_window_covered"] is True
@@ -215,6 +216,26 @@ def test_check_epex_lab_locked_holdout_coverage_blocks_candidate_holdout_gap(tmp
     assert summary["checks"]["baseline_csv_sha256_bound"] is True
     assert summary["checks"]["baseline_candidate_holdout_window_covered"] is False
     assert summary["baseline_candidate_missing_holdout_hours"] == 1
+
+
+def test_check_epex_lab_locked_holdout_coverage_blocks_candidate_timestamp_set_mismatch(tmp_path: Path) -> None:
+    plan = _write_plan(tmp_path, min_hours=4)
+    payload = json.loads(plan.read_text(encoding="utf-8"))
+    _write_candidate_csv(Path(payload["adjusted_csv"]), periods=5)
+    _rewrite_plan_candidate_hash(plan, file_key="adjusted_csv")
+    spot = tmp_path / "spot.parquet"
+    pd.DataFrame(
+        {"price_eur_mwh": [1.0, 2.0, 3.0, 4.0]},
+        index=pd.date_range("2026-07-10T00:00:00Z", periods=4, freq="h"),
+    ).to_parquet(spot)
+
+    summary = check_coverage(plan_json=plan, spot_parquet=spot)
+
+    assert summary["status"] == "NO_GO_LOCKED_HOLDOUT_SOURCE_MISSING_OR_HASH_MISMATCH"
+    assert summary["ready_to_run_backtest"] is False
+    assert summary["checks"]["baseline_candidate_holdout_window_covered"] is True
+    assert summary["checks"]["adjusted_candidate_holdout_window_covered"] is True
+    assert summary["checks"]["candidate_timestamp_sets_identical"] is False
 
 
 def test_check_epex_lab_locked_holdout_coverage_cli_exits_nonzero_when_waiting(tmp_path: Path) -> None:

@@ -677,3 +677,31 @@ python -m pytest tests/test_build_epex_lab_adjusted_production_manifest_script.p
 ```
 
 Result: `94 passed, 1 skipped`.
+
+Follow-up after candidate timestamp-set identity hardening:
+
+- `scripts/check_epex_lab_locked_holdout_coverage.py` now records each locked
+  candidate CSV timestamp count, UTC min/max, and sorted timestamp-set SHA.
+- `ready_to_run_backtest` requires
+  `checks.candidate_timestamp_sets_identical=true`.
+- `scripts/epex_lab_locked_holdout_policy.py` now requires the downstream
+  coverage payload to include explicit baseline/adjusted candidate preflight
+  checks, source CSV hash binding, and identical candidate timestamp-set SHA.
+- Current regenerated T057 runner remains
+  `WAITING_FOR_FULL_SPOT_COVERAGE`, exit `1`, because the spot parquet ends at
+  `2026-07-08T23:00:00Z` and covers `0/336` locked holdout hours.
+- Candidate preflight is clean: baseline and adjusted CSVs both have
+  `57025` unique timestamps from `2026-06-30T22:00:00Z` through
+  `2032-12-31T22:00:00Z`, with identical timestamp-set SHA
+  `c1ac9c621b1293e296f5789c342da5ecfee8444dc8fa0ad1030686079245020e`.
+- Regenerated future approval audit remains
+  `NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING`; the new candidate preflight checks
+  are true, and the holdout pass remains blocked only by future spot coverage.
+
+Validation:
+
+```powershell
+python -m pytest tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_adjusted_production_chain_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_epex_lab_locked_holdout_policy.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_plan_epex_lab_locked_holdout_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result: `96 passed, 1 skipped`.
