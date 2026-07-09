@@ -296,6 +296,47 @@ Result:
 
 `96 passed, 1 skipped`
 
+Future approval follow-up:
+
+- `scripts/audit_epex_lab_future_approval_path.py` now includes
+  `locked_holdout_queue_pass` in its internal minimum production-check set, so
+  old or synthetic readiness JSON cannot omit the queue requirement.
+- Current local queue/readiness/future-approval outputs were regenerated.
+- Queue audit:
+  `output/phase14/locked_holdout_queue_audit_20260709.json` reports
+  `WAITING_FOR_FUTURE_HOLDOUT_WINDOWS`, `plan_count=2`,
+  `future_window_count=2`.
+- Readiness:
+  `output/phase14/t057_locked_t056_future_holdout/promotion_readiness_with_locked_holdout_current.json`
+  reports `STRICT_DIAGNOSTICS_PASS_PRODUCTION_CHAIN_MISSING`,
+  `production_blocking_stage=locked_holdout_coverage`, with failed checks
+  including `locked_holdout_pass` and `locked_holdout_queue_pass`.
+- Future approval:
+  `output/phase14/t057_locked_t056_future_holdout/future_approval_path_with_holdout_current.json`
+  reports `NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING`,
+  `blocking_stage=locked_holdout_coverage`, with remaining blockers including
+  `locked_holdout_pass` and `locked_holdout_queue_pass`.
+
+Validation:
+
+```powershell
+pytest tests\test_audit_epex_lab_future_approval_path_script.py -q -p no:cacheprovider
+```
+
+Result:
+
+`12 passed`
+
+Broader validation:
+
+```powershell
+pytest tests\test_audit_epex_lab_future_approval_path_script.py tests\test_check_epex_lab_promotion_readiness_script.py tests\test_audit_epex_lab_locked_holdout_queue_script.py tests\test_epex_lab_locked_holdout_policy.py tests\test_build_epex_lab_adjusted_production_manifest_script.py tests\test_build_epex_lab_adjusted_production_chain_script.py tests\test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result:
+
+`101 passed, 1 skipped`
+
 ## Production Chain Builder Follow-Up
 
 Fixed a latent bug in:

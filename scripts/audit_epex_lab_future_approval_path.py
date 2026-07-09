@@ -28,6 +28,7 @@ PRODUCTION_CHECKS = [
     "adjusted_capstone_approved",
     "adjusted_capstone_production_chain_bound",
     "locked_holdout_pass",
+    "locked_holdout_queue_pass",
 ]
 
 REQUIRED_PRODUCTION_EVIDENCE = [

@@ -1508,6 +1508,39 @@ python -m pytest tests\test_audit_epex_lab_locked_holdout_queue_script.py tests\
 
 Result: `96 passed, 1 skipped`.
 
+Follow-up hardening: `scripts/audit_epex_lab_future_approval_path.py` now also
+includes `locked_holdout_queue_pass` in its internal minimum production-check
+set. This prevents an old or synthetic readiness JSON from dropping the queue
+requirement. Targeted validation:
+
+```powershell
+pytest tests\test_audit_epex_lab_future_approval_path_script.py -q -p no:cacheprovider
+```
+
+Result: `12 passed`.
+
+Broader validation:
+
+```powershell
+pytest tests\test_audit_epex_lab_future_approval_path_script.py tests\test_check_epex_lab_promotion_readiness_script.py tests\test_audit_epex_lab_locked_holdout_queue_script.py tests\test_epex_lab_locked_holdout_policy.py tests\test_build_epex_lab_adjusted_production_manifest_script.py tests\test_build_epex_lab_adjusted_production_chain_script.py tests\test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result: `101 passed, 1 skipped`.
+
+Regenerated local operator outputs after this hardening:
+
+- `output/phase14/locked_holdout_queue_audit_20260709.json`:
+  `status=WAITING_FOR_FUTURE_HOLDOUT_WINDOWS`, `plan_count=2`,
+  `future_window_count=2`.
+- `output/phase14/t057_locked_t056_future_holdout/promotion_readiness_with_locked_holdout_current.json`:
+  `status=STRICT_DIAGNOSTICS_PASS_PRODUCTION_CHAIN_MISSING`,
+  `production_blocking_stage=locked_holdout_coverage`, failed production
+  checks include `locked_holdout_pass` and `locked_holdout_queue_pass`.
+- `output/phase14/t057_locked_t056_future_holdout/future_approval_path_with_holdout_current.json`:
+  `status=NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING`,
+  `blocking_stage=locked_holdout_coverage`, remaining blockers include
+  `locked_holdout_pass` and `locked_holdout_queue_pass`.
+
 ## 2026-07-09 Adjusted Production Chain Builder Self-Reference Hardening
 
 Fixed:
