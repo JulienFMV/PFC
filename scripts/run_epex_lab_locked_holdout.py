@@ -29,6 +29,9 @@ def run_locked_holdout(
     output_dir: Path,
     expected_plan_sha256: str,
 ) -> dict[str, Any]:
+    plan_json = _resolved_path(plan_json)
+    spot_parquet = _resolved_path(spot_parquet)
+    output_dir = _resolved_path(output_dir)
     plan = _read_json(plan_json)
     actual_plan_sha256 = _sha256(plan_json)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -133,12 +136,16 @@ def run_locked_holdout(
 def _write_run_summary(output_dir: Path, run_summary: dict[str, Any]) -> dict[str, Any]:
     path = output_dir / "locked_holdout_run_summary.json"
     path.write_text(json.dumps(_jsonable(run_summary), indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    run_summary["run_summary"] = str(path)
+    run_summary["run_summary"] = str(_resolved_path(path))
     return run_summary
 
 
 def _read_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _resolved_path(path: Path) -> Path:
+    return path.expanduser().resolve(strict=False)
 
 
 def _sha256(path: Path) -> str:

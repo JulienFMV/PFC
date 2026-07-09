@@ -47,6 +47,8 @@ def check_coverage(
     spot_parquet: Path,
     output: Path | None = None,
 ) -> dict[str, Any]:
+    plan_json = _resolved_path(plan_json)
+    spot_parquet = _resolved_path(spot_parquet)
     plan = _read_json(plan_json)
     if plan.get("schema_version") != PLAN_SCHEMA_VERSION:
         raise ValueError(f"plan must be {PLAN_SCHEMA_VERSION}")
@@ -354,6 +356,10 @@ def _sha256(path: Path) -> str:
 
 def _read_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _resolved_path(path: Path) -> Path:
+    return path.expanduser().resolve(strict=False)
 
 
 def _jsonable(value: Any) -> Any:

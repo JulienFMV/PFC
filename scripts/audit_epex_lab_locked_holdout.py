@@ -31,6 +31,9 @@ def audit_holdout(
     spot_backtest_summary: Path,
     output: Path | None = None,
 ) -> dict[str, Any]:
+    plan_json = _resolved_path(plan_json)
+    spot_backtest_summary = _resolved_path(spot_backtest_summary)
+    output = _resolved_path(output) if output is not None else None
     plan = _read_json(plan_json)
     summary = _read_json(spot_backtest_summary)
     criteria = plan.get("pass_criteria") or {}
@@ -160,6 +163,10 @@ def _utc_text(value: Any) -> str:
 
 def _read_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _resolved_path(path: Path) -> Path:
+    return path.expanduser().resolve(strict=False)
 
 
 def _sha256(path: Path) -> str:

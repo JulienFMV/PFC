@@ -74,6 +74,17 @@ def test_locked_holdout_policy_accepts_plan_bound_run_summary(tmp_path: Path) ->
     assert policy["checks"]["plan_identity_matches_plan_json"] is True
 
 
+def test_build_locked_plan_identity_resolves_plan_json_path(tmp_path: Path, monkeypatch) -> None:
+    plan = _write_plan(tmp_path)
+    payload = json.loads(plan.read_text(encoding="utf-8"))
+    monkeypatch.chdir(tmp_path)
+
+    identity = build_locked_plan_identity(payload, plan_json=Path("locked_plan.json"))
+
+    assert identity["plan_json"] == str(plan.resolve())
+    assert identity["plan_json_sha256"] == _sha256(plan)
+
+
 def test_locked_holdout_policy_rejects_passing_summary_without_plan_identity(tmp_path: Path) -> None:
     summary = _passing_run_summary(tmp_path)
     summary.pop("locked_plan_identity")

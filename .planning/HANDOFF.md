@@ -1109,3 +1109,37 @@ Current regenerated T057 runner remains
 remains `NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING`; the remaining holdout blocker
 is still future spot coverage.
 
+## 2026-07-09 T057 Resolved Evidence Paths Follow-Up
+
+The remaining path-sensitivity P2 from the read-only audit has been addressed
+for newly generated T057 evidence.
+
+- `build_locked_plan_identity()` now resolves `plan_json` before storing and
+  hashing it.
+- Coverage, runner, and locked-holdout audit writers now resolve their main
+  input/output paths before writing summaries.
+- Future-approval audit now quotes real CLI arguments in the recommended
+  `run_locked_holdout` command, so absolute paths with spaces remain runnable.
+- A policy unit test covers relative `plan_json` input being stored as a
+  resolved path with the correct SHA.
+
+Validation:
+
+```powershell
+python -m pytest tests/test_epex_lab_locked_holdout_policy.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_audit_epex_lab_future_approval_path_script.py -q -p no:cacheprovider
+```
+
+Result: `49 passed`.
+
+```powershell
+python -m pytest tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_adjusted_production_chain_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_epex_lab_locked_holdout_policy.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_plan_epex_lab_locked_holdout_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result: `103 passed, 1 skipped`.
+
+Regenerated current T057 runner remains `WAITING_FOR_FULL_SPOT_COVERAGE`,
+exit `1`, but writes resolved UNC paths for `plan_json`, `spot_parquet`,
+`output_dir`, `coverage_status`, and `run_summary`. Regenerated future approval
+audit remains `NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING`, exit `1`, and its
+recommended command quotes the resolved locked plan path.
+

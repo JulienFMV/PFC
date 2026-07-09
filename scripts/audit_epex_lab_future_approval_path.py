@@ -286,12 +286,20 @@ def _recommended_commands(
     return {
         "run_locked_holdout": (
             "python scripts/run_epex_lab_locked_holdout.py "
-            f"--plan-json {plan_json} "
-            f"--expected-plan-sha256 {plan_sha} "
+            f"--plan-json {_quote_cli_arg(plan_json)} "
+            f"--expected-plan-sha256 {_quote_cli_arg(plan_sha)} "
             "--spot-parquet <FRESH_FUTURE_SPOT_PARQUET> "
             "--output-dir <T057_HOLDOUT_OUTPUT_DIR>"
         )
     }
+
+
+def _quote_cli_arg(value: str) -> str:
+    if value.startswith("<") and value.endswith(">"):
+        return value
+    if not value or any(char.isspace() for char in value):
+        return '"' + value.replace('"', '\\"') + '"'
+    return value
 
 
 def _read_json(path: Path | None) -> dict[str, Any]:

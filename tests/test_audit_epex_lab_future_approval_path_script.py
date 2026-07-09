@@ -282,9 +282,12 @@ def test_future_approval_path_blocks_when_locked_holdout_coverage_pending(tmp_pa
     assert summary["locked_holdout_policy"]["checks"]["coverage_ready"] is False
     assert summary["blocking_stage"] == "locked_holdout_coverage"
     assert summary["next_required_step"] == "wait_for_full_spot_coverage_then_run_locked_holdout"
+    plan_json = str((tmp_path / "locked_plan.json").resolve())
+    if any(char.isspace() for char in plan_json):
+        plan_json = f'"{plan_json}"'
     assert summary["recommended_commands"]["run_locked_holdout"] == (
         "python scripts/run_epex_lab_locked_holdout.py "
-        f"--plan-json {tmp_path / 'locked_plan.json'} "
+        f"--plan-json {plan_json} "
         f"--expected-plan-sha256 {_sha256(tmp_path / 'locked_plan.json')} "
         "--spot-parquet <FRESH_FUTURE_SPOT_PARQUET> "
         "--output-dir <T057_HOLDOUT_OUTPUT_DIR>"

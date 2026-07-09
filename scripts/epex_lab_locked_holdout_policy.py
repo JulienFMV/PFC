@@ -36,8 +36,9 @@ def build_locked_plan_identity(plan: dict[str, Any], *, plan_json: Path | None =
         "selection_summary_sha256": plan.get("selection_summary_sha256"),
     }
     if plan_json is not None:
-        identity["plan_json"] = str(plan_json)
-        identity["plan_json_sha256"] = _sha256(plan_json)
+        resolved_plan_json = _resolved_path(plan_json)
+        identity["plan_json"] = str(resolved_plan_json)
+        identity["plan_json_sha256"] = _sha256(resolved_plan_json)
     return identity
 
 
@@ -405,3 +406,7 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _resolved_path(path: Path) -> Path:
+    return path.expanduser().resolve(strict=False)

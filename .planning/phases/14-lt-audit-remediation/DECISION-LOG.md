@@ -5951,3 +5951,61 @@ Invariants not to break:
 - Offset/timestamp/data-quality failures are source-comparability NO-GO
   conditions, not tuning signals against the locked window.
 
+## D-20260709-73 - Resolve T057 Evidence Paths Before Writing Summaries
+
+Decision: new T057 locked-holdout evidence now writes resolved filesystem paths
+for the locked plan, spot parquet, output directory, coverage status, run
+summary, and audit inputs.
+
+Reason: the locked-holdout policy revalidates `plan_json` by opening the file
+named in the evidence. Relative paths can cause false NO-GO results when the
+same summary is inspected from a different current working directory. Promotion
+evidence should remain fail-closed, but new evidence should not be
+unnecessarily cwd-sensitive.
+
+Implementation:
+
+- `build_locked_plan_identity()` resolves `plan_json` before storing
+  `identity.plan_json` and hashing the file.
+- `scripts/check_epex_lab_locked_holdout_coverage.py` resolves `plan_json` and
+  `spot_parquet` before writing coverage evidence.
+- `scripts/run_epex_lab_locked_holdout.py` resolves `plan_json`,
+  `spot_parquet`, `output_dir`, and the written `run_summary` path.
+- `scripts/audit_epex_lab_locked_holdout.py` resolves `plan_json`,
+  `spot_backtest_summary`, and optional output path before writing audit
+  evidence.
+- `scripts/audit_epex_lab_future_approval_path.py` now quotes real CLI
+  arguments in the recommended locked-holdout command so absolute paths with
+  spaces remain runnable.
+- `tests/test_epex_lab_locked_holdout_policy.py` now covers relative
+  `plan_json` input to `build_locked_plan_identity()`.
+
+Validation:
+
+- `python -m pytest tests/test_epex_lab_locked_holdout_policy.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_audit_epex_lab_future_approval_path_script.py -q -p no:cacheprovider`
+  reported `49 passed`.
+- `python -m pytest tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_adjusted_production_chain_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_epex_lab_locked_holdout_policy.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_plan_epex_lab_locked_holdout_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  reported `103 passed, 1 skipped`.
+
+Operational result:
+
+- Regenerated current T057 runner remains
+  `WAITING_FOR_FULL_SPOT_COVERAGE`, exit `1`.
+- New run evidence now writes resolved UNC paths for `plan_json`,
+  `spot_parquet`, `output_dir`, `coverage_status`, and `run_summary`.
+- Regenerated future approval audit remains
+  `NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING`, exit `1`.
+- Its recommended command now quotes the resolved locked plan path.
+
+Rejected alternatives:
+
+- Keep writing relative paths and rely on callers to evaluate policy only from
+  repo root.
+- Stop revalidating `plan_json` file bindings to avoid cwd-sensitive failures.
+
+Invariants not to break:
+
+- Existing relative-path summaries remain fail-closed and policy-readable when
+  evaluated from their valid workspace.
+- The locked T057 plan JSON remains unchanged.
+
