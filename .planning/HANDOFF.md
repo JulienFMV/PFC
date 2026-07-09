@@ -1363,6 +1363,70 @@ Result: `112 passed, 1 skipped`.
 Current frozen T057 plan remains unchanged. Regenerated current T057 runner
 still exits `1` with `WAITING_FOR_FULL_SPOT_COVERAGE`.
 
+## 2026-07-09 Expert Audit and T058 Lab Plan
+
+Expert read-only audits confirmed the current split of responsibilities:
+
+- T056/t005 stays frozen for T057.
+- Promotion remains NO-GO until T057 has full future spot coverage and a
+  locked holdout PASS.
+- OMPEX remains advisory only and must not feed model input, selection,
+  backtest, or production gates.
+- The next model-improvement work should be a separate EPEX-only lab line
+  focused on solar-tail, midday, weekend, night, and ramp behavior.
+
+Canonical T056/t005 diagnostics were generated locally under ignored output:
+
+`output/phase14/t056_postval_final_micro/t005_diagnostics/canonical_ch_hfc_png_20260709`
+
+Command:
+
+```powershell
+python scripts\plot_ch_hfc_diagnostics.py --csv output\phase14\t056_postval_final_micro\t005_w075_l025_p089_e005_n055_r00\candidate_epex_shape_lab_adjusted.csv --forwards output\phase14\20260708_asof20260707_lshape100_yoy150_amp150_2032\epex_sweep_v2\diagnostic_forwards_history_rebuilt_20260708.parquet --output-dir output\phase14\t056_postval_final_micro\t005_diagnostics\canonical_ch_hfc_png_20260709 --baseline-csv output\phase14\20260708_asof20260707_lshape100_yoy150_amp150_2032\ch_hfc_hourly_asof20260707_lshape100_yoy150_amp150_2032.csv
+```
+
+Result:
+
+- Exit `0`.
+- EEX residual max absolute error:
+  `2.717391254236645e-07` EUR/MWh.
+- Worst month-to-month mean moves include 2028-04 at `-38.914134` EUR/MWh and
+  2027-04 at `-36.146815` EUR/MWh.
+- Applied-delta boundary jumps remain small, about `0.879` EUR/MWh max
+  absolute jump versus the no-smoothing baseline.
+
+A separate lab-only T058 plan was pre-registered under ignored output:
+
+`output/phase14/t058_epex_only_shape_micro_plan.json`
+
+Plan SHA256:
+
+`24b3dbf3c97daf9d21ac59ed9eab9eb6892cdfc087e050bf3fe0f5661c21519e`
+
+Plan facts:
+
+- `plan_id=t058_epex_only_shape_micro`
+- `trial_count=162`
+- `activation_status=lab_only`
+- `production_approved=false`
+- `benchmark_policy=pre_registered_independent_no_ompex`
+- `ompex_used_in_model=false`
+- `ompex_used_in_selection=false`
+- baseline candidate SHA:
+  `12447bbaa9828c0ffed871e62c35f90b8c100fcfab8c80b00468ac846848d895`
+- EPEX spot SHA:
+  `008f552e0cd684d42dcb95f87a2681054b1af338c6511ae77c1ffa81b421e32f`
+
+Operational next steps:
+
+1. Do not retune T056/t005 before T057.
+2. After full future spot coverage exists for `2026-07-10T00:00:00Z` to
+   `2026-07-24T00:00:00Z`, rerun T057 with the locked plan SHA
+   `f2b5ce94d7eb892ec4f0b2e46b209d09b078db8d15765009fba4ba0cb21ec1cd`.
+3. If T057 passes, build the real production/export/selected/capstone chain.
+4. Execute T058 only as a separate EPEX-only lab branch; it is not part of the
+   frozen T057 approval path.
+
 ## 2026-07-09 Promotion Readiness Routing Follow-Up
 
 EPEX lab promotion readiness now emits machine-readable production blocking

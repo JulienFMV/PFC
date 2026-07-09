@@ -1020,6 +1020,117 @@ Result: `112 passed, 1 skipped`.
 Current frozen T057 plan remains unchanged. Regenerated current T057 runner
 still exits `1` with `WAITING_FOR_FULL_SPOT_COVERAGE`.
 
+## 2026-07-09 Expert Audit Follow-Up and T058 Lab Pre-Registration
+
+Read-only expert audits were launched after the T056/t005 diagnostics and
+OMPEX advisory review.
+
+Model-quality audit conclusion:
+
+- T056/t005 remains the best current no-OMPEX lab replacement candidate, but
+  it is not promotable until T057 and the production evidence chain pass.
+- Strict gates pass for the current lab candidate, and EEX BASE/PEAK level
+  constraints are preserved at numerical zero.
+- Remaining quality weaknesses are concentrated in solar-tail, midday,
+  weekend, night, and ramp behavior. These must be improved with independent
+  EPEX-only evidence, not by fitting to OMPEX.
+
+Governance audit conclusion:
+
+- Promotion remains NO-GO while T057 is
+  `WAITING_FOR_FULL_SPOT_COVERAGE`.
+- A future PASS must come from `epex_lab_locked_holdout_run.v1` bound to the
+  unchanged locked plan and expected plan SHA
+  `f2b5ce94d7eb892ec4f0b2e46b209d09b078db8d15765009fba4ba0cb21ec1cd`.
+- After T057 PASS, the production chain still needs a real adjusted
+  production manifest, adjusted export manifest, selected artifact, and
+  capstone all bound to the same production manifest SHA and locked holdout
+  summary SHA.
+
+Canonical T056/t005 PNG diagnostics were generated under ignored output:
+
+`output/phase14/t056_postval_final_micro/t005_diagnostics/canonical_ch_hfc_png_20260709`
+
+Command:
+
+```powershell
+python scripts\plot_ch_hfc_diagnostics.py --csv output\phase14\t056_postval_final_micro\t005_w075_l025_p089_e005_n055_r00\candidate_epex_shape_lab_adjusted.csv --forwards output\phase14\20260708_asof20260707_lshape100_yoy150_amp150_2032\epex_sweep_v2\diagnostic_forwards_history_rebuilt_20260708.parquet --output-dir output\phase14\t056_postval_final_micro\t005_diagnostics\canonical_ch_hfc_png_20260709 --baseline-csv output\phase14\20260708_asof20260707_lshape100_yoy150_amp150_2032\ch_hfc_hourly_asof20260707_lshape100_yoy150_amp150_2032.csv
+```
+
+Result:
+
+- Exit `0`.
+- Generated `01_monthly_means_by_year.png`,
+  `02_focus_2027_2028_eex_buckets.png`,
+  `03_month_to_month_deltas.png`, `04_duck_curves_2027.png`,
+  `04_duck_curves_2028.png`, `04_duck_curves_2030.png`,
+  `05_heatmap_month_hour_2028.png`, `05_heatmap_month_hour_2030.png`,
+  `06_negative_tail_fast_negative_hours.png`,
+  `06_negative_tail_p10_negative_hours.png`,
+  `07_eex_residuals_by_product.png`, `08_boundary_delta_jumps.png`,
+  `09_executive_qa_summary.png`, `monthly_diagnostics.csv`, and
+  `eex_residual_diagnostics.csv`.
+- `eex_residual_diagnostics.csv` max absolute EEX residual is
+  `2.717391254236645e-07` EUR/MWh, confirming that the level constraints are
+  respected.
+- Worst month-to-month mean moves include 2028-04 at `-38.914134` EUR/MWh and
+  2027-04 at `-36.146815` EUR/MWh.
+- Months with negative fast/P10 hours are concentrated in April-May from 2027
+  onward. These are shape-quality review points, not production gates by
+  themselves.
+- Applied-delta boundary jumps versus the no-smoothing baseline remain small;
+  the PNG summary reports max absolute boundary jump about `0.879` EUR/MWh.
+
+T058 EPEX-only lab plan was pre-registered as a separate research line, not as
+a replacement for frozen T056/T057:
+
+`output/phase14/t058_epex_only_shape_micro_plan.json`
+
+Plan SHA256:
+
+`24b3dbf3c97daf9d21ac59ed9eab9eb6892cdfc087e050bf3fe0f5661c21519e`
+
+Command path used: direct Python call into
+`scripts.plan_epex_shape_lab_sweep.main()` to avoid PowerShell JSON quoting
+issues. The script output was:
+
+```json
+{"plan_id": "t058_epex_only_shape_micro", "trial_count": 162}
+```
+
+Plan facts:
+
+- `activation_status=lab_only`
+- `production_approved=false`
+- `benchmark_policy=pre_registered_independent_no_ompex`
+- `ompex_used_in_model=false`
+- `ompex_used_in_selection=false`
+- `ompex_postcheck_allowed_after_selection=true`
+- baseline candidate SHA:
+  `12447bbaa9828c0ffed871e62c35f90b8c100fcfab8c80b00468ac846848d895`
+- EPEX spot parquet SHA:
+  `008f552e0cd684d42dcb95f87a2681054b1af338c6511ae77c1ffa81b421e32f`
+- valuation timestamp: `2026-07-07T00:00:00Z`
+- grid:
+  - `weekend_intensity`: `0.65`, `0.75`, `0.85`
+  - `low_tail_intensity`: `0.15`, `0.25`, `0.35`
+  - `peak_subshape_intensity`: `0.87`, `0.89`, `0.91`
+  - `evening_recovery_intensity`: `0.05`
+  - `night_intensity`: `0.45`, `0.55`, `0.65`
+  - `ramp_intensity`: `0.0`
+  - `max_abs_delta_eur_mwh`: `2.5`, `2.75`
+- selection thresholds include minimum improvements for overall, solar-tail,
+  weekend, and midday MAE, plus fold-count thresholds for global, solar-tail,
+  and weekend improvements.
+- scoring policy upweights solar-tail, weekend, and midday.
+
+Operational conclusion:
+
+- T056/t005 and T057 remain frozen.
+- T058 is a lab-only, no-OMPEX research branch that may be executed later for
+  model improvement, but it does not change the T057 promotion path.
+- Git output artifacts remain ignored under `output/phase14/`.
+
 Follow-up after expert roasts on production evidence and OMPEX advisory
 governance:
 

@@ -6541,3 +6541,42 @@ Invariants:
 - Any model improvement motivated by these diagnostics must be justified and
   validated with independent no-OMPEX evidence.
 
+## D-20260709-84 - T058 Research Must Be Separate From Frozen T056/T057
+
+Decision: the next model-improvement work may be prepared as a separate
+EPEX-only lab line, `t058_epex_only_shape_micro`, while the frozen T056/t005
+candidate and T057 locked holdout remain unchanged.
+
+Reason: expert review of the T056/t005 diagnostics identified remaining
+quality weaknesses in solar-tail, midday, weekend, night, and ramp behavior,
+but T056/t005 is already frozen for the future T057 holdout. Retuning T056 or
+using the T057 window for parameter search would invalidate the locked-holdout
+evidence path.
+
+Implementation:
+
+- A lab-only T058 sweep plan was pre-registered under ignored output:
+  `output/phase14/t058_epex_only_shape_micro_plan.json`.
+- Plan SHA256:
+  `24b3dbf3c97daf9d21ac59ed9eab9eb6892cdfc087e050bf3fe0f5661c21519e`.
+- The plan contains 162 planned trials with EPEX-only inputs and
+  `benchmark_policy=pre_registered_independent_no_ompex`.
+- The plan records `ompex_used_in_model=false` and
+  `ompex_used_in_selection=false`. OMPEX may be used only as a post-selection
+  advisory sidecar.
+
+Rejected alternatives:
+
+- Retune T056/t005 before T057 completes.
+- Use OMPEX advisory heatmaps, ramps, or boundary differences as selection
+  targets or promotion gates.
+- Patch individual months after the monthly solver.
+
+Invariants:
+
+- T056/t005 and the T057 locked plan stay frozen.
+- T058 remains lab-only until it has independent no-OMPEX diagnostics and a
+  separate approval path.
+- T057 failure, if any, must be documented; it must not be used as a tuning
+  target for the locked T056/t005 line.
+
