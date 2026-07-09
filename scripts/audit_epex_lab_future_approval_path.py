@@ -277,10 +277,17 @@ def _recommended_commands(
         if holdout_policy is not None and holdout_policy.get("plan_json")
         else "<T057_PLAN_JSON>"
     )
+    plan_sha = (
+        str(holdout_policy.get("expected_plan_json_sha256") or holdout_policy.get("plan_json_sha256"))
+        if holdout_policy is not None
+        and (holdout_policy.get("expected_plan_json_sha256") or holdout_policy.get("plan_json_sha256"))
+        else "<T057_PLAN_JSON_SHA256>"
+    )
     return {
         "run_locked_holdout": (
             "python scripts/run_epex_lab_locked_holdout.py "
             f"--plan-json {plan_json} "
+            f"--expected-plan-sha256 {plan_sha} "
             "--spot-parquet <FRESH_FUTURE_SPOT_PARQUET> "
             "--output-dir <T057_HOLDOUT_OUTPUT_DIR>"
         )

@@ -174,6 +174,8 @@ def _write_locked_holdout(tmp_path, *, passed: bool = True):
             "schema_version": "epex_lab_locked_holdout_run.v1",
             "status": "LOCKED_HOLDOUT_PASS" if passed else "NO_GO_LOCKED_HOLDOUT_FAIL",
             "benchmark_policy": "locked_future_no_ompex_holdout",
+            "expected_plan_json_sha256": identity["plan_json_sha256"],
+            "actual_plan_json_sha256": identity["plan_json_sha256"],
             "promotion_gate": False,
             "production_approved": False,
             "ompex_used_in_model": False,

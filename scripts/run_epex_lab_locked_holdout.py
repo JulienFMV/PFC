@@ -27,9 +27,35 @@ def run_locked_holdout(
     plan_json: Path,
     spot_parquet: Path,
     output_dir: Path,
+    expected_plan_sha256: str,
 ) -> dict[str, Any]:
     plan = _read_json(plan_json)
+    actual_plan_sha256 = _sha256(plan_json)
     output_dir.mkdir(parents=True, exist_ok=True)
+    if expected_plan_sha256 != actual_plan_sha256:
+        run_summary = {
+            "schema_version": "epex_lab_locked_holdout_run.v1",
+            "read_only": True,
+            "promotion_gate": False,
+            "production_approved": False,
+            "plan_json": str(plan_json),
+            "expected_plan_json_sha256": expected_plan_sha256,
+            "actual_plan_json_sha256": actual_plan_sha256,
+            "spot_parquet": str(spot_parquet),
+            "output_dir": str(output_dir),
+            "coverage_ready": False,
+            "locked_plan_identity": build_locked_plan_identity(plan, plan_json=plan_json),
+            "benchmark_policy": "locked_future_no_ompex_holdout",
+            "ompex_used_in_model": False,
+            "ompex_used_in_selection": False,
+            "ompex_used_in_backtest": False,
+            "status": "NO_GO_LOCKED_HOLDOUT_PLAN_HASH_MISMATCH",
+            "backtest_ran": False,
+            "audit_ran": False,
+            "holdout_pass": False,
+            "next_action": "Do not run holdout; regenerate or use the exact pre-registered locked plan hash.",
+        }
+        return _write_run_summary(output_dir, run_summary)
     coverage_path = output_dir / "coverage_status.json"
     coverage = check_coverage(plan_json=plan_json, spot_parquet=spot_parquet, output=coverage_path)
     run_summary: dict[str, Any] = {
@@ -38,6 +64,8 @@ def run_locked_holdout(
         "promotion_gate": False,
         "production_approved": False,
         "plan_json": str(plan_json),
+        "expected_plan_json_sha256": expected_plan_sha256,
+        "actual_plan_json_sha256": actual_plan_sha256,
         "spot_parquet": str(spot_parquet),
         "output_dir": str(output_dir),
         "coverage_status": str(coverage_path),
@@ -136,10 +164,16 @@ def _jsonable(value: Any) -> Any:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--plan-json", type=Path, required=True)
+    parser.add_argument("--expected-plan-sha256", required=True)
     parser.add_argument("--spot-parquet", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args(argv)
-    summary = run_locked_holdout(plan_json=args.plan_json, spot_parquet=args.spot_parquet, output_dir=args.output_dir)
+    summary = run_locked_holdout(
+        plan_json=args.plan_json,
+        spot_parquet=args.spot_parquet,
+        output_dir=args.output_dir,
+        expected_plan_sha256=args.expected_plan_sha256,
+    )
     print(json.dumps(_jsonable(summary), indent=2, sort_keys=True))
     return 0 if summary.get("status") == "LOCKED_HOLDOUT_PASS" and summary.get("holdout_pass") is True else 1
 

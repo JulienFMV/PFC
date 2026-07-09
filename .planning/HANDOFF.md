@@ -226,12 +226,26 @@ and verifies schema/status/no-OMPEX/lab-only flags plus the same locked plan
 identity. `scripts/audit_epex_lab_locked_holdout.py` now requires
 `DIAGNOSTIC_PASS` and `strict_lab_gate_pass=true`.
 
+The T057 runner now also requires explicit frozen-plan hash anchoring:
+`scripts/run_epex_lab_locked_holdout.py` must be called with
+`--expected-plan-sha256`. It computes the actual plan JSON hash before
+coverage/backtest and writes
+`NO_GO_LOCKED_HOLDOUT_PLAN_HASH_MISMATCH` without running coverage, backtest,
+or audit if the hash differs. Passable run summaries must carry matching
+`expected_plan_json_sha256`, `actual_plan_json_sha256`, and locked plan
+identity hash. The current T057 expected plan hash remains
+`f2b5ce94d7eb892ec4f0b2e46b209d09b078db8d15765009fba4ba0cb21ec1cd`.
+
 Validation:
 `python -m pytest tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_adjusted_production_chain_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_epex_lab_locked_holdout_policy.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
 reported `86 passed, 1 skipped`.
+Follow-up validation after explicit frozen-plan hash anchoring:
+`python -m pytest tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_adjusted_production_chain_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_epex_lab_locked_holdout_policy.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_plan_epex_lab_locked_holdout_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+reported `90 passed, 1 skipped`.
 Current regenerated T057 runner still exits `1` with
 `WAITING_FOR_FULL_SPOT_COVERAGE`, spot max `2026-07-08T23:00:00Z`, observed
-holdout hours `0`, expected `336`, and `coverage_status_sha256` present.
+holdout hours `0`, expected `336`, and `coverage_status_sha256`,
+`expected_plan_json_sha256`, and `actual_plan_json_sha256` present.
 
 Expert-audit follow-up on 2026-07-09 made the T057 holdout CLIs fail-closed:
 
@@ -287,8 +301,8 @@ Future approval audit now emits machine-readable next-step routing:
 NO-GO and now reports `blocking_stage=locked_holdout_coverage` with
 `next_required_step=wait_for_full_spot_coverage_then_run_locked_holdout`.
 It also includes `recommended_commands.run_locked_holdout` with the fail-closed
-wrapper command and placeholders for `<FRESH_FUTURE_SPOT_PARQUET>` and
-`<T057_HOLDOUT_OUTPUT_DIR>`.
+wrapper command, the expected T057 plan hash when known, and placeholders for
+`<FRESH_FUTURE_SPOT_PARQUET>` and `<T057_HOLDOUT_OUTPUT_DIR>`.
 Validation:
 `python -m pytest tests/test_audit_epex_lab_future_approval_path_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_build_epex_lab_promotion_bundle_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
 reported `41 passed, 1 skipped`; regenerating the current T057 future-approval

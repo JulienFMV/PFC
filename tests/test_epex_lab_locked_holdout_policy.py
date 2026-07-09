@@ -44,6 +44,8 @@ def _passing_run_summary(tmp_path: Path) -> dict:
         "schema_version": "epex_lab_locked_holdout_run.v1",
         "status": "LOCKED_HOLDOUT_PASS",
         "benchmark_policy": "locked_future_no_ompex_holdout",
+        "expected_plan_json_sha256": identity["plan_json_sha256"],
+        "actual_plan_json_sha256": identity["plan_json_sha256"],
         "promotion_gate": False,
         "production_approved": False,
         "ompex_used_in_model": False,
@@ -128,6 +130,16 @@ def test_locked_holdout_policy_rejects_coverage_file_mismatch(tmp_path: Path) ->
 
     assert policy["pass"] is False
     assert policy["checks"]["coverage_status_matches_embedded"] is False
+
+
+def test_locked_holdout_policy_rejects_expected_plan_sha_mismatch(tmp_path: Path) -> None:
+    summary = _passing_run_summary(tmp_path)
+    summary["expected_plan_json_sha256"] = "0" * 64
+
+    policy = locked_holdout_policy(summary)
+
+    assert policy["pass"] is False
+    assert policy["checks"]["expected_plan_json_sha256_bound"] is False
 
 
 def _ready_coverage() -> dict:

@@ -57,6 +57,11 @@ def locked_holdout_policy(summary: dict[str, Any] | None) -> dict[str, Any]:
         checks.update(
             {
                 "benchmark_policy_locked": summary.get("benchmark_policy") == LOCKED_HOLDOUT_POLICY,
+                "expected_plan_json_sha256_present": bool(
+                    str(summary.get("expected_plan_json_sha256") or "").strip()
+                ),
+                "actual_plan_json_sha256_present": bool(str(summary.get("actual_plan_json_sha256") or "").strip()),
+                "expected_plan_json_sha256_bound": _expected_plan_sha_bound(summary),
                 "coverage_ready": summary.get("coverage_ready") is True,
                 "coverage_status_ready": coverage.get("status") == "READY_TO_RUN_HOLDOUT_BACKTEST",
                 "coverage_embedded_ready": coverage.get("ready_to_run_backtest") is True,
@@ -110,6 +115,8 @@ def locked_holdout_policy(summary: dict[str, Any] | None) -> dict[str, Any]:
         "status": "LOCKED_HOLDOUT_PASS" if passed else status,
         "plan_json": _identity(summary).get("plan_json"),
         "plan_json_sha256": _identity(summary).get("plan_json_sha256"),
+        "expected_plan_json_sha256": summary.get("expected_plan_json_sha256"),
+        "actual_plan_json_sha256": summary.get("actual_plan_json_sha256"),
         "plan_id": _identity(summary).get("plan_id"),
         "holdout_start_utc": _identity(summary).get("holdout_start_utc"),
         "holdout_end_utc": _identity(summary).get("holdout_end_utc"),
@@ -127,6 +134,13 @@ def _coverage_status_matches_embedded(summary: dict[str, Any]) -> bool:
         return False
     linked = _read_bound_json(summary, path_key="coverage_status", sha_key="coverage_status_sha256")
     return linked == coverage
+
+
+def _expected_plan_sha_bound(summary: dict[str, Any]) -> bool:
+    expected = summary.get("expected_plan_json_sha256")
+    actual = summary.get("actual_plan_json_sha256")
+    identity_sha = _identity(summary).get("plan_json_sha256")
+    return bool(expected and actual and identity_sha and expected == actual == identity_sha)
 
 
 def _linked_backtest_checks(summary: dict[str, Any]) -> dict[str, bool]:

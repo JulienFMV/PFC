@@ -17,7 +17,12 @@ def test_run_epex_lab_locked_holdout_waits_when_coverage_missing(tmp_path: Path)
         index=pd.date_range("2026-07-10T00:00:00Z", periods=2, freq="h"),
     ).to_parquet(spot)
 
-    summary = run_locked_holdout(plan_json=plan, spot_parquet=spot, output_dir=tmp_path / "out")
+    summary = run_locked_holdout(
+        plan_json=plan,
+        spot_parquet=spot,
+        output_dir=tmp_path / "out",
+        expected_plan_sha256=_sha256(plan),
+    )
 
     assert summary["status"] == "WAITING_FOR_FULL_SPOT_COVERAGE"
     assert summary["coverage_ready"] is False
@@ -40,6 +45,8 @@ def test_run_epex_lab_locked_holdout_cli_exits_nonzero_when_coverage_missing(tmp
         [
             "--plan-json",
             str(plan),
+            "--expected-plan-sha256",
+            _sha256(plan),
             "--spot-parquet",
             str(spot),
             "--output-dir",
@@ -97,7 +104,12 @@ def test_run_epex_lab_locked_holdout_runs_backtest_and_audit_when_ready(
 
     monkeypatch.setattr("scripts.run_epex_lab_locked_holdout.backtest_against_spot", fake_backtest_against_spot)
 
-    summary = run_locked_holdout(plan_json=plan, spot_parquet=spot, output_dir=tmp_path / "out")
+    summary = run_locked_holdout(
+        plan_json=plan,
+        spot_parquet=spot,
+        output_dir=tmp_path / "out",
+        expected_plan_sha256=_sha256(plan),
+    )
 
     assert summary["status"] == "LOCKED_HOLDOUT_PASS"
     assert summary["coverage_ready"] is True
@@ -158,6 +170,8 @@ def test_run_epex_lab_locked_holdout_cli_exits_zero_when_holdout_passes(
         [
             "--plan-json",
             str(plan),
+            "--expected-plan-sha256",
+            _sha256(plan),
             "--spot-parquet",
             str(spot),
             "--output-dir",
@@ -166,6 +180,29 @@ def test_run_epex_lab_locked_holdout_cli_exits_zero_when_holdout_passes(
     )
 
     assert code == 0
+
+
+def test_run_epex_lab_locked_holdout_rejects_plan_hash_mismatch(tmp_path: Path) -> None:
+    plan = _write_plan(tmp_path)
+    spot = tmp_path / "spot.parquet"
+    pd.DataFrame(
+        {"price_eur_mwh": [1.0, 2.0, 3.0, 4.0]},
+        index=pd.date_range("2026-07-10T00:00:00Z", periods=4, freq="h"),
+    ).to_parquet(spot)
+
+    summary = run_locked_holdout(
+        plan_json=plan,
+        spot_parquet=spot,
+        output_dir=tmp_path / "out",
+        expected_plan_sha256="0" * 64,
+    )
+
+    assert summary["status"] == "NO_GO_LOCKED_HOLDOUT_PLAN_HASH_MISMATCH"
+    assert summary["expected_plan_json_sha256"] == "0" * 64
+    assert summary["actual_plan_json_sha256"] == _sha256(plan)
+    assert summary["backtest_ran"] is False
+    assert summary["audit_ran"] is False
+    assert summary["holdout_pass"] is False
 
 
 def _write_plan(tmp_path: Path) -> Path:

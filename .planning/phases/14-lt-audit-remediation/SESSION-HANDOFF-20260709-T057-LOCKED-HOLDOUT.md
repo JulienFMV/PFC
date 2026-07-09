@@ -151,7 +151,7 @@ Result:
 Runner check with the same incomplete spot parquet:
 
 ```powershell
-python scripts/run_epex_lab_locked_holdout.py --plan-json .planning\phases\14-lt-audit-remediation\locked_holdout_plan_t057_t056_asof20260709.json --spot-parquet output\phase14\20260708_asof20260707_lshape100_yoy150_amp150_2032\epex_spot_refresh_20260708\epex_hourly_ch_energy_charts_20260708.parquet --output-dir output\phase14\t057_locked_t056_future_holdout\current_spot_runner
+python scripts/run_epex_lab_locked_holdout.py --plan-json .planning\phases\14-lt-audit-remediation\locked_holdout_plan_t057_t056_asof20260709.json --expected-plan-sha256 f2b5ce94d7eb892ec4f0b2e46b209d09b078db8d15765009fba4ba0cb21ec1cd --spot-parquet output\phase14\20260708_asof20260707_lshape100_yoy150_amp150_2032\epex_spot_refresh_20260708\epex_hourly_ch_energy_charts_20260708.parquet --output-dir output\phase14\t057_locked_t056_future_holdout\current_spot_runner
 ```
 
 Result:
@@ -434,7 +434,7 @@ Future approval next-step routing:
   `NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING`, exits `1`, and reports:
   - `blocking_stage=locked_holdout_coverage`
   - `next_required_step=wait_for_full_spot_coverage_then_run_locked_holdout`
-  - `recommended_commands.run_locked_holdout=python scripts/run_epex_lab_locked_holdout.py --plan-json .planning\phases\14-lt-audit-remediation\locked_holdout_plan_t057_t056_asof20260709.json --spot-parquet <FRESH_FUTURE_SPOT_PARQUET> --output-dir <T057_HOLDOUT_OUTPUT_DIR>`
+  - `recommended_commands.run_locked_holdout=python scripts/run_epex_lab_locked_holdout.py --plan-json .planning\phases\14-lt-audit-remediation\locked_holdout_plan_t057_t056_asof20260709.json --expected-plan-sha256 f2b5ce94d7eb892ec4f0b2e46b209d09b078db8d15765009fba4ba0cb21ec1cd --spot-parquet <FRESH_FUTURE_SPOT_PARQUET> --output-dir <T057_HOLDOUT_OUTPUT_DIR>`
 
 Validation:
 
@@ -603,6 +603,10 @@ Promotion evidence hardening:
 
 - `scripts/run_epex_lab_locked_holdout.py` now writes
   `coverage_status_sha256`.
+- It now requires `--expected-plan-sha256` and refuses to run coverage,
+  backtest, or audit when the provided hash does not match the plan JSON.
+  A mismatch writes
+  `status=NO_GO_LOCKED_HOLDOUT_PLAN_HASH_MISMATCH`.
 - `scripts/epex_lab_locked_holdout_policy.py` now accepts only
   `epex_lab_locked_holdout_run.v1` as passable promotion holdout evidence.
   Standalone `epex_lab_locked_holdout_audit.v1` remains diagnostic evidence
@@ -610,6 +614,8 @@ Promotion evidence hardening:
   `NO_GO_LOCKED_HOLDOUT_RUN_SUMMARY_REQUIRED`.
 - Passable run summaries must hash-bind `coverage_status.json`,
   `spot_backtest_summary.json`, and `locked_holdout_audit.json`.
+- Passable run summaries must carry matching `expected_plan_json_sha256`,
+  `actual_plan_json_sha256`, and locked plan identity plan hash.
 - The shared policy opens linked backtest/audit JSON and verifies schema,
   PASS statuses, no-OMPEX/lab-only flags, strict lab gate pass, and the same
   locked plan identity.
@@ -618,10 +624,12 @@ Promotion evidence hardening:
 - Regenerated current local runner remains
   `WAITING_FOR_FULL_SPOT_COVERAGE`, exit `1`, with spot max
   `2026-07-08T23:00:00Z`, observed holdout hours `0`, expected `336`, and
-  `coverage_status_sha256` present.
+  `coverage_status_sha256`, `expected_plan_json_sha256`, and
+  `actual_plan_json_sha256` present.
 - Regenerated future approval audit remains
   `NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING`, exit `1`, with
-  `blocking_stage=locked_holdout_coverage`.
+  `blocking_stage=locked_holdout_coverage` and a recommended runner command
+  carrying the expected T057 plan hash.
 
 Validation:
 
@@ -630,3 +638,11 @@ python -m pytest tests/test_build_epex_lab_adjusted_production_manifest_script.p
 ```
 
 Result: `86 passed, 1 skipped`.
+
+Follow-up validation after explicit frozen-plan hash anchoring:
+
+```powershell
+python -m pytest tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_adjusted_production_chain_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_epex_lab_locked_holdout_policy.py tests/test_check_epex_lab_locked_holdout_coverage_script.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_plan_epex_lab_locked_holdout_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result: `90 passed, 1 skipped`.

@@ -111,6 +111,8 @@ def build_plan(
                     "scripts/run_epex_lab_locked_holdout.py",
                     "--plan-json",
                     str(output or "<T057_PLAN_JSON>"),
+                    "--expected-plan-sha256",
+                    "<T057_PLAN_JSON_SHA256>",
                     "--spot-parquet",
                     "<FUTURE_SPOT_PARQUET>",
                     "--output-dir",

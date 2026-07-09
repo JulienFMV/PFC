@@ -107,7 +107,7 @@ def check_coverage(
     coverage["ready_to_run_backtest"] = ready
     coverage["status"] = "READY_TO_RUN_HOLDOUT_BACKTEST" if ready else "WAITING_FOR_FULL_SPOT_COVERAGE"
     coverage["next_action"] = (
-        "Run scripts/run_epex_lab_locked_holdout.py with the locked plan, refreshed spot parquet, and a fresh output dir."
+        "Run scripts/run_epex_lab_locked_holdout.py with the locked plan, expected plan SHA, refreshed spot parquet, and a fresh output dir."
         if ready
         else "Refresh the EPEX spot parquet after the holdout window is complete, then rerun this coverage check."
     )

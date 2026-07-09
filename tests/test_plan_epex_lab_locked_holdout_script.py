@@ -52,6 +52,7 @@ def test_plan_epex_lab_locked_holdout_binds_selected_no_ompex_candidate(tmp_path
     assert plan["pass_criteria"]["min_holdout_hours"] == 300
     assert "OMPEX" in plan["forbidden_inputs"]
     assert "scripts/run_epex_lab_locked_holdout.py" in plan["commands"]["run_locked_holdout_template"]
+    assert "--expected-plan-sha256 <T057_PLAN_JSON_SHA256>" in plan["commands"]["run_locked_holdout_template"]
     assert "--spot-parquet <FUTURE_SPOT_PARQUET>" in plan["commands"]["run_locked_holdout_template"]
     assert "compare_hpfc_ompex" not in plan["commands"]["run_future_backtest_template"]
     assert "compare_hpfc_ompex" not in plan["commands"]["run_locked_holdout_template"]

@@ -5609,3 +5609,50 @@ Invariants not to break:
 - Coverage-pending runner summaries remain useful NO-GO evidence but cannot
   pass the promotion policy.
 
+## D-20260709-67 - Require Explicit Frozen Plan Hash For T057 Runner
+
+Decision: `scripts/run_epex_lab_locked_holdout.py` now requires an explicit
+`--expected-plan-sha256` argument, and downstream holdout policy requires that
+expected hash to match both the executed plan file hash and the run summary's
+locked plan identity before a holdout can pass.
+
+Reason: checking a run summary against the local plan file is necessary but
+not sufficient to prove the file is the originally frozen T057 plan. The
+runner must carry the pre-registered plan hash as an explicit execution input,
+so a later-edited plan cannot produce a self-consistent "locked" PASS.
+
+Implementation:
+
+- `scripts/run_epex_lab_locked_holdout.py` computes the actual plan JSON hash
+  before coverage/backtest. If it differs from `--expected-plan-sha256`, it
+  writes a NO-GO run summary with
+  `status=NO_GO_LOCKED_HOLDOUT_PLAN_HASH_MISMATCH` and does not run coverage,
+  backtest, or audit.
+- Passing run summaries now include:
+  - `expected_plan_json_sha256`
+  - `actual_plan_json_sha256`
+- `scripts/epex_lab_locked_holdout_policy.py` now checks
+  `expected_plan_json_sha256_present`, `actual_plan_json_sha256_present`, and
+  `expected_plan_json_sha256_bound`.
+- `scripts/plan_epex_lab_locked_holdout.py` advertises the placeholder
+  `--expected-plan-sha256 <T057_PLAN_JSON_SHA256>` in generated run templates.
+- `scripts/audit_epex_lab_future_approval_path.py` includes the expected plan
+  hash in recommended rerun commands when it is known from the current
+  holdout policy.
+
+Validation:
+
+- `python -m pytest tests/test_run_epex_lab_locked_holdout_script.py tests/test_epex_lab_locked_holdout_policy.py tests/test_plan_epex_lab_locked_holdout_script.py tests/test_audit_epex_lab_future_approval_path_script.py -q -p no:cacheprovider`
+  reported `24 passed`.
+
+Rejected alternatives:
+
+- Continue deriving the "expected" hash from the plan file at runtime only.
+- Document the frozen hash without making the runner and policy enforce it.
+
+Invariants not to break:
+
+- The existing locked T057 plan JSON remains unchanged.
+- A plan-hash mismatch is a hard NO-GO and cannot fall through to coverage or
+  backtest.
+
