@@ -171,24 +171,29 @@ def _write_selection_summary(
     return selection
 
 
-def _write_locked_holdout(tmp_path, *, passed: bool = True):
+def _write_locked_holdout(tmp_path, *, passed: bool = True, schema: str = "run"):
     locked_holdout = tmp_path / "locked_holdout.json"
-    _write_json(
-        locked_holdout,
-        {
-            "schema_version": "epex_lab_locked_holdout_run.v1",
-            "status": "LOCKED_HOLDOUT_PASS" if passed else "WAITING_FOR_FULL_SPOT_COVERAGE",
-            "promotion_gate": False,
-            "production_approved": False,
-            "ompex_used_in_model": False,
-            "ompex_used_in_selection": False,
-            "ompex_used_in_backtest": False,
-            "coverage_ready": passed,
-            "backtest_ran": passed,
-            "audit_ran": passed,
-            "holdout_pass": passed,
-        },
-    )
+    payload = {
+        "schema_version": "epex_lab_locked_holdout_audit.v1"
+        if schema == "audit"
+        else "epex_lab_locked_holdout_run.v1",
+        "status": "LOCKED_HOLDOUT_PASS" if passed else "WAITING_FOR_FULL_SPOT_COVERAGE",
+        "promotion_gate": False,
+        "production_approved": False,
+        "ompex_used_in_model": False,
+        "ompex_used_in_selection": False,
+        "ompex_used_in_backtest": False,
+        "holdout_pass": passed,
+    }
+    if schema != "audit":
+        payload.update(
+            {
+                "coverage_ready": passed,
+                "backtest_ran": passed,
+                "audit_ran": passed,
+            }
+        )
+    _write_json(locked_holdout, payload)
     return locked_holdout
 
 
@@ -378,6 +383,65 @@ def test_adjusted_production_manifest_approval_rejects_failed_locked_holdout(tmp
             production_promotion_approved=True,
             output=tmp_path / "adjusted_production_manifest.json",
         )
+
+
+def test_adjusted_production_manifest_no_go_diagnostic_allows_missing_locked_holdout_with_passing_contract(tmp_path) -> None:
+    lab, monthly, product, powerbi, policy, independent, governance, _ompex = _write_inputs(tmp_path)
+    adjusted_csv = json.loads(lab.read_text(encoding="utf-8"))["outputs"]["adjusted_csv"]
+    source = _write_source_provenance(tmp_path, lab, adjusted_csv, source_kind="candidate_csv")
+    selection = _write_selection_summary(tmp_path, adjusted_csv)
+
+    manifest = build_manifest(
+        lab_manifest=lab,
+        baseline_monthly_manifest=monthly,
+        product_summary=product,
+        powerbi_summary=powerbi,
+        source_hierarchy_policy=policy,
+        independent_summary=independent,
+        governance_audit=governance,
+        selection_summary=selection,
+        production_run_id="diagnostic-run",
+        production_entrypoint="scripts/stage_epex_lab_adjusted_lt_candidate.py",
+        git_commit="a" * 40,
+        source_provenance_manifest=source,
+        output=tmp_path / "adjusted_production_manifest.json",
+    )
+
+    checks = {check["name"]: check["status"] for check in manifest["checks"]}
+    assert manifest["contract_pass"] is True
+    assert manifest["production_approved"] is False
+    assert manifest["locked_holdout_policy_pass"] is False
+    assert "locked_holdout_pass" not in checks
+
+
+def test_adjusted_production_manifest_accepts_locked_holdout_audit_schema(tmp_path) -> None:
+    lab, monthly, product, powerbi, policy, independent, governance, _ompex = _write_inputs(tmp_path)
+    adjusted_csv = json.loads(lab.read_text(encoding="utf-8"))["outputs"]["adjusted_csv"]
+    source = _write_source_provenance(tmp_path, lab, adjusted_csv, source_kind="candidate_csv")
+    selection = _write_selection_summary(tmp_path, adjusted_csv)
+    locked_holdout = _write_locked_holdout(tmp_path, schema="audit")
+
+    manifest = build_manifest(
+        lab_manifest=lab,
+        baseline_monthly_manifest=monthly,
+        product_summary=product,
+        powerbi_summary=powerbi,
+        source_hierarchy_policy=policy,
+        independent_summary=independent,
+        governance_audit=governance,
+        selection_summary=selection,
+        locked_holdout_summary=locked_holdout,
+        production_run_id="prod-run-1",
+        production_entrypoint="pfc_shaping.pipeline.production_phases",
+        git_commit="a" * 40,
+        source_provenance_manifest=source,
+        production_approved=True,
+        production_promotion_approved=True,
+        output=tmp_path / "adjusted_production_manifest.json",
+    )
+
+    assert manifest["locked_holdout_policy_pass"] is True
+    assert manifest["production_approved"] is True
 
 
 def test_adjusted_production_manifest_can_be_approved_with_candidate_csv_source_provenance(tmp_path) -> None:

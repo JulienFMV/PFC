@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from scripts.audit_epex_lab_future_approval_path import audit_future_approval_path
+from scripts.audit_epex_lab_future_approval_path import PRODUCTION_CHECKS, audit_future_approval_path
 
 
 def _write_json(path: Path, payload: dict) -> Path:
@@ -14,11 +14,14 @@ def _write_json(path: Path, payload: dict) -> Path:
 def _readiness_payload(*, approved: bool = False, strict: bool = True, production: bool = False) -> dict:
     checks = [
         {"name": "product_all_gates_pass", "status": "PASS", "value": True},
-        {"name": "adjusted_production_manifest_approved", "status": "PASS" if production else "FAIL", "value": production},
-        {"name": "adjusted_export_manifest_production_ready", "status": "PASS" if production else "FAIL", "value": production},
-        {"name": "adjusted_selected_artifact_production_ready", "status": "PASS" if production else "FAIL", "value": production},
-        {"name": "adjusted_capstone_approved", "status": "PASS" if production else "FAIL", "value": production},
     ]
+    for name in PRODUCTION_CHECKS:
+        value = production
+        if name.endswith("_bound"):
+            value = {
+                "locked_holdout_summary_sha256": "holdout-sha" if production else None,
+            }
+        checks.append({"name": name, "status": "PASS" if production else "FAIL", "value": value})
     return {
         "schema_version": "epex_lab_promotion_readiness.v1",
         "approved": approved,
@@ -61,6 +64,16 @@ def _locked_holdout_run_payload(**overrides) -> dict:
     }
     payload.update(overrides)
     return payload
+
+
+def _sha256(path: Path) -> str:
+    import hashlib
+
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def test_future_approval_path_reports_no_go_blockers(tmp_path: Path) -> None:
@@ -128,11 +141,12 @@ def test_future_approval_path_blocks_when_locked_holdout_coverage_pending(tmp_pa
 
 
 def test_future_approval_path_allows_promotion_ready_with_passing_locked_holdout(tmp_path: Path) -> None:
-    readiness = _write_json(
-        tmp_path / "readiness.json",
-        _readiness_payload(approved=True, production=True),
-    )
     holdout = _write_json(tmp_path / "holdout.json", _locked_holdout_run_payload())
+    payload = _readiness_payload(approved=True, production=True)
+    for check in payload["checks"]:
+        if isinstance(check.get("value"), dict) and "locked_holdout_summary_sha256" in check["value"]:
+            check["value"]["locked_holdout_summary_sha256"] = _sha256(holdout)
+    readiness = _write_json(tmp_path / "readiness.json", payload)
 
     summary = audit_future_approval_path(
         readiness_json=readiness,
@@ -143,6 +157,34 @@ def test_future_approval_path_allows_promotion_ready_with_passing_locked_holdout
     assert summary["status"] == "PROMOTION_READY_CANDIDATE"
     assert summary["approved"] is True
     assert summary["locked_holdout_policy"]["pass"] is True
+
+
+def test_future_approval_path_blocks_synthetic_ready_payload_missing_production_checks(tmp_path: Path) -> None:
+    readiness = _write_json(
+        tmp_path / "readiness.json",
+        {
+            "schema_version": "epex_lab_promotion_readiness.v1",
+            "approved": True,
+            "status": "PROMOTION_READY",
+            "strict_diagnostics_pass": True,
+            "production_chain_pass": True,
+            "selected_adjusted_csv": "adjusted.csv",
+            "missing_production_evidence": [],
+            "checks": [],
+        },
+    )
+    holdout = _write_json(tmp_path / "holdout.json", _locked_holdout_run_payload())
+
+    summary = audit_future_approval_path(
+        readiness_json=readiness,
+        locked_holdout_summary=holdout,
+        output=tmp_path / "out.json",
+    )
+
+    assert summary["status"] == "NO_GO_LOCKED_HOLDOUT_HASH_MISMATCH"
+    assert summary["approved"] is False
+    assert "adjusted_production_manifest_locked_holdout_bound" in summary["missing_production_checks"]
+    assert "locked_holdout_sha_bound" in summary["remaining_blockers"]
 
 
 def test_future_approval_path_blocks_bad_spot_policy(tmp_path: Path) -> None:

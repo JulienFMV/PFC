@@ -363,6 +363,138 @@ def test_epex_lab_readiness_can_pass_with_separate_approved_production_chain(tmp
     assert summary["production_chain_pass"] is True
     assert summary["status"] == "PROMOTION_READY"
 
+    holdout_payload = json.loads(locked_holdout.read_text(encoding="utf-8"))
+    holdout_payload["same_path_hash_change"] = True
+    locked_holdout.write_text(json.dumps(holdout_payload), encoding="utf-8")
+    changed_summary = check_readiness(
+        lab_manifest=lab,
+        governance_audit=governance,
+        independent_summary=independent,
+        product_summary=product,
+        powerbi_summary=powerbi,
+        ompex_advisory_delta=ompex,
+        adjusted_production_manifest=production_manifest,
+        adjusted_export_manifest=export_manifest,
+        adjusted_selected_config=selected_config,
+        adjusted_capstone=capstone,
+        locked_holdout_summary=locked_holdout,
+        output=tmp_path / "decision_changed_holdout.json",
+    )
+    changed_checks = {check["name"]: check["status"] for check in changed_summary["checks"]}
+    assert changed_summary["approved"] is False
+    assert changed_summary["production_chain_pass"] is False
+    assert changed_checks["adjusted_production_manifest_locked_holdout_bound"] == "FAIL"
+
+
+def test_epex_lab_readiness_rejects_divergent_export_locked_holdout_hash(tmp_path) -> None:
+    lab, governance, independent, product, powerbi, ompex = _write_inputs(tmp_path)
+    adjusted_csv = json.loads(lab.read_text(encoding="utf-8"))["outputs"]["adjusted_csv"]
+    source_provenance = _write_source_provenance(tmp_path, lab=lab, adjusted_csv=adjusted_csv)
+    selection = _write_selection_summary(tmp_path, adjusted_csv=adjusted_csv)
+    locked_holdout = _write_locked_holdout(tmp_path)
+    production_manifest = tmp_path / "prod.json"
+    export_manifest = tmp_path / "export.json"
+    selected_config = tmp_path / "selected.json"
+    capstone = tmp_path / "capstone.json"
+    run_identity = {
+        "production_run_id": "prod-run-1",
+        "production_entrypoint": "pfc_shaping.pipeline.production_phases",
+        "git_commit": "a" * 40,
+    }
+    locked_holdout_fields = {
+        "locked_holdout_summary": str(locked_holdout),
+        "locked_holdout_summary_sha256": _sha256(locked_holdout),
+        "locked_holdout_policy_pass": True,
+    }
+    _write_json(
+        production_manifest,
+        {
+            "schema_version": "epex_lab_adjusted_production_manifest.v1",
+            "production_approved": True,
+            "production_promotion_approved": True,
+            "contract_pass": True,
+            "source_provenance_pass": True,
+            "selection_policy_pass": True,
+            "selection_summary": str(selection),
+            "selection_summary_sha256": _sha256(selection),
+            "source_kind": "candidate_csv",
+            "source_promotion_eligible": True,
+            "source_provenance_manifest": str(source_provenance),
+            "source_provenance_manifest_sha256": _sha256(source_provenance),
+            "adjusted_csv": adjusted_csv,
+            "adjusted_csv_sha256": _sha256(tmp_path / "adjusted.csv"),
+            **locked_holdout_fields,
+            **run_identity,
+        },
+    )
+    production_manifest_sha = _sha256(production_manifest)
+    _write_json(
+        export_manifest,
+        {
+            "schema_version": "epex_lab_adjusted_export_manifest.v1",
+            "production_approved": True,
+            "production_promotion_approved": True,
+            "adjusted_csv": adjusted_csv,
+            "adjusted_csv_sha256": _sha256(tmp_path / "adjusted.csv"),
+            "adjusted_production_manifest": str(production_manifest),
+            "adjusted_production_manifest_sha256": production_manifest_sha,
+            **locked_holdout_fields,
+            "locked_holdout_summary_sha256": "0" * 64,
+            **run_identity,
+        },
+    )
+    _write_json(
+        selected_config,
+        {
+            "schema_version": "epex_lab_selected_artifact.v1",
+            "selection_status": "PRODUCTION_APPROVED",
+            "production_approved": True,
+            "production_promotion_approved": True,
+            "selected_adjusted_csv": adjusted_csv,
+            "selected_adjusted_csv_sha256": _sha256(tmp_path / "adjusted.csv"),
+            "adjusted_production_manifest": str(production_manifest),
+            "adjusted_production_manifest_sha256": production_manifest_sha,
+            **locked_holdout_fields,
+            **run_identity,
+        },
+    )
+    _write_json(
+        capstone,
+        {
+            "schema_version": "epex_lab_production_capstone.v1",
+            "approved": True,
+            "production_chain_pass": True,
+            "adjusted_production_manifest": str(production_manifest),
+            "adjusted_production_manifest_sha256": production_manifest_sha,
+            "adjusted_export_manifest": str(export_manifest),
+            "adjusted_export_manifest_sha256": _sha256(export_manifest),
+            "adjusted_selected_artifact": str(selected_config),
+            "adjusted_selected_artifact_sha256": _sha256(selected_config),
+            **locked_holdout_fields,
+            **run_identity,
+        },
+    )
+
+    summary = check_readiness(
+        lab_manifest=lab,
+        governance_audit=governance,
+        independent_summary=independent,
+        product_summary=product,
+        powerbi_summary=powerbi,
+        ompex_advisory_delta=ompex,
+        adjusted_production_manifest=production_manifest,
+        adjusted_export_manifest=export_manifest,
+        adjusted_selected_config=selected_config,
+        adjusted_capstone=capstone,
+        locked_holdout_summary=locked_holdout,
+        output=tmp_path / "decision.json",
+    )
+
+    checks = {check["name"]: check["status"] for check in summary["checks"]}
+    assert summary["approved"] is False
+    assert summary["production_chain_pass"] is False
+    assert checks["adjusted_export_manifest_production_chain_bound"] == "FAIL"
+
 
 def test_epex_lab_readiness_requires_locked_holdout_for_complete_production_chain(tmp_path) -> None:
     lab, governance, independent, product, powerbi, ompex = _write_inputs(tmp_path)

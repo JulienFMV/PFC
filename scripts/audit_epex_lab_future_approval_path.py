@@ -15,12 +15,14 @@ from typing import Any
 PRODUCTION_CHECKS = [
     "adjusted_production_manifest_approved",
     "adjusted_production_manifest_run_identity_valid",
+    "adjusted_production_manifest_locked_holdout_bound",
     "adjusted_export_manifest_production_ready",
     "adjusted_export_manifest_production_chain_bound",
     "adjusted_selected_artifact_production_ready",
     "adjusted_selected_artifact_production_chain_bound",
     "adjusted_capstone_approved",
     "adjusted_capstone_production_chain_bound",
+    "locked_holdout_pass",
 ]
 
 REQUIRED_PRODUCTION_EVIDENCE = [
@@ -43,15 +45,28 @@ def audit_future_approval_path(
     locked_holdout = _read_json(locked_holdout_summary) if locked_holdout_summary is not None else None
     checks = {str(check.get("name")): check for check in readiness.get("checks", [])}
     failed_checks = [name for name, check in checks.items() if check.get("status") != "PASS"]
+    missing_production_checks = [name for name in PRODUCTION_CHECKS if name not in checks]
     failed_production_checks = [name for name in PRODUCTION_CHECKS if name in failed_checks]
     missing = list(readiness.get("missing_production_evidence") or [])
-    missing_or_failed = sorted(set(missing + failed_production_checks))
+    missing_or_failed = sorted(set(missing + missing_production_checks + failed_production_checks))
     spot_policy = _spot_policy(spot) if spot is not None else None
     holdout_policy = _locked_holdout_policy(locked_holdout) if locked_holdout is not None else None
     holdout_required = bool(readiness.get("approved") is True or readiness.get("production_chain_pass") is True)
     if holdout_required and holdout_policy is None:
         holdout_policy = {"provided": False, "pass": False, "status": "MISSING_LOCKED_HOLDOUT"}
         missing_or_failed = sorted(set(missing_or_failed + ["locked_holdout_pass"]))
+    if holdout_required and holdout_policy is not None and holdout_policy.get("pass") is True:
+        expected_sha = _readiness_locked_holdout_sha(checks)
+        actual_sha = _sha256(locked_holdout_summary) if locked_holdout_summary is not None else None
+        if not expected_sha or actual_sha != expected_sha:
+            holdout_policy = {
+                **holdout_policy,
+                "pass": False,
+                "status": "NO_GO_LOCKED_HOLDOUT_HASH_MISMATCH",
+                "expected_sha256": expected_sha,
+                "actual_sha256": actual_sha,
+            }
+            missing_or_failed = sorted(set(missing_or_failed + ["locked_holdout_sha_bound"]))
     if holdout_policy is not None and holdout_policy["pass"] is not True:
         missing_or_failed = sorted(set(missing_or_failed + ["locked_holdout_pass"]))
 
@@ -59,6 +74,8 @@ def audit_future_approval_path(
         status = "NO_GO_SPOT_BACKTEST_POLICY_FAIL"
     elif holdout_policy is not None and not holdout_policy["pass"]:
         status = str(holdout_policy["status"])
+    elif missing_production_checks:
+        status = "NO_GO_PRODUCTION_CHAIN_INCOMPLETE"
     elif readiness.get("approved") is True and readiness.get("status") == "PROMOTION_READY":
         status = "PROMOTION_READY_CANDIDATE"
     elif readiness.get("strict_diagnostics_pass") is not True:
@@ -82,6 +99,7 @@ def audit_future_approval_path(
         "selected_adjusted_csv": readiness.get("selected_adjusted_csv"),
         "missing_production_evidence": missing,
         "failed_production_checks": failed_production_checks,
+        "missing_production_checks": missing_production_checks,
         "failed_check_count": int(len(failed_checks)),
         "failed_checks": failed_checks,
         "remaining_blockers": missing_or_failed,
@@ -173,6 +191,32 @@ def _locked_holdout_policy(summary: dict[str, Any] | None) -> dict[str, Any]:
         "status": "LOCKED_HOLDOUT_PASS" if passed else status,
         "checks": checks,
     }
+
+
+def _readiness_locked_holdout_sha(checks: dict[str, dict[str, Any]]) -> str | None:
+    candidate_checks = [
+        "adjusted_production_manifest_locked_holdout_bound",
+        "adjusted_export_manifest_production_chain_bound",
+        "adjusted_selected_artifact_production_chain_bound",
+        "adjusted_capstone_production_chain_bound",
+    ]
+    for name in candidate_checks:
+        value = (checks.get(name) or {}).get("value")
+        if isinstance(value, dict):
+            candidate = value.get("locked_holdout_summary_sha256")
+            if isinstance(candidate, str) and candidate:
+                return candidate
+    return None
+
+
+def _sha256(path: Path) -> str:
+    import hashlib
+
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _next_actions(

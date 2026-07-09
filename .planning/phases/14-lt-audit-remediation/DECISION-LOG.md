@@ -5061,3 +5061,62 @@ Invariants not to break:
 - Diagnostic NO-GO manifests may still be built before T057 coverage is
   complete, but cannot claim production approval.
 
+## D-20260709-56 - Require SHA-Strict T057 Binding In Readiness And Future Approval
+
+Decision: T057 binding is SHA-strict. A matching holdout path is not enough for
+readiness or future approval; the current holdout file hash must match the hash
+carried by the adjusted production chain. Future approval audits must also see
+all expected production readiness checks, including locked-holdout checks, and
+must reject synthetic `PROMOTION_READY` payloads that omit them.
+
+Reason: a read-only expert audit found two residual weaknesses after D55:
+readiness could accept a same-path holdout replacement because it allowed
+`path OR sha`, and the future approval audit could accept a minimal readiness
+JSON plus a passing holdout sidecar without proving the sidecar hash was bound
+to the chain.
+
+Implementation:
+
+- `scripts/check_epex_lab_promotion_readiness.py`
+  - `_artifact_bound_to_locked_holdout` now requires SHA match and
+    `locked_holdout_policy_pass=true`.
+- `scripts/audit_epex_lab_future_approval_path.py`
+  - adds `adjusted_production_manifest_locked_holdout_bound` and
+    `locked_holdout_pass` to production checks;
+  - reports missing production checks as blockers;
+  - compares the provided locked holdout summary SHA with the SHA reported by
+    readiness binding checks;
+  - returns `NO_GO_LOCKED_HOLDOUT_HASH_MISMATCH` for unbound sidecars.
+- `scripts/audit_epex_lab_locked_holdout.py`
+  - writes top-level no-OMPEX flags so `epex_lab_locked_holdout_audit.v1`
+    artifacts are directly consumable by holdout policies.
+
+Validation:
+
+- `python -m pytest tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_adjusted_production_chain_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+  reported `59 passed, 1 skipped`.
+
+Current regenerated evidence remains NO-GO:
+
+- `output/phase14/t057_locked_t056_future_holdout/future_approval_path_with_holdout_current.json`
+  reports `NO_GO_LOCKED_HOLDOUT_COVERAGE_PENDING`, includes
+  `locked_holdout_pass`, and now lists missing locked-holdout production checks.
+- `output/phase14/t057_locked_t056_future_holdout/promotion_readiness_with_locked_holdout_current.json`
+  exits non-zero as expected, with `locked_holdout_pass=FAIL` and
+  `adjusted_production_manifest_locked_holdout_bound=FAIL`.
+
+Rejected alternatives:
+
+- Continue accepting a matching holdout path when the hash differs.
+- Trust `readiness.approved=true` without requiring all expected checks to be
+  present and passing.
+- Keep `epex_lab_locked_holdout_audit.v1` accepted in theory but unusable by
+  the policy because it lacks top-level no-OMPEX flags.
+
+Invariants not to break:
+
+- T057 remains non-promotional and read-only.
+- A passing T057 holdout must be bound by SHA in every approved adjusted
+  production artifact.
+- NO-GO diagnostics remain possible before T057 coverage is complete.
+

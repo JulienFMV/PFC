@@ -562,7 +562,7 @@ def _artifact_bound_to_locked_holdout(
     path_bound = _same_path(artifact.get("locked_holdout_summary"), locked_holdout_path)
     sha_bound = artifact.get("locked_holdout_summary_sha256") == locked_holdout_sha256
     policy_bound = artifact.get("locked_holdout_policy_pass") is True
-    return bool((path_bound or sha_bound) and policy_bound)
+    return bool(sha_bound and policy_bound and (path_bound or artifact.get("locked_holdout_summary")))
 
 
 def _artifact_locked_holdout_matches_production(

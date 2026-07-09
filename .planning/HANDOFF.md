@@ -117,6 +117,16 @@ reported `53 passed, 1 skipped`. CLI help was checked for
 `scripts/build_epex_lab_adjusted_production_manifest.py` and
 `scripts/build_epex_lab_adjusted_production_chain.py`.
 
+Second expert-audit hardening on 2026-07-09 made T057 binding SHA-strict:
+readiness no longer accepts a same-path holdout replacement when the file hash
+differs, future approval audits require all production readiness checks to be
+present and passing, and the provided locked-holdout sidecar SHA must match the
+SHA reported by readiness binding checks. `scripts/audit_epex_lab_locked_holdout.py`
+now writes top-level no-OMPEX flags so audit-schema holdout artifacts are
+directly consumable. Validation:
+`python -m pytest tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_adjusted_production_chain_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
+reported `59 passed, 1 skipped`.
+
 Current daily generation: Wednesday 2026-07-08 was regenerated from the EEX
 workbook available on 2026-07-08. The latest usable CH/DE/FR quote row in that
 workbook is `2026-07-07`, so all new 2026-07-08 evidence is bound to

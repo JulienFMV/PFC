@@ -272,3 +272,26 @@ Operational impact:
   building any approved adjusted production manifest.
 - The production/export/selected/capstone chain must preserve the exact
   `locked_holdout_summary_sha256`.
+
+Additional expert-audit hardening:
+
+- `scripts/check_epex_lab_promotion_readiness.py` now requires SHA-strict
+  holdout binding; the same holdout path with changed content fails.
+- `scripts/audit_epex_lab_future_approval_path.py` now requires all expected
+  production readiness checks to be present and passing, including
+  `adjusted_production_manifest_locked_holdout_bound` and
+  `locked_holdout_pass`.
+- Future approval also compares the provided locked holdout sidecar SHA against
+  the SHA reported by readiness binding checks and returns
+  `NO_GO_LOCKED_HOLDOUT_HASH_MISMATCH` for unbound sidecars.
+- `scripts/audit_epex_lab_locked_holdout.py` now emits top-level no-OMPEX flags
+  so `epex_lab_locked_holdout_audit.v1` can be consumed by the same policy as
+  runner summaries.
+
+Validation after this hardening:
+
+```powershell
+python -m pytest tests/test_build_epex_lab_adjusted_production_manifest_script.py tests/test_build_epex_lab_adjusted_production_chain_script.py tests/test_check_epex_lab_promotion_readiness_script.py tests/test_audit_epex_lab_future_approval_path_script.py tests/test_audit_epex_lab_locked_holdout_script.py tests/test_run_epex_lab_locked_holdout_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider
+```
+
+Result: `59 passed, 1 skipped`.

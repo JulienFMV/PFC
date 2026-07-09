@@ -25,6 +25,11 @@ def test_audit_epex_lab_locked_holdout_passes_no_ompex_window(tmp_path: Path) ->
     assert audit["status"] == "LOCKED_HOLDOUT_PASS"
     assert audit["holdout_pass"] is True
     assert audit["approved"] is False
+    assert audit["promotion_gate"] is False
+    assert audit["production_approved"] is False
+    assert audit["ompex_used_in_model"] is False
+    assert audit["ompex_used_in_selection"] is False
+    assert audit["ompex_used_in_backtest"] is False
     assert audit["checks"]["summary_no_ompex"] is True
     assert audit["holdout_metrics"]["hours"] == 4
     assert audit["holdout_metrics"]["residual_mae_improvement_eur_mwh"] > 0
