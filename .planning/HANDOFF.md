@@ -236,7 +236,8 @@ workbook available on 2026-07-08. The latest usable CH/DE/FR quote row in that
 workbook is `2026-07-07`, so all new 2026-07-08 evidence is bound to
 `forward_snapshot_date=2026-07-07`.
 
-Current promotion-ready 2026-07-08 candidate:
+Separate baseline daily production-ready 2026-07-08 candidate
+(not the T056 EPEX lab adjusted candidate):
 
 `output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/`
 
@@ -254,7 +255,7 @@ Production LT dry-run/save also completed and wrote:
 - `pfc_shaping/output/pfc_de_15min_2026-07-08.parquet`
 - `pfc_shaping/model/artifacts/production_monthly_curve_manifest.json`
 
-Promotion evidence is complete for this 2026-07-08 candidate:
+Promotion evidence is complete for this separate baseline daily candidate:
 
 - source hierarchy policy:
   `.planning/phases/14-lt-audit-remediation/quote_conflict_source_hierarchy_policy_asof20260707_lshape100_yoy150_amp150_2032.json`
@@ -842,7 +843,7 @@ Validation for the evening-recovery component:
 `python -m pytest tests/test_run_epex_shape_lab_ab_script.py tests/test_plan_epex_shape_lab_sweep_script.py tests/test_execute_epex_shape_lab_sweep_script.py tests/test_stage_epex_lab_adjusted_lt_candidate_script.py tests/test_lt_ct_imports.py -q -p no:cacheprovider`
 reported `34 passed, 1 skipped`.
 
-Best new local frontier is T053:
+Historical pre-T056 local frontier was T053:
 
 - selection summary:
   `output/phase14/t053_evening_recovery_bridge_selection_summary/spot_backtest_selection_summary.json`
@@ -856,9 +857,10 @@ Best new local frontier is T053:
 - verdict remains `replace_incumbent=false`.
 
 T054 high-peak/low-tail reproduced the T070 family and remains NO-GO on
-solar-tail. Do not promote T053/T054. Next search should target post-valuation
-stability around T053 without weakening D50 selection policy or using OMPEX as
-model/selection/gate input.
+solar-tail. Do not promote T053/T054. This block is retained as historical
+pre-T056 search context only; the active adjusted-candidate line is T056/T057,
+and any new search must be pre-registered without weakening D50 selection
+policy or using OMPEX as model/selection/gate input.
 
 Previous 2026-07-07 promotion-ready daily candidate:
 `output/phase14/20260707_asof20260706_lshape100_yoy150_amp150_2032/`.

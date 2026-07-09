@@ -494,3 +494,11 @@ python -m pytest tests/test_epex_lab_locked_holdout_policy.py tests/test_run_epe
 ```
 
 Result: `73 passed, 1 skipped`.
+
+Context hygiene follow-up:
+
+- `.planning/HANDOFF.md` now labels the 2026-07-08 promotion-ready candidate
+  as the separate baseline daily production-ready candidate, not the T056 EPEX
+  lab adjusted candidate.
+- The T053/T054 search block is explicitly marked historical pre-T056 context.
+  The active adjusted-candidate line remains T056/T057.
