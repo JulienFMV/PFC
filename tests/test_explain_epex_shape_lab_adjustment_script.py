@@ -87,6 +87,10 @@ def test_explain_epex_shape_lab_adjustment_reports_component_buckets(tmp_path: P
     assert summary["ompex_used_in_model"] is False
     assert summary["component_totals"]["weekend"]["nonzero_hours"] > 0
     assert summary["bucket_delta_summary"]["weekend"]["hours"] > 0
+    assert summary["bucket_delta_summary"]["weekend"]["dominant_raw_component"] == "weekend"
+    assert summary["bucket_delta_summary"]["weekend"]["projection_residual_to_raw_abs_ratio"] is not None
+    assert summary["compression_summary"]["projection_residual_to_raw_abs_ratio"] is not None
+    assert summary["compression_summary"]["high_compression_bucket_count"] > 0
     assert summary["strict_checks"]["monthly_base_delta_conserved"] is True
     assert (tmp_path / "out" / "bucket_delta_summary.csv").exists()
     written = json.loads((tmp_path / "out" / "shape_explainability_summary.json").read_text(encoding="utf-8"))

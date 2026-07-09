@@ -102,6 +102,7 @@ def explain_adjustment(
         "config": {key: float(config.get(key, 0.0)) for key in sorted(INTENSITY_KEYS.values())},
         "strict_checks": strict_checks,
         "conservation": conservation,
+        "compression_summary": _compression_summary(explained, by_bucket),
         "component_totals": _component_totals(by_component),
         "bucket_delta_summary": _bucket_totals(by_bucket),
         "outputs": {
@@ -274,11 +275,14 @@ def _summary_row(frame: pd.DataFrame, labels: dict[str, Any]) -> dict[str, Any]:
         "hours": int(len(frame)),
         "mean_actual_delta_eur_mwh": _mean(actual),
         "mean_abs_actual_delta_eur_mwh": _mean(actual.abs()),
+        "mean_abs_raw_total_delta_eur_mwh": _mean(raw.abs()),
         "p95_abs_actual_delta_eur_mwh": _quantile(actual.abs(), 0.95),
         "max_abs_actual_delta_eur_mwh": _max(actual.abs()),
         "mean_raw_total_delta_eur_mwh": _mean(raw),
         "mean_projection_residual_eur_mwh": _mean(projection),
         "mean_abs_projection_residual_eur_mwh": _mean(projection.abs()),
+        "raw_to_actual_abs_ratio": _safe_ratio(_mean(raw.abs()), _mean(actual.abs())),
+        "projection_residual_to_raw_abs_ratio": _safe_ratio(_mean(projection.abs()), _mean(raw.abs())),
     }
     for component in TEMPLATE_COMPONENTS:
         col = f"{component}_raw_contribution_eur_mwh"
@@ -312,6 +316,32 @@ def _strict_checks(frame: pd.DataFrame, conservation: dict[str, Any]) -> dict[st
         "monthly_base_delta_conserved": bool(conservation["max_monthly_base_mean_abs_delta_eur_mwh"] <= 1e-5),
         "monthly_peak_delta_conserved": bool(conservation["max_monthly_peak_mean_abs_delta_eur_mwh"] <= 1e-5),
         "ompex_not_used": True,
+    }
+
+
+def _compression_summary(explained: pd.DataFrame, bucket_summary: pd.DataFrame) -> dict[str, Any]:
+    actual_abs = _mean(explained["actual_delta_eur_mwh"].abs())
+    raw_abs = _mean(explained["raw_total_delta_eur_mwh"].abs())
+    residual_abs = _mean(explained["projection_residual_eur_mwh"].abs())
+    bucket_rows = bucket_summary.to_dict(orient="records")
+    ranked = sorted(
+        bucket_rows,
+        key=lambda row: float(row.get("projection_residual_to_raw_abs_ratio") or 0.0),
+        reverse=True,
+    )
+    return {
+        "mean_abs_actual_delta_eur_mwh": actual_abs,
+        "mean_abs_raw_total_delta_eur_mwh": raw_abs,
+        "mean_abs_projection_residual_eur_mwh": residual_abs,
+        "raw_to_actual_abs_ratio": _safe_ratio(raw_abs, actual_abs),
+        "projection_residual_to_raw_abs_ratio": _safe_ratio(residual_abs, raw_abs),
+        "most_compressed_bucket": ranked[0]["bucket"] if ranked else None,
+        "most_compressed_bucket_projection_residual_to_raw_abs_ratio": (
+            float(ranked[0]["projection_residual_to_raw_abs_ratio"]) if ranked else None
+        ),
+        "high_compression_bucket_count": int(
+            sum(float(row.get("projection_residual_to_raw_abs_ratio") or 0.0) >= 0.75 for row in bucket_rows)
+        ),
     }
 
 
@@ -366,7 +396,13 @@ def _bucket_totals(bucket_summary: pd.DataFrame) -> dict[str, Any]:
         str(row["bucket"]): {
             "hours": int(row["hours"]),
             "mean_abs_actual_delta_eur_mwh": float(row["mean_abs_actual_delta_eur_mwh"]),
+            "mean_abs_raw_total_delta_eur_mwh": float(row["mean_abs_raw_total_delta_eur_mwh"]),
             "mean_abs_projection_residual_eur_mwh": float(row["mean_abs_projection_residual_eur_mwh"]),
+            "raw_to_actual_abs_ratio": _none_if_nan(row.get("raw_to_actual_abs_ratio")),
+            "projection_residual_to_raw_abs_ratio": _none_if_nan(
+                row.get("projection_residual_to_raw_abs_ratio")
+            ),
+            "dominant_raw_component": _dominant_component(row),
         }
         for row in bucket_summary.to_dict(orient="records")
     }
@@ -382,6 +418,33 @@ def _max(values: pd.Series) -> float:
 
 def _quantile(values: pd.Series, q: float) -> float:
     return float(values.quantile(q)) if len(values) else float("nan")
+
+
+def _safe_ratio(numerator: float, denominator: float) -> float | None:
+    if not np.isfinite(numerator) or not np.isfinite(denominator) or abs(float(denominator)) <= 1e-12:
+        return None
+    return float(numerator / denominator)
+
+
+def _none_if_nan(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not np.isfinite(numeric):
+        return None
+    return numeric
+
+
+def _dominant_component(row: dict[str, Any]) -> str | None:
+    values = {
+        component: abs(float(row.get(f"mean_{component}_raw_contribution_eur_mwh") or 0.0))
+        for component in TEMPLATE_COMPONENTS
+    }
+    component, value = max(values.items(), key=lambda item: item[1])
+    return component if value > 1e-12 else None
 
 
 def _jsonable(value: Any) -> Any:

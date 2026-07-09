@@ -7416,6 +7416,14 @@ Real T056/t005 diagnostic:
   `9.555854647901084e-08`
 - max monthly PEAK mean absolute delta:
   `8.333333436638669e-08`
+- enriched compression summary:
+  - mean absolute raw delta `7.2446193711283255`;
+  - mean absolute final actual delta `0.606012689469531`;
+  - raw-to-actual absolute ratio `11.954567118833522`;
+  - projection-residual-to-raw absolute ratio `0.9252234998202383`;
+  - most compressed bucket `night_00_05` with ratio
+    `0.9563567714561076`;
+  - `high_compression_bucket_count=9`.
 
 Validation:
 
@@ -7423,6 +7431,9 @@ Validation:
   reported `2 passed`.
 - `pytest tests\test_backtest_epex_shape_lab_against_spot_script.py tests\test_audit_epex_shape_lab_governance_script.py tests\test_lt_ct_imports.py -q -p no:cacheprovider`
   reported `21 passed, 1 skipped`.
+- Latest focused validation after adding compression ratios:
+  `pytest tests\test_explain_epex_shape_lab_adjustment_script.py -q -p no:cacheprovider`
+  reported `2 passed`.
 
 Rejected alternatives:
 

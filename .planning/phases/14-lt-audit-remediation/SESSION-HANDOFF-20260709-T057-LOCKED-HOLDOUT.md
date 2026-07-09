@@ -1066,6 +1066,14 @@ Main diagnostic finding:
 - raw component contributions are much larger than the final projected delta,
   so nullspace projection/capping/floor compression is a key explanation item
   before any further tuning.
+- after adding compression ratios, T056/t005 reports:
+  - mean absolute raw delta `7.2446193711283255`;
+  - mean absolute final actual delta `0.606012689469531`;
+  - raw-to-actual absolute ratio `11.954567118833522`;
+  - projection-residual-to-raw absolute ratio `0.9252234998202383`;
+  - most compressed bucket `night_00_05` with ratio
+    `0.9563567714561076`;
+  - `high_compression_bucket_count=9`.
 
 Validation:
 
@@ -1080,6 +1088,14 @@ pytest tests\test_backtest_epex_shape_lab_against_spot_script.py tests\test_audi
 ```
 
 Result: `21 passed, 1 skipped`.
+
+Latest focused validation after adding compression ratios:
+
+```powershell
+pytest tests\test_explain_epex_shape_lab_adjustment_script.py -q -p no:cacheprovider
+```
+
+Result: `2 passed`.
 
 ## 2026-07-09 Follow-Up - Production Chain Rebinds Holdout Policy
 
