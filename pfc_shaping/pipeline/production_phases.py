@@ -3,26 +3,30 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import os
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import yaml
 
-# CT pipeline is imported lazily inside ``run_short_term_phase`` so that
-# importing this module (LT-only) does not pull heavy CT dependencies
+from pfc_shaping.data.lt_input_sources import (
+    InputSourceReceipt,
+    consumed_lt_input_roles,
+    read_parquet_snapshot,
+    read_yaml_snapshot,
+    resolve_lt_input_paths,
+    validate_governed_forward_history_frame,
+    validate_lt_input_consumption,
+    validate_receipt_against_contract,
+    verify_frame_receipt,
+    verify_source_receipt,
+)
+
+
 # (lightgbm, torch, …) into the interpreter. The names are still exposed
-# to type checkers via the TYPE_CHECKING guard below.
-if TYPE_CHECKING:
-    from pfc_shaping.pipeline.swiss_short_term import (  # noqa: F401
-        SwissShortTermArtifacts,
-        SwissShortTermInputs,
-    )
-
-
 @dataclass
 class LoadedInputs:
     epex_ch: pd.DataFrame
@@ -37,16 +41,33 @@ class LoadedInputs:
     config: dict
     sh_mode: str
     eex_report_path: str | None
+    eex_report_available_at: pd.Timestamp | None = None
+    reference_timestamp: pd.Timestamp | None = None
+    reference_timestamp_is_explicit: bool = False
+    freshness_reports: dict[str, object] = field(default_factory=dict)
+    input_source_receipts: dict[str, InputSourceReceipt] = field(default_factory=dict)
+    config_source_receipt: InputSourceReceipt | None = None
+    data_root: str | None = None
+    data_layout: str | None = None
+    data_generation_id: str | None = None
+    data_contract_receipt: InputSourceReceipt | None = None
+    data_pointer_receipt: InputSourceReceipt | None = None
+    config_semantic_sha256: str | None = None
+    input_frames: dict[str, pd.DataFrame] = field(default_factory=dict)
+    data_contract_bytes: bytes | None = None
+    data_pointer_bytes: bytes | None = None
+    eex_forwards_history: pd.DataFrame | None = None
 
 
 @dataclass
 class SharedStructuralArtifacts:
     si: object
-    unc: object
+    unc: object | None
     calibrator: object | None
     entso_forecast: pd.DataFrame
     start_date: str
     horizon_days: int
+    delivery_index: pd.DatetimeIndex | None = None
 
 
 @dataclass
@@ -87,6 +108,8 @@ class MarketBranchArtifacts:
     cascaded_prices: dict
     fwd_source: str
     out_base: str
+    forward_snapshot: dict[str, object] | None = None
+    final_product_projection_report: dict[str, object] = field(default_factory=dict)
     wv: object | None = None
     hydro_forecast: pd.DataFrame | None = None
     outages_forecast: pd.DataFrame | None = None
@@ -159,58 +182,336 @@ def _first_existing_path(*paths: str | None) -> str | None:
     return None
 
 
-def _file_sha256(path: str) -> str:
-    digest = hashlib.sha256()
-    with open(path, "rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+def _json_sha256(payload: object) -> str:
+    raw = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
-def _monthly_solver_source_hashes(
+def _forward_valuation_timestamp(inputs: LoadedInputs, snapshot: object) -> pd.Timestamp:
+    reference = pd.Timestamp(inputs.reference_timestamp or pd.Timestamp.now("UTC"))
+    if reference.tzinfo is None:
+        reference = reference.tz_localize("UTC")
+    else:
+        reference = reference.tz_convert("UTC")
+    available_at = getattr(snapshot, "available_at", None)
+    if not inputs.reference_timestamp_is_explicit and available_at is not None:
+        observed = pd.Timestamp(available_at).tz_convert("UTC")
+        reference = max(reference, observed)
+    return reference
+
+
+def _next_delivery_start_date(
+    reference_timestamp: str | pd.Timestamp,
     *,
-    history_path: object | None,
-    eex_report_path: str | None,
-) -> dict[str, str]:
-    hashes: dict[str, str] = {}
-    if history_path and os.path.exists(str(history_path)):
-        hashes["forwards_path"] = _file_sha256(str(history_path))
-    if eex_report_path and os.path.exists(eex_report_path):
-        hashes["eex_report_path"] = _file_sha256(eex_report_path)
-    return hashes
+    timezone: str,
+) -> str:
+    reference = pd.Timestamp(reference_timestamp)
+    if reference.tzinfo is None:
+        raise ValueError("delivery start reference timestamp must be timezone-aware")
+    return (
+        reference.tz_convert(timezone).normalize() + pd.DateOffset(days=1)
+    ).strftime("%Y-%m-%d")
 
 
-def _read_required_parquet(path: str, label: str, logger: logging.Logger) -> pd.DataFrame:
-    if not os.path.exists(path):
-        raise FileNotFoundError(f"Missing required {label} parquet: {path}")
-    try:
-        df = pd.read_parquet(path)
-    except Exception:
-        logger.exception("  Failed to read required %s parquet: %s", label, path)
-        raise
-    if df.empty:
-        raise ValueError(f"Required {label} parquet is empty: {path}")
-    return df
+def _solver_delivery_quarter_hour_grid(
+    months: pd.PeriodIndex,
+    *,
+    timezone: str,
+) -> pd.DatetimeIndex:
+    if months.empty:
+        raise ValueError("solver delivery month grid is empty")
+    expected = pd.period_range(months.min(), months.max(), freq="M")
+    if not months.equals(expected):
+        raise ValueError("solver delivery months must be sorted, unique, and contiguous")
+    local_start = months.min().to_timestamp(how="start").tz_localize(timezone)
+    local_end = (months.max() + 1).to_timestamp(how="start").tz_localize(timezone)
+    return pd.date_range(
+        local_start.tz_convert("UTC"),
+        local_end.tz_convert("UTC"),
+        freq="15min",
+        inclusive="left",
+    )
 
 
-def load_inputs(project_root: str, logger: logging.Logger) -> LoadedInputs:
+def _prepare_governed_forward_history(
+    history: pd.DataFrame,
+    receipt: InputSourceReceipt,
+    *,
+    reference_timestamp: pd.Timestamp,
+) -> tuple[pd.DataFrame, str]:
+    """Validate the exact PIT forward-history frame consumed by the solver."""
+
+    verify_source_receipt(receipt)
+    verify_frame_receipt(history, receipt)
+    frame = validate_governed_forward_history_frame(
+        history,
+        reference_timestamp=reference_timestamp,
+    )
+    return frame, receipt.sha256
+
+
+def _validate_production_input_freshness(
+    *,
+    epex_ch: pd.DataFrame,
+    epex_de: pd.DataFrame,
+    entso: pd.DataFrame,
+    hydro: pd.DataFrame,
+    outages: pd.DataFrame | None,
+    config: dict,
+    reference_timestamp: str | pd.Timestamp | None,
+    neighbor_prices_15min: dict[str, pd.DataFrame] | None = None,
+) -> dict[str, object]:
+    from pfc_shaping.pipeline.quality_gate import (
+        QualityGateError,
+        input_grid_errors,
+        validate_input_frame,
+    )
+
+    policy = dict((config.get("quality", {}) or {}).get("freshness", {}) or {})
+    _validate_strict_production_freshness_policy(policy, QualityGateError)
+    fail_on_stale = True
+    specs = {
+        "epex_ch": (
+            epex_ch,
+            ["price_eur_mwh"],
+            float(policy.get("epex_max_age_hours", 48.0)) / 24.0,
+            float(policy.get("epex_max_gap_hours", 1.0)) / 24.0,
+        ),
+        "epex_de": (
+            epex_de,
+            ["price_eur_mwh"],
+            float(policy.get("epex_max_age_hours", 48.0)) / 24.0,
+            float(policy.get("epex_max_gap_hours", 1.0)) / 24.0,
+        ),
+        "entso": (
+            entso,
+            ["load_mw", "solar_mw", "wind_mw"],
+            float(policy.get("entso_max_age_hours", 72.0)) / 24.0,
+            float(policy.get("entso_max_gap_hours", 2.0)) / 24.0,
+        ),
+        "hydro": (
+            hydro,
+            ["fill_deviation"],
+            float(policy.get("hydro_max_age_days", 10.0)),
+            float(policy.get("hydro_max_gap_days", 14.0)),
+        ),
+    }
+    for code, frame in sorted((neighbor_prices_15min or {}).items()):
+        if code == "de":
+            continue
+        specs[f"epex_{code}"] = (
+            frame,
+            ["price_eur_mwh"],
+            float(policy.get("epex_max_age_hours", 48.0)) / 24.0,
+            float(policy.get("epex_max_gap_hours", 1.0)) / 24.0,
+        )
+    reports: dict[str, object] = {}
+    for name, (frame, columns, max_age_days, max_gap_days) in specs.items():
+        cadence_seconds = 24 * 60 * 60 if name == "hydro" else 15 * 60
+        grid_errors = input_grid_errors(
+            frame,
+            name=name,
+            expected_cadence_seconds=cadence_seconds,
+            min_grid_coverage=0.95,
+        )
+        if grid_errors:
+            raise QualityGateError("; ".join(grid_errors))
+        reports[name] = validate_input_frame(
+            frame,
+            name=name,
+            required_columns=columns,
+            min_rows=1,
+            max_age_days=max_age_days,
+            reference_timestamp=reference_timestamp,
+            fail_on_stale=fail_on_stale,
+            min_finite_fraction=float(policy.get("min_finite_fraction", 0.95)),
+            recent_window_days=float(policy.get("recent_window_days", 7.0)),
+            min_recent_finite_fraction=float(
+                policy.get("min_recent_finite_fraction", 0.95)
+            ),
+            max_finite_gap_days=max_gap_days,
+        )
+
+    outages_enabled = bool(policy.get("outages_enabled", False))
+    if outages_enabled:
+        if outages is None:
+            raise QualityGateError("outages: enabled for production but dataset is missing")
+        grid_errors = input_grid_errors(
+            outages,
+            name="outages",
+            expected_cadence_seconds=15 * 60,
+            min_grid_coverage=0.95,
+        )
+        if grid_errors:
+            raise QualityGateError("; ".join(grid_errors))
+        reports["outages"] = validate_input_frame(
+            outages,
+            name="outages",
+            required_columns=["unavailable_mw", "n_outages"],
+            min_rows=1,
+            max_age_days=float(policy.get("outages_max_age_hours", 48.0)) / 24.0,
+            reference_timestamp=reference_timestamp,
+            fail_on_stale=fail_on_stale,
+            min_finite_fraction=float(policy.get("min_finite_fraction", 0.95)),
+            recent_window_days=float(policy.get("recent_window_days", 7.0)),
+            min_recent_finite_fraction=float(
+                policy.get("min_recent_finite_fraction", 0.95)
+            ),
+            max_finite_gap_days=float(policy.get("outages_max_gap_hours", 2.0)) / 24.0,
+        )
+    return reports
+
+
+def _validate_strict_production_freshness_policy(
+    policy: dict[str, object],
+    error_type: type[RuntimeError],
+) -> None:
+    if policy.get("fail_on_stale_inputs", True) is not True:
+        raise error_type("production freshness policy cannot disable fail_on_stale_inputs")
+    minimums = {
+        "min_finite_fraction": 0.95,
+        "min_recent_finite_fraction": 0.95,
+        "recent_window_days": 7.0,
+    }
+    maximums = {
+        "epex_max_age_hours": 48.0,
+        "entso_max_age_hours": 72.0,
+        "hydro_max_age_days": 10.0,
+        "epex_max_gap_hours": 1.0,
+        "entso_max_gap_hours": 2.0,
+        "hydro_max_gap_days": 14.0,
+        "outages_max_age_hours": 48.0,
+        "outages_max_gap_hours": 2.0,
+    }
+    for key, floor in minimums.items():
+        value = float(policy.get(key, floor))
+        if not math.isfinite(value):
+            raise error_type(f"production freshness policy {key} must be finite")
+        if value < floor:
+            raise error_type(
+                f"production freshness policy {key}={value} is below sanctioned minimum {floor}"
+            )
+    for key, ceiling in maximums.items():
+        value = float(policy.get(key, ceiling))
+        if not math.isfinite(value):
+            raise error_type(f"production freshness policy {key} must be finite")
+        if value > ceiling:
+            raise error_type(
+                f"production freshness policy {key}={value} exceeds sanctioned maximum {ceiling}"
+            )
+
+
+def load_inputs(
+    project_root: str,
+    logger: logging.Logger,
+    *,
+    reference_timestamp: str | pd.Timestamp | None = None,
+    data_root: str | Path | None = None,
+    eex_report_path: str | Path | None = None,
+    eex_report_available_at: str | pd.Timestamp | None = None,
+    config_path: str | Path | None = None,
+    expected_config_sha256: str | None = None,
+    input_snapshot_contract: str | Path | None = None,
+    input_pointer_contract: str | Path | None = None,
+    expected_input_snapshot_sha256: str | None = None,
+    expected_input_pointer_sha256: str | None = None,
+    expected_input_generation_id: str | None = None,
+) -> LoadedInputs:
     logger.info("=" * 70)
     logger.info("STEP 1: Loading data")
     logger.info("=" * 70)
     t0 = time.time()
+    resolved_reference = pd.Timestamp(reference_timestamp) if reference_timestamp is not None else pd.Timestamp.now("UTC")
+    if resolved_reference.tzinfo is None:
+        resolved_reference = resolved_reference.tz_localize("UTC")
+    else:
+        resolved_reference = resolved_reference.tz_convert("UTC")
 
-    data_dir = os.path.join(project_root, "pfc_shaping", "data")
-    epex_ch = _read_required_parquet(os.path.join(data_dir, "epex_15min.parquet"), "EPEX CH", logger)
-    epex_de = _read_required_parquet(os.path.join(data_dir, "epex_de_15min.parquet"), "EPEX DE", logger)
+    selected_config = (
+        Path(config_path)
+        if config_path is not None
+        else Path(project_root) / "pfc_shaping" / "config.yaml"
+    )
+    config, config_receipt = read_yaml_snapshot(selected_config)
+    if (
+        expected_config_sha256 is not None
+        and config_receipt.sha256 != str(expected_config_sha256).strip().lower()
+    ):
+        raise ValueError("LT config SHA-256 does not match --config-sha256")
+    input_paths = resolve_lt_input_paths(
+        project_root,
+        data_root=data_root,
+        expected_snapshot_contract=input_snapshot_contract,
+        expected_pointer_contract=input_pointer_contract,
+        expected_snapshot_sha256=expected_input_snapshot_sha256,
+        expected_pointer_sha256=expected_input_pointer_sha256,
+        expected_generation_id=expected_input_generation_id,
+    )
+    logger.info("  LT input root: %s (%s)", input_paths.root, input_paths.layout)
+    if input_paths.layout != "external_v2":
+        raise ValueError(
+            "LT production inputs require an explicit governed external_v2 data root"
+        )
+    if not input_paths.calibration_eligible:
+        raise ValueError(
+            f"LT input generation {input_paths.generation_id} is not calibration eligible"
+        )
+    consumed_roles = consumed_lt_input_roles(
+        config,
+        available_roles=set(input_paths.files),
+    )
+    validate_lt_input_consumption(
+        input_paths,
+        roles=consumed_roles,
+        reference_timestamp=resolved_reference,
+    )
+    input_receipts: dict[str, InputSourceReceipt] = {}
+    input_frames: dict[str, pd.DataFrame] = {}
+
+    def read_required(path: Path, label: str, role: str) -> pd.DataFrame:
+        if not path.is_file():
+            raise FileNotFoundError(f"Missing required {label} parquet: {path}")
+        try:
+            logical_path = path.relative_to(input_paths.snapshot_root).as_posix()
+            frame, receipt = read_parquet_snapshot(
+                path,
+                role=role,
+                logical_path=logical_path,
+            )
+            validate_receipt_against_contract(input_paths, receipt)
+        except Exception:
+            logger.exception("  Failed to read required %s parquet: %s", label, path)
+            raise
+        if frame.empty:
+            raise ValueError(f"Required {label} parquet is empty: {path}")
+        input_receipts[role] = receipt
+        input_frames[role] = frame
+        return frame
+
+    epex_ch = read_required(input_paths.epex_ch, "EPEX CH", "epex_ch")
+    epex_de = read_required(input_paths.epex_de, "EPEX DE", "epex_de")
     neighbor_prices_15min = {
         "de": epex_de,
     }
     for code in ["at", "fr", "it"]:
-        path = os.path.join(data_dir, f"epex_{code}_15min.parquet")
-        if os.path.exists(path):
-            neighbor_prices_15min[code] = pd.read_parquet(path)
-    entso = _read_required_parquet(os.path.join(data_dir, "entso_15min.parquet"), "ENTSO-E", logger)
-    hydro = _read_required_parquet(os.path.join(data_dir, "hydro_reservoir.parquet"), "Hydro reservoir", logger)
+        role = f"epex_{code}"
+        if input_paths.has_role(role):
+            path = input_paths.neighbor_epex(code)
+            neighbor_prices_15min[code] = read_required(path, f"EPEX {code.upper()}", f"epex_{code}")
+    entso = read_required(input_paths.entso, "ENTSO-E", "entso")
+    hydro = read_required(input_paths.hydro, "Hydro reservoir", "hydro")
+    eex_forwards_history = None
+    if "eex_forwards_history" in consumed_roles:
+        if not input_paths.has_role("eex_forwards_history"):
+            raise ValueError(
+                "CH monthly solver requires governed external_v2 role "
+                "eex_forwards_history"
+            )
+        eex_forwards_history = read_required(
+            input_paths.eex_forwards_history,
+            "EEX forwards history",
+            "eex_forwards_history",
+        )
 
     logger.info("  EPEX CH:  %d rows  [%s -> %s]", len(epex_ch), epex_ch.index.min().date(), epex_ch.index.max().date())
     logger.info("  EPEX DE:  %d rows  [%s -> %s]", len(epex_de), epex_de.index.min().date(), epex_de.index.max().date())
@@ -237,26 +538,53 @@ def load_inputs(project_root: str, logger: logging.Logger) -> LoadedInputs:
     logger.info("  solar_regime stats: mean=%.2f, std=%.2f", entso["solar_regime"].mean(), entso["solar_regime"].std())
     logger.info("  load_deviation stats: mean=%.2f, std=%.2f", entso["load_deviation"].mean(), entso["load_deviation"].std())
 
-    with open(os.path.join(project_root, "pfc_shaping", "config.yaml"), encoding="utf-8") as handle:
-        config = yaml.safe_load(handle)
     model_cfg = config.get("model", {})
     forwards_cfg = config.get("forwards", {})
     sh_mode = model_cfg.get("shape_hourly_mode", "table")
-    eex_report_path = _first_existing_path(
-        forwards_cfg.get("eex_report_path"),
-        forwards_cfg.get("eex_report_path_unc"),
-    )
-    if eex_report_path:
-        logger.info("  EEX report path selected: %s", eex_report_path)
+    selected_eex_report = None
+    if eex_report_path is not None:
+        explicit_report = Path(eex_report_path).expanduser()
+        if not explicit_report.is_absolute() or not explicit_report.is_file():
+            raise FileNotFoundError(f"explicit EEX report path is unavailable: {explicit_report}")
+        selected_eex_report = str(explicit_report.resolve())
     else:
-        logger.warning(
-            "  No configured EEX report path found on filesystem; fallback loader will use repo-local/proxy source."
+        selected_eex_report = _first_existing_path(
+            forwards_cfg.get("eex_report_path"),
+            forwards_cfg.get("eex_report_path_unc"),
         )
+    if selected_eex_report:
+        logger.info("  EEX report path selected: %s", selected_eex_report)
+    else:
+        raise FileNotFoundError("No explicit or configured EEX report path is available")
+    selected_eex_available_at = None
+    if eex_report_available_at is not None:
+        selected_eex_available_at = pd.Timestamp(eex_report_available_at)
+        if selected_eex_available_at.tzinfo is None:
+            raise ValueError("EEX report availability must be timezone-aware")
+        selected_eex_available_at = selected_eex_available_at.tz_convert("UTC")
 
-    commodities_path = os.path.join(project_root, "data", "commodities_cache.parquet")
-    commodities = pd.read_parquet(commodities_path) if os.path.exists(commodities_path) else None
-    outages_path = os.path.join(project_root, "pfc_shaping", "data", "outages_15min.parquet")
-    outages_all = pd.read_parquet(outages_path) if os.path.exists(outages_path) else None
+    commodities = None
+    if input_paths.has_role("commodities"):
+        commodities = read_required(input_paths.commodities, "commodities", "commodities")
+    outages_all = None
+    if "outages" in consumed_roles:
+        outages_all = read_required(input_paths.outages, "outages", "outages")
+
+    freshness_reports = _validate_production_input_freshness(
+        epex_ch=epex_ch,
+        epex_de=epex_de,
+        entso=entso,
+        hydro=hydro,
+        outages=outages_all,
+        config=config,
+        reference_timestamp=resolved_reference,
+        neighbor_prices_15min=neighbor_prices_15min,
+    )
+    for name, report in freshness_reports.items():
+        logger.info("  Freshness gate %s: PASS (%d checks)", name, report.checks_passed)
+    if "outages" not in consumed_roles:
+        outages_all = None
+        logger.info("  Outages feature explicitly disabled until acquisition provenance is production-ready")
 
     return LoadedInputs(
         epex_ch=epex_ch,
@@ -270,7 +598,31 @@ def load_inputs(project_root: str, logger: logging.Logger) -> LoadedInputs:
         outages_all=outages_all,
         config=config,
         sh_mode=sh_mode,
-        eex_report_path=eex_report_path,
+        eex_report_path=selected_eex_report,
+        eex_report_available_at=selected_eex_available_at,
+        reference_timestamp=resolved_reference,
+        reference_timestamp_is_explicit=reference_timestamp is not None,
+        freshness_reports=freshness_reports,
+        input_source_receipts=input_receipts,
+        config_source_receipt=config_receipt,
+        data_root=str(input_paths.root),
+        data_layout=input_paths.layout,
+        data_generation_id=input_paths.generation_id,
+        data_contract_receipt=input_paths.contract_receipt,
+        data_pointer_receipt=input_paths.pointer_receipt,
+        config_semantic_sha256=_json_sha256(config),
+        input_frames=input_frames,
+        data_contract_bytes=(
+            Path(input_paths.contract_receipt.path).read_bytes()
+            if input_paths.contract_receipt is not None
+            else None
+        ),
+        data_pointer_bytes=(
+            Path(input_paths.pointer_receipt.path).read_bytes()
+            if input_paths.pointer_receipt is not None
+            else None
+        ),
+        eex_forwards_history=eex_forwards_history,
     )
 
 
@@ -278,6 +630,7 @@ def run_long_term_phase(
     project_root: str,
     inputs: LoadedInputs,
     peak_source_policy: str,
+    use_seasonal_hourly_shape: bool,
     logger: logging.Logger,
 ) -> LongTermArtifacts:
     logger.info("=" * 70)
@@ -291,10 +644,15 @@ def run_long_term_phase(
         logger.info("  Using ShapeHourlyMLP (neural)")
     else:
         from pfc_shaping.lt.model.shape_hourly import ShapeHourly
-        sh = ShapeHourly()
+        sh = ShapeHourly(use_seasonal_hourly=use_seasonal_hourly_shape)
         logger.info("  Using ShapeHourly (table)")
 
-    sh.fit(inputs.epex_ch, inputs.cal_ch, hydro_df=inputs.hydro)
+    sh_fit_kwargs = {"hydro_df": inputs.hydro}
+    if inputs.sh_mode == "mlp":
+        # Outage features are input data, not model-local state. Passing the
+        # governed frame explicitly prevents a hidden repo-cache fallback.
+        sh_fit_kwargs["outages_df"] = inputs.outages_all
+    sh.fit(inputs.epex_ch, inputs.cal_ch, **sh_fit_kwargs)
 
     if inputs.sh_mode == "mlp":
         logger.info("  MLP fitted (neural shape function)")
@@ -339,22 +697,21 @@ def run_long_term_phase(
     logger.info("  WaterValue fitted in %.1fs", time.time() - t4)
 
     logger.info("=" * 70)
-    logger.info("STEP 7: Fitting Uncertainty (n_boot=500, production quality)")
+    logger.info("STEP 7: Probabilistic output disabled (deterministic-only governance)")
     logger.info("=" * 70)
-    t5 = time.time()
-    from pfc_shaping.lt.model.uncertainty import Uncertainty
-
-    unc = Uncertainty(n_boot=500, seed=42)
-    unc.fit(epex_de_post, cal_de_post)
-
-    logger.info("  Bootstrap cells: %d", len(unc.boot_stats_))
-    logger.info("  Uncertainty fitted in %.1fs", time.time() - t5)
+    # The legacy interval model is not a CH rolling-origin forecast-error model.
+    # Keep production deterministic until candidate-bound calibration evidence exists.
+    unc = None
 
     logger.info("=" * 70)
     logger.info("STEP 8: Building base_prices (EEX forward levels)")
     logger.info("=" * 70)
-    from pfc_shaping.data.forward_proxy import load_base_prices as load_fwd_prices
     from pfc_shaping.calibration.cascading import ContractCascader
+    from pfc_shaping.data.forward_proxy import (
+        ForwardSourceUnavailableError,
+        load_forward_snapshot,
+        validate_forward_snapshot,
+    )
     from pfc_shaping.pipeline.monthly_curve_authority import (
         delivery_months_from_prices,
         latest_base_prices_by_market,
@@ -363,12 +720,32 @@ def run_long_term_phase(
         solve_monthly_level_authority,
     )
 
-    base_prices_ch, fwd_source_ch = load_fwd_prices(
+    forward_snapshot_ch = load_forward_snapshot(
         inputs.epex_ch,
         eex_report_path=inputs.eex_report_path,
         config=inputs.config,
+        market="CH",
+        allow_spot_proxy=False,
+        exact_source_only=inputs.eex_report_available_at is not None,
+        source_available_at=inputs.eex_report_available_at,
     )
+    freshness_policy = dict((inputs.config.get("quality", {}) or {}).get("freshness", {}) or {})
+    max_forward_age = int(freshness_policy.get("eex_max_age_business_days", 1))
+    forward_valuation_timestamp_ch = _forward_valuation_timestamp(inputs, forward_snapshot_ch)
+    forward_snapshot_report = validate_forward_snapshot(
+        forward_snapshot_ch,
+        reference_timestamp=forward_valuation_timestamp_ch,
+        max_age_business_days=max_forward_age,
+    )
+    base_prices_ch = dict(forward_snapshot_ch.prices)
+    fwd_source_ch = forward_snapshot_ch.source_description
     logger.info("  Forward source: %s", fwd_source_ch)
+    logger.info(
+        "  Forward snapshot gate: PASS (snapshot=%s, business_age=%s, sha256=%s)",
+        forward_snapshot_ch.snapshot_date.date() if forward_snapshot_ch.snapshot_date is not None else None,
+        forward_snapshot_report["business_age_days"],
+        forward_snapshot_ch.source_sha256,
+    )
 
     cascader_ch = ContractCascader()
     cascader_ch.fit_seasonal_ratios(inputs.epex_ch)
@@ -391,51 +768,62 @@ def run_long_term_phase(
         forwards_cfg = inputs.config.get("forwards", {}) or {}
         solver_as_of_date = forwards_cfg.get("eex_as_of_date")
         monthly_constraint_tolerance_ch = float(settings.get("constraint_tolerance", 1e-9))
-        history_path = settings.get("eex_history_path")
-        source_hashes = _monthly_solver_source_hashes(
-            history_path=history_path,
-            eex_report_path=inputs.eex_report_path,
+        history_receipt = inputs.input_source_receipts.get("eex_forwards_history")
+        if inputs.eex_forwards_history is None or history_receipt is None:
+            raise ValueError(
+                "CH monthly solver requires the consumed governed EEX forward history receipt"
+            )
+        history, history_sha256 = _prepare_governed_forward_history(
+            inputs.eex_forwards_history,
+            history_receipt,
+            reference_timestamp=forward_valuation_timestamp_ch,
         )
-        history = pd.DataFrame()
+        history_source_summary = list(history.attrs.get("eex_source_summary", []))
+        source_hashes = {
+            "eex_forwards_history": history_sha256,
+            "eex_forwards_history_source_summary": _json_sha256(history_source_summary),
+        }
+        if forward_snapshot_ch.source_sha256:
+            source_hashes["forward_snapshot_source"] = forward_snapshot_ch.source_sha256
         neighbor_prices: dict[str, dict[str, float]] = {}
-        if history_path and os.path.exists(str(history_path)):
-            history = pd.read_parquet(str(history_path))
-            history["date"] = pd.to_datetime(history["date"]).dt.tz_localize(None).dt.normalize()
-            neighbor_as_of_date = solver_as_of_date
-            if solver_as_of_date:
-                run_timestamp, historical_base_prices_ch = latest_base_prices_by_market(
+        neighbor_as_of_date = solver_as_of_date
+        if solver_as_of_date:
+            raise ForwardSourceUnavailableError(
+                "forwards.eex_as_of_date is research-only until EEX history carries "
+                "immutable available_at/revision receipts; it cannot drive production hard levels"
+            )
+        neighbor_as_of_date = forward_snapshot_ch.snapshot_date
+        for neighbor in settings.get("markets", ("DE", "FR", "AT", "IT")):
+            try:
+                _, prices = latest_base_prices_by_market(
                     history,
-                    market="CH",
-                    as_of_date=solver_as_of_date,
+                    market=str(neighbor).upper(),
+                    as_of_date=neighbor_as_of_date,
                 )
-                base_prices_ch = historical_base_prices_ch
-                fwd_source_ch = f"EEX history CH as-of {run_timestamp.date()} ({len(base_prices_ch)} keys)"
-                neighbor_as_of_date = run_timestamp
-            else:
-                try:
-                    neighbor_as_of_date, _ = latest_base_prices_by_market(history, market="CH")
-                except ValueError:
-                    neighbor_as_of_date = None
-            for neighbor in settings.get("markets", ("DE", "FR", "AT", "IT")):
-                try:
-                    _, prices = latest_base_prices_by_market(
-                        history,
-                        market=str(neighbor).upper(),
-                        as_of_date=neighbor_as_of_date,
-                    )
-                except ValueError:
-                    continue
-                neighbor_prices[str(neighbor).upper()] = prices
+            except ValueError:
+                continue
+            neighbor_prices[str(neighbor).upper()] = prices
+        if forward_snapshot_ch.source_sha256:
+            source_hashes["forward_snapshot_source"] = forward_snapshot_ch.source_sha256
         monthly_authority_ch = solve_monthly_level_authority(
             market="CH",
             delivery_months=delivery_months_from_prices(base_prices_ch),
             own_base_prices=base_prices_ch,
             all_market_base_prices=neighbor_prices,
             eex_history=history,
+            run_timestamp=forward_valuation_timestamp_ch,
             settings=settings,
             timezone="Europe/Zurich",
             source_hashes=source_hashes,
             original_forward_prices=base_prices_ch,
+            own_forward_snapshot=forward_snapshot_ch,
+            forward_eligibility=forward_snapshot_report,
+            expected_forward_max_age_business_days=int(
+                freshness_policy.get("eex_max_age_business_days", 1)
+            ),
+        )
+        monthly_authority_ch.manifest["eex_forwards_history_source_summary"] = (
+            history_source_summary
         )
         cascaded_prices_ch = monthly_authority_ch.assembler_base_prices
         quoted_keys_ch = monthly_authority_ch.quoted_keys
@@ -454,26 +842,60 @@ def run_long_term_phase(
     latest_fill_dev = inputs.hydro["fill_deviation"].iloc[-1]
     logger.info("  Latest hydro fill_deviation: %.3f (as of %s)", latest_fill_dev, inputs.hydro.index[-1].date())
 
-    start_date = (pd.Timestamp.utcnow() + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
-    max_fwd_year = max(int(k[:4]) for k in cascaded_prices_ch.keys() if k[:4].isdigit() and len(k) >= 4)
-    end_of_last_year = pd.Timestamp(f"{max_fwd_year}-12-31", tz="UTC")
-    future_start_ts = pd.Timestamp(start_date, tz="UTC")
-    horizon_days = (end_of_last_year - future_start_ts).days + 1
+    delivery_index: pd.DatetimeIndex | None = None
+    if monthly_authority_ch is not None:
+        delivery_months = monthly_authority_ch.inputs.delivery_grid.months
+        delivery_index = _solver_delivery_quarter_hour_grid(
+            delivery_months,
+            timezone="Europe/Zurich",
+        )
+        future_start = delivery_index[0]
+        future_end = delivery_index[-1] + pd.Timedelta(minutes=15)
+        start_date = future_start.strftime("%Y-%m-%d")
+        horizon_days = int(np.ceil((future_end - future_start) / pd.Timedelta(days=1)))
+        horizon_label = (
+            f"solver delivery grid {delivery_months.min()} -> {delivery_months.max()}"
+        )
+    else:
+        start_date = _next_delivery_start_date(
+            forward_valuation_timestamp_ch,
+            timezone="Europe/Zurich",
+        )
+        max_fwd_year = max(
+            int(k[:4])
+            for k in cascaded_prices_ch.keys()
+            if k[:4].isdigit() and len(k) >= 4
+        )
+        end_of_last_year = pd.Timestamp(f"{max_fwd_year}-12-31", tz="UTC")
+        future_start = pd.Timestamp(start_date, tz="UTC")
+        future_end = future_start + pd.Timedelta(
+            days=(end_of_last_year - future_start).days + 1
+        )
+        horizon_days = int((future_end - future_start) / pd.Timedelta(days=1))
+        horizon_label = f"legacy horizon through 31/12/{max_fwd_year}"
     logger.info(
-        "  Horizon: %s -> 31/12/%d = %d days (%.1f years)",
-        start_date,
-        max_fwd_year,
+        "  Horizon: %s (%s) = %d days (%.1f years)",
+        future_start,
+        horizon_label,
         horizon_days,
         horizon_days / 365,
     )
-    future_start = pd.Timestamp(start_date, tz="UTC")
-    future_end = future_start + pd.Timedelta(days=horizon_days)
     hydro_idx = pd.date_range(future_start, future_end, freq="W-MON", tz="UTC")
     decay = np.linspace(latest_fill_dev, 0.0, len(hydro_idx))
     hydro_forecast = pd.DataFrame({"fill_deviation": decay}, index=hydro_idx)
 
     logger.info("  Building ENTSO-E climatology forecast for N+3 horizon...")
-    future_idx = pd.date_range(future_start, future_end, freq="15min", inclusive="left", tz="UTC")
+    future_idx = (
+        delivery_index
+        if delivery_index is not None
+        else pd.date_range(
+            future_start,
+            future_end,
+            freq="15min",
+            inclusive="left",
+            tz="UTC",
+        )
+    )
     future_zurich = future_idx.tz_convert("Europe/Zurich")
 
     entso_zurich = inputs.entso.copy()
@@ -528,7 +950,10 @@ def run_long_term_phase(
 
     out_dir = os.path.join("pfc_shaping", "output")
     artifacts_dir = os.path.join("pfc_shaping", "model", "artifacts")
-    today = pd.Timestamp.now().strftime("%Y-%m-%d")
+    output_reference = pd.Timestamp(inputs.reference_timestamp)
+    if output_reference.tzinfo is None:
+        raise ValueError("LT output reference_timestamp must be timezone-aware")
+    today = output_reference.tz_convert("Europe/Zurich").strftime("%Y-%m-%d")
     out_base_ch = os.path.join(out_dir, f"pfc_15min_{today}")
     out_base_de = os.path.join(out_dir, f"pfc_de_15min_{today}")
 
@@ -538,6 +963,7 @@ def run_long_term_phase(
         entso_forecast=entso_forecast,
         start_date=start_date,
         horizon_days=horizon_days,
+        delivery_index=delivery_index,
         logger=logger,
     )
 
@@ -561,6 +987,7 @@ def run_long_term_phase(
         inputs=inputs,
         shared=shared,
         peak_source_policy=peak_source_policy,
+        use_seasonal_hourly_shape=use_seasonal_hourly_shape,
         logger=logger,
         # CH reuses the up-front computed forwards / cascader to avoid
         # parsing the EEX XLSX twice on the same run.
@@ -569,6 +996,8 @@ def run_long_term_phase(
         pre_loaded_cascaded_prices=cascaded_prices_ch,
         pre_loaded_cascader=cascader_for_ch_branch,
         pre_loaded_quoted_keys=quoted_keys_ch,
+        pre_loaded_forward_snapshot=forward_snapshot_ch,
+        pre_loaded_forward_eligibility=forward_snapshot_report,
         monthly_level_authority="solver" if monthly_authority_ch is not None else "legacy",
         skip_legacy_level_cascade=monthly_authority_ch is not None,
         skip_legacy_base_smoothing=monthly_authority_ch is not None,
@@ -593,10 +1022,18 @@ def run_long_term_phase(
         inputs=inputs,
         shared=shared,
         peak_source_policy=peak_source_policy,
+        use_seasonal_hourly_shape=use_seasonal_hourly_shape,
         logger=logger,
     )
 
     markets: dict[str, MarketBranchArtifacts] = {"CH": swiss, "DE": german}
+    monthly_curve_manifests: dict[str, dict[str, object]] = {}
+    if monthly_authority_ch is not None:
+        ch_manifest = dict(monthly_authority_ch.manifest)
+        projection_report = dict(swiss.final_product_projection_report)
+        ch_manifest["final_product_projection"] = projection_report
+        ch_manifest["final_product_projection_hash"] = _json_sha256(projection_report)
+        monthly_curve_manifests["CH"] = ch_manifest
 
     return LongTermArtifacts(
         shared=shared,
@@ -604,39 +1041,8 @@ def run_long_term_phase(
         out_dir=out_dir,
         artifacts_dir=artifacts_dir,
         today=today,
-        monthly_curve_manifests={"CH": monthly_authority_ch.manifest} if monthly_authority_ch is not None else {},
+        monthly_curve_manifests=monthly_curve_manifests,
     )
-
-
-def run_short_term_phase(
-    project_root: str,
-    inputs: LoadedInputs,
-    long_term: LongTermArtifacts,
-    logger: logging.Logger,
-):
-    """Run the Swiss CT overlay on top of the LT PFC.
-
-    The CT pipeline is imported lazily so the LT module remains
-    importable in environments without CT dependencies.
-    """
-    from pfc_shaping.pipeline.swiss_short_term import (
-        SwissShortTermInputs,
-        run_swiss_short_term_overlay,
-    )
-
-    st_inputs = SwissShortTermInputs(
-        epex_ch=inputs.epex_ch,
-        epex_de=inputs.epex_de,
-        neighbor_prices_15min=inputs.neighbor_prices_15min,
-        entso=inputs.entso,
-        hydro=inputs.hydro,
-        commodities=inputs.commodities,
-        outages_all=inputs.outages_all,
-        base_pfc_ch=long_term.swiss.pfc,
-        require_de_exogenous=os.getenv("PFC_CT_REQUIRE_DE_EXOGENOUS", "1") == "1",
-        required_neighbor_codes=("de",),
-    )
-    return run_swiss_short_term_overlay(project_root=project_root, inputs=st_inputs, logger=logger)
 
 
 def _build_shared_long_term_artifacts(
@@ -645,6 +1051,7 @@ def _build_shared_long_term_artifacts(
     entso_forecast: pd.DataFrame,
     start_date: str,
     horizon_days: int,
+    delivery_index: pd.DatetimeIndex | None,
     logger: logging.Logger,
 ) -> SharedStructuralArtifacts:
     logger.info("=" * 70)
@@ -666,6 +1073,7 @@ def _build_shared_long_term_artifacts(
         entso_forecast=entso_forecast,
         start_date=start_date,
         horizon_days=horizon_days,
+        delivery_index=delivery_index,
     )
 
 
@@ -674,6 +1082,7 @@ def _build_long_term_branch(
     inputs: LoadedInputs,
     shared: SharedStructuralArtifacts,
     peak_source_policy: str,
+    use_seasonal_hourly_shape: bool,
     logger: logging.Logger,
     *,
     pre_loaded_base_prices: dict | None = None,
@@ -681,6 +1090,8 @@ def _build_long_term_branch(
     pre_loaded_cascaded_prices: dict | None = None,
     pre_loaded_cascader: object | None = None,
     pre_loaded_quoted_keys: set[str] | None = None,
+    pre_loaded_forward_snapshot: object | None = None,
+    pre_loaded_forward_eligibility: object | None = None,
     monthly_level_authority: str = "legacy",
     skip_legacy_level_cascade: bool = False,
     skip_legacy_base_smoothing: bool = False,
@@ -716,7 +1127,13 @@ def _build_long_term_branch(
     t0 = time.time()
 
     from pfc_shaping.calibration.cascading import ContractCascader
-    from pfc_shaping.data.forward_proxy import load_base_prices as load_fwd_prices
+    from pfc_shaping.data.forward_proxy import (
+        ForwardEligibility,
+        ForwardSnapshot,
+        load_forward_snapshot,
+        validate_forward_snapshot,
+        verify_forward_eligibility,
+    )
     from pfc_shaping.lt.model.assembler import PFCAssembler
 
     # ── 1. ShapeHourly: reuse pre-fit if provided, else fit on the spot ──
@@ -729,21 +1146,52 @@ def _build_long_term_branch(
             sh = ShapeHourlyMLP()
         else:
             from pfc_shaping.lt.model.shape_hourly import ShapeHourly
-            sh = ShapeHourly()
+            sh = ShapeHourly(use_seasonal_hourly=use_seasonal_hourly_shape)
         sh.fit(spec.epex_df, spec.cal_df)
         logger.info("  %s ShapeHourly fitted (%s mode)", spec.code, inputs.sh_mode)
 
     # ── 2. Forwards (base_prices) ────────────────────────────────────────
     if pre_loaded_base_prices is not None:
-        base_prices = pre_loaded_base_prices
+        base_prices = dict(pre_loaded_base_prices)
         fwd_source = pre_loaded_fwd_source or "pre-loaded"
+        forward_snapshot = pre_loaded_forward_snapshot
+        if monthly_level_authority == "solver":
+            if not isinstance(forward_snapshot, ForwardSnapshot):
+                raise ValueError("solver-authority preloaded prices require a verified ForwardSnapshot")
+            if not isinstance(pre_loaded_forward_eligibility, ForwardEligibility):
+                raise ValueError("solver-authority preloaded prices require ForwardEligibility evidence")
+            verify_forward_eligibility(
+                forward_snapshot,
+                pre_loaded_forward_eligibility,
+                valuation_timestamp=_forward_valuation_timestamp(inputs, forward_snapshot),
+                expected_max_age_business_days=int(
+                    dict((inputs.config.get("quality", {}) or {}).get("freshness", {}) or {}).get(
+                        "eex_max_age_business_days", 1
+                    )
+                ),
+            )
+            if base_prices != dict(forward_snapshot.prices):
+                raise ValueError(
+                    "solver-authority preloaded prices must exactly match ForwardSnapshot prices"
+                )
     else:
-        base_prices, fwd_source = load_fwd_prices(
+        forward_snapshot = load_forward_snapshot(
             spec.epex_df,
             eex_report_path=inputs.eex_report_path,
             config=inputs.config,
             market=spec.sheet,
+            allow_spot_proxy=False,
+            exact_source_only=inputs.eex_report_available_at is not None,
+            source_available_at=inputs.eex_report_available_at,
         )
+        freshness_policy = dict((inputs.config.get("quality", {}) or {}).get("freshness", {}) or {})
+        validate_forward_snapshot(
+            forward_snapshot,
+            reference_timestamp=_forward_valuation_timestamp(inputs, forward_snapshot),
+            max_age_business_days=int(freshness_policy.get("eex_max_age_business_days", 1)),
+        )
+        base_prices = dict(forward_snapshot.prices)
+        fwd_source = forward_snapshot.source_description
     logger.info("  %s forward source: %s", spec.code, fwd_source)
 
     # ── 3. Cascading ────────────────────────────────────────────────────
@@ -771,7 +1219,7 @@ def _build_long_term_branch(
     assembler = PFCAssembler(
         shape_hourly=sh,
         shape_intraday=shared.si,
-        uncertainty=shared.unc,
+        uncertainty=None,
         water_value=spec.water_value,
         cascader=cascader,
         calibrator=shared.calibrator,
@@ -781,6 +1229,9 @@ def _build_long_term_branch(
         skip_legacy_base_smoothing=skip_legacy_base_smoothing,
         monthly_constraint_tolerance=monthly_constraint_tolerance,
     )
+    reference_date = pd.Timestamp(inputs.reference_timestamp)
+    if reference_date.tzinfo is None:
+        raise ValueError("LT branch reference_timestamp must be timezone-aware")
     build_kwargs = dict(
         base_prices=cascaded_prices,
         quoted_keys=set(pre_loaded_quoted_keys) if pre_loaded_quoted_keys is not None else set(base_prices.keys()),
@@ -788,7 +1239,12 @@ def _build_long_term_branch(
         horizon_days=shared.horizon_days,
         entso_forecast=shared.entso_forecast,
         hydro_forecast=spec.hydro_forecast,
+        reference_date=reference_date.tz_convert("UTC"),
     )
+    if monthly_level_authority == "solver":
+        if shared.delivery_index is None:
+            raise ValueError("solver-authority branch requires the governed delivery index")
+        build_kwargs["delivery_index"] = shared.delivery_index
     # Only the Swiss branch (with country='CH' default) consumes outages today.
     # Other markets pass country=spec.country explicitly so the assembler
     # picks the right tz / holidays.
@@ -808,6 +1264,14 @@ def _build_long_term_branch(
         cascaded_prices=cascaded_prices,
         fwd_source=fwd_source,
         out_base=spec.out_base,
+        forward_snapshot=(
+            forward_snapshot.to_manifest()
+            if forward_snapshot is not None and hasattr(forward_snapshot, "to_manifest")
+            else None
+        ),
+        final_product_projection_report=dict(
+            getattr(assembler, "final_product_projection_report_", {}) or {}
+        ),
         wv=spec.water_value,
         hydro_forecast=spec.hydro_forecast,
         outages_forecast=spec.outages_forecast,
@@ -815,39 +1279,16 @@ def _build_long_term_branch(
 
 
 # Per-market suffix used when writing artifacts. CH keeps the legacy
-# unsuffixed names ("shape_hourly.parquet", "water_value.parquet") so
-# the dashboard and any external loader keeps reading the historical
-# paths. Other markets get an explicit lower-case suffix.
-_ARTIFACT_SUFFIX: dict[str, str] = {
-    "CH": "",
-    "DE": "_de",
-    "AT": "_at",
-    "FR": "_fr",
-    "IT": "_it",
-}
-
-
 def _save_market_artifacts(
     art: MarketBranchArtifacts,
     artifacts_dir: str,
     logger: logging.Logger,
 ) -> None:
-    """Persist PFC + per-market shape / water value artifacts."""
-    art.pfc.to_parquet(f"{art.out_base}.parquet")
-    logger.info("  Saved: %s.parquet (%d rows)", art.out_base, len(art.pfc))
-    art.pfc.to_csv(f"{art.out_base}.csv", sep=";", index_label="timestamp_local")
-    logger.info("  Saved: %s.csv", art.out_base)
-
-    suffix = _ARTIFACT_SUFFIX.get(art.code, f"_{art.code.lower()}")
-
-    if hasattr(art.sh, "save"):
-        if art.sh.__class__.__name__ == "ShapeHourlyMLP":
-            art.sh.save(os.path.join(artifacts_dir, f"shape_hourly{suffix}_mlp.pkl"))
-        else:
-            art.sh.save(os.path.join(artifacts_dir, f"shape_hourly{suffix}.parquet"))
-
-    if art.wv is not None and hasattr(art.wv, "save"):
-        art.wv.save(os.path.join(artifacts_dir, f"water_value{suffix}.parquet"))
+    del art, artifacts_dir, logger
+    raise RuntimeError(
+        "Direct LT artifact publication is disabled. Serialize an immutable candidate and "
+        "use the governed REGISTER/AUDIT/PROMOTE workflow."
+    )
 
 
 def _save_monthly_curve_manifests(
@@ -864,20 +1305,11 @@ def _save_monthly_curve_manifests(
 
 
 def save_long_term_outputs(long_term: LongTermArtifacts, logger: logging.Logger) -> None:
-    logger.info("=" * 70)
-    logger.info("STEP 10: Saving output")
-    logger.info("=" * 70)
-
-    os.makedirs(long_term.out_dir, exist_ok=True)
-    os.makedirs(long_term.artifacts_dir, exist_ok=True)
-
-    for art in long_term.markets.values():
-        _save_market_artifacts(art, long_term.artifacts_dir, logger)
-    _save_monthly_curve_manifests(long_term.monthly_curve_manifests, long_term.artifacts_dir, logger)
-
-    # Shared (cross-market) artifacts written once.
-    long_term.shared.si.save(os.path.join(long_term.artifacts_dir, "shape_intraday.parquet"))
-    long_term.shared.unc.save(os.path.join(long_term.artifacts_dir, "uncertainty.parquet"))
+    del long_term, logger
+    raise RuntimeError(
+        "Direct LT output publication is disabled. Serialize an immutable candidate and "
+        "use the governed REGISTER/AUDIT/PROMOTE workflow."
+    )
 
 
 def print_pipeline_summary(long_term: LongTermArtifacts, total_time: float) -> None:

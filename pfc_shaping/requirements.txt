@@ -30,6 +30,7 @@ holidays==0.83
 # Configuration
 PyYAML==6.0.3
 duckdb>=1.1.0
+cryptography==47.0.0  # Ed25519 promotion receipt authentication
 
 # Tests
 pytest==8.4.2

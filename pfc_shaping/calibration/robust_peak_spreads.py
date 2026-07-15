@@ -67,31 +67,18 @@ _FALLBACK_BASE = 50.0
 
 
 def _holiday_aware_peak_mask(idx_local: pd.DatetimeIndex, country: str = "CH") -> np.ndarray:
-    """EEX peak mask: 08-20 Mon-Fri excl. CH national holidays (canonical).
+    """European EEX Peakload mask: 08:00-20:00 Monday-Friday.
 
-    Matches ``assembler._is_peak_timestamp``, ``count_hours`` in cascading.py,
-    and ``perfect_foresight._peak_mask``. The baseline ``fit_peak_spreads``
-    omits the holiday term — that pre-existing inconsistency is corrected here.
-
-    The ``country`` argument is validated against the ``holidays`` package; an
-    unknown country raises ``ValueError`` with a clear message rather than the
-    package's generic ``NotImplementedError``.
+    Public holidays are included in the contractual window. The function name
+    is retained for compatibility with saved calibration code.
     """
-    import holidays as _holidays
-
     if len(idx_local) == 0:
         return np.array([], dtype=bool)
-    yr_min, yr_max = idx_local.year.min(), idx_local.year.max()
-    if pd.isna(yr_min) or pd.isna(yr_max):
-        return np.array([], dtype=bool)
-    try:
-        cal = _holidays.country_holidays(country, years=list(range(int(yr_min), int(yr_max) + 1)))
-    except (NotImplementedError, KeyError) as exc:
-        raise ValueError(f"unknown country {country!r} for holiday calendar") from exc
+    if str(country).upper() not in {"CH", "DE", "AT", "FR", "IT"}:
+        raise ValueError(f"unknown EEX peak country {country!r}")
     is_weekday = idx_local.weekday < 5
     is_peak_hour = (idx_local.hour >= 8) & (idx_local.hour < 20)
-    is_holiday = np.isin(idx_local.normalize().date, list(cal.keys()))
-    return np.asarray(is_weekday & is_peak_hour & ~is_holiday)
+    return np.asarray(is_weekday & is_peak_hour)
 
 
 @dataclass

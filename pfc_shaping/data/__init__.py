@@ -1,34 +1,23 @@
 """Data loading helpers for PFC."""
 
 from pfc_shaping.data.electrification_scenarios import (
-    DEFAULT_ELECTRIFICATION_SCENARIO_PATH,
-    DEFAULT_HPFC_SCENARIO_FEATURES_PATH,
     HPFC_SCENARIO_FEATURE_COLUMNS,
-    REQUIRED_COLUMNS as ELECTRIFICATION_SCENARIO_REQUIRED_COLUMNS,
-    RECOMMENDED_COLUMNS as ELECTRIFICATION_SCENARIO_RECOMMENDED_COLUMNS,
     asof_electrification_scenarios,
     assert_scenario_coverage,
     derive_hpfc_scenario_features,
     interpolate_electrification_scenario_years,
     load_electrification_scenarios,
-    load_electrification_scenarios_from_databricks,
     validate_electrification_scenarios,
     write_hpfc_scenario_features,
 )
-from pfc_shaping.data.ep2050 import (
-    DEFAULT_LOCAL_EP2050_DIR,
-    EP2050_HOURLY_URL,
-    EP2050_PUBLICATION_DATE,
-    build_ep2050_hourly,
-    derive_ep2050_annual_scenarios,
-    download_ep2050_hourly_zip,
-    extract_ep2050_hourly_zip,
-    parse_ep2050_hourly_workbook,
+from pfc_shaping.data.electrification_scenarios import (
+    RECOMMENDED_COLUMNS as ELECTRIFICATION_SCENARIO_RECOMMENDED_COLUMNS,
+)
+from pfc_shaping.data.electrification_scenarios import (
+    REQUIRED_COLUMNS as ELECTRIFICATION_SCENARIO_REQUIRED_COLUMNS,
 )
 
 __all__ = [
-    "DEFAULT_ELECTRIFICATION_SCENARIO_PATH",
-    "DEFAULT_HPFC_SCENARIO_FEATURES_PATH",
     "ELECTRIFICATION_SCENARIO_REQUIRED_COLUMNS",
     "ELECTRIFICATION_SCENARIO_RECOMMENDED_COLUMNS",
     "HPFC_SCENARIO_FEATURE_COLUMNS",
@@ -37,15 +26,6 @@ __all__ = [
     "derive_hpfc_scenario_features",
     "interpolate_electrification_scenario_years",
     "load_electrification_scenarios",
-    "load_electrification_scenarios_from_databricks",
     "validate_electrification_scenarios",
     "write_hpfc_scenario_features",
-    "DEFAULT_LOCAL_EP2050_DIR",
-    "EP2050_HOURLY_URL",
-    "EP2050_PUBLICATION_DATE",
-    "build_ep2050_hourly",
-    "derive_ep2050_annual_scenarios",
-    "download_ep2050_hourly_zip",
-    "extract_ep2050_hourly_zip",
-    "parse_ep2050_hourly_workbook",
 ]

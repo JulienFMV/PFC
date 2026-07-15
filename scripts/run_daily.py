@@ -148,37 +148,10 @@ def run_pfc_production() -> bool:
     Lance la pipeline de production maintenue (rolling_update).
     Retourne True si succès.
     """
-    import subprocess
-
-    logger.info("=" * 60)
-    logger.info("BUILD: Running rolling_update pipeline")
-    logger.info("=" * 60)
-
-    result = subprocess.run(
-        [sys.executable, "-m", "pfc_shaping.pipeline.rolling_update"],
-        cwd=str(ROOT),
-        capture_output=True,
-        text=True,
-        timeout=600,  # 10 min max
+    raise RuntimeError(
+        "Legacy rolling_update publication is disabled; use the governed "
+        "candidate/audit/receipt/promotion runner."
     )
-
-    # Log stdout/stderr
-    if result.stdout:
-        for line in result.stdout.strip().split("\n"):
-            logger.info("  [PROD] %s", line)
-    if result.stderr:
-        for line in result.stderr.strip().split("\n"):
-            if "ERROR" in line or "FAIL" in line:
-                logger.error("  [PROD] %s", line)
-            else:
-                logger.info("  [PROD] %s", line)
-
-    if result.returncode != 0:
-        logger.error("PFC production FAILED (exit code %d)", result.returncode)
-        return False
-
-    logger.info("PFC production completed successfully")
-    return True
 
 
 # ═════════════════════════════════════════════════════════════════════════
@@ -293,6 +266,9 @@ def check_quality_gates() -> bool:
 # ═════════════════════════════════════════════════════════════════════════
 
 def main():
+    raise RuntimeError(
+        "Legacy daily ingestion/publication is disabled; use the governed runner."
+    )
     args = parse_args()
     t0 = time.time()
 

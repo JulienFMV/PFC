@@ -11,6 +11,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+import hashlib
+import json
+import math
+from numbers import Real
 import re
 
 import numpy as np
@@ -41,6 +45,7 @@ class MonthlyCurveConfig:
     min_history_snapshots: int = 24
     max_prior_residual_eur_mwh: float | None = None
     constraint_tolerance: float = 1e-9
+    quote_conflict_tolerance: float = 0.01
     stationarity_tolerance: float = 1e-7
 
 
@@ -61,6 +66,11 @@ class MarketQuote:
     snapshot_date: pd.Timestamp | None = None
     source: str = ""
     available_at: pd.Timestamp | None = None
+    quote_id: str = ""
+    snapshot_id: str = ""
+    observation_id: str = ""
+    source_kind: str = ""
+    source_sha256: str = ""
 
     def key(self) -> str:
         return f"{self.market.upper()}:{self.load_type.upper()}:{self.product}"
@@ -157,6 +167,7 @@ def build_monthly_constraint_system(
     market: str = "CH",
     load_type: str = "BASE",
     constraint_tolerance: float = 1e-9,
+    quote_conflict_tolerance: float = 0.01,
 ) -> MonthlyConstraintSystem:
     """Build hour-weighted non-overlapping monthly constraints.
 
@@ -171,7 +182,7 @@ def build_monthly_constraint_system(
         own_quotes,
         market=market,
         load_type=load_type,
-        tolerance=constraint_tolerance,
+        tolerance=quote_conflict_tolerance,
     )
     quote_by_product = {
         quote.product: quote
@@ -183,6 +194,9 @@ def build_monthly_constraint_system(
     bucket_targets: dict[str, float] = {}
     bucket_parent: dict[str, str] = {}
     bucket_sources: dict[str, tuple[str, ...]] = {}
+    bucket_source_ids: dict[str, tuple[str, ...]] = {}
+    bucket_lineage_hashes: dict[str, str] = {}
+    bucket_lineage_payloads: dict[str, dict[str, object]] = {}
     quote_diag: list[dict[str, object]] = []
 
     for product in sorted(quote_by_product, key=_product_sort_key):
@@ -214,7 +228,30 @@ def build_monthly_constraint_system(
         month_buckets.loc[grid.months[free_mask]] = bucket
         bucket_targets[bucket] = target
         bucket_parent[bucket] = product
-        bucket_sources[bucket] = (quote.key(),)
+        known_buckets = tuple(
+            str(value)
+            for value in month_buckets.loc[grid.months[known_mask]].dropna().unique().tolist()
+        )
+        source_keys = [quote.key()]
+        source_ids = [quote.quote_id or quote.key()]
+        for known_bucket in known_buckets:
+            source_keys.extend(bucket_sources.get(known_bucket, ()))
+            source_ids.extend(bucket_source_ids.get(known_bucket, ()))
+        bucket_sources[bucket] = tuple(dict.fromkeys(source_keys))
+        bucket_source_ids[bucket] = tuple(dict.fromkeys(source_ids))
+        bucket_lineage_payloads[bucket] = {
+            "formula": (
+                "direct_parent_mean"
+                if not bool(known_mask.any())
+                else "(parent_price*parent_hours-known_bucket_energy)/free_hours"
+            ),
+            "parent_product": product,
+            "parent_quote_id": quote.quote_id or quote.key(),
+            "source_quote_ids": bucket_source_ids[bucket],
+            "known_buckets": known_buckets,
+            "target": float(target),
+        }
+        bucket_lineage_hashes[bucket] = _sha256_json(bucket_lineage_payloads[bucket])
         quote_diag.append(_quote_diag_row(quote, active=True, dropped_reason=""))
 
     _validate_all_quotes(
@@ -222,7 +259,7 @@ def build_monthly_constraint_system(
         grid=grid,
         month_buckets=month_buckets,
         bucket_targets=bucket_targets,
-        tolerance=constraint_tolerance,
+        tolerance=quote_conflict_tolerance,
     )
 
     rows: list[ConstraintRow] = []
@@ -244,6 +281,13 @@ def build_monthly_constraint_system(
                     "bucket": bucket,
                     "parent_product": bucket_parent.get(bucket, bucket),
                     "source_quote_keys": bucket_sources.get(bucket, tuple()),
+                    "source_quote_ids": bucket_source_ids.get(bucket, tuple()),
+                    "lineage_formula": (
+                        "residual_parent_energy_less_known_buckets"
+                        if bucket.endswith("-RESIDUAL")
+                        else "direct_parent_mean"
+                    ),
+                    "lineage_sha256": bucket_lineage_hashes.get(bucket, ""),
                     "hours": bucket_hours,
                 },
             )
@@ -259,6 +303,19 @@ def build_monthly_constraint_system(
                 "is_residual": bucket.endswith("-RESIDUAL"),
                 "parent_product": bucket_parent.get(bucket, bucket),
                 "source_quote_keys": "|".join(bucket_sources.get(bucket, tuple())),
+                "source_quote_ids": "|".join(bucket_source_ids.get(bucket, tuple())),
+                "lineage_formula": (
+                    "residual_parent_energy_less_known_buckets"
+                    if bucket.endswith("-RESIDUAL")
+                    else "direct_parent_mean"
+                ),
+                "lineage_sha256": bucket_lineage_hashes.get(bucket, ""),
+                "lineage_payload": json.dumps(
+                    bucket_lineage_payloads.get(bucket, {}),
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    ensure_ascii=True,
+                ),
                 "dropped_reason": "",
                 "active_row_indices": (row_index,),
                 "n_months": int(mask.sum()),
@@ -326,6 +383,7 @@ def solve_monthly_forward_curve(
         market=market,
         load_type="BASE",
         constraint_tolerance=(config or MonthlyCurveConfig()).constraint_tolerance,
+        quote_conflict_tolerance=(config or MonthlyCurveConfig()).quote_conflict_tolerance,
     )
     return solve_monthly_forward_curve_from_constraints(
         constraints,
@@ -349,6 +407,7 @@ def solve_monthly_forward_curve_from_inputs(
             market=inputs.delivery_grid.calendar,
             load_type="BASE",
             constraint_tolerance=inputs.config.constraint_tolerance,
+            quote_conflict_tolerance=inputs.config.quote_conflict_tolerance,
         ),
         config=inputs.config,
         shape_prior=shape_prior,
@@ -364,7 +423,9 @@ def solve_monthly_forward_curve_from_constraints(
     """Solve a small equality-constrained quadratic monthly curve problem."""
 
     cfg = config or MonthlyCurveConfig()
+    _validate_solver_objective_weights(cfg)
     n = len(monthly_constraints.delivery_grid.months)
+    _validate_delivery_year_level_anchors(monthly_constraints)
     a = monthly_constraints.matrix
     q = monthly_constraints.targets
     parent_flat = _parent_flat_baseline(monthly_constraints)
@@ -372,6 +433,10 @@ def solve_monthly_forward_curve_from_constraints(
     shape_operator = np.eye(n) - parent_operator
     shape_target = _shape_prior_vector(shape_prior, monthly_constraints)
     shape_target = _recenter_vector_by_parent(shape_target, monthly_constraints)
+    if not np.isfinite(a).all() or not np.isfinite(q).all():
+        raise ValueError("monthly solver constraints contain non-finite values")
+    if not np.isfinite(shape_target).all():
+        raise ValueError("monthly solver shape prior contains non-finite values")
 
     terms: list[tuple[str, float, np.ndarray, np.ndarray]] = []
     ridge_used = False
@@ -397,6 +462,8 @@ def solve_monthly_forward_curve_from_constraints(
     for _, weight, operator, target in terms:
         q_matrix += weight * (operator.T @ operator)
         c_vector -= weight * (operator.T @ target)
+    if not np.isfinite(q_matrix).all() or not np.isfinite(c_vector).all():
+        raise ValueError("monthly solver objective contains non-finite values")
 
     kkt = np.block(
         [
@@ -405,6 +472,8 @@ def solve_monthly_forward_curve_from_constraints(
         ]
     )
     rhs = np.concatenate([-c_vector, q])
+    if not np.isfinite(kkt).all() or not np.isfinite(rhs).all():
+        raise ValueError("monthly solver KKT system contains non-finite values")
     try:
         solution = np.linalg.solve(kkt, rhs)
         solved_by_lstsq = False
@@ -416,6 +485,14 @@ def solve_monthly_forward_curve_from_constraints(
     multipliers = solution[n:]
     active_residual = a @ x - q
     stationarity = q_matrix @ x + c_vector + a.T @ multipliers
+    condition_number = _condition_number(kkt)
+    if (
+        not np.isfinite(solution).all()
+        or not np.isfinite(active_residual).all()
+        or not np.isfinite(stationarity).all()
+        or not math.isfinite(condition_number)
+    ):
+        raise ValueError("monthly solver produced non-finite numerical diagnostics")
     objective_terms = {
         name: float(0.5 * weight * np.sum((operator @ x - target) ** 2))
         for name, weight, operator, target in terms
@@ -434,7 +511,7 @@ def solve_monthly_forward_curve_from_constraints(
         [
             {"metric": "max_abs_constraint_residual", "value": float(np.max(np.abs(active_residual))) if len(q) else 0.0},
             {"metric": "stationarity_residual", "value": float(np.max(np.abs(stationarity))) if len(stationarity) else 0.0},
-            {"metric": "condition_number", "value": _condition_number(kkt)},
+            {"metric": "condition_number", "value": condition_number},
             {"metric": "active_constraint_rank", "value": float(np.linalg.matrix_rank(a)) if a.size else 0.0},
             {"metric": "nullspace_dimension", "value": float(n - (np.linalg.matrix_rank(a) if a.size else 0))},
             {"metric": "dropped_yoy_rows", "value": float(dropped_yoy)},
@@ -451,7 +528,7 @@ def solve_monthly_forward_curve_from_constraints(
         kkt={
             "max_abs_constraint_residual": float(np.max(np.abs(active_residual))) if len(q) else 0.0,
             "stationarity_residual": float(np.max(np.abs(stationarity))) if len(stationarity) else 0.0,
-            "condition_number": _condition_number(kkt),
+            "condition_number": condition_number,
             "active_constraint_rank": int(np.linalg.matrix_rank(a)) if a.size else 0,
             "nullspace_dimension": int(n - (np.linalg.matrix_rank(a) if a.size else 0)),
             "ridge_used": bool(ridge_used),
@@ -459,6 +536,20 @@ def solve_monthly_forward_curve_from_constraints(
             "dropped_yoy_rows": int(dropped_yoy),
         },
     )
+
+
+def _validate_delivery_year_level_anchors(
+    monthly_constraints: MonthlyConstraintSystem,
+) -> None:
+    months = monthly_constraints.delivery_grid.months
+    represented = monthly_constraints.month_buckets.notna().to_numpy()
+    for year in sorted(set(int(month.year) for month in months)):
+        in_year = np.asarray([int(month.year) == year for month in months])
+        if not bool(represented[in_year].any()):
+            raise ValueError(
+                "monthly solver has no own-market level anchor for delivery "
+                f"year {year}"
+            )
 
 
 def _normalize_months(
@@ -474,6 +565,11 @@ def _normalize_months(
     if not months.is_monotonic_increasing:
         months = months.sort_values()
     return months
+
+
+def _sha256_json(payload: object) -> str:
+    raw = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 def _normalize_quotes(
@@ -630,6 +726,11 @@ def _validate_all_quotes(
 def _quote_diag_row(quote: MarketQuote, *, active: bool, dropped_reason: str) -> dict[str, object]:
     return {
         "quote_key": quote.key(),
+        "quote_id": quote.quote_id,
+        "snapshot_id": quote.snapshot_id,
+        "observation_id": quote.observation_id,
+        "source_kind": quote.source_kind,
+        "source_sha256": quote.source_sha256,
         "market": quote.market.upper(),
         "load_type": quote.load_type.upper(),
         "product": quote.product,
@@ -648,19 +749,31 @@ def _parent_flat_baseline(monthly_constraints: MonthlyConstraintSystem) -> np.nd
             continue
         values[i] = float(monthly_constraints.bucket_targets[str(bucket)])
     missing = monthly_constraints.month_buckets.isna().to_numpy()
-    if bool(missing.any()) and bool((~missing).any()):
-        hours = monthly_constraints.delivery_grid.month_hours.to_numpy(dtype=float)
-        represented_hours = hours[~missing]
-        represented_values = values[~missing]
+    months = monthly_constraints.delivery_grid.months
+    hours = monthly_constraints.delivery_grid.month_hours.to_numpy(dtype=float)
+    for year in sorted(set(int(month.year) for month in months)):
+        in_year = np.asarray([int(month.year) == year for month in months])
+        missing_year = missing & in_year
+        represented_year = (~missing) & in_year
+        if not bool(missing_year.any()) or not bool(represented_year.any()):
+            continue
+        represented_hours = hours[represented_year]
+        represented_values = values[represented_year]
         total_hours = float(represented_hours.sum())
         if total_hours > 0.0:
-            values[missing] = float((represented_values * represented_hours).sum() / total_hours)
+            values[missing_year] = float(
+                (represented_values * represented_hours).sum() / total_hours
+            )
     return values
 
 
 def _parent_mean_operator(monthly_constraints: MonthlyConstraintSystem) -> np.ndarray:
     n = len(monthly_constraints.delivery_grid.months)
-    operator = np.eye(n, dtype=float)
+    # Unconstrained months use the represented-curve weighted mean as their
+    # level anchor. This lets a zero-mean shape prior predict a missing month
+    # around the observed market level instead of suppressing the prior or
+    # interpreting its deviation as an absolute price.
+    operator = np.zeros((n, n), dtype=float)
     for bucket in monthly_constraints.month_buckets.dropna().drop_duplicates():
         mask = monthly_constraints.month_buckets.eq(bucket).to_numpy()
         idx = np.flatnonzero(mask)
@@ -670,6 +783,21 @@ def _parent_mean_operator(monthly_constraints: MonthlyConstraintSystem) -> np.nd
             continue
         operator[idx, :] = 0.0
         operator[np.ix_(idx, idx)] = np.repeat((hours / total).reshape(1, -1), len(idx), axis=0)
+    missing = monthly_constraints.month_buckets.isna().to_numpy()
+    months = monthly_constraints.delivery_grid.months
+    all_hours = monthly_constraints.delivery_grid.month_hours.to_numpy(dtype=float)
+    for year in sorted(set(int(month.year) for month in months)):
+        in_year = np.asarray([int(month.year) == year for month in months])
+        missing_year = missing & in_year
+        represented_year = (~missing) & in_year
+        if not bool(missing_year.any()) or not bool(represented_year.any()):
+            continue
+        represented_weights = all_hours[represented_year] / float(
+            all_hours[represented_year].sum()
+        )
+        represented_indices = np.flatnonzero(represented_year)
+        for row in np.flatnonzero(missing_year):
+            operator[row, represented_indices] = represented_weights
     return operator
 
 
@@ -688,14 +816,49 @@ def _shape_prior_vector(
             raise TypeError("shape_prior.shape must be a pandas Series")
     else:
         raise TypeError("shape_prior must be a pandas Series or an object exposing a Series named 'shape'")
-    return series.reindex(monthly_constraints.delivery_grid.months).fillna(0.0).to_numpy(dtype=float)
+    try:
+        normalized_index = pd.PeriodIndex(series.index, freq="M")
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "monthly solver shape prior index must identify calendar months"
+        ) from exc
+    if normalized_index.isna().any():
+        raise ValueError("monthly solver shape prior index contains missing months")
+    if normalized_index.has_duplicates:
+        raise ValueError("monthly solver shape prior index contains duplicate months")
+    try:
+        supplied = series.to_numpy(dtype=float)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("monthly solver shape prior must be numeric") from exc
+    if not np.isfinite(supplied).all():
+        raise ValueError("monthly solver shape prior contains non-finite values")
+    normalized = pd.Series(supplied, index=normalized_index, dtype=float)
+    return normalized.reindex(monthly_constraints.delivery_grid.months).fillna(0.0).to_numpy(dtype=float)
+
+
+def _validate_solver_objective_weights(config: MonthlyCurveConfig) -> None:
+    for name in (
+        "lambda_prior",
+        "lambda_smooth_month",
+        "lambda_smooth_yoy",
+        "lambda_shape",
+    ):
+        value = getattr(config, name)
+        if isinstance(value, (bool, np.bool_)) or not isinstance(value, Real):
+            raise ValueError(f"monthly solver {name} must be a finite non-negative number")
+        number = float(value)
+        if not math.isfinite(number) or number < 0.0:
+            raise ValueError(
+                f"monthly solver {name} must be a finite non-negative number"
+            )
 
 
 def _recenter_vector_by_parent(
     values: np.ndarray,
     monthly_constraints: MonthlyConstraintSystem,
 ) -> np.ndarray:
-    out = np.asarray(values, dtype=float).copy()
+    raw = np.asarray(values, dtype=float)
+    out = raw.copy()
     for bucket in monthly_constraints.month_buckets.dropna().drop_duplicates():
         mask = monthly_constraints.month_buckets.eq(bucket).to_numpy()
         idx = np.flatnonzero(mask)
@@ -705,6 +868,19 @@ def _recenter_vector_by_parent(
             continue
         mean = float((out[idx] * hours).sum() / total)
         out[idx] -= mean
+    months = monthly_constraints.delivery_grid.months
+    missing = monthly_constraints.month_buckets.isna().to_numpy()
+    all_hours = monthly_constraints.delivery_grid.month_hours.to_numpy(dtype=float)
+    for year in sorted(set(int(month.year) for month in months)):
+        in_year = np.asarray([int(month.year) == year for month in months])
+        missing_year = missing & in_year
+        represented_year = (~missing) & in_year
+        if not bool(missing_year.any()) or not bool(represented_year.any()):
+            continue
+        represented_mean = float(
+            np.average(raw[represented_year], weights=all_hours[represented_year])
+        )
+        out[missing_year] = raw[missing_year] - represented_mean
     return out
 
 
@@ -717,9 +893,12 @@ def _second_difference_operator(monthly_constraints: MonthlyConstraintSystem) ->
         if months[i - 1] + 1 != months[i] or months[i] + 1 != months[i + 1]:
             continue
         buckets = {
-            str(month_buckets.iloc[i - 1]),
-            str(month_buckets.iloc[i]),
-            str(month_buckets.iloc[i + 1]),
+            (
+                f"UNREPRESENTED:{int(months[position].year)}"
+                if pd.isna(month_buckets.iloc[position])
+                else str(month_buckets.iloc[position])
+            )
+            for position in (i - 1, i, i + 1)
         }
         if len(buckets) != 1:
             continue

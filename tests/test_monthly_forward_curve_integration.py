@@ -4,9 +4,14 @@ import hashlib
 import json
 from pathlib import Path
 
-import pytest
 import pandas as pd
+import pytest
 
+from pfc_shaping.data.forward_proxy import (
+    ForwardSnapshot,
+    load_forward_snapshot,
+    validate_forward_snapshot,
+)
 from pfc_shaping.lt.model.assembler import PFCAssembler
 from pfc_shaping.pipeline.monthly_curve_authority import (
     delivery_months_for_local_window,
@@ -151,6 +156,7 @@ def test_monthly_authority_manifest_records_structural_template_summary() -> Non
             "structural_amplitude_eur_mwh": 110.0,
             "structural_weight": 1.0,
         },
+        allow_unverified_inputs=True,
     )
 
     summary = authority.manifest["structural_prior_summary"]
@@ -187,6 +193,7 @@ def test_monthly_authority_active_config_hash_includes_structural_prior_knobs() 
         eex_history=history,
         run_timestamp=pd.Timestamp("2026-06-17"),
         settings=base_settings,
+        allow_unverified_inputs=True,
     )
     changed_amplitude = solve_monthly_level_authority(
         market="CH",
@@ -196,6 +203,7 @@ def test_monthly_authority_active_config_hash_includes_structural_prior_knobs() 
         eex_history=history,
         run_timestamp=pd.Timestamp("2026-06-17"),
         settings={**base_settings, "structural_amplitude_eur_mwh": 40.0},
+        allow_unverified_inputs=True,
     )
     changed_weight = solve_monthly_level_authority(
         market="CH",
@@ -205,6 +213,7 @@ def test_monthly_authority_active_config_hash_includes_structural_prior_knobs() 
         eex_history=history,
         run_timestamp=pd.Timestamp("2026-06-17"),
         settings={**base_settings, "structural_weight": 0.25},
+        allow_unverified_inputs=True,
     )
 
     assert baseline.manifest["active_config_hash"] != changed_amplitude.manifest["active_config_hash"]
@@ -264,6 +273,7 @@ def test_monthly_authority_hash_parity_and_quoted_keys_exclude_synthetic_months(
         run_timestamp=pd.Timestamp("2026-06-17"),
         settings=settings,
         original_forward_prices=own,
+        allow_unverified_inputs=True,
     )
     right = solve_monthly_level_authority(
         market="CH",
@@ -274,6 +284,7 @@ def test_monthly_authority_hash_parity_and_quoted_keys_exclude_synthetic_months(
         run_timestamp=pd.Timestamp("2026-06-17"),
         settings=settings,
         original_forward_prices=own,
+        allow_unverified_inputs=True,
     )
 
     assert left.monthly_solution_hash == right.monthly_solution_hash
@@ -311,6 +322,7 @@ def test_monthly_authority_direct_and_history_paths_hash_equal(tmp_path) -> None
         run_timestamp=run_timestamp,
         settings=settings,
         original_forward_prices=own,
+        allow_unverified_inputs=True,
     )
     from_history = solve_monthly_level_authority_from_history(
         forwards_path=forwards_path,
@@ -329,7 +341,7 @@ def test_monthly_authority_direct_and_history_paths_hash_equal(tmp_path) -> None
     pd.testing.assert_series_equal(direct.result.monthly_curve, from_history.result.monthly_curve)
 
 
-def test_final_calibrator_prefers_original_quoted_base_key_over_synthetic_month() -> None:
+def test_legacy_final_calibrator_preserves_cascaded_month_priority() -> None:
     selected = PFCAssembler._select_base_contract_key(
         key_m="2028-04",
         key_q="2028-Q2",
@@ -337,7 +349,7 @@ def test_final_calibrator_prefers_original_quoted_base_key_over_synthetic_month(
         base_prices={"2028": 80.0, "2028-04": 81.0},
         quoted_keys={"2028"},
     )
-    assert selected == "2028"
+    assert selected == "2028-04"
 
 
 def test_final_calibrator_keeps_genuinely_quoted_month() -> None:
@@ -407,6 +419,89 @@ def test_solver_monthly_level_preserves_monthly_base_means_after_near_term_rebal
     for month_key, group in df.groupby(idx_local.strftime("%Y-%m")):
         if month_key in base_prices:
             assert group["price_shape"].mean() == pytest.approx(group["B"].mean(), abs=1e-9)
+
+
+def test_solver_final_projection_preserves_base_and_reprices_peak_after_bridge() -> None:
+    assembler = PFCAssembler(
+        shape_hourly=_NonNeutralShapeHourly(),
+        shape_intraday=_NonNeutralShapeIntraday(),
+        monthly_level_authority="solver",
+        skip_legacy_level_cascade=True,
+        skip_legacy_base_smoothing=True,
+        calibrator=None,
+        water_value=None,
+    )
+    base_prices = {
+        "2026-07": 100.0,
+        "2026-07-Peak": 120.0,
+    }
+
+    df = assembler.build(
+        base_prices=base_prices,
+        quoted_keys=set(base_prices),
+        start_date="2026-06-30 22:00:00",
+        horizon_days=31,
+        reference_date=pd.Timestamp("2026-06-22", tz="Europe/Zurich"),
+    )
+    idx_local = df.index.tz_convert("Europe/Zurich")
+    july = (idx_local.year == 2026) & (idx_local.month == 7)
+    peak = july & assembler._is_peak_timestamp(idx_local, country="CH")
+    offpeak = july & ~assembler._is_peak_timestamp(idx_local, country="CH")
+    total_hours = float(july.sum())
+    peak_hours = float(peak.sum())
+    offpeak_hours = float(offpeak.sum())
+    implied_offpeak = (100.0 * total_hours - 120.0 * peak_hours) / offpeak_hours
+
+    assert float(df.loc[july, "price_shape"].mean()) == pytest.approx(100.0, abs=1e-9)
+    assert float(df.loc[peak, "price_shape"].mean()) == pytest.approx(120.0, abs=1e-9)
+    assert float(df.loc[offpeak, "price_shape"].mean()) == pytest.approx(implied_offpeak, abs=1e-9)
+    assert df["calibrated"].all()
+    assert assembler.final_product_projection_report_["max_abs_error_eur_mwh"] <= 1e-9
+    assert assembler.final_product_projection_report_["partial_peak_quote_ids"] == []
+
+
+def test_solver_final_projection_rejects_explicit_offpeak_quote() -> None:
+    assembler = PFCAssembler(
+        shape_hourly=_NonNeutralShapeHourly(),
+        shape_intraday=_NonNeutralShapeIntraday(),
+        monthly_level_authority="solver",
+        skip_legacy_level_cascade=True,
+        skip_legacy_base_smoothing=True,
+        calibrator=None,
+        water_value=None,
+    )
+    prices = {"2026-07": 100.0, "2026-07-OffPeak": 80.0}
+
+    with pytest.raises(ValueError, match="explicit OFFPEAK quote"):
+        assembler.build(
+            base_prices=prices,
+            quoted_keys=set(prices),
+            start_date="2026-06-30 22:00:00",
+            horizon_days=31,
+            reference_date=pd.Timestamp("2026-06-22", tz="Europe/Zurich"),
+        )
+
+
+def test_solver_final_projection_rejects_partially_covered_peak_quote() -> None:
+    assembler = PFCAssembler(
+        shape_hourly=_NonNeutralShapeHourly(),
+        shape_intraday=_NonNeutralShapeIntraday(),
+        monthly_level_authority="solver",
+        skip_legacy_level_cascade=True,
+        skip_legacy_base_smoothing=True,
+        calibrator=None,
+        water_value=None,
+    )
+    prices = {"2026-07": 100.0, "2026-07-Peak": 120.0}
+
+    with pytest.raises(ValueError, match="partially overlap"):
+        assembler.build(
+            base_prices=prices,
+            quoted_keys=set(prices),
+            start_date="2026-07-15 00:00:00",
+            horizon_days=10,
+            reference_date=pd.Timestamp("2026-06-22", tz="Europe/Zurich"),
+        )
 
 
 def test_solver_monthly_level_accepts_hourly_model_without_seasonal_flag() -> None:
@@ -574,4 +669,131 @@ def test_export_refuses_solver_with_mutating_legacy_post_processor() -> None:
                 "--enable-monthly-forward-curve-solver",
                 "--enable-quote-aware-monthly-smoothing",
             ]
+        )
+
+
+def _forward_provenance(tmp_path: Path) -> ForwardSnapshot:
+    source = tmp_path / "eex.xlsx"
+    rows = [
+        [None, "Y01_2028_BASE", "Q01_2028_BASE", "M01_2028_BASE"],
+        [None, "ISIN-1", "ISIN-2", "ISIN-3"],
+        ["Date", None, None, None],
+        ["10.07.2026", 80.0, 80.0, 80.0],
+    ]
+    with pd.ExcelWriter(source, engine="openpyxl") as writer:
+        pd.DataFrame(rows).to_excel(writer, sheet_name="CH", index=False, header=False)
+    return load_forward_snapshot(
+        pd.DataFrame(),
+        eex_report_path=str(source),
+        config={},
+        market="CH",
+        allow_spot_proxy=False,
+        exact_source_only=True,
+        source_available_at="2026-07-10T18:00:00Z",
+    )
+
+
+def test_monthly_authority_manifest_uses_real_forward_snapshot_date(tmp_path: Path) -> None:
+    snapshot = _forward_provenance(tmp_path)
+    valuation = pd.Timestamp("2026-07-13T20:00:00Z")
+    authority = solve_monthly_level_authority(
+        market="CH",
+        delivery_months=pd.period_range("2028-01", "2028-12", freq="M"),
+        own_base_prices=dict(snapshot.prices),
+        run_timestamp=valuation,
+        settings={"allow_template_structural_fallback": True},
+        own_forward_snapshot=snapshot,
+        forward_eligibility=validate_forward_snapshot(
+            snapshot,
+            reference_timestamp=valuation,
+        ),
+    )
+
+    assert authority.manifest["forward_snapshot_date"] == "2026-07-10"
+    assert authority.manifest["forward_source_kind"] == "EEX_XLSX"
+    assert authority.manifest["hard_quote_eligible"] is True
+    assert authority.manifest["promotion_eligible"] is True
+    assert authority.inputs.own_quotes[0].snapshot_date == pd.Timestamp(
+        "2026-07-10", tz="UTC"
+    )
+    quote_by_product = {quote.product: quote for quote in authority.inputs.own_quotes}
+    assert quote_by_product["2028"].source == snapshot.quote_lineage["2028"]["quote_id"]
+    assert quote_by_product["2028"].quote_id == snapshot.quote_lineage["2028"]["quote_id"]
+    assert quote_by_product["2028"].snapshot_id == snapshot.snapshot_id
+    assert quote_by_product["2028"].observation_id == snapshot.observation_id
+    assert authority.constraints.rows["source_quote_ids"].str.len().gt(0).all()
+    assert len(authority.manifest["constraint_provenance_hash"]) == 64
+    assert len(authority.manifest["product_hierarchy_policy_sha256"]) == 64
+
+
+def test_monthly_authority_rejects_prices_detached_from_snapshot(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="exactly match"):
+        solve_monthly_level_authority(
+            market="CH",
+            delivery_months=pd.period_range("2028-01", "2028-12", freq="M"),
+            own_base_prices={"2028": 81.0},
+            run_timestamp=pd.Timestamp("2026-07-13"),
+            settings={"allow_template_structural_fallback": True},
+            own_forward_snapshot=_forward_provenance(tmp_path),
+        )
+
+
+def test_monthly_authority_requires_matching_eligibility_receipt(tmp_path: Path) -> None:
+    snapshot = _forward_provenance(tmp_path)
+    with pytest.raises(ValueError, match="forward_eligibility.v1"):
+        solve_monthly_level_authority(
+            market="CH",
+            delivery_months=pd.period_range("2028-01", "2028-12", freq="M"),
+            own_base_prices=dict(snapshot.prices),
+            run_timestamp=pd.Timestamp("2026-07-13T20:00:00Z"),
+            settings={"allow_template_structural_fallback": True},
+            own_forward_snapshot=snapshot,
+        )
+
+
+def test_monthly_authority_rejects_forged_eligibility_mapping(tmp_path: Path) -> None:
+    snapshot = _forward_provenance(tmp_path)
+    forged = {
+        "schema_version": "forward_eligibility.v1",
+        "status": "PASS",
+        "requested_role": "HARD_LEVEL",
+        "snapshot_id": snapshot.snapshot_id,
+    }
+    with pytest.raises(TypeError, match="verified ForwardEligibility"):
+        solve_monthly_level_authority(
+            market="CH",
+            delivery_months=pd.period_range("2028-01", "2028-12", freq="M"),
+            own_base_prices=dict(snapshot.prices),
+            run_timestamp=pd.Timestamp("2026-07-13T20:00:00Z"),
+            settings={"allow_template_structural_fallback": True},
+            own_forward_snapshot=snapshot,
+            forward_eligibility=forged,  # type: ignore[arg-type]
+        )
+
+
+def test_monthly_authority_without_provenance_is_non_promotional() -> None:
+    authority = solve_monthly_level_authority(
+        market="CH",
+        delivery_months=pd.period_range("2028-01", "2028-12", freq="M"),
+        own_base_prices={"2028": 80.0},
+        run_timestamp=pd.Timestamp("2026-07-13"),
+        settings={"allow_template_structural_fallback": True},
+        allow_unverified_inputs=True,
+    )
+
+    assert authority.manifest["forward_source_kind"] == "TEST_FIXTURE"
+    assert authority.manifest["hard_quote_eligible"] is False
+    assert authority.manifest["promotion_eligible"] is False
+
+
+def test_monthly_authority_rejects_market_mismatch(tmp_path: Path) -> None:
+    snapshot = _forward_provenance(tmp_path)
+    with pytest.raises(ValueError, match="market mismatch"):
+        solve_monthly_level_authority(
+            market="DE",
+            delivery_months=pd.period_range("2028-01", "2028-12", freq="M"),
+            own_base_prices=dict(snapshot.prices),
+            run_timestamp=pd.Timestamp("2026-07-13T20:00:00Z"),
+            settings={"allow_template_structural_fallback": True},
+            own_forward_snapshot=snapshot,
         )

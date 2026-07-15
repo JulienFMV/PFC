@@ -209,6 +209,66 @@ def test_load_base_prices_from_eex_report_rejects_out_of_sanity_range(
     assert prices == {"2027": 75.0}
 
 
+def test_load_base_prices_returns_selected_workbook_snapshot_date(tmp_path: Path) -> None:
+    rows = [
+        [None, "Y01_2027_BASE"],
+        [None, "ISIN_x"],
+        ["Date", None],
+        ["10.07.2026", 81.0],
+        ["13.07.2026", 82.0],
+    ]
+    path = tmp_path / "dated_report.xlsx"
+    with pd.ExcelWriter(path, engine="openpyxl") as writer:
+        pd.DataFrame(rows).to_excel(writer, sheet_name="CH", index=False, header=False)
+
+    prices, snapshot_date = load_base_prices_from_eex_report(
+        path,
+        market="CH",
+        return_snapshot_date=True,
+    )
+
+    assert prices == {"2027": 82.0}
+    assert snapshot_date == pd.Timestamp("2026-07-13")
+
+
+def test_load_base_prices_selects_max_date_from_unsorted_workbook(tmp_path: Path) -> None:
+    rows = [
+        [None, "Y01_2027_BASE"],
+        [None, "ISIN_x"],
+        ["Date", None],
+        ["13.07.2026", 82.0],
+        ["10.07.2026", 81.0],
+    ]
+    path = tmp_path / "unsorted.xlsx"
+    with pd.ExcelWriter(path, engine="openpyxl") as writer:
+        pd.DataFrame(rows).to_excel(writer, sheet_name="CH", index=False, header=False)
+
+    prices, snapshot_date = load_base_prices_from_eex_report(
+        path,
+        market="CH",
+        return_snapshot_date=True,
+    )
+
+    assert prices == {"2027": 82.0}
+    assert snapshot_date == pd.Timestamp("2026-07-13")
+
+
+def test_load_base_prices_rejects_conflicting_duplicate_snapshot_rows(tmp_path: Path) -> None:
+    rows = [
+        [None, "Y01_2027_BASE"],
+        [None, "ISIN_x"],
+        ["Date", None],
+        ["13.07.2026", 82.0],
+        ["13.07.2026", 83.0],
+    ]
+    path = tmp_path / "conflict.xlsx"
+    with pd.ExcelWriter(path, engine="openpyxl") as writer:
+        pd.DataFrame(rows).to_excel(writer, sheet_name="CH", index=False, header=False)
+
+    with pytest.raises(ValueError, match="QUOTE_CONFLICT"):
+        load_base_prices_from_eex_report(path, market="CH")
+
+
 # ---------------------------------------------------------------------------
 # Excel fixture builder
 # ---------------------------------------------------------------------------

@@ -8,9 +8,9 @@ All scenario access is as-of filtered by ``publication_date <= vintage``.
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from collections.abc import Mapping, Sequence
 
 import numpy as np
 import pandas as pd
@@ -19,7 +19,6 @@ from pfc_shaping.data.electrification_scenarios import (
     CONDITIONAL_PRODUCTION_FIELD_GROUPS,
     COUNTRY_SCOPED_CRITICAL_VALUE_COLUMNS,
     CRITICAL_PRODUCTION_VALUE_COLUMNS,
-    DEFAULT_ELECTRIFICATION_SCENARIO_PATH,
     PRODUCTION_COLUMNS,
     REQUIRED_COLUMNS,
     UNACCEPTABLE_PRODUCTION_QUALITY_TOKENS,
@@ -40,7 +39,7 @@ __all__ = [
     "electrification_modulate",
 ]
 
-DEFAULT_SCENARIO_PATH = DEFAULT_ELECTRIFICATION_SCENARIO_PATH
+DEFAULT_SCENARIO_PATH = None
 
 BLOCK_NAMES = [
     "NIGHT",

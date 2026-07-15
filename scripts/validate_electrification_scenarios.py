@@ -16,18 +16,20 @@ from pathlib import Path
 
 import pandas as pd
 
+from pfc_shaping.data.electrification_acquisition import (
+    DEFAULT_ELECTRIFICATION_SCENARIO_PATH,
+    load_electrification_scenarios_from_databricks,
+)
 from pfc_shaping.data.electrification_scenarios import (
     CONDITIONAL_PRODUCTION_FIELD_GROUPS,
     COUNTRY_SCOPED_CRITICAL_VALUE_COLUMNS,
     CRITICAL_PRODUCTION_VALUE_COLUMNS,
-    DEFAULT_ELECTRIFICATION_SCENARIO_PATH,
     PRODUCTION_COLUMNS,
     RECOMMENDED_COLUMNS,
     UNACCEPTABLE_PRODUCTION_QUALITY_TOKENS,
     asof_electrification_scenarios,
     assert_scenario_coverage,
     load_electrification_scenarios,
-    load_electrification_scenarios_from_databricks,
 )
 
 

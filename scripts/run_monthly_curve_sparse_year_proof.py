@@ -128,7 +128,6 @@ def main() -> None:
     active_constraints_hash = _monthly_authority_hash_frame(constraints.rows)
 
     monthly = _monthly_curve_frame(result.monthly_curve, constraints)
-    checks = _sparse_year_checks(monthly, constraints, year_a=2028, year_b=2029)
     historical_thresholds = (
         pd.read_csv(args.historical_thresholds)
         if args.historical_thresholds is not None
@@ -168,6 +167,15 @@ def main() -> None:
         selected_config_hash=selected_config_hash,
     )
     audit_gates = pd.concat([audit_gates, governance_gates], ignore_index=True)
+    checks = _sparse_year_checks(
+        monthly,
+        constraints,
+        audit_gates=audit_gates,
+        year_a=2028,
+        year_b=2029,
+    )
+    seam_checks = _sparse_year_seam_checks(monthly, constraints)
+    active_snapshot_coverage = _active_snapshot_quote_coverage(monthly)
     _assert_proof(
         result=result,
         audit_gates=audit_gates,
@@ -187,6 +195,8 @@ def main() -> None:
         history_diagnostics=historical.diagnostics,
         fused_diagnostics=fused.diagnostics,
         checks=checks,
+        seam_checks=seam_checks,
+        active_snapshot_coverage=active_snapshot_coverage,
         audit_gates=audit_gates,
         coverage=coverage,
         historical_thresholds=historical_thresholds,
@@ -214,6 +224,9 @@ def main() -> None:
             "export_active_constraints_hash": str(args.export_active_constraints_hash or ""),
             "solver_kkt": result.kkt,
             "gate_summary": audit_gates["status"].value_counts().to_dict(),
+            "active_snapshot_coverage_summary": active_snapshot_coverage["status"].value_counts().to_dict()
+            if not active_snapshot_coverage.empty
+            else {},
             "config": config.__dict__,
             "production_approved": False,
         },
@@ -396,7 +409,14 @@ def _monthly_curve_frame(curve: pd.Series, constraints) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def _sparse_year_checks(monthly: pd.DataFrame, constraints, *, year_a: int, year_b: int) -> pd.DataFrame:
+def _sparse_year_checks(
+    monthly: pd.DataFrame,
+    constraints,
+    *,
+    audit_gates: pd.DataFrame | None = None,
+    year_a: int,
+    year_b: int,
+) -> pd.DataFrame:
     rows = []
     prices = {
         (int(row.year), int(row.month)): float(row.price_eur_mwh)
@@ -408,9 +428,36 @@ def _sparse_year_checks(monthly: pd.DataFrame, constraints, *, year_a: int, year
     }
     cal_a = _quote_target(constraints, str(year_a))
     cal_b = _quote_target(constraints, str(year_b))
+    same_month_gate_map: dict[tuple[int, int], dict[str, object]] = {}
+    comparable_gate_map: dict[tuple[int, int], dict[str, object]] = {}
+    if audit_gates is not None and not audit_gates.empty:
+        relevant = audit_gates[
+            audit_gates["gate_id"].astype(str).isin(
+                {"same_month_rank_consistency", "residual_vs_implied_comparable_block"}
+            )
+        ].copy()
+        for row in relevant.itertuples(index=False):
+            year = int(row.year)
+            month = int(row.month)
+            payload = {
+                "status": str(row.status),
+                "severity": str(row.severity),
+                "metric_name": str(row.metric_name),
+                "metric_value": float(row.metric_value),
+                "evidence": str(row.evidence),
+                "threshold_source": str(row.threshold_source),
+            }
+            key = (year, month)
+            gate_id = str(row.gate_id)
+            if gate_id == "same_month_rank_consistency":
+                same_month_gate_map[key] = payload
+            elif gate_id == "residual_vs_implied_comparable_block":
+                comparable_gate_map[key] = payload
     for month in range(1, 13):
         if (year_a, month) not in prices or (year_b, month) not in prices:
             continue
+        same_month_gate = same_month_gate_map.get((year_a, month), {})
+        comparable_gate = comparable_gate_map.get((year_a, month), {})
         rows.append(
             {
                 "year_a": year_a,
@@ -423,6 +470,166 @@ def _sparse_year_checks(monthly: pd.DataFrame, constraints, *, year_a: int, year
                 "parent_block_a": parent[(year_a, month)],
                 "parent_block_b": parent[(year_b, month)],
                 "status": "INFO",
+                "same_month_gate_status": same_month_gate.get("status", ""),
+                "same_month_gate_severity": same_month_gate.get("severity", ""),
+                "same_month_gate_metric_name": same_month_gate.get("metric_name", ""),
+                "same_month_gate_metric_value": same_month_gate.get("metric_value", float("nan")),
+                "same_month_gate_threshold_source": same_month_gate.get("threshold_source", ""),
+                "same_month_gate_evidence": same_month_gate.get("evidence", ""),
+                "comparable_block_gate_status": comparable_gate.get("status", ""),
+                "comparable_block_gate_severity": comparable_gate.get("severity", ""),
+                "comparable_block_gate_metric_name": comparable_gate.get("metric_name", ""),
+                "comparable_block_gate_metric_value": comparable_gate.get("metric_value", float("nan")),
+                "comparable_block_gate_threshold_source": comparable_gate.get("threshold_source", ""),
+                "comparable_block_gate_evidence": comparable_gate.get("evidence", ""),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _sparse_year_seam_checks(monthly: pd.DataFrame, constraints) -> pd.DataFrame:
+    rows: list[dict[str, object]] = []
+    path = monthly.sort_values(["year", "month"]).reset_index(drop=True)
+    bucket_targets = {str(k): float(v) for k, v in constraints.bucket_targets.items()}
+
+    def synthetic_or_unquoted(bucket: str) -> bool:
+        return bucket.endswith("-RESIDUAL") or bucket.isdigit() or "-Q" in bucket
+
+    for year, group in path.groupby("year", sort=True):
+        group = group.reset_index(drop=True)
+        for idx in range(1, len(group)):
+            prev = group.iloc[idx - 1]
+            curr = group.iloc[idx]
+            prev_bucket = str(prev["parent_block_id"])
+            curr_bucket = str(curr["parent_block_id"])
+            if prev_bucket == curr_bucket:
+                if not (curr_bucket.endswith("-RESIDUAL") or curr_bucket.isdigit()):
+                    continue
+                delta = float(curr["price_eur_mwh"] - prev["price_eur_mwh"])
+                severity = "ok"
+                reason = "month-to-month path plausible"
+                if abs(delta) > 25.0:
+                    severity = "critical"
+                    reason = "large adjacent monthly jump inside synthetic bucket"
+                elif abs(delta) > 18.0:
+                    severity = "warning"
+                    reason = "elevated adjacent monthly jump inside synthetic bucket"
+                rows.append(
+                    {
+                        "year": int(year),
+                        "bucket": curr_bucket,
+                        "from_bucket": curr_bucket,
+                        "to_bucket": curr_bucket,
+                        "from_month": int(prev["month"]),
+                        "to_month": int(curr["month"]),
+                        "from_mean_eur_mwh": float(prev["price_eur_mwh"]),
+                        "to_mean_eur_mwh": float(curr["price_eur_mwh"]),
+                        "delta_eur_mwh": delta,
+                        "residual_edge_deviation_eur_mwh": float("nan"),
+                        "check_type": "adjacent_delta",
+                        "severity": severity,
+                        "reason": reason,
+                    }
+                )
+                continue
+
+            if not (synthetic_or_unquoted(prev_bucket) or synthetic_or_unquoted(curr_bucket)):
+                continue
+
+            delta = float(curr["price_eur_mwh"] - prev["price_eur_mwh"])
+            severity = "ok"
+            reason = "inter-bucket monthly seam plausible"
+            residual_edge_deviation = float("nan")
+            residual_bucket = (
+                curr_bucket
+                if curr_bucket.endswith("-RESIDUAL")
+                else prev_bucket
+                if prev_bucket.endswith("-RESIDUAL")
+                else ""
+            )
+            if residual_bucket:
+                residual_target = bucket_targets.get(residual_bucket)
+                if residual_target is not None:
+                    residual_month_mean = float(
+                        curr["price_eur_mwh"] if curr_bucket == residual_bucket else prev["price_eur_mwh"]
+                    )
+                    residual_edge_deviation = float(residual_month_mean - residual_target)
+                    if abs(residual_edge_deviation) > 15.0:
+                        severity = "critical"
+                        reason = "edge month is materially away from residual target"
+                    elif abs(residual_edge_deviation) > 10.0:
+                        severity = "warning"
+                        reason = "edge month is away from residual target"
+            if severity == "ok":
+                if abs(delta) > 35.0:
+                    severity = "critical"
+                    reason = "large unverified inter-bucket monthly seam"
+                elif abs(delta) > 25.0:
+                    severity = "warning"
+                    reason = "elevated unverified inter-bucket monthly seam"
+            rows.append(
+                {
+                    "year": int(year),
+                    "bucket": f"{prev_bucket}->{curr_bucket}",
+                    "from_bucket": prev_bucket,
+                    "to_bucket": curr_bucket,
+                    "from_month": int(prev["month"]),
+                    "to_month": int(curr["month"]),
+                    "from_mean_eur_mwh": float(prev["price_eur_mwh"]),
+                    "to_mean_eur_mwh": float(curr["price_eur_mwh"]),
+                    "delta_eur_mwh": delta,
+                    "residual_edge_deviation_eur_mwh": residual_edge_deviation,
+                    "check_type": "inter_bucket_seam",
+                    "severity": severity,
+                    "reason": reason,
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def _active_snapshot_quote_coverage(monthly: pd.DataFrame) -> pd.DataFrame:
+    rows: list[dict[str, object]] = []
+
+    def bucket_kind(bucket: str) -> str:
+        if not bucket:
+            return "unassigned"
+        if bucket.endswith("-RESIDUAL"):
+            return "residual"
+        if len(bucket) == 4 and bucket.isdigit():
+            return "calendar"
+        if "-Q" in bucket:
+            return "quarter"
+        if len(bucket) == 7 and bucket[4] == "-":
+            return "month"
+        return "other"
+
+    for year, group in monthly.groupby("year", sort=True):
+        group = group.sort_values("month").reset_index(drop=True)
+        buckets = [str(v or "") for v in group["parent_block_id"].tolist()]
+        assigned = [bucket for bucket in buckets if bucket]
+        unique_buckets = list(dict.fromkeys(assigned))
+        kinds = list(dict.fromkeys(bucket_kind(bucket) for bucket in unique_buckets))
+        assigned_month_count = sum(1 for bucket in buckets if bucket)
+        unassigned_month_count = len(buckets) - assigned_month_count
+        if assigned_month_count == 0:
+            status = "unquoted_year_fallback"
+            reason = "no active CH quote covers this delivery year in the snapshot"
+        elif unassigned_month_count > 0:
+            status = "partial_year_quote_coverage"
+            reason = "only part of the delivery year is covered by active CH quotes"
+        else:
+            status = "fully_assigned"
+            reason = "every delivery month is assigned to an active CH quote or implied residual bucket"
+        rows.append(
+            {
+                "year": int(year),
+                "month_count": int(len(group)),
+                "assigned_month_count": int(assigned_month_count),
+                "unassigned_month_count": int(unassigned_month_count),
+                "active_buckets": "|".join(unique_buckets),
+                "bucket_kinds": "|".join(kinds),
+                "status": status,
+                "reason": reason,
             }
         )
     return pd.DataFrame(rows)
@@ -451,6 +658,8 @@ def _write_outputs(
     history_diagnostics: pd.DataFrame,
     fused_diagnostics: pd.DataFrame,
     checks: pd.DataFrame,
+    seam_checks: pd.DataFrame,
+    active_snapshot_coverage: pd.DataFrame,
     audit_gates: pd.DataFrame,
     coverage: pd.DataFrame,
     historical_thresholds: pd.DataFrame,
@@ -466,6 +675,8 @@ def _write_outputs(
     history_diagnostics.to_csv(output_dir / "history_prior_diagnostics.csv", index=False)
     fused_diagnostics.to_csv(output_dir / "fused_prior_diagnostics.csv", index=False)
     checks.to_csv(output_dir / "sparse_year_checks.csv", index=False)
+    seam_checks.to_csv(output_dir / "sparse_year_seam_checks.csv", index=False)
+    active_snapshot_coverage.to_csv(output_dir / "active_snapshot_quote_coverage.csv", index=False)
     audit_gates.to_csv(output_dir / "audit_gates.csv", index=False)
     coverage.to_csv(output_dir / "monthly_quote_coverage_by_horizon.csv", index=False)
     if not historical_thresholds.empty:

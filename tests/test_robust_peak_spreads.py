@@ -37,11 +37,10 @@ def _hourly_with_peak_premium(years: list[int], base: float, premium: float,
 # ---------------------------------------------------------------------------
 # Holiday-aware peak mask (fixes the pre-existing fit_peak_spreads bug)
 # ---------------------------------------------------------------------------
-def test_holiday_aware_mask_excludes_national_ch_holidays():
-    """Aug 1 2024 is a Thursday CH national holiday: must be off-peak."""
+def test_peak_mask_includes_national_ch_holidays_on_weekdays():
     idx = pd.date_range("2024-08-01 09:00", "2024-08-01 10:00", freq="1h", tz=TZ)
     mask = _holiday_aware_peak_mask(idx)
-    assert mask.sum() == 0  # both hours classified off-peak
+    assert mask.sum() == 2
 
     # The same hour on a regular Thursday is peak.
     idx2 = pd.date_range("2024-08-08 09:00", "2024-08-08 10:00", freq="1h", tz=TZ)

@@ -59,7 +59,7 @@ class FuturesContract:
         start: Delivery start timestamp (inclusive, UTC).
         end: Delivery end timestamp (exclusive, UTC).
         product_type: ``'Base'`` (all hours) or ``'Peak'``
-            (08:00-20:00 Mon-Fri, excl. Swiss public holidays).
+            (08:00-20:00 Monday-Friday, public holidays included).
     """
 
     name: str
@@ -125,16 +125,15 @@ def _build_peak_mask(
     """Return a boolean array indicating peak timestamps.
 
     Peak is defined as hours ``[peak_hours[0], peak_hours[1])`` on Monday
-    through Friday in the supplied local timezone, excluding the supplied
-    set of national public holidays.
+    through Friday in the supplied local timezone. European EEX Peakload
+    includes public holidays.
 
     Args:
         index: UTC ``DatetimeIndex`` at 15-min frequency.
         peak_hours: ``(start_hour, end_hour)`` in the local timezone. The
             interval is ``[start_hour, end_hour)`` — e.g. ``(8, 20)`` means
             08:00-19:45 inclusive.
-        holiday_dates: Set of ``datetime.date`` objects for the relevant
-            country's public holidays over the years spanned by ``index``.
+        holiday_dates: Deprecated compatibility argument; ignored.
         tz: IANA timezone for the local-time peak window. Defaults to
             ``Europe/Zurich`` (CH/AT) — pass ``Europe/Berlin`` for DE,
             ``Europe/Paris`` for FR, ``Europe/Rome`` for IT.
@@ -145,13 +144,9 @@ def _build_peak_mask(
     idx_local = index.tz_convert(tz)
     hour = idx_local.hour
     dow = idx_local.dayofweek  # 0=Mon .. 6=Sun
-    dates = idx_local.date
-
     is_weekday = dow < 5
     is_peak_hour = (hour >= peak_hours[0]) & (hour < peak_hours[1])
-    is_not_holiday = np.array([d not in holiday_dates for d in dates])
-
-    return is_weekday & is_peak_hour & is_not_holiday
+    return is_weekday & is_peak_hour
 
 
 # Map ISO-2 market code → (IANA tz, ``holidays`` constructor). Adding a
@@ -170,12 +165,8 @@ _COUNTRY_TZ: dict[str, str] = {
 def _get_country_holidays(years: Sequence[int], country: str = "CH") -> set:
     """Collect public holidays for the requested country and years.
 
-    Used by the arbitrage-free calibrator to build the EEX-style Peak
-    mask. EEX Peak excludes national-level public holidays of the
-    delivery zone, so the country argument matters: a DE Peak forward
-    must NOT exclude Bundesfeier (1 August, CH-only) and a CH Peak
-    forward must NOT exclude Tag der Deutschen Einheit (3 October,
-    DE-only).
+    Retained for holiday-shape features and compatibility. Public holidays
+    do not alter the European EEX Peakload delivery window.
 
     Args:
         years: Calendar years to cover.
@@ -398,13 +389,7 @@ class ArbitrageFreeCalibrator:
                 whose delivery period falls outside the curve's date range
                 are silently skipped.
             country: ISO-2 market code (CH / DE / AT / FR / IT). Drives
-                the local timezone of the EEX Peak window and the set of
-                national public holidays excluded from Peak. Calibrating
-                a DE forward with the default ``"CH"`` would silently
-                use Bundesfeier as a non-peak day (CH-only) and treat
-                3 October as a Peak day (DE-only) — both wrong by
-                EEX PHELIX-Peak convention. The pipeline routes the
-                spec's country code through the assembler.
+                the local timezone of the EEX Peakload window.
 
         Returns:
             A ``CalibrationResult`` containing the calibrated curve,
@@ -447,9 +432,7 @@ class ArbitrageFreeCalibrator:
         )
 
         # ── Peak mask ─────────────────────────────────────────────────
-        years = sorted(set(index.tz_convert(local_tz).year))
-        country_hols = _get_country_holidays(years, country=country)
-        peak_mask = _build_peak_mask(index, self.peak_hours, country_hols, tz=local_tz)
+        peak_mask = _build_peak_mask(index, self.peak_hours, set(), tz=local_tz)
 
         logger.debug(
             "Peak timestamps: %d / %d (%.1f%%)",

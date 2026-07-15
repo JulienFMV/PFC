@@ -13,12 +13,6 @@ from typing import Iterable
 import numpy as np
 import pandas as pd
 
-from pfc_shaping.data.databricks_client import query_to_df, table_fqn
-
-_REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_ELECTRIFICATION_SCENARIO_PATH = _REPO_ROOT / "data" / "electrification_scenarios.parquet"
-DEFAULT_HPFC_SCENARIO_FEATURES_PATH = _REPO_ROOT / "data" / "hpfc_scenario_features.parquet"
-
 REQUIRED_COLUMNS = {
     "publication_date",
     "scenario",
@@ -159,8 +153,6 @@ HPFC_SCENARIO_FEATURE_COLUMNS = [
 ]
 
 __all__ = [
-    "DEFAULT_ELECTRIFICATION_SCENARIO_PATH",
-    "DEFAULT_HPFC_SCENARIO_FEATURES_PATH",
     "REQUIRED_COLUMNS",
     "RECOMMENDED_COLUMNS",
     "PRODUCTION_COLUMNS",
@@ -174,7 +166,6 @@ __all__ = [
     "derive_hpfc_scenario_features",
     "write_hpfc_scenario_features",
     "load_electrification_scenarios",
-    "load_electrification_scenarios_from_databricks",
     "asof_electrification_scenarios",
     "assert_scenario_coverage",
 ]
@@ -470,7 +461,7 @@ def derive_hpfc_scenario_features(frame: pd.DataFrame) -> pd.DataFrame:
 
 def write_hpfc_scenario_features(
     frame: pd.DataFrame,
-    path: str | Path = DEFAULT_HPFC_SCENARIO_FEATURES_PATH,
+    path: str | Path,
 ) -> pd.DataFrame:
     """Derive and write the gold HPFC scenario feature table."""
     features = derive_hpfc_scenario_features(frame)
@@ -481,7 +472,7 @@ def write_hpfc_scenario_features(
 
 
 def load_electrification_scenarios(
-    path: str | Path = DEFAULT_ELECTRIFICATION_SCENARIO_PATH,
+    path: str | Path,
     *,
     require_recommended: bool = False,
 ) -> pd.DataFrame:
@@ -492,28 +483,6 @@ def load_electrification_scenarios(
     else:
         df = pd.read_parquet(path)
     return validate_electrification_scenarios(df, require_recommended=require_recommended)
-
-
-def load_electrification_scenarios_from_databricks(
-    *,
-    table_key: str = "electrification_scenarios",
-    config: dict | None = None,
-    where_sql: str | None = None,
-    require_recommended: bool = False,
-) -> pd.DataFrame:
-    """Load scenario rows from a configured Databricks table.
-
-    `where_sql` is appended verbatim after `WHERE`; callers should keep it static
-    or parameterized upstream.
-    """
-    fqn = table_fqn(table_key, config=config)
-    sql = f"SELECT * FROM {fqn}"
-    if where_sql:
-        sql += f" WHERE {where_sql}"
-    return validate_electrification_scenarios(
-        query_to_df(sql, config=config),
-        require_recommended=require_recommended,
-    )
 
 
 def asof_electrification_scenarios(frame: pd.DataFrame, vintage) -> pd.DataFrame:

@@ -10,21 +10,34 @@ date.
 
 from __future__ import annotations
 
-from collections import Counter
-from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
-from datetime import datetime, timezone
 import hashlib
 import json
-from pathlib import Path
+import os
 import platform
+import shutil
 import subprocess
+import uuid
+from collections import Counter
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import InitVar, dataclass, field
+from datetime import datetime, timezone
+from importlib import metadata as importlib_metadata
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import yaml
 
 from pfc_shaping.calibration.monthly_curve_audit import audit_monthly_curve_shape
+from pfc_shaping.calibration.monthly_curve_config_identity import (
+    _sha256_text,
+    canonical_json,
+    config_hash,
+    lambda_grid_hash,
+)
+from pfc_shaping.calibration.monthly_curve_config_identity import (
+    config_payload as _config_payload,
+)
 from pfc_shaping.calibration.monthly_curve_priors import (
     MonthlyShapePrior,
     build_fused_shape_prior,
@@ -39,7 +52,12 @@ from pfc_shaping.calibration.monthly_forward_curve import (
     product_periods,
     solve_monthly_forward_curve_from_constraints,
 )
-
+from pfc_shaping.data.eex_historical_vintage import (
+    EexHistoricalVintageError,
+    VerifiedEexHistoricalVintageCatalog,
+    validate_eex_historical_vintage_frame,
+    verify_eex_historical_vintage_catalog,
+)
 
 SCORING_COLUMNS = [
     "config_hash",
@@ -92,6 +110,8 @@ FAIL_STATUSES = {
 _MONTH_RE = r"^\d{4}-\d{2}$"
 _QUARTER_RE = r"^\d{4}-Q[1-4]$"
 _YEAR_RE = r"^\d{4}$"
+GOVERNED_CALIBRATION_PROFILE = "tier2_governed_minimums.v1"
+_VERIFIED_CALIBRATION_ARTIFACT_TOKEN = object()
 
 
 @dataclass(frozen=True)
@@ -118,6 +138,32 @@ class LambdaCalibrationSettings:
     identifiability_min_rel_error_improvement: float = 0.01
 
 
+_GOVERNED_MINIMUM_SETTINGS = {
+    "min_valid_origins": LambdaCalibrationSettings().min_valid_origins,
+    "min_withheld_monthly": LambdaCalibrationSettings().min_withheld_monthly,
+    "min_withheld_quarterly": LambdaCalibrationSettings().min_withheld_quarterly,
+    "min_history_snapshots": LambdaCalibrationSettings().min_history_snapshots,
+    "min_structural_snapshots": LambdaCalibrationSettings().min_structural_snapshots,
+    "max_withheld_per_origin": LambdaCalibrationSettings().max_withheld_per_origin,
+    "identifiability_min_abs_error_improvement": (
+        LambdaCalibrationSettings().identifiability_min_abs_error_improvement
+    ),
+    "identifiability_min_rel_error_improvement": (
+        LambdaCalibrationSettings().identifiability_min_rel_error_improvement
+    ),
+}
+_GOVERNED_MAXIMUM_SETTINGS = {
+    "quote_consistency_tolerance": LambdaCalibrationSettings().quote_consistency_tolerance,
+    "hard_constraint_tolerance": LambdaCalibrationSettings().hard_constraint_tolerance,
+}
+_GOVERNED_EXACT_SETTINGS = {
+    name: value
+    for name, value in LambdaCalibrationSettings().__dict__.items()
+    if name not in _GOVERNED_MINIMUM_SETTINGS
+    and name not in _GOVERNED_MAXIMUM_SETTINGS
+}
+
+
 @dataclass(frozen=True)
 class WithheldProduct:
     market: str
@@ -126,6 +172,7 @@ class WithheldProduct:
     price: float
     origin_date: pd.Timestamp
     source: str = ""
+    snapshot_id: str = ""
 
     @property
     def tenor(self) -> str:
@@ -148,9 +195,87 @@ class CalibrationArtifacts:
     manifest: dict[str, object]
     summary: dict[str, object]
     candidate_config: dict[str, object] | None
+    _verification_token: InitVar[object | None] = None
+    verified: bool = field(init=False)
+    sealed_content_sha256: str = field(init=False)
+
+    def __post_init__(self, _verification_token: object | None) -> None:
+        object.__setattr__(
+            self,
+            "verified",
+            _verification_token is _VERIFIED_CALIBRATION_ARTIFACT_TOKEN,
+        )
+        object.__setattr__(
+            self,
+            "sealed_content_sha256",
+            _calibration_artifact_content_sha256(
+                self.scoring,
+                self.manifest,
+                self.summary,
+                self.candidate_config,
+            )
+            if _verification_token is _VERIFIED_CALIBRATION_ARTIFACT_TOKEN
+            else "",
+        )
 
 
-def run_lambda_calibration(
+def run_verified_lambda_calibration(
+    history_path: str | Path,
+    catalog_path: str | Path,
+    *,
+    grid: Mapping[str, object],
+    settings: LambdaCalibrationSettings | None = None,
+    max_origins: int | None = None,
+    max_configs: int | None = None,
+    smoke: bool = False,
+    command_line: Sequence[str] | None = None,
+) -> CalibrationArtifacts:
+    """Run calibration only through exact signed catalog and Parquet bytes."""
+
+    if not smoke and (max_origins is not None or max_configs is not None):
+        raise EexHistoricalVintageError(
+            "max_origins/max_configs are smoke-only and cannot reduce governed calibration"
+        )
+    selected_history = Path(history_path).resolve()
+    selected_catalog = Path(catalog_path).resolve()
+    try:
+        catalog = json.loads(selected_catalog.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise EexHistoricalVintageError("EEX vintage catalog is unreadable") from exc
+    history, evidence = verify_eex_historical_vintage_catalog(
+        catalog,
+        catalog_path=selected_catalog,
+        history_path=selected_history,
+    )
+    effective_settings = _settings_from_grid(grid, settings=settings, smoke=smoke)
+    governance_profile = "VERIFIED_VINTAGE_SMOKE_DIAGNOSTIC_ONLY"
+    execution_environment = None
+    if not smoke:
+        _validate_governed_calibration_settings(effective_settings)
+        execution_environment = _execution_environment_receipt()
+        if bool(execution_environment["git_worktree_dirty"]):
+            raise EexHistoricalVintageError(
+                "governed calibration requires a clean, committed source worktree"
+            )
+        governance_profile = GOVERNED_CALIBRATION_PROFILE
+    return _run_lambda_calibration_core(
+        history,
+        grid=grid,
+        settings=effective_settings,
+        source_file_hash=evidence.history_sha256,
+        max_origins=max_origins,
+        max_configs=max_configs,
+        smoke=smoke,
+        command_line=command_line,
+        input_parquet_path=str(selected_history),
+        vintage_evidence=evidence,
+        governance_profile=governance_profile,
+        expected_execution_environment=execution_environment,
+        artifact_verification_token=_VERIFIED_CALIBRATION_ARTIFACT_TOKEN,
+    )
+
+
+def _run_lambda_calibration_core(
     history: pd.DataFrame,
     *,
     grid: Mapping[str, object],
@@ -161,11 +286,43 @@ def run_lambda_calibration(
     smoke: bool = False,
     command_line: Sequence[str] | None = None,
     input_parquet_path: str = "",
+    vintage_evidence: VerifiedEexHistoricalVintageCatalog | None = None,
+    allow_unverified_vintage_fixture: bool = False,
+    governance_profile: str = "UNVERIFIED_INTERNAL_DIAGNOSTIC",
+    expected_execution_environment: Mapping[str, object] | None = None,
+    artifact_verification_token: object | None = None,
 ) -> CalibrationArtifacts:
-    """Run a point-in-time rolling-origin lambda calibration."""
+    """Internal core; unverified fixtures are never a governed CLI surface."""
 
     settings = _settings_from_grid(grid, settings=settings, smoke=smoke)
     history = normalize_history(history)
+    history = validate_eex_historical_vintage_frame(history)
+    if vintage_evidence is None and not allow_unverified_vintage_fixture:
+        raise EexHistoricalVintageError(
+            "signed eex_historical_vintage_catalog.v1 evidence is required"
+        )
+    if vintage_evidence is not None:
+        if vintage_evidence.verified is not True:
+            raise EexHistoricalVintageError(
+                "EEX vintage evidence was not created by the strict verifier"
+            )
+        if not source_file_hash or vintage_evidence.history_sha256 != source_file_hash:
+            raise EexHistoricalVintageError(
+                "verified EEX vintage catalog does not bind the consumed history bytes"
+            )
+        history.attrs["verified_vintage_catalog"] = {
+            "catalog_id": vintage_evidence.catalog_id,
+            "catalog_sha256": vintage_evidence.catalog_sha256,
+            "history_sha256": vintage_evidence.history_sha256,
+            "snapshot_count": vintage_evidence.snapshot_count,
+            "source_document_count": vintage_evidence.source_document_count,
+            "data_cutoff_utc": vintage_evidence.data_cutoff_utc,
+            "status": "VERIFIED_SIGNED_IMMUTABLE_VINTAGES",
+        }
+    else:
+        history.attrs["verified_vintage_catalog"] = {
+            "status": "UNVERIFIED_TEST_FIXTURE",
+        }
     configs = list(iter_candidate_configs(grid))
     if not configs:
         raise ValueError("lambda grid did not produce any candidate configuration")
@@ -234,6 +391,28 @@ def run_lambda_calibration(
         withheld_counts=withheld_counts,
         excluded_reasons=excluded_reasons,
     )
+    if smoke and str(summary.get("final_status", "")).startswith(
+        "PASS_CALIBRATION_CANDIDATE"
+    ):
+        summary["final_status"] = "PASS_IMPLEMENTATION_ONLY"
+    if smoke:
+        summary["selected_config_hash"] = None
+        summary["selected_mae"] = None
+        summary["selection_reason"] = (
+            "smoke execution validates implementation only and cannot select a model"
+        )
+    execution_environment = _execution_environment_receipt()
+    if expected_execution_environment is not None:
+        if canonical_json(execution_environment) != canonical_json(
+            expected_execution_environment
+        ):
+            raise EexHistoricalVintageError(
+                "governed calibration execution environment changed during the run"
+            )
+        if bool(execution_environment["git_worktree_dirty"]):
+            raise EexHistoricalVintageError(
+                "governed calibration source worktree became dirty during the run"
+            )
     manifest = build_calibration_manifest(
         history=history,
         scoring=scoring,
@@ -245,37 +424,272 @@ def run_lambda_calibration(
         input_parquet_path=input_parquet_path,
         withheld_counts=withheld_counts,
         excluded_reasons=excluded_reasons,
+        governance_profile=governance_profile,
+        execution_environment=execution_environment,
     )
-    candidate = build_candidate_config(
-        scoring,
-        summary=summary,
-        configs=configs,
-        settings=settings,
-        grid_hash=lambda_grid_hash(grid),
-        source_data_hash=source_file_hash,
-        withheld_counts=withheld_counts,
-        excluded_reasons=excluded_reasons,
-    )
+    candidate = None
+    if not smoke:
+        candidate = build_candidate_config(
+            scoring,
+            summary=summary,
+            configs=configs,
+            settings=settings,
+            grid_hash=lambda_grid_hash(grid),
+            source_data_hash=source_file_hash,
+            withheld_counts=withheld_counts,
+            excluded_reasons=excluded_reasons,
+        )
     _validate_artifacts(scoring, manifest, summary, candidate)
-    return CalibrationArtifacts(scoring, manifest, summary, candidate)
+    return CalibrationArtifacts(
+        scoring,
+        manifest,
+        summary,
+        candidate,
+        _verification_token=artifact_verification_token,
+    )
 
 
 def write_calibration_artifacts(artifacts: CalibrationArtifacts, output_dir: Path) -> None:
-    output_dir.mkdir(parents=True, exist_ok=True)
-    artifacts.scoring.to_csv(output_dir / "scoring.csv", index=False)
-    (output_dir / "calibration_manifest.json").write_text(
-        json.dumps(artifacts.manifest, indent=2, sort_keys=True, default=str),
-        encoding="utf-8",
-    )
-    (output_dir / "calibration_summary.json").write_text(
-        json.dumps(artifacts.summary, indent=2, sort_keys=True, default=str),
-        encoding="utf-8",
-    )
-    if artifacts.candidate_config is not None:
-        (output_dir / "candidate_config.yaml").write_text(
-            yaml.safe_dump(artifacts.candidate_config, sort_keys=True),
-            encoding="utf-8",
+    if artifacts.verified is not True:
+        raise EexHistoricalVintageError(
+            "only run_verified_lambda_calibration artifacts may be published"
         )
+    payloads = _calibration_artifact_payloads(
+        artifacts.scoring,
+        artifacts.manifest,
+        artifacts.summary,
+        artifacts.candidate_config,
+    )
+    current_digest = _serialized_calibration_payloads_sha256(payloads)
+    if current_digest != artifacts.sealed_content_sha256:
+        raise EexHistoricalVintageError(
+            "verified calibration artifacts changed after strict evaluation"
+        )
+    _write_calibration_artifacts_core(
+        artifacts,
+        output_dir,
+        serialized_payloads=payloads,
+    )
+
+
+def _write_calibration_artifacts_core(
+    artifacts: CalibrationArtifacts,
+    output_dir: Path,
+    *,
+    serialized_payloads: Mapping[str, bytes] | None = None,
+) -> None:
+    """Publish one immutable, complete artifact set to a new run directory."""
+
+    output_dir = Path(output_dir).resolve()
+    output_dir.parent.mkdir(parents=True, exist_ok=True)
+    if output_dir.exists():
+        raise FileExistsError(f"calibration output directory already exists: {output_dir}")
+    stage = output_dir.parent / f".{output_dir.name}-{uuid.uuid4().hex}.staging"
+    stage.mkdir(exist_ok=False)
+    payloads = dict(
+        serialized_payloads
+        or _calibration_artifact_payloads(
+            artifacts.scoring,
+            artifacts.manifest,
+            artifacts.summary,
+            artifacts.candidate_config,
+        )
+    )
+    summary_payload = json.loads(payloads["calibration_summary.json"])
+    inventory = {
+        "schema_version": "monthly_curve_calibration_artifact_set.v1",
+        "final_status": str(summary_payload.get("final_status", "")),
+        "candidate_config_present": "candidate_config.yaml" in payloads,
+        "files": {
+            name: {
+                "sha256": hashlib.sha256(payload).hexdigest(),
+                "size_bytes": len(payload),
+            }
+            for name, payload in sorted(payloads.items())
+        },
+    }
+    payloads["artifact_set_manifest.json"] = json.dumps(
+        inventory,
+        indent=2,
+        sort_keys=True,
+    ).encode("utf-8")
+    published = False
+    try:
+        for name, payload in payloads.items():
+            _write_fsync(stage / name, payload)
+        stage.replace(output_dir)
+        published = True
+        verify_calibration_artifact_set(output_dir)
+    except Exception:
+        shutil.rmtree(stage, ignore_errors=True)
+        if published and output_dir.exists():
+            quarantine = output_dir.parent / (
+                f".{output_dir.name}-{uuid.uuid4().hex}.invalid"
+            )
+            output_dir.replace(quarantine)
+            shutil.rmtree(quarantine, ignore_errors=True)
+        raise
+
+
+def _calibration_artifact_payloads(
+    scoring: pd.DataFrame,
+    manifest: Mapping[str, object],
+    summary: Mapping[str, object],
+    candidate_config: Mapping[str, object] | None,
+) -> dict[str, bytes]:
+    payloads = {
+        "scoring.csv": scoring.to_csv(index=False, lineterminator="\n").encode("utf-8"),
+        "calibration_manifest.json": json.dumps(
+            manifest,
+            indent=2,
+            sort_keys=True,
+            default=str,
+        ).encode("utf-8"),
+        "calibration_summary.json": json.dumps(
+            summary,
+            indent=2,
+            sort_keys=True,
+            default=str,
+        ).encode("utf-8"),
+    }
+    if candidate_config is not None:
+        payloads["candidate_config.yaml"] = yaml.safe_dump(
+            dict(candidate_config),
+            sort_keys=True,
+        ).encode("utf-8")
+    return payloads
+
+
+def _calibration_artifact_content_sha256(
+    scoring: pd.DataFrame,
+    manifest: Mapping[str, object],
+    summary: Mapping[str, object],
+    candidate_config: Mapping[str, object] | None,
+) -> str:
+    payloads = _calibration_artifact_payloads(
+        scoring,
+        manifest,
+        summary,
+        candidate_config,
+    )
+    return _serialized_calibration_payloads_sha256(payloads)
+
+
+def _serialized_calibration_payloads_sha256(
+    payloads: Mapping[str, bytes],
+) -> str:
+    receipts = {
+        name: {
+            "sha256": hashlib.sha256(payload).hexdigest(),
+            "size_bytes": len(payload),
+        }
+        for name, payload in sorted(payloads.items())
+    }
+    return hashlib.sha256(
+        json.dumps(receipts, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def verify_calibration_artifact_set(output_dir: str | Path) -> dict[str, object]:
+    """Replay the exact immutable file inventory for one calibration run."""
+
+    root = Path(output_dir).resolve()
+    manifest_path = root / "artifact_set_manifest.json"
+    try:
+        inventory = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError("calibration artifact-set manifest is unreadable") from exc
+    if inventory.get("schema_version") != "monthly_curve_calibration_artifact_set.v1":
+        raise ValueError("calibration artifact-set schema mismatch")
+    files = inventory.get("files")
+    if not isinstance(files, Mapping) or not files:
+        raise ValueError("calibration artifact-set inventory is missing")
+    final_status = str(inventory.get("final_status", ""))
+    candidate_required = final_status.startswith("PASS_CALIBRATION_CANDIDATE")
+    required_payload_names = {
+        "scoring.csv",
+        "calibration_manifest.json",
+        "calibration_summary.json",
+    }
+    expected_payload_names = set(required_payload_names)
+    if candidate_required:
+        expected_payload_names.add("candidate_config.yaml")
+    if {str(name) for name in files} != expected_payload_names:
+        raise ValueError("calibration artifact-set required role mismatch")
+    entries = list(root.iterdir())
+    if any(path.is_symlink() or not path.is_file() for path in entries):
+        raise ValueError("calibration artifact-set contains non-regular entries")
+    actual_names = {path.name for path in entries}
+    expected_names = {str(name) for name in files} | {manifest_path.name}
+    if actual_names != expected_names:
+        raise ValueError("calibration artifact-set file inventory mismatch")
+    for name, raw in files.items():
+        if not isinstance(raw, Mapping):
+            raise ValueError("calibration artifact-set receipt is invalid")
+        payload = (root / str(name)).read_bytes()
+        if raw.get("size_bytes") != len(payload) or str(raw.get("sha256", "")) != (
+            hashlib.sha256(payload).hexdigest()
+        ):
+            raise ValueError(f"calibration artifact-set receipt mismatch: {name}")
+    candidate_present = "candidate_config.yaml" in files
+    if inventory.get("candidate_config_present") is not candidate_present:
+        raise ValueError("calibration candidate presence flag mismatch")
+    try:
+        summary = json.loads((root / "calibration_summary.json").read_text(encoding="utf-8"))
+        run_manifest = json.loads(
+            (root / "calibration_manifest.json").read_text(encoding="utf-8")
+        )
+        scoring = pd.read_csv(root / "scoring.csv")
+    except (OSError, json.JSONDecodeError, pd.errors.ParserError) as exc:
+        raise ValueError("calibration artifact-set semantic payload is unreadable") from exc
+    if str(summary.get("final_status", "")) != final_status or str(
+        run_manifest.get("final_status", "")
+    ) != final_status:
+        raise ValueError("calibration artifact-set final status parity mismatch")
+    if bool(summary.get("production_approved")) or bool(
+        run_manifest.get("production_approved")
+    ):
+        raise ValueError("calibration artifact-set cannot be production approved")
+    if list(scoring.columns) != SCORING_COLUMNS:
+        raise ValueError("calibration artifact-set scoring schema mismatch")
+    if candidate_required:
+        try:
+            candidate = yaml.safe_load(
+                (root / "candidate_config.yaml").read_text(encoding="utf-8")
+            )
+        except (OSError, yaml.YAMLError) as exc:
+            raise ValueError("calibration candidate config is unreadable") from exc
+        if not isinstance(candidate, Mapping) or candidate.get("selection_status") != "SELECTED":
+            raise ValueError("calibration candidate selection contract mismatch")
+        if bool(candidate.get("production_approved")):
+            raise ValueError("calibration candidate cannot be production approved")
+        expected_scope = {
+            "market": "CH",
+            "load_type": "BASE",
+            "timezone": "Europe/Zurich",
+            "profile": GOVERNED_CALIBRATION_PROFILE,
+        }
+        if candidate.get("governed_scope") != expected_scope:
+            raise ValueError("calibration candidate governed scope mismatch")
+        canonical_config = candidate.get("canonical_config")
+        if not isinstance(canonical_config, Mapping) or str(
+            candidate.get("config_hash", "")
+        ) != config_hash(canonical_config):
+            raise ValueError("calibration candidate config hash mismatch")
+        if candidate.get("grid_file_hash") != run_manifest.get("lambda_grid_hash"):
+            raise ValueError("calibration candidate grid hash mismatch")
+        if candidate.get("source_data_hash") != run_manifest.get("input_parquet_sha256"):
+            raise ValueError("calibration candidate source hash mismatch")
+        if run_manifest.get("governance_profile") != GOVERNED_CALIBRATION_PROFILE:
+            raise ValueError("calibration candidate governance profile mismatch")
+        if bool(run_manifest.get("git_worktree_dirty")):
+            raise ValueError("calibration candidate cannot originate from a dirty worktree")
+        vintage = run_manifest.get("verified_vintage_catalog")
+        if not isinstance(vintage, Mapping) or vintage.get("status") != (
+            "VERIFIED_SIGNED_IMMUTABLE_VINTAGES"
+        ):
+            raise ValueError("calibration candidate vintage evidence mismatch")
+    return dict(inventory)
 
 
 def load_lambda_grid(path: Path) -> dict[str, object]:
@@ -335,23 +749,6 @@ def iter_candidate_configs(grid: Mapping[str, object]) -> Iterable[LambdaCandida
                         )
 
 
-def config_hash(config: MonthlyCurveConfig | LambdaCandidateConfig | Mapping[str, object]) -> str:
-    payload = _config_payload(config)
-    first = _sha256_text(canonical_json(payload))
-    second = _sha256_text(canonical_json(dict(reversed(list(payload.items())))))
-    if first != second:
-        raise ValueError("non-reproducible config hash")
-    return first
-
-
-def lambda_grid_hash(grid: Mapping[str, object]) -> str:
-    return _sha256_text(canonical_json(grid))
-
-
-def canonical_json(value: object) -> str:
-    return json.dumps(_canonicalize(value), sort_keys=True, separators=(",", ":"), ensure_ascii=True)
-
-
 def normalize_history(history: pd.DataFrame) -> pd.DataFrame:
     required = {"date", "product", "load_type", "market", "price"}
     missing = sorted(required - set(history.columns))
@@ -365,7 +762,12 @@ def normalize_history(history: pd.DataFrame) -> pd.DataFrame:
     df["price"] = df["price"].astype(float)
     if "source" not in df.columns:
         df["source"] = ""
-    return df.sort_values(["date", "market", "load_type", "product"]).reset_index(drop=True)
+    sort_columns = [
+        column
+        for column in ("available_at", "date", "market", "load_type", "product")
+        if column in df.columns
+    ]
+    return df.sort_values(sort_columns).reset_index(drop=True)
 
 
 def select_origins(
@@ -379,24 +781,34 @@ def select_origins(
         & (history["load_type"].eq(settings.load_type.upper()))
         & (history["product"].astype(str).str.match(f"{_MONTH_RE}|{_QUARTER_RE}"))
     ]
-    dates = sorted(pd.Timestamp(d) for d in sub["date"].dropna().unique())
+    origin_column = "available_at" if "available_at" in sub.columns else "date"
+    dates = sorted(pd.Timestamp(d) for d in sub[origin_column].dropna().unique())
     if max_origins is not None:
         dates = dates[-int(max_origins) :]
     return dates
 
 
 def quote_set_for_origin(history: pd.DataFrame, origin: pd.Timestamp) -> tuple[MarketQuote, ...]:
-    origin = pd.Timestamp(origin).tz_localize(None).normalize()
-    snap = history[history["date"].eq(origin)]
+    if "available_at" in history.columns:
+        origin = _aware_utc(origin)
+        available = pd.to_datetime(history["available_at"], utc=True)
+        snap = history[available.eq(origin)]
+    else:
+        origin = pd.Timestamp(origin).tz_localize(None).normalize()
+        snap = history[history["date"].eq(origin)]
     return tuple(
         MarketQuote(
             market=str(row.market).upper(),
             product=str(row.product),
             load_type=str(row.load_type).upper(),
             price=float(row.price),
-            snapshot_date=origin,
+            snapshot_date=pd.Timestamp(row.date),
             source=str(getattr(row, "source", "")),
-            available_at=origin,
+            available_at=pd.Timestamp(getattr(row, "available_at", origin)),
+            quote_id=str(getattr(row, "quote_id", "")),
+            snapshot_id=str(getattr(row, "snapshot_id", "")),
+            source_kind="EEX_HISTORICAL_VINTAGE",
+            source_sha256=str(getattr(row, "source_document_sha256", "")),
         )
         for row in snap.itertuples(index=False)
         if np.isfinite(float(row.price))
@@ -426,8 +838,13 @@ def select_withheld_products(
                 product=quote.product,
                 load_type=quote.load_type.upper(),
                 price=float(quote.price),
-                origin_date=pd.Timestamp(quote.snapshot_date).tz_localize(None).normalize(),
+                origin_date=pd.Timestamp(
+                    quote.available_at
+                    if quote.available_at is not None
+                    else quote.snapshot_date
+                ),
                 source=quote.source,
+                snapshot_id=quote.snapshot_id,
             )
         )
     candidates.sort(key=lambda item: (item.tenor, item.product))
@@ -518,7 +935,9 @@ def validate_masked_inputs(masked: MaskedQuoteSets, withheld: WithheldProduct) -
         key = quote_key(quote.market, quote.load_type, quote.product)
         if key in forbidden:
             raise ValueError(f"masked quote leakage detected for {key}")
-        if quote.available_at is not None and pd.Timestamp(quote.available_at).tz_localize(None) > withheld.origin_date:
+        if quote.available_at is not None and _aware_utc(quote.available_at) > _aware_utc(
+            withheld.origin_date
+        ):
             raise ValueError(f"future quote leaked into calibration inputs: {key}")
 
 
@@ -528,15 +947,32 @@ def history_before_origin(
     *,
     lookback_years: int | None,
 ) -> pd.DataFrame:
-    origin = pd.Timestamp(origin).tz_localize(None).normalize()
-    hist = history[history["date"] < origin].copy()
-    if lookback_years is not None:
-        hist = hist[hist["date"] >= origin - pd.DateOffset(years=int(lookback_years))]
+    if "available_at" in history.columns:
+        origin = _aware_utc(origin)
+        available = pd.to_datetime(history["available_at"], utc=True)
+        hist = history[available < origin].copy()
+        if lookback_years is not None:
+            lower = origin - pd.DateOffset(years=int(lookback_years))
+            hist = hist[pd.to_datetime(hist["available_at"], utc=True) >= lower]
+    else:
+        origin = pd.Timestamp(origin).tz_localize(None).normalize()
+        hist = history[history["date"] < origin].copy()
+        if lookback_years is not None:
+            hist = hist[hist["date"] >= origin - pd.DateOffset(years=int(lookback_years))]
     return hist
 
 
 def validate_history_point_in_time(history_view: pd.DataFrame, origin: pd.Timestamp) -> None:
     if history_view.empty:
+        return
+    if "available_at" in history_view.columns:
+        origin = _aware_utc(origin)
+        max_available = pd.to_datetime(history_view["available_at"], utc=True).max()
+        if max_available >= origin:
+            raise ValueError(
+                "history feature leakage: "
+                f"max available_at {max_available} >= origin {origin}"
+            )
         return
     origin = pd.Timestamp(origin).tz_localize(None).normalize()
     max_date = pd.to_datetime(history_view["date"]).dt.tz_localize(None).max()
@@ -612,21 +1048,35 @@ def build_calibration_manifest(
     input_parquet_path: str,
     withheld_counts: Counter[tuple[str, str, str]],
     excluded_reasons: Counter[str],
+    governance_profile: str = "UNVERIFIED_INTERNAL_DIAGNOSTIC",
+    execution_environment: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     row_counts = {
         str(date.date() if hasattr(date, "date") else date): int(count)
         for date, count in history.groupby("date", sort=True).size().items()
     }
+    execution_environment = dict(
+        execution_environment or _execution_environment_receipt()
+    )
     return {
-        "git_commit": _git_commit(),
+        "git_commit": execution_environment["git_commit"],
+        "git_worktree_dirty": execution_environment["git_worktree_dirty"],
         "command_line": list(command_line),
         "generated_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "input_parquet_path": input_parquet_path,
         "input_parquet_sha256": source_file_hash,
         "lambda_grid_hash": lambda_grid_hash(grid),
         "run_config_hash": _sha256_text(canonical_json(_settings_payload(settings))),
-        "python_version": platform.python_version(),
+        "python_version": execution_environment["python_version"],
+        "governance_profile": governance_profile,
+        "execution_environment": execution_environment,
         "row_counts_by_snapshot": row_counts,
+        "rolling_origin_provenance": dict(
+            history.attrs.get("rolling_origin_provenance", {})
+        ),
+        "verified_vintage_catalog": dict(
+            history.attrs.get("verified_vintage_catalog", {})
+        ),
         "origins_evaluated": int(scoring["origin_date"].nunique()) if not scoring.empty else 0,
         "withheld_products_by_market_load_type_tenor": _counter_to_nested_counts(withheld_counts),
         "withheld_products_by_tenor_horizon": _scoring_count_table(
@@ -651,22 +1101,25 @@ def build_candidate_config(
     excluded_reasons: Counter[str],
 ) -> dict[str, object] | None:
     final_status = str(summary["final_status"])
-    if final_status in FAIL_STATUSES:
+    if not final_status.startswith("PASS_CALIBRATION_CANDIDATE"):
         return None
     selected_hash = str(summary.get("selected_config_hash") or config_hash(configs[0]))
     selected = next((cfg for cfg in configs if config_hash(cfg) == selected_hash), configs[0])
     active_payload = _active_config_payload(selected, settings or LambdaCalibrationSettings())
-    selection_status = "SELECTED" if final_status.startswith("PASS_CALIBRATION_CANDIDATE") else "UNSUPPORTED"
-    if final_status == "PASS_IMPLEMENTATION_ONLY":
-        selection_status = "NOT_PRODUCTION_APPROVED"
     return {
         "config_hash": config_hash(active_payload),
         "canonical_config": active_payload,
         "grid_file_hash": grid_hash,
         "source_data_hash": source_data_hash,
         "generated_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
-        "selection_status": selection_status,
+        "selection_status": "SELECTED",
         "production_approved": False,
+        "governed_scope": {
+            "market": str((settings or LambdaCalibrationSettings()).market),
+            "load_type": str((settings or LambdaCalibrationSettings()).load_type),
+            "timezone": str((settings or LambdaCalibrationSettings()).timezone),
+            "profile": GOVERNED_CALIBRATION_PROFILE,
+        },
         "selection_reason": str(summary.get("selection_reason", "")),
         "sample_counts": _counter_to_nested_counts(withheld_counts),
         "excluded_config_counts": dict(excluded_reasons),
@@ -772,8 +1225,8 @@ def _score_one_case(
             reason = "critical audit gates present"
         return {
             "config_hash": config_hash(config),
-            "origin_date": withheld.origin_date.date().isoformat(),
-            "snapshot_id": withheld.origin_date.date().isoformat(),
+            "origin_date": _origin_iso(withheld.origin_date),
+            "snapshot_id": withheld.snapshot_id,
             "source_file_hash": source_file_hash,
             "market": withheld.market,
             "withheld_product": withheld.product,
@@ -801,8 +1254,8 @@ def _score_one_case(
     except Exception as exc:
         return {
             "config_hash": config_hash(config),
-            "origin_date": withheld.origin_date.date().isoformat(),
-            "snapshot_id": withheld.origin_date.date().isoformat(),
+            "origin_date": _origin_iso(withheld.origin_date),
+            "snapshot_id": withheld.snapshot_id,
             "source_file_hash": source_file_hash,
             "market": withheld.market,
             "withheld_product": withheld.product,
@@ -964,22 +1417,62 @@ def _final_status(scoring: pd.DataFrame, *, settings: LambdaCalibrationSettings)
 
 
 def _best_config_hash(scoring: pd.DataFrame, *, baseline_hash: str) -> str | None:
-    if scoring.empty:
-        return None
-    valid = scoring[scoring["abs_error"].notna() & scoring["status"].astype(str).isin(["PASS", "CRITICAL_GATES"])]
-    if valid.empty:
-        return None
-    grouped = valid.groupby("config_hash", sort=True)["abs_error"].mean()
+    grouped = _complete_config_mae(scoring)
     if grouped.empty:
-        return baseline_hash
+        return None
     return str(grouped.sort_values(kind="mergesort").index[0])
 
 
 def _mae_for_config(scoring: pd.DataFrame, cfg_hash: str | None) -> float:
     if not cfg_hash or scoring.empty:
         return float("nan")
-    sub = scoring[scoring["config_hash"].astype(str).eq(str(cfg_hash))]
-    return float(pd.to_numeric(sub["abs_error"], errors="coerce").mean()) if not sub.empty else float("nan")
+    complete = _complete_config_mae(scoring)
+    return float(complete.loc[str(cfg_hash)]) if str(cfg_hash) in complete.index else float("nan")
+
+
+def _complete_config_mae(scoring: pd.DataFrame) -> pd.Series:
+    """Score only configurations covering the exact same finite PASS case set."""
+
+    required = {
+        "config_hash",
+        "origin_date",
+        "snapshot_id",
+        "market",
+        "withheld_load_type",
+        "withheld_product",
+        "status",
+        "abs_error",
+    }
+    if scoring.empty or not required <= set(scoring.columns):
+        return pd.Series(dtype=float)
+    case_columns = [
+        "origin_date",
+        "snapshot_id",
+        "market",
+        "withheld_load_type",
+        "withheld_product",
+    ]
+    expected_cases = {
+        tuple(str(row[column]) for column in case_columns)
+        for row in scoring.to_dict(orient="records")
+    }
+    scores: dict[str, float] = {}
+    for cfg_hash, group in scoring.groupby("config_hash", sort=True):
+        cases = [
+            tuple(str(row[column]) for column in case_columns)
+            for row in group.to_dict(orient="records")
+        ]
+        errors = pd.to_numeric(group["abs_error"], errors="coerce")
+        if (
+            len(cases) != len(expected_cases)
+            or len(set(cases)) != len(cases)
+            or set(cases) != expected_cases
+            or not group["status"].astype(str).eq("PASS").all()
+            or not np.isfinite(errors.to_numpy(dtype=float)).all()
+        ):
+            continue
+        scores[str(cfg_hash)] = float(errors.mean())
+    return pd.Series(scores, dtype=float)
 
 
 def _config_metric_table(scoring: pd.DataFrame) -> list[dict[str, object]]:
@@ -987,6 +1480,7 @@ def _config_metric_table(scoring: pd.DataFrame) -> list[dict[str, object]]:
         return []
     rows: list[dict[str, object]] = []
     for cfg_hash, group in scoring.groupby("config_hash", sort=True):
+        complete = str(cfg_hash) in _complete_config_mae(scoring).index
         rows.append(
             {
                 "config_hash": str(cfg_hash),
@@ -995,6 +1489,7 @@ def _config_metric_table(scoring: pd.DataFrame) -> list[dict[str, object]]:
                 "max_constraint_residual": float(pd.to_numeric(group["constraint_residual_max"], errors="coerce").max()),
                 "critical_gate_count": int(pd.to_numeric(group["critical_gate_count"], errors="coerce").fillna(0).sum()),
                 "n_rows": int(len(group)),
+                "complete_case_eligible": bool(complete),
             }
         )
     return rows
@@ -1102,38 +1597,36 @@ def _settings_from_grid(
     return LambdaCalibrationSettings(**payload)
 
 
-def _config_payload(config: MonthlyCurveConfig | LambdaCandidateConfig | Mapping[str, object]) -> dict[str, object]:
-    history_lookback_years: int | None = None
-    if isinstance(config, LambdaCandidateConfig):
-        history_lookback_years = config.history_lookback_years
-        raw = dict(config.monthly_config.__dict__)
-    elif isinstance(config, Mapping):
-        raw = dict(config)
-        history_lookback_years = raw.get("history_lookback_years")  # type: ignore[assignment]
-    else:
-        raw = dict(config.__dict__)
-    keys = [
-        "lambda_prior",
-        "lambda_smooth_month",
-        "lambda_smooth_yoy",
-        "lambda_shape",
-        "neighbor_shrinkage",
-        "robust_panel_quantile",
-        "min_history_snapshots",
-        "max_prior_residual_eur_mwh",
-        "constraint_tolerance",
-        "stationarity_tolerance",
-        "markets",
-        "min_structural_snapshots",
-        "allow_template_structural_fallback",
-        "structural_amplitude_eur_mwh",
-        "panel_weight",
-        "history_weight",
-        "structural_weight",
-    ]
-    payload = {key: raw.get(key) for key in keys}
-    payload["history_lookback_years"] = history_lookback_years
-    return payload
+def _validate_governed_calibration_settings(
+    settings: LambdaCalibrationSettings,
+) -> None:
+    violations: list[str] = []
+    for field_name, value in settings.__dict__.items():
+        if isinstance(value, bool) or not isinstance(value, (int, float, np.number)):
+            continue
+        if not np.isfinite(float(value)):
+            violations.append(f"{field_name} is non-finite")
+    for field_name, floor in _GOVERNED_MINIMUM_SETTINGS.items():
+        value = getattr(settings, field_name)
+        if not isinstance(value, (int, float, np.number)) or isinstance(value, bool):
+            violations.append(f"{field_name} is not numeric")
+        elif np.isfinite(float(value)) and value < floor:
+            violations.append(f"{field_name}={value} < {floor}")
+    for field_name, ceiling in _GOVERNED_MAXIMUM_SETTINGS.items():
+        value = getattr(settings, field_name)
+        if not isinstance(value, (int, float, np.number)) or isinstance(value, bool):
+            violations.append(f"{field_name} is not numeric")
+        elif np.isfinite(float(value)) and value > ceiling:
+            violations.append(f"{field_name}={value} > {ceiling}")
+    for field_name, expected in _GOVERNED_EXACT_SETTINGS.items():
+        value = getattr(settings, field_name)
+        if value != expected:
+            violations.append(f"{field_name}={value!r} != {expected!r}")
+    if violations:
+        raise EexHistoricalVintageError(
+            "governed calibration settings weaken tier2_governed_minimums.v1: "
+            + "; ".join(violations)
+        )
 
 
 def _active_config_payload(
@@ -1176,27 +1669,19 @@ def _settings_payload(settings: LambdaCalibrationSettings) -> dict[str, object]:
     return payload
 
 
-def _canonicalize(value: object) -> object:
-    if isinstance(value, Mapping):
-        return {str(k): _canonicalize(v) for k, v in sorted(value.items(), key=lambda item: str(item[0]))}
-    if isinstance(value, (list, tuple)):
-        return [_canonicalize(v) for v in value]
-    if isinstance(value, float):
-        if not np.isfinite(value):
-            return str(value)
-        return float(f"{value:.12g}")
-    if isinstance(value, (np.floating,)):
-        return _canonicalize(float(value))
-    if isinstance(value, (np.integer,)):
-        return int(value)
-    if isinstance(value, pd.Timestamp):
-        ts = value.tz_localize("UTC") if value.tzinfo is None else value.tz_convert("UTC")
-        return ts.isoformat()
-    return value
+def _aware_utc(value: object) -> pd.Timestamp:
+    timestamp = pd.Timestamp(value)
+    if pd.isna(timestamp):
+        raise ValueError("rolling-origin timestamp is invalid")
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.tz_localize("UTC")
+    else:
+        timestamp = timestamp.tz_convert("UTC")
+    return timestamp
 
 
-def _sha256_text(text: str) -> str:
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+def _origin_iso(value: object) -> str:
+    return _aware_utc(value).isoformat()
 
 
 def _counter_to_nested_counts(counter: Counter[tuple[str, str, str]]) -> dict[str, int]:
@@ -1217,8 +1702,8 @@ def _validate_artifacts(
     missing = [col for col in SCORING_COLUMNS if col not in scoring.columns]
     if missing:
         raise ValueError(f"scoring artifact missing required columns: {missing}")
-    if final_status in FAIL_STATUSES and candidate is not None:
-        raise ValueError("FAIL status cannot produce a candidate config")
+    if not final_status.startswith("PASS_CALIBRATION_CANDIDATE") and candidate is not None:
+        raise ValueError("non-candidate status cannot produce a candidate config")
     if candidate is not None and bool(candidate.get("production_approved")):
         raise ValueError("candidate config must keep production_approved=false")
 
@@ -1228,3 +1713,58 @@ def _git_commit() -> str:
         return subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
     except Exception:
         return "UNKNOWN"
+
+
+def _execution_environment_receipt() -> dict[str, object]:
+    repo_root = Path(__file__).resolve().parents[2]
+    package_root = repo_root / "pfc_shaping"
+    source_paths = sorted(
+        (
+            path
+            for path in package_root.rglob("*.py")
+            if "ct" not in path.relative_to(package_root).parts
+        ),
+        key=lambda path: path.as_posix(),
+    )
+    source_paths.append(repo_root / "scripts/run_monthly_curve_lambda_calibration.py")
+    source_files = {
+        path.relative_to(repo_root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in source_paths
+    }
+    dependency_versions = sorted(
+        {
+            f"{distribution.metadata.get('Name', 'UNKNOWN')}=={distribution.version}"
+            for distribution in importlib_metadata.distributions()
+        }
+    )
+    dirty = _git_worktree_dirty()
+    return {
+        "git_commit": _git_commit(),
+        "git_worktree_dirty": dirty,
+        "python_version": platform.python_version(),
+        "source_files": source_files,
+        "source_bundle_sha256": _sha256_text(canonical_json(source_files)),
+        "dependency_versions_sha256": _sha256_text(
+            canonical_json(dependency_versions)
+        ),
+        "dependency_count": len(dependency_versions),
+    }
+
+
+def _write_fsync(path: Path, payload: bytes) -> None:
+    with path.open("xb") as handle:
+        handle.write(payload)
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
+def _git_worktree_dirty() -> bool:
+    try:
+        return bool(
+            subprocess.check_output(
+                ["git", "status", "--porcelain", "--untracked-files=normal"],
+                text=True,
+            ).strip()
+        )
+    except Exception:
+        return True

@@ -1,7 +1,7 @@
 """Holiday pressure features for CH long-term spot/HFC shaping.
 
-The EEX PEAK contract calendar is intentionally national-holiday based.  Spot
-and HFC shape pressure is broader for Switzerland because CH prices are coupled
+The EEX Peakload contract includes weekday public holidays. Spot and HFC shape
+pressure is nevertheless holiday-sensitive because CH prices are coupled
 to neighbouring markets and large cantonal holidays.  This module keeps that
 structural day-type logic in LT model code so scripts and future production
 paths can share one implementation.

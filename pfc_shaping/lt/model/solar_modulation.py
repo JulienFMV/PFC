@@ -53,7 +53,6 @@ import numpy as np
 import pandas as pd
 
 from pfc_shaping.data.calendar_ch import enrich_15min_index
-from pfc_shaping.lt.model.shape_hourly import SAISONS, TYPES_JOUR
 
 logger = logging.getLogger(__name__)
 
@@ -70,10 +69,8 @@ __all__ = [
     "SOLAR_MODULATION_PRODUCTION_DEFAULT",
 ]
 
-# Repo root: pfc_shaping/lt/model/solar_modulation.py -> parents[3] == repo root.
-_REPO_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_ENTSO_PATH = _REPO_ROOT / "pfc_shaping" / "data" / "entso_15min.parquet"
-DEFAULT_EPEX_PATH = _REPO_ROOT / "data" / "epex_hourly.parquet"
+DEFAULT_ENTSO_PATH = None
+DEFAULT_EPEX_PATH = None
 
 # 4 hour-blocks (research §4 block_structure). hour-of-day (local) -> block name.
 #   NIGHT        : 00-06, 22-23   -> beta ~ 0 (no sun)
@@ -131,13 +128,17 @@ class SolarPenetrationFeature:
     extrapolating beyond the fitted support (research §2 monotonicity_guard).
     """
 
-    def __init__(self, entso_path: str | Path = DEFAULT_ENTSO_PATH) -> None:
-        self.entso_path = Path(entso_path)
+    def __init__(self, entso_path: str | Path | None = None) -> None:
+        self.entso_path = Path(entso_path) if entso_path is not None else None
         self._raw: pd.DataFrame | None = None  # cached [solar_mw, load_mw]
 
     # -- internal -----------------------------------------------------------
     def _load(self) -> pd.DataFrame:
         if self._raw is None:
+            if self.entso_path is None:
+                raise FileNotFoundError(
+                    "solar penetration requires an explicit governed ENTSO path"
+                )
             # NOTE: pyarrow drops the (nameless) datetime index when read_parquet
             # is given an explicit ``columns=`` list — it returns a default
             # RangeIndex, which would silently break the ``index < vintage`` leak
@@ -523,7 +524,9 @@ def _fit_correction(shape_hourly, vintage, epex=None, feature=None):
     if epex is None and shape_hourly is not None:
         epex = getattr(shape_hourly, "_solar_epex_hist", None)
     if epex is None:
-        epex = pd.read_parquet(DEFAULT_EPEX_PATH)
+        raise FileNotFoundError(
+            "solar correction requires explicit EPEX history or a bound shape-hourly cache"
+        )
     if "price_eur_mwh" not in epex.columns:
         # Single-column frames from a Series are common; coerce by position.
         epex = epex.rename(columns={epex.columns[0]: "price_eur_mwh"})

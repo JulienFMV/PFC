@@ -14,6 +14,7 @@ yfinance==1.2.0
 openpyxl==3.1.5
 pyxlsb==1.0.10
 duckdb>=1.1
+cryptography==47.0.0
 # Optional: foundation model ensemble (zero-shot forecasting)
 # pip install torch chronos-forecasting
 # torch==2.8.0

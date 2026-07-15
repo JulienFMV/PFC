@@ -7954,3 +7954,1604 @@ Invariants:
 - T060 remains useful as a weaker-compression challenger, but not as a fix for
   the upstream residual seam warning family.
 
+## D-20260710-110 - Promotion Requires Delivered-Product Audit And Explicit Selected-Lambda Promotion Approval
+
+Decision: monthly-curve promotion from prod/export/selected manifests is now
+NO-GO unless a delivered CH product-normalization summary artifact is supplied
+and passes fail-closed checks. The selected-lambda artifact must also carry
+`production_promotion_approved=true`; absence of that field is blocking.
+
+Reason: the scientific calibration review treats delivered BASE, PEAK and
+implied OFFPEAK repricing as a hard promotion condition, not as an optional
+diagnostic. The selected-lambda artifact is part of the independent evidence
+triad and must prove that the selected config is approved for production
+promotion scope, not only selected as a candidate.
+
+Evidence:
+
+- `scripts/check_monthly_curve_promotion_from_manifests.py` now injects a
+  required `delivered_product_normalization_audit` governance gate from the
+  `scripts/audit_ch_product_normalization.py` summary JSON.
+- The gate requires `schema_version=ch_product_normalization_audit.v2`,
+  `all_gates_pass=true`, `covered_hard_gates_pass=true`,
+  `supported_hard_gates_no_critical=true`, and zero `critical_count`,
+  `unsupported_count`, `blocking_quote_conflict_count`, and
+  `delivered_curve_drift_count`.
+- When quote conflicts exist, the summary must prove a production-approved
+  source hierarchy policy with zero blocking quote conflicts.
+- Targeted validation: `82 passed, 1 skipped` for delivered-product audit,
+  EEX workbook integrity, monthly manifest promotion, sparse-year proof,
+  monthly promotion, and LT/CT import separation tests.
+
+Rejected alternatives:
+
+- Treat delivered-product normalization as a separate non-blocking report.
+- Let `production_approved=true` imply production-promotion approval when the
+  selected-lambda artifact lacks `production_promotion_approved`.
+- Accept quote conflicts in promotion without policy/hash-bound evidence.
+
+Invariants:
+
+- Monthly solver remains the level authority when
+  `monthly_level_authority="solver"`.
+- Promotion evidence must come from independent real artifacts: production
+  manifest, export manifest, selected config artifact, and delivered-product
+  summary.
+- `QUOTE_CONFLICT` can be accepted only by explicit production-approved source
+  hierarchy policy evidence bound to the audited delivered CSV and forwards.
+
+## D-20260713-111 - Adopt A Tiered FMV Product Quality Charter Before Further Optimisation
+
+Decision: adopt
+`.planning/phases/14-lt-audit-remediation/PFC-FMV-PRODUCT-QUALITY-CHARTER-20260713.md`
+as the normative target for the Phase 14 remediation and later IT handoff.
+
+Reason: the 2026 scientific and operational roast found that a good monthly
+solver score could coexist with stale inputs, downstream product drift, a
+broken promotion capstone and a different scheduled production path. Quality
+must therefore be ordered: market/provenance/promotion invariants first,
+statistical and economic optimisation second, containerisation last.
+
+Rejected alternatives:
+
+- Optimise the active MLP before restoring final product identities and data
+  provenance.
+- Treat OMPEX similarity as a promotion target.
+- Dockerise the current legacy and Phase 14 split before selecting one
+  canonical production entrypoint.
+- Allow an aggregate MAE gain to compensate for a hard market or point-in-time
+  failure.
+
+Invariants:
+
+- Tier 0 failures always block production regardless of statistical scores.
+- OMPEX remains advisory-only and forbidden from fitting, selection, backtest
+  truth and promotion.
+- Monthly solver authority and the prohibition on individual month patches
+  remain unchanged.
+- Every structural implementation step receives an independent quant, data or
+  IT roast before it can enter promotion evidence.
+
+## D-20260713-112 - Final Solver Projection Must Be The Last Price Mutation
+
+Decision: in solver-authority mode, apply one final fail-closed equality
+projection after bridge and intraday operations. Use solver monthly BASE
+levels and accepted, fully covered PEAK quotes as hard constraints.
+
+Reason: monthly BASE recentering alone can preserve the solver level while
+allowing downstream PEAK/OFFPEAK drift. A final disjoint PEAK/OFFPEAK system
+preserves monthly authority and the accepted product spread simultaneously.
+
+Rejected alternatives:
+
+- Patch individual months after generation.
+- Treat a delivered-product warning as sufficient remediation.
+- Apply a positive price floor during final projection.
+- Silently ignore explicit OFFPEAK input.
+
+Invariants:
+
+- The projection is the last mutation of `price_shape`.
+- KKT failure and residual above `1e-6 EUR/MWh` are blocking.
+- Redundant parents follow Month > Quarter > Cal hierarchy and remain visible
+  to the delivered-product audit.
+- Partial products cannot be claimed as fully repriced.
+
+## D-20260713-113 - Production Hard Quotes Cannot Fall Back To Spot
+
+Decision: nominal production callers must pass `allow_spot_proxy=false`, and
+core input freshness is fail-closed before fitting. Outages are disabled until
+their acquisition distinguishes missing information from economic zero.
+
+Reason: the prior loader could transform a market-data outage into a hard
+forward level, while stale March/April feature caches remained eligible.
+
+Rejected alternatives:
+
+- Keep proxy prices and label the run low confidence.
+- Allow stale fundamentals when EEX itself is recent.
+- Continue using a stale outages cache because the feature is optional.
+
+Invariants:
+
+- Spot remains shape information only and never a production forward level.
+- Freshness uses an explicit reference timestamp and blocks future data.
+- This decision is incomplete until `rolling_update` cannot publish and EEX
+  provenance is represented by a structured snapshot.
+
+## D-20260713-114 - Hard Forward Levels Require A Verified Snapshot And Eligibility Receipt
+
+Decision: production hard levels must originate from `ForwardSnapshot v1`
+created by the verified workbook-byte parser and must carry a matching
+immutable `ForwardEligibility v1` receipt. The solver reparses the bound source
+bytes, recomputes the receipt, and requires exact equality at the valuation
+timestamp.
+
+Reason: path strings, file mtimes, declared hashes and caller-supplied booleans
+cannot prove point-in-time availability or quote identity. Earlier prototypes
+allowed a valid workbook hash to be paired with invented prices or a freshness
+receipt to be replayed at another valuation time.
+
+Rejected alternatives:
+
+- Trust `hard_quote_eligible=true` from a caller or manifest.
+- Use file modification time as historical `available_at`.
+- Hash the workbook after parsing it from a mutable network path.
+- Permit `EEX_HISTORY` to become a hard source without bitemporal acquisition
+  and revision receipts.
+
+Invariants:
+
+- Parsing and source hashing use the same captured bytes.
+- `snapshot_date`, `available_at` and valuation timestamp remain distinct.
+- Snapshot identity binds normalized quotes and lineage; observation identity
+  additionally binds availability.
+- Eligibility binds the observation, policy, valuation timestamp and source /
+  quote hashes and is recomputed at the solver boundary.
+- Spot, config fallback, unknown, test fixtures and unreceipted history never
+  become promotion-eligible hard quotes.
+
+## D-20260713-115 - Constraint And Product Audit Provenance Are Promotion Evidence
+
+Decision: every active monthly constraint must expose source quote IDs and a
+canonical lineage hash. Residual buckets reference both their parent quote and
+all finer active quotes used in the energy subtraction. The delivered-product
+audit must bind the exact monthly candidate snapshot / eligibility IDs before
+the capstone can pass.
+
+Reason: a mathematical constraint hash alone did not prove which market quotes
+created it, and a whole-Parquet hash plus date could still select a different
+market/date slice in the delivered-product audit.
+
+Rejected alternatives:
+
+- Overload a generic `source` string with a quote ID.
+- Let a residual bucket reference only its parent quote.
+- Accept copied snapshot fields across production/export/selected artifacts
+  without reopening and hashing referenced files.
+- Write only a boolean/summary promotion result.
+
+Invariants:
+
+- `MarketQuote` carries explicit quote, snapshot, observation and source IDs.
+- Economic quote-conflict tolerance is separate from numerical hard repricing
+  and stationarity tolerances.
+- The manifest hashes hard quotes, quote diagnostics, constraint provenance and
+  the Month > Quarter > Calendar policy.
+- Selected config hash is recomputed from `canonical_config`; candidate path
+  and bytes are reopened and hashed.
+- The capstone emits `promotion_receipt.v1`; it does not itself change the
+  production pointer. Atomic promotion remains a separate mandatory gate.
+
+## D-20260713-116 - Promotion Time And Candidate Bytes Are Independent Trust Roots
+
+Decision: a promotion receipt must bind one verified immutable candidate
+bundle and must recompute forward eligibility at the exact promotion
+timestamp. Production/export manifests, the audited delivered CSV, the quote
+snapshot Parquet, the archived EEX workbook and the monthly candidate manifest
+must resolve to files hash-bound by that bundle where applicable.
+
+Reason: internally coherent JSON could previously replay a June eligibility
+in July, attest a different solver candidate, or approve a bundle whose files
+were never audited. Declared hashes without reopening the referenced bytes are
+not promotion evidence.
+
+Rejected alternatives:
+
+- Compare only copied snapshot and eligibility IDs.
+- Permit the capstone to approve without a durable receipt.
+- Accept a candidate bundle manifest after checking only its schema version.
+- Audit a CSV or forwards file outside the promoted bundle.
+
+Invariants:
+
+- Core promotion inputs are captured once and rehashed before decision output.
+- Candidate bundle files and `content_sha256` are verified before and after
+  gate evaluation and again under the promotion lock.
+- `promotion_receipt.v1` binds `candidate_bundle_manifest_sha256`; its own
+  canonical `receipt_id` is recomputed by the promoter.
+- The atomic pointer changes only after every governance gate is PASS.
+
+## D-20260713-117 - Production Freshness Policy Is Code-Sanctioned And Non-Relaxable
+
+Decision: the production loader always fails on stale critical inputs and
+rejects configurations that disable freshness or relax the sanctioned age,
+finite-coverage, recent-window or maximum-gap thresholds. Research callers may
+use lower-level diagnostics, but cannot enter the production loader with a
+permissive policy.
+
+Reason: a single fresh point or a coherently edited configuration could hide a
+multi-day gap or data that were months old. A production gate controlled by
+the same untrusted configuration it is meant to constrain is not a gate.
+
+Rejected alternatives:
+
+- Convert stale production inputs to warnings.
+- Permit larger thresholds when all manifests agree.
+- Use only the latest dataframe index rather than the latest finite point per
+  critical feature.
+
+Invariants:
+
+- Global and recent finite coverage are both checked.
+- Recent maximum finite-observation gaps are blocking.
+- EPEX/ENTSO/hydro thresholds may be made stricter but not more permissive
+  without a reviewed code change and new decision.
+- Stale data block before model fitting and before candidate staging.
+
+## D-20260713-118 - LT Builds Enter Immutable Staging Before Any Publication
+
+Decision: `scripts/build_lt_candidate.py` is the first canonical LT-only build
+entrypoint. It runs strict inputs and LT generation, serializes only inside a
+run-ID staging directory, archives the exact EEX workbook and a minimal quote
+snapshot, hashes core heavy inputs without copying them, then finalizes an
+immutable candidate bundle. It never invokes CT and never promotes.
+
+Reason: direct writes to shared `output/` and `model/artifacts/` make failed
+runs observable as production and prevent atomic rollback. Candidate creation
+must be separated from audit and pointer promotion.
+
+Rejected alternatives:
+
+- Reuse `run_pfc_production.py`, which also invokes CT and direct saves.
+- Reuse `rolling_update.py` as the canonical LT release path.
+- Create staging before freshness validation.
+
+Invariants:
+
+- A failed preflight creates no release root or staging directory.
+- Candidate manifests use bundle-relative archived source evidence.
+- `current.json` is untouched by candidate construction.
+- Global production remains NO-GO until the candidate is automatically audited,
+  receives an approved receipt and is promoted atomically by one runner.
+
+## D-20260713-119 - LT Inputs Use One Explicit Immutable External Generation
+
+Decision: the canonical reusable LT data store is selected explicitly through
+`--data-root` or `PFC_LT_DATA_ROOT`. Its `current.json` points to one immutable
+`external_v2` generation whose `lt_input_snapshot.v1` contract binds every
+core role, relative path, byte size and SHA-256. The exact EEX workbook is a
+separate explicit mount selected through `--eex-report-path` or
+`PFC_EEX_REPORT_PATH`.
+
+Reason: live files spread between the repo, `PFC_phase10_c`, `PFC_CT_DATA` and
+the user home allowed silent root switching, inter-vintage mixtures and
+non-portable receipts. Per-file hashes alone did not prove that the frames
+consumed by one calibration belonged to one acquisition generation.
+
+Rejected alternatives:
+
+- Select `~/pfc_local_data` merely because the directory exists.
+- Fall back file by file from an external root to repo-local caches.
+- Treat copied legacy caches as production-ready after appending a fresh tail.
+- Persist absolute Windows source paths as the identity of candidate inputs.
+- Reuse `PFC_CT_DATA` directly from LT without a governed import generation.
+
+Invariants:
+
+- Production candidate builds require an explicit data root and EEX workbook.
+- External paths are relative, confined after filesystem resolution and bound
+  to the common generation contract.
+- Duplicate timestamps are blocking.
+- Source bytes and the semantic DataFrame passed through the run both have
+  receipts; mutation of either before candidate serialization is blocking.
+- Candidate manifests contain logical paths and hashes, not machine-specific
+  input paths.
+- Migrated legacy seed `20260713-migrated-seed-v2` is permanently marked
+  `calibration_eligible=false`; freshness alone cannot promote it.
+
+## D-20260713-120 - ENTSO-E Archives Are Shared Data Assets, Not Repo Assets
+
+Decision: reusable ENTSO-E payloads live under the user-level shared root
+`C:\Users\jbattaglia\pfc_local_data\entsoe`, outside every model repository.
+Each historical source is retained as a separate versioned import with byte
+and semantic-frame receipts and is treated as immutable by consumers. PFC_LT
+is one governed consumer of that store; it does not own the data and may not
+overwrite an import in place. Local read-only attributes protect against
+accidental edits, but do not claim enterprise WORM or independently signed
+provenance while the store remains under a user profile with `FullControl`.
+Cross-project consumers address this library directly with
+`PFC_ENTSOE_DATA_ROOT`; `PFC_LT_DATA_ROOT` remains a different contract that
+selects a complete immutable LT generation through `current.json`.
+
+Reason: ENTSO-E history is useful to several forecasting and market-analysis
+projects. Keeping it inside `PFC_phase10_c`, `PFC_CT_DATA` or PFC_LT would
+duplicate large files, couple their lifecycle to one codebase and make source
+vintages impossible to distinguish reliably.
+
+Rejected alternatives:
+
+- Move ENTSO-E parquets into the PFC_LT repository.
+- Treat one mutable `entsoe/curated` file as the historical archive.
+- Overwrite the 22 May import with the different Phase 10 payloads.
+- Make an archived payload model-eligible merely because its hashes verify.
+
+Invariants:
+
+- Shared imports must be treated as immutable and can be read by other
+  projects; enterprise enforcement remains an IT deployment requirement.
+- `PFC_ENTSOE_DATA_ROOT` points to the `entsoe` directory itself, while
+  `PFC_SHARED_DATA_ROOT` and `PFC_LT_DATA_ROOT` point to its common parent.
+- ENTSO-E archive writers do not fall back to `PFC_LT_DATA_ROOT`; when direct
+  and parent roots are both configured they must resolve to the same store.
+- Distinct payloads receive distinct import IDs and manifests.
+- Archive integrity and calibration eligibility are separate controls.
+- Only receipt-verified imports remain in `entsoe/imports`; incomplete legacy
+  copies belong in `entsoe/quarantine`.
+- PFC_LT consumes only a complete governed generation selected explicitly;
+  discovering a shared import never activates it automatically.
+- LT model components must not open repo-local ENTSO-E or outage caches. The
+  orchestrator injects the exact governed frames; an absent optional frame is
+  represented by neutral features, not by a filesystem fallback.
+- Before the first payload read, every consumed role must be individually
+  calibration-eligible, share the contract's attested acquisition cutoff and
+  have that cutoff at or before valuation.
+- `entsoe/curated` is legacy and non-authoritative. Cross-project consumers use
+  an explicit immutable import ID; the parent `current.json` belongs only to
+  the complete LT snapshot contract.
+- New reusable imports use `entso_reusable_import.v2`: the recursive source
+  Parquet inventory must equal the disjoint union of archived schema files and
+  explicit exclusions. Historical v1 imports remain immutable, research-only
+  evidence and are never rewritten in place.
+
+## D-20260713-121 - Promotion Replays Evidence Under External Trust Anchors
+
+Decision: promotion approval is authenticated, replayed from immutable bytes,
+and separated into three authorities: acquisition attestation, promotion
+receipt approval, and release-transition journaling. Production APIs do not
+accept caller-supplied trust anchors. A signed transition is current only when
+its event ID equals the signed head stored under an IT-controlled journal root
+external to the mutable release root.
+
+Reason: coherent JSON and SHA-256 values prove integrity but not authority.
+Without an external trust anchor, an operator could sign forged data, approve
+its own quote-conflict exception, or rewind `current.json` to an older valid
+event without recording a rollback.
+
+Rejected alternatives:
+
+- Accept a public key path as a promotion API argument.
+- Trust `GOVERNED_ACQUISITION` or `production_approved=true` as declarations.
+- Verify only the current event instead of the complete historical chain.
+- Treat a signed event inside the same mutable release root as a monotone head.
+
+Invariants:
+
+- Calibration-eligible input contracts require a trusted Ed25519 acquisition
+  attestation and per-role PIT availability no later than valuation.
+- Production QUOTE_CONFLICT policies require a separately trusted Ed25519
+  approval attestation at the capstone.
+- Promotion receipts and transition events use distinct contracts; every
+  historical event reopens its bound bundle and receipt.
+- `PFC_PROMOTION_JOURNAL_ROOT` must be absolute and external to the release
+  root. Deployment ACL/KMS/HSM separation remains an IT prerequisite.
+- Candidate, receipt and event signatures never make migrated archives
+  calibration eligible by themselves.
+
+## D-20260713-122 - European EEX Peakload Includes Weekday Public Holidays
+
+Decision: the canonical EEX Peakload mask for CH and neighboring European
+markets is Monday-Friday, 08:00-20:00 local delivery time, including public
+holidays. Holiday and cantonal effects remain explanatory spot/HFC shaping
+features, but cannot change the contractual PEAK/OFFPEAK partition.
+
+Reason: the prior implementation incorrectly excluded national holidays from
+European EEX Peakload. That produced 3,108 PEAK hours for CH calendar 2027
+instead of the contractual 3,132 and biased PEAK repricing plus implied
+OFFPEAK identities.
+
+Rejected alternatives:
+
+- Keep a holiday-aware audit while changing only the solver.
+- Apply country-specific holidays to EEX products because spot prices react to
+  holidays.
+- Preserve old regression fixtures when they contradict the exchange product
+  specification.
+
+Invariants:
+
+- Solver constraints, cascading hour counts, arbitrage-free calibration,
+  assembler projection, delivered-product audit, export diagnostics and
+  perfect-foresight validation use the same contractual mask.
+- Calendar-hour provenance is independently reconstructed from product and
+  load type; manifest-declared residual hours are not authoritative.
+- A locked test asserts exactly 3,132 hourly PEAK intervals for CH calendar
+  2027.
+
+## D-20260713-123 - Promotion Replays Complete Input And Constraint Partitions
+
+Decision: every LT input role actually consumed by a candidate and covered by
+the sanctioned freshness policy is validated at valuation and replayed at the
+trusted promotion clock. Timestamps must lie on the absolute UTC cadence
+grid, not merely have cadence-compatible pairwise differences. Separately,
+the monthly constraint provenance is a unique, exhaustive and disjoint
+partition: products and source IDs are unique, known buckets are strict
+non-overlapping children, and every hard quote inside the solver delivery grid
+is exactly covered and repriced by a complete partition of active descendants.
+
+Reason: a signed optional input could previously be fresh at valuation but
+stale at promotion, and a dense 15-minute series shifted by seven minutes
+could pass cadence checks. A coherently rehashed residual could also count the
+same known month twice, or omit a CAL hard quote from all constraint rows,
+while retaining a false governance PASS.
+
+Rejected alternatives:
+
+- Apply promotion-time freshness only to mandatory CH/DE/ENTSO/hydro roles.
+- Validate timestamp deltas without anchoring them to the UTC epoch grid.
+- Trust manifest-declared residual hours or `known_buckets` multiplicity.
+- Require one parent row per hard quote even when a consistent parent is fully
+  represented by finer active descendants.
+
+Invariants:
+
+- EPEX neighbors consumed by LT receive the same freshness policy and report
+  replay as CH/DE; enabled outages receive sanctioned gap and age checks.
+- Disabled outages are not read or serialized as consumed LT evidence.
+- Known-bucket delivery months must be strict subsets of their parent and
+  pairwise disjoint; the residual is the exact set complement.
+- Active constraint rows are globally non-overlapping and confined to the
+  serialized solver delivery grid.
+- A hard quote intersecting that grid must be fully covered and energy-weighted
+  repriced within the sanctioned tolerance; outside-grid quotes are inactive.
+- Constraint source IDs are recomputed from the parent and governed child
+  lineage rather than accepted as a self-declared list.
+
+## D-20260713-124 - Legacy Publishers Fail Closed And Journal Heads Are Append-Only
+
+Decision: each promotion head is written once to a signed, contiguous external
+history before the mutable head mirror is updated. Resolution validates every
+history entry and requires the mirror to equal the latest entry. Restoring an
+old signed pointer and old mutable head therefore cannot hide a newer retained
+head. In parallel, `legacy_repo` is never calibration eligible and all known
+direct/rolling production entrypoints are disabled until the governed runner
+exists.
+
+Reason: a signature authenticates a document but does not prove it is the
+latest document. The previous single mutable head could be restored together
+with `current.json`. Separately, the Windows task, `rolling_update` and the old
+top-level publisher bypassed candidate bundles, capstone receipts and atomic
+promotion.
+
+Rejected alternatives:
+
+- Rely on the operator not to restore an older valid head.
+- Keep legacy publication available behind another environment flag.
+- Mark repo-local caches calibration eligible when no explicit data root is
+  supplied.
+- Claim local append-only filenames provide WORM against an account with
+  delete permission.
+
+Invariants:
+
+- Signed head sequence numbers are contiguous and immutable filenames bind a
+  128-bit path prefix while the document verifies the complete SHA-256.
+- The mutable head is only a mirror; immutable history is the anti-replay
+  authority.
+- Missing, deleted or inconsistent history fails closed.
+- Production input loading requires an explicit `external_v2`, signed and
+  calibration-eligible generation.
+- Legacy Python and PowerShell publishers terminate before output execution.
+- Enterprise WORM/ACL enforcement and scheduler replacement remain mandatory
+  IT deployment controls.
+
+## D-20260713-125 - Shared Archives Bind Complete Source Inventory And EEX History Is Semantically Replayed
+
+Decision: every new reusable ENTSO-E archive uses
+`entso_reusable_import.v2`, records receipts for every recursively discovered
+source Parquet and requires the source set to remain unchanged through the
+archive copy. Archived frame metadata is recomputed by the verifier. In the LT
+candidate path, the exact set of consumed roles is derived by one strict
+function shared by producer and capstone, while governed EEX forward history
+receives an independent promotion-time semantic PIT replay from captured
+bytes.
+
+Reason: byte hashes alone did not prove that a historical source directory had
+been exhaustively classified, that declared row/frame metadata was true, or
+that a hash-consistent EEX history contained no post-valuation quote. Divergent
+truthiness rules could also make the producer consume a role that the capstone
+did not expect.
+
+Rejected alternatives:
+
+- Rewrite historical v1 imports in place.
+- Infer exclusions from filenames or silently ignore unknown Parquets.
+- Trust producer-declared consumed roles or freshness reports.
+- Treat a valid EEX history hash as sufficient semantic PIT evidence.
+
+Invariants:
+
+- Historical v1 imports remain immutable; complete-inventory re-archives use
+  new IDs.
+- For v2, source inventory equals the disjoint union of archived payloads and
+  explicit exclusions, and every source has a size/SHA-256 receipt.
+- Source inventory mutation before publication is blocking and staging is
+  removed.
+- `monthly_curve_solver.enabled` and `outages_enabled` must be actual booleans
+  in both producer and capstone semantics.
+- A solver-enabled CH run must consume an eligible, common-cutoff
+  `eex_forwards_history` role whose required columns, dates, prices and quote
+  identities pass semantic PIT validation.
+- Reusable imports remain model-ineligible until incorporated into a fresh,
+  signed, complete LT acquisition generation.
+
+## D-20260713-126 - Independent Decisions Are Captured Before Solve
+
+Decision: a production LT build captures authenticated historical thresholds
+and the selected-lambda decision into an empty candidate staging directory
+before input loading or solver execution. Each independent artifact is bound
+by an Ed25519 model-governance receipt to its role, bytes, size, authority,
+issue time and data cutoff. A candidate remains `EVIDENCE_PENDING` and cannot
+be finalized until an exact `candidate_evidence.v1` manifest is verified.
+
+Reason: the previous flow finalized the PFC before collecting audits, and the
+legacy selected-config artifact referred to the current solution and manifest.
+Presence and SHA-256 alone could not prove that selection or calibration
+preceded observation of the candidate.
+
+Rejected alternatives:
+
+- Accept unsigned sidecars or arbitrary `producer_contract` strings as proof
+  of independent authority.
+- Create lambda evidence after the monthly solution is known.
+- Finalize a data-only candidate and register mutable external evidence later.
+- Trust a signed threshold cutoff without checking CSV lookback and quantiles.
+
+Invariants:
+
+- Production consumes only the model-governance public key; the authority
+  private key is not a builder/runtime variable.
+- Independent artifact and receipt paths are distinct and copied with a
+  pre/post-read TOCTOU check before the solve.
+- `monthly_curve_selected_lambda_decision.v1` is production-approved, has no
+  post-run fields and exactly matches the archived active solver config.
+- Historical thresholds contain the exact two gate families by 13 buckets,
+  CH-only semantics, no lookback beyond the signed cutoff, and coherent
+  status/sample statistics: `PASS` requires enough observations and ordered
+  `0 <= p50 <= p90 <= p97.5 <= max`; `UNSUPPORTED` carries no quantiles.
+- The evidence manifest binds the pre-run manifest and semantic pre-seal run
+  payload; simple post-seal mutation is blocking.
+- The builder executes one LT solve and stops at
+  `CANDIDATE_STAGED_EVIDENCE_PENDING`.
+- Derived export/audit evidence and promotion routing remain `NO_GO` until all
+  proofs are replayed from staged bytes and external legacy paths are removed.
+
+## D-20260713-127 - One Governed Clock And One Exact Solver Delivery Grid
+
+Decision: the explicit candidate `reference_timestamp` is the only run clock
+for LT assembly, output dating and evidence. Solver months are reconstructed
+as one exact, contiguous, timezone-aware CH delivery grid, including both DST
+transitions. Input pointers, signed acquisition contracts and generation
+receipts must identify one exact acquisition and one exact receipt set.
+
+Reason: ambient wall-clock calls, partial month lists and merely compatible
+source pointers allowed a reproducibility claim without proving that the
+candidate used one point-in-time information set and one complete delivery
+domain.
+
+Rejected alternatives:
+
+- Record the governed clock only in the manifest while allowing model code to
+  call the current date.
+- Accept non-contiguous months and infer missing months from output rows.
+- Treat matching payload hashes as sufficient when acquisition identities or
+  signed receipt sets differ.
+
+Invariants:
+
+- `monthly_level_authority=solver` keeps the solver as level authority.
+- Month boundaries and interval counts are generated in `Europe/Zurich` and
+  independently replayed from staged output.
+- Pointer, contract, generation and per-role acquisition IDs are exact and
+  paths remain confined to the signed generation root.
+
+## D-20260713-128 - Product Evidence Requires Signed Conflict Policy
+
+Decision: a candidate cannot complete delivered-product evidence without an
+authentic, production-approved source-hierarchy policy bound to the exact
+pre-policy conflict inventory. The final audit always enforces canonical CH
+BASE and PEAK semantics, implied OFFPEAK energy conservation, finite prices,
+quote-aware buckets and a fixed `1e-6` tolerance.
+
+Reason: `QUOTE_CONFLICT` is a market-data governance decision, not a numerical
+tolerance. An unsigned waiver, a weaker CLI profile or an out-of-scope NaN
+could otherwise turn an incomplete audit into a false PASS.
+
+Rejected alternatives:
+
+- Let the builder choose a source hierarchy after seeing the candidate.
+- Permit optional signatures or `--allow-failed-gates` in production audit.
+- Accept BASE-only audit or omit implied OFFPEAK conservation.
+
+Invariants:
+
+- The first product-evidence pass returns exit code `2` and only the exact
+  policy payload needed from the independent authority.
+- The signed policy, inventory, gates, summary, staged forwards and candidate
+  CSV are all byte/hash replayed.
+- `CRITICAL`, `UNSUPPORTED`, non-finite prices and unresolved conflicts remain
+  blocking; policy cannot mask them.
+
+## D-20260713-129 - Canonical Seal Is The Only Release Artifact Authority
+
+Decision: finalization and governed release derive artifact roles only from a
+canonical assembled-candidate seal. The seal replays both derived and product
+evidence, is idempotently recoverable after interruption, and is bound back
+into the candidate run manifest. Strict finalization runs under the promotion
+lock before and after rename; recognized temporaries owned by dead processes
+are removed, active or ambiguous temporaries block, and failed post-rename
+replay is quarantined.
+
+Reason: operator-provided artifact paths and a non-recoverable two-write seal
+left room for substitution, partial publication, PID reuse, Windows path
+overflow and an unretryable final candidate after a crash.
+
+Rejected alternatives:
+
+- Keep arbitrary artifact flags on the production release CLI.
+- Trust a seal file without replaying its child manifests.
+- Include leftover temporary files in the immutable bundle.
+- Leave a failed post-rename candidate under its requested run ID.
+
+Invariants:
+
+- Production registration uses `assembled_candidate_seal.v1` and derives the
+  exact required role set from staged bytes.
+- Atomic-write names are short `.pfc-<pid>-<process-start>-<uuid>` paths for
+  Windows safety and PID-reuse detection.
+- An orphan canonical seal can be replayed and rebound exactly; differing
+  existing bytes fail closed.
+- Generic legacy APIs do not constitute the sanctioned production command
+  surface; audit and promotion CLI paths require assembled registration.
+
+## D-20260713-130 - Pre-Run Selection And Post-Run Parity Are Distinct Artifacts
+
+Decision: the independently signed selected-lambda decision remains immutable
+and strictly pre-run. It never receives candidate hashes or delivered-product
+evidence. The release `selected_config_artifact` is instead the deterministic
+post-run `selected_config_run_parity`, which parents the signed decision, the
+archived active config and the exact production manifest. A separate canonical
+product-evidence manifest parents that parity, production, export, the signed
+conflict policy and the delivered audit artifacts.
+
+Reason: requiring a delivered-product summary hash in the pre-run lambda
+decision creates an impossible circular dependency. Treating the pre-run
+decision itself as the post-run selected-config artifact also prevents the
+capstone from proving solution and constraint parity without mutating an
+independent authority record.
+
+Rejected alternatives:
+
+- Add post-run candidate or summary fields to the signed lambda decision.
+- Let production, export and selected artifacts each duplicate mutable copies
+  of the same forward snapshot and product evidence.
+- Resolve portable product-summary paths relative to flattened release copies.
+
+Invariants:
+
+- The selected-lambda decision contains no run ID, candidate manifest,
+  solution hash, constraint hash or export field.
+- The parity artifact exposes the approved canonical config and exact
+  production solution/constraint hashes, while retaining both immutable
+  parents by path/hash/size.
+- The canonical export hash-parents production; the capstone may reuse that
+  bound production forward/solver evidence rather than duplicate it.
+- In assembled mode, the capstone replaces flattened request copies with
+  canonical bundle artifacts, resolves portable paths from the bundle root
+  and independently replays product normalization.
+- The strict assembled seal is replayed under the promotion lock immediately
+  before pointer publication.
+
+## D-20260713-131 - Assembled Promotion Claims Are Reserved And Replayed
+
+Decision: assembled LT evidence is required by default by the atomic promotion
+primitive. The generic finalizer cannot write the reserved `evidence_contract`
+metadata key; only the strict assembled finalizer supplies the canonical
+`assembled_lt_candidate.v1` value after replaying the assembled seal. Promotion
+locks bind both PID and process-start identity.
+
+Reason: a permissive primitive or forgeable metadata label leaves a misleading
+alternate Python route even when the sanctioned CLI is strict. PID-only locks
+can also remain falsely live after operating-system PID reuse.
+
+Rejected alternatives:
+
+- Keep generic promotion as the default and rely only on callers to pass a
+  strict flag.
+- Treat `evidence_contract` as ordinary caller metadata.
+- Recover a lock solely from whether its PID currently exists.
+
+Invariants:
+
+- Generic compatibility requires the explicit
+  `require_assembled_evidence=False` opt-in and is not the production path.
+- A metadata label never substitutes for replay of the strict assembled seal.
+- Public generic finalization rejects every caller-supplied
+  `evidence_contract`, including the canonical string.
+- New locks contain `pid` and `start`; a mismatched live PID/start pair is a
+  recycled PID, while legacy or unreadable ambiguous locks remain fail-closed.
+- Final assembled evidence is replayed before and after receipt validation and
+  immediately before atomic pointer publication.
+
+## D-20260713-132 - Rolling-Origin Calibration Requires Real Signed EEX Vintages
+
+Decision: reconstructed latest-revision EEX history is not admissible
+rolling-origin evidence. Governed lambda calibration accepts only an exact
+`eex_historical_vintage_catalog.v1` whose Parquet bytes, archived XLSX files,
+parser code/configuration and quote lineage replay exactly. Every source file
+must carry an `eex_source_receipt.v1` issued by a distinct trusted-time
+authority, chained from genesis in the IT-governed journal. `available_at` is
+the receipt time; it is never inferred from the workbook date.
+
+Non-smoke selection uses the canonical `tier2_governed_minimums.v1` profile for
+CH BASE in Europe/Zurich. Numeric settings must be finite, proof thresholds
+cannot be weakened, all remaining settings are fixed, complete-case coverage
+is exact, and the source/runtime closure must be clean and identical before
+and after execution. Smoke runs and `UNSUPPORTED` results cannot select a hash
+or emit a candidate. Published artifacts are new-directory-only, exact-set
+verified and sealed over the same immutable bytes passed to the publisher.
+
+Reason: assigning synthetic availability to a current workbook creates
+look-ahead bias and makes a rolling-origin score scientifically meaningless.
+A signature authenticates a declaration but does not create trusted time;
+time must come from an independently administered acquisition service. Loose
+thresholds, partial-case selection or mutable candidate files could otherwise
+turn an implementation smoke test into misleading model-selection evidence.
+
+Rejected alternatives:
+
+- Backfill `available_at` from the EEX row date or filesystem timestamp.
+- Treat the current latest-revision Parquet as historical vintage evidence.
+- Admit OMPEX, benchmark or proxy prices into calibration truth.
+- Let caller-supplied settings weaken the governed statistical profile.
+- Reuse an output directory or retain a candidate after smoke/unsupported runs.
+
+Invariants:
+
+- No historical receipt may be fabricated retrospectively; admissible history
+  starts when the independent timestamp service is deployed.
+- One economic quote exists per availability cutoff; revisions have one root,
+  a contiguous fully linked chain and no fork.
+- Catalog and timestamp authorities use distinct keys, absolute trusted-key
+  paths and the configured `PFC_DATA_TIMESTAMP_JOURNAL_ID`.
+- The public writer accepts only content-sealed artifacts returned by
+  `run_verified_lambda_calibration`; candidate scope/hash/source/grid parity is
+  replayed from the persisted exact set.
+- This code-contract GO is not production approval. Real Tier 2 calibration
+  remains NO_GO until IT provides the timestamp service, append-only/WORM
+  journal, protected keys and genuine future vintages.
+
+## D-20260713-133 - Tier 2 Starts With An Authenticated Monthly-Only Preregistration
+
+Decision: the first Tier 2 artifact is
+`tier2_monthly_eex_evaluation_plan.v1`. It supports only the claim
+`MONTHLY_EEX_MASKED_QUOTE_ONLY`; full hourly PFC quality remains
+`UNSUPPORTED_REQUIRES_HOURLY_PIT_TRUTH` and production approval is always
+false. The only accepting public boundary reads exact plan, governance-receipt
+and trusted-time-receipt paths, rejects duplicate JSON keys and reparse paths,
+verifies distinct Ed25519 authorities against absolute trust anchors, and
+returns a token-protected deeply immutable proof.
+
+The plan freezes the candidate-grid/source/runtime hashes, deterministic
+selection rule, market-constrained CH seasonal baseline, complete-case gates,
+origin-level circular moving-block bootstrap specification and mandatory
+`MONTH/QUARTER x H0/H1/H2/H3_PLUS` buckets. Every fold carries canonical
+`fold_as_of_utc`; `origin_id` is derived from campaign and time, tenor/horizon
+is recomputed, and delivery must start strictly after the fold. Selection and
+holdout times are disjoint, and every holdout origin is strictly after the
+external preregistration timestamp.
+
+Reason: EEX vintage evidence can test reconstruction of masked monthly quotes,
+but cannot prove hourly shape quality. A mapping-only campaign validator also
+allowed fabricated metrics, origins and hashes to create false PASS results.
+Preregistration must therefore be authenticated before selection, while every
+downstream artifact remains unavailable until row-level EEX evidence can be
+replayed.
+
+Rejected alternatives:
+
+- Treat monthly EEX errors as evidence for hourly regimes or full PFC quality.
+- Use one delivery-month coefficient for BASE, PEAK and OFFPEAK rank tests.
+- Accept self-hashed fold/campaign/index mappings without exact signed inputs.
+- Allow H0 targets whose delivery has already started.
+- Implement a campaign PASS before signed row-level provenance and prediction
+  replay exist.
+
+Invariants:
+
+- Identifiability uses chronological `delivery_month x PEAK/OFFPEAK` atoms,
+  actual Europe/Zurich DST hours and the EEX weekday 08:00-20:00 calendar;
+  holidays remain included in Peakload.
+- Constraint rows are L2-normalized; SVD rank and condition use the effective
+  nonzero spectrum for retained and target-augmented systems.
+- Candidate freeze, fold result, selection/holdout campaign and final index
+  validators raise `UNSUPPORTED` unconditionally and are outside `__all__`.
+- A real downstream PASS requires a signed row-level EEX package for all four
+  temporal roles and replay of masking, revealing-set removal, predictions,
+  repricing, conservation, metrics and exact fold inventory.
+- Quant, Data and IT returned GO with no P0/P1 for this narrow plan slice. This
+  is not a Tier 2 campaign GO and does not change global production NO_GO.
+
+## D-20260713-134 - A Fold May Prove EEX Data Lineage Before It Proves Model Output
+
+Decision: the first signed fold package is accepted only as
+`DATA_LINEAGE_REPLAYED_MODEL_OUTPUT_UNVERIFIED`. The path-only verifier returns
+a token-protected `VerifiedSelectionFoldDataLineage` containing catalog/fold/
+config identities and the hash of an associated diagnostic, but no segment,
+prediction, metric, campaign or production claim. Both manifest and diagnostic
+must state `data_lineage_verified=true`, `model_output_verified=false`,
+`campaign_eligible=false` and `production_approved=false`. HOLDOUT remains
+`UNSUPPORTED_HOLDOUT_REQUIRES_VERIFIED_FREEZE`.
+
+The verifier replays the latest unique CH snapshot available at the fold
+origin, exact target selection, all overlapping revealing-quote removals,
+retained complement, PIT context windows, future-diagnostic namespace and seven
+exact row-role inventories. The candidate inventory is deliberately named
+`permitted_candidate_input_row_hashes`: it proves which signed rows are allowed,
+not which rows a model execution actually consumed. Governance, acquisition and
+execution keys are mutually distinct and disjoint from all trusted-time keys.
+The exact package and all catalog history/source/parser files are snapshotted
+before and after replay; the manifest is snapshotted before reading and its read
+bytes are explicitly bound to the initial snapshot hash.
+
+Reason: row cleanliness and recomputed arithmetic do not prove how candidate
+segments were generated. An offensive test showed that an actor controlling the
+diagnostic could set a target-month segment equal to the masked quote and
+recompute consistent metrics. Demoting the claim preserves useful PIT lineage
+evidence without misrepresenting a diagnostic as out-of-sample model evidence.
+An IT roast also reproduced a manifest replacement race between read and initial
+snapshot; ordering and byte binding now close that window.
+
+Rejected alternatives:
+
+- Call permitted rows actual model inputs without deterministic execution replay.
+- Return recomputed metrics in the verified proof token.
+- Enable SELECTION/HOLDOUT campaign closure from one signed diagnostic package.
+- Accept a post-read manifest snapshot without binding the bytes already parsed.
+- Treat a signed diagnostic as evidence of hourly PFC quality or production fitness.
+
+Invariants:
+
+- A manipulated but internally coherent diagnostic can be authenticated only as
+  an unverified diagnostic hash; this API cannot label it model-verified or
+  campaign-eligible.
+- Deterministic replay of the candidate monthly solver and canonical baseline,
+  including exact runtime/config/source closure, is required before any metric
+  can enter a verified fold proof.
+- Candidate freeze, campaign aggregation, holdout and final Tier 2 index remain
+  fail-closed and outside the public API.
+- Targeted verification is `45 passed, 1 skipped`; the expanded related matrix
+  is `208 passed, 1 skipped, 1 known warning`; Ruff and diff-check pass.
+- Permanent Quant, Data and IT re-roasts returned GO with no P0/P1 for this
+  data-lineage slice only. Global production remains NO_GO.
+
+## D-20260713-135 - Tier 2 Model Replay Starts With A Pure BASE-Only Core
+
+Decision: deterministic Tier 2 model replay starts with a private, target-blind
+BASE-only generation core. It reconstructs one candidate and the fixed
+`market_constrained_seasonal.v1` baseline from retained CH BASE quotes and
+historical CH BASE deviations. PEAK and OFFPEAK remain
+`UNSUPPORTED_REQUIRES_JOINT_PEAK_OFFPEAK_SOLVER`. The core is not signed, is not
+PIT evidence by itself and cannot emit campaign metrics or a promotion claim.
+
+The shared monthly solver now treats a missing quoted month as a relative
+seasonal-shape problem around an own-market level anchored separately in each
+delivery year. The target for an unrepresented month is its raw seasonal prior
+minus the actual-hour-weighted raw prior of represented months in the same
+year. Monthly second differences cannot bridge represented buckets or delivery
+years. A delivery year without its own represented market level fails closed.
+
+Reason: reusing the former generic scoring path would mix generation and target
+knowledge and would falsely imply PEAK/OFFPEAK coverage. A global level anchor
+or December/January smoothing bridge can also transfer level across delivery
+years. Recentring the prior before the shared solver destroys the seasonal
+information needed to infer a latent annual level from incomplete monthly
+quotes.
+
+Rejected alternatives:
+
+- Reuse `_score_one_case` as model-output evidence.
+- Generate PEAK/OFFPEAK independently before a joint product-consistent solver
+  exists.
+- Patch missing months after solve or use one cross-year represented mean.
+- Accept convertible strings, NaT month labels, non-finite weights or an
+  unbounded governed objective.
+- Treat permitted signed rows as proof that a model actually consumed them.
+
+Invariants:
+
+- The pure core has no target, diagnostic or scoring argument and is absent
+  from `__all__`.
+- Candidate config is exhaustive, strictly typed, snapshotted before solve and
+  bounded; neighbor shrinkage is zero and baseline hyperparameters are fixed.
+- Historical seasonal evidence counts distinct snapshots, not multiple
+  delivery years within one snapshot, and requires 24 snapshots per month.
+- Every retained quote is repriced within `1e-9`; non-finite outputs, numerical
+  ridge, least-squares fallback, excessive stationarity/residual or KKT
+  condition above `1e12` fail closed with typed errors.
+- The shared solver rejects non-real/boolean, negative or non-finite objective
+  weights, non-finite priors, NaT months and collisions after monthly index
+  normalization.
+- Quant, Data and IT returned GO with no P0/P1 for both the shared-solver change
+  and private BASE replay core. This does not change global production NO_GO.
+- The next accepting boundary must authenticate exact paths and replay the
+  signed permitted rows, runtime/config/source closure and generated outputs
+  byte-for-byte before any verified metric or campaign claim exists.
+
+## D-20260713-136 - Model Replay Must Consume The Same Authenticated Fold Snapshot
+
+Decision: the fold-lineage verifier has one private same-snapshot primitive.
+It returns the existing public lineage proof plus token-protected immutable
+records for exactly `fold_historical_context` and
+`fold_evaluation_snapshot_retained`. The public API remains unchanged and
+returns only `VerifiedSelectionFoldDataLineage`; the private context is absent
+from `__all__` and can never be supplied to a public accepting boundary.
+
+Reason: obtaining the public proof and then rereading the catalog or row
+artifact creates a second acquisition and a TOCTOU window. The output verifier
+must consume rows derived from the already authenticated in-memory frame, never
+from the unverified diagnostic.
+
+Rejected alternatives:
+
+- Put mutable DataFrames or row payloads in the public proof token.
+- Reread catalog/history/fold rows after public lineage verification.
+- Reconstruct model inputs from diagnostic candidate segments or metrics.
+- Snapshot the package before materializing the private records and call that
+  the final TOCTOU check.
+
+Invariants:
+
+- Private records are frozen tuples selected by unique ordered row hashes from
+  the authenticated frame; target, removed, later and diagnostic roles are not
+  present.
+- Candidate grid content is recursively immutable in the context.
+- Records and grid are materialized before the final package snapshot, which is
+  the last fallible verification before frozen context construction and return.
+- An offensive mutation during record materialization fails exact-inventory
+  verification.
+- Quant, Data and IT returned GO with no P0/P1 for this prerequisite.
+- This decision does not verify model output. Trust policy, complete BASE config,
+  replayable source/runtime closure and a pre-existing signed output commitment
+  remain mandatory before the path-only wrapper can return a model-output token.
+
+## D-20260714-137 - Chosen BASE Output Requires Independent Signed Byte Replay
+
+Decision: one SELECTION fold may receive the narrow status
+`MODEL_OUTPUT_VERIFIED_BASE_ONLY` only when a path-only verifier reproduces the
+exact canonical bytes of a pre-existing two-file BASE output package. The
+signed incoming manifest must still state `model_output_verified=false`; the
+verified result is an ephemeral in-process return value and is never durable
+downstream authority. Every later accepting boundary must reverify canonical
+signed artifacts by path.
+
+The verifier consumes the private same-snapshot fold context, filters only CH
+BASE retained and historical rows, validates one exhaustive config from the
+signed grid, runs the target-blind BASE candidate and canonical baseline, and
+compares generated bytes exactly with `expected_base_output.v1.json`. It binds
+the manifest, output, plan/grid/fold/catalog/history, all receipts, catalog
+internal files and six trust anchors before consumption and recaptures them
+after solve.
+
+Trust anchors are read once with stat-before/stat-after; the same PEM bytes
+derive file hash, public key and key ID. Governance, acquisition, fold
+execution, model execution, source time and Tier 2 time authorities are checked
+role by role, not merely as sets. Captured journal IDs are checked against plan,
+fold, source and output receipts. Output receipt IDs and SHA-256 values, plus
+the exact consumed PEM hashes, are retained in the ephemeral result.
+
+The signed source closure binds disk bytes and the loaded consumer graph:
+function aliases, provider identity, recursive bytecode, deterministic defaults,
+class identity and methods, imported modules, governed uppercase constants and
+canonical regex/path/sentinel values. Loaded bindings are recaptured after the
+solve. The runtime lock binds the Python executable and executable Python/native
+distribution files plus complete `tzdata`.
+
+Reason: exact output bytes are not model evidence unless the authenticated fold
+rows, selected full config, executing callable graph, runtime, receipts and trust
+policy are tied to the same captured execution. Earlier variants allowed ABA
+receipt/key swaps, authority-role permutations and in-memory substitution of
+the replay function, internal solver alias, imported class, regex or module.
+
+Rejected alternatives:
+
+- Let the signed producer manifest self-declare `model_output_verified=true`.
+- Treat a Python result object as durable evidence or expose a global factory.
+- Hash only source files while ignoring loaded aliases, classes, constants or
+  imported module identities.
+- Compare authority identities only as unordered sets.
+- Accept an allowlisted config choice as independently selected.
+- Infer campaign metrics, PEAK/OFFPEAK quality or production fitness from this
+  one BASE computation.
+
+Invariants:
+
+- The result fixes `configuration_selection_verified=false`,
+  `process_isolation_verified=false`, `metrics_verified=false`,
+  `campaign_eligible=false`, `production_approved=false` and
+  `peak_offpeak_verified=false`.
+- The chosen config computation is target-blind, but its choice may not enter a
+  selection metric until every preregistered `fold x config` output is present.
+- PEAK/OFFPEAK remains `UNSUPPORTED_REQUIRES_JOINT_PEAK_OFFPEAK_SOLVER`.
+- A fresh immutable process/container and a complete campaign runtime closure
+  remain mandatory before campaign or production evidence.
+- Final Tier 2 verification is `94 passed, 1 skipped`; targeted Ruff,
+  `py_compile` and `git diff --check` pass.
+- Permanent Quant, Data and IT roasters returned GO with no P0/P1 for this
+  chosen-config, trusted-process claim only. Campaign and production remain
+  NO_GO.
+
+## D-20260714-138 - Selection Requires A Config-Neutral Premetric BASE Matrix
+
+Decision: D138 must not aggregate chosen-config D137 proofs and must not consume
+the current scored `fold_result`. Selection evidence is split into two signed,
+path-only boundaries:
+
+1. a config-neutral `selection_base_inputs` package containing only exact BASE
+   historical/retained row inventories and delivery grids for every signed
+   SELECTION fold;
+2. a `selection_base_output_inventory` containing every candidate output for
+   every fold and exactly one canonical baseline per fold.
+
+Let `F` be the exact ordered SELECTION folds from the signed plan and `C` the
+exact sorted configs from the signed grid, equal to the plan allowlist. The
+independently reconstructed inventory must equal:
+
+```text
+Kcandidate = F x C
+Kbaseline = F x {canonical baseline}
+Kexpected = Kcandidate union Kbaseline
+|Kexpected| = |F| x (|C| + 1)
+```
+
+Any missing, extra, duplicate or reordered cell; path collision; wrong fold,
+config/input/baseline hash; numerical failure; unsupported fold; or count
+overflow rejects the whole inventory. Every SELECTION fold must be BASE or the
+entire D138 boundary returns
+`UNSUPPORTED_REQUIRES_JOINT_PEAK_OFFPEAK_SOLVER`. Filtering PEAK/OFFPEAK folds
+silently is forbidden. Governed upper bounds for folds, configs and checked
+`F*C` multiplication are mandatory before filesystem or solver work.
+
+The input package may contain fold ID/spec/time, BASE target product identity,
+evaluation snapshot identity/time, delivery months, historical row hashes,
+retained row hashes and `base_input_set_sha256`. It may not contain target
+price/hash, config choice, candidate/baseline segment, prediction, error,
+metric, rank, winner or later diagnostic quote.
+
+The output inventory binds plan/grid/input/source/runtime hashes, one baseline
+entry per fold and all candidate entries. Each entry binds fold/spec/input set,
+config or canonical baseline identity, hash-addressed relative path, SHA-256 and
+size. The verifier derives `Kexpected` itself; signed `complete=true` is never
+accepted as evidence. Plan, grid, catalog, runtime and trust policy are captured
+once; catalog Parquet is decoded once; one immutable context is derived per
+fold; baseline is solved once per fold; candidate solves are `O(F*C)`; all state
+is recaptured after the last cell. No persistent or caller-supplied cache is
+accepted.
+
+Signing order is plan governance/time, input lineage execution/time, complete
+matrix model execution/time, then a later and independently signed metric
+reveal. The matrix trusted-time receipt must bind both exact matrix manifest
+bytes and the model-execution attestation hash/ID. Future metrics must bind the
+verified inventory SHA and execute strictly after its trusted timestamp.
+
+Reason: the current fold manifest chooses one config and the current fold
+result already validates target-dependent predictions and errors. Repeating it
+for all configs would create multiple TOCTOU windows and cannot prove that a
+complete matrix was frozen before accepted scoring. A single baseline per fold
+also prevents candidate-conditioned baseline drift.
+
+Rejected alternatives:
+
+- Re-sign one config-specific fold package per candidate and call the set complete.
+- Reuse target-dependent `fold_result` as the premetric input boundary.
+- Compute or store one baseline independently in every candidate cell.
+- Accept a self-declared completeness flag or caller-supplied list of configs.
+- Claim that a process/operator never observed targets without separate custody
+  and process isolation.
+- Enable campaign validation as part of D138.
+
+Invariants:
+
+- D138 may prove only complete BASE inputs and complete premetric output bytes.
+- `configuration_selection_verified`, `target_non_observation_verified`,
+  `target_reveal_order_verified`, `process_isolation_verified`,
+  `metrics_verified`, `holdout_verified`, `campaign_eligible`,
+  `production_approved` and `peak_offpeak_verified` remain false.
+- The defensible causal claim is "matrix frozen before accepted signed metrics",
+  not literal human/process ignorance of targets.
+- All persistent boundaries remain path-only and independently signed.
+- Quant, Data and IT returned design GO for this split and NO_GO for repeated
+  D137 aggregation or campaign/production activation.
+
+## D-20260714-139 - Premetric SELECTION Input Derivation Is Private And Config-Neutral
+
+Decision: the first D138 implementation primitive is a private pure derivation,
+not signed evidence. It consumes only an exact token-protected
+`VerifiedEvaluationPlan` and an already authenticated EEX frame. For every
+preregistered SELECTION fold it derives the ordered CH BASE historical and
+retained row hashes actually consumable by the BASE replay core, the BASE-only
+delivery grid, evaluation snapshot identity/time and one shared
+`base_input_set_sha256`. It has no config argument and is absent from `__all__`.
+
+The derivation uses a dedicated solver-input path. It does not call the existing
+scored fold-result validator and does not build removed-target, later-quote,
+candidate segment, baseline segment, prediction, error, metric, rank or winner
+roles. The target lookup reads only identity columns required to identify the
+evaluation snapshot and remove all algebraically overlapping quotes; target
+price is never selected or emitted. Snapshot ID plus target product remain
+lineage metadata, so `target_non_observation_verified` remains false.
+
+D137 and D138 now share one canonical
+`tier2_monthly_eex_base_input_set.v1` hash function. Both also derive the
+delivery grid from the target plus retained CH quotes of the same load type;
+PEAK/OFFPEAK rows can no longer extend a BASE solver grid. The governed plan
+requires canonical uppercase `BASE/PEAK/OFFPEAK`, closing divergent lowercase
+interpretations.
+
+Before any record is materialized, the full fold inventory is checked for BASE
+only, order, uniqueness and maximum count; frame row count, conservative
+`2 * frame_rows * fold_count` emitted-hash work and total fold-row work are
+bounded; every delivery grid is preflighted. Duplicate frame hashes, an
+unregistered/modified fold or a duck-typed plan fail closed.
+
+Reason: config-neutral matrix evidence cannot be built on a helper that accepts
+invented plan identities, hashes the same rows under a different domain, scans
+unbounded inputs or materializes target-dependent scored roles. Exact parity
+with D137 is required before the future signed package can bind both stages.
+
+Rejected alternatives:
+
+- Accept a `SimpleNamespace` or caller-created plan-like object.
+- Expose one-fold derivation without exact membership in the signed plan.
+- Keep separate D137 and D138 hash domains under the same field name.
+- Reuse `_derive_fold_rows` and silently omit the scored/diagnostic fields later.
+- Let other load types expand the BASE delivery grid.
+- Check memory/work limits only after records have been allocated.
+- Treat this private return value as persistent or signed evidence.
+
+Invariants:
+
+- The whole set rejects before partial record creation when any fold is not
+  canonical `BASE` or any conservative resource preflight fails.
+- Row order, row hashes, delivery months and input hash match D137 exactly.
+- The private payload contains no target price/hash, config, prediction, metric,
+  rank or winner.
+- A future signed wrapper must path-verify plan/catalog/trust itself and rerun
+  this derivation; it may not accept a caller-supplied derived object.
+- Target custody/isolation, signed D138 package, `F x C` matrix, metrics,
+  campaign and production remain NO_GO.
+- Final targeted Tier 2 verification is `102 passed, 1 skipped`; Ruff,
+  `py_compile` and diff-check pass.
+- Permanent Quant, Data and IT roasters returned GO with no P0/P1 for this
+  private prerequisite only.
+
+
+## D-20260714-140 - One Consumer-Neutral FMV Data Root With Governed Views
+
+Decision: reusable internal data is located through the canonical
+`FMV_DATA_ROOT`, currently
+`C:\Users\jbattaglia\pfc_local_data`. Top-level directories represent data
+domains (`entsoe`, `market`, `hydro`, `scenarios`, `ep2050`), not LT, CT or a
+dashboard. Each consumer selects exact immutable vintages through its own
+contract under `views/<consumer>`; LT uses `views/pfc_lt/current.json`.
+
+`PFC_LT_DATA_ROOT`, `PFC_SHARED_DATA_ROOT` and `PFC_ENTSOE_DATA_ROOT` are
+transition aliases only. When aliases coexist they must resolve to the same
+physical root/domain or execution fails. New deployments define only
+`FMV_DATA_ROOT`.
+
+The old root-level `current.json` is a read-only fallback for an unmigrated
+store. A candidate consuming it is labelled `legacy_external_pointer`, never
+`fmv_data_view:pfc_lt`, and the promotion capstone rejects both the legacy ID
+and its non-canonical logical pointer path. New snapshot publication updates
+only the canonical consumer view; dual publication is forbidden because two
+filesystem replacements cannot form one atomic transaction.
+
+Writer, reader and migration paths reject symbolic links and Windows
+junctions in every existing ancestor below the shared root. The LT contract
+path is exactly
+`snapshots/<generation_id>/lt_input_snapshot.json`; arbitrary in-root aliases
+are forbidden. Migration verifies pointer bytes, canonical contract path,
+SHA-256, full `external_v2` semantics and generation identity before creating
+the view. POSIX publishers sync destination directories after atomic replace.
+
+Reason: ENTSO-E, EEX/EPEX, hydro and scenarios are enterprise data assets used
+by several models and business tools. Naming storage after one model creates
+duplicate lifecycle ownership, while a single mutable `current` shared by all
+consumers silently couples their freshness, quality and entitlement policies.
+Domain assets plus consumer-specific immutable views preserve reuse without
+weakening point-in-time or promotion evidence.
+
+Rejected alternatives:
+
+- Keep separate `PFC_LT_DATA_ROOT`, `PFC_CT_DATA_ROOT` and dashboard copies.
+- Let every consumer read mutable domain-level `curated` files directly.
+- Rename or move the existing heavy workstation data during this migration.
+- Publish both root and consumer pointers on every generation.
+- Treat a logical path string as canonical while following a junction.
+- Deduplicate immutable generations with mutable hardlinks.
+
+Invariants:
+
+- Presence under `FMV_DATA_ROOT` never grants calibration eligibility.
+- LT and CT share source assets but retain independent view and promotion
+  contracts; LT still never imports `pfc_shaping.ct.*`.
+- OMPEX remains benchmark-only and is not a shared model input role.
+- Existing heavy Parquets were not moved, rewritten or committed.
+- `lt_input_snapshot.v1` may copy exact bytes to freeze one generation. A
+  future content-addressed store requires a separately versioned and audited
+  schema before physical deduplication.
+- This storage stage is not a production promotion. Docker/CI, managed ACLs,
+  signed fresh acquisitions, full build/finalize orchestration and the
+  pre-existing direct `rolling_update` OMPEX route remain independent NO-GO
+  items.
+
+Final independent Data, IT and Quant re-roasts found no remaining stage-introduced P0/P1 and returned GO for D140. The Quant reviewer initially confused legacy readability with promotion eligibility, then corrected the verdict after replaying the dual data_root_id and logical_path capstone rejection.
+
+## D-20260714-141 - OMPEX Is Benchmark-Only And The Legacy Direct Publisher Is Removed
+
+Decision: `pfc_shaping/pipeline/rolling_update.py` is a fail-closed tombstone.
+The historical implementation that combined ingestion, LT calibration, OMPEX
+comparison, persistence and publication has been physically removed. Imported
+calls, `python -m` execution and direct file execution all raise before I/O.
+The governed candidate, audit, receipt and atomic-promotion workflow is the
+only permitted LT publication path.
+
+OMPEX/HFC data remain an external read-only benchmark. They may be used only
+by explicit validation tooling after a candidate has been generated. They may
+not enter model inputs, calibration, hyperparameter or lambda selection,
+backtest truth, quality gates, promotion decisions or published artifacts.
+
+Reason: an unreachable legacy publisher still constituted a recoverable
+bypass and embedded an OMPEX strict-gate policy. A benchmark known to contain
+its own errors cannot be allowed to determine FMV model selection or
+publication. Removing the implementation makes the intended governance a
+property of the executable surface rather than a convention.
+
+Rejected alternatives:
+
+- Keep the historical implementation below an unconditional `raise`.
+- Retain strict or advisory OMPEX policy inside a publication command.
+- Retain live compatibility helpers, including environment-loading or logging
+  functions that can perform I/O.
+- Rely only on top-level wrapper scripts to block the legacy module.
+
+Invariants:
+
+- `rolling_update` contains no ingestion, model, OMPEX/HFC comparison,
+  persistence or export primitive.
+- Every retained compatibility symbol fails before filesystem, environment,
+  network, database or logging I/O.
+- Direct and module execution fail non-zero and create no output.
+- LT remains independent from `pfc_shaping.ct.*`; monthly solver authority is
+  unchanged.
+- This stage does not promote production. Fresh signed inputs, complete real
+  candidate evidence and the remaining industrialization gates are still
+  required.
+
+Verification: Ruff passed; the legacy-entrypoint and LT/CT boundary matrix
+reported `29 passed, 1 skipped`. Independent Data and Quant reviews returned
+GO before the final IT corrections. The final independent IT re-roast found no
+P0/P1/P2 and returned stage GO. Production remains globally `NO_GO`.
+
+## D-20260714-142 - One LT Release CLI, One Phase And One Private-Key Authority Per Process
+
+Decision: `scripts/run_governed_lt_release.py` is the canonical LT release
+command surface and exposes exactly `build`, `finalize`, `register`, `audit`,
+`promote` and `status`. One invocation performs one phase. There is no `all`,
+`run`, `release`, `auto-promote`, policy-signing or failed-gate override path.
+The former build and finalize scripts remain compatibility facades over the
+same operations and argument contract; they do not gain additional authority.
+
+The process checks private-key scope before phase I/O. Build, finalize,
+register and status accept no private key. Audit may expose only the promotion
+receipt key. Promote may expose only the promotion-event key. Model-governance,
+data-acquisition and quote-conflict-policy signing keys remain external to the
+runtime in every phase.
+
+Build emits `state=CANDIDATE_STAGED_EVIDENCE_PENDING` and
+`next_action=SOURCE_HIERARCHY_POLICY_REQUIRED`; exit `30` distinguishes this
+expected governance handshake from argparse exit `2`. Finalize is retryable
+after a successful rename only when the supplied signed policy exactly equals
+the policy sealed in the immutable candidate. Audit can recover an existing
+signed receipt without retaining its private key. Status is schema-versioned,
+strictly read-only and reports absent, staged, finalized, registered, audit or
+promoted state without creating roots.
+
+Reason: a single operational entrypoint is necessary for IT automation, but a
+single privileged end-to-end process would collapse the independent builder,
+policy, auditor and promoter authorities. Recovery must consume persistent
+hash-bound evidence rather than Python memory or repeated signing access.
+
+Rejected alternatives:
+
+- Add a command that builds, audits and promotes in one process.
+- Let finalize sign or infer its own quote-conflict policy.
+- Permit build/finalize/status under an identity exposing authority keys.
+- Require the receipt private key again after an audit receipt was committed.
+- Treat status as harmless while allowing it to create workflow directories.
+- Rebuild under an existing run ID after a lost CLI response.
+
+Invariants:
+
+- D126-D131 remain normative; the builder stops before independent policy.
+- Only `promote` may update `current.json`; status never writes.
+- Register derives production artifacts only from the assembled candidate
+  seal, and audit/promotion continue to replay that seal and signed receipt.
+- Finalize retries reject a missing, linked, changing or byte-different policy.
+- CLI output is versioned JSON; exit codes are `0` success, `2` usage and `30`
+  expected governance stop/rejection.
+- LT imports remain independent from `pfc_shaping.ct.*` and OMPEX remains
+  absent from inputs, selection, gates and promotion.
+- Explicit expected-current CAS, governed rollback CLI and target-storage crash
+  drills remain separate global industrialization work; production stays
+  `NO_GO`.
+
+Verification: the core controller/governance/atomic/legacy/LT-boundary matrix
+reported `119 passed, 1 skipped`; the real candidate assembly, signed policy,
+seal, finalization retry and capstone matrix reported `26 passed`; forward
+snapshot/PIT tests reported `18 passed`. Ruff and diff-check passed apart from
+line-ending warnings. Independent IT, Security and Operations re-roasts found
+no D142 P0/P1 and returned stage GO.
+
+## D-20260714-143 - Immutable Signed Release Journal, Explicit CAS And Governed Rollback
+
+Decision: LT release transitions use an immutable, signed event/head journal
+as authority. `current.json` and the mutable head are projections only and may
+be repaired by exact retry. Registration binds an explicit expected-current
+event, a full 256-bit request identity and a canonical operation timestamp.
+Promotion and rollback compare-and-swap under the transition lock; conflicts,
+busy locks, integrity failures and committed-transition projection failures
+remain distinct CLI outcomes (`40`, `41`, `50`, `51`).
+
+Rollback requires a fresh, expiring authorization signed by an independent
+authority and bound to the current event plus an exact earlier PROMOTE event.
+Historical receipt and rollback public keys are replay-only. They may verify
+committed history or repair the exact last committed transition, but cannot
+authorize a new transition. Event, receipt and rollback keyrings, including
+historical keys, are pairwise disjoint.
+
+The signed release domain and journal namespace derive from the governed
+canonical UUID in `PFC_PROMOTION_RELEASE_DOMAIN_ID`, not from a host-local
+drive or UNC spelling. The value is generated once per logical release,
+reused only by aliases/mounts of that release, never copied across physical
+roots or environments, and pinned by an immutable, exclusive, fsynced
+`release_domain.json` marker. Configuration drift or marker loss after any
+transition activity fails closed. Candidate roots,
+trust anchors and keyring paths reject symlinks and Windows junctions before
+resolution. Candidate files reject hardlinks. Finalization flushes the staged
+tree before rename and its parent after rename where the platform exposes
+directory fsync.
+
+All governance-critical JSON and YAML consumed by the candidate seal,
+product-policy audit and capstone use shared strict parsers. Duplicate JSON
+keys, duplicate YAML keys and merge-key collisions fail closed before a signed
+receipt can be emitted. Non-finite numbers, cycles, excessive depth and
+excessive container cardinality are rejected. Shared alias DAGs are validated
+in linear time with cached subtree heights, preserving the depth bound.
+
+Exclusive immutable writes recover only crash-leftover temporary hardlinks
+whose strict filename and `(st_dev, st_ino)` exactly match the destination.
+Concurrent cleanup is idempotent, parent directories are fsynced after cleanup,
+and the final immutable file must return to `st_nlink == 1`.
+
+Reason: mutable pointers, path-derived namespaces, permissive structured-data
+parsers and key rotation without replay-only semantics permit ambiguity or
+make deterministic recovery impossible. The authoritative evidence must remain
+stable across process crashes, key rotations and equivalent Windows/UNC mounts.
+
+Rejected alternatives:
+
+- Automatically delete a lock whose PID appears stale.
+- Rebase a signed request or receipt onto a newer current event.
+- Accept historical signing keys for new promotions or rollbacks.
+- Keep the release domain as a hash of the local path spelling.
+- Permit duplicate-key JSON/YAML because one local parser is last-wins.
+- Patch `current.json` or an individual month after the fact.
+
+Invariants:
+
+- Monthly solver level authority and all Phase 14 scientific contracts remain
+  unchanged; no individual month is patched after solve.
+- LT remains independent from `pfc_shaping.ct.*`; no CT or Power BI file is
+  part of D143.
+- An immutable commit is never reported as uncommitted. Exit `51` requires an
+  exact retry to repair projections without creating a second event.
+- The application never auto-recovers a transition lock.
+- OMPEX remains benchmark-only and absent from model inputs and promotion.
+- No real candidate was promoted by this stage.
+
+Verification: final Ruff matrix passed. The final exact release, capstone,
+product-policy and candidate-evidence matrix reported `351 passed, 2 skipped,
+1 warning`; both skips are Windows real-symlink capability tests covered by
+deterministic link/junction simulations, and the warning is the existing pandas
+concat future warning. Independent Systems, Security and replacement IT/
+Operations re-roasts returned GO with no P0/P1. Production remains globally
+`NO_GO` pending target-volume
+Windows/SMB crash/concurrency/durability drills, WORM or external monotonic
+anti-rewind evidence, service ACLs and HSM/KMS-backed key operations.
+
+## D-20260714-144 - Non-Promotional Target-Volume Storage Drill
+
+Decision: qualify the application-visible filesystem semantics of the future
+LT release volume with a dedicated, non-promotional drill before any real
+release root is provisioned. Every run is confined to a new exclusive
+`<drill-root>/.pfc-lt-storage-drill/<run-id>` directory outside governed
+releases and candidates. The drill uses synthetic bytes only, refuses exposed
+private-key variables and can never emit promotion authorization.
+
+The drill exercises the exact production primitives for immutable hardlink
+publication and crash recovery, exclusive multi-process writers, transition
+locks including abandoned locks, atomic JSON replacement with two byte-exact
+readers, and atomic directory finalization. Drive, short UNC and FQDN UNC
+spellings are typed, lexically distinct, identity-checked and exercised for
+visibility and exclusion. Windows Python 3.11 reparse points are detected via
+`FILE_ATTRIBUTE_REPARSE_POINT` through one shared path-safety primitive.
+
+Each potentially blocking probe runs in a supervised subprocess. Windows
+supervisors own descendants through a `KILL_ON_JOB_CLOSE` Job Object; POSIX
+uses a retained process group. The public CLI separately supervises the whole
+run so a blocked target-volume operation cannot suppress the emergency JSON.
+The final artifact inventory is closed over every run file except the report,
+which is the sole declared exclusion and is written last by exclusive create
+plus fsync. The report hash-binds the drill, atomic promotion, path-safety and
+CLI implementations.
+
+Reason: local unit tests cannot establish the semantics of the final SMB
+appliance, while running a promotion to test storage would mix qualification
+with production authority. A synthetic, fail-closed and retained drill gives
+IT reproducible evidence without creating a candidate or changing release
+state.
+
+Rejected alternatives:
+
+- Treat local NTFS tests as proof of the target SMB appliance.
+- Use OMPEX, EEX, ENTSO-E or a real candidate as drill payload.
+- Run probes in the CLI process with best-effort timeout checks around syscalls.
+- Use threads, process-name kills or automatic stale-lock recovery.
+- Accept an alias equal to the primary spelling or classify IP/device paths as
+  a FQDN UNC alias.
+- Publish the report with the hardlink primitive whose absence is itself under
+  test.
+
+Invariants:
+
+- `promotion_ready` and `production_authorization` are literal `false` for all
+  outcomes; `production_qualification_status` remains `UNSUPPORTED`.
+- No governed build, finalize, register, audit, promote or rollback API is
+  called by the drill.
+- Production stays globally `NO_GO` until the drill passes on the exact volume,
+  aliases and service identities and independent WORM/ACL/HSM/power-loss/
+  backup attestations exist.
+- Monthly solver authority, LT/CT separation, OMPEX benchmark-only status and
+  all scientific Phase 14 contracts remain unchanged.
+
+Verification: final dedicated D144 suite reported `37 passed, 2 skipped`; the
+skips are platform/capability tests covered by deterministic Windows reparse
+and process-supervision coverage. The integrated D143/D144 matrix reported
+`247 passed, 4 skipped, 1 warning` before the final cancellation-priority tests;
+the final dedicated suite covers those last changes. Systems, Security and
+IT/Operations returned GO with no P0/P1. No target-volume drill or real
+promotion was executed.
+
+## D-20260715-145 - Signed Admission, Sealed Runtime And Governed Publication
+
+Decision: every production release registration must consume a canonical
+`governed_lt_release_request.v3` signed with an active Ed25519 registration key.
+The request binds the workflow and release domains, candidate manifest and
+seal, expected current event, evidence inventory and operation timestamp.
+Registration is not allowed to provision workflow, evidence or release roots;
+IT must create and pin those domains before runtime identities are enabled.
+
+Workflow phase outputs are isolated by ownership under
+`requests/<request-prefix>`, `audit-results/<request-prefix>` and
+`promotion-results/<request-prefix>`. Read-only STATUS, AUDIT and PROMOTE
+lookups must not create paths, recover crash hardlinks or recreate a missing
+domain marker. Candidate and request bindings are revalidated under the
+promotion lock after every candidate bundle reread. The promotion result uses
+the receipt hash returned by the authoritative CAS operation, not a
+controller-side pre-CAS observation.
+
+Once CAS commits an immutable event, every later failure, including clock or
+projection serialization failure, is reported as `COMMITTED` via exit `51`.
+The exact signed request may repair projections without emitting another
+event. Historical keys and historical audit policy versions are replay-only:
+they may verify or repair exact committed history but cannot authorize a new
+transition or receipt.
+
+The distributable runtime is admitted only when two isolated builds are
+byte-identical, both pass the wheel contract audit, the transitive wheelhouse is
+hash-pinned and scanned, and every service identity installs the same admitted
+wheel. At runtime, the package recomputes a SHA-256 over the exact allowed
+Python member set and compares it with the embedded 64-hex source revision;
+missing, extra, symlinked or hardlinked Python files fail closed.
+
+Governed probabilistic output uses a positive publication schema. Every row
+must identify `price_shape`, `profile_type` and `confidence`; labels must be
+unique, values finite, quantiles ordered, and the interval status must satisfy
+the exact governed policy. Dashboard consumers use only this positive export.
+Euler export remains deterministic-only and may not imply probabilistic
+governance.
+
+Reason: unsigned registration material, shared writable phase directories,
+implicit path creation, controller-side receipt observations and unsealed
+installed code each permit authority substitution or ambiguous recovery.
+Negative probabilistic flags are also too easy for downstream consumers to
+ignore. Exact signed bindings, phase ownership, read-only validation and a
+positive schema make admission and publication fail closed.
+
+Rejected alternatives:
+
+- Accept a local unsigned registration JSON or reconstruct its bindings.
+- Let runtime service accounts create domain markers or shared run roots.
+- Share one writable workflow directory across Registrar, Auditor and Promoter.
+- Repair hardlink residue during STATUS or another read-only lookup.
+- Report a post-CAS projection failure as uncommitted or retry it as a new event.
+- Trust only wheel metadata without recomputing the installed Python tree hash.
+- Publish quantiles with an optional warning flag that consumers may ignore.
+- Use OMPEX as a model input or treat it as ground truth.
+
+Invariants:
+
+- The monthly solver remains the sole monthly level authority when configured
+  as `monthly_level_authority="solver"`; no month is patched after solve.
+- LT never imports `pfc_shaping.ct.*`; no CT or Power BI file is part of D145.
+- OMPEX remains benchmark-only and absent from training, calibration, feature
+  selection, lambda selection and promotion evidence.
+- Heavy local data and generated candidates are not committed.
+- A missing or divergent governed root/domain fails closed without mutation.
+- Software GO does not imply data, infrastructure or production GO.
+
+Verification: the final focused Ruff scope passed; `git diff --check` passed
+with expected Windows line-ending notices; the final release request,
+promotion, governed release, CLI, package, probabilistic and atomic matrix
+reported `360 passed, 2 skipped in 569.80s`. Two isolated builds produced the
+same 69-member wheel with SHA-256
+`d944cb56914fd4c6fe61c98e4398a1710ede30f365144a5ec49e26ba5c624fad`
+and embedded source revision
+`2cca924acf184f6e442598c852325aa2a8944908f8d2f6e84eae7cc737f8a6c7`;
+both audits and the isolated CLI smoke passed. Final Quant and IT/Operations
+roasts found no P0/P1 code issue.
+
+Repository-wide integration verification subsequently reported
+`1909 passed, 11 skipped, 23 warnings in 2439.58s`. It also corrected three
+test-harness issues without changing scientific or release authority:
+
+- LT/CT import isolation now restores the original `pfc_shaping` module objects
+  in a `finally`, preventing suite-order identity drift;
+- assembled REGISTER tests provision the real release/workflow domains and
+  phase-specific keys and locate receipts under `audit-results`;
+- full storage-drill success tests allow 180 seconds for the unchanged 1,000
+  fsynced replacements on loaded Windows hosts, while injected 0.1/1-second
+  deadline tests and all runtime fail-closed behavior remain unchanged.
+
+Independent IT roast found no P0/P1 or coverage weakening in these integration
+corrections.
+
+Production remains globally `NO_GO`. The current shared-data seed is
+`20260713-migrated-seed-v2`, classified `MIGRATED_UNVERIFIED`, marked
+`calibration_eligible=false`, and only available through 2026-06-08. A fresh
+PIT capture, regenerated CH LT candidate, delivered-product audit, strict
+export and independent benchmark assessment are required. Exact-volume
+ACL/WORM, HSM/KMS, multi-host SMB, power-loss, backup/restore and DR evidence
+remain external IT prerequisites.

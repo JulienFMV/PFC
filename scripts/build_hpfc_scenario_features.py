@@ -14,13 +14,15 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from pfc_shaping.data.electrification_scenarios import (
+from pfc_shaping.data.electrification_acquisition import (
     DEFAULT_ELECTRIFICATION_SCENARIO_PATH,
     DEFAULT_HPFC_SCENARIO_FEATURES_PATH,
+    load_electrification_scenarios_from_databricks,
+)
+from pfc_shaping.data.electrification_scenarios import (
     asof_electrification_scenarios,
     derive_hpfc_scenario_features,
     load_electrification_scenarios,
-    load_electrification_scenarios_from_databricks,
 )
 
 

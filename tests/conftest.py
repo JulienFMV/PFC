@@ -18,6 +18,9 @@ import os
 
 import pytest
 
+import pfc_shaping.pipeline.candidate_evidence as candidate_evidence
+import pfc_shaping.pipeline.governed_release_cli_contract as release_cli_contract
+
 
 @pytest.fixture(autouse=True)
 def _pfc_lt_env_hygiene():
@@ -41,3 +44,18 @@ def _pfc_lt_env_hygiene():
         os.environ.pop(k, None)
     for k, v in snapshot.items():
         os.environ[k] = v
+
+
+@pytest.fixture(autouse=True)
+def _sealed_runtime_identity(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Exercise governance as an installed wheel rather than an unsealed checkout."""
+
+    candidate_revision = "1" * 40
+    runtime_revision = "1" * 64
+    monkeypatch.setattr(candidate_evidence, "SOURCE_REVISION", candidate_revision)
+    monkeypatch.setattr(release_cli_contract, "SOURCE_REVISION", runtime_revision)
+    monkeypatch.setattr(
+        release_cli_contract,
+        "_installed_runtime_source_revision",
+        lambda: runtime_revision,
+    )

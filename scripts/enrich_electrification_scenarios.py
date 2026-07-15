@@ -15,12 +15,13 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from pfc_shaping.data.electrification_scenarios import (
+from pfc_shaping.data.electrification_acquisition import (
     DEFAULT_ELECTRIFICATION_SCENARIO_PATH,
+)
+from pfc_shaping.data.electrification_scenarios import (
     RECOMMENDED_COLUMNS,
     validate_electrification_scenarios,
 )
-
 
 PROFILE_NAME = "ch_first_pfc_proxy_v0"
 

@@ -10,7 +10,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Mapping
 
-import holidays
 import numpy as np
 import pandas as pd
 import scipy.sparse as sp
@@ -28,15 +27,6 @@ _COUNTRY_TZ = {
     "IT_NORD": "Europe/Rome",
 }
 
-_COUNTRY_HOLIDAYS = {
-    "CH": holidays.Switzerland,
-    "DE": holidays.Germany,
-    "DE-LU": holidays.Germany,
-    "AT": holidays.Austria,
-    "FR": holidays.France,
-    "IT": holidays.Italy,
-    "IT_NORD": holidays.Italy,
-}
 
 
 @dataclass(frozen=True)
@@ -195,19 +185,14 @@ def eex_peak_mask(index: pd.DatetimeIndex, *, country: str = "CH") -> np.ndarray
 
     code = country.upper()
     tz = _COUNTRY_TZ.get(code)
-    holiday_cls = _COUNTRY_HOLIDAYS.get(code)
-    if tz is None or holiday_cls is None:
+    if tz is None:
         raise ValueError(f"unsupported peak calendar country {country!r}")
     utc = validate_utc_index(index)
     local = utc.tz_convert(tz)
-    years = sorted(set(int(y) for y in local.year))
-    holiday_dates = set(holiday_cls(years=years).keys())
-    local_dates = pd.Series(local.date)
     return (
         (local.weekday < 5)
         & (local.hour >= 8)
         & (local.hour <= 19)
-        & (~local_dates.isin(holiday_dates).to_numpy())
     )
 
 
@@ -253,6 +238,23 @@ def _source_quote_keys(bucket: str, prices: Mapping[str, float]) -> tuple[str, .
         if bucket == raw or bucket == f"{raw}-RESIDUAL":
             keys.append(raw)
     return tuple(keys)
+
+
+def _raw_product_mask(local: pd.Series, product: str) -> np.ndarray:
+    raw = str(product)
+    if len(raw) == 4 and raw.isdigit():
+        return (local.dt.year.to_numpy() == int(raw))
+    if len(raw) == 7 and raw[4:6] == "-Q" and raw[6].isdigit():
+        return (
+            (local.dt.year.to_numpy() == int(raw[:4]))
+            & (local.dt.quarter.to_numpy() == int(raw[6]))
+        )
+    if len(raw) == 7 and raw[4] == "-" and raw[5:].isdigit():
+        return (
+            (local.dt.year.to_numpy() == int(raw[:4]))
+            & (local.dt.month.to_numpy() == int(raw[5:]))
+        )
+    return np.zeros(len(local), dtype=bool)
 
 
 def build_base_peak_offpeak_constraint_system(
@@ -345,7 +347,21 @@ def build_base_peak_offpeak_constraint_system(
         if row.kind == "PEAK"
         for source in row.metadata.get("source_quotes", ())
     }
-    missing_raw_quotes = sorted(str(key) for key in peak_forward_prices if str(key) not in represented_raw_quotes)
+    missing_raw_quotes = []
+    peak_bucket_values = peak_buckets.to_numpy(dtype=object)
+    for key in peak_forward_prices:
+        raw = str(key)
+        if raw in represented_raw_quotes:
+            continue
+        delivery_mask = _raw_product_mask(local, raw) & peak_mask
+        # A coarser parent fully covered by finer quote buckets is represented
+        # by the source hierarchy even though it adds no independent KKT row.
+        hierarchy_covered = bool(delivery_mask.any()) and bool(
+            pd.notna(peak_bucket_values[delivery_mask]).all()
+        )
+        if not hierarchy_covered:
+            missing_raw_quotes.append(raw)
+    missing_raw_quotes.sort()
     if missing_raw_quotes:
         raise ValueError(f"PEAK quotes not represented in constraint system: {missing_raw_quotes}")
     return ConstraintSystem(tuple(rows), n_variables=len(utc))

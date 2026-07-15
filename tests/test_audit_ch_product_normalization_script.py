@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -8,7 +9,64 @@ import pandas as pd
 import pytest
 
 from pfc_shaping.calibration.cascading import count_hours
-from scripts.audit_ch_product_normalization import _sha256_file, eex_peak_mask, main, run_audit
+from pfc_shaping.data.forward_proxy import ForwardEligibility, ForwardSnapshot
+from pfc_shaping.data.ingest_forwards import load_base_prices_from_eex_report_bytes
+from scripts.audit_ch_product_normalization import (
+    _sha256_file,
+    eex_peak_mask,
+    load_forward_snapshot,
+    load_source_hierarchy_policy,
+    main,
+    run_audit,
+)
+
+
+@pytest.mark.parametrize(
+    ("suffix", "raw", "message"),
+    [
+        (
+            ".json",
+            '{"production_approved":false,"production_approved":true}',
+            "duplicate JSON key",
+        ),
+        (
+            ".yaml",
+            (
+                "defaults: &defaults\n"
+                "  production_approved: false\n"
+                "policy:\n"
+                "  <<: *defaults\n"
+                "  production_approved: true\n"
+            ),
+            "duplicate YAML key",
+        ),
+    ],
+)
+def test_source_hierarchy_policy_rejects_ambiguous_structured_bytes(
+    tmp_path: Path,
+    suffix: str,
+    raw: str,
+    message: str,
+) -> None:
+    policy = tmp_path / f"policy{suffix}"
+    policy.write_text(raw, encoding="utf-8")
+
+    with pytest.raises(ValueError, match=message):
+        load_source_hierarchy_policy(policy)
+
+
+def test_eex_peak_mask_matches_contractual_2027_hour_count() -> None:
+    timestamps = pd.Series(
+        pd.date_range(
+            "2027-01-01T00:00:00",
+            "2028-01-01T00:00:00",
+            freq="1h",
+            inclusive="left",
+            tz="Europe/Zurich",
+        )
+    )
+
+    assert int(eex_peak_mask(timestamps, country="CH").sum()) == 3132
 
 
 LOCAL_TZ = "Europe/Zurich"
@@ -75,6 +133,65 @@ def _write_forwards(path: Path, *, date: str = "2026-06-22") -> None:
         ]
     )
     frame.to_parquet(path)
+
+
+def _write_monthly_candidate(path: Path, forwards_path: Path) -> None:
+    forward_date, snapshot = load_forward_snapshot(
+        forwards_path,
+        market="CH",
+        required_forward_date="2026-06-22",
+    )
+    assert forward_date == pd.Timestamp("2026-06-22")
+    report_path = path.with_suffix(".xlsx")
+    workbook_rows = [
+        [None, "M01_2027_BASE", "M01_2027_PEAK"],
+        [None, "ISIN-BASE", "ISIN-PEAK"],
+        ["Date", None, None],
+        ["22.06.2026", 100.0, 120.0],
+    ]
+    with pd.ExcelWriter(report_path, engine="openpyxl") as writer:
+        pd.DataFrame(workbook_rows).to_excel(writer, sheet_name="CH", index=False, header=False)
+    report_bytes = report_path.read_bytes()
+    prices, parsed_date, metadata = load_base_prices_from_eex_report_bytes(
+        report_bytes,
+        market="CH",
+        source_label=str(report_path.resolve()),
+        return_snapshot_metadata=True,
+    )
+    raw_snapshot = ForwardSnapshot(
+        prices=prices,
+        market="CH",
+        source_kind="EEX_XLSX",
+        source_description="synthetic manifest identity fixture",
+        snapshot_date=parsed_date,
+        available_at="2026-06-22T12:00:00Z",
+        source_path=str(report_path.resolve()),
+        source_sha256=hashlib.sha256(report_bytes).hexdigest(),
+        quote_lineage=metadata["quote_lineage"],
+        source_sheet="CH",
+    )
+    snapshot_manifest = raw_snapshot.to_manifest()
+    snapshot_manifest["hard_quote_eligible"] = True
+    eligibility = ForwardEligibility(
+        snapshot_id=raw_snapshot.snapshot_id,
+        observation_id=raw_snapshot.observation_id,
+        source_sha256=str(raw_snapshot.source_sha256),
+        quote_set_sha256=raw_snapshot.quote_set_sha256,
+        quote_lineage_sha256=raw_snapshot.quote_lineage_sha256,
+        reference_timestamp=pd.Timestamp("2026-06-22T20:00:00Z"),
+        available_at=pd.Timestamp("2026-06-22T12:00:00Z"),
+        business_age_days=0,
+        max_age_business_days=1,
+    )
+    payload = {
+        "promotion_eligible": True,
+        "forward_snapshot": snapshot_manifest,
+        "forward_eligibility": eligibility.to_manifest(),
+        "monthly_solution_hash": "solution-hash",
+        "active_constraints_hash": "constraints-hash",
+        "active_config_hash": "config-hash",
+    }
+    path.write_text(json.dumps(payload), encoding="utf-8")
 
 
 def _write_forwards_rows(path: Path, rows: list[dict[str, object]]) -> None:
@@ -302,6 +419,68 @@ def test_product_normalization_audit_passes_base_peak_and_implied_offpeak(tmp_pa
     assert direct.loc[("hard_base_product_repricing", "BASE", "2027-01"), "rows"] == total_hours
     assert direct.loc[("hard_peak_product_repricing", "PEAK", "2027-01"), "rows"] == peak_hours
     assert direct.loc[("implied_offpeak_identity", "OFFPEAK", "2027-01"), "rows"] == offpeak_hours
+
+
+def test_product_audit_binds_exact_monthly_candidate_forward_snapshot(tmp_path: Path) -> None:
+    csv_path = tmp_path / "delivered.csv"
+    forwards_path = tmp_path / "forwards.parquet"
+    candidate_path = tmp_path / "monthly_candidate.json"
+    _write_delivered_csv(csv_path)
+    _write_forwards(forwards_path)
+    _write_monthly_candidate(candidate_path, forwards_path)
+
+    _, summary = run_audit(
+        csv_path=csv_path,
+        forwards_path=forwards_path,
+        required_forward_date="2026-06-22",
+        monthly_candidate_manifest_path=candidate_path,
+    )
+
+    assert summary["monthly_candidate_binding_status"] == "BOUND"
+    payload = json.loads(candidate_path.read_text(encoding="utf-8"))
+    assert summary["forward_snapshot_id"] == payload["forward_snapshot"]["snapshot_id"]
+    assert summary["forward_eligibility_id"] == payload["forward_eligibility"]["eligibility_id"]
+    assert summary["monthly_candidate_manifest_sha256"] == _sha256_file(candidate_path)
+
+
+def test_product_audit_rejects_different_forward_quote_set(tmp_path: Path) -> None:
+    csv_path = tmp_path / "delivered.csv"
+    forwards_path = tmp_path / "forwards.parquet"
+    candidate_path = tmp_path / "monthly_candidate.json"
+    _write_delivered_csv(csv_path)
+    _write_forwards(forwards_path)
+    _write_monthly_candidate(candidate_path, forwards_path)
+    payload = json.loads(candidate_path.read_text(encoding="utf-8"))
+    payload["forward_snapshot"]["quote_set_sha256"] = "different"
+    candidate_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="quote_set_sha256"):
+        run_audit(
+            csv_path=csv_path,
+            forwards_path=forwards_path,
+            required_forward_date="2026-06-22",
+            monthly_candidate_manifest_path=candidate_path,
+        )
+
+
+def test_product_audit_rejects_substituted_forward_eligibility(tmp_path: Path) -> None:
+    csv_path = tmp_path / "delivered.csv"
+    forwards_path = tmp_path / "forwards.parquet"
+    candidate_path = tmp_path / "monthly_candidate.json"
+    _write_delivered_csv(csv_path)
+    _write_forwards(forwards_path)
+    _write_monthly_candidate(candidate_path, forwards_path)
+    payload = json.loads(candidate_path.read_text(encoding="utf-8"))
+    payload["forward_eligibility"]["observation_id"] = "0" * 64
+    candidate_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="observation_id mismatch"):
+        run_audit(
+            csv_path=csv_path,
+            forwards_path=forwards_path,
+            required_forward_date="2026-06-22",
+            monthly_candidate_manifest_path=candidate_path,
+        )
 
 
 def test_product_normalization_audit_flags_peak_repricing_break(tmp_path: Path) -> None:
@@ -1129,21 +1308,46 @@ def test_product_normalization_cli_fails_closed_on_quote_conflict(tmp_path: Path
     summary = pd.read_json(summary_path, typ="series").to_dict()
     assert summary["quote_conflict_count"] == 3
     assert summary["all_gates_pass"] is False
-    assert main(
-        [
-            "--csv",
-            str(csv_path),
-            "--forwards",
-            str(forwards_path),
-            "--required-forward-date",
-            "2026-06-22",
-            "--output-csv",
-            str(gates_path),
-            "--summary-json",
-            str(summary_path),
-            "--allow-failed-gates",
-        ]
-    ) == 0
+
+
+def test_product_normalization_cli_rejects_unsigned_production_policy(
+    tmp_path: Path,
+) -> None:
+    csv_path = tmp_path / "delivered_q3.csv"
+    forwards_path = tmp_path / "forwards_q3.parquet"
+    gates_path = tmp_path / "gates.csv"
+    summary_path = tmp_path / "summary.json"
+    policy_path = tmp_path / "unsigned-policy.json"
+    _write_2027_q3_redundant_conflict_curve(csv_path, forwards_path)
+    _, initial = run_audit(
+        csv_path=csv_path,
+        forwards_path=forwards_path,
+        required_forward_date="2026-06-22",
+    )
+    policy_path.write_text(
+        json.dumps(
+            _approved_quote_conflict_policy(csv_path, forwards_path, initial)
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="authentically signed"):
+        main(
+            [
+                "--csv",
+                str(csv_path),
+                "--forwards",
+                str(forwards_path),
+                "--required-forward-date",
+                "2026-06-22",
+                "--source-hierarchy-policy",
+                str(policy_path),
+                "--output-csv",
+                str(gates_path),
+                "--summary-json",
+                str(summary_path),
+            ]
+        )
 
 
 def test_product_normalization_audit_marks_in_scope_missing_required_quote_unsupported(tmp_path: Path) -> None:
@@ -1252,7 +1456,7 @@ def test_product_normalization_audit_fails_when_only_out_of_scope_products_exist
     assert "no_in_scope_product_gates_emitted" in set(gates["evidence"])
 
 
-def test_product_normalization_audit_flags_empty_evidence_as_critical(tmp_path: Path) -> None:
+def test_product_normalization_audit_rejects_only_invalid_product_evidence(tmp_path: Path) -> None:
     csv_path = tmp_path / "delivered.csv"
     forwards_path = tmp_path / "forwards.parquet"
     _write_delivered_csv(csv_path)
@@ -1271,16 +1475,12 @@ def test_product_normalization_audit_flags_empty_evidence_as_critical(tmp_path: 
         ],
     )
 
-    gates, summary = run_audit(
-        csv_path=csv_path,
-        forwards_path=forwards_path,
-        required_forward_date="2026-06-22",
-    )
-
-    assert summary["critical_count"] == 1
-    assert summary["all_gates_pass"] is False
-    assert gates.iloc[0]["gate_id"] == "audit_evidence_present"
-    assert gates.iloc[0]["status"] == "CRITICAL"
+    with pytest.raises(ValueError, match="unsupported forward product"):
+        run_audit(
+            csv_path=csv_path,
+            forwards_path=forwards_path,
+            required_forward_date="2026-06-22",
+        )
 
 
 def test_product_normalization_audit_flags_missing_required_peak_quote(tmp_path: Path) -> None:
@@ -1333,6 +1533,60 @@ def test_product_normalization_audit_rejects_duplicate_forward_quote(tmp_path: P
     frame.to_parquet(forwards_path)
 
     with pytest.raises(ValueError, match="duplicate forward quote"):
+        run_audit(
+            csv_path=csv_path,
+            forwards_path=forwards_path,
+            required_forward_date="2026-06-22",
+        )
+
+
+@pytest.mark.parametrize("bad_price", [np.nan, np.inf, -np.inf])
+def test_product_normalization_rejects_nonfinite_quote_even_out_of_scope(
+    tmp_path: Path,
+    bad_price: float,
+) -> None:
+    csv_path = tmp_path / "delivered.csv"
+    forwards_path = tmp_path / "forwards.parquet"
+    _write_delivered_csv(csv_path)
+    _write_forwards(forwards_path)
+    frame = pd.read_parquet(forwards_path)
+    invalid = frame.iloc[[0]].copy()
+    invalid["product"] = "2035"
+    invalid["price"] = bad_price
+    pd.concat([frame, invalid], ignore_index=True).to_parquet(forwards_path, index=False)
+
+    with pytest.raises(ValueError, match="non-finite"):
+        run_audit(
+            csv_path=csv_path,
+            forwards_path=forwards_path,
+            required_forward_date="2026-06-22",
+        )
+
+
+@pytest.mark.parametrize(
+    ("product", "load_type", "message"),
+    [
+        ("NOT-A-PRODUCT", "BASE", "unsupported forward product"),
+        ("2027", "UNKNOWN", "unsupported forward load_type"),
+    ],
+)
+def test_product_normalization_rejects_unrecognized_quote_rows(
+    tmp_path: Path,
+    product: str,
+    load_type: str,
+    message: str,
+) -> None:
+    csv_path = tmp_path / "delivered.csv"
+    forwards_path = tmp_path / "forwards.parquet"
+    _write_delivered_csv(csv_path)
+    _write_forwards(forwards_path)
+    frame = pd.read_parquet(forwards_path)
+    invalid = frame.iloc[[0]].copy()
+    invalid["product"] = product
+    invalid["load_type"] = load_type
+    pd.concat([frame, invalid], ignore_index=True).to_parquet(forwards_path, index=False)
+
+    with pytest.raises(ValueError, match=message):
         run_audit(
             csv_path=csv_path,
             forwards_path=forwards_path,

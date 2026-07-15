@@ -384,7 +384,7 @@ def test_monthly_solver_build_receives_intended_local_delivery_window(tmp_path, 
     assert argv[argv.index("--monthly-solver-delivery-local-end-date") + 1] == "2030-12-31"
 
 
-def test_eex_peak_mask_excludes_ch_national_holidays():
+def test_eex_peak_mask_includes_ch_national_holidays_on_weekdays():
     timestamps = pd.Series(
         pd.DatetimeIndex(
             [
@@ -399,10 +399,10 @@ def test_eex_peak_mask_excludes_ch_national_holidays():
 
     mask = _eex_peak_mask(timestamps)
 
-    assert mask.tolist() == [False, True, False, False]
+    assert mask.tolist() == [True, True, False, False]
 
 
-def test_eex_peak_mask_supports_neighbor_holiday_calendars():
+def test_eex_peak_mask_is_independent_of_neighbor_holidays():
     timestamps = pd.Series(
         pd.DatetimeIndex(
             [
@@ -416,14 +416,14 @@ def test_eex_peak_mask_supports_neighbor_holiday_calendars():
     fr_mask = _eex_peak_mask(timestamps, country="FR")
     at_mask = _eex_peak_mask(timestamps, country="AT")
 
-    assert fr_mask.tolist() == [False, False]
+    assert fr_mask.tolist() == [True, False]
     assert at_mask.tolist() == [True, False]
 
 
 def test_eex_peak_mask_rejects_unsupported_country():
     timestamps = pd.Series(pd.date_range("2028-07-14 10:00", periods=1, freq="h", tz="Europe/Zurich"))
 
-    with pytest.raises(ValueError, match="unsupported EEX peak holiday country"):
+    with pytest.raises(ValueError, match="unsupported EEX peak country"):
         _eex_peak_mask(timestamps, country="XX")
 
 

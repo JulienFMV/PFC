@@ -12,10 +12,12 @@ artifacts and full EPEX history). They focus on:
   3. LongTermArtifacts.swiss / .german aliases over a markets dict.
   4. Type aliasing of SwissLongTermArtifacts and
      GermanLongTermArtifacts onto MarketBranchArtifacts.
-  5. Per-market artifact suffix mapping used by save_long_term_outputs.
+  5. Governed monthly-manifest and solver-grid helpers.
 """
 
 from __future__ import annotations
+
+from types import SimpleNamespace
 
 import pandas as pd
 import pytest
@@ -27,9 +29,9 @@ from pfc_shaping.pipeline.production_phases import (
     MarketSpec,
     SharedStructuralArtifacts,
     SwissLongTermArtifacts,
-    _ARTIFACT_SUFFIX,
-    _monthly_solver_source_hashes,
+    _build_long_term_branch,
     _save_monthly_curve_manifests,
+    _solver_delivery_quarter_hour_grid,
 )
 
 
@@ -175,32 +177,6 @@ def test_long_term_artifacts_supports_extra_markets_without_field_change() -> No
     assert lt.markets["IT"] is italian
 
 
-# ---------------------------------------------------------------------------
-# Artifact suffix mapping
-# ---------------------------------------------------------------------------
-
-
-def test_artifact_suffix_legacy_ch_is_empty() -> None:
-    """CH must keep the unsuffixed legacy artifact paths
-    ('shape_hourly.parquet', 'water_value.parquet') so the dashboard
-    and downstream consumers keep reading the same paths."""
-    assert _ARTIFACT_SUFFIX["CH"] == ""
-
-
-@pytest.mark.parametrize(
-    "code, expected",
-    [("DE", "_de"), ("AT", "_at"), ("FR", "_fr"), ("IT", "_it")],
-)
-def test_artifact_suffix_per_market(code: str, expected: str) -> None:
-    assert _ARTIFACT_SUFFIX[code] == expected
-
-
-def test_artifact_suffix_covers_full_panel() -> None:
-    """The mapping must contain at least the 5 markets we plan to
-    activate in Phase 3. Adding more later is fine."""
-    assert {"CH", "DE", "FR", "AT", "IT"}.issubset(_ARTIFACT_SUFFIX.keys())
-
-
 def test_save_monthly_curve_manifests_writes_production_ch_manifest(tmp_path) -> None:
     manifest = {
         "monthly_solution_hash": "solution",
@@ -217,21 +193,70 @@ def test_save_monthly_curve_manifests_writes_production_ch_manifest(tmp_path) ->
     assert '"active_constraints_hash": "constraints"' in text
 
 
-def test_monthly_solver_source_hashes_bind_history_and_eex_report(tmp_path) -> None:
-    history = tmp_path / "history.parquet"
-    report = tmp_path / "Price_Report_EEX.xlsx"
-    history.write_bytes(b"history")
-    report.write_bytes(b"eex")
+def test_long_term_branch_passes_governed_reference_timestamp_to_assembler(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
 
-    hashes = _monthly_solver_source_hashes(
-        history_path=history,
-        eex_report_path=str(report),
+    class _Assembler:
+        def __init__(self, **kwargs) -> None:
+            self.final_product_projection_report_ = {}
+
+        def build(self, **kwargs) -> pd.DataFrame:
+            captured.update(kwargs)
+            return pd.DataFrame(
+                {"price_shape": [80.0]},
+                index=pd.DatetimeIndex([pd.Timestamp("2027-01-01T00:00:00Z")]),
+            )
+
+    monkeypatch.setattr("pfc_shaping.lt.model.assembler.PFCAssembler", _Assembler)
+    reference = pd.Timestamp("2026-07-13T12:34:56+02:00")
+    inputs = SimpleNamespace(
+        reference_timestamp=reference,
+        sh_mode="seasonal",
+        config={},
+        eex_report_path=None,
+    )
+    shared = SharedStructuralArtifacts(
+        si=object(),
+        unc=object(),
+        calibrator=None,
+        entso_forecast=pd.DataFrame(),
+        start_date="2027-01-01",
+        horizon_days=1,
+    )
+    spec = MarketSpec(
+        code="CH",
+        sheet="CH",
+        tz="Europe/Zurich",
+        country="CH",
+        epex_df=pd.DataFrame(),
+        cal_df=pd.DataFrame(),
+        pre_fitted_sh=object(),
     )
 
-    assert hashes == {
-        "forwards_path": "259aa8ef98a8b91de574cd904138ef643240c23080cf24da4793a6f10a43fa9d",
-        "eex_report_path": "ccb598084458885106bfe1f9adf8b9cd54622b266a9940f66ea14c5fa57fb71e",
-    }
+    _build_long_term_branch(
+        spec=spec,
+        inputs=inputs,
+        shared=shared,
+        peak_source_policy="same_first",
+        use_seasonal_hourly_shape=True,
+        logger=_NullLogger(),
+        pre_loaded_base_prices={"2027": 80.0},
+        pre_loaded_fwd_source="fixture",
+        pre_loaded_cascaded_prices={"2027": 80.0},
+        pre_loaded_cascader=object(),
+    )
+
+    assert captured["reference_date"] == reference.tz_convert("UTC")
+
+
+def test_solver_delivery_grid_rejects_noncontiguous_months() -> None:
+    with pytest.raises(ValueError, match="contiguous"):
+        _solver_delivery_quarter_hour_grid(
+            pd.PeriodIndex(["2027-01", "2027-03"], freq="M"),
+            timezone="Europe/Zurich",
+        )
 
 
 class _NullLogger:

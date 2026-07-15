@@ -98,10 +98,6 @@ class ShapeHourlyMLP:
         df = df.join(calendar_df[["saison", "type_jour", "heure_hce"]])
         df = df.dropna(subset=["saison", "type_jour", "heure_hce", "price_eur_mwh"])
 
-        # Auto-load outages if not provided
-        if outages_df is None:
-            outages_df = self._try_load_outages()
-
         # Temporal decay weights
         t_max = df.index.max()
         days_ago = (t_max - df.index).total_seconds() / 86400.0
@@ -364,20 +360,6 @@ class ShapeHourlyMLP:
         valid = fill_at_date.notna()
         result[valid.values] = fill_at_date[valid].values.astype(float)
         return result
-
-    @staticmethod
-    def _try_load_outages() -> pd.DataFrame | None:
-        """Try to load outages parquet if it exists."""
-        outage_path = Path(__file__).resolve().parent.parent / "data" / "outages_15min.parquet"
-        if outage_path.exists():
-            try:
-                df = pd.read_parquet(outage_path)
-                logger.info("Outages loaded: %d rows, max unavail=%.0f MW",
-                            len(df), df["unavailable_mw"].max() if "unavailable_mw" in df.columns else 0)
-                return df
-            except Exception as e:
-                logger.warning("Failed to load outages: %s", e)
-        return None
 
     @staticmethod
     def _map_outages(

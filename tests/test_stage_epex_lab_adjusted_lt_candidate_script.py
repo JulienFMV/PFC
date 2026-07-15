@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 
 import numpy as np
 import pandas as pd
 import pytest
 
-from scripts.stage_epex_lab_adjusted_lt_candidate import main, stage_candidate
 from scripts.export_local_test_ch_hourly_csv import to_hourly_csv_frame
+from scripts.stage_epex_lab_adjusted_lt_candidate import main, stage_candidate
 
 
 def _fan_parquet(path) -> None:
@@ -309,7 +309,7 @@ def test_stage_epex_lab_adjusted_candidate_blocks_contract_from_csv_without_sour
     assert not (tmp_path / "stage" / "adjusted_production_manifest_no_go.json").exists()
 
 
-def test_stage_epex_lab_adjusted_candidate_writes_contract_from_manifest_bound_audited_csv_when_evidence_is_supplied(
+def test_stage_epex_lab_adjusted_candidate_remains_no_go_without_locked_holdout(
     tmp_path,
 ) -> None:
     fan = tmp_path / "fan.parquet"
@@ -357,12 +357,17 @@ def test_stage_epex_lab_adjusted_candidate_writes_contract_from_manifest_bound_a
     assert manifest["missing_production_contract_inputs"] == []
     assert manifest["production_contract_blockers"] == []
     assert manifest["source_provenance_manifest_sha256"]
-    assert manifest["adjusted_production_contract_pass"] is True
+    assert manifest["adjusted_production_contract_pass"] is False
     contract_path = tmp_path / "stage" / "adjusted_production_manifest_no_go.json"
     contract = json.loads(contract_path.read_text(encoding="utf-8"))
     assert contract["schema_version"] == "epex_lab_adjusted_production_manifest.v1"
-    assert contract["contract_pass"] is True
+    assert contract["contract_pass"] is False
     assert contract["source_kind"] == "candidate_csv"
     assert contract["source_provenance_pass"] is True
+    assert contract["locked_holdout_policy"] == {
+        "pass": False,
+        "provided": False,
+        "status": "MISSING_LOCKED_HOLDOUT",
+    }
     assert contract["production_approved"] is False
     assert contract["production_promotion_approved"] is False

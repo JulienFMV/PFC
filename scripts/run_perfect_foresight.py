@@ -44,6 +44,7 @@ def _granularity_ladder(
     vintage: pd.Timestamp,
     target_year: int,
     config_name: str,
+    estimator: str,
 ) -> dict[str, object]:
     """Compute monthly-signature corr for Cal / Cal+Quarter / market anchors.
 
@@ -65,7 +66,16 @@ def _granularity_ladder(
     def corr(anchors: dict) -> float:
         if not anchors:
             return float("nan")
-        sig = monthly_signature(build_curve(config_name, vintage, epex, anchors), target_year)
+        sig = monthly_signature(
+            build_curve(
+                config_name,
+                vintage,
+                epex,
+                anchors,
+                estimator=estimator,
+            ),
+            target_year,
+        )
         both = pd.concat([sig, real_sig], axis=1, join="inner").dropna()
         if len(both) < 3:
             return float("nan")
@@ -86,7 +96,15 @@ def _granularity_ladder(
     }
 
 
-def _make_figures(epex, fwds, res, target_year, config_name, out_dir: Path) -> list[Path]:
+def _make_figures(
+    epex,
+    fwds,
+    res,
+    target_year,
+    config_name,
+    estimator,
+    out_dir: Path,
+) -> list[Path]:
     import matplotlib
 
     matplotlib.use("Agg")
@@ -122,8 +140,26 @@ def _make_figures(epex, fwds, res, target_year, config_name, out_dir: Path) -> l
 
     # Fig 2 — monthly signature: realized vs PF-cal vs market.
     real_sig = monthly_signature(epex, target_year)
-    pf_sig = monthly_signature(build_curve(config_name, best, epex, {str(target_year): realized_window_mean(epex, target_year)}), target_year)
-    mkt_sig = monthly_signature(build_curve(config_name, best, epex, _forwards_for_vintage(fwds, best, epex)), target_year)
+    pf_sig = monthly_signature(
+        build_curve(
+            config_name,
+            best,
+            epex,
+            {str(target_year): realized_window_mean(epex, target_year)},
+            estimator=estimator,
+        ),
+        target_year,
+    )
+    mkt_sig = monthly_signature(
+        build_curve(
+            config_name,
+            best,
+            epex,
+            _forwards_for_vintage(fwds, best, epex),
+            estimator=estimator,
+        ),
+        target_year,
+    )
     fig, ax = plt.subplots(figsize=(8, 4.5))
     ax.plot(real_sig.index, real_sig.values, "k-o", label="realized")
     ax.plot(pf_sig.index, pf_sig.values, "s--", label="perfect-foresight Cal")
@@ -150,7 +186,13 @@ def _make_figures(epex, fwds, res, target_year, config_name, out_dir: Path) -> l
     fig.tight_layout(); fig.savefig(p, dpi=130); plt.close(fig); paths.append(p)
 
     # Fig 4 — de-levelled diurnal profile, realized vs model (summer).
-    pf_curve = build_curve(config_name, best, epex, {str(target_year): realized_window_mean(epex, target_year)})
+    pf_curve = build_curve(
+        config_name,
+        best,
+        epex,
+        {str(target_year): realized_window_mean(epex, target_year)},
+        estimator=estimator,
+    )
     m = pf_curve.tz_convert(TZ); r = epex.tz_convert(TZ)
     summer = (np.isin(m.index.month, (6, 7, 8))) & (m.index.year == target_year)
     summer_r = (np.isin(r.index.month, (6, 7, 8))) & (r.index.year == target_year)
@@ -189,11 +231,11 @@ def _fmt(x, spec: str = ".3f") -> str:
         return str(x)
 
 
-def _write_report(res, ladder_df, fig_paths, target_year, out_path: Path) -> None:
+def _write_report(res, ladder_df, fig_paths, target_year, estimator, out_path: Path) -> None:
     s, d, k, agg = res.sweep, res.diurnal, res.subkpis, res.aggregates
     L = []
     L.append(f"# Perfect-Foresight Shaping Diagnostic — Delivery Cal {target_year}\n")
-    L.append(f"**Config** : `{res.config_name}`\n")
+    L.append(f"**Config** : `{res.config_name}`  \n**Estimator** : `{estimator}`\n")
     L.append("Additive, non-gating. Isolates **shaping** quality from **forward-forecast** "
              "error by re-anchoring on realized ex-post settlements (perfect foresight) and "
              "de-levelling intra-period profiles. Methodology: Fleten-Lemming (2003), "
@@ -462,7 +504,14 @@ def main(argv: list[str] | None = None) -> int:
 
     best = max(candidate_vintages,
                key=lambda v: (epex[epex.index < v].index.max() - epex[epex.index < v].index.min()).days)
-    ladder = _granularity_ladder(epex, fwds, best, args.target_year, args.config)
+    ladder = _granularity_ladder(
+        epex,
+        fwds,
+        best,
+        args.target_year,
+        args.config,
+        args.estimator,
+    )
     ladder_df = pd.DataFrame([
         {"anchor": k, "monthly_corr": round(v["corr"], 4), "n_keys": len(v["keys"]),
          "keys": ", ".join(v["keys"]) if v["keys"] else "—"}
@@ -474,10 +523,18 @@ def main(argv: list[str] | None = None) -> int:
     fig_paths: list[Path] = []
     if not args.no_figures:
         print("[pf] rendering figures ...")
-        fig_paths = _make_figures(epex, fwds, res, args.target_year, args.config, out_dir / "figures")
+        fig_paths = _make_figures(
+            epex,
+            fwds,
+            res,
+            args.target_year,
+            args.config,
+            args.estimator,
+            out_dir / "figures",
+        )
 
     report = out_dir / "PERFECT-FORESIGHT-REPORT.md"
-    _write_report(res, ladder_df, fig_paths, args.target_year, report)
+    _write_report(res, ladder_df, fig_paths, args.target_year, args.estimator, report)
     res.sweep.to_parquet(out_dir / "pf_sweep.parquet")
     res.diurnal.to_parquet(out_dir / "pf_diurnal.parquet")
     print(f"[pf] report  -> {report}")

@@ -89,7 +89,6 @@ forwards:
     monthly_level_authority: "solver"
     skip_legacy_level_cascade: true
     skip_legacy_base_smoothing: true
-    eex_history_path: "data/eex_forwards_history.parquet"
     lambda_prior: 0.000001
     lambda_smooth_month: 0.1
     lambda_smooth_yoy: 150.0
@@ -103,7 +102,8 @@ forwards:
     panel_weight: 1.0
     history_weight: 0.5
     structural_weight: 1.0
-    constraint_tolerance: 0.01
+    constraint_tolerance: 0.000000001
+    quote_conflict_tolerance: 0.01
     stationarity_tolerance: 0.0000001
 
 model:
@@ -174,7 +174,7 @@ flavors:
     24:  0.4
     36:  0.3
   # Percentile IC utilisé comme plancher prix client
-  client_percentile: "p90"
+  client_percentile: null
 
 # ── Paramètres d'export ─────────────────────────────────────
 export:
@@ -187,14 +187,28 @@ export:
   # Colonnes exportées
   columns:
     - price_shape
-    - p10
-    - p90
     - profile_type
     - confidence
     - calibrated
 
 # —— Quality gates (prod) ————————————————————————————————————————
 quality:
+  freshness:
+    fail_on_stale_inputs: true
+    min_finite_fraction: 0.95
+    recent_window_days: 7
+    min_recent_finite_fraction: 0.95
+    eex_max_age_business_days: 1
+    epex_max_age_hours: 48
+    epex_max_gap_hours: 1
+    entso_max_age_hours: 72
+    entso_max_gap_hours: 2
+    hydro_max_age_days: 10
+    hydro_max_gap_days: 14
+    outages_enabled: false
+    outages_max_age_hours: 48
+    outages_max_gap_hours: 2
+
   # Policy for external benchmark (HFC/OMPEX):
   # - advisory: never blocks publication, monitoring only
   # - strict: blocks run if thresholds are breached

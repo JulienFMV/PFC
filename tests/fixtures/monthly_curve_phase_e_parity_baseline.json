@@ -2,7 +2,7 @@
   "description": "Synthetic frozen fixture for monthly solver Phase E prod/export parity and OFF legacy baseline.",
   "history_snapshot_date": "2026-06-17",
   "monthly_authority": {
-    "active_constraints_hash": "ac7ed9b966fe21be709db0148c4af844270444bc8b3a4b073e5b2a5a40661aa1",
+    "active_constraints_hash": "d53b075cbde90355b31ae612d28bde3b18e9e594de09ac290f21bdfd4dbb1c79",
     "direct_history_constraints_hash_equal": true,
     "direct_history_monthly_hash_equal": true,
     "monthly_solution_hash": "a7f9db5e121d74a7d5349c77d86ce2030d09a032e4491a20f2f4aa4dbebd61b0",

@@ -40,7 +40,6 @@ import numpy as np
 import pandas as pd
 from pandas.tseries.offsets import BMonthEnd
 
-
 # ---------------------------------------------------------------------------
 # C3 REVIEWS — forwards_source structured flag (not just a log line)
 # ---------------------------------------------------------------------------
@@ -177,12 +176,48 @@ def list_vintages_2024_2025() -> list[pd.Timestamp]:
 # ---------------------------------------------------------------------------
 
 
+def _fit_validation_components(
+    config: AblationConfig,
+    vintage: pd.Timestamp,
+    epex_hist: pd.DataFrame,
+    *,
+    with_uncertainty: bool,
+) -> tuple[object, object, object, object | None]:
+    """Fit the leak-free shape components shared by validation build paths."""
+
+    from pfc_shaping.calibration.arbitrage_free import ArbitrageFreeCalibrator
+    from pfc_shaping.data.calendar_ch import enrich_15min_index
+    from pfc_shaping.lt.model.shape_hourly import ShapeHourly
+    from pfc_shaping.lt.model.shape_intraday import ShapeIntraday
+    from pfc_shaping.lt.model.uncertainty import Uncertainty
+
+    epex_train = epex_hist.loc[epex_hist.index < vintage]
+    cal_train = enrich_15min_index(epex_train.index, country="CH")
+    sh = ShapeHourly(use_seasonal_hourly=config.use_seasonal_hourly).fit(
+        epex_train, cal_train
+    )
+    sh._solar_epex_hist = epex_train
+    si = ShapeIntraday().fit(epex_train, None, cal_train)
+    calibrator = ArbitrageFreeCalibrator(
+        smoothness_weight=1.0,
+        tol=0.01,
+        enforce_m_factor_floor=config.enforce_m_factor_floor,
+    )
+    unc = (
+        Uncertainty(n_boot=500, seed=42).fit(epex_train, cal_train)
+        if with_uncertainty
+        else None
+    )
+    return sh, si, calibrator, unc
+
+
 def build_one(
     config: AblationConfig,
     vintage: pd.Timestamp,
     epex_hist: pd.DataFrame,
     forwards_asof: dict[str, float],
     with_uncertainty: bool = False,
+    solar_penetration_feature=None,
 ) -> pd.DataFrame:
     """Build one PFC for (config, vintage). 1 of 96 grid points.
 
@@ -201,9 +236,9 @@ def build_one(
     le skeleton léger ; les Plans 10-02/03/04 wireront le contenu).
     """
     # Local imports — évite le coût à l'import time du package validation
-    from pfc_shaping.data.calendar_ch import enrich_15min_index
     from pfc_shaping.calibration.arbitrage_free import ArbitrageFreeCalibrator
     from pfc_shaping.calibration.cascading import ContractCascader
+    from pfc_shaping.data.calendar_ch import enrich_15min_index
     from pfc_shaping.lt.model.assembler import PFCAssembler
     from pfc_shaping.lt.model.shape_hourly import ShapeHourly
     from pfc_shaping.lt.model.shape_intraday import ShapeIntraday
@@ -253,6 +288,7 @@ def build_one(
         enforce_m_factor_floor=config.enforce_m_factor_floor,
         enforce_floor=config.enforce_floor,
         allow_negative_peak=config.allow_negative_peak,
+        solar_penetration_feature=solar_penetration_feature,
     )
     pfc = assembler.build(
         base_prices=cascaded_prices,
@@ -332,8 +368,6 @@ def derive_forwards_from_epex_hist(
     # Convert historical index quarter/month for groupby aggregation
     hist_q = hist.index.quarter
     hist_m = hist.index.month
-    hist_y = hist.index.year
-
     out: dict[str, float] = {}
 
     # Yearly forwards : Y+1, Y+2, Y+3
@@ -1749,7 +1783,6 @@ def run_scorecard_full(
         test_arb_free,
         test_continuity,
         test_holiday_weekend,
-        test_seasonal_profile,
     )
 
     # WR-10 : per-vintage arb-free evaluation. L'ancienne implémentation

@@ -89,11 +89,16 @@ class PFCFlavors:
         spread_by_horizon: dict[int, float] | None = None,
         hourly_risk_premium: dict[int, float] | None = None,
         capture_premium: dict[int, float] | None = None,
-        client_percentile: str = "p90",
+        client_percentile: str | None = None,
     ) -> None:
         self.spread_by_horizon = spread_by_horizon or DEFAULT_SPREAD.copy()
         self.hourly_risk_premium = hourly_risk_premium or DEFAULT_HOURLY_RISK_PREMIUM.copy()
         self.capture_premium = capture_premium or DEFAULT_CAPTURE_PREMIUM.copy()
+        if client_percentile is not None:
+            raise ValueError(
+                "probabilistic client pricing is disabled until calibrated CH "
+                "rolling-origin evidence is promotion-approved"
+            )
         self.client_percentile = client_percentile
 
     def generate(
@@ -116,7 +121,6 @@ class PFCFlavors:
         """
         now = pd.Timestamp.now(tz="UTC")
         idx = pfc_mid.index
-        n = len(idx)
 
         # ── Horizon en mois pour chaque timestamp ──
         days_ahead = (idx - now).total_seconds() / 86400
@@ -147,12 +151,6 @@ class PFCFlavors:
         # On utilise aussi le percentile haut des IC comme plancher
         client_price = pfc_mid["price_shape"].values + spread_arr + risk_arr
 
-        if self.client_percentile == "p90" and "p90" in pfc_mid.columns:
-            p90 = pfc_mid["p90"].values
-            valid = ~np.isnan(p90)
-            # Le prix client est au minimum le p90 (conservateur vendeur)
-            client_price[valid] = np.maximum(client_price[valid], p90[valid])
-
         client = pfc_mid.copy()
         client["price_shape"] = client_price
         client["spread"] = spread_arr
@@ -160,9 +158,7 @@ class PFCFlavors:
         client["pfc_flavor"] = "client"
 
         # Recalculer p10/p90 pour le client (shift by spread+risk)
-        if "p10" in client.columns:
-            client["p10"] = pfc_mid["p10"].values + spread_arr + risk_arr
-            client["p90"] = pfc_mid["p90"].values + spread_arr + risk_arr
+        client = client.drop(columns=["p10", "p90"], errors="ignore")
 
         # ══════════════════════════════════════════════════════════════════
         # 3. VALORISATION PRODUCTION (dispatch hydro)
@@ -181,9 +177,8 @@ class PFCFlavors:
         prod["pfc_flavor"] = "production"
 
         # p10/p90 shifted
-        if "p10" in prod.columns:
-            prod["p10"] = pfc_mid["p10"].values + capture_arr
-            prod["p90"] = pfc_mid["p90"].values + capture_arr
+        prod = prod.drop(columns=["p10", "p90"], errors="ignore")
+        mid = mid.drop(columns=["p10", "p90"], errors="ignore")
 
         # ── Statistiques ──
         mid_mean = pfc_mid["price_shape"].mean()

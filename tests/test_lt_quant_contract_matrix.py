@@ -106,8 +106,21 @@ def test_peak_quote_is_represented_even_when_base_bucket_name_differs():
     assert "2030-01" in peak.metadata["source_quotes"]
 
 
-def test_ch_august_1_holiday_is_offpeak():
+def test_fully_covered_redundant_peak_parent_is_accepted_by_source_hierarchy():
+    idx = pd.date_range("2030-01-01", "2030-03-31 23:00", freq="h", tz="UTC")
+    system = build_base_peak_offpeak_constraint_system(
+        idx,
+        {"2030-01": 80.0, "2030-02": 80.0, "2030-03": 80.0},
+        {"2030-Q1": 100.0, "2030-01": 100.0, "2030-02": 100.0, "2030-03": 100.0},
+        country="CH",
+    )
+
+    assert {"PEAK:2030-01", "PEAK:2030-02", "PEAK:2030-03"}.issubset(system.names)
+    assert "PEAK:2030-Q1" not in system.names
+
+
+def test_ch_august_1_weekday_holiday_is_eex_peak():
     idx = pd.date_range("2030-08-01 00:00", "2030-08-01 23:00", freq="h", tz="Europe/Zurich").tz_convert("UTC")
     peak = eex_peak_mask(idx, country="CH")
 
-    assert not bool(peak.any())
+    assert int(peak.sum()) == 12

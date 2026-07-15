@@ -249,6 +249,7 @@ class PFCAssembler:
         enforce_floor: bool = False,
         allow_negative_peak: bool = True,
         enable_solar_modulation: bool = False,
+        solar_penetration_feature=None,
         enable_intraday_amplitude_shrinkage: bool = False,
         enable_electrification_shape: bool = False,
         electrification_scenario: str | None = None,
@@ -298,6 +299,7 @@ class PFCAssembler:
         # (Phase-10 atol=1e-12 reproducibility contract). See
         # pfc_shaping/lt/model/solar_modulation.py.
         self.enable_solar_modulation: bool = bool(enable_solar_modulation)
+        self.solar_penetration_feature = solar_penetration_feature
         self.enable_intraday_amplitude_shrinkage: bool = bool(
             enable_intraday_amplitude_shrinkage
         )
@@ -398,25 +400,12 @@ class PFCAssembler:
 
     @staticmethod
     def _is_peak_timestamp(idx_local: pd.DatetimeIndex, country: str = "CH") -> np.ndarray:
-        """Return EEX-style peak mask on a local timezone index (15-min granularity).
-
-        Uses ``np.isin`` rather than ``pd.Series(..., index=idx_local).isin(...)``
-        so the function survives autumnal DST transitions where ``idx_local``
-        contains duplicated timestamps (Europe/Zurich on the last Sunday of
-        October has 02:00→02:00 repeated, which makes the Series-with-index
-        path raise on some pandas versions). The country-aware holidays
-        table covers CH / DE / AT / FR / IT.
-        """
-        years = sorted(set(int(y) for y in idx_local.year.unique()))
-        holiday_set = _country_holidays(years, country)
-
+        """Return European EEX Peakload on a local-time index."""
+        if str(country).upper() not in _COUNTRY_LOCAL_TZ:
+            raise ValueError(f"unsupported EEX peak country: {country!r}")
         is_weekday = idx_local.weekday < 5
         is_peak_hour = (idx_local.hour >= 8) & (idx_local.hour < 20)
-        # np.isin is duplicate-safe; sorted holiday_set as numpy array.
-        dates_arr = np.asarray(idx_local.date, dtype=object)
-        holidays_arr = np.fromiter(holiday_set, dtype=object, count=len(holiday_set))
-        is_holiday = np.isin(dates_arr, holidays_arr)
-        return (is_weekday & is_peak_hour & ~is_holiday).astype(bool)
+        return (is_weekday & is_peak_hour).astype(bool)
 
     def build(
         self,
@@ -424,6 +413,7 @@ class PFCAssembler:
         quoted_keys: set[str] | None = None,
         start_date: str | None = None,
         horizon_days: int = HORIZON_DAYS,
+        delivery_index: pd.DatetimeIndex | None = None,
         entso_forecast: pd.DataFrame | None = None,
         hydro_forecast: pd.DataFrame | None = None,
         outages_forecast: pd.DataFrame | None = None,
@@ -472,11 +462,25 @@ class PFCAssembler:
             ``tests/test_shape_hourly_bowl.py::test_split_level_anomaly_drift_warning``
             (Plan 05C-02 Task 5) for the CI signal that the warning actually fires.
         """
-        if start_date is None:
-            start_date = (pd.Timestamp.now("UTC") + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
-
-        ts_start = pd.Timestamp(start_date, tz="UTC")
-        ts_end = ts_start + pd.Timedelta(days=horizon_days)
+        if delivery_index is not None:
+            idx = pd.DatetimeIndex(delivery_index)
+            if idx.tz is None:
+                raise ValueError("delivery_index must be timezone-aware")
+            idx = idx.tz_convert("UTC")
+            if idx.empty or not idx.is_unique or not idx.is_monotonic_increasing:
+                raise ValueError("delivery_index must be non-empty, unique, and sorted")
+            if len(idx) > 1 and not bool(
+                (idx.to_series().diff().dropna() == pd.Timedelta(minutes=15)).all()
+            ):
+                raise ValueError("delivery_index must have an exact 15-minute cadence")
+            ts_start = idx[0]
+            ts_end = idx[-1] + pd.Timedelta(minutes=15)
+        else:
+            if start_date is None:
+                start_date = (pd.Timestamp.now("UTC") + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+            ts_start = pd.Timestamp(start_date, tz="UTC")
+            ts_end = ts_start + pd.Timedelta(days=horizon_days)
+            idx = pd.date_range(ts_start, ts_end, freq="15min", inclusive="left", tz="UTC")
 
         logger.info("Assemblage PFC 15min : %s Ã¢â€ â€™ %s", ts_start.date(), ts_end.date())
 
@@ -490,9 +494,6 @@ class PFCAssembler:
                 "Legacy forward cascade skipped; monthly_level_authority=%s",
                 self.monthly_level_authority,
             )
-
-        # Index complet 15min UTC
-        idx = pd.date_range(ts_start, ts_end, freq="15min", inclusive="left", tz="UTC")
 
         # Enrichissement calendaire
         cal = enrich_15min_index(idx, country=country)
@@ -556,7 +557,13 @@ class PFCAssembler:
         # solar layer uses as the strict leak-free training cut-off.
         if getattr(self, "enable_solar_modulation", False):
             from pfc_shaping.lt.model.solar_modulation import solar_modulate
-            f_H = solar_modulate(f_H, cal, self.sh, vintage=reference_date)
+            f_H = solar_modulate(
+                f_H,
+                cal,
+                self.sh,
+                vintage=reference_date,
+                feature=self.solar_penetration_feature,
+            )
 
         # Ã¢â€â‚¬Ã¢â€â‚¬ Facteur 15min f_Q Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         if getattr(self, "enable_electrification_shape", False):
@@ -709,7 +716,7 @@ class PFCAssembler:
 
         # Ã¢â€â‚¬Ã¢â€â‚¬ Calibration arbitrage-free Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         calibrated = False
-        if self.calibrator is not None:
+        if self.calibrator is not None and not solver_monthly_level:
             price_shape, calibrated = self._apply_calibration(
                 price_raw, idx, base_prices, quoted_keys=quoted_keys, country=country
             )
@@ -737,6 +744,13 @@ class PFCAssembler:
 
         if solver_monthly_level:
             price_shape = self._preserve_monthly_base_means(price_shape, B, idx, country=country)
+            price_shape, calibrated = self._project_final_solver_products(
+                price_shape,
+                idx=idx,
+                base_prices=base_prices,
+                quoted_keys=quoted_keys,
+                country=country,
+            )
 
         df = pd.DataFrame(
             {
@@ -797,7 +811,7 @@ class PFCAssembler:
             Tuple (prix calibrÃƒÂ©, True si convergence OK)
         """
         from pfc_shaping.calibration.arbitrage_free import FuturesContract
-        from pfc_shaping.calibration.cascading import parse_key, _period_boundaries_utc
+        from pfc_shaping.calibration.cascading import _period_boundaries_utc
 
         contracts = self._build_non_overlapping_contracts(
             idx=idx,
@@ -816,10 +830,8 @@ class PFCAssembler:
             "Calibration arbitrage-free : %d contrats non-overlap (country=%s)",
             len(contracts), country,
         )
-        # Route the market country to the calibrator so the EEX Peak
-        # mask uses the right timezone and national-holiday calendar
-        # (e.g. Bundesfeier excluded only for CH, Tag der Deutschen
-        # Einheit excluded only for DE).
+        # Route the market country for the local EEX Peakload timezone.
+        # Public holidays remain in the contractual delivery window.
         try:
             result = self.calibrator.calibrate(price_raw, contracts, country=country)
         except TypeError:
@@ -830,7 +842,7 @@ class PFCAssembler:
             if country.upper() != "CH":
                 logger.warning(
                     "Calibrator does not accept country=%s; falling back to CH "
-                    "holidays — peak/offpeak split may be biased on this market.",
+                    "timezone — peak/offpeak split may be biased on this market.",
                     country,
                 )
             result = self.calibrator.calibrate(price_raw, contracts)
@@ -1099,17 +1111,14 @@ class PFCAssembler:
         base_prices: dict,
         quoted_keys: set[str],
     ) -> str | None:
-        """Select the BASE key used by final calibration.
+        """Select the most granular BASE key on the legacy calibration path.
 
-        Monthly solver mode supplies synthetic monthly BASE keys for the level
-        input. Those keys must not become final hard traded constraints unless
-        they also appear in ``quoted_keys``.
+        Solver-owned levels are handled by ``_build_monthly_solver_contracts``
+        before this helper is reached. Preserving Month > Quarter > Calendar
+        here is therefore required for legacy cascaded-shape parity.
         """
-
+        del quoted_keys
         candidates = [key_m, key_q, key_y]
-        for key in candidates:
-            if key in base_prices and key in quoted_keys:
-                return key
         for key in candidates:
             if key in base_prices:
                 return key
@@ -1355,6 +1364,169 @@ class PFCAssembler:
         raw_month_mean = price_raw.groupby(month_key).transform("mean")
         base_month_mean = base_level.groupby(month_key).transform("mean")
         return (price_raw + base_month_mean - raw_month_mean).rename("price_shape")
+
+    def _project_final_solver_products(
+        self,
+        price_shape: pd.Series,
+        *,
+        idx: pd.DatetimeIndex,
+        base_prices: dict,
+        quoted_keys: set[str] | None,
+        country: str,
+    ) -> tuple[pd.Series, bool]:
+        """Project the final solver-owned shape onto hard BASE/PEAK products.
+
+        This is deliberately the last mutation of ``price_shape``. Synthetic
+        solver months are hard BASE level constraints; only PEAK keys present
+        in ``quoted_keys`` are eligible market constraints. The disjoint
+        PEAK/OFFPEAK representation preserves each monthly BASE mean while
+        enforcing accepted PEAK quotes.
+        """
+
+        from pfc_shaping.lt.model.quant_shape_optimizer import QuantShapeOptimizer
+        from pfc_shaping.lt.model.shape_constraints import (
+            build_base_peak_offpeak_constraint_system,
+        )
+
+        monthly_base_prices: dict[str, float] = {}
+        for raw_key, value in base_prices.items():
+            key = str(raw_key)
+            if len(key) == 7 and key[4] == "-" and key[5:].isdigit():
+                monthly_base_prices[key] = float(value)
+        if not monthly_base_prices:
+            raise ValueError(
+                "monthly_level_authority='solver' requires synthetic monthly BASE levels "
+                "for final product projection"
+            )
+
+        accepted_keys = {str(key) for key in (quoted_keys or set())}
+        peak_prices: dict[str, float] = {}
+        partial_peak_quotes: list[str] = []
+        out_of_scope_peak_quotes: list[str] = []
+        for raw_key in accepted_keys:
+            lowered = raw_key.lower()
+            if lowered.endswith("-offpeak"):
+                raise ValueError(
+                    f"explicit OFFPEAK quote {raw_key!r} is not supported by the solver projection; "
+                    "provide the approved BASE/PEAK hierarchy and audit implied OFFPEAK"
+                )
+            if not lowered.endswith("-peak") or raw_key not in base_prices:
+                continue
+            product = raw_key[:-5]
+            if self._product_has_full_coverage(idx, product, country=country):
+                peak_prices[product] = float(base_prices[raw_key])
+            elif self._product_has_any_coverage(idx, product, country=country):
+                partial_peak_quotes.append(raw_key)
+            else:
+                out_of_scope_peak_quotes.append(raw_key)
+
+        if partial_peak_quotes:
+            raise ValueError(
+                "quoted PEAK products partially overlap the delivered artifact and cannot be "
+                f"repriced exactly: {sorted(partial_peak_quotes)}"
+            )
+
+        constraints = build_base_peak_offpeak_constraint_system(
+            idx,
+            monthly_base_prices,
+            peak_prices,
+            country=country,
+        )
+        optimizer = QuantShapeOptimizer(
+            lambda_prior=1.0,
+            lambda_smooth_h=0.0,
+            lambda_smooth_m=0.0,
+            lambda_seam=0.0,
+            epsilon_ridge=0.0,
+            feasibility_tol=min(
+                float(getattr(self, "monthly_constraint_tolerance", 1e-9)),
+                1e-9,
+            ),
+            stationarity_tol=1e-7,
+        )
+        result = optimizer.solve(price_shape.rename("final_shape_prior"), constraints)
+        max_abs_error = (
+            float(result.constraint_residuals["abs_error"].max())
+            if not result.constraint_residuals.empty
+            else 0.0
+        )
+        if not np.isfinite(max_abs_error) or max_abs_error > 1e-6:
+            raise ValueError(
+                "final BASE/PEAK/OFFPEAK projection residual exceeds hard tolerance: "
+                f"{max_abs_error:.3e} EUR/MWh"
+            )
+        self.final_product_projection_report_ = {
+            "constraint_count": int(len(constraints.rows)),
+            "base_constraint_count": int(sum(row.kind == "BASE" for row in constraints.rows)),
+            "peak_constraint_count": int(sum(row.kind == "PEAK" for row in constraints.rows)),
+            "offpeak_constraint_count": int(sum(row.kind == "OFFPEAK" for row in constraints.rows)),
+            "max_abs_error_eur_mwh": max_abs_error,
+            "primal_inf": float(result.kkt.primal_inf),
+            "stationarity_inf": float(result.kkt.stationarity_inf),
+            "partial_peak_quote_ids": sorted(partial_peak_quotes),
+            "out_of_scope_peak_quote_ids": sorted(out_of_scope_peak_quotes),
+        }
+        logger.info(
+            "Final solver product projection: constraints=%d, PEAK=%d, OFFPEAK=%d, max_error=%.3e",
+            len(constraints.rows),
+            self.final_product_projection_report_["peak_constraint_count"],
+            self.final_product_projection_report_["offpeak_constraint_count"],
+            max_abs_error,
+        )
+        return result.curve.rename("price_shape"), True
+
+    @staticmethod
+    def _product_has_full_coverage(
+        idx: pd.DatetimeIndex,
+        product: str,
+        *,
+        country: str,
+    ) -> bool:
+        from pfc_shaping.calibration.monthly_forward_curve import product_periods
+
+        try:
+            months = product_periods(str(product))
+        except ValueError:
+            return False
+        if len(months) == 0 or len(idx) == 0:
+            return False
+        local_tz = _country_local_tz(country)
+        first = months.min()
+        last = months.max()
+        start = pd.Timestamp(year=int(first.year), month=int(first.month), day=1, tz=local_tz).tz_convert("UTC")
+        if int(last.month) == 12:
+            end = pd.Timestamp(year=int(last.year) + 1, month=1, day=1, tz=local_tz).tz_convert("UTC")
+        else:
+            end = pd.Timestamp(year=int(last.year), month=int(last.month) + 1, day=1, tz=local_tz).tz_convert("UTC")
+        step = idx[1] - idx[0] if len(idx) > 1 else pd.Timedelta(minutes=15)
+        return bool(idx[0] <= start and idx[-1] + step >= end)
+
+    @staticmethod
+    def _product_has_any_coverage(
+        idx: pd.DatetimeIndex,
+        product: str,
+        *,
+        country: str,
+    ) -> bool:
+        from pfc_shaping.calibration.monthly_forward_curve import product_periods
+
+        try:
+            months = product_periods(str(product))
+        except ValueError:
+            return False
+        if len(months) == 0 or len(idx) == 0:
+            return False
+        local_tz = _country_local_tz(country)
+        first = months.min()
+        last = months.max()
+        start = pd.Timestamp(year=int(first.year), month=int(first.month), day=1, tz=local_tz).tz_convert("UTC")
+        if int(last.month) == 12:
+            end = pd.Timestamp(year=int(last.year) + 1, month=1, day=1, tz=local_tz).tz_convert("UTC")
+        else:
+            end = pd.Timestamp(
+                year=int(last.year), month=int(last.month) + 1, day=1, tz=local_tz
+            ).tz_convert("UTC")
+        return bool(idx[-1] >= start and idx[0] < end)
 
     def _stabilize_raw_curve(
         self,

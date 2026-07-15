@@ -72,10 +72,7 @@ from pfc_shaping.validation.scorecard import (
 TZ = "Europe/Zurich"
 
 #: EEX peak convention (matches assembler `_is_peak_timestamp` / cascader
-#: `count_hours`): 08:00-20:00 local, Mon-Fri, excluding CH *national* holidays.
-#: NB: a known inconsistency exists in `cascading.fit_peak_spreads` (it omits the
-#: holiday mask); we follow the canonical assembler convention here. Flagged in
-#: 10-PERFECT-FORESIGHT-SHAPING.md §6 for the codebase owner.
+#: `count_hours`): 08:00-20:00 local, Monday-Friday, holidays included.
 PEAK_HOUR_START = 8
 PEAK_HOUR_END = 20
 
@@ -108,15 +105,12 @@ def _to_local(series: pd.Series) -> pd.Series:
 
 
 def _peak_mask(idx_local: pd.DatetimeIndex, country: str = "CH") -> np.ndarray:
-    """EEX peak mask on a local-tz index: 08-20 Mon-Fri excl. CH national holidays."""
-    import holidays as _holidays
-
-    years = range(int(idx_local.year.min()), int(idx_local.year.max()) + 1)
-    cal = _holidays.country_holidays(country, years=list(years))
+    """European EEX Peakload: 08:00-20:00 Monday-Friday, holidays included."""
+    if str(country).upper() not in {"CH", "DE", "AT", "FR", "IT"}:
+        raise ValueError(f"unsupported EEX peak country: {country!r}")
     is_weekday = idx_local.weekday < 5
     is_peak_hour = (idx_local.hour >= PEAK_HOUR_START) & (idx_local.hour < PEAK_HOUR_END)
-    is_holiday = np.isin(idx_local.normalize().date, list(cal.keys()))
-    return np.asarray(is_weekday & is_peak_hour & ~is_holiday)
+    return np.asarray(is_weekday & is_peak_hour)
 
 
 def realized_window_mean(
@@ -217,9 +211,15 @@ def perfect_foresight_anchors(
 # ---------------------------------------------------------------------------
 # Shape scoring
 # ---------------------------------------------------------------------------
-def build_curve(config_name: str, vintage: pd.Timestamp, epex: pd.Series,
-                anchors: dict[str, float],
-                estimator: str = "baseline") -> pd.Series:
+def build_curve(
+    config_name: str,
+    vintage: pd.Timestamp,
+    epex: pd.Series,
+    anchors: dict[str, float],
+    estimator: str = "baseline",
+    *,
+    solar_penetration_feature=None,
+) -> pd.Series:
     """Build a single PFC and return the hourly `price_shape` series.
 
     Thin wrapper around `build_one` for the perfect-foresight diagnostic. The
@@ -248,6 +248,10 @@ def build_curve(config_name: str, vintage: pd.Timestamp, epex: pd.Series,
             f"estimator={estimator!r} must be 'baseline', 'sota', 'sota_solar', "
             "'sota_amp' or 'sota_electrification'"
         )
+    if estimator == "sota_solar" and solar_penetration_feature is None:
+        raise ValueError(
+            "sota_solar requires an explicit governed solar_penetration_feature"
+        )
     try:
         config = next(c for c in ABLATION_GRID if c.name == config_name)
     except StopIteration as exc:
@@ -269,6 +273,7 @@ def build_curve(config_name: str, vintage: pd.Timestamp, epex: pd.Series,
             epex_hist=epex.to_frame("price_eur_mwh"),
             forwards_asof=anchors,
             with_uncertainty=False,
+            solar_penetration_feature=solar_penetration_feature,
         )
     return df["price_shape"].resample("1h").mean()
 
@@ -574,6 +579,8 @@ def run_perfect_foresight(
     config_name: str = PRODUCTION_CONFIG,
     vintages: list[pd.Timestamp] | None = None,
     estimator: str = "baseline",
+    *,
+    solar_penetration_feature=None,
 ) -> PerfectForesightResult:
     """Run the full perfect-foresight shaping diagnostic for one delivery year.
 
@@ -618,7 +625,14 @@ def run_perfect_foresight(
     diurnal_rows: list[dict] = []
     for v in vintages:
         # Perfect-foresight build (anchor realized Cal target_year only).
-        pf_curve = build_curve(config_name, v, epex, {str(target_year): realized_cal}, estimator=estimator)
+        pf_curve = build_curve(
+            config_name,
+            v,
+            epex,
+            {str(target_year): realized_cal},
+            estimator=estimator,
+            solar_penetration_feature=solar_penetration_feature,
+        )
         pf_sig = monthly_signature(pf_curve, target_year)
         pf_r, pf_rho, n_pairs = _safe_corr(pf_sig, real_sig)
         if n_pairs < 3:
@@ -628,7 +642,14 @@ def run_perfect_foresight(
         mkt_fwds = _forwards_for_vintage(forwards_history, v, epex)
         market_r = float("nan")
         if mkt_fwds:
-            mkt_curve = build_curve(config_name, v, epex, mkt_fwds, estimator=estimator)
+            mkt_curve = build_curve(
+                config_name,
+                v,
+                epex,
+                mkt_fwds,
+                estimator=estimator,
+                solar_penetration_feature=solar_penetration_feature,
+            )
             mkt_sig = monthly_signature(mkt_curve, target_year)
             market_r, _, _ = _safe_corr(mkt_sig, real_sig)
 
@@ -666,7 +687,14 @@ def run_perfect_foresight(
     subkpis: dict[str, Any] = {}
     if vintages:
         best = max(vintages, key=lambda v: _train_years(epex, v))
-        pf_best = build_curve(config_name, best, epex, {str(target_year): realized_cal}, estimator=estimator)
+        pf_best = build_curve(
+            config_name,
+            best,
+            epex,
+            {str(target_year): realized_cal},
+            estimator=estimator,
+            solar_penetration_feature=solar_penetration_feature,
+        )
         subkpis = {"vintage": best.strftime("%Y-%m-%d"),
                    **ch_physical_subkpis(pf_best, realized_1h, target_year)}
 

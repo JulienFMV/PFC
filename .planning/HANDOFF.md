@@ -2,7 +2,7 @@
 
 Latest active handoff:
 
-`.planning/phases/14-lt-audit-remediation/SESSION-HANDOFF-20260709-T061-T060-FUTURE-HOLDOUT.md`
+`.planning/phases/14-lt-audit-remediation/SESSION-HANDOFF-20260714-TIER2-BASE-SIGNED-OUTPUT-REPLAY.md`
 
 Read order for new agents:
 
@@ -1362,6 +1362,282 @@ Result: `112 passed, 1 skipped`.
 
 Current frozen T057 plan remains unchanged. Regenerated current T057 runner
 still exits `1` with `WAITING_FOR_FULL_SPOT_COVERAGE`.
+
+## 2026-07-13 Tier 2 BASE-Only Replay Core Closure
+
+Added the private target-blind BASE replay core in
+`pfc_shaping/calibration/tier2_monthly_eex_base_replay.py` with offensive tests
+in `tests/test_tier2_monthly_eex_base_replay.py`. The core produces deterministic
+candidate and fixed-baseline monthly BASE outputs only. PEAK/OFFPEAK, signed PIT
+proof, campaign metrics and promotion remain unsupported.
+
+The shared solver in `pfc_shaping/calibration/monthly_forward_curve.py` now:
+
+- anchors incomplete curves independently by delivery year;
+- applies missing-month seasonal priors relative to the represented raw prior
+  using actual delivery-hour weights;
+- prevents monthly D2 smoothing across represented buckets and year boundaries;
+- rejects invalid objective weights, non-finite values, NaT month labels and
+  monthly-index collisions before solve.
+
+The governed core caps objective weights and KKT condition at `1e12`, rejects
+ridge/lstsq fallback, emits typed numerical failures and reprices every retained
+quote within `1e-9`. Historical shape requires 24 distinct snapshots per
+calendar month and never counts multiple delivery years as independent
+snapshots.
+
+Verification: `90 passed, 2 known warnings` targeted; `167 passed, 1 skipped,
+2 known warnings` expanded; impacted integration `25 passed, 3 deselected` for
+three pre-existing wall-clock fixture failures; Ruff and diff-check PASS; CT and
+Power BI paths untouched. Quant, Data and IT all returned GO with no P0/P1 for
+the shared solver and private BASE core.
+
+Global production remains `NO_GO`. Next: a path-only signed execution wrapper
+must replay exact permitted rows and bind runtime/config/source closure plus
+candidate/baseline output bytes before any verified metric is admitted.
+
+## 2026-07-13 Tier 2 Same-Snapshot Replay Prerequisite
+
+The fold-lineage verifier now has a private token-protected context containing
+only immutable historical and retained records selected from the same verified
+in-memory EEX frame. The public API and claim remain data-lineage only. There is
+no second catalog/history read and no target or diagnostic payload in the
+context. Materialization occurs before the final exact package snapshot; a
+concurrent package mutation test fails closed.
+
+Verification: `48 passed, 1 skipped`; Ruff/diff-check PASS. Quant, Data and IT
+returned GO with no P0/P1. Model-output verification remains NO_GO pending the
+pinned trust policy, full grid config, replayable source/runtime closure and
+pre-existing signed output commitment.
+
+## 2026-07-13 Tier 2 Monthly EEX Preregistration
+
+Added a fail-closed governed preregistration contract in
+`pfc_shaping/calibration/tier2_monthly_eex_evaluation.py` with focused tests in
+`tests/test_tier2_monthly_eex_evaluation.py`.
+
+Only `tier2_monthly_eex_evaluation_plan.v1` can be authenticated. The public
+boundary consumes exact plan, model-governance receipt and independent
+trusted-time receipt paths and returns a token-protected immutable proof. The
+plan is limited to `MONTHLY_EEX_MASKED_QUOTE_ONLY`; it freezes candidate/source/
+runtime hashes, baseline, statistical gates, mandatory MONTH/QUARTER horizon
+buckets and exact canonical origins. Atomic BASE/PEAK/OFFPEAK identifiability
+uses CH DST-aware month x PEAK/OFFPEAK segments.
+
+All candidate-freeze, fold-result, campaign and index validators remain
+unconditionally `UNSUPPORTED` and outside the public surface until signed
+row-level EEX replay is implemented. Quant, Data and IT returned GO with no
+P0/P1 for this narrow plan slice. Targeted validation: `19 passed, 1 skipped`;
+expanded related matrix: `87 passed, 1 skipped, 1 known warning`; Ruff PASS.
+
+Global production and downstream Tier 2 remain NO_GO. The row-level follow-up
+is recorded in the next section.
+
+## 2026-07-13 Tier 2 Monthly EEX Fold Data Lineage
+
+Added the path-only fold boundary in
+`pfc_shaping/calibration/tier2_monthly_eex_fold_evidence.py` and its offensive
+tests. It verifies signed EEX PIT row lineage, target/overlap masking, permitted
+candidate rows, catalog/source/parser stability and independent authority roles.
+It returns only `VerifiedSelectionFoldDataLineage`; the associated numeric result
+is explicitly `MODEL_OUTPUT_UNVERIFIED`, non-campaign and non-production.
+
+The final correction snapshots the exact package before reading the manifest,
+binds parsed manifest bytes to that initial hash and compares the whole package
+again after replay. This closes the IT-reproduced post-read/pre-snapshot race.
+
+Validation: `45 passed, 1 skipped` targeted; `208 passed, 1 skipped, 1 known
+warning` expanded; Ruff and diff-check PASS. Quant, Data and IT all returned GO
+with no P0/P1 for this narrow data-lineage slice. Global production and all
+verified model/campaign/HOLDOUT claims remain NO_GO. Next: deterministic replay
+of the candidate solver and canonical baseline before exposing any metric.
+
+## 2026-07-13 EEX Vintage And Rolling-Origin Code Contract
+
+The EEX rolling-origin boundary is now fail-closed. Legacy latest-revision
+history is rejected; strict calibration requires signed immutable XLSX
+vintages, exact parser/lineage replay and externally timestamped receipts in a
+fixed chained journal. Governed non-smoke selection fixes the CH BASE profile,
+rejects non-finite/weakened settings and dirty or changing runtime sources,
+uses exact complete cases, and publishes only content-sealed exact artifact
+sets. Smoke and unsupported runs emit no candidate.
+
+Final verification is `41 passed` targeted and `244 passed` expanded; Ruff and
+`git diff --check` pass. Quant, Data and IT all give GO for this code contract
+with no P0/P1. Production remains NO_GO because no IT timestamp service, WORM
+journal or genuine eligible historical vintages exist. Never backfill them.
+Next: pre-register the Tier 2 evaluation/fold contract before collecting and
+scoring future vintages.
+
+## 2026-07-13 Canonical LT Evidence And Release Closure
+
+Phase 14 steps 4+5 now use one assembled-candidate seal as the governed
+artifact authority. Finalization, registration, real capstone evaluation and
+atomic promotion replay canonical bundle bytes; selected-lambda pre-run proof,
+post-run selected-config parity and delivered-product evidence remain separate
+hash-parented artifacts.
+
+The last roast corrections make assembled evidence strict by default in the
+atomic promotion API, reserve `evidence_contract` from generic finalization,
+prevent registry retry poisoning before request validation, and bind promotion
+locks to PID plus process-start identity. The expanded verification result is
+`340 passed, 1 skipped, 1 warning`; after the final metadata-reservation patch,
+the affected atomic/assembled matrix is `56 passed, 1 warning` and Ruff passes.
+
+Permanent Quant/Data/IT final verdicts are all `GO` for steps 4+5, with no
+remaining P0/P1. Production remains `NO_GO`: the current shared C: generation is
+`20260713-migrated-seed-v2`, explicitly non-calibration-eligible, and no fresh
+signed eligible acquisition exists. Do not promote, start Docker handoff, or
+commit `data/eex_forwards_history.parquet`. Continue with fresh governed data
+acquisition, then build and audit a real assembled candidate.
+
+The user environment contains both shared-root variables, but the current
+long-running process does not; restart it or pass the data root explicitly.
+No `ENTSOE_API_KEY` is present in process, user or machine environments.
+
+## 2026-07-13 Pre-Run Governance And Evidence Barrier
+
+The permanent Quant roast gives `GO` to the governed EEX data/PIT tranche.
+The candidate builder now captures signed historical thresholds and a
+selected-lambda decision before its only LT solve, then stops at
+`CANDIDATE_STAGED_EVIDENCE_PENDING`.
+
+`candidate_evidence.v1` is mandatory before atomic finalization. Independent
+inputs are Ed25519-bound to exact role/hash/size/PIT cutoff and revalidated by
+the finalizer; selected config parity and threshold cutoff semantics are also
+replayed. The final Data re-roast gives this pre-run sub-lot `GO`, with no
+P0/P1 remaining in that exact scope. Final aggregate: `187 passed, 1 skipped`.
+
+Production remains `NO_GO`: derived export/audit evidence is not yet assembled
+from staged bytes, `governed_release` still accepts legacy external paths, and
+no fresh signed calibration-eligible LT snapshot exists. Continue with the
+staged-byte evidence assembler, not a new solve or manual month corrections.
+
+## 2026-07-13 Shared Data And Capstone Closure
+
+Shared ENTSO-E data is canonical under
+`C:\Users\jbattaglia\pfc_local_data\entsoe`: the two verified imports contain
+seven and three Parquet payloads and remain model-ineligible until governed
+acquisition. Latest hardening closes optional-role promotion freshness,
+absolute UTC grid phase, globally overlapping constraint rows and exhaustive
+descendant-partition repricing for every in-grid hard quote. Producer and capstone share the same
+grid validator. Focused tests are `63 passed`; the broad affected LT matrix is
+`323 passed, 1 skipped, 1 known warning`. Production
+remains `NO_GO` pending fresh signed data and protected IT trust services.
+
+Cross-project reuse is now explicit at user scope:
+`PFC_LT_DATA_ROOT=C:\Users\jbattaglia\pfc_local_data` and
+`PFC_SHARED_DATA_ROOT=C:\Users\jbattaglia\pfc_local_data`. The shared
+`entsoe\CATALOG.md` records immutable import IDs and consumer rules. All ten
+payloads were rechecked byte-for-byte against their old source-project copies;
+all SHA-256 values matched. Existing project-local files remain legacy
+duplicates, not canonical sources.
+
+The direct cross-project ENTSO-E contract is additionally exposed at user
+scope as
+`PFC_ENTSOE_DATA_ROOT=C:\Users\jbattaglia\pfc_local_data\entsoe`. It is a
+read-library root, not an LT snapshot selector. The active MLP path no longer
+auto-loads repo-local `outages_15min.parquet`; `run_long_term_phase` injects
+`inputs.outages_all` from the selected governed generation, and a disabled or
+absent outage role stays neutral. Verification on 2026-07-13: both reusable
+imports passed byte/frame receipt replay; shared-root, archive, freshness and
+hidden-path tests reported `53 passed, 1 skipped`. The expanded release/input
+matrix reported `179 passed, 1 skipped`.
+
+Permanent Data/IT/Quant roasts then required three additional fail-closed
+controls. The archive writer now consumes `PFC_ENTSOE_DATA_ROOT` directly,
+never falls back to `PFC_LT_DATA_ROOT`, checks junction confinement before
+creating `imports`, and rejects unclassified ENTSO-like Parquets. Before the
+first LT Parquet read, every role that the selected configuration would consume
+must be individually eligible, share the attested snapshot cutoff, and be PIT
+at valuation. `entsoe\curated` is documented as a non-authoritative legacy
+copy; cross-project consumers must select `imports\<import_id>` explicitly.
+
+The final archive contract is `entso_reusable_import.v2`: every recursively
+discovered source Parquet must be either a recognized archived payload or an
+explicit `--exclude-parquet`, and the verifier checks the exact disjoint
+partition. The capstone now captures and hash-binds the archived config,
+derives the complete consumed-role set independently, requires exact receipt
+set equality and replays the common acquisition cutoff. Final affected matrix:
+`183 passed, 1 skipped`. IT found no remaining code P0 and issued only a local
+single-writer GO; workstation ACL/WORM/signing/concurrency remain enterprise
+NO-GO blockers.
+
+Final shared-root hardening removed the low-level implicit repo fallback,
+requires absolute archive roots, binds `manifest.import_id` to the archive
+directory and disables direct `pfc_shaping.pipeline.rolling_update` execution
+before any I/O. Permanent Quant/Data/IT re-roasts found no remaining P0/P1 in
+this local shared-data tranche. Dashboard/runbook references to the retired
+direct publisher were removed and its retained implementation is directly
+tested. Focused archive/resolver/legacy tests: `25 passed`; affected governance
+matrix: `126 passed`. Production remains NO-GO for fresh signed eligible data,
+service-owned immutable storage and explicit scheduler/container injection.
+
+IT follow-up closes the code-level replay and bypass P0s: signed journal heads
+now have an exclusive contiguous history, restoring old pointer plus mutable
+head is rejected, `legacy_repo` is ineligible, and all known legacy direct or
+scheduled publishers fail before execution or ingestion. Targeted IT tests:
+`39 passed`.
+Production remains `NO_GO` for WORM/ACL, scheduler replacement, separated keys,
+crash recovery and a unified governed runner.
+
+Final broad matrix after these changes: `329 passed, 1 skipped, 1 known
+warning`.
+
+## 2026-07-13 Phase 14 Product Governance Continuation
+
+Canonical detailed handoff:
+`.planning/phases/14-lt-audit-remediation/SESSION-HANDOFF-20260713-PRODUCT-LEAD-QUALITY-P0.md`.
+
+Current durable state:
+
+- reusable ENTSO-E archives are verified under
+  `C:\Users\jbattaglia\pfc_local_data\entsoe` and remain intentionally
+  non-model-eligible;
+- calibration-eligible LT acquisitions require signed provenance, per-role
+  PIT availability, cadence and byte/frame replay;
+- delivered BASE/PEAK/OFFPEAK audit is rerun from bundle bytes;
+- QUOTE_CONFLICT production exceptions require external signed approval;
+- promotion receipts, events and an external monotone journal head are signed;
+- European EEX Peakload was corrected to Monday-Friday 08:00-20:00 including
+  public holidays; CH 2027 has 3,132 contractual PEAK hours;
+- broad current verification: `252 passed, 1 skipped`.
+
+## 2026-07-13 Shared Data V2 And Semantic PIT Closure
+
+The shared-data tranche now closes the remaining archive and EEX-history
+replay gaps. New `entso_reusable_import.v2` archives bind the complete
+recursive source Parquet inventory, per-source byte receipts, explicit
+exclusions and recomputed DataFrame metadata. The writer rescans the source
+inventory before publication. Producer and capstone share strict consumed-role
+semantics and reject non-boolean activation flags. Governed EEX history is
+validated for required columns, finite prices, unique quote identities and no
+observation after valuation; the capstone independently replays that semantic
+PIT check from the captured bytes.
+
+Preferred cross-project imports under
+`C:\Users\jbattaglia\pfc_local_data\entsoe\imports`:
+
+- `pfc-ct-data-20260522-v3-inventory`: 7 archived plus 4 explicitly excluded
+  Parquets; manifest SHA-256
+  `f07dc8a1bbcff4d296f2e17fc45d8c97c9ec2850f0a829e1914b92eb98f13040`;
+- `pfc-phase10-20260528-v2-inventory`: 3 archived plus 3 explicitly excluded
+  Parquets; manifest SHA-256
+  `13dfc8611f72a08885b7157104a279a014f046263312313af99f83070d029a15`.
+
+The archived payload hash maps are exactly identical to their immutable v1
+predecessors. Both new imports remain
+`FORBIDDEN_UNTIL_GOVERNED_IMPORT`/`calibration_eligible=false`; they are
+reusable research archives, not active LT inputs. Focused input/archive/
+capstone matrix: `91 passed, 1 skipped`. Expanded governed release/input
+matrix: `191 passed, 1 skipped`. Compileall and `git diff --check` pass; the
+skip is the Windows symlink test where the account cannot create a directory
+symlink. Production remains `NO_GO` pending a fresh signed eligible
+acquisition and enterprise storage/trust controls.
+
+Production remains `NO_GO`: no fresh attested acquisition exists, IT trust
+infrastructure is not provisioned, and unified promotion runner / legacy
+publisher shutdown / rolling-origin / holdout / Docker work are pending.
 
 ## 2026-07-09 Expert Roast Follow-Up - Future Approval Fail-Closed
 
@@ -2844,3 +3120,301 @@ Result: `113 passed, 1 skipped`.
 Current frozen T057 plan remains unchanged. Regenerated current T057 runner
 still exits `1` with `WAITING_FOR_FULL_SPOT_COVERAGE`.
 
+
+## 2026-07-14 Consumer-Neutral FMV Shared Data Root
+
+The workstation data platform is now addressed canonically by
+`FMV_DATA_ROOT=C:\Users\jbattaglia\pfc_local_data`. No heavy data was moved or
+rewritten. User-scope `FMV_DATA_ROOT` was added while the three matching legacy
+aliases remain temporarily configured. New configuration examples expose only
+the generic variable.
+
+The existing LT pointer was materialized non-destructively at:
+
+`C:\Users\jbattaglia\pfc_local_data\views\pfc_lt\current.json`
+
+Its bytes match the legacy root pointer with SHA-256
+`937653A1806DA48146B27762156AA31D6E4C09A090947522D327F6889C626740` and resolve
+generation `20260713-migrated-seed-v2`. The canonical view is now authoritative;
+the root pointer is a frozen fallback only. Future publishers write one
+canonical pointer, not two.
+
+Changed shared-data files:
+
+- `.env.example`
+- `docs/data/SHARED-DATA-PLATFORM.md`
+- `pfc_shaping/data/shared_data_root.py`
+- `pfc_shaping/data/lt_input_sources.py`
+- `pfc_shaping/pipeline/candidate_bundle.py`
+- `scripts/archive_entso_dataset.py`
+- `scripts/create_lt_input_snapshot.py`
+- `scripts/materialize_shared_data_views.py`
+- `scripts/build_lt_candidate.py`
+- `scripts/run_governed_lt_release.py`
+- `scripts/check_monthly_curve_promotion_from_manifests.py`
+- `tests/test_shared_data_root.py`
+- `tests/test_lt_input_sources.py`
+- `tests/test_archive_entso_dataset_script.py`
+- `tests/test_materialize_shared_data_views_script.py`
+- `tests/test_run_governed_lt_release_script.py`
+- `tests/test_candidate_bundle.py`
+- `tests/test_candidate_evidence_assembler.py`
+- `tests/test_check_monthly_curve_promotion_from_manifests.py`
+
+Controls now enforced:
+
+- aliases must agree and direct domain roots must map to their generic child;
+- consumer view, snapshot contract and input paths are confined and reject
+  symlink/junction ancestors;
+- contract path is canonical and migration replays full contract semantics;
+- legacy fallback candidates are marked `legacy_external_pointer` and rejected
+  by the promotion capstone;
+- non-audit release commands do not resolve irrelevant data configuration;
+- signing private-key examples are role-separated and disabled by default.
+
+Verification:
+
+- Ruff on the changed Python surface: pass.
+- Shared root/view/writer/reader/candidate/capstone focused matrix:
+  `41 passed, 3 skipped` after final confinement changes.
+- Full promotion capstone before the final confinement-only delta:
+  `63 passed`.
+- Earlier combined shared-data/capstone matrix: `119 passed, 1 skipped`.
+- Real local migration replay and LT resolver: pass.
+- `git diff --check`: pass; only expected LF/CRLF warnings.
+
+An unrelated expanded evidence-assembler matrix reported `80 passed, 1
+skipped, 23 failed`: every failure came from a pre-existing fixture whose EEX
+availability timestamp was seconds after its fixed valuation reference. The
+PIT gate correctly rejected it as future data; it was not weakened here.
+
+Production remains `NO_GO`. Shared storage architecture is not signed fresh
+data, Docker/CI, managed permissions, content-addressed deduplication or a
+complete build/finalize/register/audit/promote runner. The pre-existing direct
+`rolling_update` OMPEX path also remains a separate program risk even though no
+OMPEX data was introduced into the shared LT contract.
+
+Final D140 verification amendment:
+
+- final focused matrix under the real user environment: 63 passed, 4 skipped;
+- final anti-link subset after broken-link hardening: 34 passed, 3 skipped;
+- Ruff: pass; git diff --check: pass with line-ending warnings only;
+- independent Data, IT and Quant reviewers: three stage GO verdicts, no remaining stage-introduced P0/P1;
+- production remains globally NO_GO for the separate evidence and industrialization gaps listed above.
+
+## 2026-07-14 Legacy Rolling Publisher Removal
+
+The recoverable `rolling_update` implementation has been removed. The module
+is now a 42-line fail-closed tombstone that directs callers to the governed
+candidate/audit/receipt/promotion workflow. OMPEX/HFC comparison, ingestion,
+model construction, DuckDB persistence and export code no longer exist in the
+module.
+
+Changed files:
+
+- `pfc_shaping/pipeline/rolling_update.py`
+- `tests/test_legacy_production_entrypoints.py`
+- `.planning/phases/14-lt-audit-remediation/DECISION-LOG.md`
+- `.planning/HANDOFF.md`
+
+Controls and verification:
+
+- imported `run_update`, `_run_update_legacy` and `setup_logging` all raise
+  before I/O;
+- `python -m pfc_shaping.pipeline.rolling_update` and direct file execution
+  fail non-zero and leave the working directory empty;
+- the tombstone has no live environment loader and no OMPEX/HFC, persistence,
+  model or export primitive;
+- `python -m ruff check pfc_shaping/pipeline/rolling_update.py tests/test_legacy_production_entrypoints.py`: pass;
+- `python -m pytest tests/test_legacy_production_entrypoints.py tests/test_lt_ct_imports.py -q`:
+  `29 passed, 1 skipped`;
+- final independent IT re-roast: no P0/P1/P2, stage GO. Earlier independent
+  Data and Quant reviews also returned stage GO.
+
+Durable decision: D-20260714-141. OMPEX is benchmark-only and cannot influence
+inputs, calibration, selection, backtest truth, gates, promotion or outputs.
+Production remains globally `NO_GO`; this change closes one bypass but is not
+promotion evidence.
+
+## 2026-07-14 Phase-Separated Governed LT Controller
+
+D142 makes `scripts/run_governed_lt_release.py` the canonical release CLI with
+six separate commands: `build`, `finalize`, `register`, `audit`, `promote` and
+`status`. It deliberately has no multi-phase or automatic promotion command.
+Every invocation emits versioned JSON and executes one authority boundary.
+
+Changed files for D142:
+
+- `pfc_shaping/pipeline/governed_release_cli_contract.py`
+- `pfc_shaping/pipeline/governed_release.py`
+- `pfc_shaping/pipeline/atomic_promotion.py`
+- `pfc_shaping/data/forward_proxy.py`
+- `scripts/build_lt_candidate.py`
+- `scripts/finalize_lt_candidate.py`
+- `scripts/run_governed_lt_release.py`
+- `pfc_shaping/tools/OPERATIONS.md`
+- `tests/test_run_governed_lt_release_script.py`
+- `tests/test_governed_release.py`
+- `tests/test_candidate_evidence_assembler.py`
+- `tests/test_forward_proxy.py`
+- `.planning/phases/14-lt-audit-remediation/DECISION-LOG.md`
+- `.planning/HANDOFF.md`
+
+Controls now enforced:
+
+- private-key matrix before phase I/O: none for build/finalize/register/status,
+  receipt key only for audit, event key only for promote;
+- external model, acquisition and quote-policy signing keys are forbidden in
+  every runtime phase;
+- build state and independent-policy next action are separate fields;
+- build/audit expected governance stops use exit `30`, while CLI misuse remains
+  exit `2`;
+- finalize retries the immutable final candidate after rename and requires the
+  exact sealed policy bytes;
+- audit receipt recovery no longer needs a deleted private key;
+- status uses `governed_lt_release_status.v2`, covers intermediate/terminal
+  states and creates no release, workflow or evidence path;
+- controller imports do not load the scientific builder runtime for status or
+  help;
+- fixed historical fixtures now use a deterministic internal observation
+  clock, preserving the production PIT rejection rules.
+
+Verification:
+
+- core controller/governance/atomic/legacy/LT matrix: `119 passed, 1 skipped`;
+- candidate assembly + policy + seal + real capstone: `26 passed` with one
+  existing pandas future warning;
+- forward snapshot/PIT matrix: `18 passed`;
+- Ruff: pass;
+- `git diff --check`: pass, expected LF/CRLF warnings only;
+- final independent IT, Security and Operations roasts: three stage GO
+  verdicts, no D142 P0/P1.
+
+Next global industrialization stage: bind an explicit expected-current event
+or generation into registration and enforce that CAS under the promotion lock,
+then expose governed rollback with the same CAS and test crash recovery on the
+target filesystem. These are not D142 regressions. Production remains
+globally `NO_GO`, and no real candidate was promoted in this stage.
+
+## 2026-07-14 D143 Governed Release CAS, Journal And Rollback Hardening
+
+D143 closes the software-side expected-current CAS, immutable signed journal,
+crash-repair and governed rollback stage. The authoritative state is the signed
+immutable event/head chain; `current.json` and the mutable head are reparable
+projections. New transitions accept active primary keys only. Historical keys
+are replay-only and exact committed retries remain repairable after rotation.
+
+Additional fail-closed controls added during independent roast cycles:
+
+- candidate root, trust anchors and all ancestors reject symlink/junction
+  indirection; candidate payloads and root manifests reject hardlinks;
+- staging files/directories are flushed before final rename, then the parent is
+  flushed where supported;
+- `PFC_PROMOTION_RELEASE_DOMAIN_ID` provides one mount-independent canonical
+  UUID domain for requests, receipts, events and journal paths, pinned by an
+  immutable `release_domain.json` marker;
+- request timestamps are canonicalized to whole UTC seconds before hashing;
+- shared strict JSON/YAML parsers reject duplicate keys and YAML merge
+  collisions, non-finite numbers, cycles, excessive depth/cardinality and
+  alias-DAG amplification in policy, capstone, receipt, manifest, seal and
+  assembler paths;
+- crash-leftover immutable-write hardlinks are recovered only by exact inode
+  identity, with idempotent concurrent cleanup and parent fsync;
+- CLI outcomes are `40` CAS conflict, `41` busy transition, `50` integrity or
+  governance failure, and `51` committed transition requiring projection
+  repair.
+
+Verification on the final worktree:
+
+- Ruff on all D143 runtime and test files: pass;
+- integrated matrix: `351 passed, 2 skipped, 1 warning in 243.88s`;
+- `git diff --check`: pass, with only expected LF/CRLF notices;
+- final Systems, Security and replacement IT/Operations re-roasts: stage GO,
+  no P0/P1;
+- no real candidate promoted and no generated production artefact committed.
+
+Durable decision: D-20260714-143. Global production status remains `NO_GO`.
+Required external evidence is still WORM or external monotonic anti-rewind for
+the journal, service-account ACLs, HSM/KMS key custody, unique domain UUID
+provisioning, and kill/restart/concurrent-writer/hardlink/rename durability
+drills on the exact Windows/SMB target volume.
+
+## 2026-07-14 D144 Target-Volume Storage Drill
+
+D144 adds a synthetic, non-promotional Windows/SMB storage qualification
+harness. It creates only a new
+`<drill-root>/.pfc-lt-storage-drill/<run-id>` directory, refuses governed
+release/candidate ancestry, reparse points, hardlinked controls and exposed
+private keys, and never calls a governed transition API.
+
+The harness exercises the exact D143 immutable writer/recovery, hardlink
+contention, transition lock, atomic JSON replacement and directory-finalization
+primitives. Probes are subprocess-supervised; Windows uses nested
+`KILL_ON_JOB_CLOSE` Job Objects and the public CLI also supervises the entire
+run. Typed drive/short-UNC/FQDN-UNC aliases must be distinct and identity-
+equivalent. Reports are versioned, hash-bound, inventory-closed and always set
+`promotion_ready=false`, `production_authorization=false` and
+`production_qualification_status=UNSUPPORTED`.
+
+Changed runtime surface: `pfc_shaping/path_safety.py`,
+`pfc_shaping/pipeline/storage_drill.py`, Windows atomic read/write retry and
+deadline support in `pfc_shaping/pipeline/atomic_promotion.py`, shared reparse
+checks in evidence/governed-release/shared-root modules, and
+`scripts/run_lt_release_storage_drill.py`. Dedicated verification is
+`37 passed, 2 skipped`; integrated verification is
+`247 passed, 4 skipped, 1 warning`. Final Systems, Security and IT/Operations
+re-roasts returned GO with no P0/P1. No production or target-volume artefact
+was generated.
+
+Durable decision: D-20260714-144. Global production remains `NO_GO` pending
+execution on the exact SMB volume and service identities plus multi-host,
+WORM/ACL, HSM/KMS, power-loss durability, backup/restore and DR attestations.
+
+## 2026-07-15 D145 Signed Admission And Publication Closure
+
+D145 closes the remaining software-side admission and publication gaps before
+the curated Phase 14 commit. REGISTER consumes a canonical Ed25519-signed v3
+request bound to the workflow domain, release domain, candidate, expected
+current event and exact evidence hashes. AUDIT and PROMOTE use physically
+separate workflow namespaces, read-only lookups never create or repair governed
+roots, and all post-CAS projection failures return exit `51` with
+`commit_status=COMMITTED` for exact repair.
+
+The installed runtime is sealed by an exact Python-file allowlist and embedded
+SHA-256 source revision. Two isolated builds produced the same 69-member wheel;
+both wheel audits passed and an isolated install/smoke test returned CLI exit
+`0`:
+
+- wheel SHA-256:
+  `d944cb56914fd4c6fe61c98e4398a1710ede30f365144a5ec49e26ba5c624fad`;
+- embedded source revision:
+  `2cca924acf184f6e442598c852325aa2a8944908f8d2f6e84eae7cc737f8a6c7`.
+
+Probabilistic publication now exposes only governed positive-schema rows
+(`price_shape`, `profile_type`, `confidence`) and rejects duplicate labels,
+non-finite values, invalid quantile order and non-governed interval states.
+Deterministic Euler export remains explicitly deterministic-only.
+
+Final verification: focused governance Ruff passed; `git diff --check` passed
+with expected Windows LF/CRLF notices; the final release/request/promotion/
+package/probabilistic matrix reported `360 passed, 2 skipped in 569.80s`.
+Independent Quant and IT/Operations re-roasts returned software GO with no
+P0/P1. No CT or Power BI file was changed, no real candidate was generated or
+promoted, and the modified heavy EEX parquet remains local and excluded from
+the curated commit.
+
+The repository-wide integration run exposed and closed three test-harness
+defects: obsolete direct-export suffix assertions, non-transactional
+`sys.modules` isolation, and Windows storage-drill success budgets shorter than
+the retained 1,000 fsynced replacements under load. The fail-closed runtime and
+the dedicated 0.1/1-second timeout tests were not relaxed. Final full suite:
+`1909 passed, 11 skipped, 23 warnings in 2439.58s`.
+
+Durable decision: D-20260715-145. Software status is conditional GO only.
+Global production remains `NO_GO`: the shared-data pointer is still
+`20260713-migrated-seed-v2`, `MIGRATED_UNVERIFIED`,
+`calibration_eligible=false`, with availability ending 2026-06-08. The next
+scientific action is a fresh PIT data capture and candidate regeneration,
+followed by delivered-product, strict export and independent benchmark audits.
+IT must separately prove exact-volume ACL/WORM, HSM/KMS, multi-host SMB,
+power-loss, backup/restore and DR controls.

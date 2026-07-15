@@ -498,6 +498,57 @@ def test_module_all_completeness():
         assert hasattr(pf, name), f"__all__ lists {name!r} but it is not defined"
 
 
+def test_granularity_ladder_uses_requested_estimator(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from pfc_shaping.validation import perfect_foresight as pf
+    from pfc_shaping.validation import scorecard
+    from scripts import run_perfect_foresight as runner
+
+    index = pd.date_range(
+        "2025-01-01",
+        "2026-01-01",
+        freq="1h",
+        inclusive="left",
+        tz="UTC",
+    )
+    epex = pd.Series(
+        50.0 + np.sin(np.arange(len(index)) * 2.0 * np.pi / len(index)),
+        index=index,
+    )
+    selected_estimators: list[str] = []
+
+    def fake_build_curve(
+        _config_name: str,
+        _vintage: pd.Timestamp,
+        series: pd.Series,
+        _anchors: dict[str, float],
+        estimator: str = "baseline",
+        **_kwargs: object,
+    ) -> pd.Series:
+        selected_estimators.append(estimator)
+        return series
+
+    monkeypatch.setattr(pf, "build_curve", fake_build_curve)
+    monkeypatch.setattr(
+        scorecard,
+        "_forwards_for_vintage",
+        lambda *_args, **_kwargs: {"2025": 50.0, "2025-Q1": 50.0},
+    )
+
+    ladder = runner._granularity_ladder(
+        epex,
+        pd.DataFrame(),
+        pd.Timestamp("2024-12-31", tz="UTC"),
+        2025,
+        "bowl_on_floors_off",
+        "sota",
+    )
+
+    assert set(ladder) == {"pf_cal", "pf_cal_quarter", "market"}
+    assert selected_estimators == ["sota", "sota", "sota"]
+
+
 # ---------------------------------------------------------------------------
 # Slow integration test — real run_perfect_foresight with a single vintage
 # ---------------------------------------------------------------------------

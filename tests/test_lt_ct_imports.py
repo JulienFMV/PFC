@@ -51,9 +51,17 @@ def _purge(prefixes: tuple[str, ...]) -> None:
 @pytest.fixture(autouse=True)
 def fresh_modules():
     """Drop cached pfc_shaping modules between tests so import paths are exercised."""
+    original_modules = {
+        name: module
+        for name, module in sys.modules.items()
+        if name.startswith("pfc_shaping")
+    }
     _purge(("pfc_shaping",))
-    yield
-    _purge(("pfc_shaping",))
+    try:
+        yield
+    finally:
+        _purge(("pfc_shaping",))
+        sys.modules.update(original_modules)
 
 
 def test_shim_registers_lazy_proxies_in_sys_modules() -> None:
@@ -105,6 +113,7 @@ def test_legacy_from_import_resolves_to_new_module() -> None:
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", DeprecationWarning)
         from pfc_shaping.model.assembler import PFCAssembler as Legacy
+
         from pfc_shaping.lt.model.assembler import PFCAssembler as Modern
 
     assert Legacy is Modern, "legacy alias must reach the same class object"

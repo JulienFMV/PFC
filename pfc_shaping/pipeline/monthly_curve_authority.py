@@ -8,15 +8,15 @@ must consume when the monthly solver is enabled.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from dataclasses import dataclass
 import hashlib
 import json
+from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 
 import pandas as pd
 
-from pfc_shaping.calibration.monthly_curve_lambda_calibration import config_hash
+from pfc_shaping.calibration.monthly_curve_config_identity import config_hash
 from pfc_shaping.calibration.monthly_curve_priors import (
     MonthlyShapePrior,
     build_fused_shape_prior,
@@ -34,6 +34,11 @@ from pfc_shaping.calibration.monthly_forward_curve import (
     build_monthly_constraint_system,
     product_periods,
     solve_monthly_forward_curve_from_constraints,
+)
+from pfc_shaping.data.forward_proxy import (
+    ForwardEligibility,
+    ForwardSnapshot,
+    verify_forward_eligibility,
 )
 
 DEFAULT_MONTHLY_SOLVER_CONFIG: dict[str, object] = {
@@ -56,6 +61,7 @@ DEFAULT_MONTHLY_SOLVER_CONFIG: dict[str, object] = {
     "history_weight": 0.5,
     "structural_weight": 1.0,
     "constraint_tolerance": 1e-9,
+    "quote_conflict_tolerance": 0.01,
     "stationarity_tolerance": 1e-7,
     "eex_history_path": "data/eex_forwards_history.parquet",
 }
@@ -106,6 +112,7 @@ def monthly_curve_config_from_settings(settings: Mapping[str, object]) -> Monthl
         neighbor_shrinkage=float(settings.get("neighbor_shrinkage", 0.5)),
         min_history_snapshots=int(settings.get("min_history_snapshots", 24)),
         constraint_tolerance=float(settings.get("constraint_tolerance", 1e-9)),
+        quote_conflict_tolerance=float(settings.get("quote_conflict_tolerance", 0.01)),
         stationarity_tolerance=float(settings.get("stationarity_tolerance", 1e-7)),
     )
 
@@ -191,6 +198,10 @@ def solve_monthly_level_authority(
     timezone: str = "Europe/Zurich",
     source_hashes: Mapping[str, str] | None = None,
     original_forward_prices: Mapping[str, float] | None = None,
+    own_forward_snapshot: ForwardSnapshot | None = None,
+    forward_eligibility: ForwardEligibility | None = None,
+    expected_forward_max_age_business_days: int = 1,
+    allow_unverified_inputs: bool = False,
 ) -> MonthlyLevelAuthority:
     """Solve the monthly level and return assembler-ready inputs."""
 
@@ -198,14 +209,65 @@ def solve_monthly_level_authority(
     cfg_settings.update(dict(settings or {}))
     cfg = monthly_curve_config_from_settings(cfg_settings)
     market = str(market).upper()
+    if own_forward_snapshot is None and not allow_unverified_inputs:
+        raise ValueError(
+            "a verified ForwardSnapshot is required; "
+            "allow_unverified_inputs is restricted to non-promotional tests and research"
+        )
     eex_history = eex_history.copy() if eex_history is not None else pd.DataFrame()
+    valuation_ts = _resolve_valuation_timestamp(run_timestamp)
     run_ts = _resolve_run_timestamp(run_timestamp, eex_history)
+    quote_provenance = _normalize_quote_provenance(
+        own_forward_snapshot.to_manifest() if own_forward_snapshot is not None else None,
+        run_timestamp=run_ts,
+    )
+    provenance_market = str(quote_provenance.get("market") or market).upper()
+    if provenance_market != market:
+        raise ValueError(
+            f"forward provenance market mismatch: expected {market}, got {provenance_market}"
+        )
+    if own_forward_snapshot is not None and dict(own_base_prices) != dict(own_forward_snapshot.prices):
+        raise ValueError("own_base_prices must exactly match the validated ForwardSnapshot prices")
+    if (
+        own_forward_snapshot is not None
+        and original_forward_prices is not None
+        and dict(original_forward_prices) != dict(own_forward_snapshot.prices)
+    ):
+        raise ValueError("original_forward_prices must exactly match the validated ForwardSnapshot prices")
+    if own_forward_snapshot is not None:
+        assert own_forward_snapshot.snapshot_date is not None
+        assert own_forward_snapshot.available_at is not None
+        if own_forward_snapshot.snapshot_date > valuation_ts:
+            raise ValueError("forward snapshot_date is after the valuation timestamp")
+        if own_forward_snapshot.available_at > valuation_ts:
+            raise ValueError("forward available_at is after the valuation timestamp")
+        if forward_eligibility is None:
+            raise ValueError("matching forward_eligibility.v1 evidence is required")
+        if not isinstance(forward_eligibility, ForwardEligibility):
+            raise TypeError("forward_eligibility must be a verified ForwardEligibility object")
+        verify_forward_eligibility(
+            own_forward_snapshot,
+            forward_eligibility,
+            valuation_timestamp=valuation_ts,
+            expected_max_age_business_days=int(expected_forward_max_age_business_days),
+        )
+    quote_source_ids = {
+        str(quote["product"]): str(quote["quote_id"])
+        for quote in quote_provenance.get("quotes", [])
+        if isinstance(quote, Mapping) and quote.get("product") and quote.get("quote_id")
+    }
     own_quotes = _quotes_from_prices(
         market=market,
         prices=own_base_prices,
         load_type="BASE",
-        run_timestamp=run_ts,
-        source="monthly_solver_current_snapshot",
+        snapshot_date=pd.Timestamp(quote_provenance["snapshot_date"]),
+        available_at=pd.Timestamp(quote_provenance["available_at"]),
+        source=str(quote_provenance["source_kind"]),
+        source_by_product=quote_source_ids,
+        snapshot_id=str(quote_provenance.get("snapshot_id") or ""),
+        observation_id=str(quote_provenance.get("observation_id") or ""),
+        source_kind=str(quote_provenance.get("source_kind") or ""),
+        source_sha256=str(quote_provenance.get("source_sha256") or ""),
     )
     constraints = build_monthly_constraint_system(
         delivery_months,
@@ -214,6 +276,7 @@ def solve_monthly_level_authority(
         market=market,
         load_type="BASE",
         constraint_tolerance=cfg.constraint_tolerance,
+        quote_conflict_tolerance=cfg.quote_conflict_tolerance,
     )
     neighbor_markets = tuple(str(m).upper() for m in cfg_settings.get("markets", ("DE", "FR", "AT", "IT")))
     neighbor_prices = {
@@ -277,8 +340,9 @@ def solve_monthly_level_authority(
                 market=neighbor,
                 prices=prices,
                 load_type="BASE",
-                run_timestamp=run_ts,
-                source="monthly_solver_neighbor_snapshot",
+                snapshot_date=run_ts,
+                available_at=run_ts,
+                source="NEIGHBOR_PRIOR_UNVERIFIED",
             )
         ),
         eex_history=eex_history,
@@ -298,6 +362,11 @@ def solve_monthly_level_authority(
         fused_status=fused.status,
         structural_prior_summary=_prior_diagnostics_summary(structural),
         source_hashes=source_hashes or {},
+        quote_provenance=quote_provenance,
+        valuation_timestamp=valuation_ts,
+        forward_eligibility=(
+            forward_eligibility.to_manifest() if forward_eligibility is not None else {}
+        ),
     )
     return MonthlyLevelAuthority(
         inputs=inputs,
@@ -309,6 +378,14 @@ def solve_monthly_level_authority(
         synthetic_monthly_keys=synthetic_monthly_keys,
         manifest=manifest,
     )
+
+
+def active_monthly_curve_config_payload(
+    settings: Mapping[str, object],
+) -> dict[str, object]:
+    """Return the canonical lambda-selection payload consumed by production."""
+
+    return _active_config_payload(settings)
 
 
 def solve_monthly_level_authority_from_history(
@@ -345,6 +422,7 @@ def solve_monthly_level_authority_from_history(
         timezone=timezone,
         source_hashes={"forwards_path": _file_sha256(forwards_path)},
         original_forward_prices=original_forward_prices or own,
+        allow_unverified_inputs=True,
     )
 
 
@@ -375,8 +453,14 @@ def _quotes_from_prices(
     market: str,
     prices: Mapping[str, float],
     load_type: str,
-    run_timestamp: pd.Timestamp,
+    snapshot_date: pd.Timestamp,
+    available_at: pd.Timestamp,
     source: str,
+    source_by_product: Mapping[str, str] | None = None,
+    snapshot_id: str = "",
+    observation_id: str = "",
+    source_kind: str = "",
+    source_sha256: str = "",
 ) -> tuple[MarketQuote, ...]:
     out: list[MarketQuote] = []
     for product, price in sorted(prices.items()):
@@ -388,9 +472,14 @@ def _quotes_from_prices(
                 product=str(product),
                 load_type=str(load_type).upper(),
                 price=float(price),
-                snapshot_date=run_timestamp,
-                source=source,
-                available_at=run_timestamp,
+                snapshot_date=snapshot_date,
+                source=str((source_by_product or {}).get(str(product), source)),
+                available_at=available_at,
+                quote_id=str((source_by_product or {}).get(str(product), "")),
+                snapshot_id=snapshot_id,
+                observation_id=observation_id,
+                source_kind=source_kind,
+                source_sha256=source_sha256,
             )
         )
     return tuple(out)
@@ -414,6 +503,78 @@ def _resolve_run_timestamp(run_timestamp: pd.Timestamp | None, history: pd.DataF
     return pd.Timestamp.utcnow().tz_localize(None).normalize()
 
 
+def _resolve_valuation_timestamp(run_timestamp: pd.Timestamp | None) -> pd.Timestamp:
+    timestamp = pd.Timestamp(run_timestamp) if run_timestamp is not None else pd.Timestamp.now("UTC")
+    if timestamp.tzinfo is None:
+        return timestamp.tz_localize("UTC")
+    return timestamp.tz_convert("UTC")
+
+
+def _normalize_quote_provenance(
+    provenance: Mapping[str, object] | None,
+    *,
+    run_timestamp: pd.Timestamp,
+) -> dict[str, object]:
+    if provenance is None:
+        fixture_timestamp = pd.Timestamp(run_timestamp).isoformat()
+        return {
+            "schema_version": "forward_snapshot.v1",
+            "market": None,
+            "source_kind": "TEST_FIXTURE",
+            "source_description": "Implicit non-promotional test fixture",
+            "snapshot_date": fixture_timestamp,
+            "available_at": fixture_timestamp,
+            "source_path": None,
+            "source_sha256": None,
+            "hard_quote_eligible": False,
+            "quote_count": None,
+            "promotion_eligible": False,
+        }
+
+    payload = dict(provenance)
+    source_kind = str(payload.get("source_kind") or "UNKNOWN").upper()
+    if source_kind not in {"EEX_XLSX", "EEX_UNC"}:
+        raise ValueError(f"forward source kind {source_kind} is forbidden for hard constraints")
+    if not bool(payload.get("hard_quote_eligible", False)):
+        raise ValueError(f"forward source {source_kind} is not hard-quote eligible")
+    for field in ("snapshot_date", "available_at", "source_path", "source_sha256"):
+        if not payload.get(field):
+            raise ValueError(f"forward provenance field {field} is required")
+    source_sha256 = str(payload["source_sha256"]).lower()
+    if len(source_sha256) != 64 or any(char not in "0123456789abcdef" for char in source_sha256):
+        raise ValueError("forward provenance source_sha256 must be a lowercase SHA-256 digest")
+    source_path = Path(str(payload["source_path"]))
+    if not source_path.is_file():
+        raise ValueError(f"forward provenance source_path does not exist: {source_path}")
+    if _file_sha256(source_path) != source_sha256:
+        raise ValueError("forward provenance source_sha256 does not match source_path bytes")
+    snapshot_date = pd.Timestamp(payload["snapshot_date"])
+    available_at = pd.Timestamp(payload["available_at"])
+    if available_at.tzinfo is None:
+        available_at = available_at.tz_localize("UTC")
+    else:
+        available_at = available_at.tz_convert("UTC")
+    if snapshot_date.tzinfo is None:
+        snapshot_date = snapshot_date.tz_localize("UTC")
+    else:
+        snapshot_date = snapshot_date.tz_convert("UTC")
+    if available_at.date() < snapshot_date.date():
+        raise ValueError("forward source available_at precedes snapshot_date")
+    payload.update(
+        {
+            "schema_version": str(payload.get("schema_version") or "forward_snapshot.v1"),
+            "source_kind": source_kind,
+            "snapshot_date": snapshot_date.isoformat(),
+            "available_at": available_at.isoformat(),
+            "source_path": str(Path(str(payload["source_path"])).resolve()),
+            "source_sha256": source_sha256,
+            "hard_quote_eligible": True,
+            "promotion_eligible": False,
+        }
+    )
+    return payload
+
+
 def _manifest(
     *,
     market: str,
@@ -427,19 +588,76 @@ def _manifest(
     fused_status: str,
     structural_prior_summary: Mapping[str, object],
     source_hashes: Mapping[str, str],
+    quote_provenance: Mapping[str, object],
+    valuation_timestamp: pd.Timestamp,
+    forward_eligibility: Mapping[str, object],
 ) -> dict[str, object]:
     monthly_payload = {str(k): round(float(v), 10) for k, v in result.monthly_curve.sort_index().items()}
     active_config_payload = _active_config_payload(settings)
+    product_hierarchy_policy = {
+        "schema_version": "monthly_quote_hierarchy_policy.v1",
+        "priority": ["MONTH", "QUARTER", "CALENDAR"],
+        "quote_conflict_tolerance_eur_mwh": float(
+            settings.get("quote_conflict_tolerance", 0.01)
+        ),
+        "hard_repricing_tolerance_eur_mwh": float(
+            settings.get("constraint_tolerance", 1e-9)
+        ),
+        "stationarity_tolerance": float(settings.get("stationarity_tolerance", 1e-7)),
+        "residual_lineage_required": True,
+    }
+    hard_quotes = [
+        dict(quote)
+        for quote in quote_provenance.get("quotes", [])
+        if isinstance(quote, Mapping) and str(quote.get("load_type", "")).upper() == "BASE"
+    ]
+    constraint_provenance_frame = constraints.rows[
+        [
+            "constraint_name",
+            "product",
+            "parent_product",
+            "source_quote_ids",
+            "lineage_formula",
+            "lineage_sha256",
+            "lineage_payload",
+            "target",
+            "hours",
+            "n_months",
+            "is_residual",
+            "load_type",
+        ]
+    ]
+    constraint_provenance_rows = _canonical_frame_records(constraint_provenance_frame)
     return {
         "monthly_curve_schema_version": result.monthly_curve_schema_version,
+        "delivery_months": [str(month) for month in result.monthly_curve.sort_index().index],
         "market": market,
         "run_timestamp": str(pd.Timestamp(run_timestamp)),
+        "valuation_timestamp": pd.Timestamp(valuation_timestamp).isoformat(),
         "solver_config": dict(settings),
         "solver_config_hash": _sha256_json(dict(settings)),
         "active_config_hash": config_hash(active_config_payload),
         "source_hashes": dict(source_hashes),
-        "forward_snapshot_date": str(pd.Timestamp(run_timestamp).date()),
+        "forward_snapshot": dict(quote_provenance),
+        "forward_eligibility": dict(forward_eligibility),
+        "forward_snapshot_date": str(pd.Timestamp(quote_provenance["snapshot_date"]).date()),
+        "forward_source_kind": str(quote_provenance["source_kind"]),
+        "forward_source_sha256": quote_provenance.get("source_sha256"),
+        "hard_quote_eligible": bool(quote_provenance.get("hard_quote_eligible", False)),
+        "promotion_eligible": bool(
+            quote_provenance.get("hard_quote_eligible", False)
+            and forward_eligibility.get("status") == "PASS"
+            and forward_eligibility.get("requested_role") == "HARD_LEVEL"
+        ),
         "active_constraints_hash": _hash_frame(constraints.rows),
+        "constraint_provenance_rows": constraint_provenance_rows,
+        "constraint_provenance_hash": _sha256_json(constraint_provenance_rows),
+        "quote_diagnostics_hash": _hash_frame(constraints.quote_diagnostics),
+        "hard_quote_set_hash": _sha256_json(hard_quotes),
+        "hard_quotes": hard_quotes,
+        "product_hierarchy_policy": product_hierarchy_policy,
+        "product_hierarchy_policy_sha256": _sha256_json(product_hierarchy_policy),
+        "monthly_solution": monthly_payload,
         "monthly_solution_hash": _sha256_json(monthly_payload),
         "panel_status": panel_status,
         "history_status": history_status,
@@ -508,12 +726,16 @@ def _prior_diagnostics_summary(prior: MonthlyShapePrior) -> dict[str, object]:
 
 
 def _hash_frame(frame: pd.DataFrame) -> str:
+    return _sha256_json(_canonical_frame_records(frame))
+
+
+def _canonical_frame_records(frame: pd.DataFrame) -> list[dict[str, object]]:
     if frame.empty:
-        return _sha256_json([])
+        return []
     payload = frame.copy()
     payload = payload.reindex(sorted(payload.columns), axis=1)
     payload = payload.sort_values(list(payload.columns)).reset_index(drop=True)
-    return _sha256_json(payload.to_dict(orient="records"))
+    return payload.to_dict(orient="records")
 
 
 def _sha256_json(payload: object) -> str:

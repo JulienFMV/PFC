@@ -30,16 +30,20 @@ logging.basicConfig(
 )
 logger = logging.getLogger("PFC_PROD")
 
-from pfc_shaping.pipeline.production_phases import (
+from pfc_shaping.pipeline.production_phases import (  # noqa: E402
     load_inputs,
     print_pipeline_summary,
     run_long_term_phase,
-    run_short_term_phase,
     save_long_term_outputs,
 )
+from pfc_shaping.pipeline.short_term_orchestration import run_short_term_phase  # noqa: E402
 
 
 def main() -> None:
+    raise RuntimeError(
+        "Legacy direct publication is disabled. Build an immutable LT candidate with "
+        "scripts/build_lt_candidate.py and use the governed audit/receipt/promotion flow."
+    )
     logger.info("Peak source policy: %s", PEAK_SOURCE_POLICY)
     started_at = time.time()
 

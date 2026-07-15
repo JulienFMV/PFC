@@ -18,7 +18,7 @@ Energy conservation constraint (hour-weighted average):
 where h_child_i is the number of delivery hours in child period i.
 
 Peak / Off-Peak decomposition:
-    Peak   = 08:00–20:00 Mon–Fri excl. Swiss national holidays (EEX standard)
+    Peak   = 08:00-20:00 Monday-Friday, public holidays included
     Base   = all hours
     OffPeak = (Base × total_h - Peak × peak_h) / offpeak_h
 """
@@ -65,7 +65,7 @@ class ContractSpec:
         end: Delivery period end (exclusive), timezone-aware UTC.
         product_type: One of 'Cal', 'Quarter', 'Month'.
         n_hours: Total delivery hours in the period.
-        n_peak_hours: Peak delivery hours (08:00-20:00 Mon-Fri excl. holidays).
+        n_peak_hours: Peak delivery hours (08:00-20:00 Monday-Friday).
         n_offpeak_hours: Off-peak delivery hours.
         price: Forward price in EUR/MWh (if known).
     """
@@ -197,14 +197,14 @@ def count_hours(
     Correctly handles DST transitions (CET ↔ CEST) and leap years by
     generating the full hourly index in local time.
 
-    Peak hours: 08:00–20:00 on weekdays (Mon–Fri) excluding national holidays.
+    Peak hours: 08:00-20:00 on weekdays (Mon-Fri), public holidays included.
 
     Args:
         year: Delivery year.
         month_start: First month of the period (inclusive).
         month_end: Last month of the period (inclusive).
         tz: Local timezone.
-        country: 'CH' or 'DE' — controls which holidays are excluded from peak.
+        country: Delivery country, retained for API compatibility.
 
     Returns:
         (total_hours, peak_hours, offpeak_hours)
@@ -217,18 +217,10 @@ def count_hours(
 
     total_hours = len(idx_utc)
 
-    # Collect holidays for all years that may be spanned
-    hol_years = set(idx_local.year.unique())
-    hol_set: set = set()
-    for y in hol_years:
-        hol_set |= _holidays_set(y, country=country)
-
-    # Peak mask: hour 08..19 on weekdays, not a holiday
+    # European EEX Peakload: hour 08..19 on every weekday, holidays included.
     is_weekday = idx_local.weekday < 5  # Mon=0 .. Fri=4
     is_peak_hour = (idx_local.hour >= 8) & (idx_local.hour < 20)
-    is_holiday = pd.Series(idx_local.date, index=idx_utc).isin(hol_set).values
-
-    peak_mask = is_weekday & is_peak_hour & ~is_holiday
+    peak_mask = is_weekday & is_peak_hour
     peak_hours = int(peak_mask.sum())
     offpeak_hours = total_hours - peak_hours
 

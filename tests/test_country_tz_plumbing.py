@@ -131,9 +131,7 @@ def _build_index(start: str, end: str, tz: str = "UTC") -> pd.DatetimeIndex:
     return pd.date_range(start=start, end=end, freq="15min", tz=tz, inclusive="left")
 
 
-def test_peak_mask_excludes_country_specific_holidays() -> None:
-    """For 2024-08-01 (Bundesfeier, a Thursday): CH peak mask = all False
-    over the day; DE peak mask = full Peak (08-20) for that day."""
+def test_peak_mask_includes_weekday_public_holidays() -> None:
     idx = _build_index("2024-07-31", "2024-08-03", tz="UTC")
     ch_hols = _get_country_holidays([2024], country="CH")
     de_hols = _get_country_holidays([2024], country="DE")
@@ -147,13 +145,11 @@ def test_peak_mask_excludes_country_specific_holidays() -> None:
     is_peak_window = (idx_zh.hour >= 8) & (idx_zh.hour < 20)
     is_aug1_peak_window = is_aug1 & is_peak_window
 
-    # On Aug 1 during peak hours: CH excludes (Bundesfeier), DE includes.
-    assert ch_mask[is_aug1_peak_window].sum() == 0, "CH wrongly marks Bundesfeier as peak"
-    assert de_mask[is_aug1_peak_window].sum() > 0, "DE wrongly marks 1 Aug as non-peak"
+    assert ch_mask[is_aug1_peak_window].sum() == 48
+    assert de_mask[is_aug1_peak_window].sum() == 48
 
 
-def test_peak_mask_excludes_de_specific_holiday() -> None:
-    """3 October 2024 (Thursday) is Tag der Deutschen Einheit (DE only)."""
+def test_peak_mask_includes_de_weekday_public_holiday() -> None:
     idx = _build_index("2024-10-02", "2024-10-05", tz="UTC")
     ch_hols = _get_country_holidays([2024], country="CH")
     de_hols = _get_country_holidays([2024], country="DE")
@@ -166,8 +162,8 @@ def test_peak_mask_excludes_de_specific_holiday() -> None:
     is_peak_window = (idx_be.hour >= 8) & (idx_be.hour < 20)
     is_oct3_peak_window = is_oct3 & is_peak_window
 
-    assert de_mask[is_oct3_peak_window].sum() == 0, "DE wrongly marks Deutsche Einheit as peak"
-    assert ch_mask[is_oct3_peak_window].sum() > 0, "CH wrongly marks 3 Oct as non-peak"
+    assert de_mask[is_oct3_peak_window].sum() == 48
+    assert ch_mask[is_oct3_peak_window].sum() == 48
 
 
 # ---------------------------------------------------------------------------

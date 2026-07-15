@@ -267,33 +267,18 @@ def calibrate_hourly_to_eex(
 def _eex_peak_mask(ts_ch: pd.Series, *, country: str = "CH") -> pd.Series:
     """Return EEX contractual peak hours for local CH timestamps.
 
-    This is deliberately narrower than the CH spot-shaping holiday pressure:
-    EEX peak excludes national holidays, not cantonal/neighbor holiday effects.
+    European EEX Peakload includes public holidays. Holiday pressure remains
+    a separate spot-shaping feature.
     """
     ts = pd.Series(ts_ch, copy=False)
     if ts.empty:
         return pd.Series(dtype=bool, index=ts.index)
-    years = sorted(int(year) for year in ts.dt.year.dropna().unique())
-    holiday_set: set[object] = set()
-    for year in years:
-        country_u = str(country).upper()
-        if country_u == "DE":
-            holiday_set |= set(holidays.Germany(years=year).keys())
-        elif country_u == "AT":
-            holiday_set |= set(holidays.Austria(years=year).keys())
-        elif country_u == "FR":
-            holiday_set |= set(holidays.France(years=year).keys())
-        elif country_u == "IT":
-            holiday_set |= set(holidays.Italy(years=year).keys())
-        elif country_u == "CH":
-            holiday_set |= set(holidays.Switzerland(years=year).keys())
-        else:
-            raise ValueError(f"unsupported EEX peak holiday country: {country!r}")
+    if str(country).upper() not in {"CH", "DE", "AT", "FR", "IT"}:
+        raise ValueError(f"unsupported EEX peak country: {country!r}")
     return (
         (ts.dt.weekday < 5)
         & (ts.dt.hour >= 8)
         & (ts.dt.hour < 20)
-        & (~ts.dt.date.isin(holiday_set))
     )
 
 
