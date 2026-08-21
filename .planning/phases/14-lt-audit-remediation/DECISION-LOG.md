@@ -13946,6 +13946,84 @@ Invariants not to break:
 - Model admission remains
   `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS`; T057 remains sealed.
 
+## D-20260821-251 - Harden the monthly front edge and keep Databricks layers role-specific
+
+Decision:
+
+- Treat governed Databricks tables as upstream source authority, but keep the
+  model runtime detached from Databricks. The model consumes bounded,
+  immutable, hash-manifested local snapshots under `FMV_DATA_ROOT`.
+- Use Gold EEX forward and spot facts for hard forward constraints and realized
+  price truth; use ENTSO-E Gold dimension/latest for current serving and Silver
+  `ge_power_entsoe_time_series_vintages` as the canonical PIT/revision/resource
+  history. Keep the Gold ENTSO-E bridge optional and current-state only.
+- Use LSEG curve `110181967` only as an independently governed benchmark.
+  Weather and Swissgrid Gold facts remain candidate exogenous inputs and need
+  their own admission and coverage evidence before model use.
+- Keep source-export roles distinct from model-facing `external_v2` roles.
+  The deterministic Gold/Silver-to-feature materializer is still missing;
+  `scripts/create_lt_input_snapshot.py` remains an unverified legacy copier and
+  cannot grant calibration eligibility.
+- At every valuation, admit only CAL/Q/M products whose entire delivery period
+  starts in the first wholly undelivered local month or later. Exclude
+  already-started and unsupported-tenor products from both the hard constraint
+  set and assembler quoted keys, and record the exact inclusions/exclusions in
+  the solver manifest.
+- Make the monthly KKT solve fail closed: no least-squares fallback, and reject
+  any result whose hard-constraint or stationarity residual breaches its
+  configured tolerance.
+- Repair the declared test environment and bounded CI evidence: declare the
+  ingestion/test dependencies, select an available Python 3.11 runtime and run
+  the minimum LT, monthly solver and PIT/data contract matrices on PRs.
+- Keep `python -m pfc_shaping.cli.governed_release` as the only governed LT
+  release entry point. Retain `run_pfc_production.py` solely as a fail-closed
+  legacy sentinel with no dead direct-publication body.
+
+Reason:
+
+The independent external audit correctly reproduced a front-edge defect: a
+current-year CAL or current-quarter quote could extend the delivery grid into
+months whose delivery had already begun. It also identified a silent
+least-squares fallback, missing declared test dependencies and a CI Python pin
+that failed before tests ran. These are deterministic contract defects that can
+be corrected before any governed Databricks data are consumed.
+
+The audit's broader source conclusion needs one precision: Silver and Gold are
+not interchangeable fallbacks. Each layer has a declared role, and the fitting
+or generation process must operate on an immutable local snapshot rather than
+issuing live SQL. This preserves point-in-time semantics, reproducibility,
+performance and Databricks cost control.
+
+Rejected alternatives:
+
+- Query Databricks live during fitting, calibration or PFC generation.
+- Relabel a copied legacy `entso_15min.parquet` as a PIT-safe Databricks
+  feature materialization without origin-aware Silver lineage.
+- Force all ENTSO-E data into Gold or use Gold Latest as historical PIT truth.
+- Keep already-started CAL/Q products and silently generate a curve in the
+  past.
+- Accept a least-squares KKT fallback and rely only on downstream audit to
+  notice a bad monthly solution.
+- Wire seam smoothing as an individual post-solver month patch. Any seam
+  improvement must live in the zero-mean monthly/residual formulation and then
+  pass the unchanged hard EEX constraints.
+- Remove `_build_monthly_solver_contracts` as dead code; the assembler reaches
+  it through `_build_non_overlapping_contracts` in solver mode.
+
+Invariants not to break:
+
+- The CH monthly solver is the sole level authority. ENTSO-E, weather,
+  Swissgrid, neighboring markets, history, AFRY and LSEG can shape or benchmark
+  only and cannot rewrite solver monthly means.
+- The first admitted delivery month is valuation-dependent and governed in
+  `Europe/Zurich`; no hard-coded calendar date is allowed.
+- Gold/Silver extraction is bounded and incremental where applicable. Local
+  snapshot publication is immutable and content-bound; the model performs no
+  unmanifested live Databricks reads.
+- Unknown ENTSO-E backfill availability cannot pass as known-at evidence.
+- Model admission remains
+  `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS`; T057 remains sealed.
+
 ## D-20260821-248 - Separate the ENTSO-E Gold serving layer from the Silver PIT authority
 
 Decision:

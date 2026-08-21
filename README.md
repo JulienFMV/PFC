@@ -89,10 +89,11 @@ hourly / 15-minute curve
 independent validation and governed publication
 ```
 
-`run_pfc_production.py` is the top-level orchestration entry point. Operational
-commands and the allowlisted standard-user runner are documented in
-[OPERATIONS.md](pfc_shaping/tools/OPERATIONS.md). On the managed workstation,
-all mutable test and build output must remain below `build/`.
+`python -m pfc_shaping.cli.governed_release` is the governed release entry
+point. `run_pfc_production.py` is a fail-closed legacy sentinel and cannot
+publish. Operational commands and the allowlisted standard-user runner are
+documented in [OPERATIONS.md](pfc_shaping/tools/OPERATIONS.md). On the managed
+workstation, all mutable test and build output must remain below `build/`.
 
 ## Current evidence boundary
 

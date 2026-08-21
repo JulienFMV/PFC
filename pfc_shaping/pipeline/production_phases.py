@@ -971,6 +971,7 @@ def run_long_term_phase(
         latest_base_prices_by_market,
         monthly_solver_enabled,
         monthly_solver_settings,
+        select_wholly_undelivered_forward_prices,
         solve_monthly_level_authority,
     )
 
@@ -1086,7 +1087,13 @@ def run_long_term_phase(
             source_hashes["forward_snapshot_source"] = forward_snapshot_ch.source_sha256
         monthly_authority_ch = solve_monthly_level_authority(
             market="CH",
-            delivery_months=delivery_months_from_prices(base_prices_ch),
+            delivery_months=delivery_months_from_prices(
+                select_wholly_undelivered_forward_prices(
+                    base_prices_ch,
+                    valuation_timestamp=forward_valuation_timestamp_ch,
+                    timezone="Europe/Zurich",
+                )
+            ),
             own_base_prices=base_prices_ch,
             all_market_base_prices=neighbor_prices,
             eex_history=history,

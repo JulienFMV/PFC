@@ -21,6 +21,7 @@ from pfc_shaping.pipeline.monthly_curve_authority import (
     latest_base_prices_by_market,
     monthly_solver_enabled,
     monthly_solver_settings,
+    select_wholly_undelivered_forward_prices,
     solve_monthly_level_authority,
     solve_monthly_level_authority_from_history,
 )
@@ -137,6 +138,60 @@ def test_monthly_solver_defaults_include_structural_template_fallback() -> None:
     assert settings["allow_template_structural_fallback"] is True
     assert settings["structural_amplitude_eur_mwh"] == 110.0
     assert settings["structural_weight"] == 1.0
+
+
+def test_monthly_authority_excludes_products_whose_delivery_already_started() -> None:
+    valuation = pd.Timestamp("2026-08-21T12:00:00Z")
+    full_surface = {
+        "2026": 74.0,
+        "2026-Q3": 72.0,
+        "2026-09": 75.0,
+        "2026-09-Peak": 82.0,
+        "2026-Q4": 77.0,
+        "2027": 78.0,
+        "DAY-2026-08-22": 71.0,
+    }
+    eligible = select_wholly_undelivered_forward_prices(
+        full_surface,
+        valuation_timestamp=valuation,
+    )
+
+    assert set(eligible) == {"2026-09", "2026-09-Peak", "2026-Q4", "2027"}
+    authority = solve_monthly_level_authority(
+        market="CH",
+        delivery_months=delivery_months_from_prices(eligible),
+        own_base_prices=full_surface,
+        original_forward_prices=full_surface,
+        run_timestamp=valuation,
+        settings={"allow_template_structural_fallback": True},
+        allow_unverified_inputs=True,
+    )
+
+    assert str(authority.inputs.delivery_grid.months[0]) == "2026-09"
+    assert "2026" not in authority.quoted_keys
+    assert "2026-Q3" not in authority.quoted_keys
+    assert authority.quoted_keys == set(eligible)
+    assert authority.manifest["front_edge_policy"] == {
+        "schema_version": "monthly_forward_front_edge.v1",
+        "valuation_timestamp": "2026-08-21T12:00:00+00:00",
+        "delivery_timezone": "Europe/Zurich",
+        "first_wholly_undelivered_month": "2026-09",
+        "included_products": ["2026-09", "2026-09-Peak", "2026-Q4", "2027"],
+        "excluded_started_delivery_products": ["2026", "2026-Q3"],
+        "excluded_unsupported_tenor_products": ["DAY-2026-08-22"],
+    }
+
+
+def test_monthly_authority_rejects_a_delivery_grid_that_reintroduces_started_months() -> None:
+    with pytest.raises(ValueError, match="wholly undelivered forward product surface"):
+        solve_monthly_level_authority(
+            market="CH",
+            delivery_months=pd.period_range("2026-01", "2027-12", freq="M"),
+            own_base_prices={"2026": 74.0, "2027": 78.0},
+            run_timestamp=pd.Timestamp("2026-08-21T12:00:00Z"),
+            settings={"allow_template_structural_fallback": True},
+            allow_unverified_inputs=True,
+        )
 
 
 def test_monthly_authority_manifest_records_structural_template_summary() -> None:

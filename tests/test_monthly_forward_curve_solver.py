@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 import pytest
 
 from pfc_shaping.calibration.monthly_curve_priors import (
@@ -10,14 +10,12 @@ from pfc_shaping.calibration.monthly_curve_priors import (
 )
 from pfc_shaping.calibration.monthly_forward_curve import (
     MonthlyCurveConfig,
-    build_monthly_constraint_system,
-    solve_monthly_forward_curve,
-    solve_monthly_forward_curve_from_constraints,
-)
-from pfc_shaping.calibration.monthly_forward_curve import (
     _parent_mean_operator,
     _second_difference_operator,
     _yoy_shape_operator,
+    build_monthly_constraint_system,
+    solve_monthly_forward_curve,
+    solve_monthly_forward_curve_from_constraints,
 )
 
 
@@ -104,6 +102,32 @@ def test_solver_reports_rank_nullspace_and_conditioning():
     assert result.kkt["nullspace_dimension"] == 10
     assert result.kkt["condition_number"] > 0.0
     assert result.kkt["solved_by_lstsq"] is False
+
+
+def test_solver_fails_closed_when_direct_kkt_solve_fails(monkeypatch):
+    months = pd.period_range("2028-01", "2028-12", freq="M")
+    constraints = build_monthly_constraint_system(months, {"2028": 80.40})
+
+    def fail_direct_solve(*_args, **_kwargs):
+        raise np.linalg.LinAlgError("synthetic singular system")
+
+    monkeypatch.setattr(np.linalg, "solve", fail_direct_solve)
+
+    with pytest.raises(ValueError, match="direct KKT solve failed"):
+        solve_monthly_forward_curve_from_constraints(constraints)
+
+
+def test_solver_fails_closed_when_solution_breaches_hard_constraints(monkeypatch):
+    months = pd.period_range("2028-01", "2028-12", freq="M")
+    constraints = build_monthly_constraint_system(months, {"2028": 80.40})
+
+    def return_zero_solution(matrix, _rhs):
+        return np.zeros(matrix.shape[0], dtype=float)
+
+    monkeypatch.setattr(np.linalg, "solve", return_zero_solution)
+
+    with pytest.raises(ValueError, match="constraint residual exceeds tolerance"):
+        solve_monthly_forward_curve_from_constraints(constraints)
 
 
 def test_shape_prior_moves_unquoted_degrees_without_breaking_eex_quotes():

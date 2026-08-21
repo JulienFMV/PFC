@@ -32,6 +32,16 @@ validation = [
   "matplotlib==3.8.4",
   "statsmodels==0.14.6",
 ]
+ingest = [
+  "python-dotenv==1.2.1",
+  "requests==2.32.5",
+]
+test = [
+  "pytest==8.4.2",
+  "python-dotenv==1.2.1",
+  "requests==2.32.5",
+  "ruff==0.15.12",
+]
 
 [dependency-groups]
 dev = [

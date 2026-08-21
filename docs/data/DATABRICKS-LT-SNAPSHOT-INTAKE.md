@@ -28,6 +28,43 @@ Weather and Swissgrid exports are separate optional domains. Their presence
 does not authorize them as model inputs; each keeps its own freshness,
 availability and feature-admission checks.
 
+## Current implementation boundary
+
+The table roles above are **source-export roles**. They are not yet the same
+objects as the model-facing `external_v2` roles consumed by
+`production_phases.load_inputs` (`epex_ch`, `epex_de`, `entso`, `hydro`,
+optional `outages` and `eex_forwards_history`). Two explicit stages are
+required:
+
+1. export and admit the bounded Gold/Silver source package described here;
+2. deterministically materialize model-facing Parquet roles from that admitted
+   package, with a manifest binding every output to its source tables,
+   predicates, watermarks, code revision and point-in-time policy.
+
+Stage 2 is not implemented for the new Databricks package at this baseline.
+In particular, `scripts/create_lt_input_snapshot.py` is only a legacy bootstrap
+that copies already-curated files and declares `source_class` as
+`MIGRATED_UNVERIFIED` and `calibration_eligible` as false. It must not be
+presented as the Gold/Silver transformation or as scientific admission.
+
+The future materializer must keep two different ENTSO-E views:
+
+- a current/latest feature view for operational generation, reconciled against
+  Gold dimension/latest;
+- origin-aware point-in-time feature views for calibration and backtests,
+  derived from Silver vintages and excluding unknown-availability rows.
+
+A flat current `entso_15min.parquet` cannot by itself prove point-in-time
+training or backtest correctness.
+
+Candidate governance also still captures a separate EEX workbook and signed
+acquisition contract. In solver mode that workbook is not the monthly-level
+source; the signed `eex_forwards_history` vintage catalog is. Before production
+admission, either retain the workbook as an explicitly independent cross-check
+and reconcile it to the Databricks extract, or replace it with a content-bound
+Databricks export receipt. Do not keep an unrelated mandatory artifact merely
+to satisfy a legacy interface.
+
 The legacy `prd.gold.factentsoetimeseriesvintages` is deliberately excluded.
 It duplicates Silver history and is no longer maintained by the audited
 ENTSO-E Gold pipeline.

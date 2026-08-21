@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -180,6 +181,42 @@ def delivery_months_from_prices(prices: Mapping[str, float]) -> pd.PeriodIndex:
     return pd.PeriodIndex(sorted(months), freq="M")
 
 
+def first_wholly_undelivered_month(
+    valuation_timestamp: str | pd.Timestamp,
+    *,
+    timezone: str = "Europe/Zurich",
+) -> pd.Period:
+    """Return the first full local delivery month strictly after valuation."""
+
+    valuation = pd.Timestamp(valuation_timestamp)
+    if valuation.tzinfo is None:
+        raise ValueError("forward valuation timestamp must be timezone-aware")
+    local = valuation.tz_convert(timezone)
+    current = pd.Period(f"{local.year:04d}-{local.month:02d}", freq="M")
+    return current + 1
+
+
+def select_wholly_undelivered_forward_prices(
+    prices: Mapping[str, float],
+    *,
+    valuation_timestamp: str | pd.Timestamp,
+    timezone: str = "Europe/Zurich",
+) -> dict[str, float]:
+    """Keep only CAL/Q/M products whose complete delivery is still future.
+
+    BASE, PEAK and OFFPEAK products follow the same front-edge rule. Products
+    with unsupported tenors are excluded from the monthly solver view rather
+    than being silently treated as monthly authority.
+    """
+
+    selected, _, _, _ = _classify_forward_front_edge(
+        prices,
+        valuation_timestamp=valuation_timestamp,
+        timezone=timezone,
+    )
+    return selected
+
+
 def latest_base_prices_by_market(
     history: pd.DataFrame,
     *,
@@ -258,6 +295,44 @@ def solve_monthly_level_authority(
             valuation_timestamp=valuation_ts,
             expected_max_age_business_days=int(expected_forward_max_age_business_days),
         )
+    (
+        eligible_forward_prices,
+        excluded_started_products,
+        excluded_unsupported_products,
+        first_delivery_month,
+    ) = _classify_forward_front_edge(
+        own_base_prices,
+        valuation_timestamp=valuation_ts,
+        timezone=timezone,
+    )
+    eligible_base_prices = {
+        product: price
+        for product, price in eligible_forward_prices.items()
+        if _is_base_delivery_product(product)
+    }
+    if not eligible_base_prices:
+        raise ValueError(
+            "forward snapshot contains no wholly undelivered CAL/Q/M BASE product"
+        )
+    expected_delivery_months = delivery_months_from_prices(eligible_base_prices)
+    supplied_delivery_months = build_delivery_grid(
+        delivery_months,
+        timezone=timezone,
+        calendar=market,
+    ).months
+    if not supplied_delivery_months.equals(expected_delivery_months):
+        raise ValueError(
+            "delivery_months must exactly match the wholly undelivered forward product surface"
+        )
+    front_edge_policy = {
+        "schema_version": "monthly_forward_front_edge.v1",
+        "valuation_timestamp": valuation_ts.isoformat(),
+        "delivery_timezone": timezone,
+        "first_wholly_undelivered_month": str(first_delivery_month),
+        "included_products": sorted(eligible_forward_prices),
+        "excluded_started_delivery_products": excluded_started_products,
+        "excluded_unsupported_tenor_products": excluded_unsupported_products,
+    }
     quote_source_ids = {
         str(quote["product"]): str(quote["quote_id"])
         for quote in quote_provenance.get("quotes", [])
@@ -265,7 +340,7 @@ def solve_monthly_level_authority(
     }
     own_quotes = _quotes_from_prices(
         market=market,
-        prices=own_base_prices,
+        prices=eligible_base_prices,
         load_type="BASE",
         snapshot_date=pd.Timestamp(quote_provenance["snapshot_date"]),
         available_at=pd.Timestamp(quote_provenance["available_at"]),
@@ -330,13 +405,18 @@ def solve_monthly_level_authority(
         },
     )
     result = solve_monthly_forward_curve_from_constraints(constraints, config=cfg, shape_prior=fused)
-    assembler_base_prices = dict(original_forward_prices or own_base_prices)
+    assembler_source_prices = select_wholly_undelivered_forward_prices(
+        original_forward_prices or own_base_prices,
+        valuation_timestamp=valuation_ts,
+        timezone=timezone,
+    )
+    assembler_base_prices = dict(assembler_source_prices)
     synthetic_monthly_keys: set[str] = set()
     for month, value in result.monthly_curve.items():
         key = str(month)
         assembler_base_prices[key] = float(value)
         synthetic_monthly_keys.add(key)
-    quoted_keys = set(str(key) for key in dict(original_forward_prices or own_base_prices))
+    quoted_keys = set(str(key) for key in assembler_source_prices)
     inputs = MonthlyCurveInputs(
         delivery_grid=build_delivery_grid(delivery_months, timezone=timezone, calendar=market),
         own_quotes=own_quotes,
@@ -374,6 +454,7 @@ def solve_monthly_level_authority(
         forward_eligibility=(
             forward_eligibility.to_manifest() if forward_eligibility is not None else {}
         ),
+        front_edge_policy=front_edge_policy,
     )
     return MonthlyLevelAuthority(
         inputs=inputs,
@@ -511,6 +592,46 @@ def _is_base_delivery_product(product: str) -> bool:
     return True
 
 
+def _classify_forward_front_edge(
+    prices: Mapping[str, float],
+    *,
+    valuation_timestamp: str | pd.Timestamp,
+    timezone: str,
+) -> tuple[dict[str, float], list[str], list[str], pd.Period]:
+    first_month = first_wholly_undelivered_month(
+        valuation_timestamp,
+        timezone=timezone,
+    )
+    selected: dict[str, float] = {}
+    excluded_started: list[str] = []
+    excluded_unsupported: list[str] = []
+    for raw_product, raw_price in sorted(prices.items(), key=lambda item: str(item[0])):
+        product = str(raw_product)
+        try:
+            periods = _forward_product_periods(product)
+        except ValueError:
+            excluded_unsupported.append(product)
+            continue
+        if periods.min() < first_month:
+            excluded_started.append(product)
+            continue
+        price = float(raw_price)
+        if not math.isfinite(price):
+            raise ValueError(f"forward price is non-finite for {product}")
+        selected[product] = price
+    return selected, excluded_started, excluded_unsupported, first_month
+
+
+def _forward_product_periods(product: str) -> pd.PeriodIndex:
+    canonical = str(product)
+    lowered = canonical.lower()
+    for suffix in ("-offpeak", "-peak"):
+        if lowered.endswith(suffix):
+            canonical = canonical[: -len(suffix)]
+            break
+    return product_periods(canonical)
+
+
 def _resolve_run_timestamp(run_timestamp: pd.Timestamp | None, history: pd.DataFrame) -> pd.Timestamp:
     if run_timestamp is not None:
         return pd.Timestamp(run_timestamp).tz_localize(None).normalize()
@@ -607,9 +728,11 @@ def _manifest(
     quote_provenance: Mapping[str, object],
     valuation_timestamp: pd.Timestamp,
     forward_eligibility: Mapping[str, object],
+    front_edge_policy: Mapping[str, object],
 ) -> dict[str, object]:
     monthly_payload = {str(k): round(float(v), 10) for k, v in result.monthly_curve.sort_index().items()}
     active_config_payload = _active_config_payload(settings)
+    included_products = set(front_edge_policy["included_products"])
     product_hierarchy_policy = {
         "schema_version": "monthly_quote_hierarchy_policy.v1",
         "priority": ["MONTH", "QUARTER", "CALENDAR"],
@@ -625,7 +748,11 @@ def _manifest(
     hard_quotes = [
         dict(quote)
         for quote in quote_provenance.get("quotes", [])
-        if isinstance(quote, Mapping) and str(quote.get("load_type", "")).upper() == "BASE"
+        if (
+            isinstance(quote, Mapping)
+            and str(quote.get("load_type", "")).upper() == "BASE"
+            and str(quote.get("product", "")) in included_products
+        )
     ]
     constraint_provenance_frame = constraints.rows[
         [
@@ -656,6 +783,7 @@ def _manifest(
         "source_hashes": dict(source_hashes),
         "forward_snapshot": dict(quote_provenance),
         "forward_eligibility": dict(forward_eligibility),
+        "front_edge_policy": dict(front_edge_policy),
         "forward_snapshot_date": str(pd.Timestamp(quote_provenance["snapshot_date"]).date()),
         "forward_source_kind": str(quote_provenance["source_kind"]),
         "forward_source_sha256": quote_provenance.get("source_sha256"),

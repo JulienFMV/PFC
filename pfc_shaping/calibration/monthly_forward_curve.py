@@ -9,13 +9,13 @@ any optimizer is introduced.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
 import hashlib
 import json
 import math
-from numbers import Real
 import re
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
+from numbers import Real
 
 import numpy as np
 import pandas as pd
@@ -25,7 +25,6 @@ from pfc_shaping.calibration.constraints import (
     ConstraintSystem,
     FeasibilityReport,
 )
-
 
 MONTHLY_CURVE_SCHEMA_VERSION = "monthly_curve_constraints_v1"
 
@@ -472,9 +471,8 @@ def solve_monthly_forward_curve_from_constraints(
     try:
         solution = np.linalg.solve(kkt, rhs)
         solved_by_lstsq = False
-    except np.linalg.LinAlgError:
-        solution = np.linalg.lstsq(kkt, rhs, rcond=None)[0]
-        solved_by_lstsq = True
+    except np.linalg.LinAlgError as exc:
+        raise ValueError("monthly solver direct KKT solve failed") from exc
 
     x = solution[:n]
     multipliers = solution[n:]
@@ -488,6 +486,22 @@ def solve_monthly_forward_curve_from_constraints(
         or not math.isfinite(condition_number)
     ):
         raise ValueError("monthly solver produced non-finite numerical diagnostics")
+    max_abs_constraint_residual = (
+        float(np.max(np.abs(active_residual))) if len(q) else 0.0
+    )
+    stationarity_residual = (
+        float(np.max(np.abs(stationarity))) if len(stationarity) else 0.0
+    )
+    if max_abs_constraint_residual > cfg.constraint_tolerance:
+        raise ValueError(
+            "monthly solver constraint residual exceeds tolerance: "
+            f"{max_abs_constraint_residual:.6g} > {cfg.constraint_tolerance:.6g}"
+        )
+    if stationarity_residual > cfg.stationarity_tolerance:
+        raise ValueError(
+            "monthly solver stationarity residual exceeds tolerance: "
+            f"{stationarity_residual:.6g} > {cfg.stationarity_tolerance:.6g}"
+        )
     objective_terms = {
         term.name: float(
             0.5
@@ -508,8 +522,8 @@ def solve_monthly_forward_curve_from_constraints(
     )
     diagnostics = pd.DataFrame(
         [
-            {"metric": "max_abs_constraint_residual", "value": float(np.max(np.abs(active_residual))) if len(q) else 0.0},
-            {"metric": "stationarity_residual", "value": float(np.max(np.abs(stationarity))) if len(stationarity) else 0.0},
+            {"metric": "max_abs_constraint_residual", "value": max_abs_constraint_residual},
+            {"metric": "stationarity_residual", "value": stationarity_residual},
             {"metric": "condition_number", "value": condition_number},
             {"metric": "active_constraint_rank", "value": float(np.linalg.matrix_rank(a)) if a.size else 0.0},
             {"metric": "nullspace_dimension", "value": float(n - (np.linalg.matrix_rank(a) if a.size else 0))},
@@ -528,8 +542,8 @@ def solve_monthly_forward_curve_from_constraints(
         priors=priors,
         diagnostics=diagnostics,
         kkt={
-            "max_abs_constraint_residual": float(np.max(np.abs(active_residual))) if len(q) else 0.0,
-            "stationarity_residual": float(np.max(np.abs(stationarity))) if len(stationarity) else 0.0,
+            "max_abs_constraint_residual": max_abs_constraint_residual,
+            "stationarity_residual": stationarity_residual,
             "condition_number": condition_number,
             "active_constraint_rank": int(np.linalg.matrix_rank(a)) if a.size else 0,
             "nullspace_dimension": int(n - (np.linalg.matrix_rank(a) if a.size else 0)),

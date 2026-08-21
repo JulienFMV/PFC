@@ -14,6 +14,10 @@ Permanent project facts:
 - When `monthly_level_authority="solver"`, the monthly solver is the level
   authority. Hourly layers may shape within a month but must not rewrite solver
   monthly means.
+- The governed operational entry point is
+  `python -m pfc_shaping.cli.governed_release`. `run_pfc_production.py` is a
+  disabled fail-closed legacy sentinel and must not be described or used as a
+  production entry point.
 - Promotion evidence must come from independent real manifests: production,
   local export, and the selected lambda artifact.
 - Far-horizon `UNSUPPORTED` can be accepted only when documented and when it
@@ -143,9 +147,9 @@ exclusivement sur le LT ou sur le CT sans toucher l'autre.
   partagé (`pfc_shaping.data.*`, `pfc_shaping.calendar_ch`,
   `pfc_shaping.storage.*`, `pfc_shaping.calibration.*`).
 - **Code LT** ne doit **jamais** importer `pfc_shaping.ct.*`. La PFC long-terme
-  est indépendante du modèle court-terme. Le seul point de rencontre est
-  l'orchestration top-level (`run_pfc_production.py` ou
-  `production_phases.py` → `swiss_short_term.py`).
+  est indépendante du modèle court-terme. Le seul point de rencontre autorisé
+  reste une orchestration CT explicitement séparée; le candidat LT gouverné
+  n'appelle pas l'overlay CT.
 - **Code CT** peut importer `pfc_shaping.ct.*` et le partagé. Il peut
   consommer une PFC LT en sortie (`base_pfc_ch`) mais ne doit pas appeler
   le pipeline LT.
@@ -193,5 +197,6 @@ exclusivement sur le LT ou sur le CT sans toucher l'autre.
 ## Outils
 
 - `scripts/phase0_sniff_forwards.py` — cadrage des sources EEX (Phase 0 LT).
-- `run_pfc_production.py` — entrée production (orchestration top-level).
+- `python -m pfc_shaping.cli.governed_release` — entrée gouvernée LT.
+- `run_pfc_production.py` — sentinelle legacy désactivée, fail-closed.
 - `dashboard/app.py` — dashboard Streamlit (lecture seule des artefacts LT et CT).
