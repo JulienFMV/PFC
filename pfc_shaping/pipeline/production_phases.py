@@ -556,6 +556,77 @@ def _future_hydro_civil_weekly_index(
     return local.tz_convert("UTC")
 
 
+def _build_entsoe_climatology_forecast(
+    entso: pd.DataFrame,
+    future_index: pd.DatetimeIndex,
+) -> pd.DataFrame:
+    """Build a complete Swiss-local climatology without neutral gap fills."""
+
+    if not isinstance(entso.index, pd.DatetimeIndex) or entso.index.tz is None:
+        raise ValueError("ENTSO-E climatology source index must be timezone-aware")
+    if not isinstance(future_index, pd.DatetimeIndex) or future_index.tz is None:
+        raise ValueError("ENTSO-E climatology target index must be timezone-aware")
+    required = ["solar_regime", "load_deviation"]
+    missing_columns = [column for column in required if column not in entso.columns]
+    if missing_columns:
+        raise ValueError(
+            f"ENTSO-E climatology source is missing columns: {missing_columns}"
+        )
+    feature_columns = [*required]
+    if "flow_deviation" in entso.columns:
+        feature_columns.append("flow_deviation")
+    numeric = entso[feature_columns].apply(pd.to_numeric, errors="coerce")
+    if not np.isfinite(numeric.to_numpy(dtype=float)).all():
+        raise ValueError("ENTSO-E climatology source contains non-finite features")
+
+    source_local = entso.index.tz_convert("Europe/Zurich")
+    source = numeric.copy()
+    source["month"] = source_local.month
+    source["hour"] = source_local.hour
+    source["qh"] = (source_local.minute // 15) + 1
+    climatology = (
+        source.groupby(["month", "hour", "qh"], sort=True)[feature_columns]
+        .median()
+        .reset_index()
+    )
+
+    target_utc = future_index.tz_convert("UTC")
+    target_local = target_utc.tz_convert("Europe/Zurich")
+    target = pd.DataFrame(
+        {
+            "target_utc": target_utc,
+            "month": target_local.month,
+            "hour": target_local.hour,
+            "qh": (target_local.minute // 15) + 1,
+        }
+    )
+    forecast = target.merge(
+        climatology,
+        on=["month", "hour", "qh"],
+        how="left",
+        validate="many_to_one",
+        sort=False,
+    )
+    missing = forecast[feature_columns].isna().any(axis=1)
+    if missing.any():
+        missing_keys = (
+            forecast.loc[missing, ["month", "hour", "qh"]]
+            .drop_duplicates()
+            .sort_values(["month", "hour", "qh"], kind="mergesort")
+        )
+        preview = missing_keys.head(8).to_dict(orient="records")
+        raise ValueError(
+            "ENTSO-E climatology has no admitted source value for "
+            f"{len(missing_keys)} Swiss-local slots; first={preview}"
+        )
+    result = forecast.set_index("target_utc")[feature_columns]
+    result.index = pd.DatetimeIndex(result.index).tz_convert("UTC")
+    result.index.name = None
+    if not result.index.equals(target_utc):
+        raise ValueError("ENTSO-E climatology target order changed during materialization")
+    return result
+
+
 def load_inputs(
     project_root: str,
     logger: logging.Logger,
@@ -1181,46 +1252,7 @@ def run_long_term_phase(
             tz="UTC",
         )
     )
-    future_zurich = future_idx.tz_convert("Europe/Zurich")
-
-    entso_zurich = inputs.entso.copy()
-    entso_zurich["month"] = inputs.entso.index.tz_convert("Europe/Zurich").month
-    entso_zurich["hour"] = inputs.entso.index.tz_convert("Europe/Zurich").hour
-    entso_zurich["qh"] = (inputs.entso.index.minute // 15) + 1
-
-    agg_dict = {
-        "solar_regime_median": ("solar_regime", "median"),
-        "load_deviation_median": ("load_deviation", "median"),
-    }
-    if "flow_deviation" in entso_zurich.columns:
-        agg_dict["flow_deviation_median"] = ("flow_deviation", "median")
-
-    clim = entso_zurich.groupby(["month", "hour", "qh"]).agg(**agg_dict).reset_index()
-    future_keys = pd.DataFrame(
-        {
-            "month": future_zurich.month,
-            "hour": future_zurich.hour,
-            "qh": (future_zurich.minute // 15) + 1,
-        },
-        index=future_idx,
-    )
-    entso_forecast = future_keys.merge(clim, on=["month", "hour", "qh"], how="left").set_index(
-        future_idx
-    )
-
-    rename_map = {
-        "solar_regime_median": "solar_regime",
-        "load_deviation_median": "load_deviation",
-    }
-    keep_cols = ["solar_regime", "load_deviation"]
-    if "flow_deviation_median" in entso_forecast.columns:
-        rename_map["flow_deviation_median"] = "flow_deviation"
-        keep_cols.append("flow_deviation")
-    entso_forecast = entso_forecast.rename(columns=rename_map)[keep_cols]
-    entso_forecast["solar_regime"] = entso_forecast["solar_regime"].fillna(1.0)
-    entso_forecast["load_deviation"] = entso_forecast["load_deviation"].fillna(0.0)
-    if "flow_deviation" in entso_forecast.columns:
-        entso_forecast["flow_deviation"] = entso_forecast["flow_deviation"].fillna(0.0)
+    entso_forecast = _build_entsoe_climatology_forecast(inputs.entso, future_idx)
 
     logger.info("  ENTSO-E climatology forecast: %d rows", len(entso_forecast))
     logger.info(

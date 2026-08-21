@@ -69,7 +69,10 @@ jobs:
       - name: Governed data and PIT contracts
         run: |
           python -m pytest -q -p no:cacheprovider \
+            tests/test_databricks_lt_materialization.py \
+            tests/test_databricks_pfc_layer_acceptance.py \
             tests/test_eex_historical_vintage.py \
             tests/test_lt_input_sources.py \
+            tests/test_lt_replay_transforms.py \
             tests/test_forward_proxy.py \
             tests/test_quality_gate.py

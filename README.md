@@ -67,6 +67,9 @@ See [LT Databricks snapshot intake](docs/data/DATABRICKS-LT-SNAPSHOT-INTAKE.md)
 and [shared data platform](docs/data/SHARED-DATA-PLATFORM.md). The
 [data documentation index](docs/data/README.md) separates current contracts
 from historical replay material.
+The offline
+[Databricks LT materialization contract](docs/data/DATABRICKS-LT-MATERIALIZATION.md)
+defines the exact Gold/Silver-to-model bridge and has no live SQL path.
 
 ## Main LT flow
 

@@ -4,6 +4,7 @@ import pandas as pd
 import pytest
 
 from pfc_shaping.pipeline.production_phases import (
+    _build_entsoe_climatology_forecast,
     _future_hydro_civil_weekly_index,
     _validate_production_input_freshness,
     _validate_strict_production_freshness_policy,
@@ -68,6 +69,55 @@ def test_future_hydro_grid_preserves_swiss_midnight_across_dst() -> None:
 
     assert all(timestamp.weekday() == 0 and timestamp.hour == 0 for timestamp in local)
     assert {timestamp.hour for timestamp in index} == {22, 23}
+
+
+def test_entsoe_climatology_preserves_repeated_swiss_fall_back_hour() -> None:
+    source_index = pd.date_range(
+        "2025-10-25T22:00:00Z",
+        "2025-10-26T23:00:00Z",
+        freq="15min",
+        inclusive="left",
+    )
+    target_index = pd.date_range(
+        "2026-10-24T22:00:00Z",
+        "2026-10-25T23:00:00Z",
+        freq="15min",
+        inclusive="left",
+    )
+    source = pd.DataFrame(
+        {
+            "solar_regime": 1.0,
+            "load_deviation": 0.0,
+            "flow_deviation": 0.0,
+        },
+        index=source_index,
+    )
+
+    forecast = _build_entsoe_climatology_forecast(source, target_index)
+
+    assert forecast.index.equals(target_index)
+    assert forecast.index.tz_convert("Europe/Zurich").hour.tolist().count(2) == 8
+    assert not forecast.isna().any().any()
+
+
+def test_entsoe_climatology_rejects_an_uncovered_local_slot() -> None:
+    source_index = pd.date_range(
+        "2025-01-01T00:00:00Z",
+        periods=96,
+        freq="15min",
+    )
+    source = pd.DataFrame(
+        {"solar_regime": 1.0, "load_deviation": 0.0},
+        index=source_index,
+    ).drop(source_index[10])
+    target_index = pd.date_range(
+        "2026-01-01T00:00:00Z",
+        periods=96,
+        freq="15min",
+    )
+
+    with pytest.raises(ValueError, match="no admitted source value"):
+        _build_entsoe_climatology_forecast(source, target_index)
 
 
 def test_daily_hydro_grid_is_rejected() -> None:

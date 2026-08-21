@@ -14024,6 +14024,83 @@ Invariants not to break:
 - Model admission remains
   `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS`; T057 remains sealed.
 
+## D-20260821-252 - Add an offline Databricks-to-model materialization boundary
+
+Decision:
+
+- Add a pure local materializer for already-exported Databricks frames. It has
+  no connector, SQL, Warehouse, network, signing, publication or model
+  authority path.
+- Materialize Gold spot intervals by an exact market/product identity and an
+  explicit origin cutoff. Preserve native 15-minute observations and expand
+  declared atomic 30/60-minute intervals only as stepwise transport values.
+- Materialize ENTSO-E current-serving features from Gold dimension/latest and
+  point-in-time features from Silver vintages. Silver selection requires known
+  availability at or before the origin, coherent availability basis, no DQ
+  failure and the latest eligible revision.
+- Require an exact `fmv_entsoe_feature_mapping.v1` contract bound to the
+  semantic hash of the Gold dimension. Never infer SeriesKey membership or
+  flow signs. Require A65/A16 actual load, A75/A16/A01 production, B16 solar,
+  B18/B19 wind, A11/A16 physical flows and MW quantity fields.
+- Aggregate the selected raw series into the existing causal replay transforms
+  for `solar_regime`, `load_deviation` and `flow_deviation`.
+- Remove silent neutral filling from the production ENTSO-E climatology.
+  Missing Swiss-local month/hour/quarter slots now fail closed; the repeated
+  fall-back hour remains distinct in UTC.
+- Keep the existing EEX Gold daily normalizer as the separate EEX building
+  block. Keep hydro on its separately governed SFOE/FMV source until a real
+  Gold source and transformation are explicitly approved.
+
+Reason:
+
+The prior code already had strong provider-byte and causal replay contracts,
+but their v3 provider envelope was tied to Energy-Charts, ENTSO-E API XML and
+SFOE CSV. Relabeling Databricks Parquet as one of those provider responses
+would falsify provenance. A source-specific offline adapter is needed before
+the new Gold/Silver exports can produce the existing model-facing roles.
+
+The exact SeriesKey inventory is intentionally unavailable until the real Gold
+dimension export is admitted. Binding the future mapping to the complete
+semantic signature prevents guessed IDs, group drift and the earlier
+generation-versus-consumption ambiguity.
+
+Rejected alternatives:
+
+- Query Databricks live from the model or this materializer.
+- Reuse the API-specific provider envelope while changing only its source
+  label.
+- Infer solar, wind, load or flow series from partial names, row order or
+  current counts.
+- Accept `UNKNOWN_BACKFILL` as historical known-at truth or choose a later
+  revision at an earlier simulated origin.
+- Collapse both Swiss fall-back hours to one naive local timestamp.
+- Fill an absent climatology slot with solar regime 1 or deviation 0.
+- Claim that a successful local transformation grants layer, calibration,
+  model-input or production authority.
+
+Verification:
+
+- focused materializer and quality matrix: `38 passed`;
+- expanded materializer/layer/replay/input/quality/assembler matrix:
+  `177 passed, 2 skipped in 157.19s`;
+- post-signature materializer/layer/quality/replay matrix: `53 passed`;
+- exact bounded CI data/PIT matrix: `135 passed, 2 skipped in 36.67s`;
+- targeted Ruff and `git diff --check`: pass;
+- Databricks connections/statements/Warehouse starts: `0/0/0`.
+
+Invariants not to break:
+
+- Gold is the current-serving authority and Silver vintages are the ENTSO-E
+  PIT authority; neither is consumed live by the model.
+- Every admitted model role remains an immutable, hash-manifested local
+  artifact with independently replayable derivation.
+- Materialization code and audits remain authority-negative until integrated
+  into the governed publisher and admitted on real data.
+- The CH monthly solver remains sole level authority. ENTSO-E and spot may
+  shape or validate but cannot rewrite solver monthly means.
+- Model admission remains
+  `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS`; T057 remains sealed.
+
 ## D-20260821-248 - Separate the ENTSO-E Gold serving layer from the Silver PIT authority
 
 Decision:

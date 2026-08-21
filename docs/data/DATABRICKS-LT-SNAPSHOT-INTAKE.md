@@ -41,11 +41,15 @@ required:
    package, with a manifest binding every output to its source tables,
    predicates, watermarks, code revision and point-in-time policy.
 
-Stage 2 is not implemented for the new Databricks package at this baseline.
-In particular, `scripts/create_lt_input_snapshot.py` is only a legacy bootstrap
-that copies already-curated files and declares `source_class` as
+Stage 2 now has a local, pure building block for Gold spot and Gold/Silver
+ENTSO-E in `pfc_shaping/data/databricks_lt_materialization.py`; the existing EEX
+daily normalizer remains separate. The new code is not yet integrated into the
+governed snapshot publisher and grants no authority. In particular,
+`scripts/create_lt_input_snapshot.py` is still only a legacy bootstrap that
+copies already-curated files and declares `source_class` as
 `MIGRATED_UNVERIFIED` and `calibration_eligible` as false. It must not be
-presented as the Gold/Silver transformation or as scientific admission.
+presented as the Gold/Silver transformation or as scientific admission. See
+`docs/data/DATABRICKS-LT-MATERIALIZATION.md` for the exact boundary.
 
 The future materializer must keep two different ENTSO-E views:
 

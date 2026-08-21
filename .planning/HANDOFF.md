@@ -5,7 +5,7 @@ Read in this order:
 1. `AGENTS.md`
 2. `.planning/HANDOFF.md`
 3. `.planning/phases/14-lt-audit-remediation/DECISION-LOG.md`
-4. `.planning/phases/14-lt-audit-remediation/SESSION-HANDOFF-20260821-EXTERNAL-AUDIT-REMEDIATION.md`
+4. `.planning/phases/14-lt-audit-remediation/SESSION-HANDOFF-20260821-DATABRICKS-LOCAL-MATERIALIZER.md`
 
 ## Current state
 
@@ -21,6 +21,9 @@ Read in this order:
 - The external audit's confirmed front-edge, KKT, dependency, CI and legacy
   entrypoint defects are remediated locally. Its post-solver seam-patch and
   dead-contract claims were rejected after code-path verification.
+- A pure offline Gold/Silver materializer now covers spot and ENTSO-E PIT/current
+  frames with exact SeriesKey mapping, DST and fail-closed coverage. Publisher
+  integration and real-data admission remain pending.
 
 ## Invariants
 
@@ -33,6 +36,6 @@ Read in this order:
   `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS` until independently
   governed local exports and a new future holdout exist.
 
-See durable decisions D-20260821-248 through D-20260821-251 and the linked
+See durable decisions D-20260821-248 through D-20260821-252 and the linked
 session handoff for exact files, tests and residual risks. The preceding repo
 hygiene handoff retains exact cleanup counts.

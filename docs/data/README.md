@@ -4,6 +4,8 @@
 
 - `DATABRICKS-LT-SNAPSHOT-INTAKE.md`: current mixed-layer Databricks export
   contract.
+- `DATABRICKS-LT-MATERIALIZATION.md`: offline Gold/Silver-to-model mapping,
+  PIT and interval contract.
 - `SHARED-DATA-PLATFORM.md`: consumer-neutral local storage and immutable view
   contract.
 - `templates/`: schema/binding templates used by current validation.
