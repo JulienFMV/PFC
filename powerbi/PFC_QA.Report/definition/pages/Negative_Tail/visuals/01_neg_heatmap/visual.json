@@ -1,0 +1,110 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.10.0/schema.json",
+  "name": "neg_heatmap",
+  "position": {
+    "x": 20,
+    "y": 40,
+    "z": 0,
+    "height": 520,
+    "width": 620
+  },
+  "visual": {
+    "visualType": "pivotTable",
+    "query": {
+      "queryState": {
+        "Columns": {
+          "projections": [
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Negative_Low_Hours"
+                    }
+                  },
+                  "Property": "hour_code"
+                }
+              },
+              "queryRef": "Negative_Low_Hours.hour_code",
+              "nativeQueryRef": "hour_code",
+              "active": true
+            }
+          ]
+        },
+        "Rows": {
+          "projections": [
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Negative_Low_Hours"
+                    }
+                  },
+                  "Property": "month_code"
+                }
+              },
+              "queryRef": "Negative_Low_Hours.month_code",
+              "nativeQueryRef": "month_code",
+              "active": true
+            }
+          ]
+        },
+        "Values": {
+          "projections": [
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Negative_Low_Hours"
+                    }
+                  },
+                  "Property": "fast_negative_hours"
+                }
+              },
+              "queryRef": "Negative_Low_Hours.fast_negative_hours",
+              "nativeQueryRef": "fast_negative_hours"
+            }
+          ]
+        }
+      }
+    },
+    "visualContainerObjects": {
+      "title": [
+        {
+          "properties": {
+            "show": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            },
+            "text": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Fast negative hours heatmap'"
+                }
+              }
+            },
+            "fontSize": {
+              "expr": {
+                "Literal": {
+                  "Value": "11D"
+                }
+              }
+            },
+            "bold": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

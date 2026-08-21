@@ -1,0 +1,97 @@
+{
+  "schema_version": "ch_lt_hourly_day_ahead_capture_curl_retry.v1",
+  "retry_id": "3ad869f51d0e225c60beea4ce10667bc0267441f44fae36c5f41994899c46c0e",
+  "lifecycle_state": "FROZEN_LOCAL_TRANSPORT_RETRY_NOT_ADMISSION",
+  "as_of_utc": "2026-07-27T00:00:00Z",
+  "prior_attempt": {
+    "run_spec_path": ".planning/phases/14-lt-audit-remediation/CH-LT-HOURLY-DAY-AHEAD-CAPTURE-RUN-SPEC-20260727.json",
+    "run_spec_sha256": "47cb42616f6cda629b725b05159db0cd1dc3c3e4ce054d857a356e130851deb7",
+    "run_spec_id": "c6389dfa8c948fc55558ff2d6acd01aeab488b6bce228d129be9e022cfcb0cb7",
+    "output_directory_relative": "output/phase14/ch_da_hourly_capture_20260727_attempt1",
+    "attempt_record_relative": "output/phase14/ch_da_hourly_capture_20260727_attempt1/capture-attempt.json",
+    "attempt_record_sha256": "39b39ba5e044a992ba28349519a7341b103a5602a302c692671dd71106f0e27b",
+    "failure_classification": "SANDBOX_REQUESTS_PROXY_CONNECTION_REFUSED",
+    "failure_stderr_durably_captured": false,
+    "prior_namespace_closed_to_retry": true
+  },
+  "request_identity": {
+    "endpoint": "https://api.energy-charts.info/price",
+    "bidding_zone": "CH",
+    "start_utc": "2026-06-26T22:00:00Z",
+    "end_utc_exclusive": "2026-07-26T22:00:00Z",
+    "provider_end_parameter_inclusive": "2026-07-26T21:00Z",
+    "expected_source_observation_count": 720,
+    "source_cadence_seconds": 3600
+  },
+  "retry_execution": {
+    "wrapper": "scripts/run_ch_lt_hourly_curl_retry_from_spec.py",
+    "acquisition_id": "ch-da-hourly-20260626T2200Z-20260726T2200Z-attempt2-curl",
+    "output_directory_relative": "output/phase14/ch_da_hourly_capture_20260727_attempt2_curl",
+    "prepare_subcommand_required": true,
+    "curl_subcommand_required": true,
+    "finalize_subcommand_required": true,
+    "output_namespace_reuse_forbidden": true
+  },
+  "curl_transport": {
+    "executable": "curl.exe",
+    "arguments_template": [
+      "-L",
+      "--ssl-no-revoke",
+      "--max-redirs",
+      "0",
+      "--proto",
+      "=https",
+      "--tlsv1.2",
+      "--fail-with-body",
+      "--silent",
+      "--show-error",
+      "--header",
+      "Accept: application/json",
+      "--header",
+      "Accept-Encoding: identity",
+      "--cacert",
+      "C:/certs/git-ca-plus-fmv.crt",
+      "--dump-header",
+      "{repo_root}/output/phase14/ch_da_hourly_capture_20260727_attempt2_curl/response-headers.txt",
+      "--output",
+      "{repo_root}/output/phase14/ch_da_hourly_capture_20260727_attempt2_curl/provider-response.json",
+      "https://api.energy-charts.info/price?bzn=CH&start=2026-06-26T22%3A00Z&end=2026-07-26T21%3A00Z"
+    ],
+    "redirect_limit": 0,
+    "response_encoding_requested": "identity",
+    "ca_bundle_sha256": "e68ca0a61d7e000d0c10fb3a712be09c533378b99af5fa4c30a34c7aa8f36f25",
+    "response_body_relative": "output/phase14/ch_da_hourly_capture_20260727_attempt2_curl/provider-response.json",
+    "response_headers_relative": "output/phase14/ch_da_hourly_capture_20260727_attempt2_curl/response-headers.txt"
+  },
+  "completion_contract": {
+    "http_status_required": 200,
+    "media_type_required": "application/json",
+    "content_encoding_allowed": [
+      "",
+      "identity"
+    ],
+    "provider_body_max_bytes": 8388608,
+    "expected_bronze_observation_count": 2880,
+    "expected_bronze_cadence_seconds": 900,
+    "bronze_sampling_kind": "UPSAMPLED_STEPWISE_PROXY",
+    "native_hourly_truth_eligible_after_external_admission": true,
+    "native_quarter_hour_truth_eligible": false,
+    "receipt_last_written_required": true
+  },
+  "external_authorities": {
+    "trusted_time_receipt_present": false,
+    "independent_signature_present": false,
+    "builder_inaccessible_immutable_namespace_present": false,
+    "external_cas_receipt_present": false,
+    "fresh_authenticated_head_present": false
+  },
+  "local_capture_execution_authorized": true,
+  "scientific_execution_authorized": false,
+  "scientific_admission": false,
+  "model_selection_authorized": false,
+  "publication_authorized": false,
+  "production_authorization": false,
+  "promotion_gate": false,
+  "future_holdout_consumed": false,
+  "t057_consumed": false
+}

@@ -1,0 +1,272 @@
+table HFC_Hourly
+	lineageTag: bb21f4fe-5ff4-4a90-b721-1f8a9c88097c
+
+	measure 'Avg Price Weighted' = AVERAGE ( HFC_Hourly[price_weighted_mean_eur_mwh] )
+		formatString: 0.00
+		lineageTag: f0cf9e17-851a-4a54-a703-a19c9b0d06f8
+
+	measure 'Avg Price Central' = AVERAGE ( HFC_Hourly[price_central_eur_mwh] )
+		formatString: 0.00
+		lineageTag: df2ee887-93e3-4ee4-b7c3-148d42114053
+
+	measure 'Avg Price Fast' = AVERAGE ( HFC_Hourly[price_fast_eur_mwh] )
+		formatString: 0.00
+		lineageTag: 2b0d6fae-342b-4620-9fb7-878eff5ee32b
+
+	measure 'Avg Price Slow' = AVERAGE ( HFC_Hourly[price_slow_eur_mwh] )
+		formatString: 0.00
+		lineageTag: af90f3a2-a892-427b-a1e5-f05c6d3b0aa3
+
+	measure 'Min Weighted Price' = MIN ( HFC_Hourly[price_weighted_mean_eur_mwh] )
+		formatString: 0.00
+		lineageTag: 866c33b3-e6b2-4cda-bc8f-57f3b9fcc2f3
+
+	measure 'Weighted Negative Hours' = CALCULATE ( COUNTROWS ( HFC_Hourly ), HFC_Hourly[price_weighted_mean_eur_mwh] < 0 )
+		formatString: 0
+		lineageTag: 14b8b822-9b32-4768-b026-c602aaea161e
+
+	measure 'Fast Negative Hours' = CALCULATE ( COUNTROWS ( HFC_Hourly ), HFC_Hourly[price_fast_eur_mwh] < 0 )
+		formatString: 0
+		lineageTag: 12217c4d-b597-4a98-8f09-ca7d5d454cc0
+
+	measure 'P10 Negative Hours' = CALCULATE ( COUNTROWS ( HFC_Hourly ), HFC_Hourly[structural_p10_eur_mwh] < 0 )
+		formatString: 0
+		lineageTag: 4b97766c-26fa-41ae-a0ff-1c6d99eaf827
+
+	measure 'Peak Avg Price' = CALCULATE ( [Avg Price Weighted], HFC_Hourly[is_eex_peak] = TRUE () )
+		formatString: 0.00
+		lineageTag: 35d952b4-e2a4-4c61-bcca-2a1dc6c88487
+
+	measure 'Offpeak Avg Price' = CALCULATE ( [Avg Price Weighted], HFC_Hourly[is_eex_peak] = FALSE () )
+		formatString: 0.00
+		lineageTag: 8d328c42-e60c-4db9-a66b-afc27433d1c8
+
+	measure 'Peak Offpeak Spread' = [Peak Avg Price] - [Offpeak Avg Price]
+		formatString: 0.00
+		lineageTag: 070bb470-c160-432e-9b54-0888a814d320
+
+	measure 'Midday Avg Price' = CALCULATE ( [Avg Price Weighted], HFC_Hourly[hour] >= 11, HFC_Hourly[hour] <= 15 )
+		formatString: 0.00
+		lineageTag: 01cee7f7-a1f5-459f-bc3f-a8006cbc62ec
+
+	measure 'Evening Avg Price' = CALCULATE ( [Avg Price Weighted], HFC_Hourly[hour] >= 17, HFC_Hourly[hour] <= 21 )
+		formatString: 0.00
+		lineageTag: 8b9ab93a-b801-4d39-a000-4c3df3413d3f
+
+	measure 'Evening Midday Spread' = [Evening Avg Price] - [Midday Avg Price]
+		formatString: 0.00
+		lineageTag: bca8bbeb-edc1-40b8-b8b1-26e8e3d08ec7
+
+	measure 'Weekend Avg Price' = CALCULATE ( [Avg Price Weighted], HFC_Hourly[is_weekend] = TRUE () )
+		formatString: 0.00
+		lineageTag: 6db62621-ccba-472c-9ab1-ca8cf9f03951
+
+	measure 'Weekday Avg Price' = CALCULATE ( [Avg Price Weighted], HFC_Hourly[is_weekend] = FALSE () )
+		formatString: 0.00
+		lineageTag: 6790bf9d-99d1-4358-999d-53a33fb2b663
+
+	measure 'Weekend Weekday Spread' = [Weekend Avg Price] - [Weekday Avg Price]
+		formatString: 0.00
+		lineageTag: dc0fa97a-5828-4271-ad31-a7bfcdde204a
+
+	column timestamp_ch_text
+		dataType: string
+		lineageTag: 8a1d8e15-db34-464a-a316-2d51a08f1f8d
+		summarizeBy: none
+		sourceColumn: timestamp_ch_text
+
+	column timestamp_ch_iso
+		dataType: dateTime
+		formatString: dd.mm.yyyy hh:nn
+		lineageTag: 65050463-bf88-43e1-916c-af1c67b42c27
+		summarizeBy: none
+		sourceColumn: timestamp_ch_iso
+
+	column timestamp_ch
+		dataType: string
+		lineageTag: 56840067-c594-42a3-8321-67a832eacfd4
+		summarizeBy: none
+		sourceColumn: timestamp_ch
+
+	column utc_offset_ch
+		dataType: string
+		lineageTag: 9409099a-11d1-4702-9be5-843d9a33c0c3
+		summarizeBy: none
+		sourceColumn: utc_offset_ch
+
+	column timestamp_utc
+		dataType: string
+		lineageTag: f3622106-be0f-4932-88bf-93e340b94683
+		summarizeBy: none
+		sourceColumn: timestamp_utc
+
+	column timestamp_utc_text
+		dataType: string
+		lineageTag: 8b18ba89-2f12-4d85-ab3f-b1bce3c6cf9d
+		summarizeBy: none
+		sourceColumn: timestamp_utc_text
+
+	column date_ch
+		dataType: dateTime
+		formatString: dd.mm.yyyy
+		lineageTag: 6e1e2b1f-2d3a-4afa-9c90-88b3c6f4bdcc
+		summarizeBy: none
+		sourceColumn: date_ch
+
+		annotation UnderlyingDateTimeDataType = Date
+
+	column year
+		dataType: int64
+		formatString: 0
+		lineageTag: 800fd6bd-d750-4241-8fb8-2cb4651695b1
+		summarizeBy: none
+		sourceColumn: year
+
+	column quarter
+		dataType: int64
+		formatString: 0
+		lineageTag: e3ee01b8-ea41-4851-a3fc-276e285c1bce
+		summarizeBy: none
+		sourceColumn: quarter
+
+	column month
+		dataType: int64
+		formatString: 0
+		lineageTag: 22034a9e-ce18-4ba7-98ed-9fd1ea0db5c0
+		summarizeBy: none
+		sourceColumn: month
+
+	column month_code
+		dataType: string
+		lineageTag: ba4af7c9-d91f-43eb-8242-f814048e0d3c
+		summarizeBy: none
+		sourceColumn: month_code
+
+	column month_label
+		dataType: string
+		lineageTag: daee5845-bbbd-4477-9651-54ebded66867
+		summarizeBy: none
+		sourceColumn: month_label
+
+	column hour
+		dataType: int64
+		formatString: 0
+		lineageTag: 95d04245-abbe-4c9e-8083-a481d094345b
+		summarizeBy: none
+		sourceColumn: hour
+
+	column hour_code
+		dataType: string
+		lineageTag: 9867036e-2654-4014-a611-faa593af75fe
+		summarizeBy: none
+		sourceColumn: hour_code
+
+	column weekday
+		dataType: int64
+		formatString: 0
+		lineageTag: 65f0ff87-9fa3-41e0-8486-b9493926114a
+		summarizeBy: none
+		sourceColumn: weekday
+
+	column season
+		dataType: string
+		lineageTag: 96cfeb88-3702-4d55-a917-53e0c46ac06c
+		summarizeBy: none
+		sourceColumn: season
+
+	column is_weekend
+		dataType: boolean
+		lineageTag: 4669e22e-bb9c-4227-a800-be110e96623d
+		summarizeBy: none
+		sourceColumn: is_weekend
+
+	column is_eex_peak
+		dataType: boolean
+		lineageTag: 64d1a943-531e-4526-b12c-acef4ac1d26f
+		summarizeBy: none
+		sourceColumn: is_eex_peak
+
+	column is_weighted_negative
+		dataType: boolean
+		lineageTag: dc2494bf-1bc2-473a-bacc-b1a5d0569bd4
+		summarizeBy: none
+		sourceColumn: is_weighted_negative
+
+	column is_fast_negative
+		dataType: boolean
+		lineageTag: e4669fea-386f-450f-8404-8f227711a68c
+		summarizeBy: none
+		sourceColumn: is_fast_negative
+
+	column is_p10_negative
+		dataType: boolean
+		lineageTag: d831d793-4feb-4120-84b3-17cebaa58e43
+		summarizeBy: none
+		sourceColumn: is_p10_negative
+
+	column price_slow_eur_mwh
+		dataType: double
+		formatString: 0.00
+		lineageTag: 9d4029ef-fac4-4018-894e-2456a70b596b
+		summarizeBy: none
+		sourceColumn: price_slow_eur_mwh
+
+	column price_central_eur_mwh
+		dataType: double
+		formatString: 0.00
+		lineageTag: dac6df3f-792d-44a0-b9de-22d03a6a06a1
+		summarizeBy: none
+		sourceColumn: price_central_eur_mwh
+
+	column price_fast_eur_mwh
+		dataType: double
+		formatString: 0.00
+		lineageTag: c6a57642-b255-40d6-9f2d-f5d05934c5f3
+		summarizeBy: none
+		sourceColumn: price_fast_eur_mwh
+
+	column price_weighted_mean_eur_mwh
+		dataType: double
+		formatString: 0.00
+		lineageTag: cb6efd68-e9d3-438d-87f4-3e3966617f9d
+		summarizeBy: none
+		sourceColumn: price_weighted_mean_eur_mwh
+
+	column structural_p10_eur_mwh
+		dataType: double
+		formatString: 0.00
+		lineageTag: fd96f8cc-319b-42cd-8a5d-991e954a5743
+		summarizeBy: none
+		sourceColumn: structural_p10_eur_mwh
+
+	column structural_p50_eur_mwh
+		dataType: double
+		formatString: 0.00
+		lineageTag: f577c959-e60c-436f-89b7-d662b6681c0a
+		summarizeBy: none
+		sourceColumn: structural_p50_eur_mwh
+
+	column structural_p90_eur_mwh
+		dataType: double
+		formatString: 0.00
+		lineageTag: 6589e5c4-f7d0-406f-97b0-e80a8196a000
+		summarizeBy: none
+		sourceColumn: structural_p90_eur_mwh
+
+	column structural_width_eur_mwh
+		dataType: double
+		formatString: 0.00
+		lineageTag: 8cdf5263-02b9-4f9d-9446-334de6e29d64
+		summarizeBy: none
+		sourceColumn: structural_width_eur_mwh
+
+	partition HFC_Hourly = m
+		mode: import
+		source =
+				let
+				    Source = Csv.Document(File.Contents("\\fmvfs2\Data\Energy\GeCom\CONTROLLING RISK\Analyses diverses\Python - JB\PFC_LT\powerbi\data\hfc_hourly_powerbi.csv"), [Delimiter=",", Columns=29, Encoding=65001, QuoteStyle=QuoteStyle.Csv]),
+				    Promoted = Table.PromoteHeaders(Source, [PromoteAllScalars=true]),
+				    Typed = Table.TransformColumnTypes(Promoted, {{"timestamp_ch_text", type text}, {"timestamp_ch_iso", type datetime}, {"timestamp_ch", type text}, {"utc_offset_ch", type text}, {"timestamp_utc", type text}, {"timestamp_utc_text", type text}, {"date_ch", type date}, {"year", Int64.Type}, {"quarter", Int64.Type}, {"month", Int64.Type}, {"month_code", type text}, {"month_label", type text}, {"hour", Int64.Type}, {"hour_code", type text}, {"weekday", Int64.Type}, {"season", type text}, {"is_weekend", type logical}, {"is_eex_peak", type logical}, {"is_weighted_negative", type logical}, {"is_fast_negative", type logical}, {"is_p10_negative", type logical}, {"price_slow_eur_mwh", type number}, {"price_central_eur_mwh", type number}, {"price_fast_eur_mwh", type number}, {"price_weighted_mean_eur_mwh", type number}, {"structural_p10_eur_mwh", type number}, {"structural_p50_eur_mwh", type number}, {"structural_p90_eur_mwh", type number}, {"structural_width_eur_mwh", type number}})
+				in
+				    Typed
+

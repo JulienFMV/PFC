@@ -84,7 +84,7 @@ def main() -> None:
         raise FileNotFoundError(f"PriceFM hourly predictions not found: {args.pricefm_hourly}")
 
     sys.path.insert(0, str(ROOT))
-    from pfc_shaping.model.lear_forecaster import LEARForecaster, _get_holidays
+    from pfc_shaping.ct.model.lear_forecaster import LEARForecaster, _get_holidays
 
     pricefm = pd.read_csv(args.pricefm_hourly)
     pricefm["timestamp"] = pd.to_datetime(pricefm["timestamp"], utc=True)

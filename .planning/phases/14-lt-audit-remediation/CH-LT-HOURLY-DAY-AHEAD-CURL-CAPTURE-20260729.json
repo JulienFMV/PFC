@@ -1,0 +1,80 @@
+{
+  "schema_version": "ch_lt_hourly_day_ahead_curl_capture.v2",
+  "contract_id": "f630dabe7e38caece87cefb01f5e6eb8d519b96baecdb191ea90b7c3427c3c6b",
+  "lifecycle_state": "FROZEN_LOCAL_CURL_CAPTURE_NOT_ADMISSION",
+  "as_of_utc": "2026-07-29T00:00:00Z",
+  "market": "CH",
+  "timezone": "Europe/Zurich",
+  "source": {
+    "role": "epex_ch",
+    "source_system": "ENERGY_CHARTS_API",
+    "endpoint": "https://api.energy-charts.info/price",
+    "bidding_zone": "CH",
+    "product": "DAY_AHEAD_PRICE_CH",
+    "product_cadence_seconds": 3600,
+    "product_identity_status": "EXTERNAL_PRODUCT_AUCTION_SESSION_IDENTITY_UNVERIFIED"
+  },
+  "window": {
+    "start_utc": "2026-06-28T22:00:00Z",
+    "end_utc_exclusive": "2026-07-28T22:00:00Z",
+    "duration_hours": 720,
+    "expected_source_observation_count": 720,
+    "dst_interpretation": "UTC_INTERVAL_MAPPED_TO_EUROPE_ZURICH_DELIVERY_HOURS"
+  },
+  "execution": {
+    "wrapper": "scripts/run_ch_lt_hourly_curl_retry_from_spec.py",
+    "acquisition_id": "ch-da-hourly-20260628T2200Z-20260728T2200Z-attempt1-curl-v2",
+    "raw_cadence_minutes": 60,
+    "expected_bronze_observation_count": 2880,
+    "expected_bronze_cadence_seconds": 900,
+    "bronze_sampling_kind": "UPSAMPLED_STEPWISE_PROXY",
+    "native_hourly_truth_eligible_after_external_admission": true,
+    "native_quarter_hour_truth_eligible": false,
+    "output_directory_relative": "output/phase14/ch_da_hourly_capture_20260729_attempt1_curl_v2",
+    "output_namespace_reuse_forbidden": true
+  },
+  "tls": {
+    "ca_bundle_path": "C:/certs/git-ca-plus-fmv.crt",
+    "ca_bundle_sha256": "e68ca0a61d7e000d0c10fb3a712be09c533378b99af5fa4c30a34c7aa8f36f25",
+    "ca_bundle_size_bytes": 258962
+  },
+  "transport": {
+    "executable": "curl.exe",
+    "redirect_limit": 0,
+    "protocol": "https",
+    "minimum_tls_version": "1.2",
+    "response_encoding_requested": "identity",
+    "provider_body_max_bytes": 8388608
+  },
+  "intended_use": {
+    "allowed": [
+      "LOCAL_HOURLY_SHAPE_DIAGNOSTIC",
+      "EXTERNAL_ADMISSION_INPUT_CANDIDATE"
+    ],
+    "forbidden": [
+      "MONTHLY_LEVEL_AUTHORITY",
+      "NATIVE_QUARTER_HOUR_TRUTH",
+      "MODEL_SELECTION_BEFORE_EXTERNAL_ADMISSION",
+      "FUTURE_HOLDOUT_TRUTH_OPEN",
+      "SNAPSHOT_PUBLICATION",
+      "CANDIDATE_PROMOTION",
+      "PRODUCTION_PROMOTION"
+    ]
+  },
+  "external_authorities": {
+    "trusted_time_receipt_present": false,
+    "independent_signature_present": false,
+    "builder_inaccessible_immutable_namespace_present": false,
+    "external_cas_receipt_present": false,
+    "fresh_authenticated_head_present": false
+  },
+  "local_capture_execution_authorized": true,
+  "scientific_execution_authorized": false,
+  "scientific_admission": false,
+  "model_selection_authorized": false,
+  "publication_authorized": false,
+  "production_authorization": false,
+  "promotion_gate": false,
+  "future_holdout_consumed": false,
+  "t057_consumed": false
+}

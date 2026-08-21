@@ -1,0 +1,135 @@
+{
+  "schema_version": "ch_lt_future_scoring_implementation_closure.v3",
+  "closure_id": "cedd9356744eddda6aec87666a64017f3946b5561219800b31c74e4e35d6fa1f",
+  "status": "REPRODUCIBLE_EXACT_WHEEL_RUNTIME_CONSUMED_FULL_PROJECT_SOURCE_CLOSURE_LOCAL_NO_GO",
+  "supersedes": {
+    "path": ".planning/phases/14-lt-audit-remediation/CH-LT-FUTURE-SCORING-IMPLEMENTATION-CLOSURE-V2-20260731.json",
+    "sha256": "fc9d548a17f8f51f3e7b1115677d7505892133a81a0f54e9168e5fee8da8f573",
+    "closure_id": "a24dcb3b89c5804199df5c744bcdc24be39c0d70f6ccbbd74b3b5e1f30f3a0a2",
+    "reason": "REPLACE_DIRECT_ONLY_BINDING_WITH_RUNTIME_CONSUMED_BUILD_GENERATED_FULL_PROJECT_SOURCE_CLOSURE"
+  },
+  "future_origin_selection": {
+    "path": ".planning/phases/14-lt-audit-remediation/CH-LT-LOCAL-FUTURE-ORIGIN-SELECTION-V6-20260731.json",
+    "sha256": "11966d1ee85ace46e97006fa74f8aab4789c71f7438de909ed71541aab480df7",
+    "selection_id": "5340bb8c5cd0c2ba65f346c70e75ba7aa6bb17a5553df353f476ef8c50f03984",
+    "same_origin_as_v5": true,
+    "additional_countable_origin": false
+  },
+  "reproducible_wheel": {
+    "build_a_path": "build/wheel-dist-prospective-g/fmv_pfc_lt-0.14.0-py3-none-any.whl",
+    "build_b_path": "build/wheel-dist-prospective-h/fmv_pfc_lt-0.14.0-py3-none-any.whl",
+    "build_a_sha256": "0e7d69b14493a6959222709835a0ca00ea373b99df50a24344cf35bd97e80f37",
+    "build_b_sha256": "0e7d69b14493a6959222709835a0ca00ea373b99df50a24344cf35bd97e80f37",
+    "byte_identical": true,
+    "member_count": 109,
+    "source_revision": "5f544d90a81077d7aec8d893339c5f2ca0928489e9e950ee02d65c9797b44da7",
+    "wheel_contract_status": "PASS",
+    "promotion_eligible": false
+  },
+  "runtime_consumed_project_source_closure": {
+    "execution_mode": "ISOLATED_WHEEL_UNPACK_OVER_EXACT_REPO_LOCAL_RUNTIME_SUBSTRATE",
+    "wheel_unpack_root": "build/wheel-unpack-prospective-g/fmv_pfc_lt-0.14.0",
+    "auditor_module": "pfc_shaping.validation.ch_lt_local_future_origin_selection",
+    "auditor_status": "SEALED_INSTALLED_FULL_SOURCE_IMPORT_CLOSURE_VERIFIED",
+    "source_count": 105,
+    "source_revision": "5f544d90a81077d7aec8d893339c5f2ca0928489e9e950ee02d65c9797b44da7",
+    "wheel_root_occurrences_in_sys_path": 1,
+    "checkout_root_occurrences_in_sys_path": 0,
+    "scripts_module_loaded": false,
+    "ct_module_loaded": false,
+    "selection_audit_status": "VALID_LOCAL_FUTURE_ORIGIN_REHEARSAL_V7_PACKAGED_MODULE_SOURCES_BOUND_NONCOUNTABLE_NO_GO",
+    "recursive_selection_binding_count": 25,
+    "future_holdout_consumed": false,
+    "t057_consumed": false
+  },
+  "runtime_substrate": {
+    "interpreter_path": "build/pytest-runtime-v1/python.exe",
+    "interpreter_sha256": "50bfb90ee93bb0cb51175b546f133798dfe4b778677d95d81391e7bf6d85e5ac",
+    "python_version": "3.11.13",
+    "conda_runtime_prefix": "build/conda-runtime-v34-peak-base",
+    "python_runtime_manifest": {
+      "path": "build/launcherless-python-runtime-manifest-20260730-v34-peak-base.json",
+      "sha256": "f50d83fab7cd3ceff0f2d303990e682f47c55e590fa1b55bbdf35f8be100a463",
+      "tree_sha256": "ca27db7083a959f614c2c6c032c22c27409e6d33ac7e5e9a56cf1bc899d28a72"
+    },
+    "conda_prefix_receipt": {
+      "path": "build/launcherless-conda-prefix-receipt-20260730-v34-peak.json",
+      "sha256": "bd348f5145963bfc3ae4c157b723807d52c5a24adbd6a98589f2b1b3d891a233"
+    },
+    "prior_runtime_receipt": {
+      "path": "build/launcherless-runtime-receipt-20260730-v34-peak.json",
+      "sha256": "8f6f36e36a2707b1c71ff98cce20691e8c648bdda02eeb5f6ffa1335c8c4d405",
+      "binds_current_project_wheel": false,
+      "role": "NATIVE_AND_THIRD_PARTY_SUBSTRATE_CONTEXT_ONLY"
+    },
+    "verified_direct_distribution_versions": {
+      "cryptography": "47.0.0",
+      "holidays": "0.83",
+      "numpy": "2.0.2",
+      "openpyxl": "3.1.5",
+      "pandas": "2.3.3",
+      "pyarrow": "21.0.0",
+      "PyYAML": "6.0.3",
+      "scikit-learn": "1.6.1",
+      "scipy": "1.13.1"
+    }
+  },
+  "verification_matrix": {
+    "prospective_scoring_truth_and_package_contract": {
+      "passed": 63,
+      "failed": 0,
+      "duration_seconds": 32.12
+    },
+    "runtime_packaging_publisher": {
+      "passed": 110,
+      "skipped": 12,
+      "deselected": 2,
+      "failed": 0,
+      "duration_seconds": 13.90
+    },
+    "publisher_acl_remediation_targets": {
+      "passed": 7,
+      "failed": 0,
+      "duration_seconds": 0.44
+    },
+    "candidate_evidence_and_quality": {
+      "passed": 92,
+      "failed": 0,
+      "duration_seconds": 101.41
+    },
+    "governed_release": {
+      "passed": 37,
+      "failed": 0,
+      "duration_seconds": 27.79
+    },
+    "atomic_promotion": {
+      "passed": 116,
+      "skipped": 2,
+      "failed": 0,
+      "duration_seconds": 135.59
+    }
+  },
+  "closed_findings": [
+    "NO_PROSPECTIVE_RUNTIME_IMPORTS_FROM_SCRIPTS_NAMESPACE",
+    "PROSPECTIVE_MODULES_INCLUDED_IN_POSITIVE_WHEEL_INVENTORY",
+    "BUILD_GENERATED_FULL_PROJECT_SOURCE_REVISION_CONSUMED_BEFORE_REGISTRY_READ",
+    "EXACTLY_ONE_WHEEL_ROOT_AND_ZERO_CHECKOUT_ROOTS_IN_ISOLATED_SYS_PATH",
+    "REPRODUCIBLE_WHEEL_BYTES_AND_WHEEL_CONTRACT_PASS",
+    "WINDOWS_TEMPFILE_ACL_FAILURE_REMOVED_FROM_PUBLISHER_CAPTURE_AND_SUPERVISOR",
+    "WINDOWS_TEMPFILE_ACL_FAILURE_REMOVED_FROM_PRODUCT_NORMALIZATION_REPLAY"
+  ],
+  "limitations": [
+    "WHEEL_UNPACK_IS_PURELIB_EQUIVALENT_BUT_NOT_A_PIP_INSTALLER_RECEIPT",
+    "CURRENT_PROJECT_WHEEL_NOT_YET_INTEGRATED_INTO_A_FRESH_FULL_RUNTIME_TREE_RECEIPT",
+    "PYTEST_OVERLAY_IS_LOCAL_TEST_HARNESS_NOT_PRODUCTION_RUNTIME",
+    "NO_INDEPENDENT_TRUSTED_TIME_SIGNATURE_OR_EXTERNAL_CAS",
+    "NATIVE_HOURLY_COLLECTOR_NOT_OPERATIONALLY_SCHEDULED",
+    "NO_MATURED_REAL_TRUTH_TO_SCORE_END_TO_END_RECEIPT",
+    "NO_INDEPENDENT_ROLLING_ORIGIN_EVIDENCE_YET"
+  ],
+  "future_holdout_consumed": false,
+  "t057_consumed": false,
+  "scientific_admission": false,
+  "production_authorization": false,
+  "promotion_gate": false
+}

@@ -1,0 +1,67 @@
+source_id,publication_date,country,scenario,delivery_year,field,value,justification
+lt_field_neutralization_policy_20260612,2026-06-12 00:00:00+00:00,AT,central,2030,coal_gw,0.0,Explicit zero neutralisation where no governed 2030 coal capacity source is wired for this country/scenario. Existing non-null coal source values are preserved.
+lt_field_neutralization_policy_20260612,2026-06-12 00:00:00+00:00,AT,fast,2030,coal_gw,0.0,Explicit zero neutralisation where no governed 2030 coal capacity source is wired for this country/scenario. Existing non-null coal source values are preserved.
+lt_field_neutralization_policy_20260612,2026-06-12 00:00:00+00:00,AT,slow,2030,coal_gw,0.0,Explicit zero neutralisation where no governed 2030 coal capacity source is wired for this country/scenario. Existing non-null coal source values are preserved.
+lt_field_neutralization_policy_20260612,2026-06-12 00:00:00+00:00,CH,central,2030,coal_gw,0.0,Explicit zero neutralisation where no governed 2030 coal capacity source is wired for this country/scenario. Existing non-null coal source values are preserved.
+lt_field_neutralization_policy_20260612,2026-06-12 00:00:00+00:00,CH,fast,2030,coal_gw,0.0,Explicit zero neutralisation where no governed 2030 coal capacity source is wired for this country/scenario. Existing non-null coal source values are preserved.
+lt_field_neutralization_policy_20260612,2026-06-12 00:00:00+00:00,CH,slow,2030,coal_gw,0.0,Explicit zero neutralisation where no governed 2030 coal capacity source is wired for this country/scenario. Existing non-null coal source values are preserved.
+lt_field_neutralization_policy_20260612,2026-06-12 00:00:00+00:00,AT,central,2030,dsm_gw,0.0,DSM structural flex layer inactive until a governed DSM scenario source is wired.
+lt_field_neutralization_policy_20260612,2026-06-12 00:00:00+00:00,AT,fast,2030,dsm_gw,0.0,DSM structural flex layer inactive until a governed DSM scenario source is wired.
+lt_field_neutralization_policy_20260612,2026-06-12 00:00:00+00:00,AT,slow,2030,dsm_gw,0.0,DSM structural flex layer inactive until a governed DSM scenario source is wired.
+lt_field_neutralization_policy_20260612,2026-06-12 00:00:00+00:00,CH,central,2030,dsm_gw,0.0,DSM structural flex layer inactive until a governed DSM scenario source is wired.
+lt_field_neutralization_policy_20260612,2026-06-12 00:00:00+00:00,CH,fast,2030,dsm_gw,0.0,DSM structural flex layer inactive until a governed DSM scenario source is wired.
+lt_field_neutralization_policy_20260612,2026-06-12 00:00:00+00:00,CH,slow,2030,dsm_gw,0.0,DSM structural flex layer inactive until a governed DSM scenario source is wired.
+lt_field_neutralization_policy_20260612,2026-06-12 00:00:00+00:00,DE,central,2030,dsm_gw,0.0,DSM structural flex layer inactive until a governed DSM scenario source is wired.
+lt_field_neutralization_policy_20260612,2026-06-12 00:00:00+00:00,DE,fast,2030,dsm_gw,0.0,DSM structural flex layer inactive until a governed DSM scenario source is wired.
+lt_field_neutralization_policy_20260612,2026-06-12 00:00:00+00:00,DE,slow,2030,dsm_gw,0.0,DSM structural flex layer inactive until a governed DSM scenario source is wired.
+lt_field_neutralization_policy_20260612,2026-06-12 00:00:00+00:00,FR,central,2030,dsm_gw,0.0,DSM structural flex layer inactive until a governed DSM scenario source is wired.
+lt_field_neutralization_policy_20260612,2026-06-12 00:00:00+00:00,FR,fast,2030,dsm_gw,0.0,DSM structural flex layer inactive until a governed DSM scenario source is wired.
+lt_field_neutralization_policy_20260612,2026-06-12 00:00:00+00:00,FR,slow,2030,dsm_gw,0.0,DSM structural flex layer inactive until a governed DSM scenario source is wired.
+lt_field_neutralization_policy_20260612,2026-06-12 00:00:00+00:00,IT,central,2030,dsm_gw,0.0,DSM structural flex layer inactive until a governed DSM scenario source is wired.
+lt_field_neutralization_policy_20260612,2026-06-12 00:00:00+00:00,IT,fast,2030,dsm_gw,0.0,DSM structural flex layer inactive until a governed DSM scenario source is wired.
+lt_field_neutralization_policy_20260612,2026-06-12 00:00:00+00:00,IT,slow,2030,dsm_gw,0.0,DSM structural flex layer inactive until a governed DSM scenario source is wired.
+lt_field_neutralization_policy_20260612,2026-06-12 00:00:00+00:00,AT,central,2030,electrolysis_twh,0.0,Electrolysis structural demand layer inactive until a governed hydrogen scenario source is wired.
+lt_field_neutralization_policy_20260612,2026-06-12 00:00:00+00:00,AT,fast,2030,electrolysis_twh,0.0,Electrolysis structural demand layer inactive until a governed hydrogen scenario source is wired.
+lt_field_neutralization_policy_20260612,2026-06-12 00:00:00+00:00,AT,slow,2030,electrolysis_twh,0.0,Electrolysis structural demand layer inactive until a governed hydrogen scenario source is wired.
+lt_field_neutralization_policy_20260612,2026-06-12 00:00:00+00:00,CH,central,2030,electrolysis_twh,0.0,Electrolysis structural demand layer inactive until a governed hydrogen scenario source is wired.
+lt_field_neutralization_policy_20260612,2026-06-12 00:00:00+00:00,CH,fast,2030,electrolysis_twh,0.0,Electrolysis structural demand layer inactive until a governed hydrogen scenario source is wired.
+lt_field_neutralization_policy_20260612,2026-06-12 00:00:00+00:00,CH,slow,2030,electrolysis_twh,0.0,Electrolysis structural demand layer inactive until a governed hydrogen scenario source is wired.
+lt_field_neutralization_policy_20260612,2026-06-12 00:00:00+00:00,DE,central,2030,electrolysis_twh,0.0,Electrolysis structural demand layer inactive until a governed hydrogen scenario source is wired.
+lt_field_neutralization_policy_20260612,2026-06-12 00:00:00+00:00,DE,fast,2030,electrolysis_twh,0.0,Electrolysis structural demand layer inactive until a governed hydrogen scenario source is wired.
+lt_field_neutralization_policy_20260612,2026-06-12 00:00:00+00:00,DE,slow,2030,electrolysis_twh,0.0,Electrolysis structural demand layer inactive until a governed hydrogen scenario source is wired.
+lt_field_neutralization_policy_20260612,2026-06-12 00:00:00+00:00,FR,central,2030,electrolysis_twh,0.0,Electrolysis structural demand layer inactive until a governed hydrogen scenario source is wired.
+lt_field_neutralization_policy_20260612,2026-06-12 00:00:00+00:00,FR,fast,2030,electrolysis_twh,0.0,Electrolysis structural demand layer inactive until a governed hydrogen scenario source is wired.
+lt_field_neutralization_policy_20260612,2026-06-12 00:00:00+00:00,FR,slow,2030,electrolysis_twh,0.0,Electrolysis structural demand layer inactive until a governed hydrogen scenario source is wired.
+lt_field_neutralization_policy_20260612,2026-06-12 00:00:00+00:00,IT,central,2030,electrolysis_twh,0.0,Electrolysis structural demand layer inactive until a governed hydrogen scenario source is wired.
+lt_field_neutralization_policy_20260612,2026-06-12 00:00:00+00:00,IT,fast,2030,electrolysis_twh,0.0,Electrolysis structural demand layer inactive until a governed hydrogen scenario source is wired.
+lt_field_neutralization_policy_20260612,2026-06-12 00:00:00+00:00,IT,slow,2030,electrolysis_twh,0.0,Electrolysis structural demand layer inactive until a governed hydrogen scenario source is wired.
+lt_field_neutralization_policy_20260612,2026-06-12 00:00:00+00:00,AT,central,2030,p2x_gw,0.0,P2X structural flex layer inactive until a governed hydrogen/P2X capacity source is wired.
+lt_field_neutralization_policy_20260612,2026-06-12 00:00:00+00:00,AT,fast,2030,p2x_gw,0.0,P2X structural flex layer inactive until a governed hydrogen/P2X capacity source is wired.
+lt_field_neutralization_policy_20260612,2026-06-12 00:00:00+00:00,AT,slow,2030,p2x_gw,0.0,P2X structural flex layer inactive until a governed hydrogen/P2X capacity source is wired.
+lt_field_neutralization_policy_20260612,2026-06-12 00:00:00+00:00,CH,central,2030,p2x_gw,0.0,P2X structural flex layer inactive until a governed hydrogen/P2X capacity source is wired.
+lt_field_neutralization_policy_20260612,2026-06-12 00:00:00+00:00,CH,fast,2030,p2x_gw,0.0,P2X structural flex layer inactive until a governed hydrogen/P2X capacity source is wired.
+lt_field_neutralization_policy_20260612,2026-06-12 00:00:00+00:00,CH,slow,2030,p2x_gw,0.0,P2X structural flex layer inactive until a governed hydrogen/P2X capacity source is wired.
+lt_field_neutralization_policy_20260612,2026-06-12 00:00:00+00:00,DE,central,2030,p2x_gw,0.0,P2X structural flex layer inactive until a governed hydrogen/P2X capacity source is wired.
+lt_field_neutralization_policy_20260612,2026-06-12 00:00:00+00:00,DE,fast,2030,p2x_gw,0.0,P2X structural flex layer inactive until a governed hydrogen/P2X capacity source is wired.
+lt_field_neutralization_policy_20260612,2026-06-12 00:00:00+00:00,DE,slow,2030,p2x_gw,0.0,P2X structural flex layer inactive until a governed hydrogen/P2X capacity source is wired.
+lt_field_neutralization_policy_20260612,2026-06-12 00:00:00+00:00,FR,central,2030,p2x_gw,0.0,P2X structural flex layer inactive until a governed hydrogen/P2X capacity source is wired.
+lt_field_neutralization_policy_20260612,2026-06-12 00:00:00+00:00,FR,fast,2030,p2x_gw,0.0,P2X structural flex layer inactive until a governed hydrogen/P2X capacity source is wired.
+lt_field_neutralization_policy_20260612,2026-06-12 00:00:00+00:00,FR,slow,2030,p2x_gw,0.0,P2X structural flex layer inactive until a governed hydrogen/P2X capacity source is wired.
+lt_field_neutralization_policy_20260612,2026-06-12 00:00:00+00:00,IT,central,2030,p2x_gw,0.0,P2X structural flex layer inactive until a governed hydrogen/P2X capacity source is wired.
+lt_field_neutralization_policy_20260612,2026-06-12 00:00:00+00:00,IT,fast,2030,p2x_gw,0.0,P2X structural flex layer inactive until a governed hydrogen/P2X capacity source is wired.
+lt_field_neutralization_policy_20260612,2026-06-12 00:00:00+00:00,IT,slow,2030,p2x_gw,0.0,P2X structural flex layer inactive until a governed hydrogen/P2X capacity source is wired.
+lt_field_neutralization_policy_20260612,2026-06-12 00:00:00+00:00,AT,central,2030,managed_charging_share,0.0,Conservative no-managed-charging assumption until a governed smart-charging share is approved.
+lt_field_neutralization_policy_20260612,2026-06-12 00:00:00+00:00,AT,fast,2030,managed_charging_share,0.0,Conservative no-managed-charging assumption until a governed smart-charging share is approved.
+lt_field_neutralization_policy_20260612,2026-06-12 00:00:00+00:00,AT,slow,2030,managed_charging_share,0.0,Conservative no-managed-charging assumption until a governed smart-charging share is approved.
+lt_field_neutralization_policy_20260612,2026-06-12 00:00:00+00:00,CH,central,2030,managed_charging_share,0.0,Conservative no-managed-charging assumption until a governed smart-charging share is approved.
+lt_field_neutralization_policy_20260612,2026-06-12 00:00:00+00:00,CH,fast,2030,managed_charging_share,0.0,Conservative no-managed-charging assumption until a governed smart-charging share is approved.
+lt_field_neutralization_policy_20260612,2026-06-12 00:00:00+00:00,CH,slow,2030,managed_charging_share,0.0,Conservative no-managed-charging assumption until a governed smart-charging share is approved.
+lt_field_neutralization_policy_20260612,2026-06-12 00:00:00+00:00,DE,central,2030,managed_charging_share,0.0,Conservative no-managed-charging assumption until a governed smart-charging share is approved.
+lt_field_neutralization_policy_20260612,2026-06-12 00:00:00+00:00,DE,fast,2030,managed_charging_share,0.0,Conservative no-managed-charging assumption until a governed smart-charging share is approved.
+lt_field_neutralization_policy_20260612,2026-06-12 00:00:00+00:00,DE,slow,2030,managed_charging_share,0.0,Conservative no-managed-charging assumption until a governed smart-charging share is approved.
+lt_field_neutralization_policy_20260612,2026-06-12 00:00:00+00:00,FR,central,2030,managed_charging_share,0.0,Conservative no-managed-charging assumption until a governed smart-charging share is approved.
+lt_field_neutralization_policy_20260612,2026-06-12 00:00:00+00:00,FR,fast,2030,managed_charging_share,0.0,Conservative no-managed-charging assumption until a governed smart-charging share is approved.
+lt_field_neutralization_policy_20260612,2026-06-12 00:00:00+00:00,FR,slow,2030,managed_charging_share,0.0,Conservative no-managed-charging assumption until a governed smart-charging share is approved.
+lt_field_neutralization_policy_20260612,2026-06-12 00:00:00+00:00,IT,central,2030,managed_charging_share,0.0,Conservative no-managed-charging assumption until a governed smart-charging share is approved.
+lt_field_neutralization_policy_20260612,2026-06-12 00:00:00+00:00,IT,fast,2030,managed_charging_share,0.0,Conservative no-managed-charging assumption until a governed smart-charging share is approved.
+lt_field_neutralization_policy_20260612,2026-06-12 00:00:00+00:00,IT,slow,2030,managed_charging_share,0.0,Conservative no-managed-charging assumption until a governed smart-charging share is approved.

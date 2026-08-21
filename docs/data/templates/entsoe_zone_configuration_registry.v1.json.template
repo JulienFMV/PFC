@@ -1,0 +1,103 @@
+{
+  "schema_version": "fmv_entsoe_zone_configuration_registry.v1",
+  "evidence_class": "REAL_OWNER_ASSERTED",
+  "registry_owner": "<ACCOUNTABLE_DATA_OWNER>",
+  "registered_at_utc": "<YYYY-MM-DDTHH:MM:SSZ>",
+  "coverage_window_start_utc": "<YYYY-MM-DDTHH:MM:SSZ>",
+  "coverage_window_end_utc": "<YYYY-MM-DDTHH:MM:SSZ>",
+  "entries": [
+    {
+      "source_identifier_scheme": "EIC_Y_CODE",
+      "source_identifier": "<CH_EIC_Y_CODE_16_CHARS>",
+      "logical_zone": "CH",
+      "domain_kind": "BIDDING_ZONE",
+      "valid_from_utc": "<YYYY-MM-DDTHH:MM:SSZ>",
+      "valid_to_utc": "<YYYY-MM-DDTHH:MM:SSZ>",
+      "source_status": "<ACTIVE_OR_DEACTIVATED_OR_SUPERSEDED>",
+      "source_document_id_kind": "<OFFICIAL_EIC_REGISTRY_ENTRY_ID_OR_GOVERNED_EIC_REGISTRY_SNAPSHOT_ID>",
+      "source_document_id": "<IMMUTABLE_REGISTRY_ENTRY_OR_SNAPSHOT_ID>",
+      "source_endpoint": "https://<GOVERNED_SOURCE_ENDPOINT>",
+      "owner_semantics_confirmed": true,
+      "reason": "<WHY_THIS_CODE_MAPS_TO_CH_FOR_THIS_EXACT_INTERVAL>"
+    },
+    {
+      "source_identifier_scheme": "EIC_Y_CODE",
+      "source_identifier": "<DE_LU_EIC_Y_CODE_16_CHARS>",
+      "logical_zone": "DE_LU",
+      "domain_kind": "BIDDING_ZONE",
+      "valid_from_utc": "<YYYY-MM-DDTHH:MM:SSZ>",
+      "valid_to_utc": "<YYYY-MM-DDTHH:MM:SSZ>",
+      "source_status": "<ACTIVE_OR_DEACTIVATED_OR_SUPERSEDED>",
+      "source_document_id_kind": "<OFFICIAL_EIC_REGISTRY_ENTRY_ID_OR_GOVERNED_EIC_REGISTRY_SNAPSHOT_ID>",
+      "source_document_id": "<IMMUTABLE_REGISTRY_ENTRY_OR_SNAPSHOT_ID>",
+      "source_endpoint": "https://<GOVERNED_SOURCE_ENDPOINT>",
+      "owner_semantics_confirmed": true,
+      "reason": "<WHY_THIS_CODE_MAPS_TO_DE_LU_FOR_THIS_EXACT_INTERVAL>"
+    },
+    {
+      "source_identifier_scheme": "EIC_Y_CODE",
+      "source_identifier": "<FR_EIC_Y_CODE_16_CHARS>",
+      "logical_zone": "FR",
+      "domain_kind": "BIDDING_ZONE",
+      "valid_from_utc": "<YYYY-MM-DDTHH:MM:SSZ>",
+      "valid_to_utc": "<YYYY-MM-DDTHH:MM:SSZ>",
+      "source_status": "<ACTIVE_OR_DEACTIVATED_OR_SUPERSEDED>",
+      "source_document_id_kind": "<OFFICIAL_EIC_REGISTRY_ENTRY_ID_OR_GOVERNED_EIC_REGISTRY_SNAPSHOT_ID>",
+      "source_document_id": "<IMMUTABLE_REGISTRY_ENTRY_OR_SNAPSHOT_ID>",
+      "source_endpoint": "https://<GOVERNED_SOURCE_ENDPOINT>",
+      "owner_semantics_confirmed": true,
+      "reason": "<WHY_THIS_CODE_MAPS_TO_FR_FOR_THIS_EXACT_INTERVAL>"
+    },
+    {
+      "source_identifier_scheme": "EIC_Y_CODE",
+      "source_identifier": "<IT_NORTH_EIC_Y_CODE_16_CHARS>",
+      "logical_zone": "IT_NORTH",
+      "domain_kind": "BIDDING_ZONE",
+      "valid_from_utc": "<YYYY-MM-DDTHH:MM:SSZ>",
+      "valid_to_utc": "<YYYY-MM-DDTHH:MM:SSZ>",
+      "source_status": "<ACTIVE_OR_DEACTIVATED_OR_SUPERSEDED>",
+      "source_document_id_kind": "<OFFICIAL_EIC_REGISTRY_ENTRY_ID_OR_GOVERNED_EIC_REGISTRY_SNAPSHOT_ID>",
+      "source_document_id": "<IMMUTABLE_REGISTRY_ENTRY_OR_SNAPSHOT_ID>",
+      "source_endpoint": "https://<GOVERNED_SOURCE_ENDPOINT>",
+      "owner_semantics_confirmed": true,
+      "reason": "<WHY_THIS_CODE_MAPS_TO_IT_NORTH_FOR_THIS_EXACT_INTERVAL>"
+    },
+    {
+      "source_identifier_scheme": "EIC_Y_CODE",
+      "source_identifier": "<AT_EIC_Y_CODE_16_CHARS>",
+      "logical_zone": "AT",
+      "domain_kind": "BIDDING_ZONE",
+      "valid_from_utc": "<YYYY-MM-DDTHH:MM:SSZ>",
+      "valid_to_utc": "<YYYY-MM-DDTHH:MM:SSZ>",
+      "source_status": "<ACTIVE_OR_DEACTIVATED_OR_SUPERSEDED>",
+      "source_document_id_kind": "<OFFICIAL_EIC_REGISTRY_ENTRY_ID_OR_GOVERNED_EIC_REGISTRY_SNAPSHOT_ID>",
+      "source_document_id": "<IMMUTABLE_REGISTRY_ENTRY_OR_SNAPSHOT_ID>",
+      "source_endpoint": "https://<GOVERNED_SOURCE_ENDPOINT>",
+      "owner_semantics_confirmed": true,
+      "reason": "<WHY_THIS_CODE_MAPS_TO_AT_FOR_THIS_EXACT_INTERVAL>"
+    },
+    {
+      "source_identifier_scheme": "OWNER_CANONICAL_LABEL",
+      "source_identifier": "<EXACT_RAW_FROMZONE_OR_TOZONE_VALUE>",
+      "logical_zone": "<CH_OR_DE_LU_OR_FR_OR_IT_NORTH_OR_AT>",
+      "domain_kind": "BIDDING_ZONE",
+      "valid_from_utc": "<YYYY-MM-DDTHH:MM:SSZ>",
+      "valid_to_utc": "<YYYY-MM-DDTHH:MM:SSZ>",
+      "source_status": "<ACTIVE_OR_DEACTIVATED_OR_SUPERSEDED>",
+      "source_document_id_kind": "GOVERNED_EIC_REGISTRY_SNAPSHOT_ID",
+      "source_document_id": "<IMMUTABLE_MAPPING_SNAPSHOT_ID>",
+      "source_endpoint": "https://<GOVERNED_SOURCE_ENDPOINT>",
+      "owner_semantics_confirmed": true,
+      "reason": "<WHY_THE_EXACT_RAW_DEV_LABEL_MAPS_TO_THIS_LOGICAL_ZONE_AND_EIC>"
+    }
+  ],
+  "authorities": {
+    "external_registry_owner_identity_verified": false,
+    "official_eic_registry_membership_verified": false,
+    "official_eic_check_digit_verified": false,
+    "current_exact_dev_zone_coverage_proven": false,
+    "point_in_time_availability_proven": false,
+    "model_input_authorized": false,
+    "production_authorized": false
+  }
+}

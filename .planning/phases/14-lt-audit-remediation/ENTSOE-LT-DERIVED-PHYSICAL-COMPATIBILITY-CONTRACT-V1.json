@@ -1,0 +1,67 @@
+{
+  "schema_version": "fmv_entsoe_lt_derived_physical_compatibility_contract.v1",
+  "decision": "D-20260806-282",
+  "status": "SYNTHETIC_PHYSICAL_COMPATIBILITY_NO_REAL_OR_MODEL_AUTHORITY",
+  "purpose": "compose exact D280 physical selections with exact D281 forecast-error lineage and prove value-free zone, canonical-unit and effective-cadence compatibility",
+  "predecessors": {
+    "d280_contract_content_id": "20144a9715eb6892756f8648c1e25090d4635247ac9683dd3a8ea896166f7d34",
+    "d281_contract_content_id": "7f3fdde5c5d5f192cee06b570063173eb4a55344fe2f871a5441bf140cb8c2ac",
+    "accepted_d280_blocker_codes_before_composition": [
+      "DERIVED_TRANSFORM_LINEAGE_REQUIRED"
+    ],
+    "d281_status": "PASS_VALUE_FREE_DERIVED_LINEAGE_LATER_COMPOSITE_REQUIRED"
+  },
+  "join_grain": {
+    "one_output_feature_record_per_transform": true,
+    "one_selected_physical_series_per_primitive_feature_record": true,
+    "primitive_formula_roles_in_order": [
+      "REALIZED_ACTUAL",
+      "OPERATIONAL_FORECAST"
+    ],
+    "primitive_source_families_in_order": [
+      "actual_load",
+      "load_forecast"
+    ],
+    "duplicate_or_orphan_join_is_admissible": false
+  },
+  "physical_compatibility": {
+    "required_canonical_unit": "MW",
+    "logical_zone_must_match": true,
+    "target_interval_must_be_covered_by_each_temporal_zone_binding": true,
+    "target_interval_must_match_all_lineage_records": true,
+    "effective_native_cadence_must_match": true,
+    "effective_native_cadence_is_proven_by_d280_native_interval_validation_and_common_target_duration": true,
+    "derived_output_inherits_primitive_zone_unit_and_cadence": true,
+    "missing_or_ambiguous_temporal_binding_is_admissible": false
+  },
+  "integrity": {
+    "feature_records_selection_semantics_family_zone_and_lineage_must_remain_content_stable": true,
+    "predecessor_content_ids_must_match_exactly": true,
+    "clear_series_or_feature_ids_may_be_persisted": false,
+    "real_or_feature_values_may_be_opened_or_recomputed": false,
+    "synthetic_pass_grants_real_data_or_model_authority": false,
+    "monthly_effects_may_rewrite_solver_mean": false
+  },
+  "execution": {
+    "databricks_connection_count": 0,
+    "databricks_statement_count": 0,
+    "warehouse_start_count": 0,
+    "databricks_write_count": 0,
+    "network_call_count": 0,
+    "h_drive_access_count": 0,
+    "opened_real_value_row_count": 0
+  },
+  "authorities": {
+    "real_source_evidence": false,
+    "external_owner_identity": false,
+    "official_zone_registry": false,
+    "point_in_time": false,
+    "arithmetic_recomputation": false,
+    "predictive_value": false,
+    "model_input": false,
+    "model_selection": false,
+    "candidate": false,
+    "promotion": false,
+    "production": false
+  }
+}

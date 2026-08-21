@@ -59,7 +59,7 @@ class FuturesContract:
         start: Delivery start timestamp (inclusive, UTC).
         end: Delivery end timestamp (exclusive, UTC).
         product_type: ``'Base'`` (all hours) or ``'Peak'``
-            (08:00-20:00 Mon-Fri, excl. Swiss public holidays).
+            (08:00-20:00 Monday-Friday, public holidays included).
     """
 
     name: str
@@ -119,53 +119,87 @@ class CalibrationResult:
 def _build_peak_mask(
     index: pd.DatetimeIndex,
     peak_hours: tuple[int, int],
-    ch_holiday_dates: set,
+    holiday_dates: set,
+    tz: str = "Europe/Zurich",
 ) -> np.ndarray:
     """Return a boolean array indicating peak timestamps.
 
     Peak is defined as hours ``[peak_hours[0], peak_hours[1])`` on Monday
-    through Friday in the Europe/Zurich timezone, excluding Swiss public
-    holidays.
+    through Friday in the supplied local timezone. European EEX Peakload
+    includes public holidays.
 
     Args:
         index: UTC ``DatetimeIndex`` at 15-min frequency.
-        peak_hours: ``(start_hour, end_hour)`` in local Zurich time. The
+        peak_hours: ``(start_hour, end_hour)`` in the local timezone. The
             interval is ``[start_hour, end_hour)`` — e.g. ``(8, 20)`` means
             08:00-19:45 inclusive.
-        ch_holiday_dates: Set of ``datetime.date`` objects for Swiss public
-            holidays over the relevant years.
+        holiday_dates: Deprecated compatibility argument; ignored.
+        tz: IANA timezone for the local-time peak window. Defaults to
+            ``Europe/Zurich`` (CH/AT) — pass ``Europe/Berlin`` for DE,
+            ``Europe/Paris`` for FR, ``Europe/Rome`` for IT.
 
     Returns:
         Boolean numpy array of shape ``(len(index),)``.
     """
-    idx_zurich = index.tz_convert("Europe/Zurich")
-    hour = idx_zurich.hour
-    dow = idx_zurich.dayofweek  # 0=Mon .. 6=Sun
-    dates = idx_zurich.date
-
+    idx_local = index.tz_convert(tz)
+    hour = idx_local.hour
+    dow = idx_local.dayofweek  # 0=Mon .. 6=Sun
     is_weekday = dow < 5
     is_peak_hour = (hour >= peak_hours[0]) & (hour < peak_hours[1])
-    is_not_holiday = np.array([d not in ch_holiday_dates for d in dates])
-
-    return is_weekday & is_peak_hour & is_not_holiday
+    return is_weekday & is_peak_hour
 
 
-def _get_ch_holidays(years: Sequence[int]) -> set:
-    """Collect Swiss public holidays for the given years.
+# Map ISO-2 market code → (IANA tz, ``holidays`` constructor). Adding a
+# new market only requires extending this table. CH and AT share
+# Europe/Zurich (CET/CEST) but their holiday calendars differ; FR uses
+# Paris, IT uses Rome, DE uses Berlin. Order matters only for logging.
+_COUNTRY_TZ: dict[str, str] = {
+    "CH": "Europe/Zurich",
+    "DE": "Europe/Berlin",
+    "AT": "Europe/Vienna",
+    "FR": "Europe/Paris",
+    "IT": "Europe/Rome",
+}
 
-    Uses the ``holidays`` library with all cantons aggregated (national
-    holidays). This is consistent with EEX Peak definitions.
+
+def _get_country_holidays(years: Sequence[int], country: str = "CH") -> set:
+    """Collect public holidays for the requested country and years.
+
+    Retained for holiday-shape features and compatibility. Public holidays
+    do not alter the European EEX Peakload delivery window.
 
     Args:
         years: Calendar years to cover.
+        country: ISO-2 market code (CH / DE / AT / FR / IT).
 
     Returns:
         Set of ``datetime.date`` objects.
     """
+    code = country.upper()
+    constructors: dict[str, callable] = {
+        "CH": holidays.Switzerland,
+        "DE": holidays.Germany,
+        "AT": holidays.Austria,
+        "FR": holidays.France,
+        "IT": holidays.Italy,
+    }
+    if code not in constructors:
+        raise ValueError(
+            f"Unsupported country {country!r} for arbitrage-free calibration; "
+            f"expected one of {sorted(constructors)}"
+        )
+    ctor = constructors[code]
     result: set = set()
     for y in years:
-        result |= set(holidays.Switzerland(years=y).keys())
+        result |= set(ctor(years=y).keys())
     return result
+
+
+# Backward-compat shim: legacy callers (and tests) still import
+# _get_ch_holidays. Keep it as a thin alias around the country-aware
+# helper so old call sites keep working unchanged.
+def _get_ch_holidays(years: Sequence[int]) -> set:
+    return _get_country_holidays(years, country="CH")
 
 
 # ---------------------------------------------------------------------------
@@ -316,6 +350,7 @@ class ArbitrageFreeCalibrator:
         regularisation: float = 1e-8,
         tol: float = 0.01,
         mode: str = "multiplicative",
+        enforce_m_factor_floor: bool = False,
     ) -> None:
         if mode not in ("additive", "multiplicative"):
             raise ValueError(f"mode must be 'additive' or 'multiplicative', got {mode!r}")
@@ -324,6 +359,15 @@ class ArbitrageFreeCalibrator:
         self.regularisation = regularisation
         self.tol = tol
         self.mode = mode
+        self.enforce_m_factor_floor = enforce_m_factor_floor
+        # Phase 5 D-A2-1 / NEG-02: when False (default, negative-ready), the
+        # m_factor = np.maximum(m_factor, 0.1) clip in the multiplicative path
+        # is skipped — allowing m_factor < 0.1 and thus negative calibrated prices.
+        # When True (legacy rollback path, D-A2-3): the clip is applied AND
+        # converged=False is propagated whenever the clip actually mutates m_factor
+        # (NEG-02 literal — the floor must not silently mask calibration residuals).
+        # The ctor arg is inconditionnel for traceability even in additive mode
+        # (the floor is a no-op in additive path; ctor arg is still stored).
 
     # -----------------------------------------------------------------
     # Public API
@@ -333,6 +377,7 @@ class ArbitrageFreeCalibrator:
         self,
         raw_curve: pd.Series,
         contracts: list[FuturesContract],
+        country: str = "CH",
     ) -> CalibrationResult:
         """Calibrate a raw shape curve to match futures prices.
 
@@ -343,15 +388,26 @@ class ArbitrageFreeCalibrator:
             contracts: List of futures contracts to reprice.  Contracts
                 whose delivery period falls outside the curve's date range
                 are silently skipped.
+            country: ISO-2 market code (CH / DE / AT / FR / IT). Drives
+                the local timezone of the EEX Peakload window.
 
         Returns:
             A ``CalibrationResult`` containing the calibrated curve,
             correction term, per-contract residuals, and diagnostics.
 
         Raises:
-            ValueError: If ``raw_curve`` is empty or has no timezone.
+            ValueError: If ``raw_curve`` is empty or has no timezone, or
+                if ``country`` is unknown.
         """
         # ── Input validation ──────────────────────────────────────────
+        # Validate ``country`` BEFORE the empty-contracts shortcut so a
+        # typo never silently falls back to CH.
+        local_tz = _COUNTRY_TZ.get(country.upper())
+        if local_tz is None:
+            raise ValueError(
+                f"Unsupported country {country!r}; expected one of {sorted(_COUNTRY_TZ)}"
+            )
+
         if raw_curve.empty:
             raise ValueError("raw_curve is empty.")
         if raw_curve.index.tz is None:
@@ -366,17 +422,17 @@ class ArbitrageFreeCalibrator:
         S = raw_curve.values.astype(np.float64)
 
         logger.info(
-            "Calibration (%s): %d timestamps (%.1f days), %d contracts.",
+            "Calibration (%s, country=%s, tz=%s): %d timestamps (%.1f days), %d contracts.",
             self.mode,
+            country.upper(),
+            local_tz,
             n,
             n / 96,
             len(contracts),
         )
 
         # ── Peak mask ─────────────────────────────────────────────────
-        years = sorted(set(index.tz_convert("Europe/Zurich").year))
-        ch_hols = _get_ch_holidays(years)
-        peak_mask = _build_peak_mask(index, self.peak_hours, ch_hols)
+        peak_mask = _build_peak_mask(index, self.peak_hours, set(), tz=local_tz)
 
         logger.debug(
             "Peak timestamps: %d / %d (%.1f%%)",
@@ -440,6 +496,9 @@ class ArbitrageFreeCalibrator:
         )
 
         # ── Calibrated curve ──────────────────────────────────────────
+        # floor_applied tracks whether the m_factor floor mutated the values;
+        # initialised False so the additive path is safe (no floor there).
+        floor_applied = False
         if self.mode == "multiplicative":
             # Additive delta is solved; convert to multiplicative:
             # P_add = S + delta_add (reprices exactly)
@@ -451,7 +510,26 @@ class ArbitrageFreeCalibrator:
             small_mask = np.abs(S) < 1.0
             safe_S = np.where(small_mask, 1.0, S)
             m_factor = P_add / safe_S
-            m_factor = np.maximum(m_factor, 0.1)
+            # Floor #3 — m_factor >= 0.1 clip (Phase 5 D-A2-1 / NEG-02).
+            # Conditional on enforce_m_factor_floor (default False = OFF).
+            # When False (negative-ready): skip clip; m_factor can be < 0.1,
+            # allowing calibrated prices below ~10% of the raw curve level.
+            # When True (legacy rollback): apply clip AND propagate converged=False
+            # whenever the clip actually mutates m_factor (NEG-02 literal —
+            # floor-hit must not silently mask calibration non-convergence).
+            # codex action #6: reason-tagged INFO log distinguishes floor-induced
+            # non-convergence from iteration-limit non-convergence.
+            if self.enforce_m_factor_floor:
+                m_clipped = np.maximum(m_factor, 0.1)
+                n_clipped = int(np.sum(m_clipped != m_factor))
+                if n_clipped > 0:
+                    floor_applied = True
+                    logger.warning(
+                        "m_factor floor 0.1 applied at %d timestamps"
+                        " (enforce_m_factor_floor=True)",
+                        n_clipped,
+                    )
+                m_factor = m_clipped
             # For near-zero S, use additive result directly (no div-by-zero)
             P = np.where(small_mask, P_add, S * m_factor)
             delta_for_log = m_factor - 1.0
@@ -486,10 +564,31 @@ class ArbitrageFreeCalibrator:
                 max_abs_residual,
                 self.tol,
             )
+            logger.info(
+                "Calibration non-convergence: max_abs_residual=%.6f > tol=%.4f",
+                max_abs_residual,
+                self.tol,
+                extra={"reason": "iteration_limit"},
+            )
         else:
             logger.info(
                 "Calibration converged. Max residual: %.6f EUR/MWh.",
                 max_abs_residual,
+            )
+
+        # Phase 5 NEG-02 / codex action #6: floor-induced non-convergence.
+        # When enforce_m_factor_floor=True AND the clip mutated m_factor,
+        # force converged=False regardless of residual level (the floor
+        # masked the calibration problem — residuals may appear within tol
+        # but the underlying repricing is incorrect without the clamp).
+        # Emit reason-tagged INFO so operators can distinguish this case from
+        # iteration_limit non-convergence in production log aggregators.
+        if floor_applied:
+            converged = False
+            logger.info(
+                "Calibration non-convergence: m_factor floor hit"
+                " (enforce_m_factor_floor=True); converged forced False.",
+                extra={"reason": "m_factor_floor_hit"},
             )
 
         # ── Smoothness cost ───────────────────────────────────────────
@@ -580,97 +679,101 @@ class ArbitrageFreeCalibrator:
 
         converged = True
 
+        # WR-01 (Phase 5 code review): use warnings.catch_warnings() context
+        # manager rather than filterwarnings/resetwarnings(). The previous
+        # implementation called warnings.resetwarnings() in the finally clause,
+        # which purges ALL global filters (including those set by pytest,
+        # urllib3, user --W flags, and other modules). catch_warnings saves
+        # and restores the filter state on entry/exit, so we only mute
+        # RuntimeWarning locally for the duration of the solve.
         try:
-            # Suppress overflow/divide warnings during iterative refinement
-            # — NaN/Inf are caught explicitly below
-            warnings.filterwarnings("ignore", category=RuntimeWarning)
-            # Factorise H_reg (SPD, banded -> fast sparse LU)
-            logger.debug("Factorising H_reg (%d x %d)...", n, n)
-            H_factor = splu(H_reg.tocsc())
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", category=RuntimeWarning)
+                # Factorise H_reg (SPD, banded -> fast sparse LU)
+                logger.debug("Factorising H_reg (%d x %d)...", n, n)
+                H_factor = splu(H_reg.tocsc())
 
-            # Compute H^{-1} A^T column by column (M solves, each O(N))
-            A_t_dense = A.T.toarray()  # N x M (M is small, typically < 100)
-            H_inv_At = np.zeros((n, m))
-            for j in range(m):
-                H_inv_At[:, j] = H_factor.solve(A_t_dense[:, j])
+                # Compute H^{-1} A^T column by column (M solves, each O(N))
+                A_t_dense = A.T.toarray()  # N x M (M is small, typically < 100)
+                H_inv_At = np.zeros((n, m))
+                for j in range(m):
+                    H_inv_At[:, j] = H_factor.solve(A_t_dense[:, j])
 
-            # Schur complement: S = A H^{-1} A^T (M x M dense)
-            S_mat = np.asarray(A @ H_inv_At)
+                # Schur complement: S = A H^{-1} A^T (M x M dense)
+                S_mat = np.asarray(A @ H_inv_At)
 
-            # Detect rank
-            U, sigma, Vt = np.linalg.svd(S_mat, full_matrices=False)
-            rank_tol = max(m, n) * np.finfo(float).eps * sigma[0]
-            rank = int(np.sum(sigma > rank_tol))
+                # Detect rank
+                U, sigma, Vt = np.linalg.svd(S_mat, full_matrices=False)
+                rank_tol = max(m, n) * np.finfo(float).eps * sigma[0]
+                rank = int(np.sum(sigma > rank_tol))
 
-            if rank < m:
-                logger.warning(
-                    "Constraint matrix is rank-deficient: rank %d / %d. "
-                    "Overlapping contracts may have inconsistent prices; "
-                    "using least-squares fit for redundant constraints.",
-                    rank,
-                    m,
-                )
-                # Pseudoinverse solve: minimises ||S lam + b||_2
-                sigma_inv = np.zeros_like(sigma)
-                sigma_inv[:rank] = 1.0 / sigma[:rank]
-                lam = Vt.T @ (sigma_inv * (U.T @ (-b)))
-                delta = H_inv_At @ (-lam)
-
-                # Iterative refinement within the column space
-                for iteration in range(10):
-                    if np.any(np.isnan(delta)) or np.any(np.isinf(delta)):
-                        logger.warning("NaN/Inf during rank-def refinement iter %d — stopping.", iteration)
-                        break
-                    r = b - np.asarray(A @ delta).ravel()
-                    # Project residual onto column space of S
-                    r_proj = U[:, :rank] @ (U[:, :rank].T @ r)
-                    max_r_proj = np.max(np.abs(r_proj))
-                    if max_r_proj < 1e-10:
-                        logger.debug(
-                            "Rank-deficient refinement converged at "
-                            "iteration %d.",
-                            iteration,
-                        )
-                        break
-                    d_lam = Vt[:rank, :].T @ (
-                        (1.0 / sigma[:rank]) * (U[:, :rank].T @ (-r_proj))
+                if rank < m:
+                    logger.warning(
+                        "Constraint matrix is rank-deficient: rank %d / %d. "
+                        "Overlapping contracts may have inconsistent prices; "
+                        "using least-squares fit for redundant constraints.",
+                        rank,
+                        m,
                     )
-                    delta += H_factor.solve(A_t_dense @ (-d_lam))
+                    # Pseudoinverse solve: minimises ||S lam + b||_2
+                    sigma_inv = np.zeros_like(sigma)
+                    sigma_inv[:rank] = 1.0 / sigma[:rank]
+                    lam = Vt.T @ (sigma_inv * (U.T @ (-b)))
+                    delta = H_inv_At @ (-lam)
 
-            else:
-                # Full-rank: direct solve with iterative refinement
-                lam = np.linalg.solve(S_mat, -b)
-                delta = H_factor.solve(A_t_dense @ (-lam))
-
-                for iteration in range(10):
-                    if np.any(np.isnan(delta)) or np.any(np.isinf(delta)):
-                        logger.warning("NaN/Inf during refinement iter %d — stopping.", iteration)
-                        break
-                    r = b - np.asarray(A @ delta).ravel()
-                    max_r = np.max(np.abs(r))
-                    if max_r < 1e-10:
-                        logger.debug(
-                            "Iterative refinement converged at iteration %d "
-                            "(max residual %.2e).",
-                            iteration,
-                            max_r,
+                    # Iterative refinement within the column space
+                    for iteration in range(10):
+                        if np.any(np.isnan(delta)) or np.any(np.isinf(delta)):
+                            logger.warning("NaN/Inf during rank-def refinement iter %d — stopping.", iteration)
+                            break
+                        r = b - np.asarray(A @ delta).ravel()
+                        # Project residual onto column space of S
+                        r_proj = U[:, :rank] @ (U[:, :rank].T @ r)
+                        max_r_proj = np.max(np.abs(r_proj))
+                        if max_r_proj < 1e-10:
+                            logger.debug(
+                                "Rank-deficient refinement converged at "
+                                "iteration %d.",
+                                iteration,
+                            )
+                            break
+                        d_lam = Vt[:rank, :].T @ (
+                            (1.0 / sigma[:rank]) * (U[:, :rank].T @ (-r_proj))
                         )
-                        break
-                    d_lam = np.linalg.solve(S_mat, -r)
-                    delta += H_factor.solve(A_t_dense @ (-d_lam))
+                        delta += H_factor.solve(A_t_dense @ (-d_lam))
 
-            if np.any(np.isnan(delta)) or np.any(np.isinf(delta)):
-                raise ValueError("Solution contains NaN/Inf.")
+                else:
+                    # Full-rank: direct solve with iterative refinement
+                    lam = np.linalg.solve(S_mat, -b)
+                    delta = H_factor.solve(A_t_dense @ (-lam))
 
-            logger.debug("Schur complement solve succeeded.")
-            return delta, converged
+                    for iteration in range(10):
+                        if np.any(np.isnan(delta)) or np.any(np.isinf(delta)):
+                            logger.warning("NaN/Inf during refinement iter %d — stopping.", iteration)
+                            break
+                        r = b - np.asarray(A @ delta).ravel()
+                        max_r = np.max(np.abs(r))
+                        if max_r < 1e-10:
+                            logger.debug(
+                                "Iterative refinement converged at iteration %d "
+                                "(max residual %.2e).",
+                                iteration,
+                                max_r,
+                            )
+                            break
+                        d_lam = np.linalg.solve(S_mat, -r)
+                        delta += H_factor.solve(A_t_dense @ (-d_lam))
+
+                if np.any(np.isnan(delta)) or np.any(np.isinf(delta)):
+                    raise ValueError("Solution contains NaN/Inf.")
+
+                logger.debug("Schur complement solve succeeded.")
+                return delta, converged
 
         except Exception as exc:
             logger.error("Schur complement solve failed: %s", exc)
             converged = False
             return np.zeros(n), converged
-        finally:
-            warnings.resetwarnings()
 
     def _solve_mixed_system(
         self,
@@ -703,69 +806,70 @@ class ArbitrageFreeCalibrator:
 
         converged = True
 
+        # WR-01 (Phase 5 code review): same rationale as in _solve_schur —
+        # catch_warnings restores prior filter state, resetwarnings() wiped it.
         try:
-            warnings.filterwarnings("ignore", category=RuntimeWarning)
-            n_hard = len(hard_idx)
-            n_soft = len(soft_idx)
-            logger.info(
-                "Mixed calibration solve: %d hard constraints, %d soft constraints.",
-                n_hard,
-                n_soft,
-            )
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", category=RuntimeWarning)
+                n_hard = len(hard_idx)
+                n_soft = len(soft_idx)
+                logger.info(
+                    "Mixed calibration solve: %d hard constraints, %d soft constraints.",
+                    n_hard,
+                    n_soft,
+                )
 
-            A_soft = A[soft_idx]
-            b_soft = np.asarray(b[soft_idx], dtype=float)
-            w_soft = np.asarray(weights[soft_idx], dtype=float)
-            W_diag = np.square(w_soft)
+                A_soft = A[soft_idx]
+                b_soft = np.asarray(b[soft_idx], dtype=float)
+                w_soft = np.asarray(weights[soft_idx], dtype=float)
+                W_diag = np.square(w_soft)
 
-            # Factorise the smoothness operator once, then work only in
-            # contract space via Woodbury / Schur complements.
-            H_factor = splu(H_reg.tocsc())
+                # Factorise the smoothness operator once, then work only in
+                # contract space via Woodbury / Schur complements.
+                H_factor = splu(H_reg.tocsc())
 
-            A_soft_t_dense = A_soft.T.toarray()
-            H_inv_AsT = np.zeros((n, n_soft))
-            for j in range(n_soft):
-                H_inv_AsT[:, j] = H_factor.solve(A_soft_t_dense[:, j])
+                A_soft_t_dense = A_soft.T.toarray()
+                H_inv_AsT = np.zeros((n, n_soft))
+                for j in range(n_soft):
+                    H_inv_AsT[:, j] = H_factor.solve(A_soft_t_dense[:, j])
 
-            S_ss = np.asarray(A_soft @ H_inv_AsT, dtype=float)
-            W_inv = np.diag(1.0 / W_diag)
-            R = W_inv + S_ss
-            R_inv = np.linalg.pinv(R, rcond=1e-12)
+                S_ss = np.asarray(A_soft @ H_inv_AsT, dtype=float)
+                W_inv = np.diag(1.0 / W_diag)
+                R = W_inv + S_ss
+                R_inv = np.linalg.pinv(R, rcond=1e-12)
 
-            Wb = W_diag * b_soft
-            H_inv_rhs = H_inv_AsT @ Wb
-            soft_rhs_proj = S_ss @ Wb
-            H_eff_inv_rhs = H_inv_rhs - H_inv_AsT @ (R_inv @ soft_rhs_proj)
+                Wb = W_diag * b_soft
+                H_inv_rhs = H_inv_AsT @ Wb
+                soft_rhs_proj = S_ss @ Wb
+                H_eff_inv_rhs = H_inv_rhs - H_inv_AsT @ (R_inv @ soft_rhs_proj)
 
-            if n_hard == 0:
-                delta = H_eff_inv_rhs
+                if n_hard == 0:
+                    delta = H_eff_inv_rhs
+                    if np.any(np.isnan(delta)) or np.any(np.isinf(delta)):
+                        raise ValueError("Soft-only mixed solution contains NaN/Inf.")
+                    return delta, converged
+
+                A_hard = A[hard_idx]
+                b_hard = np.asarray(b[hard_idx], dtype=float)
+                A_hard_t_dense = A_hard.T.toarray()
+                H_inv_AhT = np.zeros((n, n_hard))
+                for j in range(n_hard):
+                    H_inv_AhT[:, j] = H_factor.solve(A_hard_t_dense[:, j])
+
+                S_sh = np.asarray(A_soft @ H_inv_AhT, dtype=float)
+                H_eff_inv_AhT = H_inv_AhT - H_inv_AsT @ (R_inv @ S_sh)
+
+                K = np.asarray(A_hard @ H_eff_inv_AhT, dtype=float)
+                rhs_lambda = np.asarray(A_hard @ H_eff_inv_rhs, dtype=float).ravel() - b_hard
+                lambda_vec = np.linalg.pinv(K, rcond=1e-12) @ rhs_lambda
+                delta = H_eff_inv_rhs - H_eff_inv_AhT @ lambda_vec
+
                 if np.any(np.isnan(delta)) or np.any(np.isinf(delta)):
-                    raise ValueError("Soft-only mixed solution contains NaN/Inf.")
-                return delta, converged
-
-            A_hard = A[hard_idx]
-            b_hard = np.asarray(b[hard_idx], dtype=float)
-            A_hard_t_dense = A_hard.T.toarray()
-            H_inv_AhT = np.zeros((n, n_hard))
-            for j in range(n_hard):
-                H_inv_AhT[:, j] = H_factor.solve(A_hard_t_dense[:, j])
-
-            S_sh = np.asarray(A_soft @ H_inv_AhT, dtype=float)
-            H_eff_inv_AhT = H_inv_AhT - H_inv_AsT @ (R_inv @ S_sh)
-
-            K = np.asarray(A_hard @ H_eff_inv_AhT, dtype=float)
-            rhs_lambda = np.asarray(A_hard @ H_eff_inv_rhs, dtype=float).ravel() - b_hard
-            lambda_vec = np.linalg.pinv(K, rcond=1e-12) @ rhs_lambda
-            delta = H_eff_inv_rhs - H_eff_inv_AhT @ lambda_vec
-
-            if np.any(np.isnan(delta)) or np.any(np.isinf(delta)):
-                raise ValueError("Mixed hard/soft solution contains NaN/Inf.")
-            return np.asarray(delta, dtype=float).ravel(), converged
+                    raise ValueError("Mixed hard/soft solution contains NaN/Inf.")
+                return np.asarray(delta, dtype=float).ravel(), converged
         except Exception as exc:
             logger.error("Mixed hard/soft solve failed: %s", exc)
             return np.zeros(n), False
-        finally:
-            warnings.resetwarnings()
 
     def _trivial_result(self, raw_curve: pd.Series) -> CalibrationResult:
         """Return a no-op calibration result when there are no constraints.

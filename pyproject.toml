@@ -1,0 +1,71 @@
+[build-system]
+requires = ["setuptools==80.9.0", "wheel==0.45.1"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fmv-pfc-lt"
+dynamic = ["version"]
+description = "Governed Swiss long-term price forward curve pipeline for FMV"
+readme = "PACKAGE.md"
+requires-python = ">=3.11,<3.12"
+license = "LicenseRef-Proprietary"
+authors = [{ name = "FMV SA" }]
+dependencies = [
+  "cryptography==47.0.0",
+  "holidays==0.83",
+  "numpy==2.0.2",
+  "openpyxl==3.1.5",
+  "pandas==2.3.3",
+  "pyarrow==21.0.0",
+  "PyYAML==6.0.3",
+  "scikit-learn==1.6.1",
+  "scipy==1.13.1",
+]
+
+[project.optional-dependencies]
+dashboard = [
+  "duckdb==1.5.0",
+  "plotly==6.6.0",
+  "streamlit==1.50.0",
+]
+validation = [
+  "matplotlib==3.8.4",
+  "statsmodels==0.14.6",
+]
+
+[dependency-groups]
+dev = [
+  "pytest==8.4.2",
+  "ruff==0.15.12",
+]
+
+[tool.setuptools.packages.find]
+include = ["pfc_shaping", "pfc_shaping.*"]
+exclude = [
+  "pfc_shaping.ct",
+  "pfc_shaping.ct.*",
+  "pfc_shaping.model",
+  "pfc_shaping.model.*",
+  "pfc_shaping.storage",
+  "pfc_shaping.storage.*",
+  "pfc_shaping.tools",
+  "pfc_shaping.tools.*",
+]
+
+[tool.setuptools]
+include-package-data = false
+
+[tool.setuptools.dynamic]
+version = { attr = "pfc_shaping.version.__version__" }
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]
+
+[tool.pytest.ini_options]
+markers = [
+  "slow: marks tests that are intentionally slow and may be split from the default suite.",
+]

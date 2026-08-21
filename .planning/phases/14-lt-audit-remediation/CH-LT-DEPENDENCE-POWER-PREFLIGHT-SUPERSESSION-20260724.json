@@ -1,0 +1,34 @@
+{
+  "schema_version": "ch_lt_dependence_power_preflight_supersession.v1",
+  "status": "LOCAL_DIAGNOSTIC_V1_SUPERSEDED_BY_V2_NO_GO",
+  "superseded": {
+    "path": "output/phase14/ch_lt_dependence_power_preflight/intraday_shape_rolling_origin_20260724_v3.json",
+    "sha256": "614a7a79cd2d22c1e7abe8303900f861a7c660ca199ce1e656268a291157cadd",
+    "schema_version": "ch_lt_dependence_power_preflight.v1",
+    "reason": "The v1 labels overstated post-selection plug-in required-n sensitivity as a conservative CH acquisition floor."
+  },
+  "replacement": {
+    "path": "output/phase14/ch_lt_dependence_power_preflight/intraday_shape_rolling_origin_20260724_v3_v2.json",
+    "sha256": "34fc3621ea9082ac6c4c0306c4f7f77e333a33fef83a7f673e62c462ec6d5907",
+    "schema_version": "ch_lt_dependence_power_preflight.v2",
+    "status": "LOCAL_DE_LU_INTRAHOUR_PLUGIN_SENSITIVITY_NO_GO"
+  },
+  "forbidden_confirmatory_reuse": [
+    {
+      "role": "paired_fold_csv",
+      "path": "output/phase14/intraday_shape_rolling_origin_20260724_v3/fold_metrics.csv",
+      "sha256": "910dd2dbe0a2c87f345f05431be14769d45e4113e1f54301176ba25fc7ecfe45"
+    },
+    {
+      "role": "source_summary",
+      "path": "output/phase14/intraday_shape_rolling_origin_20260724_v3/summary.json",
+      "sha256": "523169da91a3ec3ab46f341608274a449f035488bf671d2af82481112a3d8f09"
+    }
+  ],
+  "scientific_admission": false,
+  "execution_authorized": false,
+  "production_authorization": false,
+  "promotion_gate": false,
+  "future_holdout_consumed": false,
+  "t057_consumed": false
+}

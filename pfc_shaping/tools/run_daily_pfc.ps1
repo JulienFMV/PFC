@@ -5,6 +5,8 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+throw "Legacy rolling_update publication is disabled. Use the governed candidate/audit/receipt/promotion runner."
+
 Set-Location $RepoRoot
 $envRoot = Split-Path -Parent $PythonExe
 $env:PATH = "$envRoot;$envRoot\Library\bin;$envRoot\Scripts;$env:PATH"

@@ -1,0 +1,297 @@
+{
+  "benchmark_policy": {
+    "benchmarks": [
+      "market_constrained_seasonal_naive.v1",
+      "incumbent_ch_lt.v1",
+      "robust_regularized_linear_gam.v1",
+      "justified_nonlinear_tree_challenger.v1"
+    ],
+    "common_origins_targets_and_eligibility_masks": true,
+    "ompex_allowed_as_truth": false,
+    "ompex_allowed_in_fit": false,
+    "ompex_allowed_in_selection": false,
+    "ompex_role": "DIAGNOSTIC_EXTERNAL_BENCHMARK_ONLY",
+    "selection_nested_inside_each_outer_origin": true
+  },
+  "data_admission": {
+    "admission_controls": [
+      "EXACT_PROVIDER_RAW_BYTES",
+      "SOURCE_SPECIFIC_REPLAY_EQUALITY",
+      "AVAILABLE_AT_COMPLETE_AND_LE_ORIGIN",
+      "INDEPENDENT_TRUSTED_TIME_RECEIPT",
+      "INDEPENDENT_SIGNATURE",
+      "BUILDER_INACCESSIBLE_IMMUTABLE_NAMESPACE",
+      "EXTERNAL_CAS_RECEIPT_AND_FRESH_HEAD",
+      "NO_LINK_REPARSE_OR_HARDLINK_ALIAS"
+    ],
+    "admitted_role_manifests": [],
+    "conditional_roles_if_used": [
+      "commodities",
+      "entso",
+      "epex_at",
+      "epex_de",
+      "epex_fr",
+      "epex_it",
+      "hydro",
+      "outages"
+    ],
+    "current_evidence": [
+      {
+        "admissible_for_holdout": false,
+        "admissible_for_selection": false,
+        "admissible_for_training": false,
+        "authority_status": "COMPLETE_LOCAL_UNTRUSTED_CAPTURE",
+        "evidence_id": "ch_recent_provider_capture_20260724",
+        "limitations": [
+          "Local workstation clock is not an independent trusted-time authority.",
+          "The capture is unsigned and not externally CAS-published.",
+          "The Builder can still mutate its quarantine namespace.",
+          "The provider raw cadence is hourly and cannot identify native CH quarter-hour shape."
+        ],
+        "path": "output/phase14/prospective_public_capture_20260724/epex_ch_recent/provider-response.json",
+        "raw_resolution_minutes": 60,
+        "role": "epex_ch",
+        "sha256": "11985c82a4f82041cfc7a396848517ee816aafbc20a1a858951babc75233068c"
+      },
+      {
+        "admissible_for_holdout": false,
+        "admissible_for_selection": false,
+        "admissible_for_training": false,
+        "authority_status": "VERIFIED_LOCAL_QUARANTINE_NOT_PRODUCTION",
+        "evidence_id": "ch_recent_local_replay_audit_20260724",
+        "limitations": [
+          "Exact local replay does not provide an independent signature.",
+          "No Builder-inaccessible ACL freeze receipt exists.",
+          "No external CAS receipt or fresh authenticated HEAD exists."
+        ],
+        "path": "output/phase14/prospective_public_audit_20260724/epex_ch_recent-audit.json",
+        "raw_resolution_minutes": 60,
+        "role": "epex_ch",
+        "sha256": "3dc5aacef13b29a481629c360a3540b630e9089aa6c7117e459bc192fd22f8e4"
+      },
+      {
+        "admissible_for_holdout": false,
+        "admissible_for_selection": false,
+        "admissible_for_training": false,
+        "authority_status": "COMPLETE_LOCAL_MIXED_AUTHORITY_NO_GO",
+        "evidence_id": "de_lu_proxy_intraday_panel_20260724",
+        "limitations": [
+          "The historical base segment is ungoverned.",
+          "The local capture clock is untrusted.",
+          "DE-LU to CH transfer has not been validated.",
+          "The panel cannot substitute for direct CH quarter-hour truth."
+        ],
+        "path": "output/phase14/prospective_intraday_panel_20260724/epex_de_15min_complete.parquet",
+        "raw_resolution_minutes": 15,
+        "role": "epex_de",
+        "sha256": "e5b0a6d6e3c6837ae1728f25ea25bdbee9278d8eefd414f4476669d7286268ab"
+      }
+    ],
+    "current_evidence_admissible": false,
+    "unconditional_roles": [
+      "eex_forward_source",
+      "eex_forwards_history",
+      "epex_ch"
+    ]
+  },
+  "delivery_resolution_minutes": 15,
+  "deterministic_policy": {
+    "aggregation_order": "WITHIN_ORIGIN_VOLUME_WEIGHTED_THEN_EQUAL_ORIGIN_WEIGHT",
+    "cascade_invariance_tolerance_eur_mwh": 1e-08,
+    "comparison_tolerance": 1e-12,
+    "complexity_policy": {
+      "ablation_by_feature_group_required": true,
+      "active_basis_dimension_reported": true,
+      "effective_degrees_of_freedom_reported": true,
+      "incremental_oos_value_required": true,
+      "maximum_condition_number": 1000000000.0,
+      "regularization_selected_inside_origin": true
+    },
+    "final_eex_repricing_tolerance_eur_mwh": 1e-06,
+    "maximum_mandatory_stratum_relative_degradation": 0.02,
+    "minimum_positive_origin_share": 0.7,
+    "minimum_relative_mae_improvement": 0.02,
+    "minimum_relative_rmse_improvement": 0.0,
+    "monthly_level_preservation_tolerance_eur_mwh": 1e-09,
+    "monthly_solver_repricing_tolerance_eur_mwh": 1e-09,
+    "primary_metric": "MONTHLY_LEVEL_NEUTRALIZED_MAE_EUR_MWH",
+    "quote_sensitivity_policy": {
+      "cascade_bucket_gain_max": 2.23606797749979,
+      "delivery_year_gain_max": 2.0,
+      "full_horizon_gain_is_gate": false,
+      "monthly_row_l1_gain_max": 3.0,
+      "support_weighted_gain_max": 2.0
+    },
+    "secondary_metrics": [
+      "MONTHLY_LEVEL_NEUTRALIZED_RMSE_EUR_MWH",
+      "BIAS_EUR_MWH",
+      "P95_ABSOLUTE_ERROR_EUR_MWH",
+      "CAPTURE_FACTOR_ERROR",
+      "BASE_PEAK_OFFPEAK_WEIGHTED_ERROR"
+    ]
+  },
+  "economic_materiality": {
+    "fmv_risk_approval_receipt_sha256": null,
+    "metric": "PROFILE_CAPTURE_VALUE_ERROR_EUR_MWH",
+    "minimum_capture_value_improvement_eur_mwh": null,
+    "population": "FMV_PREDEFINED_FIL_ACC_AND_DISPATCH_PROFILES",
+    "status": "BLOCKED_REQUIRES_FMV_RISK_APPROVAL",
+    "transaction_and_imbalance_assumptions_sha256": null
+  },
+  "execution_controls": {
+    "available_at_rule": "EVERY_CONSUMED_ROW_AVAILABLE_AT_LE_ORIGIN",
+    "candidate_grid_hash_bound_before_evaluation": true,
+    "exact_origin_inventory_required": true,
+    "full_refit_per_origin": [
+      "ACQUISITION_ADMISSION",
+      "MONTHLY_SOLVER",
+      "FEATURE_TRANSFORMS",
+      "SHAPING_FIT",
+      "COMPLEXITY_SELECTION",
+      "PROBABILISTIC_CALIBRATION",
+      "SCENARIO_GENERATION"
+    ],
+    "future_data_injection_test_required": true,
+    "one_shot_future_holdout_namespace": true,
+    "output_append_only": true,
+    "production_authorization": false,
+    "promotion_gate": false,
+    "revision_policy": "LATEST_REVISION_AVAILABLE_AT_ORIGIN_ONLY",
+    "same_file_alias_attack_test_required": true
+  },
+  "independent_review": {
+    "it_operations_receipt_sha256": null,
+    "quant_data_receipt_sha256": null,
+    "required_no_open_severity": [
+      "P0",
+      "P1"
+    ],
+    "security_receipt_sha256": null
+  },
+  "lifecycle": {
+    "candidate_grid_sha256": null,
+    "frozen_at_utc": null,
+    "governance_receipt_sha256": null,
+    "state": "DRAFT_NOT_FROZEN",
+    "trusted_time_receipt_sha256": null
+  },
+  "market": "CH",
+  "origin_design": {
+    "future_holdout": {
+      "episode_inventory_sha256": null,
+      "episode_length_days": 14,
+      "exact_episodes": [],
+      "one_episode_per_season": true,
+      "one_shot": true,
+      "required_episode_count": 4,
+      "strictly_post_freeze": true
+    },
+    "nested_selection": {
+      "embargo_months": 1,
+      "feature_groups_selected_per_outer_origin": true,
+      "future_holdout_visible_to_selection": false,
+      "hyperparameters_refit_per_outer_origin": true,
+      "minimum_inner_origins": 12,
+      "selection_scope": "INSIDE_EACH_OUTER_ORIGIN_ONLY"
+    },
+    "retrospective_outer": {
+      "cadence_months": 1,
+      "exact_origins": [],
+      "minimum_per_regime": {
+        "CROSS_BORDER_STRESS": 4,
+        "HYDRO_HIGH": 4,
+        "HYDRO_LOW": 4,
+        "NEGATIVE_PRICE": 4,
+        "PRICE_SPIKE": 4,
+        "RENEWABLE_HIGH": 4
+      },
+      "minimum_per_season": 6,
+      "origin_inventory_sha256": null,
+      "regime_definition_manifest_sha256": null,
+      "regime_overlap_allowed": true,
+      "required_origin_count": 24
+    }
+  },
+  "plan_id": "ae5557fd7e58a6ee4164e7f8a949cb379fc2d8ac23766e17a1873c4de420c5f6",
+  "probabilistic_policy": {
+    "calibration_required_by_horizon_and_regime": true,
+    "energy_score_no_regression": true,
+    "marginal_scores": [
+      "PINBALL_BY_QUANTILE",
+      "WIS",
+      "CRPS",
+      "EMPIRICAL_COVERAGE",
+      "SHARPNESS",
+      "PIT_OR_RANDOMIZED_RANK"
+    ],
+    "minimum_relative_crps_improvement": 0.02,
+    "minimum_relative_wis_improvement": 0.02,
+    "pathwise_market_product_identity_required": true,
+    "quantile_crossing_tolerance_eur_mwh": 0.0,
+    "quantile_grid": [
+      0.01,
+      0.05,
+      0.1,
+      0.25,
+      0.5,
+      0.75,
+      0.9,
+      0.95,
+      0.99
+    ],
+    "quantile_market_identity_policy": "MARGINAL_QUANTILES_NOT_SEPARATELY_REPRICED_SCENARIOS_PROJECTED_PATHWISE",
+    "scenario_count": 1000,
+    "scenario_monthly_mean_tolerance_eur_mwh": 1e-09,
+    "scenario_rng": "PCG64",
+    "scenario_seed": 20260724,
+    "trajectory_scores": [
+      "ENERGY_SCORE",
+      "VARIOGRAM_SCORE"
+    ],
+    "transparent_baselines": [
+      "EMPIRICAL_BLOCK_RESIDUAL_BOOTSTRAP",
+      "REGULARIZED_QUANTILE_REGRESSION"
+    ],
+    "variogram": {
+      "lag_weight": "INVERSE_LAG",
+      "lags_quarter_hours": [
+        1,
+        4,
+        16,
+        48,
+        96
+      ],
+      "order": 0.5
+    },
+    "variogram_score_no_regression": true
+  },
+  "production_authorization": false,
+  "promotion_gate": false,
+  "protocol_name": "ch_lt_pit_outer24_future4_20260724_v1",
+  "schema_version": "ch_lt_pit_probabilistic_preregistration.v1",
+  "scope": "FULL_DELIVERED_CH_LT_PFC",
+  "statistical_policy": {
+    "aggregate_improvement_ci_lower_bound_strictly_positive": true,
+    "bootstrap": {
+      "block_length_origins": 3,
+      "method": "CIRCULAR_MOVING_BLOCK_PERCENTILE",
+      "replicates": 10000,
+      "rng": "PCG64",
+      "seed": 20260724,
+      "unit": "ORIGIN"
+    },
+    "confidence_interval": "TWO_SIDED_95_PERCENT",
+    "familywise_alpha": 0.05,
+    "future_episode_rule": "ALL_FOUR_EPISODES_NON_REGRESSING_ON_PRIMARY_METRIC_AND_COMBINED_PASS",
+    "hac_cross_check": {
+      "lag_origins": 2,
+      "method": "NEWEY_WEST_HLN_CORRECTED_DIEBOLD_MARIANO",
+      "primary_gate": false
+    },
+    "inference_unit": "ORIGIN",
+    "missing_or_ineligible": "UNSUPPORTED_NEVER_IMPUTED_AS_ZERO_OR_WIN",
+    "multiplicity": "HOLM_FOR_PRIMARY_CHALLENGER_COMPARISONS",
+    "ties_within_comparison_tolerance": "TIE_NOT_WIN"
+  },
+  "timezone": "Europe/Zurich"
+}

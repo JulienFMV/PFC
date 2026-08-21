@@ -1,0 +1,91 @@
+{
+  "schema_version": "fmv-eex-ch-short-tenor-evidence-selection-v1",
+  "status": "PASS_LOCAL_EVIDENCE_CHAIN_RECONCILED_NO_MODEL_AUTHORITY",
+  "decision": "D-20260805-225",
+  "purpose": "reconcile D220-D223 short-tenor evidence identities without changing scientific payloads or granting empirical authority",
+  "selected_chain": {
+    "normalization_content_id": "2837dc4849dc4b573c441059574973e0b8cc0fbb5023203509cb2929dd636a3f",
+    "short_tenor_audit_content_id": "b09eb3250df5a3c0616eb169c512319c514ddf540251b405023d9351bd5d8bde",
+    "contrast_bundle": {
+      "content_id": "309b9f07236d1cfb32b3d92c1ed5413bde6966fa383629882a539ccbd60e9cb5",
+      "manifest_sha256": "57b571bef311cf22955edc415e650f55671ad2f243141d4f334ccac425d8bb0f",
+      "contract_sha256": "8d18107356ae60e1379baaee5392ff7f2fc2c79895140c6e4423105ad970a802",
+      "module_sha256": "95ca6087f9ea213111abed2c06ba87978d21cb4d4c4221bb40e953abba626b0b",
+      "tests_sha256": "505d30aa8608af24619b5fcccf68d3e20f3b9520dc31ee73a97eb74c1d2ba858"
+    },
+    "combination_policy": {
+      "content_id": "189e7ab9d460daefbaa689f1dc8ae4c3bb269f7b5bcb5eae95e77b6d0d4d3e43",
+      "contract_sha256": "367ae861ecb6273dbd72ff308fdd0523b8640e57f7dba122fade4d127e7b1aae"
+    },
+    "combination_proof": {
+      "content_id": "122afd7292549b00a946a2893487d344e459c420a8bbdf99c11714c7308a8cfd",
+      "manifest_sha256": "d9772a5e18eea9adb3f6aa9a085558fe0bf91534b03d2e172c4d3c16b0626dab",
+      "summary_sha256": "5f68ca8c6089df2cacb76db202160720655fe6b3e3ffdcf2522e04e41e9b6db3",
+      "residuals_sha256": "45123d43c5978d115838308cb8028a4c13a3b842cebb34486d5c60a3286bed08",
+      "module_sha256": "f87e72b56c6286c57dac74333fa379aa3756ba9674bd0a510a7f7f2f05274697",
+      "tests_sha256": "8a818a83633254c244409eac216b597aafabe93c69cbb3b38fb28c277f0f61ba"
+    }
+  },
+  "superseded_evidence": [
+    {
+      "kind": "CONTRAST_BUNDLE",
+      "content_id": "ae7b962ca5f85ff75223ad45fd578c29b49a1d66dfbdd418b941c337dda38147",
+      "manifest_sha256": "fd5af41eb51154dfa1a3406feebe830cac7fb11d90603edce266116b3278b390",
+      "bound_source_contrast_id": null,
+      "reason": "STALE_TEST_BYTES_SAME_SCIENTIFIC_PAYLOAD"
+    },
+    {
+      "kind": "CONTRAST_BUNDLE",
+      "content_id": "7a4c2a601e169d8c471e0939919f12cf56b03d132d8691a82d6bfef5b392bd03",
+      "manifest_sha256": "a62e5656febf38b088e18b9e463c2eb9851cb0d0c90ac7584e7d527dfa4e89f1",
+      "bound_source_contrast_id": null,
+      "reason": "STALE_TEST_BYTES_SAME_SCIENTIFIC_PAYLOAD"
+    },
+    {
+      "kind": "COMBINATION_PROOF",
+      "content_id": "21c557df75260ce162c15af6fbe0c91de4c8a6fcd233564403a04e7b1fc53ad0",
+      "manifest_sha256": "c2cddd1ba59b3f0cf77ff16f5debcbf915c46b9373dd6a36e238d144d58bb21c",
+      "bound_source_contrast_id": "7a4c2a601e169d8c471e0939919f12cf56b03d132d8691a82d6bfef5b392bd03",
+      "reason": "BINDS_SUPERSEDED_CONTRAST_BUNDLE"
+    },
+    {
+      "kind": "COMBINATION_PROOF",
+      "content_id": "c06dfcf5fbda16cd5bab04005d4581e35216116c30c6c9df6cef94f2d949f67b",
+      "manifest_sha256": "b76eb64b493a154c66def95a2dc13c448f2f93f048f2a3a45e5caf057e7783c8",
+      "bound_source_contrast_id": "ae7b962ca5f85ff75223ad45fd578c29b49a1d66dfbdd418b941c337dda38147",
+      "reason": "BINDS_SUPERSEDED_CONTRAST_BUNDLE"
+    }
+  ],
+  "scientific_payload_identity": {
+    "contrast_rows_sha256": "99933b4e4fce7e208f3f57017f6ba1ad6b1342e97804958b64465cdc4e550dcc",
+    "diagnostic_rows_sha256": "f06f024de5e8f8d1e758195c7a260f64ff49bd9a488f10092c87294ee199e049",
+    "summary_sha256": "663bbc40827efe51e3a0f8e7b32b60b1f1679ea097a8d1e3a8816257bff42694",
+    "selected_and_superseded_contrast_payloads_identical": true,
+    "selection_used_market_performance": false,
+    "selection_basis": "CURRENT_CONTRACT_MODULE_TEST_BYTES_AND_TWO_EXACT_REPO_LOCAL_RUNTIME_REPLAYS"
+  },
+  "execution": {
+    "repo_local_replay_count": 2,
+    "runtime": "BUILD_PYTEST_RUNTIME_V2_FINAL",
+    "databricks_request_count": 0,
+    "warehouse_start_count": 0,
+    "network_call_count": 0,
+    "remote_write_count": 0
+  },
+  "authorities": {
+    "point_in_time_availability_proven": false,
+    "rolling_origin_selection_authorized": false,
+    "model_input_authorized": false,
+    "candidate_assembly_authorized": false,
+    "promotion_authorized": false,
+    "production_authorized": false
+  },
+  "invariants": [
+    "MONTHLY_SOLVER_REMAINS_SOLE_LEVEL_AUTHORITY",
+    "OMPEX_POST_CANDIDATE_BENCHMARK_ONLY",
+    "AFRY_RESTRICTED_DESCRIPTIVE_ONLY",
+    "T057_SEALED",
+    "NO_LOCAL_OR_SYNTHETIC_ENTSOE_EMPIRICAL_SUBSTITUTION",
+    "NO_DATABRICKS_EXECUTION_FOR_LOCAL_RECONCILIATION"
+  ]
+}

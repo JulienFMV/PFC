@@ -1,0 +1,116 @@
+{
+  "schema_version": "ch_lt_local_future_origin_selection.v2",
+  "selection_id": "ab5ad8a873507d3648c27117adf0b5a65b8cea96550dd47fd4617642672aeb42",
+  "status": "SEALED_LOCAL_FUTURE_ORIGIN_REHEARSAL_V6_NONCOUNTABLE_NO_GO",
+  "market": "CH",
+  "supersession": {
+    "supersedes_selection_path": ".planning/phases/14-lt-audit-remediation/CH-LT-LOCAL-FUTURE-ORIGIN-SELECTION-V1-20260731.json",
+    "supersedes_selection_sha256": "0be15394ad127a311ad669751a099a6700f4ba89f1d4960ef6df2a2a2e9aa845",
+    "supersedes_selection_id": "2513ce6162ea20c46342df8fd27db754fdad97ceba664fd7d4f214030f7338bc",
+    "same_origin_not_an_additional_origin": true,
+    "reason": "PRE_DELIVERY_QUANT_SCORING_CONTRACT_AND_FAIL_CLOSED_QH_GRID_HARDENING",
+    "v5_retention_role": "SUPERSEDED_PRE_DELIVERY_LOCAL_REHEARSAL_AUDIT_ONLY"
+  },
+  "selected_origin": {
+    "origin_as_of_utc": "2026-07-31T07:20:27Z",
+    "origin_id": "6bb3c7cf163a62ed4be5bcffe6739a97da249789d8ae18bfcb89c276e15e2c2a",
+    "first_target_delivery_start_utc": "2026-07-31T22:00:00Z",
+    "last_target_delivery_end_utc": "2029-07-31T22:00:00Z",
+    "origin_precedes_first_target": true,
+    "local_clock_trusted": false,
+    "duplicate_origin_as_of_utc": "FORBIDDEN"
+  },
+  "bindings": {
+    "origin_target_mask_inventory": {
+      "path": "build/ch-lt-origin-target-mask-inventories/structural-dry-run-20260731T072027Z-schema-v2.json",
+      "sha256": "a4d5722841df549ba24ca2dd190fa0f5b1d79738fc63680acf93034e148419b7",
+      "inventory_id": "9fabce9f35249cb82024f5ad9c52e82e2b55a0f6a027d2f09dac3a64c3ecff66"
+    },
+    "prediction_commitment": {
+      "path": "build/ch-lt-structural-prediction-commitments/structural-dry-run-20260731T072027Z-v6-quant-contract/commitment.json",
+      "sha256": "b3b504a7820a1c781b0d0383d1279c071b41743954e80f7115a4257d8269f1c4",
+      "commitment_id": "88178d2d76d1ffaf47c42cbde6d60cdb6d4e7f6368ff94613d899686708e77b2"
+    },
+    "sealed_predictions": {
+      "path": "build/ch-lt-structural-prediction-commitments/structural-dry-run-20260731T072027Z-v6-quant-contract/predictions.json",
+      "sha256": "8d2bfae4998a8431f4bcb3a55c51e29830c17b515ed20c9d2c49274aef841dbd",
+      "prediction_set_id": "2c5bbf96199cdcad68e80353eb821c45b310d78efb0a6d9c687f5f69d916f552"
+    },
+    "hourly_scoring_contract": {
+      "path": ".planning/phases/14-lt-audit-remediation/CH-LT-FUTURE-HOURLY-SCORING-CONTRACT-V1-20260731.json",
+      "sha256": "e6f0767de168c02fefa2a26cb90b147e8491d5a16cdd008ed137e1cd430a237a",
+      "contract_id": "698af6ba9989db27d20f404d8c4c23bf2f19cacb63c41d5d80a74a81e37d45a8"
+    },
+    "current_evidence_selection": {
+      "path": ".planning/phases/14-lt-audit-remediation/CH-LT-CURRENT-EVIDENCE-SELECTION-V3-20260731.json",
+      "sha256": "6518f7e876ce1c233fc055d3d20ad213088d361d784afbe5aa16d4f165e744f7",
+      "registry_id": "748aba2e2f85711d0a5dcdb07e0acacbf8dbce7a76ab4a4b07ef48371ec25488",
+      "independent_rolling_origin_count": 0
+    },
+    "inventory_execution_receipt": {
+      "path": "build/workspace-local-runs/org31fresh/execution-receipt.json",
+      "sha256": "5553023b0605f7cee0de3981dbe4f025a2ea6c26be645a8852ee427facb13ce0"
+    },
+    "inventory_supervisor_receipt": {
+      "path": "build/workspace-local-supervisors/org31fresh/supervisor-receipt.json",
+      "sha256": "62c3efeb9cc142d6c4071798d738d7b7bf12c4d01b060822f909541d9baccac8"
+    },
+    "prediction_execution_receipt": {
+      "path": "build/workspace-local-runs/pred31v6b/execution-receipt.json",
+      "sha256": "25e4ca22d54ff308e0b9e028ce6015fb7c43a0495060b39e38dc62595747cb56"
+    },
+    "prediction_supervisor_receipt": {
+      "path": "build/workspace-local-supervisors/pred31v6b/supervisor-receipt.json",
+      "sha256": "d1579283f320f126273dda4e22de0fe73e4d294c731a28d19a158dd4fd231559"
+    }
+  },
+  "evaluation_contract": {
+    "source": "BOUND_HOURLY_SCORING_CONTRACT_ONLY_NO_DUPLICATED_FORMULAS",
+    "hourly_shape_functional_contract_sha256": "2899143a8a6bdeb8605a46c02bdb055cf9c8b29e9a7b2fc4d9f581a65085d468",
+    "hourly_scoring_contract_sha256": "e6f0767de168c02fefa2a26cb90b147e8491d5a16cdd008ed137e1cd430a237a",
+    "target_count": 36,
+    "prediction_count": 108,
+    "primary_scenario": "central",
+    "scenario_pooling": "FORBIDDEN",
+    "quarter_hour_scoring": "FORBIDDEN_UNTIL_MARKET_TRANSITION_IS_INDEPENDENTLY_ADMITTED"
+  },
+  "truth_lifecycle": {
+    "native_hourly_collector": "REQUIRED_NOT_YET_IMPLEMENTED",
+    "truth_manifest_builder": "REQUIRED_NOT_YET_IMPLEMENTED",
+    "truth_open_auditor": "REQUIRED_NOT_YET_IMPLEMENTED",
+    "precommitted_scorer": "REQUIRED_NOT_YET_IMPLEMENTED",
+    "provider_lag_sla": "UNSET_REQUIRES_MEASUREMENT_AND_OWNER_APPROVAL",
+    "operational_owner": "UNSET_EXTERNAL_FMV_DECISION",
+    "partial_month_truth_open": "FORBIDDEN",
+    "post_truth_retuning": "FORBIDDEN_FOR_THIS_ORIGIN"
+  },
+  "authority_boundary": {
+    "independent_registry_receipt_present": false,
+    "independent_trusted_time_receipt_present": false,
+    "independent_signature_present": false,
+    "builder_inaccessible_external_cas_receipt_present": false,
+    "fresh_governed_ch_eex_level_present": false,
+    "direct_ch_shape_authority_present": false,
+    "countable_prospective_origin": false,
+    "outcomes_opened": false,
+    "future_holdout_consumed": false,
+    "t057_consumed": false,
+    "scientific_admission": false,
+    "candidate_assembly_eligible": false,
+    "publication_authorized": false,
+    "promotion_gate": false,
+    "production_authorization": false
+  },
+  "next_external_requirements": [
+    "IMPLEMENT_AND_GOVERN_NATIVE_HOURLY_TRUTH_COLLECTION_TRUTH_OPEN_AND_SCORING_LIFECYCLE",
+    "REGISTER_A_FUTURE_ORIGIN_THROUGH_AN_INDEPENDENT_LINEARIZABLE_AUTHORITY_BEFORE_ITS_FIRST_TARGET",
+    "BIND_INDEPENDENT_TRUSTED_TIME_SIGNATURE_AND_BUILDER_INACCESSIBLE_EXTERNAL_CAS_RECEIPT",
+    "BIND_FRESH_POINT_IN_TIME_CH_EEX_LEVEL_AND_ORIGIN_AVAILABLE_PRODUCT_INVENTORY",
+    "ACCUMULATE_THE_PREDECLARED_NUMBER_OF_INDEPENDENT_ORIGINS_BEFORE_ANY_QUALITY_CLAIM"
+  ],
+  "future_holdout_consumed": false,
+  "t057_consumed": false,
+  "scientific_admission": false,
+  "production_authorization": false,
+  "promotion_gate": false
+}

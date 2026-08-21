@@ -1,0 +1,74 @@
+table EEX_Residuals
+	lineageTag: b0ada6fa-1f4e-4630-8917-89890b3ba705
+
+	measure 'EEX Max Abs Residual' = MAX ( EEX_Residuals[abs_error_eur_mwh] )
+		formatString: 0.000000
+		lineageTag: ca15f6e9-06f0-457d-be58-7115b9ed8d89
+
+	measure 'EEX Max BASE Residual' = CALCULATE ( MAX ( EEX_Residuals[abs_error_eur_mwh] ), EEX_Residuals[load_type] = "BASE" )
+		formatString: 0.000000
+		lineageTag: cb094a5c-2795-4e11-8e30-d319f42fc358
+
+	measure 'EEX Max PEAK Residual' = CALCULATE ( MAX ( EEX_Residuals[abs_error_eur_mwh] ), EEX_Residuals[load_type] = "PEAK" )
+		formatString: 0.000000
+		lineageTag: 3d02a67d-c251-48cf-87e3-5dc273bd3036
+
+	measure 'EEX Max Abs Residual Text' = FORMAT ( [EEX Max Abs Residual], "0.000000" )
+		lineageTag: 1e983471-6000-4efb-a8ba-88c2574fe91b
+
+	measure 'EEX Max BASE Residual Text' = FORMAT ( [EEX Max BASE Residual], "0.000000" )
+		lineageTag: 2c08a9f8-ec2a-4fd0-8faa-ec842bcffb78
+
+	measure 'EEX Max PEAK Residual Text' = FORMAT ( [EEX Max PEAK Residual], "0.000000" )
+		lineageTag: d4e14988-b5e6-4c23-b1d9-ad9a39640f88
+
+	column load_type
+		dataType: string
+		lineageTag: 037b5a3b-06e6-461a-b54d-25194700bff5
+		summarizeBy: none
+		sourceColumn: load_type
+
+	column product
+		dataType: string
+		lineageTag: 2ee282f8-00ae-43d3-8891-ecc0995b1e89
+		summarizeBy: none
+		sourceColumn: product
+
+	column target_eex_eur_mwh
+		dataType: double
+		formatString: 0.00
+		lineageTag: 2dda4a08-4f55-426f-80ef-74c96ea29954
+		summarizeBy: none
+		sourceColumn: target_eex_eur_mwh
+
+	column csv_mean_eur_mwh
+		dataType: double
+		formatString: 0.00
+		lineageTag: 221e9ef6-a095-47d3-99f1-bd9e484ed67c
+		summarizeBy: none
+		sourceColumn: csv_mean_eur_mwh
+
+	column abs_error_eur_mwh
+		dataType: double
+		formatString: 0.000000
+		lineageTag: 0c17c323-d37d-4548-9e39-2cf5a6cc30c8
+		summarizeBy: none
+		sourceColumn: abs_error_eur_mwh
+
+	column rows
+		dataType: int64
+		formatString: 0
+		lineageTag: 638644ed-7709-4adf-b07e-31fba9a6bcf8
+		summarizeBy: none
+		sourceColumn: rows
+
+	partition EEX_Residuals = m
+		mode: import
+		source =
+				let
+				    Source = Csv.Document(File.Contents("\\fmvfs2\Data\Energy\GeCom\CONTROLLING RISK\Analyses diverses\Python - JB\PFC_LT\powerbi\data\eex_residuals.csv"), [Delimiter=",", Columns=6, Encoding=65001, QuoteStyle=QuoteStyle.Csv]),
+				    Promoted = Table.PromoteHeaders(Source, [PromoteAllScalars=true]),
+				    Typed = Table.TransformColumnTypes(Promoted, {{"load_type", type text}, {"product", type text}, {"target_eex_eur_mwh", type number}, {"csv_mean_eur_mwh", type number}, {"abs_error_eur_mwh", type number}, {"rows", Int64.Type}})
+				in
+				    Typed
+

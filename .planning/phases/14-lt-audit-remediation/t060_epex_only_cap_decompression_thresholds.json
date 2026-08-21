@@ -1,0 +1,6 @@
+{
+  "max_epex_spot_age_days": 14.0,
+  "max_ramp_p99_increase_eur_mwh": 1.0,
+  "min_adjusted_price_eur_mwh": -10.0,
+  "min_epex_fit_coverage_days": 730.0
+}

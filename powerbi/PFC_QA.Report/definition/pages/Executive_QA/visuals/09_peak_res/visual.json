@@ -1,0 +1,90 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.10.0/schema.json",
+  "name": "peak_res",
+  "position": {
+    "x": 1020.3039513677812,
+    "y": 125.47112462006079,
+    "z": 0,
+    "height": 117.68996960486322,
+    "width": 189.66565349544075
+  },
+  "visual": {
+    "visualType": "cardVisual",
+    "query": {
+      "queryState": {
+        "Data": {
+          "projections": [
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "EEX_Residuals"
+                    }
+                  },
+                  "Property": "EEX Max PEAK Residual Text"
+                }
+              },
+              "queryRef": "EEX_Residuals.EEX Max PEAK Residual Text",
+              "nativeQueryRef": "EEX Max PEAK Residual Text"
+            }
+          ]
+        }
+      }
+    },
+    "visualContainerObjects": {
+      "title": [
+        {
+          "properties": {
+            "show": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            },
+            "text": {
+              "expr": {
+                "Literal": {
+                  "Value": "'EEX PEAK residual'"
+                }
+              }
+            },
+            "fontSize": {
+              "expr": {
+                "Literal": {
+                  "Value": "11D"
+                }
+              }
+            },
+            "bold": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  "filterConfig": {
+    "filters": [
+      {
+        "name": "5c2e3951a4190d55ab16",
+        "field": {
+          "Measure": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "EEX_Residuals"
+              }
+            },
+            "Property": "EEX Max PEAK Residual Text"
+          }
+        },
+        "type": "Advanced"
+      }
+    ]
+  }
+}

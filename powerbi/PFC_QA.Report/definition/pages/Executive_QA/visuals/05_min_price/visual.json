@@ -1,0 +1,90 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.10.0/schema.json",
+  "name": "min_price",
+  "position": {
+    "x": 219.81762917933131,
+    "y": 125.47112462006079,
+    "z": 0,
+    "height": 117.68996960486322,
+    "width": 190.63829787234044
+  },
+  "visual": {
+    "visualType": "cardVisual",
+    "query": {
+      "queryState": {
+        "Data": {
+          "projections": [
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "HFC_Hourly"
+                    }
+                  },
+                  "Property": "Min Weighted Price"
+                }
+              },
+              "queryRef": "HFC_Hourly.Min Weighted Price",
+              "nativeQueryRef": "Min Weighted Price"
+            }
+          ]
+        }
+      }
+    },
+    "visualContainerObjects": {
+      "title": [
+        {
+          "properties": {
+            "show": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            },
+            "text": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Min weighted price'"
+                }
+              }
+            },
+            "fontSize": {
+              "expr": {
+                "Literal": {
+                  "Value": "11D"
+                }
+              }
+            },
+            "bold": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  "filterConfig": {
+    "filters": [
+      {
+        "name": "13651dd5d484c2455863",
+        "field": {
+          "Measure": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "HFC_Hourly"
+              }
+            },
+            "Property": "Min Weighted Price"
+          }
+        },
+        "type": "Advanced"
+      }
+    ]
+  }
+}

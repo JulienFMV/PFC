@@ -4,8 +4,8 @@ Shared data loading, caching, and chart helpers for the PFC dashboard.
 
 from __future__ import annotations
 
-import logging
 import json
+import logging
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -18,6 +18,10 @@ import plotly.graph_objects as go
 import plotly.io as pio
 import streamlit as st
 import yaml
+
+from pfc_shaping.pipeline.probabilistic_output_governance import (
+    quarantine_legacy_intervals,
+)
 
 logger = logging.getLogger("pfc_dashboard")
 
@@ -168,9 +172,11 @@ def load_pfc() -> pd.DataFrame | None:
     if parquet_path is not None:
         df = _safe_read_parquet(parquet_path, "PFC")
         if df is not None:
-            return df
+            return quarantine_legacy_intervals(df, context=str(parquet_path))
     if csv_path is not None:
-        return _safe_read_csv(csv_path, "PFC")
+        df = _safe_read_csv(csv_path, "PFC")
+        if df is not None:
+            return quarantine_legacy_intervals(df, context=str(csv_path))
     return None
 
 
@@ -299,9 +305,11 @@ def load_pfc_market(market: str) -> pd.DataFrame | None:
     if parquet_path is not None:
         df = _safe_read_parquet(parquet_path, f"PFC-{m}")
         if df is not None:
-            return df
+            return quarantine_legacy_intervals(df, context=str(parquet_path))
     if csv_path is not None:
-        return _safe_read_csv(csv_path, f"PFC-{m}")
+        df = _safe_read_csv(csv_path, f"PFC-{m}")
+        if df is not None:
+            return quarantine_legacy_intervals(df, context=str(csv_path))
     return None
 
 
@@ -547,18 +555,24 @@ def load_benchmarks(limit: int = 200) -> pd.DataFrame:
 @st.cache_data(ttl=300, show_spinner=False)
 def load_forecasts_hourly(run_id: str | None = None, limit: int = 5000) -> pd.DataFrame:
     safe_limit = max(1, int(limit))
+    # Historical LT bands are uncalibrated. Preserve the dashboard schema while
+    # preventing stale finite values from being presented as forecast intervals.
+    projection = (
+        "SELECT run_id, ts_local, price_shape, "
+        "CAST(NULL AS DOUBLE) AS p10, CAST(NULL AS DOUBLE) AS p90 "
+    )
     if run_id:
-        sql = (
-            "SELECT run_id, ts_local, price_shape, p10, p90 "
+        sql = projection + (
             f"FROM forecasts_hourly WHERE run_id = ? ORDER BY ts_local LIMIT {safe_limit}"
         )
-        return _read_duckdb(sql, [run_id])
+        frame = _read_duckdb(sql, [run_id])
     else:
-        sql = (
-            "SELECT run_id, ts_local, price_shape, p10, p90 "
+        sql = projection + (
             f"FROM forecasts_hourly ORDER BY run_id DESC, ts_local LIMIT {safe_limit}"
         )
-        return _read_duckdb(sql)
+        frame = _read_duckdb(sql)
+    frame.attrs["probabilistic_status"] = "QUARANTINED_UNCALIBRATED"
+    return frame
 
 
 def data_freshness() -> dict[str, str]:
@@ -748,7 +762,7 @@ def add_range_slider(fig: go.Figure) -> go.Figure:
 
 def no_data_warning(name: str = "donnees") -> None:
     st.warning(
-        f"Aucune {name} disponible. Lance `python -m pfc_shaping.pipeline.rolling_update` pour ingerer les donnees.",
+        f"Aucune {name} de production gouvernee disponible.",
         icon="⚠️",
     )
 
@@ -774,7 +788,7 @@ def load_model_quality() -> dict[str, float] | None:
     if not eval_path.exists():
         return None
     try:
-        lines = eval_path.read_text().strip().splitlines()
+        lines = eval_path.read_text(encoding="utf-8").strip().splitlines()
         metrics: dict[str, float] = {}
         in_block = False
         for line in lines:

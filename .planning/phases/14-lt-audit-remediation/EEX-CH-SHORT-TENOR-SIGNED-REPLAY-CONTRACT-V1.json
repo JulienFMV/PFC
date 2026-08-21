@@ -1,0 +1,109 @@
+{
+  "schema_version": "fmv-eex-ch-short-tenor-signed-replay-contract-v1",
+  "status": "PASS_LOCAL_DSSE_AND_TIME_LINK_REPLAY_ONLY_NO_EXTERNAL_TRUST",
+  "purpose": "path-safe replay of exact D227 training and selection receipts plus signed execution-time observations without opening prices or granting empirical authority",
+  "selected_boundary": {
+    "receipt_contract_schema": "fmv-eex-ch-short-tenor-receipt-contract-v1",
+    "receipt_contract_content_id": "d4f7e4e87b8e059255e1a85a589f41d54596756d731ce4a9781b2dbc46d61068",
+    "receipt_contract_sha256": "3168d75e245f033daa44f4c6dab9061f51e06f2b993797b7fb7d9c46dbe6b665",
+    "receipt_contract_decision": "D-20260805-227"
+  },
+  "in_toto_slsa_profile": {
+    "statement_type": "https://in-toto.io/Statement/v1",
+    "predicate_type": "https://slsa.dev/provenance/v1",
+    "payload_type": "application/vnd.in-toto+json",
+    "build_type": "urn:fmv:pfc:eex-ch-short-tenor-receipt-replay:v1",
+    "one_subject_exactly": true,
+    "subject_matches_receipt_output_name_and_sha256": true,
+    "build_definition_external_parameters_embed_exact_structural_receipt": true,
+    "build_definition_resolved_dependencies_match_role_specific_receipt_inputs": true,
+    "run_details_match_receipt_builder_invocation_times_and_byproducts": true,
+    "receipt_contract_content_id_bound": true,
+    "local_unknown_fields_fail_closed": true,
+    "generic_slsa_unknown_field_rule_acknowledged": "IGNORE_UNRECOGNIZED_FIELDS"
+  },
+  "trusted_time_link_profile": {
+    "statement_type": "https://in-toto.io/Statement/v1",
+    "predicate_type": "urn:fmv:pfc:trusted-execution-time-observation:v1",
+    "payload_type": "application/vnd.in-toto+json",
+    "one_observation_per_training_or_selection_run": true,
+    "subject_matches_execution_attestation_sha256": true,
+    "observation_payload_sha256_matches_receipt_trusted_time_receipt_sha256": true,
+    "receipt_role_execution_attestation_and_expected_time_source_bound": true,
+    "training_and_selection_execution_attestation_sha256s_distinct": true,
+    "finished_at_not_after_observed_at_not_after_outer_origin": true,
+    "same_trusted_time_key_required_for_both_observations": true,
+    "external_time_authority_identity_not_inferred": true
+  },
+  "dsse_profile": {
+    "envelope_fields": [
+      "payloadType",
+      "payload",
+      "signatures"
+    ],
+    "pre_auth_encoding": "DSSEv1 <len(payloadType)> <payloadType> <len(payload)> <payload>",
+    "signature_algorithm": "Ed25519",
+    "exactly_one_signature_per_envelope": true,
+    "key_id_rule": "sha256_subject_public_key_info_der",
+    "key_id_is_checked_only_after_the_expected_role_key_is_supplied": true,
+    "key_id_never_selects_a_trust_anchor": true,
+    "strict_standard_base64_local_profile": true,
+    "canonical_payload_and_envelope_json_required": true,
+    "duplicate_json_keys_rejected": true,
+    "unknown_envelope_or_signature_fields_fail_closed": true
+  },
+  "path_replay_contract": {
+    "all_input_paths_absolute": true,
+    "stable_single_link_regular_files_required": true,
+    "seven_input_files_pairwise_distinct": true,
+    "caller_held_envelope_sha256_required": true,
+    "caller_held_public_key_file_sha256_required": true,
+    "canonical_public_key_pem_required": true,
+    "training_receipt_signed_by_execution_key": true,
+    "selection_receipt_signed_by_governance_key": true,
+    "time_observations_signed_by_trusted_time_key": true,
+    "governance_execution_and_trusted_time_keys_pairwise_distinct": true,
+    "structural_training_and_selection_validation_replayed": true,
+    "exact_training_selection_link_replayed": true,
+    "authority_sets_match_across_receipts": true,
+    "non_time_and_trusted_time_key_sets_globally_disjoint": true,
+    "receipt_material_subject_and_source_time_artifacts_not_opened": true,
+    "price_values_not_opened": true
+  },
+  "verified_by_local_replay": [
+    "exact envelope bytes match caller-held hashes",
+    "exact public-key bytes match caller-held hashes",
+    "DSSE Ed25519 signature integrity using caller-supplied role keys",
+    "in-toto Statement and SLSA provenance structural bindings",
+    "D227 structural receipt invariants and training-selection linkage",
+    "signed execution-time observation linkage and chronology",
+    "governance execution and trusted-time key separation"
+  ],
+  "not_verified_by_local_replay": [
+    "external ownership organisational identity issuance rotation revocation or compromise status of keys",
+    "independent authority or accuracy of the asserted observation times",
+    "source acquisition trusted-time receipts or same-snapshot EEX and ENTSO-E point-in-time availability",
+    "truth independence predictive quality or model superiority over OMPEX"
+  ],
+  "authorities": {
+    "local_signature_integrity_verified_after_successful_replay": true,
+    "local_time_observation_link_verified_after_successful_replay": true,
+    "external_authority_verified": false,
+    "independently_trusted_time_verified": false,
+    "point_in_time_availability_proven": false,
+    "training_authorized": false,
+    "selection_authorized": false,
+    "model_input_authorized": false,
+    "candidate_assembly_authorized": false,
+    "promotion_authorized": false,
+    "production_authorized": false
+  },
+  "required_before_authenticated_use": [
+    "externally governed trust-anchor registry with owner and role identity",
+    "key lifecycle issuance rotation revocation and compromise policy",
+    "independently verified trusted-time authority and source acquisition receipts",
+    "same-snapshot replay of every bound EEX and ENTSO-E PIT artifact",
+    "append-only or WORM receipt retention",
+    "new independently frozen future holdout distinct from sealed T057"
+  ]
+}

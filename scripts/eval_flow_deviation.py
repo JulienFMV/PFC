@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 
 from pfc_shaping.data.calendar_ch import enrich_15min_index
-from pfc_shaping.model.shape_intraday import ShapeIntraday
+from pfc_shaping.lt.model.shape_intraday import ShapeIntraday
 
 # ── Load data ──────────────────────────────────────────────────────────────
 print("=" * 70)

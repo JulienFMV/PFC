@@ -1,0 +1,88 @@
+{
+  "schema_version": "ch_lt_prospective_capture_ledger_selection.v2",
+  "status": "SELECTED_LOCAL_DIAGNOSTIC_ONLY_NOT_PIT_AUTHORITY",
+  "supersedes": {
+    "path": ".planning/phases/14-lt-audit-remediation/CH-LT-PROSPECTIVE-CAPTURE-LEDGER-SELECTION-20260730.json",
+    "sha256": "7accb35de831693dec5de039a2400c874dce5151e3421d56181dabede09845fa",
+    "reason": "V8_EXTENDS_THE_CONTIGUOUS_LOCAL_PREFIX_WITH_A_POST_DELIVERY_CAPTURE"
+  },
+  "selected": {
+    "version": "v8",
+    "path": "build/prospective-ledgers/ch-hourly-local-ledger-20260730-v8.json",
+    "sha256": "ac347cb709fc1ae7c75bf516621901851c08656921e3b4d960eb695a8ad32433",
+    "ledger_id": "2921ae31951aed2e9918811c511b88020ee5e6e882ae38902949da851410e1d0",
+    "request_path": "build/prospective-ledgers/ch-hourly-local-ledger-request-20260730-v3.json",
+    "request_sha256": "d62ae24b5612da8a13b7b56102e9f77ce358c8b507e8dd8be613e82bc67f5f80",
+    "execution_receipt_path": "build/prospective-ledgers/ch-hourly-local-ledger-execution-receipt-20260730-v8.json",
+    "execution_receipt_sha256": "06cd8e34297e9f29b7a8b8ac65ea0e350d9cd6245393088efc4d22e1b2e63c49",
+    "runtime_receipt_path": "build/launcherless-runtime-receipt-20260730-v29.json",
+    "runtime_receipt_sha256": "f4ff1d309a7800056e254fe506b61cea5a46e691308e9263d1a9ab701825e8c3",
+    "project_wheel_sha256": "896a24ede95ce38110942ce6217d1af994dc003589f9c0da35505a85be51652b",
+    "project_source_revision": "9718dceb841e8dc221cd3f785b083b30971b0cc410b4407a9524ba40d52c3255",
+    "window_start_utc": "2026-06-28T22:00:00Z",
+    "window_end_utc_exclusive": "2026-07-30T02:00:00Z",
+    "duration_hours": 748,
+    "capture_count": 3,
+    "native_hourly_observation_count": 748,
+    "transport_quarter_hour_row_count": 2992,
+    "proxy_rows_add_independent_information": false,
+    "selectable_for_local_structural_diagnostics": true,
+    "scientific_admission": false,
+    "production_authorization": false
+  },
+  "nonselected_attempts": [
+    {
+      "version": "v5",
+      "path": "build/prospective-ledgers/ch-hourly-local-ledger-20260730-v5.json",
+      "sha256": "089aaa82d1025fd550cd9cdceba6a20cfb1aef1871a57f4cdca2c2e23470bdb6",
+      "artifact_created": true,
+      "selectable": false,
+      "reason": "SHORTER_CONTIGUOUS_PREFIX_SUPERSEDED_BY_V8"
+    },
+    {
+      "version": "v6",
+      "artifact_created": false,
+      "selectable": false,
+      "reason": "PARENT_TIMEOUT_THEN_TERMINATION_WITHOUT_TERMINAL_ARTIFACT"
+    },
+    {
+      "version": "v7",
+      "artifact_created": false,
+      "selectable": false,
+      "reason": "FAIL_CLOSED_CAPTURE_CHRONOLOGY_INVALID"
+    }
+  ],
+  "excluded_capture": {
+    "capture_summary_path": "build/prospective-captures/ch-da-hourly-20260730-v2/capture-summary.json",
+    "capture_summary_sha256": "9d3201775bd01d41e1bbb170240dc796d2ebc2b68b0dfa0be0bebc3b03639cb8",
+    "audit_path": "build/prospective-audits/ch-da-hourly-20260730-v2-audit-v8.json",
+    "audit_sha256": "13b506bcf95fe622ab3ad858ef9a4494454bee3a802cb59605d6495e2f4c28ea",
+    "start_utc": "2026-07-29T22:00:00Z",
+    "end_utc_exclusive": "2026-07-30T22:00:00Z",
+    "received_at_utc_untrusted": "2026-07-30T02:29:12.648104Z",
+    "local_archive_allowed": true,
+    "prospective_ledger_eligible": false,
+    "reason": "DELIVERY_WINDOW_ENDED_AFTER_CAPTURE_TIME_FUTURE_OUTCOME_LEAKAGE_GATE"
+  },
+  "permitted_claims": [
+    "LOCAL_CAPTURE_CONTIGUITY",
+    "NATIVE_HOURLY_CADENCE_OBSERVED",
+    "EXACT_LOCAL_PROVIDER_REPLAY",
+    "HASH_BOUND_LOCAL_INTEGRITY_AT_CONSTRUCTION",
+    "DELIVERY_WINDOW_END_NOT_AFTER_UNTRUSTED_CAPTURE_TIME"
+  ],
+  "forbidden_claims": [
+    "POINT_IN_TIME_AUTHORITY",
+    "TRUSTED_AVAILABLE_AT_OR_REVISION_LINEAGE",
+    "NATIVE_HOURLY_OR_QUARTER_HOUR_SCIENTIFIC_TRUTH",
+    "OFFICIAL_PRODUCT_AUCTION_SESSION_OR_SETTLEMENT_IDENTITY",
+    "INDEPENDENT_ROLLING_ORIGIN_OR_HOLDOUT_EVIDENCE",
+    "TRAINING_MODEL_SELECTION_OR_CANDIDATE_AUTHORITY",
+    "PUBLICATION_PROMOTION_OR_PRODUCTION_AUTHORITY"
+  ],
+  "independent_rolling_origin_count": 0,
+  "future_holdout_consumed": false,
+  "t057_consumed": false,
+  "promotion_gate": false,
+  "production_authorization": false
+}

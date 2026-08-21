@@ -1,0 +1,65 @@
+{
+  "accept_quote_conflict": true,
+  "candidate_csv": "output\\phase14\\t056_postval_final_micro\\t005_w075_l025_p089_e005_n055_r00\\candidate_epex_shape_lab_adjusted.csv",
+  "decision": "Production-approved source hierarchy policy for the exact T056 t005 EPEX lab diagnostic artifact only: quote-aware finer BASE/PEAK buckets are the delivered-product repricing authority when redundant parent quotes conflict and all finer buckets pass. This policy accepts only QUOTE_CONFLICT source hierarchy for the bound CSV/forwards hashes; it is not a production promotion approval for the lab curve.",
+  "expected_quote_conflict_count": 6,
+  "expected_quote_conflicts": [
+    {
+      "covered_by_quote_aware_products": "2026-10,2026-11,2026-12",
+      "gate_id": "hard_base_product_repricing",
+      "load_type": "BASE",
+      "product": "2026-Q4",
+      "quote_conflict_basis": "finer_quote_aware_buckets"
+    },
+    {
+      "covered_by_quote_aware_products": "2027-01,2027-Q1-RESIDUAL,2027-Q2,2027-Q3,2027-Q4",
+      "gate_id": "hard_base_product_repricing",
+      "load_type": "BASE",
+      "product": "2027",
+      "quote_conflict_basis": "finer_quote_aware_buckets"
+    },
+    {
+      "covered_by_quote_aware_products": "2026-10,2026-11,2026-12",
+      "gate_id": "hard_peak_product_repricing",
+      "load_type": "PEAK",
+      "product": "2026-Q4",
+      "quote_conflict_basis": "finer_quote_aware_buckets"
+    },
+    {
+      "covered_by_quote_aware_products": "2027-01,2027-Q1-RESIDUAL,2027-Q2,2027-Q3,2027-Q4",
+      "gate_id": "hard_peak_product_repricing",
+      "load_type": "PEAK",
+      "product": "2027",
+      "quote_conflict_basis": "finer_quote_aware_buckets"
+    },
+    {
+      "covered_by_quote_aware_products": "2026-Q4",
+      "gate_id": "implied_offpeak_identity",
+      "load_type": "OFFPEAK",
+      "product": "2026-Q4",
+      "quote_conflict_basis": "parent_base_peak_quote_conflict"
+    },
+    {
+      "covered_by_quote_aware_products": "2027",
+      "gate_id": "implied_offpeak_identity",
+      "load_type": "OFFPEAK",
+      "product": "2027",
+      "quote_conflict_basis": "parent_base_peak_quote_conflict"
+    }
+  ],
+  "forward_snapshot_date": "2026-07-07",
+  "forwards_path": "output\\phase14\\20260708_asof20260707_lshape100_yoy150_amp150_2032\\epex_sweep_v2\\diagnostic_forwards_history_rebuilt_20260708.parquet",
+  "forwards_sha256": "a6244638c2234781853284ce2ad58d55d01265568cca6c85d4461f21446e8d76",
+  "input_csv_sha256": "5e603a4d5926f9265ca564615e69d0d7ee39f778f6f19b495706ab1b89cf69b6",
+  "market": "CH",
+  "production_approved": true,
+  "quote_conflict_identity_hash": "a28d7f15151e730dca2099335e1d7e75dcf52e3a77edb6871352f9942c882846",
+  "rejected_alternatives": [
+    "Patch delivered months after the monthly solver or EPEX lab adjustment",
+    "Treat redundant parent quote conflicts as PASS without a hash-bound policy",
+    "Use OMPEX HFC benchmark data in model selection, calibration, or source hierarchy decisions",
+    "Promote the lab curve without production/export/capstone evidence"
+  ],
+  "schema_version": "ch_quote_conflict_source_hierarchy_policy.v1",
+  "source_hierarchy": "quote_aware_finer_buckets_over_redundant_parent"
+}

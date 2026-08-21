@@ -8,9 +8,9 @@ Formats supportés :
     - Parquet : format interne FMV (archivage + reporting)
 
 Format CSV de sortie (à valider avec Phinergy) :
-    timestamp_local;price_shape;p10;p90;profile_type;confidence
-    2025-03-10 00:00;65.42;59.10;71.80;M+1..M+6;1.0
-    2025-03-10 00:15;64.18;57.90;70.50;M+1..M+6;1.0
+    timestamp_local;price_shape;profile_type;confidence
+    2025-03-10 00:00;65.42;M+1..M+6;1.0
+    2025-03-10 00:15;64.18;M+1..M+6;1.0
     ...
 
 Convention :
@@ -35,7 +35,9 @@ import pandas as pd
 logger = logging.getLogger(__name__)
 
 # Colonnes exportées vers EULER (dans cet ordre)
-EULER_COLUMNS = ["price_shape", "p10", "p90", "profile_type", "confidence"]
+# Production is deterministic-only until CH rolling-origin interval evidence is
+# promotion-approved. Advisory p10/p90 values must never reach EULER.
+EULER_COLUMNS = ["price_shape", "profile_type", "confidence"]
 INTERNAL_COLUMNS = EULER_COLUMNS + ["calibrated"]
 
 

@@ -17,11 +17,11 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from pfc_shaping.model.futureboost_experimental import (  # noqa: E402
+from pfc_shaping.ct.model.futureboost_experimental import (  # noqa: E402
     DEFAULT_FUTUREBOOST_EXPERIMENT,
     FutureBoostExperimentalRegressor,
 )
-from pfc_shaping.model.pricefm_experimental import blend_lear_with_pricefm  # noqa: E402
+from pfc_shaping.ct.model.pricefm_experimental import blend_lear_with_pricefm  # noqa: E402
 from scripts.eval_futureboost_experimental import _build_overlap, _score_frame  # noqa: E402
 
 

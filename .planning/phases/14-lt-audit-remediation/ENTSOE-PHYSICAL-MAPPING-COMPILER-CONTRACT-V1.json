@@ -1,0 +1,231 @@
+{
+  "schema_version": "fmv_entsoe_physical_mapping_compiler_contract.v1",
+  "status": "STATIC_OFFLINE_COMPILER_CONTRACT_NO_EXECUTION_AUTHORITY",
+  "purpose": "compile an admitted ENTSO-E physical schema and owner-asserted mapping into explicit normalized Databricks SQL templates without executing them",
+  "input_bindings": {
+    "governed_acquisition_package_contract_content_id": "4f6e644b15593e8d4ae2ca196e1d52a002d4255bdf42e7a137982edb854f0fa0",
+    "governed_acquisition_package_contract_sha256": "97edaf93c639953365d20d7539380a706f0f8fdbec9476af94262fb1d4b2204d",
+    "governed_acquisition_package_decision": "D-20260805-233",
+    "metadata_admission_contract_content_id": "ac0ccb6b5a94e0dee46050b5a765f92efcf800f078b93645917247a3be206564",
+    "metadata_query_sha256": "dec7e207603e3a8b69f5808b42454575f1b4a985a25fa8aca3e5c6a2c95b72fa",
+    "entsoe_intake_contract_path": ".planning/phases/14-lt-audit-remediation/ENTSOE-DATABRICKS-INTAKE-CONTRACT-V1.json",
+    "entsoe_intake_contract_sha256": "7ede1698099390babfa1d130bfecae61fd1e090888a3d6e6e4f892119db52b87"
+  },
+  "mapping_manifest": {
+    "schema_version": "fmv_entsoe_physical_column_mapping.v1",
+    "exact_top_level_fields": [
+      "schema_version",
+      "evidence_class",
+      "mapping_owner",
+      "mapped_at_utc",
+      "metadata_schema_fingerprint",
+      "metadata_payload_sha256",
+      "metadata_statement_id",
+      "catalog",
+      "schema",
+      "table_mappings",
+      "semantic_assertions",
+      "authorities"
+    ],
+    "evidence_classes": [
+      "REAL_METADATA_OWNER_ASSERTED",
+      "SYNTHETIC_TEST_ONLY"
+    ],
+    "catalog": "dev",
+    "schema": "gold",
+    "mapping_must_be_injective_per_table": true,
+    "implicit_columns_allowed": false,
+    "implicit_casts_allowed": false
+  },
+  "normalized_roles": {
+    "series_dimension": {
+      "physical_table": "dimentsoeseries",
+      "grain": [
+        "series_id"
+      ],
+      "required_fields": [
+        "series_id",
+        "group_name",
+        "field_name",
+        "from_zone",
+        "to_zone",
+        "unit",
+        "native_resolution",
+        "source_endpoint",
+        "document_id"
+      ]
+    },
+    "latest_values": {
+      "physical_table": "factentsoetimeserieslatest",
+      "grain": [
+        "series_id",
+        "target_ts_utc"
+      ],
+      "required_fields": [
+        "series_id",
+        "target_ts_utc",
+        "value",
+        "is_historical",
+        "quality_flag",
+        "revision_number",
+        "meta_load_timestamp_utc"
+      ]
+    },
+    "vintage_values": {
+      "physical_table": "factentsoetimeseriesvintages",
+      "grain": [
+        "series_id",
+        "target_ts_utc",
+        "as_of_utc"
+      ],
+      "required_fields": [
+        "series_id",
+        "target_ts_utc",
+        "as_of_utc",
+        "value",
+        "quality_flag",
+        "revision_number",
+        "meta_load_timestamp_utc"
+      ]
+    }
+  },
+  "type_classes": {
+    "identifier": [
+      "STRING",
+      "VARCHAR",
+      "CHAR",
+      "BIGINT",
+      "INT",
+      "INTEGER",
+      "LONG",
+      "SMALLINT"
+    ],
+    "string": [
+      "STRING",
+      "VARCHAR",
+      "CHAR"
+    ],
+    "timestamp_utc_asserted": [
+      "TIMESTAMP",
+      "TIMESTAMP_NTZ"
+    ],
+    "numeric": [
+      "DECIMAL",
+      "DOUBLE",
+      "FLOAT",
+      "REAL",
+      "BIGINT",
+      "INT",
+      "INTEGER",
+      "LONG",
+      "SMALLINT",
+      "TINYINT"
+    ],
+    "integer": [
+      "BIGINT",
+      "INT",
+      "INTEGER",
+      "LONG",
+      "SMALLINT",
+      "TINYINT"
+    ],
+    "boolean": [
+      "BOOLEAN"
+    ]
+  },
+  "field_type_classes": {
+    "series_id": "identifier",
+    "group_name": "string",
+    "field_name": "string",
+    "from_zone": "string",
+    "to_zone": "string",
+    "unit": "string",
+    "native_resolution": "string",
+    "source_endpoint": "string",
+    "document_id": "string",
+    "target_ts_utc": "timestamp_utc_asserted",
+    "as_of_utc": "timestamp_utc_asserted",
+    "value": "numeric",
+    "is_historical": "boolean",
+    "quality_flag": "string",
+    "revision_number": "integer",
+    "meta_load_timestamp_utc": "timestamp_utc_asserted"
+  },
+  "cross_table_type_equalities": [
+    "series_id",
+    "target_ts_utc",
+    "value",
+    "quality_flag",
+    "revision_number",
+    "meta_load_timestamp_utc"
+  ],
+  "semantic_assertions_required": {
+    "timestamp_timezone": "UTC",
+    "source_timestamps_are_utc_owner_asserted": true,
+    "native_resolution_is_source_field_not_inferred": true,
+    "implicit_upsampling_authorized": false,
+    "implicit_forward_fill_authorized": false,
+    "implicit_casts_authorized": false,
+    "latest_values_point_in_time_authority": false,
+    "vintage_availability_field": "as_of_utc",
+    "day_ahead_price_unit": "EUR/MWh"
+  },
+  "sql_templates": {
+    "dialect": "DATABRICKS_SQL_NAMED_PARAMETER_MARKERS",
+    "explicit_projection_only": true,
+    "select_star_forbidden": true,
+    "ddl_dml_forbidden": true,
+    "qualified_fixed_table_identifiers": true,
+    "physical_columns_delimited": true,
+    "normalized_aliases_delimited": true,
+    "half_open_target_window": true,
+    "series_dimension": {
+      "parameters": [],
+      "row_limit": 100001,
+      "limit_hit_requires_rejection": true
+    },
+    "latest_values": {
+      "parameters": [
+        "start_utc",
+        "end_utc"
+      ],
+      "maximum_execution_window_days": 31,
+      "row_limit": 1000001,
+      "limit_hit_requires_rejection": true
+    },
+    "vintage_values": {
+      "parameters": [
+        "start_utc",
+        "end_utc",
+        "as_of_cutoff_utc"
+      ],
+      "maximum_execution_window_days": 31,
+      "row_limit": 1000001,
+      "limit_hit_requires_rejection": true
+    }
+  },
+  "execution_policy": {
+    "current_databricks_statement_budget": 0,
+    "current_warehouse_start_budget": 0,
+    "current_network_call_budget": 0,
+    "current_remote_write_budget": 0,
+    "connector_code_allowed": false,
+    "compiled_sql_execution_authorized": false,
+    "future_execution_requires_new_explicit_user_authorization": true,
+    "future_parameters_require_separate_validation": true,
+    "future_limit_hit_requires_smaller_window_retry_not_acceptance": true
+  },
+  "authorities": {
+    "real_metadata_captured": false,
+    "external_mapping_owner_identity_verified": false,
+    "physical_column_mapping_verified_on_real_metadata": false,
+    "entsoe_values_opened": false,
+    "point_in_time_availability_proven": false,
+    "training_authorized": false,
+    "selection_authorized": false,
+    "model_input_authorized": false,
+    "candidate_assembly_authorized": false,
+    "promotion_authorized": false,
+    "production_authorized": false
+  }
+}

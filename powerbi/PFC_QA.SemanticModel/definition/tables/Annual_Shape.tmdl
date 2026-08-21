@@ -1,0 +1,111 @@
+table Annual_Shape
+	lineageTag: d512f9a7-a195-4587-91f4-ba632f569993
+
+	column year
+		dataType: int64
+		formatString: 0
+		lineageTag: 60d66797-6c95-4b74-b2b7-e925b2a1ca24
+		summarizeBy: none
+		sourceColumn: year
+
+	column mean_eur_mwh
+		dataType: double
+		formatString: 0.00
+		lineageTag: cf89fc9e-26dc-48ea-93a2-e0c6c9d0ac7a
+		summarizeBy: none
+		sourceColumn: mean_eur_mwh
+
+	column winter_summer_spread_eur_mwh
+		dataType: double
+		formatString: 0.00
+		lineageTag: fb5331b7-b415-4d14-8a0c-36571412b352
+		summarizeBy: none
+		sourceColumn: winter_summer_spread_eur_mwh
+
+	column evening_minus_midday_eur_mwh
+		dataType: double
+		formatString: 0.00
+		lineageTag: ca3cd22d-483b-428f-8b85-a426437ace77
+		summarizeBy: none
+		sourceColumn: evening_minus_midday_eur_mwh
+
+	column peak_minus_offpeak_eur_mwh
+		dataType: double
+		formatString: 0.00
+		lineageTag: ab1ad2e1-5794-4425-a402-34dc626f16ff
+		summarizeBy: none
+		sourceColumn: peak_minus_offpeak_eur_mwh
+
+	column weekend_minus_weekday_eur_mwh
+		dataType: double
+		formatString: 0.00
+		lineageTag: fb208296-f155-43c6-b4d6-3782994bfe42
+		summarizeBy: none
+		sourceColumn: weekend_minus_weekday_eur_mwh
+
+	column negative_hours_weighted
+		dataType: int64
+		formatString: 0
+		lineageTag: aa9d4dfa-2ebe-4c6d-8899-52945cacc73b
+		summarizeBy: none
+		sourceColumn: negative_hours_weighted
+
+	column negative_hours_fast
+		dataType: int64
+		formatString: 0
+		lineageTag: a9c396df-6541-4fcc-a166-c45dd0d4ab4d
+		summarizeBy: none
+		sourceColumn: negative_hours_fast
+
+	column negative_hours_p10
+		dataType: int64
+		formatString: 0
+		lineageTag: 6d3acfdb-7c6b-4183-bbe1-f64257085591
+		summarizeBy: none
+		sourceColumn: negative_hours_p10
+
+	column structural_width_mean_eur_mwh
+		dataType: double
+		formatString: 0.00
+		lineageTag: 806d9b38-5cfe-4637-a9c8-63b416de6173
+		summarizeBy: none
+		sourceColumn: structural_width_mean_eur_mwh
+
+	column structural_width_p95_eur_mwh
+		dataType: double
+		formatString: 0.00
+		lineageTag: 618a81ac-0fc5-4b57-bc25-b7d209c60eb4
+		summarizeBy: none
+		sourceColumn: structural_width_p95_eur_mwh
+
+	column min_weighted_eur_mwh
+		dataType: double
+		formatString: 0.00
+		lineageTag: 462b3adc-df90-46e6-950a-32f6f4fad2a2
+		summarizeBy: none
+		sourceColumn: min_weighted_eur_mwh
+
+	column min_fast_eur_mwh
+		dataType: double
+		formatString: 0.00
+		lineageTag: 6d752b90-1f07-4c16-8959-c184b53df448
+		summarizeBy: none
+		sourceColumn: min_fast_eur_mwh
+
+	column min_p10_eur_mwh
+		dataType: double
+		formatString: 0.00
+		lineageTag: 65cc2344-f28d-4afb-aef2-93269e6f87d1
+		summarizeBy: none
+		sourceColumn: min_p10_eur_mwh
+
+	partition Annual_Shape = m
+		mode: import
+		source =
+				let
+				    Source = Csv.Document(File.Contents("\\fmvfs2\Data\Energy\GeCom\CONTROLLING RISK\Analyses diverses\Python - JB\PFC_LT\powerbi\data\annual_shape.csv"), [Delimiter=",", Columns=14, Encoding=65001, QuoteStyle=QuoteStyle.Csv]),
+				    Promoted = Table.PromoteHeaders(Source, [PromoteAllScalars=true]),
+				    Typed = Table.TransformColumnTypes(Promoted, {{"year", Int64.Type}, {"mean_eur_mwh", type number}, {"winter_summer_spread_eur_mwh", type number}, {"evening_minus_midday_eur_mwh", type number}, {"peak_minus_offpeak_eur_mwh", type number}, {"weekend_minus_weekday_eur_mwh", type number}, {"negative_hours_weighted", Int64.Type}, {"negative_hours_fast", Int64.Type}, {"negative_hours_p10", Int64.Type}, {"structural_width_mean_eur_mwh", type number}, {"structural_width_p95_eur_mwh", type number}, {"min_weighted_eur_mwh", type number}, {"min_fast_eur_mwh", type number}, {"min_p10_eur_mwh", type number}})
+				in
+				    Typed
+

@@ -23,15 +23,15 @@ def run_eval(shape_hourly_cls, label: str, **kwargs):
     from dashboard.utils import load_epex
     from pfc_shaping.data.calendar_ch import enrich_15min_index
     from pfc_shaping.data.forward_proxy import derive_base_prices
-    from pfc_shaping.model.assembler import PFCAssembler
-    from pfc_shaping.model.shape_intraday import ShapeIntraday
-    from pfc_shaping.model.uncertainty import Uncertainty
+    from pfc_shaping.lt.model.assembler import PFCAssembler
+    from pfc_shaping.lt.model.shape_intraday import ShapeIntraday
+    from pfc_shaping.lt.model.uncertainty import Uncertainty
     from pfc_shaping.calibration.cascading import ContractCascader
     from pfc_shaping.calibration.arbitrage_free import ArbitrageFreeCalibrator
 
     epex = load_epex()
     cfg_path = ROOT / "pfc_shaping" / "config.yaml"
-    with cfg_path.open() as f:
+    with cfg_path.open(encoding="utf-8") as f:
         config = yaml.safe_load(f)
     model_cfg = config.get("model", {})
 
@@ -155,8 +155,8 @@ def run_eval(shape_hourly_cls, label: str, **kwargs):
 
 
 def main():
-    from pfc_shaping.model.shape_hourly import ShapeHourly
-    from pfc_shaping.model.shape_hourly_mlp import ShapeHourlyMLP
+    from pfc_shaping.lt.model.shape_hourly import ShapeHourly
+    from pfc_shaping.lt.model.shape_hourly_mlp import ShapeHourlyMLP
 
     print("=" * 60)
     print("A/B TEST: ShapeHourly (table) vs ShapeHourlyMLP (neural)")

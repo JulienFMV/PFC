@@ -1,0 +1,90 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.10.0/schema.json",
+  "name": "eex_max",
+  "position": {
+    "x": 819.93920972644378,
+    "y": 391.00303951367783,
+    "z": 0,
+    "height": 131.30699088145897,
+    "width": 189.66565349544075
+  },
+  "visual": {
+    "visualType": "cardVisual",
+    "query": {
+      "queryState": {
+        "Data": {
+          "projections": [
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "EEX_Residuals"
+                    }
+                  },
+                  "Property": "EEX Max Abs Residual Text"
+                }
+              },
+              "queryRef": "EEX_Residuals.EEX Max Abs Residual Text",
+              "nativeQueryRef": "EEX Max Abs Residual Text"
+            }
+          ]
+        }
+      }
+    },
+    "visualContainerObjects": {
+      "title": [
+        {
+          "properties": {
+            "show": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            },
+            "text": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Max EEX residual'"
+                }
+              }
+            },
+            "fontSize": {
+              "expr": {
+                "Literal": {
+                  "Value": "11D"
+                }
+              }
+            },
+            "bold": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  "filterConfig": {
+    "filters": [
+      {
+        "name": "0bd8a035279182a4c315",
+        "field": {
+          "Measure": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "EEX_Residuals"
+              }
+            },
+            "Property": "EEX Max Abs Residual Text"
+          }
+        },
+        "type": "Advanced"
+      }
+    ]
+  }
+}

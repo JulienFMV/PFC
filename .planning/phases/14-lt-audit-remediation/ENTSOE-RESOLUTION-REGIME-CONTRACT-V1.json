@@ -1,0 +1,86 @@
+{
+  "schema_version": "fmv_entsoe_resolution_regime_contract.v1",
+  "decision": "D-20260806-260",
+  "status": "ALGORITHM_ONLY_NO_REAL_DATA_AUTHORITY",
+  "purpose": "represent effective-dated native cadence per physical ENTSO-E series without inventing a country-wide transition or upsampling history",
+  "supersession_scope": {
+    "supersedes_single_resolution_as_historical_truth": true,
+    "single_native_resolution_remains_current_or_single_regime_metadata_only": true,
+    "does_not_supersede_family_unit_sign_lineage_quality_or_pit_gates": true
+  },
+  "source_findings": [
+    {
+      "source_id": "EPEX_SPOT_15_MINUTE_MARKET_TIME_UNIT",
+      "source_locator": "https://www.epexspot.com/en/new-15-minute-products-market-coupling",
+      "scope": "Swiss day-ahead market design",
+      "finding": "Swiss introduction is sequential and separately governed from the SDAC rollout; 60-minute indices may coexist with 15-minute clearing prices through explicit aggregation rules.",
+      "may_define_an_observed_go_live_date": false
+    },
+    {
+      "source_id": "SWISSGRID_BALANCING_ROADMAP_2026_2030",
+      "source_locator": "https://www.swissgrid.ch/content/dam/swissgrid/about-us/newsroom/publications/balancing-roadmap-fr.pdf",
+      "scope": "Swiss day-ahead, intraday and border products",
+      "finding": "Fifteen-minute products are introduced by market and border on distinct schedules; a roadmap date is a plan, not proof that a physical series changed cadence.",
+      "may_define_an_observed_go_live_date": false
+    }
+  ],
+  "normalized_sidecar": {
+    "role": "series_resolution_regimes",
+    "grain": [
+      "series_id",
+      "valid_from_utc"
+    ],
+    "required_fields": [
+      "series_id",
+      "valid_from_utc",
+      "valid_to_utc",
+      "native_resolution",
+      "source_document_id",
+      "source_locator",
+      "owner_confirmed_at_utc"
+    ],
+    "interval_semantics": "LEFT_CLOSED_RIGHT_OPEN",
+    "timestamp_semantics": "DELIVERY_INTERVAL_START_UTC",
+    "supported_resolutions": [
+      "PT15M",
+      "PT30M",
+      "PT1H"
+    ],
+    "open_ended_final_regime_allowed": true,
+    "gaps_or_overlaps_allowed": false,
+    "one_country_wide_regime_substitution_allowed": false
+  },
+  "quality_rules": {
+    "exact_series_coverage_required": true,
+    "transition_boundary_must_close_previous_grid": true,
+    "observed_target_must_match_active_regime_grid": true,
+    "expected_slots_are_built_piecewise": true,
+    "missing_slots_are_reported_not_filled": true,
+    "implicit_upsampling_authorized": false,
+    "implicit_downsampling_authorized": false,
+    "implicit_forward_fill_authorized": false,
+    "historical_hourly_series_is_invalid_only_because_later_market_is_15_minute": false,
+    "roadmap_or_calendar_date_may_replace_series_evidence": false,
+    "maximum_expected_slots_per_assessment": 5000000
+  },
+  "execution": {
+    "databricks_connection_count": 0,
+    "databricks_statement_count": 0,
+    "warehouse_start_count": 0,
+    "databricks_write_count": 0,
+    "network_call_count": 0,
+    "h_drive_access_count": 0,
+    "opened_real_value_row_count": 0
+  },
+  "authorities": {
+    "real_source_evidence": false,
+    "external_owner_identity": false,
+    "point_in_time_availability": false,
+    "value_quality": false,
+    "model_input": false,
+    "model_selection": false,
+    "candidate": false,
+    "promotion": false,
+    "production": false
+  }
+}

@@ -1,0 +1,99 @@
+{
+  "schema_version": "fmv_entsoe_lt_derived_feature_lineage_contract.v1",
+  "decision": "D-20260806-281",
+  "status": "VALUE_FREE_DERIVED_FEATURE_LINEAGE_NO_MODEL_AUTHORITY",
+  "purpose": "bind each lagged ENTSO-E load forecast error to the exact realized and operational-forecast feature records that make it knowable at one forecast origin",
+  "predecessors": {
+    "d273_feature_availability_contract_content_id": "c7826b4ad2fa5cdb6baff5d077f00ee5fd8d98108cebef9920c147d787df2ab0",
+    "d280_real_derived_feature_admission_remains_blocked": true
+  },
+  "supported_transforms": [
+    {
+      "transform_kind": "LOAD_FORECAST_ERROR",
+      "formula": "REALIZED_ACTUAL_MINUS_OPERATIONAL_FORECAST",
+      "input_roles_in_formula_order": [
+        "REALIZED_ACTUAL",
+        "OPERATIONAL_FORECAST"
+      ],
+      "d273_dependency_roles_order": [
+        "OPERATIONAL_FORECAST",
+        "REALIZED_ACTUAL"
+      ],
+      "required_source_families_by_formula_role": {
+        "REALIZED_ACTUAL": "actual_load",
+        "OPERATIONAL_FORECAST": "load_forecast"
+      },
+      "output_information_role": "FORECAST_ERROR",
+      "output_source_family": "load_forecast_error",
+      "permitted_output_uses": [
+        "LAGGED_COVARIATE",
+        "DIAGNOSTIC_ONLY"
+      ],
+      "target_interval_must_match_all_records": true,
+      "origin_must_match_all_records": true,
+      "output_availability_is_maximum_input_availability": true,
+      "calculation_cannot_precede_input_availability": true,
+      "missing_input_or_output_value_policy": "PRESERVE_NULL",
+      "output_sign_convention": "POSITIVE_WHEN_ACTUAL_ABOVE_FORECAST",
+      "semantic_unit_zone_and_cadence_binding": "REQUIRES_LATER_D280_COMPOSITE"
+    }
+  ],
+  "lineage_document": {
+    "schema_version": "fmv_entsoe_lt_derived_feature_lineage.v1",
+    "required_document_fields": [
+      "schema_version",
+      "evidence_class",
+      "feature_availability_contract_content_id",
+      "feature_records_content_id",
+      "declared_at_utc",
+      "transforms",
+      "authorities"
+    ],
+    "required_transform_fields": [
+      "transform_id",
+      "transform_kind",
+      "output_feature_record_id",
+      "input_feature_record_ids_in_formula_order",
+      "formula",
+      "calculation_created_at_utc",
+      "missing_value_policy",
+      "output_sign_convention",
+      "semantic_unit_zone_and_cadence_binding",
+      "reason"
+    ],
+    "maximum_transforms": 100000
+  },
+  "admission_rules": {
+    "all_referenced_d273_records_must_be_structurally_eligible": true,
+    "every_forecast_error_record_must_be_bound_exactly_once": true,
+    "input_and_output_feature_record_ids_must_be_content_hashes": true,
+    "input_roles_families_target_origin_and_availability_must_match": true,
+    "duplicate_or_self_dependency_is_admissible": false,
+    "formula_or_operand_order_may_be_inferred": false,
+    "semantic_unit_zone_and_cadence_proven_by_this_contract": false,
+    "raw_values_opened_or_recomputed": false,
+    "synthetic_structural_pass_grants_model_input_authority": false,
+    "monthly_effects_may_rewrite_solver_mean": false
+  },
+  "execution": {
+    "databricks_connection_count": 0,
+    "databricks_statement_count": 0,
+    "warehouse_start_count": 0,
+    "databricks_write_count": 0,
+    "network_call_count": 0,
+    "h_drive_access_count": 0,
+    "opened_real_value_row_count": 0
+  },
+  "authorities": {
+    "real_source_evidence": false,
+    "point_in_time": false,
+    "semantic_unit_zone_cadence": false,
+    "arithmetic_recomputation": false,
+    "predictive_value": false,
+    "model_input": false,
+    "model_selection": false,
+    "candidate": false,
+    "promotion": false,
+    "production": false
+  }
+}

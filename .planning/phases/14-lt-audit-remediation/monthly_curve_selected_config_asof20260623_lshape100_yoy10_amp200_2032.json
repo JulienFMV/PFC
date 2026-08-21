@@ -1,0 +1,42 @@
+{
+  "active_config_hash_from_candidate_manifest": "f4b64f88919149a42a85693135c047b442ffa099011ce17e41c1cfe8782db88e",
+  "active_constraints_hash": "a80d5e09d2b6eda2ca5f22fd83ed58116a96b91dd80e46f50b61eb7e54baa262",
+  "candidate_manifest": "output/phase14/20260624_asof20260623_lshape100_yoy10_amp200_2032/fan_asof20260623_lshape100_yoy10_amp200_2032.monthly_curve_manifest.json",
+  "canonical_config": {
+    "allow_template_structural_fallback": true,
+    "constraint_tolerance": 0.01,
+    "history_lookback_years": 6,
+    "history_weight": 0.5,
+    "lambda_prior": 1e-06,
+    "lambda_shape": 100.0,
+    "lambda_smooth_month": 0.1,
+    "lambda_smooth_yoy": 10.0,
+    "markets": [
+      "AT",
+      "DE",
+      "FR",
+      "IT"
+    ],
+    "max_prior_residual_eur_mwh": null,
+    "min_history_snapshots": 24,
+    "min_structural_snapshots": 24,
+    "neighbor_shrinkage": 0.5,
+    "panel_weight": 1.0,
+    "robust_panel_quantile": 0.5,
+    "stationarity_tolerance": 1e-07,
+    "structural_amplitude_eur_mwh": 200.0,
+    "structural_weight": 1.0
+  },
+  "config_hash": "f4b64f88919149a42a85693135c047b442ffa099011ce17e41c1cfe8782db88e",
+  "export_manifest": "output/phase14/20260624_asof20260623_lshape100_yoy10_amp200_2032/fan_asof20260623_lshape100_yoy10_amp200_2032.monthly_curve_manifest.json",
+  "forward_snapshot_date": "2026-06-23",
+  "monthly_solution_hash": "d717a426f5fee7fe62abf294a0e44311040115fd4edb6a3a118f06bf7243832e",
+  "production_manifest": "pfc_shaping/model/artifacts/production_monthly_curve_manifest.json",
+  "production_manifest_triad_validated": true,
+  "production_promotion_approved": true,
+  "production_approved": true,
+  "promotion_scope": "PRODUCTION_EXPORT_SELECTED_TRIAD",
+  "schema_version": "monthly_curve_selected_config.v1",
+  "selection_reason": "Phase 14 as-of 2026-06-23 lshape100/yoy10/amp200 candidate binds the selected lambda configuration to matching production and local-export monthly solver manifests, strict delivered-product/source-hierarchy audit, strict Power BI export gates, and PNG visual diagnostics showing restored annual-only seasonal amplitude versus the prior yoy50 candidate.",
+  "selection_status": "PRODUCTION_APPROVED"
+}

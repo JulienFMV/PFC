@@ -1,0 +1,55 @@
+{
+  "schema_version": "fmv_entsoe_local_daily_capture_guard_contract.v1",
+  "status": "STATIC_REAL_LOCAL_DAILY_COST_GUARD_NO_CAPTURE_EXECUTION_AUTHORITY",
+  "decision": "D-20260806-246",
+  "purpose": "consume one Europe/Zurich ENTSO-E capture day durably before any Warehouse or SQL action",
+  "input_bindings": {
+    "series_inventory_decision": "D-20260806-243",
+    "series_inventory_contract_content_id": "1e183fc51f2673cfc3fed0035dc4a5e3d84664f51ff8447a355264e5e819ddc6",
+    "series_inventory_contract_sha256": "ba8f6945b4a43b54762fa475228edabea4018bfea5871f2581dc53536c0743a1",
+    "series_inventory_query_sha256": "16a989d2b1528f79b3ecb7a2d9f8f221a6be67cc1c4d3c622516c8bd0dde95e7",
+    "synthetic_predecessor_decision": "D-20260805-238",
+    "synthetic_predecessor_is_real_reservation_authority": false
+  },
+  "reservation_policy": {
+    "capture_timezone": "Europe/Zurich",
+    "maximum_reservations_per_local_day": 1,
+    "maximum_request_age_seconds": 60,
+    "reservation_root": "build/databricks-control-plane/entsoe-daily-reservations",
+    "marker_name": "YYYY-MM-DD.json",
+    "exclusive_create_required": true,
+    "single_link_regular_file_required": true,
+    "file_fsync_required": true,
+    "directory_fsync_available_on_windows": false,
+    "power_loss_durability_proven_on_windows": false,
+    "existing_marker_always_consumes_day": true,
+    "corrupt_or_partial_marker_consumes_day": true,
+    "publication_failure_after_create_consumes_day": true,
+    "same_day_retry_authorized": false,
+    "automatic_marker_deletion_authorized": false,
+    "clock_source": "LOCAL_SYSTEM_UTC_UNATTESTED"
+  },
+  "secret_policy": {
+    "token_allowed": false,
+    "host_allowed": false,
+    "http_path_allowed": false,
+    "warehouse_identifier_allowed": false,
+    "warehouse_identifier_sha256_required": true
+  },
+  "execution_boundary": {
+    "warehouse_state_checked_by_guard": false,
+    "warehouse_start_count": 0,
+    "sql_statement_count": 0,
+    "databricks_write_count": 0,
+    "capture_execution_authorized": false
+  },
+  "authorities": {
+    "local_daily_cost_guard": true,
+    "external_monotone_time": false,
+    "cross_host_uniqueness": false,
+    "warehouse_execution": false,
+    "point_in_time_availability": false,
+    "model_input": false,
+    "production": false
+  }
+}

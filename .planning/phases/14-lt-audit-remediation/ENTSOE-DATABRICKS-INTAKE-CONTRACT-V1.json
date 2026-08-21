@@ -1,0 +1,119 @@
+{
+  "schema_version": "fmv_entsoe_databricks_intake_contract.v1",
+  "purpose": "governed ENTSO-E fundamental and cross-market evidence for CH LT shape validation",
+  "contains_market_or_vendor_values": false,
+  "source_tables": {
+    "series_dimension": "dimentsoeseries",
+    "latest_values": "factentsoetimeserieslatest",
+    "vintage_values": "factentsoetimeseriesvintages"
+  },
+  "normalized_export": {
+    "series_dimension": {
+      "grain": ["series_id"],
+      "required_fields": [
+        "series_id",
+        "group_name",
+        "field_name",
+        "from_zone",
+        "to_zone",
+        "unit",
+        "native_resolution",
+        "source_endpoint",
+        "document_id"
+      ]
+    },
+    "latest_values": {
+      "grain": ["series_id", "target_ts_utc"],
+      "required_fields": [
+        "series_id",
+        "target_ts_utc",
+        "value",
+        "is_historical",
+        "quality_flag",
+        "revision_number",
+        "meta_load_timestamp_utc"
+      ]
+    },
+    "vintage_values": {
+      "grain": ["series_id", "target_ts_utc", "as_of_utc"],
+      "required_fields": [
+        "series_id",
+        "target_ts_utc",
+        "as_of_utc",
+        "value",
+        "quality_flag",
+        "revision_number",
+        "meta_load_timestamp_utc"
+      ]
+    }
+  },
+  "required_swiss_groups": [
+    "actual_load",
+    "day_ahead_prices",
+    "generation_actual",
+    "generation_forecast",
+    "hydro_reservoir_storage",
+    "load_forecast",
+    "renewables_forecast_day_ahead",
+    "renewables_forecast_intraday",
+    "crossborder_physical_flows",
+    "scheduled_exchanges",
+    "ntc_day_ahead",
+    "ntc_month_ahead",
+    "ntc_year_ahead"
+  ],
+  "required_borders": ["CH-DE", "CH-FR", "CH-IT", "CH-AT"],
+  "generation_breakdown": [
+    "solar",
+    "wind",
+    "nuclear",
+    "hydro_run_of_river",
+    "hydro_reservoir",
+    "hydro_pumped_storage"
+  ],
+  "unit_contract": {
+    "power_and_flow": "MW",
+    "energy_and_reservoir_storage": "MWh",
+    "day_ahead_price": "EUR/MWh",
+    "bare_EUR_for_energy_price_authorized": false
+  },
+  "time_contract": {
+    "timestamp_timezone": "UTC",
+    "native_resolution_required_per_series": true,
+    "implicit_upsampling_authorized": false,
+    "implicit_forward_fill_authorized": false,
+    "dst_inference_from_row_count_authorized": false,
+    "expected_grid_built_from_native_resolution": true
+  },
+  "point_in_time_contract": {
+    "forecast_as_of_utc_required": true,
+    "actual_value_availability_required": true,
+    "backfill_must_be_flagged": true,
+    "backfill_may_reconstruct_historical_information_set": false,
+    "rolling_origin_requires_as_of_utc_not_after_origin": true,
+    "revision_history_must_not_be_overwritten": true,
+    "earliest_trustworthy_as_of_utc_required_per_series": true
+  },
+  "quality_gates": {
+    "primary_keys_unique": true,
+    "required_fields_non_null": true,
+    "finite_values_required": true,
+    "negative_physical_quantity_requires_explicit_sign_semantics": true,
+    "zero_fill_missing_authorized": false,
+    "per_series_expected_vs_observed_grid_required": true,
+    "gap_profile_by_series_border_group_and_calendar_regime_required": true,
+    "minimum_complete_days_for_seasonal_cross_market_diagnostic": 730,
+    "source_to_dimension_join_coverage_required": 1.0,
+    "immutable_snapshot_hash_manifest_required": true
+  },
+  "authority": {
+    "local_schema_development": true,
+    "model_training": false,
+    "rolling_origin_selection": false,
+    "candidate_assembly": false,
+    "production_promotion": false,
+    "legacy_local_substitution_authorized": false,
+    "synthetic_substitution_authorized": false
+  },
+  "admission": "NO_GO_UNTIL_HASHED_EXPORT_PIT_AND_QUALITY_GATES_PASS"
+}
