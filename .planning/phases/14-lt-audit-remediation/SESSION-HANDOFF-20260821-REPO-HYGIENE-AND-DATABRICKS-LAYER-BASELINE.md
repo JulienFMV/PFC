@@ -95,11 +95,19 @@ No Databricks SQL, Warehouse start or remote write occurred.
 - focused post-cleanup smoke: `8 passed`;
 - post-cleanup Ruff on the adjusted data-boundary files: pass;
 - full pytest collection exceeded the 60-second foreground bound and was
-  stopped before a test run; run the complete suite as a durable job.
+  stopped before a test run;
+- the full local pytest suite was then run with a 20-minute bound but did not
+  emit a terminal verdict before timeout. Its Python child exited immediately
+  after the timeout check; no orphan remained. This is `INCONCLUSIVE`, not a
+  pass or a demonstrated test failure. Split it by governed matrix or run it
+  on the independently governed CI runner with per-test duration reporting.
 
 ## Residual status
 
 - No push or production promotion is implied by this local baseline.
+- Global historical-suite qualification remains inconclusive because of the
+  20-minute local timeout; the focused LT/data/import matrices listed above
+  are the positive evidence for this cleanup.
 - Data/model admission remains
   `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS`.
 - T057 remains sealed.
