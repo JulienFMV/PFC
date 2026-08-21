@@ -16,9 +16,11 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
 from pfc_shaping.data.acquisition_contract import (
-    PROVIDER_RAW_LT_INPUT_SNAPSHOT_SCHEMA,
-    REPLAY_GOVERNED_LT_INPUT_ROLES,
+    DATABRICKS_UPSTREAM_REPLAY_KIND,
+    PROVIDER_API_UPSTREAM_REPLAY_KIND,
+    governed_upstream_replay_kind,
 )
+from pfc_shaping.data.databricks_lt_snapshot import databricks_replay_bindings
 from pfc_shaping.data.lt_input_sources import (
     validate_governed_lt_snapshot_bundle,
     validate_lt_input_contract_semantics,
@@ -123,9 +125,7 @@ class SnapshotPublicationRepairRequired(RuntimeError):
 
     def __init__(self, result: Mapping[str, object]) -> None:
         self.result = dict(result)
-        super().__init__(
-            "external CAS is committed but local publication evidence requires repair"
-        )
+        super().__init__("external CAS is committed but local publication evidence requires repair")
 
 
 class SnapshotPublicationRetired(RuntimeError):
@@ -249,8 +249,7 @@ def prepare_governed_lt_snapshot(
             or contract.get("calibration_eligible") is not False
         ):
             raise ValueError(
-                "legacy bootstrap must preserve MIGRATED_UNVERIFIED and "
-                "calibration_eligible=false"
+                "legacy bootstrap must preserve MIGRATED_UNVERIFIED and calibration_eligible=false"
             )
         bootstrap_authorization_payload = _stable_external_file(
             bootstrap_authorization_path,
@@ -307,9 +306,7 @@ def prepare_governed_lt_snapshot(
         assert bootstrap_authorization_payload is not None
         if canonical_json(bootstrap_authorization) != bootstrap_authorization_payload:
             raise ValueError("IT bootstrap authorization must be canonical JSON")
-        bootstrap_authorization_sha256 = hashlib.sha256(
-            bootstrap_authorization_payload
-        ).hexdigest()
+        bootstrap_authorization_sha256 = hashlib.sha256(bootstrap_authorization_payload).hexdigest()
     intent = sign_snapshot_publication_intent(
         {
             "schema_version": "lt_snapshot_publication_intent.v1",
@@ -356,9 +353,7 @@ def prepare_governed_lt_snapshot(
     _write_immutable_or_identical(intent_path, intent_payload)
     if bootstrap_authorization_payload is not None:
         _write_immutable_or_identical(
-            view
-            / "bootstrap-authorizations"
-            / f"{bootstrap_authorization_id}.json",
+            view / "bootstrap-authorizations" / f"{bootstrap_authorization_id}.json",
             bootstrap_authorization_payload,
         )
     operation_path = view / "operations" / f"{operation_id}.json"
@@ -515,9 +510,7 @@ def _finalize_verified_external_publication(
         ):
             raise SnapshotPublicationConflict("bootstrap authorization hash mismatch")
         _write_immutable_or_identical(
-            view
-            / "bootstrap-authorizations"
-            / f"{intent['bootstrap_authorization_id']}.json",
+            view / "bootstrap-authorizations" / f"{intent['bootstrap_authorization_id']}.json",
             authorization_payload,
         )
 
@@ -740,9 +733,7 @@ def _publish_filesystem_prototype_for_tests(
                     raise SnapshotPublicationConflict(
                         "committed publication targets a missing immutable generation"
                     )
-                retry_pointer = _legacy_pointer_mapping_from_event_for_tests(
-                    committed_operation
-                )
+                retry_pointer = _legacy_pointer_mapping_from_event_for_tests(committed_operation)
                 retry_payload = canonical_json(retry_pointer)
                 retry_sha = hashlib.sha256(retry_payload).hexdigest()
                 if dict(current_pointer or {}) != retry_pointer or current_sha != retry_sha:
@@ -769,9 +760,7 @@ def _publish_filesystem_prototype_for_tests(
             if len(anchor_history) == current_revision + 1:
                 committed_anchor = anchor_history[-1]
                 committed_event_id = str(committed_anchor["event_id"])
-                committed_event = _legacy_read_publication_event_for_tests(
-                    root, committed_event_id
-                )
+                committed_event = _legacy_read_publication_event_for_tests(root, committed_event_id)
                 if (
                     committed_event.get("operation_id") != operation_id
                     or committed_event.get("previous_event_id") != expected_current_event_id
@@ -786,9 +775,7 @@ def _publish_filesystem_prototype_for_tests(
                     raise SnapshotPublicationConflict(
                         "committed publication targets a missing immutable generation"
                     )
-                repaired_pointer = _legacy_pointer_mapping_from_event_for_tests(
-                    committed_event
-                )
+                repaired_pointer = _legacy_pointer_mapping_from_event_for_tests(committed_event)
                 repaired_payload = canonical_json(repaired_pointer)
                 repaired_sha = hashlib.sha256(repaired_payload).hexdigest()
                 if committed_anchor.get("pointer_sha256") != repaired_sha:
@@ -864,9 +851,7 @@ def _publish_filesystem_prototype_for_tests(
                     private_key_path=publication_private_key,
                 )
                 anchor_payload = canonical_json(anchor)
-                anchor_path = _legacy_publication_anchor_directory_for_tests(
-                    root, create=False
-                ) / (
+                anchor_path = _legacy_publication_anchor_directory_for_tests(root, create=False) / (
                     f"{previous_revision + 1:012d}-{anchor['anchor_id']}.json"
                 )
                 if len(anchor_history) == previous_revision + 1:
@@ -921,11 +906,9 @@ def _committed_operation_event(
     matches = [
         event
         for anchor in anchor_history
-        if (
-            event := _legacy_read_publication_event_for_tests(
-                root, str(anchor["event_id"])
-            )
-        ).get("operation_id")
+        if (event := _legacy_read_publication_event_for_tests(root, str(anchor["event_id"]))).get(
+            "operation_id"
+        )
         == operation_id
     ]
     if len(matches) > 1:
@@ -1005,8 +988,7 @@ def assert_snapshot_publisher_runtime_identity(*, phase: str) -> None:
     request_private_env = "PFC_DATA_PUBLICATION_REQUEST_SIGNING_PRIVATE_KEY_PATH"
     additionally_forbidden = (
         [request_private_env]
-        if phase in {"cas", "finalize"}
-        and str(os.environ.get(request_private_env, "")).strip()
+        if phase in {"cas", "finalize"} and str(os.environ.get(request_private_env, "")).strip()
         else []
     )
     _assert_external_request_authority_isolated(
@@ -1054,10 +1036,7 @@ def _assert_external_request_authority_isolated(
         if not str(os.environ.get(primary_env, "")).strip()
     )
     if missing_authorities:
-        raise ValueError(
-            "publisher trust registry is incomplete: "
-            f"{missing_authorities}"
-        )
+        raise ValueError(f"publisher trust registry is incomplete: {missing_authorities}")
     snapshot = tempfile.TemporaryDirectory(prefix="fmv-pfc-trust-")
     snapshot_root = Path(snapshot.name)
     captured: dict[str, tuple[str, Path, str | None, Path | None]] = {}
@@ -1362,7 +1341,9 @@ def _validate_finalize_predecessor(
 ) -> None:
     if intent.get("transition_type") == BOOTSTRAP_TRANSITION_TYPE:
         if current_payload is None or current_pointer is None:
-            raise SnapshotPublicationConflict("bootstrap legacy pointer disappeared before finalize")
+            raise SnapshotPublicationConflict(
+                "bootstrap legacy pointer disappeared before finalize"
+            )
         if current_pointer.get("schema_version") != "lt_data_pointer.v1":
             raise SnapshotPublicationConflict("bootstrap legacy pointer was already replaced")
         if hashlib.sha256(current_payload).hexdigest() != intent.get("legacy_pointer_sha256"):
@@ -1420,10 +1401,13 @@ def _bound_files(
             raw.get("size_bytes"),
             label=f"{role}.raw",
         )
-        if (
-            contract.get("schema_version") == PROVIDER_RAW_LT_INPUT_SNAPSHOT_SCHEMA
-            and str(role) in REPLAY_GOVERNED_LT_INPUT_ROLES
-        ):
+        snapshot_schema = str(contract.get("schema_version", ""))
+        replay_kind = governed_upstream_replay_kind(
+            snapshot_schema=snapshot_schema,
+            role=str(role),
+            entry=raw_entry,
+        )
+        if replay_kind == PROVIDER_API_UPSTREAM_REPLAY_KIND:
             provider_raw = raw_entry.get("provider_raw_artifact")
             provider_derivation = raw_entry.get("provider_derivation")
             if not isinstance(provider_raw, Mapping):
@@ -1451,6 +1435,15 @@ def _bound_files(
                 None,
                 label=f"{role}.provider_parser_config",
             )
+        elif replay_kind == DATABRICKS_UPSTREAM_REPLAY_KIND:
+            for binding_role, binding in databricks_replay_bindings(raw_entry).items():
+                _add_binding(
+                    bound,
+                    binding.get("path"),
+                    binding.get("sha256"),
+                    binding.get("size_bytes"),
+                    label=f"{role}.databricks.{binding_role}",
+                )
         _add_binding(
             bound,
             derivation.get("parser_code_path"),

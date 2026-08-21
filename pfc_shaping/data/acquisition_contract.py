@@ -34,13 +34,24 @@ SOURCE_ACQUISITION_RECEIPT_SCHEMA = "source_acquisition_receipt.v2"
 SOURCE_JOURNAL_CHECKPOINT_SCHEMA = "source_journal_checkpoint.v1"
 GOVERNED_LT_INPUT_SNAPSHOT_SCHEMA = "lt_input_snapshot.v2"
 PROVIDER_RAW_LT_INPUT_SNAPSHOT_SCHEMA = "lt_input_snapshot.v3"
+DATABRICKS_LT_INPUT_SNAPSHOT_SCHEMA = "lt_input_snapshot.v4"
+DATABRICKS_UPSTREAM_REPLAY_KIND = "DATABRICKS_EXPORT"
+PROVIDER_API_UPSTREAM_REPLAY_KIND = "PROVIDER_API"
+DATABRICKS_REPLAY_GOVERNED_LT_INPUT_ROLES = frozenset(
+    {"epex_ch", "epex_de", "epex_at", "epex_fr", "epex_it", "entso"}
+)
 GOVERNED_LT_INPUT_SNAPSHOT_SCHEMAS = frozenset(
-    {GOVERNED_LT_INPUT_SNAPSHOT_SCHEMA, PROVIDER_RAW_LT_INPUT_SNAPSHOT_SCHEMA}
+    {
+        GOVERNED_LT_INPUT_SNAPSHOT_SCHEMA,
+        PROVIDER_RAW_LT_INPUT_SNAPSHOT_SCHEMA,
+        DATABRICKS_LT_INPUT_SNAPSHOT_SCHEMA,
+    }
 )
 ATTESTABLE_ACQUISITION_SCHEMAS = {
     "lt_input_snapshot.v1",
     GOVERNED_LT_INPUT_SNAPSHOT_SCHEMA,
     PROVIDER_RAW_LT_INPUT_SNAPSHOT_SCHEMA,
+    DATABRICKS_LT_INPUT_SNAPSHOT_SCHEMA,
     "eex_historical_vintage_catalog.v1",
 }
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -78,9 +89,7 @@ def verify_acquisition_contract(
     unsigned = dict(contract)
     attestation = unsigned.pop("acquisition_attestation", None)
     if unsigned.get("schema_version") not in ATTESTABLE_ACQUISITION_SCHEMAS:
-        raise AcquisitionAuthenticationError(
-            "acquisition contract schema cannot be verified"
-        )
+        raise AcquisitionAuthenticationError("acquisition contract schema cannot be verified")
     if not isinstance(attestation, Mapping):
         raise AcquisitionAuthenticationError("acquisition attestation is missing")
     if attestation.get("algorithm") != SIGNATURE_ALGORITHM:
@@ -113,9 +122,7 @@ def verify_acquisition_contract(
         _verify_governed_lt_snapshot_receipts(
             unsigned,
             acquisition_key_id=_public_key_id(public_key),
-            require_provider_raw=(
-                unsigned.get("schema_version") == PROVIDER_RAW_LT_INPUT_SNAPSHOT_SCHEMA
-            ),
+            snapshot_schema=str(unsigned.get("schema_version", "")),
         )
     return unsigned
 
@@ -135,27 +142,20 @@ def verify_trusted_time_receipt(
             trusted_journal_id,
         )
     )
-    if explicit_values_present and (
-        trusted_public_key_path is None or trusted_journal_id is None
-    ):
+    if explicit_values_present and (trusted_public_key_path is None or trusted_journal_id is None):
         raise AcquisitionAuthenticationError(
-            "explicit trusted-time trust requires trusted_public_key_path and "
-            "trusted_journal_id"
+            "explicit trusted-time trust requires trusted_public_key_path and trusted_journal_id"
         )
     explicit_trust = trusted_public_key_path is not None
     key_value = (
-        trusted_public_key_path
-        if explicit_trust
-        else os.environ.get(TRUSTED_TIME_PUBLIC_KEY_ENV)
+        trusted_public_key_path if explicit_trust else os.environ.get(TRUSTED_TIME_PUBLIC_KEY_ENV)
     )
     if not key_value:
         raise AcquisitionAuthenticationError(
             f"{TRUSTED_TIME_PUBLIC_KEY_ENV} is required for historical EEX vintages"
         )
     expected_journal_id = str(
-        trusted_journal_id
-        if explicit_trust
-        else os.environ.get(TRUSTED_TIME_JOURNAL_ID_ENV, "")
+        trusted_journal_id if explicit_trust else os.environ.get(TRUSTED_TIME_JOURNAL_ID_ENV, "")
     ).strip()
     if not expected_journal_id:
         raise AcquisitionAuthenticationError(
@@ -226,7 +226,9 @@ def verify_source_acquisition_receipt(
         if not isinstance(value, str) or not value.strip():
             raise AcquisitionAuthenticationError(f"source receipt {field} is missing")
     if unsigned.get("acquisition_method") != "PROSPECTIVE_DIRECT":
-        raise AcquisitionAuthenticationError("source receipt is not a prospective direct acquisition")
+        raise AcquisitionAuthenticationError(
+            "source receipt is not a prospective direct acquisition"
+        )
     if not _is_sha256(unsigned.get("raw_sha256")):
         raise AcquisitionAuthenticationError("source receipt raw_sha256 is invalid")
     raw_size = unsigned.get("raw_size_bytes")
@@ -289,7 +291,9 @@ def verify_source_journal_checkpoint(
     try:
         public_key.verify(signature, payload)
     except InvalidSignature as exc:
-        raise AcquisitionAuthenticationError("source journal checkpoint signature is invalid") from exc
+        raise AcquisitionAuthenticationError(
+            "source journal checkpoint signature is invalid"
+        ) from exc
     identity = dict(unsigned)
     checkpoint_id = str(identity.pop("checkpoint_id", ""))
     if checkpoint_id != hashlib.sha256(_canonical_json_bytes(identity)).hexdigest():
@@ -351,7 +355,7 @@ def _verify_governed_lt_snapshot_receipts(
     contract: Mapping[str, object],
     *,
     acquisition_key_id: str,
-    require_provider_raw: bool,
+    snapshot_schema: str,
 ) -> None:
     if contract.get("calibration_eligible") is not True:
         raise AcquisitionAuthenticationError("governed LT snapshot must be calibration eligible")
@@ -393,18 +397,23 @@ def _verify_governed_lt_snapshot_receipts(
         verified_receipts.append(verified)
         if str(verified["source_role"]) != str(role):
             raise AcquisitionAuthenticationError(f"governed LT source role mismatch: {role}")
-        if str(verified["source_system"]).upper() != str(
-            entry.get("source_system", "")
-        ).upper():
+        if str(verified["source_system"]).upper() != str(entry.get("source_system", "")).upper():
             raise AcquisitionAuthenticationError(f"governed LT source system mismatch: {role}")
         if str(verified["acquisition_id"]) != acquisition_id:
-            raise AcquisitionAuthenticationError(f"governed LT receipt acquisition mismatch: {role}")
+            raise AcquisitionAuthenticationError(
+                f"governed LT receipt acquisition mismatch: {role}"
+            )
         raw_artifact = entry.get("raw_artifact")
         provider_derived_at: datetime | None = None
         if not isinstance(raw_artifact, Mapping):
             raise AcquisitionAuthenticationError(f"governed LT raw artifact is missing: {role}")
         _portable_relative_path(raw_artifact.get("path"), label=f"raw artifact {role}")
-        if require_provider_raw and str(role) in REPLAY_GOVERNED_LT_INPUT_ROLES:
+        replay_kind = _governed_upstream_replay_kind(
+            snapshot_schema=snapshot_schema,
+            role=str(role),
+            entry=entry,
+        )
+        if replay_kind == PROVIDER_API_UPSTREAM_REPLAY_KIND:
             provider_raw = entry.get("provider_raw_artifact")
             provider_derivation = entry.get("provider_derivation")
             if not isinstance(provider_raw, Mapping):
@@ -423,9 +432,7 @@ def _verify_governed_lt_snapshot_receipts(
                 raise AcquisitionAuthenticationError(
                     f"governed LT provider raw size mismatch: {role}"
                 )
-            _portable_relative_path(
-                provider_raw.get("path"), label=f"provider raw artifact {role}"
-            )
+            _portable_relative_path(provider_raw.get("path"), label=f"provider raw artifact {role}")
             for field in ("parser_code_sha256", "parser_config_sha256"):
                 if not _is_sha256(provider_derivation.get(field)):
                     raise AcquisitionAuthenticationError(
@@ -442,6 +449,53 @@ def _verify_governed_lt_snapshot_receipts(
             provider_derived_at = _utc_datetime(
                 provider_derivation.get("derived_at_utc"),
                 label=f"governed LT provider derivation time {role}",
+            )
+        elif replay_kind == DATABRICKS_UPSTREAM_REPLAY_KIND:
+            upstream = entry.get("upstream_replay")
+            assert isinstance(upstream, Mapping)
+            manifest = upstream.get("manifest")
+            if not isinstance(manifest, Mapping):
+                raise AcquisitionAuthenticationError(
+                    f"governed LT Databricks replay manifest is missing: {role}"
+                )
+            _verify_portable_binding(
+                manifest,
+                label=f"Databricks replay manifest {role}",
+            )
+            if str(manifest.get("sha256", "")) != str(verified["raw_sha256"]):
+                raise AcquisitionAuthenticationError(
+                    f"governed LT Databricks manifest receipt hash mismatch: {role}"
+                )
+            if manifest.get("size_bytes") != verified["raw_size_bytes"]:
+                raise AcquisitionAuthenticationError(
+                    f"governed LT Databricks manifest receipt size mismatch: {role}"
+                )
+            export_manifest = upstream.get("export_manifest")
+            if not isinstance(export_manifest, Mapping):
+                raise AcquisitionAuthenticationError(
+                    f"governed LT Databricks export manifest is missing: {role}"
+                )
+            _verify_portable_binding(
+                export_manifest,
+                label=f"Databricks export manifest {role}",
+            )
+            artifacts = upstream.get("artifacts")
+            if not isinstance(artifacts, Mapping) or not artifacts:
+                raise AcquisitionAuthenticationError(
+                    f"governed LT Databricks replay artifacts are missing: {role}"
+                )
+            for artifact_role, binding in artifacts.items():
+                if not isinstance(binding, Mapping):
+                    raise AcquisitionAuthenticationError(
+                        f"governed LT Databricks artifact is invalid: {role}.{artifact_role}"
+                    )
+                _verify_portable_binding(
+                    binding,
+                    label=f"Databricks artifact {role}.{artifact_role}",
+                )
+            provider_derived_at = _utc_datetime(
+                upstream.get("replayed_at_utc"),
+                label=f"governed LT Databricks replay time {role}",
             )
         else:
             if str(raw_artifact.get("sha256", "")) != str(verified["raw_sha256"]):
@@ -498,7 +552,9 @@ def _verify_governed_lt_snapshot_receipts(
         _portable_relative_path(quality.get("report_path"), label=f"quality report {role}")
         if str(role) in REPLAY_GOVERNED_LT_INPUT_ROLES:
             artifact_paths = {
-                "derived": _portable_relative_path(entry.get("path"), label=f"derived artifact {role}"),
+                "derived": _portable_relative_path(
+                    entry.get("path"), label=f"derived artifact {role}"
+                ),
                 "raw": _portable_relative_path(
                     raw_artifact.get("path"), label=f"raw artifact {role}"
                 ),
@@ -512,7 +568,7 @@ def _verify_governed_lt_snapshot_receipts(
                     quality.get("report_path"), label=f"quality report {role}"
                 ),
             }
-            if require_provider_raw:
+            if replay_kind == PROVIDER_API_UPSTREAM_REPLAY_KIND:
                 provider_raw = entry["provider_raw_artifact"]
                 provider_derivation = entry["provider_derivation"]
                 artifact_paths.update(
@@ -531,6 +587,45 @@ def _verify_governed_lt_snapshot_receipts(
                         ),
                     }
                 )
+            elif replay_kind == DATABRICKS_UPSTREAM_REPLAY_KIND:
+                upstream = entry["upstream_replay"]
+                assert isinstance(upstream, Mapping)
+                manifest = upstream["manifest"]
+                export_manifest = upstream["export_manifest"]
+                artifacts = upstream["artifacts"]
+                assert isinstance(manifest, Mapping)
+                assert isinstance(export_manifest, Mapping)
+                assert isinstance(artifacts, Mapping)
+                artifact_paths.update(
+                    {
+                        "databricks_manifest": _portable_relative_path(
+                            manifest.get("path"),
+                            label=f"Databricks replay manifest {role}",
+                        ),
+                        "databricks_export_manifest": _portable_relative_path(
+                            export_manifest.get("path"),
+                            label=f"Databricks export manifest {role}",
+                        ),
+                    }
+                )
+                for artifact_role, binding in artifacts.items():
+                    assert isinstance(binding, Mapping)
+                    artifact_path = _portable_relative_path(
+                        binding.get("path"),
+                        label=f"Databricks artifact {role}.{artifact_role}",
+                    )
+                    expected_alias = {
+                        "model/raw.parquet": artifact_paths["raw"],
+                        "model/derived.parquet": artifact_paths["derived"],
+                    }.get(str(artifact_role))
+                    if expected_alias is not None:
+                        if artifact_path != expected_alias:
+                            raise AcquisitionAuthenticationError(
+                                "governed LT Databricks model artifact does not alias "
+                                f"its canonical frame: {role}.{artifact_role}"
+                            )
+                    else:
+                        artifact_paths[f"databricks:{artifact_role}"] = artifact_path
             if len(set(artifact_paths.values())) != len(artifact_paths):
                 raise AcquisitionAuthenticationError(
                     f"governed LT core role aliases raw, derived or evidence artifacts: {role}"
@@ -600,8 +695,7 @@ def _verify_snapshot_receipt_checkpoint(
         label="source journal checkpoint issued_at_utc",
     )
     latest_received = max(
-        _utc_datetime(item["received_at_utc"], label="source receipt time")
-        for item in ordered
+        _utc_datetime(item["received_at_utc"], label="source receipt time") for item in ordered
     )
     if issued_at < latest_received:
         raise AcquisitionAuthenticationError("source journal checkpoint predates its receipts")
@@ -620,6 +714,83 @@ def governed_snapshot_bundle_root_sha256(files: Mapping[str, object]) -> str:
             raise AcquisitionAuthenticationError(f"governed LT bundle role is invalid: {role}")
         normalized[role] = dict(entry)
     return hashlib.sha256(_canonical_json_bytes(normalized)).hexdigest()
+
+
+def _governed_upstream_replay_kind(
+    *,
+    snapshot_schema: str,
+    role: str,
+    entry: Mapping[str, object],
+) -> str | None:
+    if role not in REPLAY_GOVERNED_LT_INPUT_ROLES:
+        return None
+    if snapshot_schema == PROVIDER_RAW_LT_INPUT_SNAPSHOT_SCHEMA:
+        return PROVIDER_API_UPSTREAM_REPLAY_KIND
+    if snapshot_schema != DATABRICKS_LT_INPUT_SNAPSHOT_SCHEMA:
+        return None
+    upstream = entry.get("upstream_replay")
+    if not isinstance(upstream, Mapping) or set(upstream) != {
+        "kind",
+        "replayed_at_utc",
+        "manifest",
+        "artifacts",
+        "export_manifest",
+    }:
+        raise AcquisitionAuthenticationError(
+            f"governed LT upstream replay declaration is not exact: {role}"
+        )
+    kind = str(upstream.get("kind", ""))
+    if kind not in {
+        PROVIDER_API_UPSTREAM_REPLAY_KIND,
+        DATABRICKS_UPSTREAM_REPLAY_KIND,
+    }:
+        raise AcquisitionAuthenticationError(
+            f"governed LT upstream replay kind is unsupported: {role}"
+        )
+    if kind == DATABRICKS_UPSTREAM_REPLAY_KIND:
+        if role not in DATABRICKS_REPLAY_GOVERNED_LT_INPUT_ROLES:
+            raise AcquisitionAuthenticationError(
+                f"governed LT role has no Databricks replay contract: {role}"
+            )
+        if "provider_raw_artifact" in entry or "provider_derivation" in entry:
+            raise AcquisitionAuthenticationError(
+                f"governed LT Databricks role mixes provider-API evidence: {role}"
+            )
+    else:
+        if upstream.get("replayed_at_utc") is not None or any(
+            upstream.get(field) is not None
+            for field in ("manifest", "artifacts", "export_manifest")
+        ):
+            raise AcquisitionAuthenticationError(
+                f"governed LT provider-API role carries Databricks evidence: {role}"
+            )
+    return kind
+
+
+def governed_upstream_replay_kind(
+    *,
+    snapshot_schema: str,
+    role: str,
+    entry: Mapping[str, object],
+) -> str | None:
+    """Return the explicit upstream replay family for one governed role."""
+
+    return _governed_upstream_replay_kind(
+        snapshot_schema=snapshot_schema,
+        role=role,
+        entry=entry,
+    )
+
+
+def _verify_portable_binding(binding: Mapping[str, object], *, label: str) -> None:
+    if set(binding) != {"path", "sha256", "size_bytes"}:
+        raise AcquisitionAuthenticationError(f"{label} binding is not exact")
+    _portable_relative_path(binding.get("path"), label=label)
+    if not _is_sha256(binding.get("sha256")):
+        raise AcquisitionAuthenticationError(f"{label} SHA-256 is invalid")
+    size = binding.get("size_bytes")
+    if not isinstance(size, int) or isinstance(size, bool) or size < 1:
+        raise AcquisitionAuthenticationError(f"{label} size is invalid")
 
 
 def _portable_relative_path(value: object, *, label: str) -> str:
@@ -688,9 +859,7 @@ def _select_trusted_public_key(
     if keyring_path is not None:
         keyring = _absolute_trusted_key_path(keyring_path)
         if not keyring.is_dir():
-            raise AcquisitionAuthenticationError(
-                f"{label} trusted keyring is not a directory"
-            )
+            raise AcquisitionAuthenticationError(f"{label} trusted keyring is not a directory")
         historical = _load_public_key(
             _absolute_trusted_key_path(keyring / f"{selected_key_id}.pem")
         )
@@ -741,8 +910,7 @@ def _read_stable_regular_file(path: str | Path, *, label: str) -> bytes:
     if len(raw) > 64 * 1024:
         raise AcquisitionAuthenticationError(f"{label} is unexpectedly large")
     identities = [
-        _file_identity(metadata)
-        for metadata in (before, opened_before, opened_after, after)
+        _file_identity(metadata) for metadata in (before, opened_before, opened_after, after)
     ]
     if any(identity != identities[0] for identity in identities[1:]):
         raise AcquisitionAuthenticationError(f"{label} changed while it was read")

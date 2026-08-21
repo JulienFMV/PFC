@@ -14,6 +14,9 @@ pfc_shaping/publisher_package_contract.py
 pfc_shaping/publisher_runtime_admission.py
 pfc_shaping/data/__init__.py
 pfc_shaping/data/acquisition_contract.py
+pfc_shaping/data/databricks_lt_materialization.py
+pfc_shaping/data/databricks_lt_replay.py
+pfc_shaping/data/databricks_lt_snapshot.py
 pfc_shaping/data/governed_lt_acquisition.py
 pfc_shaping/data/lt_input_replay.py
 pfc_shaping/data/lt_input_sources.py

@@ -11,6 +11,9 @@ Implementation:
 
 Exact source-to-frame replay and the self-contained unsigned pre-publication
 package are implemented in `pfc_shaping/data/databricks_lt_replay.py`.
+The signed snapshot binding and isolated-publisher admission are implemented
+in `pfc_shaping/data/databricks_lt_snapshot.py` as
+`lt_input_snapshot.v4`.
 
 ## Source-to-model paths
 
@@ -101,23 +104,47 @@ Verification replays from the source bytes and rejects byte mutation, code or
 runtime drift, audit/config divergence, an unexpected source inventory and a
 mixed DEV/PRD package. The package declares zero Databricks connections,
 statements, Warehouse starts, network calls and remote writes. It is unsigned,
-authority-negative and not yet an `lt_input_snapshot` publication.
+authority-negative and cannot be published without the independent v4
+acquisition, time, journal and publication authorities.
+
+## Governed snapshot v4
+
+`lt_input_snapshot.v4` keeps the API-specific provider replay and the
+Databricks replay as explicit, different evidence families. Each replayed role
+declares exactly one `upstream_replay.kind`:
+
+- `PROVIDER_API` retains the v3 raw-envelope proof, currently used for hydro
+  and any role not yet exported from Databricks;
+- `DATABRICKS_EXPORT` binds the exact replay manifest, every package member, a
+  canonical export manifest and the downstream raw-to-feature derivation.
+
+For a calibration-eligible Databricks role, the validator requires PRD tables,
+an exact read-only query and selected-column inventory, a PIT upper watermark,
+actual Parquet row/hash/size reconciliation, explicit cost counters, ordered
+export/receipt/replay timestamps and quality report `lt_source_quality.v3`.
+The acquisition receipt is bound to the replay manifest bytes, and the signed
+source-journal root covers the complete role declaration.
+
+The initial v4 deliberately admits only `FULL_SNAPSHOT` with no predecessor.
+It rejects a claimed incremental generation until predecessor + delta merge,
+overlap, deduplication and cumulative-output replay are implemented as one
+deterministic proof. This prevents a cheap delta from being mistaken for a
+complete model history.
 
 ## Remaining integration work
 
 1. Generate the real SeriesKey mapping contract from the admitted Gold
    dimension inventory.
-2. Bind the self-contained replay package to the governed export receipt,
-   query/predicate, watermark and incremental predecessor manifest.
-3. Extend or replace the API-specific `lt_input_snapshot.v3` provider envelope
-   so Databricks exports can satisfy exact replay without pretending to be API
-   responses, then admit that schema in the isolated snapshot publisher.
-4. Convert the existing EEX normalizer output into the signed historical
+2. Implement deterministic incremental composition before enabling a
+   predecessor-bearing mode; v4 currently accepts full snapshots only.
+3. Convert the existing EEX normalizer output into the signed historical
    vintage catalog required by the monthly solver.
-5. Keep hydro on its separately governed SFOE/FMV source until an exact Gold
+4. Keep hydro on its separately governed SFOE/FMV source until an exact Gold
    table and transformation are approved.
-6. Treat weather, Swissgrid and LSEG as separately admitted candidates or
+5. Treat weather, Swissgrid and LSEG as separately admitted candidates or
    benchmarks; they are not core authority merely because they exist in Gold.
+6. Run the v4 chain on a user-authorized, bounded PRD export and retain the
+   actual Databricks query-history/cost observation.
 
 Until those steps and real-data acceptance pass, model admission remains
 `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS`.

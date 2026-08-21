@@ -14184,6 +14184,81 @@ Invariants not to break:
   monthly solver remains sole level authority, model admission remains
   `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS`, and T057 remains sealed.
 
+## D-20260821-254 - Admit an explicit hybrid Databricks snapshot v4 in the isolated publisher
+
+Decision:
+
+- Add `lt_input_snapshot.v4` without changing the meaning of the API-specific
+  v3 schema. Every replay-governed role declares exactly one upstream family:
+  `PROVIDER_API` or `DATABRICKS_EXPORT`.
+- For a Databricks role, bind the source receipt to the exact replay-manifest
+  bytes; bind every package member, a canonical export manifest and the
+  downstream feature replay through the signed role and journal root.
+- Require PRD source tables for calibration-eligible Databricks roles. DEV
+  remains valid only for unsigned/local engineering replay.
+- Reconcile query table, selected columns, read-only predicate, PIT upper
+  watermark, actual Parquet rows/hash/size, cost counters and
+  export/receipt/replay time order before accepting the role.
+- Add `lt_source_quality.v3` for Databricks roles. It binds the replay/export
+  manifests, materializer, replay config, materialization audit, bronze frame,
+  feature parser/config and derived frame.
+- Admit v4 in the signer-free isolated publisher, its Docker positive list and
+  the governed LT wheel. Preserve v3 consumption compatibility for existing
+  provider-raw snapshots.
+- Limit the first v4 export mode to `FULL_SNAPSHOT` with a null predecessor and
+  lower watermark. Do not claim incremental publication until cumulative
+  predecessor + delta composition is deterministically replayable.
+
+Reason:
+
+The exact local replay package from D-253 proved transformation determinism but
+had no signed bridge to acquisition time, export predicates, costs, quality or
+publication. Reusing v3 would falsely label Databricks Parquet as provider API
+JSON/XML. A separate hybrid schema closes the proof chain while allowing hydro
+to remain on its governed SFOE/API source.
+
+The implementation review caught and removed an initially circular export-ID
+design, then added actual Parquet row and selected-column reconciliation and
+explicit export <= receipt <= replay ordering. The larger regression matrix
+also exposed a stale pre-existing `uv.lock` hash in the publisher runtime
+contract; the contract now binds the current unchanged lock bytes.
+
+Rejected alternatives:
+
+- Relabel Databricks exports as v3 provider envelopes.
+- Accept DEV tables in a calibration-eligible signed bundle.
+- Bind only the model-facing frame and trust query/cost metadata by convention.
+- Treat a delta export as complete history without replaying its merge with
+  the predecessor.
+- Put signing keys or Databricks connectors inside the publisher runtime.
+
+Verification:
+
+- pre-change D-253 counter-audit: `59 passed`;
+- direct v4 replay/export adversarial matrix plus materializer: `31 passed`;
+- signed hybrid v4 acquisition, quality, journal and CAS publication path:
+  `6 passed` including five adversarial/direct checks;
+- broad replay/input/publisher/package matrix: initially `209 passed, 15
+  skipped, 3 failed`, with all three packaging/compatibility findings fixed;
+- targeted rerun of those findings and runtime closure: `11 passed`;
+- final full replay/input/publisher/package requalification after the receipt
+  locator and anti-relabel audit: `213 passed, 15 skipped`;
+- LT solver/import and candidate-evidence boundary matrix: `113 passed, 1
+  skipped`;
+- targeted Ruff: pass;
+- Databricks connections/statements/Warehouse starts, network calls and remote
+  writes: `0/0/0/0/0`.
+
+Invariants not to break:
+
+- A v4 signature proves the declared local export/replay chain; it does not
+  grant monthly-level authority or establish predictive skill.
+- The CH monthly solver remains sole level authority. ENTSO-E and spot provide
+  shape/validation truth only, and LSEG remains benchmark-only.
+- Real-data admission, the EEX forward vintage catalog, rolling-origin evidence
+  and a new independent future holdout are still required. Model admission
+  remains `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS`; T057 remains sealed.
+
 ## D-20260821-248 - Separate the ENTSO-E Gold serving layer from the Silver PIT authority
 
 Decision:

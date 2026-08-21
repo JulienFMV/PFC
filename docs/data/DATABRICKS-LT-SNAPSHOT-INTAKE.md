@@ -30,25 +30,23 @@ availability and feature-admission checks.
 
 ## Current implementation boundary
 
-The table roles above are **source-export roles**. They are not yet the same
-objects as the model-facing `external_v2` roles consumed by
+The table roles above are **source-export roles**. They are transformed into
+the model-facing `external_v2` roles consumed by
 `production_phases.load_inputs` (`epex_ch`, `epex_de`, `entso`, `hydro`,
 optional `outages` and `eex_forwards_history`). Two explicit stages are
 required:
 
 1. export and admit the bounded Gold/Silver source package described here;
-2. deterministically materialize model-facing Parquet roles from that admitted
-   package, with a manifest binding every output to its source tables,
-   predicates, watermarks, code revision and point-in-time policy.
+2. deterministically materialize model-facing Parquet roles, then admit the
+   signed `lt_input_snapshot.v4` bundle whose manifest binds every output to
+   its source tables, query, predicate, watermarks, code and PIT policy.
 
-Stage 2 now has a local, pure building block for Gold spot and Gold/Silver
-ENTSO-E in `pfc_shaping/data/databricks_lt_materialization.py`; the existing EEX
-daily normalizer remains separate. The new code is not yet integrated into the
-governed snapshot publisher and grants no authority. Exact Databricks
-source-to-frame replay plus a self-contained unsigned package now exist in
-`pfc_shaping/data/databricks_lt_replay.py`; this closes the local replay gap but
-does not make the API-specific `lt_input_snapshot.v3` accept Databricks
-exports. In particular,
+Stage 2 is implemented for Gold spot and Gold/Silver ENTSO-E in
+`pfc_shaping/data/databricks_lt_materialization.py`, with exact package replay
+in `pfc_shaping/data/databricks_lt_replay.py` and signed publisher admission in
+`pfc_shaping/data/databricks_lt_snapshot.py`. The API-specific
+`lt_input_snapshot.v3` remains unchanged; v4 supports an explicit hybrid of
+Databricks exports and provider API envelopes. In particular,
 `scripts/create_lt_input_snapshot.py` is still only a legacy bootstrap that
 copies already-curated files and declares `source_class` as
 `MIGRATED_UNVERIFIED` and `calibration_eligible` as false. It must not be
@@ -133,10 +131,12 @@ and contains Parquet payloads plus one manifest. The manifest binds:
 - code revision, export time, cost receipt and previous generation ID;
 - explicit authorities, all false until downstream validation succeeds.
 
-Incremental pulls use a durable high-water mark with overlap and deduplication.
-A retry is idempotent. A missing watermark fails closed instead of silently
-reading full history. Full backfills are explicit, chunked and separately
-costed.
+The first admitted v4 mode is `FULL_SNAPSHOT`. It requires a null predecessor,
+a null lower watermark and a bounded upper PIT watermark. An incremental pull
+may still be prepared operationally, but it cannot be published as complete
+model history until the predecessor + delta composition is itself replayable,
+including overlap and deduplication. A missing watermark fails closed. Full
+backfills remain explicit, bounded and separately costed.
 
 The model reads only the immutable generation selected by
 `views/pfc_lt/current.json`. It never mutates an admitted snapshot and never

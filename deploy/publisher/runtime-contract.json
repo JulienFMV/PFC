@@ -55,7 +55,7 @@
   ],
   "source_lock": {
     "path": "uv.lock",
-    "sha256": "efcea25267644da75c8736b3ede0dfaaf4b6ee8e58b982a61e87edb1064eb5d6"
+    "sha256": "ad9077398246618202b7bb3ae0c6621d4d2b2b5b6186fd0f827a4ac77b0b30a6"
   },
   "installation_policy": {
     "network_access": "DENIED",

@@ -18,6 +18,9 @@ import pfc_shaping.data.snapshot_publisher as publisher_module
 from pfc_shaping.data import ingest_entso, ingest_epex, ingest_hydro, snapshot_publisher
 from pfc_shaping.data import snapshot_publication_state as publication_state_module
 from pfc_shaping.data.acquisition_contract import (
+    DATABRICKS_LT_INPUT_SNAPSHOT_SCHEMA,
+    DATABRICKS_UPSTREAM_REPLAY_KIND,
+    PROVIDER_API_UPSTREAM_REPLAY_KIND,
     PROVIDER_RAW_LT_INPUT_SNAPSHOT_SCHEMA,
     TRUSTED_ACQUISITION_PUBLIC_KEY_ENV,
     TRUSTED_JOURNAL_PUBLIC_KEY_ENV,
@@ -31,6 +34,19 @@ from pfc_shaping.data.acquisition_signing import (
     sign_acquisition_contract,
     sign_source_acquisition_receipt,
     sign_source_journal_checkpoint,
+)
+from pfc_shaping.data.databricks_lt_replay import (
+    GOLD_SPOT_MODE,
+    build_databricks_replay_package,
+)
+from pfc_shaping.data.databricks_lt_snapshot import (
+    DATABRICKS_EXPORT_MANIFEST_SCHEMA,
+    DATABRICKS_EXPORT_MODE,
+    databricks_export_id,
+    expected_databricks_quality_bindings,
+)
+from pfc_shaping.data.databricks_lt_snapshot import (
+    canonical_json_bytes as databricks_canonical_json_bytes,
 )
 from pfc_shaping.data.governed_lt_acquisition import (
     ENERGY_CHARTS_PRICE_URL,
@@ -53,6 +69,7 @@ from pfc_shaping.data.lt_input_sources import (
     dataframe_sha256,
     resolve_lt_input_paths,
     validate_governed_lt_snapshot_bundle,
+    validate_lt_input_consumption,
     validate_lt_input_contract_semantics,
 )
 from pfc_shaping.data.snapshot_anchor_signing import (
@@ -179,6 +196,55 @@ def test_v2_requires_distinct_signed_pit_receipts_and_bound_artifacts(
     assert paths.calibration_eligible is True
     assert paths.available_at_utc == "2026-07-16T08:05:00+00:00"
     assert verify_acquisition_contract(contract)["generation_id"] == "generation-001"
+
+
+def test_v4_hybrid_databricks_and_provider_replay_publishes_end_to_end(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data_root, contract = _governed_snapshot(
+        tmp_path,
+        monkeypatch,
+        publish_projection=True,
+        databricks_v4=True,
+    )
+    generation = data_root / "snapshots" / "generation-001"
+
+    validate_governed_lt_snapshot_bundle(generation, contract)
+    paths = resolve_lt_input_paths(tmp_path / "project", data_root=data_root)
+    validate_lt_input_consumption(
+        paths,
+        roles={"epex_ch", "epex_de", "entso", "hydro"},
+        reference_timestamp="2026-07-16T09:00:00Z",
+    )
+
+    assert paths.schema_version == DATABRICKS_LT_INPUT_SNAPSHOT_SCHEMA
+    assert (
+        contract["files"]["epex_ch"]["upstream_replay"]["kind"] == DATABRICKS_UPSTREAM_REPLAY_KIND
+    )
+    assert (
+        contract["files"]["hydro"]["upstream_replay"]["kind"] == PROVIDER_API_UPSTREAM_REPLAY_KIND
+    )
+
+
+def test_v3_bundle_cannot_be_relabelled_as_databricks_v4(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, contract = _governed_snapshot(tmp_path, monkeypatch)
+    unsigned = json.loads(json.dumps(contract))
+    unsigned.pop("acquisition_attestation")
+    unsigned["schema_version"] = DATABRICKS_LT_INPUT_SNAPSHOT_SCHEMA
+    relabelled = sign_acquisition_contract(
+        unsigned,
+        private_key_path=os.environ["TEST_ACQUISITION_PRIVATE_KEY"],
+    )
+
+    with pytest.raises(
+        AcquisitionAuthenticationError,
+        match="upstream replay declaration is not exact",
+    ):
+        validate_lt_input_contract_semantics(relabelled)
 
 
 def test_v2_rejects_one_key_for_acquisition_and_trusted_time(
@@ -440,17 +506,15 @@ def test_v3_rejects_fully_resigned_epex_cadence_metadata_stripping(
     quality_path = generation / quality["report_path"]
     report = json.loads(quality_path.read_bytes())
     report["bindings"]["bronze_sha256"] = _sha256(raw_payload)
-    report["bindings"]["feature_parser_config_sha256"] = _sha256(
-        replay_config_payload
-    )
+    report["bindings"]["feature_parser_config_sha256"] = _sha256(replay_config_payload)
     report["bindings"]["derived_sha256"] = _sha256(derived_payload)
     report["metrics"] = {
         "bronze": _frame_quality_metrics(raw),
         "derived": _frame_quality_metrics(derived),
     }
-    quality_payload = (
-        json.dumps(report, sort_keys=True, separators=(",", ":")) + "\n"
-    ).encode("ascii")
+    quality_payload = (json.dumps(report, sort_keys=True, separators=(",", ":")) + "\n").encode(
+        "ascii"
+    )
     quality_path.write_bytes(quality_payload)
     quality["report_sha256"] = _sha256(quality_payload)
     resigned = _resign_snapshot_after_file_change(unsigned)
@@ -1481,6 +1545,7 @@ def _governed_snapshot(
     monkeypatch: pytest.MonkeyPatch,
     *,
     publish_projection: bool = False,
+    databricks_v4: bool = False,
 ) -> tuple[Path, dict[str, object]]:
     acquisition_private, acquisition_public = _write_keypair(
         tmp_path / "acquisition",
@@ -1559,6 +1624,13 @@ def _governed_snapshot(
         timestamp_private=timestamp_private,
         journal_private=journal_private,
     )
+    if databricks_v4:
+        _upgrade_snapshot_to_databricks_v4(
+            data_root / "snapshots" / "generation-001",
+            unsigned,
+            timestamp_private=timestamp_private,
+            journal_private=journal_private,
+        )
     contract = sign_acquisition_contract(unsigned, private_key_path=acquisition_private)
     contract_path = data_root / "snapshots" / "generation-001" / "lt_input_snapshot.json"
     _write_json(contract_path, contract)
@@ -1824,6 +1896,250 @@ def _unsigned_snapshot(
     }
 
 
+def _upgrade_snapshot_to_databricks_v4(
+    generation: Path,
+    unsigned: dict[str, object],
+    *,
+    timestamp_private: Path,
+    journal_private: Path,
+) -> None:
+    files = unsigned["files"]
+    assert isinstance(files, dict)
+    source_rows = _databricks_spot_rows()
+    source_payload = _parquet_payload(source_rows)
+    package = build_databricks_replay_package(
+        role="epex_ch",
+        mode=GOLD_SPOT_MODE,
+        as_of_utc="2026-07-16T07:00:00Z",
+        source_payloads={"spot_price_interval": source_payload},
+        source_tables={"spot_price_interval": "prd.gold.factspotpriceinterval"},
+        selection={"market_zone": "CH", "source_product": "CH_DAY_AHEAD"},
+    )
+    entry = files["epex_ch"]
+    assert isinstance(entry, dict)
+    artifact_bindings: dict[str, dict[str, object]] = {}
+    for artifact_role, payload in package.artifacts.items():
+        if artifact_role == "model/raw.parquet":
+            relative = "raw/epex_ch.parquet"
+        elif artifact_role == "model/derived.parquet":
+            relative = "inputs/epex_ch.parquet"
+        else:
+            relative = f"databricks/epex_ch/{artifact_role}"
+        _write_bytes(generation / relative, payload)
+        artifact_bindings[artifact_role] = {
+            "path": relative,
+            "sha256": _sha256(payload),
+            "size_bytes": len(payload),
+        }
+    replay_manifest_path = "databricks/epex_ch/replay-manifest.json"
+    _write_bytes(generation / replay_manifest_path, package.manifest_payload)
+    export_unsigned = {
+        "schema_version": DATABRICKS_EXPORT_MANIFEST_SCHEMA,
+        "role": "epex_ch",
+        "source_environment": "PRD",
+        "export_mode": DATABRICKS_EXPORT_MODE,
+        "predecessor_generation_id": None,
+        "as_of_utc": "2026-07-16T07:00:00+00:00",
+        "exported_at_utc": "2026-07-16T07:00:30+00:00",
+        "source_queries": {
+            "spot_price_interval": {
+                "source_table": "prd.gold.factspotpriceinterval",
+                "selected_columns": [str(column) for column in source_rows.columns],
+                "predicate_sql": (
+                    "SELECT SpotProductID, SourceProduct, MarketZone, "
+                    "DeliveryStartUtc, DeliveryEndUtc, FrequencyMinutes, Price, "
+                    "PriceUnit, ObservedAtUtc FROM prd.gold.factspotpriceinterval "
+                    "WHERE MarketZone = 'CH' AND ObservedAtUtc <= TIMESTAMP "
+                    "'2026-07-16T07:00:00Z'"
+                ),
+                "watermark_column": "ObservedAtUtc",
+                "lower_watermark_exclusive_utc": None,
+                "upper_watermark_inclusive_utc": "2026-07-16T07:00:00Z",
+                "row_count": len(source_rows),
+                "artifact_sha256": _sha256(source_payload),
+                "artifact_size_bytes": len(source_payload),
+            }
+        },
+        "cost_evidence": {
+            "schema_version": "fmv_databricks_lt_export_cost.v1",
+            "evidence_basis": "CLIENT_OBSERVATION",
+            "statement_count": 1,
+            "warehouse_start_count": 0,
+            "rows_exported": len(source_rows),
+            "bytes_exported": len(source_payload),
+            "billing_usage_quantity_dbcu": None,
+            "estimated_cost_chf": None,
+        },
+        "authorities": {
+            "source_authenticity_verified": False,
+            "model_input_authorized": False,
+            "calibration_authorized": False,
+            "publication_authorized": False,
+            "production_authorized": False,
+        },
+    }
+    export_payload = databricks_canonical_json_bytes(
+        {
+            **export_unsigned,
+            "export_id": databricks_export_id(export_unsigned),
+        }
+    )
+    export_manifest_path = "databricks/epex_ch/export-manifest.json"
+    _write_bytes(generation / export_manifest_path, export_payload)
+
+    derived_payload = package.artifacts["model/derived.parquet"]
+    entry["source_system"] = "EPEX_SPOT"
+    entry["sha256"] = _sha256(derived_payload)
+    entry["size_bytes"] = len(derived_payload)
+    entry["raw_artifact"] = artifact_bindings["model/raw.parquet"]
+    entry.pop("provider_raw_artifact")
+    entry.pop("provider_derivation")
+    for obsolete in (
+        "provider_raw/epex_ch.json",
+        "provider_parser/epex_ch.py",
+        "provider_parser/epex_ch.json",
+    ):
+        (generation / obsolete).unlink()
+    parser_path = approved_parser_path_for_role("epex_ch")
+    parser_payload = parser_path.read_bytes()
+    archived_parser_path = generation / "parser" / "epex_ch.py"
+    _write_bytes(archived_parser_path, parser_payload)
+    parser_config_payload = json.dumps(
+        build_replay_config(
+            role="epex_ch",
+            source_system="EPEX_SPOT",
+            raw_frame=package.replay.materialization.raw_frame,
+            derived_frame=package.replay.materialization.derived_frame,
+        ),
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("ascii")
+    parser_config_path = generation / "parser" / "epex_ch.json"
+    _write_bytes(parser_config_path, parser_config_payload)
+    entry["derivation"] = {
+        "parser_code_path": "parser/epex_ch.py",
+        "parser_code_sha256": _sha256(parser_payload),
+        "parser_config_path": "parser/epex_ch.json",
+        "parser_config_sha256": _sha256(parser_config_payload),
+        "derived_at_utc": "2026-07-16T08:01:00Z",
+    }
+    entry["upstream_replay"] = {
+        "kind": DATABRICKS_UPSTREAM_REPLAY_KIND,
+        "replayed_at_utc": "2026-07-16T07:30:00Z",
+        "manifest": {
+            "path": replay_manifest_path,
+            "sha256": _sha256(package.manifest_payload),
+            "size_bytes": len(package.manifest_payload),
+        },
+        "artifacts": artifact_bindings,
+        "export_manifest": {
+            "path": export_manifest_path,
+            "sha256": _sha256(export_payload),
+            "size_bytes": len(export_payload),
+        },
+    }
+    policy_sha = str(entry["quality_evidence"]["policy_sha256"])
+    quality_report = {
+        "bindings": expected_databricks_quality_bindings(
+            entry=entry,
+            raw=entry["raw_artifact"],
+            derivation=entry["derivation"],
+        ),
+        "metrics": {
+            "bronze": _frame_quality_metrics(package.replay.materialization.raw_frame),
+            "derived": _frame_quality_metrics(package.replay.materialization.derived_frame),
+        },
+        "policy_sha256": policy_sha,
+        "role": "epex_ch",
+        "schema_version": "lt_source_quality.v3",
+        "status": "PASS",
+    }
+    quality_payload = (
+        json.dumps(
+            quality_report,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n"
+    ).encode("ascii")
+    quality_path = generation / "quality" / "epex_ch.json"
+    _write_bytes(quality_path, quality_payload)
+    entry["quality_evidence"]["report_sha256"] = _sha256(quality_payload)
+
+    for role, role_entry in files.items():
+        if role == "epex_ch" or role not in SOURCE_SYSTEMS:
+            continue
+        assert isinstance(role_entry, dict)
+        role_entry["upstream_replay"] = {
+            "kind": PROVIDER_API_UPSTREAM_REPLAY_KIND,
+            "replayed_at_utc": None,
+            "manifest": None,
+            "artifacts": None,
+            "export_manifest": None,
+        }
+
+    previous: str | None = None
+    for role, role_entry in files.items():
+        assert isinstance(role_entry, dict)
+        receipt = dict(role_entry["source_receipt"])
+        receipt.pop("trusted_time_attestation", None)
+        receipt.pop("receipt_id", None)
+        receipt["previous_receipt_id"] = previous
+        if role == "epex_ch":
+            receipt.update(
+                {
+                    "source_system": "EPEX_SPOT",
+                    "source_locator": "databricks://prd.gold.factspotpriceinterval",
+                    "acquisition_method": "PROSPECTIVE_DIRECT",
+                    "raw_sha256": _sha256(package.manifest_payload),
+                    "raw_size_bytes": len(package.manifest_payload),
+                }
+            )
+        signed_receipt = sign_source_acquisition_receipt(
+            receipt,
+            private_key_path=timestamp_private,
+        )
+        role_entry["source_receipt"] = signed_receipt
+        previous = str(signed_receipt["receipt_id"])
+
+    checkpoint = dict(unsigned["source_journal_checkpoint"])
+    checkpoint.pop("journal_attestation", None)
+    checkpoint.pop("checkpoint_id", None)
+    receipt_ids = [str(files[role]["source_receipt"]["receipt_id"]) for role in SOURCE_SYSTEMS]
+    checkpoint.update(
+        {
+            "receipt_ids": receipt_ids,
+            "head_receipt_id": receipt_ids[-1],
+            "bundle_root_sha256": governed_snapshot_bundle_root_sha256(files),
+        }
+    )
+    unsigned["source_journal_checkpoint"] = sign_source_journal_checkpoint(
+        checkpoint,
+        private_key_path=journal_private,
+    )
+    unsigned["schema_version"] = DATABRICKS_LT_INPUT_SNAPSHOT_SCHEMA
+
+
+def _databricks_spot_rows() -> pd.DataFrame:
+    rows: list[dict[str, object]] = []
+    for hour in range(4):
+        start = pd.Timestamp("2026-07-16T00:00:00Z") + pd.Timedelta(hours=hour)
+        rows.append(
+            {
+                "SpotProductID": 1,
+                "SourceProduct": "CH_DAY_AHEAD",
+                "MarketZone": "CH",
+                "DeliveryStartUtc": start,
+                "DeliveryEndUtc": start + pd.Timedelta(hours=1),
+                "FrequencyMinutes": 60,
+                "Price": 50.0 + hour,
+                "PriceUnit": "EUR/MWh",
+                "ObservedAtUtc": pd.Timestamp("2026-07-15T12:00:00Z"),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
 def _resign_snapshot_after_file_change(unsigned: dict[str, object]) -> dict[str, object]:
     checkpoint = dict(unsigned["source_journal_checkpoint"])
     checkpoint.pop("journal_attestation")
@@ -1870,9 +2186,7 @@ def _frame_quality_metrics(frame: pd.DataFrame) -> dict[str, object]:
         "duplicate_timestamp_count": int(frame.index.duplicated().sum()),
     }
     if "lt_observation_resolution_provenance" in frame.attrs:
-        metrics["resolution_provenance"] = dict(
-            frame.attrs["lt_observation_resolution_provenance"]
-        )
+        metrics["resolution_provenance"] = dict(frame.attrs["lt_observation_resolution_provenance"])
     return metrics
 
 

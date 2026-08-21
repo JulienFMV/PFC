@@ -5,7 +5,7 @@ Read in this order:
 1. `AGENTS.md`
 2. `.planning/HANDOFF.md`
 3. `.planning/phases/14-lt-audit-remediation/DECISION-LOG.md`
-4. `.planning/phases/14-lt-audit-remediation/SESSION-HANDOFF-20260821-DATABRICKS-REPLAY-AUDIT.md`
+4. `.planning/phases/14-lt-audit-remediation/SESSION-HANDOFF-20260821-DATABRICKS-SNAPSHOT-V4.md`
 
 ## Current state
 
@@ -23,9 +23,9 @@ Read in this order:
   dead-contract claims were rejected after code-path verification.
 - The offline Gold/Silver materializer was roast-hardened for mapping binding,
   generation/flow direction, boolean/PIT semantics, exact intervals and stable
-  hashes. A self-contained exact-byte replay package now covers spot and
-  ENTSO-E PIT/current frames. The Databricks-aware signed publisher schema and
-  real-data admission remain pending.
+  hashes. `lt_input_snapshot.v4` now binds its exact replay package, PRD export
+  manifest, query/watermark/cost evidence and quality proof into the isolated
+  publisher. Real-data admission remains pending.
 
 ## Invariants
 
@@ -38,6 +38,6 @@ Read in this order:
   `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS` until independently
   governed local exports and a new future holdout exist.
 
-See durable decisions D-20260821-248 through D-20260821-253 and the linked
+See durable decisions D-20260821-248 through D-20260821-254 and the linked
 session handoff for exact files, tests and residual risks. The preceding repo
 hygiene handoff retains exact cleanup counts.

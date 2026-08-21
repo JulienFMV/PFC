@@ -90,6 +90,7 @@ pfc_shaping/data/__init__.py
 pfc_shaping/data/acquisition_contract.py
 pfc_shaping/data/databricks_lt_materialization.py
 pfc_shaping/data/databricks_lt_replay.py
+pfc_shaping/data/databricks_lt_snapshot.py
 pfc_shaping/data/calendar_ch.py
 pfc_shaping/data/eex_datasource_v2_capture.py
 pfc_shaping/data/eex_forward_vintage_intake.py
