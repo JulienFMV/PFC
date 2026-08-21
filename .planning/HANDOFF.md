@@ -5,7 +5,7 @@ Read in this order:
 1. `AGENTS.md`
 2. `.planning/HANDOFF.md`
 3. `.planning/phases/14-lt-audit-remediation/DECISION-LOG.md`
-4. `.planning/phases/14-lt-audit-remediation/SESSION-HANDOFF-20260821-DATABRICKS-SNAPSHOT-V4.md`
+4. `.planning/phases/14-lt-audit-remediation/SESSION-HANDOFF-20260821-EEX-CAUSAL-MATERIALIZATION.md`
 
 ## Current state
 
@@ -26,6 +26,10 @@ Read in this order:
   hashes. `lt_input_snapshot.v4` now binds its exact replay package, PRD export
   manifest, query/watermark/cost evidence and quality proof into the isolated
   publisher. Real-data admission remains pending.
+- The Gold EEX joined projection now has a causal offline materializer. It
+  filters by FMV fact-load time and Swiss quotation date, reuses the existing
+  EEX normalizer and remains authority-negative pending three-table manifest
+  binding and signed vintage conversion.
 
 ## Invariants
 
@@ -38,6 +42,6 @@ Read in this order:
   `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS` until independently
   governed local exports and a new future holdout exist.
 
-See durable decisions D-20260821-248 through D-20260821-254 and the linked
+See durable decisions D-20260821-248 through D-20260821-255 and the linked
 session handoff for exact files, tests and residual risks. The preceding repo
 hygiene handoff retains exact cleanup counts.

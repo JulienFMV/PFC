@@ -6,6 +6,7 @@ from io import BytesIO
 import pandas as pd
 import pytest
 
+from pfc_shaping.data.databricks_eex_daily_snapshot import EXPECTED_COLUMNS
 from pfc_shaping.data.databricks_lt_materialization import (
     ENTSOE_FEATURE_MAPPING_SCHEMA_VERSION,
     DatabricksLTMaterializationError,
@@ -13,6 +14,7 @@ from pfc_shaping.data.databricks_lt_materialization import (
     EntsoeSeriesTerm,
     entsoe_dimension_semantic_sha256,
     entsoe_feature_mapping_from_contract,
+    materialize_eex_forward_history,
     materialize_entsoe_current_features,
     materialize_entsoe_pit_features,
     materialize_spot_price_history,
@@ -129,6 +131,96 @@ def _parquet_payload(frame: pd.DataFrame) -> bytes:
     buffer = BytesIO()
     frame.to_parquet(buffer, index=True)
     return buffer.getvalue()
+
+
+def _eex_daily_rows() -> pd.DataFrame:
+    rows = [
+        {
+            "ProductID": "month-base",
+            "DeliveryPeriodID": "2026-09-base",
+            "QuotationDateID": "2026-08-20",
+            "SettlementPriceEurMWh": 71.0,
+            "LastPriceEurMWh": 72.0,
+            "FactLoadTimestampUtc": "2026-08-20T22:15:00Z",
+            "Country": "CH",
+            "Commodity": "POWER",
+            "ProductType": "BASE",
+            "DeliveryPeriodType": "MONTH",
+            "DeliveryStartDate": "2026-09-01",
+            "DeliveryEndDate": "2026-09-30",
+        },
+        {
+            "ProductID": "quarter-base",
+            "DeliveryPeriodID": "2026-q4-base",
+            "QuotationDateID": "2026-08-21",
+            "SettlementPriceEurMWh": 74.0,
+            "LastPriceEurMWh": None,
+            "FactLoadTimestampUtc": "2026-08-21T06:15:00Z",
+            "Country": "CH",
+            "Commodity": "POWER",
+            "ProductType": "BASE",
+            "DeliveryPeriodType": "QUARTER",
+            "DeliveryStartDate": "2026-10-01",
+            "DeliveryEndDate": "2026-12-31",
+        },
+        {
+            "ProductID": "year-base",
+            "DeliveryPeriodID": "2027-base",
+            "QuotationDateID": "2026-08-22",
+            "SettlementPriceEurMWh": 78.0,
+            "LastPriceEurMWh": None,
+            "FactLoadTimestampUtc": "2026-08-22T06:15:00Z",
+            "Country": "CH",
+            "Commodity": "POWER",
+            "ProductType": "BASE",
+            "DeliveryPeriodType": "YEAR",
+            "DeliveryStartDate": "2027-01-01",
+            "DeliveryEndDate": "2027-12-31",
+        },
+    ]
+    return pd.DataFrame(rows, columns=EXPECTED_COLUMNS)
+
+
+def test_eex_materialization_enforces_observation_origin_and_solver_scope() -> None:
+    result = materialize_eex_forward_history(
+        _eex_daily_rows(),
+        as_of_utc="2026-08-21T12:00:00Z",
+    )
+
+    assert set(result.derived_frame["product_type"]) == {"Month", "Quarter"}
+    assert result.audit["source_rows"] == 3
+    assert result.audit["eligible_rows"] == 2
+    assert result.audit["excluded_after_origin_rows"] == 1
+    assert result.audit["authorities"]["model_input_authorized"] is False
+    assert result.audit["normalization_audit"]["authority"][
+        "point_in_time_availability_proven"
+    ] is False
+
+
+def test_eex_materialization_is_stable_under_source_row_order() -> None:
+    source = _eex_daily_rows()
+    first = materialize_eex_forward_history(
+        source,
+        as_of_utc="2026-08-23T12:00:00Z",
+    )
+    second = materialize_eex_forward_history(
+        source.sample(frac=1.0, random_state=17),
+        as_of_utc="2026-08-23T12:00:00Z",
+    )
+
+    assert first.audit["source_projection_sha256"] == second.audit[
+        "source_projection_sha256"
+    ]
+    pd.testing.assert_frame_equal(first.raw_frame, second.raw_frame)
+    pd.testing.assert_frame_equal(first.derived_frame, second.derived_frame)
+
+
+def test_eex_materialization_rejects_naive_origin() -> None:
+    with pytest.raises(DatabricksLTMaterializationError, match="timezone-aware"):
+        materialize_eex_forward_history(
+            _eex_daily_rows(),
+            as_of_utc="2026-08-21T12:00:00",
+        )
 
 
 def _silver_vintages() -> pd.DataFrame:

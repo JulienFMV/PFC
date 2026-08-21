@@ -17,6 +17,13 @@ from typing import Mapping
 import numpy as np
 import pandas as pd
 
+from pfc_shaping.data.databricks_eex_daily_snapshot import (
+    EXPECTED_COLUMNS as EEX_DAILY_COLUMNS,
+)
+from pfc_shaping.data.databricks_eex_daily_snapshot import (
+    DatabricksEexDailyNormalizationError,
+    normalize_databricks_eex_daily_snapshot,
+)
 from pfc_shaping.data.governed_lt_acquisition import dataframe_semantic_sha256
 from pfc_shaping.data.lt_replay_transforms import build_entso_features, clean_epex
 
@@ -164,6 +171,109 @@ class DatabricksMaterialization:
     raw_frame: pd.DataFrame
     derived_frame: pd.DataFrame
     audit: Mapping[str, object]
+
+
+def materialize_eex_forward_history(
+    frame: pd.DataFrame,
+    *,
+    as_of_utc: str | pd.Timestamp,
+) -> DatabricksMaterialization:
+    """Build a causal CH CAL/Q/M history from one joined Gold EEX export.
+
+    The input is the exact 12-column projection produced by the bounded join
+    of ``facteexpricedaily``, ``dimeexproduct`` and
+    ``dimeexdeliveryperiod``. ``FactLoadTimestampUtc`` is treated as the FMV
+    observation bound: rows loaded after ``as_of_utc`` are excluded rather
+    than back-dated to their quotation date. The result remains an unsigned,
+    non-PIT candidate until the existing EEX vintage catalogue and independent
+    source-time authorities admit it.
+    """
+
+    if not isinstance(frame, pd.DataFrame) or frame.empty:
+        raise DatabricksLTMaterializationError("Gold EEX daily export is empty")
+    if tuple(frame.columns) != tuple(EEX_DAILY_COLUMNS):
+        raise DatabricksLTMaterializationError(
+            "Gold EEX daily export columns are not exact"
+        )
+    if frame.columns.has_duplicates:
+        raise DatabricksLTMaterializationError(
+            "Gold EEX daily export has duplicate columns"
+        )
+
+    origin = _utc_scalar(as_of_utc, label="EEX origin")
+    source = frame.copy()
+    load_timestamp = _utc_series(
+        source["FactLoadTimestampUtc"],
+        label="EEX fact load timestamp",
+    )
+    quotation_date = pd.to_datetime(source["QuotationDateID"], errors="coerce")
+    if quotation_date.isna().any() or quotation_date.dt.tz is not None:
+        raise DatabricksLTMaterializationError(
+            "Gold EEX quotation date must contain valid timezone-naive dates"
+        )
+    quotation_date = quotation_date.dt.normalize()
+    origin_market_date = origin.tz_convert("Europe/Zurich").tz_localize(None).normalize()
+    eligible_mask = load_timestamp.le(origin) & quotation_date.le(origin_market_date)
+    eligible = source.loc[eligible_mask].copy()
+    if eligible.empty:
+        raise DatabricksLTMaterializationError(
+            "Gold EEX daily export has no row observed by the requested origin"
+        )
+    eligible["FactLoadTimestampUtc"] = load_timestamp.loc[eligible.index]
+    eligible["QuotationDateID"] = quotation_date.loc[eligible.index]
+    eligible = eligible.sort_values(
+        ["ProductID", "DeliveryPeriodID", "QuotationDateID"],
+        kind="mergesort",
+    ).reset_index(drop=True)
+
+    source_projection = source.copy()
+    source_projection["FactLoadTimestampUtc"] = load_timestamp
+    source_projection["QuotationDateID"] = quotation_date
+    source_projection = source_projection.sort_values(
+        ["ProductID", "DeliveryPeriodID", "QuotationDateID"],
+        kind="mergesort",
+    ).reset_index(drop=True)
+    source_hash = dataframe_semantic_sha256(source_projection)
+    try:
+        normalized = normalize_databricks_eex_daily_snapshot(
+            eligible,
+            source_snapshot_sha256=source_hash,
+            as_of_date=origin_market_date,
+        )
+    except DatabricksEexDailyNormalizationError as exc:
+        raise DatabricksLTMaterializationError(str(exc)) from exc
+
+    metadata = {
+        "schema_version": MATERIALIZATION_SCHEMA_VERSION,
+        "source_layer": "GOLD",
+        "source_role": "eex_daily_joined",
+        "market": "CH",
+        "commodity": "POWER",
+        "as_of_utc": origin.isoformat(),
+        "observation_bound": "FactLoadTimestampUtc<=as_of_utc",
+        "quotation_bound": "QuotationDateID<=Europe/Zurich(as_of_utc).date",
+        "solver_period_types": ["MONTH", "QUARTER", "YEAR"],
+    }
+    raw = eligible.copy()
+    derived = normalized.history.copy()
+    raw.attrs[MATERIALIZATION_METADATA_ATTR] = metadata
+    derived.attrs[MATERIALIZATION_METADATA_ATTR] = metadata
+    audit = {
+        **metadata,
+        "status": "PASS_LOCAL_MATERIALIZATION_NOT_PIT_OR_MODEL_AUTHORITY",
+        "source_projection_sha256": source_hash,
+        "source_rows": len(source),
+        "eligible_rows": len(eligible),
+        "excluded_after_origin_rows": int((~eligible_mask).sum()),
+        "quarantined_rows": int(len(normalized.quarantine)),
+        "all_products_live_rows": int(len(normalized.all_products_history)),
+        "solver_history_rows": int(len(derived)),
+        "raw_frame_sha256": dataframe_semantic_sha256(raw),
+        "derived_frame_sha256": dataframe_semantic_sha256(derived),
+        "normalization_audit": dict(normalized.audit),
+        "authorities": _false_authorities(),
+    }
+    return DatabricksMaterialization(raw, derived, audit)
 
 
 def entsoe_dimension_semantic_sha256(dimension: pd.DataFrame) -> str:
@@ -988,6 +1098,7 @@ __all__ = [
     "MATERIALIZATION_SCHEMA_VERSION",
     "entsoe_dimension_semantic_sha256",
     "entsoe_feature_mapping_from_contract",
+    "materialize_eex_forward_history",
     "materialize_entsoe_current_features",
     "materialize_entsoe_pit_features",
     "materialize_spot_price_history",

@@ -41,7 +41,7 @@ required:
    signed `lt_input_snapshot.v4` bundle whose manifest binds every output to
    its source tables, query, predicate, watermarks, code and PIT policy.
 
-Stage 2 is implemented for Gold spot and Gold/Silver ENTSO-E in
+Stage 2 is implemented end-to-end for Gold spot and Gold/Silver ENTSO-E in
 `pfc_shaping/data/databricks_lt_materialization.py`, with exact package replay
 in `pfc_shaping/data/databricks_lt_replay.py` and signed publisher admission in
 `pfc_shaping/data/databricks_lt_snapshot.py`. The API-specific
@@ -52,6 +52,12 @@ copies already-curated files and declares `source_class` as
 `MIGRATED_UNVERIFIED` and `calibration_eligible` as false. It must not be
 presented as the Gold/Silver transformation or as scientific admission. See
 `docs/data/DATABRICKS-LT-MATERIALIZATION.md` for the exact boundary.
+
+The Gold EEX joined projection now has an offline causal materializer too. It
+filters on both FMV fact-load time and Swiss quotation date before reusing the
+existing CAL/Q/M normalizer. Its three-table join provenance and conversion to
+the signed EEX vintage catalog remain separate admission steps; the local
+materialization alone grants no solver or PIT authority.
 
 The future materializer must keep two different ENTSO-E views:
 

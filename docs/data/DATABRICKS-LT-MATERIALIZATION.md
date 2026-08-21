@@ -22,7 +22,7 @@ in `pfc_shaping/data/databricks_lt_snapshot.py` as
 | Gold spot interval fact | exact market/product filter, known-and-delivered cutoff, atomic interval expansion | `epex_<market>` raw `price_eur_mwh`, then governed `clean_epex` features |
 | Gold ENTSO-E dimension + Latest | explicit SeriesKey mapping and known current-state selection | current-serving `entso` raw and derived features |
 | Gold ENTSO-E dimension + Silver vintages | availability-known, `availability_timestamp_utc <= origin`, DQ exclusion and latest eligible revision | point-in-time `entso` raw and derived features |
-| Gold EEX daily fact/dimensions | existing `databricks_eex_daily_snapshot` normalizer | `eex_forwards_history` candidate content |
+| Gold EEX daily fact/dimensions | `materialize_eex_forward_history`: exact joined projection, `FactLoadTimestampUtc <= as_of_utc`, Swiss quotation-date cutoff, then the existing EEX normalizer | causal `eex_forwards_history` candidate content |
 
 The materialization result always declares all scientific and production
 authorities false. Layer acceptance, immutable publication, signing and model
@@ -107,6 +107,12 @@ statements, Warehouse starts, network calls and remote writes. It is unsigned,
 authority-negative and cannot be published without the independent v4
 acquisition, time, journal and publication authorities.
 
+The EEX materialization is deliberately one step short of this generic replay
+package. Its joined Gold projection is now deterministic and causal, but the
+three physical source tables and their join SQL still have to be bound by the
+future export manifest before v4 publication. This avoids treating a joined
+Parquet file as proof of dimension provenance.
+
 ## Governed snapshot v4
 
 `lt_input_snapshot.v4` keeps the API-specific provider replay and the
@@ -137,8 +143,9 @@ complete model history.
    dimension inventory.
 2. Implement deterministic incremental composition before enabling a
    predecessor-bearing mode; v4 currently accepts full snapshots only.
-3. Convert the existing EEX normalizer output into the signed historical
-   vintage catalog required by the monthly solver.
+3. Bind the EEX joined projection to the three Gold tables and exact join SQL,
+   then convert its causal normalizer output into the signed historical vintage
+   catalog required by the monthly solver.
 4. Keep hydro on its separately governed SFOE/FMV source until an exact Gold
    table and transformation are approved.
 5. Treat weather, Swissgrid and LSEG as separately admitted candidates or

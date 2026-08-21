@@ -14259,6 +14259,64 @@ Invariants not to break:
   and a new independent future holdout are still required. Model admission
   remains `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS`; T057 remains sealed.
 
+## D-20260821-255 - Add one causal EEX Gold materialization without creating a second vintage authority
+
+Decision:
+
+- Add `materialize_eex_forward_history` to the existing offline Databricks LT
+  materializer.
+- Accept only the exact joined 12-column EEX projection already governed by
+  the local normalizer. Bound eligibility by both
+  `FactLoadTimestampUtc <= as_of_utc` and quotation date no later than the
+  Swiss market date at that origin.
+- Reuse `normalize_databricks_eex_daily_snapshot` and expose only
+  Month/Quarter/Year rows as the solver-history candidate. Do not use sparse
+  `LastPriceEurMWh` as a settlement-price fallback.
+- Keep every scientific and production authority false. Require the future v4
+  export manifest to bind all three Gold tables and exact join SQL, then route
+  accepted rows through the existing signed EEX vintage catalogue.
+- Defer weather-forecast activation until source issue-time and geographic
+  coverage are explicit. Observed weather and hydro remain optional shape
+  candidates and never monthly-level authorities.
+
+Reason:
+
+The data engineer expects to promote EEX and the other lakehouse sources to
+PRD next week. The useful no-cost preparation is a deterministic causal
+transformation that can be exercised on the future export immediately. A new
+generic EEX vintage architecture would duplicate mature project governance
+and would be unnecessary for a daily FTP source. Quotation date alone is not
+enough for retrospective replay because a backfill loaded today was not
+necessarily available to FMV at the historical quotation date.
+
+Rejected alternatives:
+
+- Query Databricks before the production tables are ready.
+- Treat every historical quotation date as proven historical FMV availability.
+- Build a parallel EEX vintage system or admit an unbound joined Parquet as
+  proof of its fact and dimension tables.
+- Activate weather forecasts or seam smoothing before real issue-time and
+  rolling-origin evidence exist.
+
+Verification:
+
+- baseline Databricks/solver/continuity matrix: `151 passed`;
+- EEX materializer/normalizer matrix: `36 passed`;
+- broad LT regression: `341 passed, 3 skipped in 131.05s`;
+- targeted Ruff and `git diff --check`: pass;
+- Databricks connections/statements/Warehouse starts, network calls and remote
+  writes: `0/0/0/0/0`.
+
+Invariants not to break:
+
+- The CH monthly solver remains sole monthly-level authority and final EEX
+  product means remain hard constraints.
+- LT code remains independent from `pfc_shaping.ct.*`.
+- The causal local EEX materialization is not PIT, model, calibration,
+  publication or production authority by itself.
+- Model admission remains
+  `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS`; T057 remains sealed.
+
 ## D-20260821-248 - Separate the ENTSO-E Gold serving layer from the Silver PIT authority
 
 Decision:
