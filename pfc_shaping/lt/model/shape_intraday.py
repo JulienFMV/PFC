@@ -57,6 +57,14 @@ HEURES_RAMPE = set(range(24))
 MIN_OBS_COUCHE1 = 8   # ≥ 8 occurrences de l'heure dans la cellule
 MIN_OBS_COUCHE2 = 50  # pour la régression Ridge sur features exogènes (augmenté de 30)
 
+# A ratio estimator is ill-conditioned when the parent-hour price is close to
+# zero.  Sparse cells are particularly exposed because a handful of zero or
+# negative-price hours can dominate all four fitted ratios.  Rolling-origin
+# calibration uses a weighted price-space regression until the cell contains
+# more than 24 distinct parent hours; the dense-cell estimator remains the
+# historical robust ratio fit.
+MIN_PARENT_HOURS_FOR_RATIO_ESTIMATOR = 24
+
 # Seuil R² OOS minimal pour retenir une correction Layer 2
 # Avec peu de données (< 1 an), R² > 0 passe souvent par chance.
 # 0.02 = la correction doit expliquer au moins 2% de la variance OOS.
@@ -77,12 +85,21 @@ class ShapeIntraday:
         n_obs_         : dict[(saison, type_jour, heure)] -> int
     """
 
-    def __init__(self, halflife_days: float = 180.0, hydro_weight_sigma: float = 0.25) -> None:
+    def __init__(
+        self,
+        halflife_days: float = 180.0,
+        hydro_weight_sigma: float = 0.25,
+        *,
+        enable_sparse_support_regularization: bool = False,
+    ) -> None:
         self.halflife_days = halflife_days
         self.hydro_weight_sigma = hydro_weight_sigma
+        self.enable_sparse_support_regularization = enable_sparse_support_regularization
         self.base_factors_: dict[tuple, np.ndarray] = {}
         self.corrections_: dict[tuple, dict] = {}
         self.n_obs_: dict[tuple, int] = {}
+        self.sparse_support_envelope_: float | None = None
+        self.sparse_support_constrained_cells_: int = 0
         self._climatological_fill: pd.Series | None = None  # mean fill per week-of-year
 
     @staticmethod
@@ -162,6 +179,8 @@ class ShapeIntraday:
                         if corr is not None:
                             self.corrections_[key] = corr
 
+        if self.enable_sparse_support_regularization:
+            self._constrain_sparse_cells_to_dense_support()
         self._fill_missing_cells()
 
         logger.info(
@@ -275,8 +294,14 @@ class ShapeIntraday:
             base = self.base_factors_[actual_key]
             idx_arr = np.array(indices)
             q_vals = quarts[idx_arr]
+            maturity_timestamps = (
+                timestamps[idx_arr].floor("h")
+                if self.enable_sparse_support_regularization
+                else timestamps[idx_arr]
+            )
             years_ahead = (
-                (timestamps[idx_arr] - reference_date).total_seconds() / (365.25 * 86400.0)
+                (maturity_timestamps - reference_date).total_seconds()
+                / (365.25 * 86400.0)
             ).astype(float)
             flatten = self._flatten_strength(years_ahead)
 
@@ -326,6 +351,13 @@ class ShapeIntraday:
                     "saison": saison, "type_jour": tj, "heure": h,
                     "quart": q, "f_Q_base": v,
                     "n_obs": self.n_obs_.get((saison, tj, h), 0),
+                    "enable_sparse_support_regularization": (
+                        self.enable_sparse_support_regularization
+                    ),
+                    "sparse_support_envelope": self.sparse_support_envelope_,
+                    "sparse_support_constrained_cells": (
+                        self.sparse_support_constrained_cells_
+                    ),
                 })
         pd.DataFrame(records).to_parquet(path, index=False)
 
@@ -346,7 +378,21 @@ class ShapeIntraday:
         """Charge depuis Parquet."""
         path = Path(path)
         df = pd.read_parquet(path)
-        obj = cls()
+        enabled = (
+            bool(df["enable_sparse_support_regularization"].iloc[0])
+            if "enable_sparse_support_regularization" in df.columns and len(df)
+            else False
+        )
+        obj = cls(enable_sparse_support_regularization=enabled)
+        if "sparse_support_envelope" in df.columns and len(df):
+            envelope = df["sparse_support_envelope"].iloc[0]
+            obj.sparse_support_envelope_ = (
+                None if pd.isna(envelope) else float(envelope)
+            )
+        if "sparse_support_constrained_cells" in df.columns and len(df):
+            obj.sparse_support_constrained_cells_ = int(
+                df["sparse_support_constrained_cells"].iloc[0]
+            )
         for (saison, tj, h), grp in df.groupby(["saison", "type_jour", "heure"]):
             grp = grp.sort_values("quart")
             obj.base_factors_[(saison, tj, int(h))] = grp["f_Q_base"].values
@@ -378,6 +424,13 @@ class ShapeIntraday:
 
         Uses sample_weight from temporal decay + hydro analogue if available.
         """
+        parent_hour_count = hour_data.index.floor("h").nunique()
+        if (
+            self.enable_sparse_support_regularization
+            and parent_hour_count <= MIN_PARENT_HOURS_FOR_RATIO_ESTIMATOR
+        ):
+            return self._fit_sparse_price_space(hour_data)
+
         has_weights = "_weight" in hour_data.columns
         ratios = []
         for q in range(1, 5):
@@ -412,6 +465,77 @@ class ShapeIntraday:
         if arr.mean() == 0:
             return np.ones(4)
         return arr / arr.mean()  # normalisation
+
+    def _fit_sparse_price_space(self, hour_data: pd.DataFrame) -> np.ndarray | None:
+        """Fit sparse cells without dividing by a near-zero hourly price.
+
+        For each quarter, solve the weighted through-origin least-squares
+        problem ``price_q = beta_q * mean_hour_price``.  The four slopes are
+        then normalized to preserve the exact parent-hour energy constraint.
+        This estimator is used only for cells with at most
+        ``MIN_PARENT_HOURS_FOR_RATIO_ESTIMATOR`` distinct parent hours.
+        """
+        has_weights = "_weight" in hour_data.columns
+        hour_means = hour_data.groupby(hour_data.index.floor("h"))["price_eur_mwh"].mean()
+        slopes: list[float] = []
+        for q in range(1, 5):
+            q_data = hour_data[hour_data["quart"] == q].copy()
+            q_data["hour_key"] = q_data.index.floor("h")
+            x = q_data["hour_key"].map(hour_means).to_numpy(dtype=float)
+            y = q_data["price_eur_mwh"].to_numpy(dtype=float)
+            weights = (
+                q_data["_weight"].to_numpy(dtype=float)
+                if has_weights
+                else np.ones(len(q_data), dtype=float)
+            )
+            finite = np.isfinite(x) & np.isfinite(y) & np.isfinite(weights) & (weights > 0.0)
+            if int(finite.sum()) < MIN_OBS_COUCHE1:
+                return None
+            x = x[finite]
+            y = y[finite]
+            weights = weights[finite]
+            denominator = float(np.sum(weights * x * x))
+            if denominator <= np.finfo(float).eps:
+                return None
+            slopes.append(float(np.sum(weights * x * y) / denominator))
+
+        arr = np.asarray(slopes, dtype=float)
+        if not np.isfinite(arr).all() or abs(float(arr.mean())) <= np.finfo(float).eps:
+            return None
+        return arr / arr.mean()
+
+    def _constrain_sparse_cells_to_dense_support(self) -> None:
+        """Keep sparse-cell amplitudes inside the observed dense-cell envelope.
+
+        The envelope is data-derived: the largest absolute deviation from one
+        among directly fitted cells containing more than 24 parent hours.
+        Sparse profiles outside that support are radially contracted toward
+        the neutral profile.  This preserves their direction and exact mean
+        without quarter-by-quarter clipping.
+        """
+        dense_deviations = [
+            float(np.max(np.abs(np.asarray(self.base_factors_[key], dtype=float) - 1.0)))
+            for key, n_obs in self.n_obs_.items()
+            if n_obs > MIN_PARENT_HOURS_FOR_RATIO_ESTIMATOR * 4
+        ]
+        if not dense_deviations:
+            self.sparse_support_envelope_ = None
+            self.sparse_support_constrained_cells_ = 0
+            return
+        envelope = max(dense_deviations)
+        constrained = 0
+        for key, n_obs in self.n_obs_.items():
+            if n_obs > MIN_PARENT_HOURS_FOR_RATIO_ESTIMATOR * 4:
+                continue
+            factors = np.asarray(self.base_factors_[key], dtype=float)
+            deviation = float(np.max(np.abs(factors - 1.0)))
+            if deviation <= envelope or deviation <= np.finfo(float).eps:
+                continue
+            contracted = 1.0 + (factors - 1.0) * (envelope / deviation)
+            self.base_factors_[key] = contracted / contracted.mean()
+            constrained += 1
+        self.sparse_support_envelope_ = envelope
+        self.sparse_support_constrained_cells_ = constrained
 
     def _fit_correction(self, hour_data: pd.DataFrame) -> dict | None:
         """

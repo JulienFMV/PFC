@@ -3,10 +3,16 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from pfc_shaping.pipeline.quality_gate import QualityGateError, validate_input_frame
 from pfc_shaping.pipeline.production_phases import (
+    _future_hydro_civil_weekly_index,
     _validate_production_input_freshness,
     _validate_strict_production_freshness_policy,
+)
+from pfc_shaping.pipeline.quality_gate import (
+    QualityGateError,
+    input_grid_errors,
+    validate_input_frame,
+    weekly_local_grid_errors,
 )
 
 
@@ -24,9 +30,59 @@ def _dense_recent_frame() -> pd.DataFrame:
     return pd.DataFrame({"value": 1.0}, index=index)
 
 
-def _daily_recent_hydro() -> pd.DataFrame:
-    index = pd.date_range("2026-07-03T00:00:00Z", "2026-07-10T00:00:00Z", freq="1D")
-    return pd.DataFrame({"fill_deviation": 0.0}, index=index)
+def _weekly_recent_hydro() -> pd.DataFrame:
+    index = pd.date_range(
+        "2026-05-18",
+        "2026-07-06",
+        freq="7D",
+        tz="Europe/Zurich",
+    ).tz_convert("UTC")
+    return pd.DataFrame(
+        {
+            "fill_deviation": 0.0,
+            "water_value_supported": True,
+            "water_value_history_count": 6,
+            "water_value_reference_mean_pct": 50.0,
+            "water_value_reference_std_pct": 2.0,
+            "water_value_reference_se_pct": 0.8,
+        },
+        index=index,
+    )
+
+
+def test_weekly_monday_hydro_grid_is_accepted() -> None:
+    assert weekly_local_grid_errors(
+        _weekly_recent_hydro(),
+        name="hydro",
+        timezone="Europe/Zurich",
+        weekday=0,
+    ) == []
+
+
+def test_future_hydro_grid_preserves_swiss_midnight_across_dst() -> None:
+    index = _future_hydro_civil_weekly_index(
+        pd.Timestamp("2026-03-01T00:00:00Z"),
+        pd.Timestamp("2026-11-15T00:00:00Z"),
+    )
+    local = index.tz_convert("Europe/Zurich")
+
+    assert all(timestamp.weekday() == 0 and timestamp.hour == 0 for timestamp in local)
+    assert {timestamp.hour for timestamp in index} == {22, 23}
+
+
+def test_daily_hydro_grid_is_rejected() -> None:
+    index = pd.date_range("2026-07-01T00:00:00Z", periods=14, freq="D")
+    hydro = pd.DataFrame({"fill_deviation": 0.0}, index=index)
+
+    errors = input_grid_errors(
+        hydro,
+        name="hydro",
+        expected_cadence_seconds=7 * 24 * 60 * 60,
+        expected_phase_offset_seconds=4 * 24 * 60 * 60,
+    )
+
+    assert "hydro.grid_phase_mismatch" in errors
+    assert "hydro.off_grid_timestamps" in errors
 
 
 def test_stale_input_is_warning_by_default() -> None:
@@ -167,8 +223,19 @@ def test_production_freshness_blocks_one_stale_core_dataset() -> None:
         index=fresh.index,
     )
     stale_hydro = pd.DataFrame(
-        {"fill_deviation": 0.0},
-        index=pd.date_range(end="2026-06-01T00:00:00Z", periods=4, freq="1D"),
+        {
+            "fill_deviation": 0.0,
+            "water_value_supported": True,
+            "water_value_history_count": 6,
+            "water_value_reference_mean_pct": 50.0,
+            "water_value_reference_std_pct": 2.0,
+            "water_value_reference_se_pct": 0.8,
+        },
+        index=pd.date_range(
+            end=pd.Timestamp("2026-06-01", tz="Europe/Zurich"),
+            periods=8,
+            freq="7D",
+        ).tz_convert("UTC"),
     )
     config = {
         "quality": {
@@ -194,6 +261,28 @@ def test_production_freshness_blocks_one_stale_core_dataset() -> None:
         )
 
 
+def test_production_freshness_rejects_unsupported_recent_hydro() -> None:
+    fresh = _dense_recent_frame()
+    epex = fresh.rename(columns={"value": "price_eur_mwh"})
+    entso = pd.DataFrame(
+        {"load_mw": 1.0, "solar_mw": 1.0, "wind_mw": 1.0},
+        index=fresh.index,
+    )
+    hydro = _weekly_recent_hydro()
+    hydro.loc[hydro.index[-1], "water_value_supported"] = False
+
+    with pytest.raises(RuntimeError, match="scientifically unsupported"):
+        _validate_production_input_freshness(
+            epex_ch=epex,
+            epex_de=epex,
+            entso=entso,
+            hydro=hydro,
+            outages=None,
+            config={"quality": {"freshness": {"outages_enabled": False}}},
+            reference_timestamp="2026-07-10T00:00:00Z",
+        )
+
+
 def test_production_freshness_requires_enabled_outages() -> None:
     fresh = _dense_recent_frame()
     epex = fresh.rename(columns={"value": "price_eur_mwh"})
@@ -201,7 +290,7 @@ def test_production_freshness_requires_enabled_outages() -> None:
         {"load_mw": 1.0, "solar_mw": 1.0, "wind_mw": 1.0},
         index=fresh.index,
     )
-    hydro = _daily_recent_hydro()
+    hydro = _weekly_recent_hydro()
     config = {
         "quality": {
             "freshness": {
@@ -248,7 +337,7 @@ def test_production_freshness_rejects_invalid_neighbor_grid(
             epex_ch=epex,
             epex_de=epex,
             entso=entso,
-            hydro=_daily_recent_hydro(),
+            hydro=_weekly_recent_hydro(),
             outages=None,
             config={"quality": {"freshness": {"outages_enabled": False}}},
             reference_timestamp="2026-07-10T00:00:00Z",

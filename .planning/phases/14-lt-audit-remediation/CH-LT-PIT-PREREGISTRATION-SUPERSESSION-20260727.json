@@ -1,0 +1,70 @@
+{
+  "schema_version": "ch_lt_pit_preregistration_supersession.v1",
+  "status": "ACTIVE_FAIL_CLOSED_V1_SUPERSEDED_NO_EXECUTABLE_SUCCESSOR",
+  "superseded": {
+    "path": ".planning/phases/14-lt-audit-remediation/CH-LT-PIT-PROBABILISTIC-PREREGISTRATION-DRAFT-20260724.json",
+    "sha256": "aba798530084b7031a0ac38b1c48b20cff575d6082edbcf37c9a04528900ba61",
+    "schema_version": "ch_lt_pit_probabilistic_preregistration.v1",
+    "plan_id": "ae5557fd7e58a6ee4164e7f8a949cb379fc2d8ac23766e17a1873c4de420c5f6",
+    "protocol_name": "ch_lt_pit_outer24_future4_20260724_v1",
+    "reason": "The v1 pathwise fixed-monthly-level scenario policy conflicts with the corrected full delivered-curve estimand and would suppress scenario-specific monthly level risk."
+  },
+  "non_authoritative_clarifications": [
+    {
+      "role": "corrected_estimand_draft",
+      "path": ".planning/phases/14-lt-audit-remediation/CH-LT-ESTIMAND-AND-ECONOMIC-DESIGN-DRAFT-20260724.json",
+      "sha256": "4209931e28a7c1cf2a4224d779f73648c4c9c5eac55df0a7ba1ad872226e2931",
+      "schema_version": "ch_lt_estimand_and_economic_design.v1",
+      "contract_id": "da4090073a4566f662e47fa59e206e1485d683305a1134f2089ebb13a4daa344"
+    },
+    {
+      "role": "compute_runtime_draft",
+      "path": ".planning/phases/14-lt-audit-remediation/CH-LT-COMPUTE-RUNTIME-DRAFT-20260727.json",
+      "sha256": "b231345e96e7664ae02b7dbf3514af87d47ded7783034eaab1f8d449a28fe96f",
+      "schema_version": "ch_lt_compute_runtime.v1",
+      "contract_id": "d06710ba8ebee2364b81930fce51d17768f206521edfe62336ff2abdef60930a"
+    },
+    {
+      "role": "successor_readiness_contract",
+      "path": ".planning/phases/14-lt-audit-remediation/CH-LT-PIT-SUCCESSOR-READINESS-CONTRACT-20260729.json",
+      "sha256": "734a7824ec747c829526774b346da441b45fff7cff5c9eb79ffc653ac78c7b8e",
+      "schema_version": "ch_lt_pit_successor_readiness_contract.v1",
+      "contract_id": "5e655cab1ca090cd067100dc8eb06161811b77991132e7c299883a7eb249e706"
+    }
+  ],
+  "policy_conflict": {
+    "superseded_policy": "EVERY_SCENARIO_PROJECTED_PATHWISE_TO_THE_MONTHLY_SOLVER_FORWARD",
+    "corrected_ensemble_policy": "ENERGY_WEIGHTED_ENSEMBLE_EXPECTATION_EQUALS_MONTHLY_SOLVER_FORWARD",
+    "scenario_specific_monthly_level_risk": "ALLOWED_ONLY_WITH_ZERO_MEAN_ENSEMBLE_AND_FROZEN_COVARIANCE",
+    "pathwise_fixed_monthly_level": "SEPARATE_SHAPE_ONLY_DIAGNOSTIC_PRODUCT",
+    "monthly_solver_level_authority_preserved": true
+  },
+  "successor": {
+    "state": "NOT_CREATED",
+    "schema_version": null,
+    "plan_id": null,
+    "execution_capability": null,
+    "required_before_creation": [
+      "GOVERNED_POINT_IN_TIME_CH_AND_EEX_EVIDENCE",
+      "EXACT_ORIGIN_TARGET_MASK_AND_INNER_FOLD_INVENTORIES",
+      "FROZEN_DEPENDENCE_POWER_AND_MULTIPLICITY_DESIGN",
+      "FROZEN_PROBABILISTIC_SCENARIO_AND_MONTE_CARLO_DESIGN",
+      "FMV_RISK_APPROVED_ECONOMIC_MATERIALITY",
+      "INDEPENDENT_SECURITY_ITOPS_AND_QUANT_REVIEWS",
+      "EXTERNAL_ADMISSION_ENVELOPE_AND_ONE_SHOT_LEDGER"
+    ]
+  },
+  "forbidden_uses_of_superseded_v1": [
+    "EVALUATION_EXECUTION_ADMISSION",
+    "MODEL_OR_HYPERPARAMETER_SELECTION",
+    "FUTURE_HOLDOUT_CONSUMPTION",
+    "SCIENTIFIC_CONFIRMATION",
+    "PRODUCTION_PROMOTION"
+  ],
+  "scientific_admission": false,
+  "execution_authorized": false,
+  "production_authorization": false,
+  "promotion_gate": false,
+  "future_holdout_consumed": false,
+  "t057_consumed": false
+}

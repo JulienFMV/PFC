@@ -1,0 +1,381 @@
+{
+  "schema_version": "fmv-eex-entsoe-governed-acquisition-package-contract-v1",
+  "status": "PREPARED_D233_LOCAL_ZERO_EXECUTION_NO_MODEL_AUTHORITY",
+  "purpose": "value-free fail-closed request for a repo-local immutable EEX and ENTSO-E source-evidence package with bounded future acquisition and independently verifiable existence time",
+  "selected_boundaries": {
+    "zero_query_plan_schema": "fmv-ch-lt-databricks-zero-query-acquisition-plan-v1",
+    "zero_query_plan_content_id": "3395f45bd1d22663386aa7cd4e93cfe2bc02079fa7cb8b103825b9c5650dc1af",
+    "zero_query_plan_sha256": "f62bd9e0a9ffe6f0daa2b02917b47763b64a340f28ab59cdd664cbdd8ec58999",
+    "zero_query_plan_decision": "D-20260805-231",
+    "entsoe_metadata_admission_contract_schema": "fmv_entsoe_databricks_metadata_admission_contract.v1",
+    "entsoe_metadata_admission_contract_content_id": "ac0ccb6b5a94e0dee46050b5a765f92efcf800f078b93645917247a3be206564",
+    "entsoe_metadata_admission_contract_sha256": "19033d5e24800abc240d3de4974cc44ec7a3fc7afc6f69db07ee1cf0a6191c43",
+    "entsoe_metadata_admission_decision": "D-20260805-232",
+    "receipt_contract_schema": "fmv-eex-ch-short-tenor-receipt-contract-v1",
+    "receipt_contract_content_id": "d4f7e4e87b8e059255e1a85a589f41d54596756d731ce4a9781b2dbc46d61068",
+    "receipt_contract_sha256": "3168d75e245f033daa44f4c6dab9061f51e06f2b993797b7fb7d9c46dbe6b665",
+    "receipt_contract_decision": "D-20260805-227",
+    "trust_registry_contract_schema": "fmv-eex-ch-short-tenor-trust-registry-contract-v1",
+    "trust_registry_contract_content_id": "3ecf96f83be71c5beb24160793d5fcbce2d771edbda74e190bda3d5b851b54fa",
+    "trust_registry_contract_sha256": "e7fbf4f099bcc355073d0f5b591d988100df4168c22b172ce8fc08e4c4a0ed9c",
+    "trust_registry_contract_decision": "D-20260805-229",
+    "registered_signer_binding_contract_schema": "fmv-eex-ch-short-tenor-registered-signer-binding-contract-v1",
+    "registered_signer_binding_contract_content_id": "2fa6d60542f513faf132bc33dbf6ea17c98693b7658c37ad9e92195dcdd053f0",
+    "registered_signer_binding_contract_sha256": "849cb6cea28913b87b69cea463d54ea9f110150467343cbd8f27f602a07fca23",
+    "registered_signer_binding_decision": "D-20260805-230",
+    "entsoe_intake_contract_schema": "fmv_entsoe_databricks_intake_contract.v1",
+    "entsoe_intake_contract_content_id": "75cb7e9f5d4cedb55e31fbd26b0bdcdf4ff629caf641c984cfec3fc6510b2a60",
+    "entsoe_intake_contract_sha256": "7ede1698099390babfa1d130bfecae61fd1e090888a3d6e6e4f892119db52b87",
+    "eex_normalizer_schema": "fmv_databricks_eex_daily_normalization.v1",
+    "eex_normalizer_module_sha256": "f1469df05c0f4ed8e25c515c6bb62b92f479ac4ad1081a6a3be7c9aeea7bb086"
+  },
+  "delivery_boundary": {
+    "preferred_mode": "DATA_ENGINEER_PUBLISHES_EXISTING_READ_ONLY_EXPORT_TO_REPO_LOCAL_INTAKE",
+    "intake_root_template": "build/governed-source-intake/<snapshot_id>",
+    "pfc_databricks_connector_must_not_be_called": true,
+    "pfc_databricks_cost_is_zero_only_while_all_execution_counters_remain_zero": true,
+    "future_external_or_pfc_execution_requires_new_explicit_user_authorization": true,
+    "external_data_engineer_cost_is_not_claimed_zero": true,
+    "all_mutable_paths_must_remain_below_canonical_workspace_build": true,
+    "h_drive_access_authorized": false,
+    "remote_write_authorized": false,
+    "accepted_data_formats": [
+      "PARQUET",
+      "NDJSON"
+    ],
+    "manifest_format": "STRICT_UTF8_CANONICAL_JSON",
+    "stable_single_link_regular_files_required": true,
+    "content_addressed_snapshot_directory_required": true
+  },
+  "artifact_inventory": [
+    {
+      "role": "eex_daily_snapshot",
+      "source_mode": "REUSE_D231_LOCAL_ARTIFACT_NO_NEW_QUERY",
+      "catalog": "prd",
+      "schema": "gold",
+      "source_tables": [
+        "facteexpricedaily",
+        "dimeexproduct",
+        "dimeexdeliveryperiod"
+      ],
+      "artifact_path": "build/databricks-eex-daily/2026-08-05/eex_ch_power.ndjson",
+      "artifact_sha256": "593e916b6aa18ad83f7bd7941ff68184cd71da8882ef4eb381de46d09ce64812",
+      "source_manifest_path": "build/databricks-eex-daily/2026-08-05/manifest.json",
+      "source_manifest_sha256": "f8ec096be43851d85b16ec2b678d4a695fb0521c2c651e8bcf7c2491a29b50c1",
+      "row_count": 82552,
+      "grain": [
+        "ProductID",
+        "DeliveryPeriodID",
+        "QuotationDateID"
+      ],
+      "required_fields": [
+        "ProductID",
+        "DeliveryPeriodID",
+        "QuotationDateID",
+        "SettlementPriceEurMWh",
+        "LastPriceEurMWh",
+        "FactLoadTimestampUtc",
+        "Country",
+        "Commodity",
+        "ProductType",
+        "DeliveryPeriodType",
+        "DeliveryStartDate",
+        "DeliveryEndDate"
+      ],
+      "required_product_families": [
+        "DAY",
+        "WEEK",
+        "WEEKEND",
+        "MONTH",
+        "QUARTER",
+        "YEAR"
+      ],
+      "required_product_types": [
+        "BASE",
+        "PEAK"
+      ],
+      "price_unit": "EUR/MWh",
+      "new_databricks_statement_count": 0,
+      "historical_point_in_time_reconstruction_proven": false
+    },
+    {
+      "role": "entsoe_series_dimension",
+      "source_mode": "FUTURE_NORMALIZED_EXPORT_AFTER_SCHEMA_ADMISSION",
+      "catalog": "dev",
+      "schema": "gold",
+      "source_table": "dimentsoeseries",
+      "artifact_path": "data/entsoe_series_dimension.parquet",
+      "grain": [
+        "series_id"
+      ],
+      "required_fields": [
+        "series_id",
+        "group_name",
+        "field_name",
+        "from_zone",
+        "to_zone",
+        "unit",
+        "native_resolution",
+        "source_endpoint",
+        "document_id"
+      ]
+    },
+    {
+      "role": "entsoe_latest_values",
+      "source_mode": "FUTURE_NORMALIZED_EXPORT_AFTER_SCHEMA_ADMISSION",
+      "catalog": "dev",
+      "schema": "gold",
+      "source_table": "factentsoetimeserieslatest",
+      "artifact_path": "data/entsoe_latest_values.parquet",
+      "grain": [
+        "series_id",
+        "target_ts_utc"
+      ],
+      "required_fields": [
+        "series_id",
+        "target_ts_utc",
+        "value",
+        "is_historical",
+        "quality_flag",
+        "revision_number",
+        "meta_load_timestamp_utc"
+      ]
+    },
+    {
+      "role": "entsoe_vintage_values",
+      "source_mode": "FUTURE_NORMALIZED_EXPORT_AFTER_SCHEMA_ADMISSION",
+      "catalog": "dev",
+      "schema": "gold",
+      "source_table": "factentsoetimeseriesvintages",
+      "artifact_path": "data/entsoe_vintage_values.parquet",
+      "grain": [
+        "series_id",
+        "target_ts_utc",
+        "as_of_utc"
+      ],
+      "required_fields": [
+        "series_id",
+        "target_ts_utc",
+        "as_of_utc",
+        "value",
+        "quality_flag",
+        "revision_number",
+        "meta_load_timestamp_utc"
+      ]
+    }
+  ],
+  "source_scope": {
+    "eex_country": "CH",
+    "eex_commodity": "POWER",
+    "entsoe_required_swiss_groups_are_controlled_by_exact_intake_contract": true,
+    "entsoe_required_borders": [
+      "CH-DE",
+      "CH-FR",
+      "CH-IT",
+      "CH-AT"
+    ],
+    "entsoe_generation_breakdown_is_controlled_by_exact_intake_contract": true,
+    "all_available_in_scope_history_requested": true,
+    "silent_truncation_or_sampling_authorized": false,
+    "native_resolution_required_per_series": true,
+    "implicit_upsampling_or_forward_fill_authorized": false,
+    "historical_backfill_must_be_flagged": true,
+    "historical_backfill_may_reconstruct_past_information_sets": false,
+    "swiss_day_ahead_price_grid_must_follow_applicable_market_time_regime": true,
+    "historical_hourly_swiss_prices_are_not_a_missing_15_minute_data_defect": true,
+    "monthly_level_authority": "solver",
+    "short_tenor_shape_must_be_zero_mean_within_solver_month": true
+  },
+  "execution_and_cost_fence": {
+    "this_contract_execution_enabled": false,
+    "this_contract_databricks_connections": 0,
+    "this_contract_databricks_statements": 0,
+    "this_contract_warehouse_starts": 0,
+    "this_contract_network_calls": 0,
+    "this_contract_h_drive_accesses": 0,
+    "this_contract_remote_writes": 0,
+    "this_contract_market_value_rows_opened": 0,
+    "entsoe_physical_schema_admitted": false,
+    "entsoe_value_query_generation_authorized": false,
+    "future_capture_ceiling_is_inactive_until_schema_admission_and_new_authorization": true,
+    "future_max_capture_batches_per_europe_zurich_day": 1,
+    "future_max_warehouse_starts_per_capture_batch": 1,
+    "future_max_entsoe_read_only_statements_per_capture_batch": 3,
+    "future_max_statement_runtime_seconds": 300,
+    "future_max_batch_runtime_seconds": 900,
+    "future_max_retries": 0,
+    "future_warehouse_auto_stop_minutes_max": 5,
+    "future_allowed_statement_classes": [
+      "SELECT",
+      "WITH_SELECT"
+    ],
+    "select_star_authorized": false,
+    "ddl_dml_merge_copy_unload_or_temp_objects_authorized": false,
+    "monetary_estimate_and_currency_cap_required_before_authorization": true,
+    "query_sha256_and_schema_fingerprint_required_before_authorization": true,
+    "failure_on_any_cap_exceedance_required": true,
+    "partial_or_truncated_snapshot_admission_authorized": false,
+    "max_total_local_export_bytes": 68719476736,
+    "per_artifact_hard_caps": {
+      "eex_daily_snapshot": {
+        "max_rows": 100000,
+        "max_bytes": 67108864
+      },
+      "entsoe_series_dimension": {
+        "max_rows": 1000000,
+        "max_bytes": 268435456
+      },
+      "entsoe_latest_values": {
+        "max_rows": 100000000,
+        "max_bytes": 17179869184
+      },
+      "entsoe_vintage_values": {
+        "max_rows": 300000000,
+        "max_bytes": 50465865728
+      }
+    }
+  },
+  "manifest_contract": {
+    "batch_required_fields": [
+      "schema_version",
+      "snapshot_id",
+      "capture_batch_id",
+      "snapshot_reference_time_utc",
+      "challenge_id",
+      "challenge_nonce_sha256",
+      "capture_started_at_utc",
+      "capture_completed_at_utc",
+      "workspace_host_sha256",
+      "warehouse_id_sha256",
+      "warehouse_size",
+      "warehouse_start_count",
+      "read_statement_count",
+      "retry_count",
+      "total_runtime_seconds",
+      "total_local_export_bytes",
+      "artifact_manifest_sha256s",
+      "source_envelope_sha256s"
+    ],
+    "artifact_required_fields": [
+      "role",
+      "catalog",
+      "schema",
+      "source_table_names",
+      "source_watermarks",
+      "physical_to_normalized_column_mapping",
+      "normalized_schema_sha256",
+      "query_text_sha256",
+      "statement_id_sha256",
+      "statement_class",
+      "statement_started_at_utc",
+      "statement_completed_at_utc",
+      "row_count",
+      "size_bytes",
+      "minimum_timestamps_by_field",
+      "maximum_timestamps_by_field",
+      "artifact_relative_path",
+      "artifact_sha256",
+      "read_only_statement_verified",
+      "backfill_status"
+    ],
+    "primary_key_uniqueness_required": true,
+    "required_fields_non_null_required": true,
+    "finite_values_required": true,
+    "source_to_dimension_join_coverage_required": 1.0,
+    "expected_vs_observed_native_grid_required": true,
+    "minimum_complete_days_for_seasonal_cross_market_diagnostic": 730,
+    "as_of_not_after_origin_replay_required": true,
+    "artifact_hashes_must_verify_before_any_values_are_opened": true,
+    "unknown_manifest_fields_fail_closed": true
+  },
+  "source_envelope_contract": {
+    "required_roles": [
+      "eex_acquisition",
+      "eex_source_trusted_time",
+      "entsoe_acquisition",
+      "entsoe_source_trusted_time"
+    ],
+    "exactly_one_dsse_envelope_per_role": true,
+    "payload_type": "application/vnd.in-toto+json",
+    "statement_schema": "https://in-toto.io/Statement/v1",
+    "subject_digests_bind_exact_batch_and_artifact_manifests": true,
+    "predicate_binds_capture_batch_challenge_query_schema_artifact_and_source_watermarks": true,
+    "all_payloads_bind_same_capture_batch_id_and_challenge_nonce_sha256": true,
+    "signer_key_must_resolve_to_same_named_d229_registry_role": true,
+    "source_and_source_time_signers_must_be_pairwise_distinct": true,
+    "source_envelope_signatures_are_not_self_declared_authority": true,
+    "all_envelope_sha256s_must_be_computed_over_exact_dsse_bytes": true
+  },
+  "external_time_batch_contract": {
+    "exactly_one_profile_per_capture_batch": true,
+    "allowed_profiles": [
+      "RFC3161_BATCH_ROOT",
+      "TRANSPARENCY_LOG_BATCH_ROOT"
+    ],
+    "profile_mixing_authorized": false,
+    "common_unpredictable_governed_challenge_required_before_capture": true,
+    "challenge_nonce_minimum_bits": 128,
+    "challenge_issuance_time_and_issuer_signature_required": true,
+    "leaf_roles_in_canonical_order": [
+      "eex_acquisition",
+      "eex_source_trusted_time",
+      "entsoe_acquisition",
+      "entsoe_source_trusted_time"
+    ],
+    "leaf_payload_schema": "fmv_source_envelope_timestamp_leaf.v1",
+    "leaf_payload_fields": [
+      "schema_version",
+      "capture_batch_id",
+      "challenge_nonce_sha256",
+      "envelope_role",
+      "envelope_sha256"
+    ],
+    "leaf_and_node_hashing": "RFC9162_SHA256_0X00_LEAF_0X01_NODE",
+    "one_inclusion_proof_per_exact_envelope_leaf_required": true,
+    "rfc3161_message_imprint_must_equal_exact_batch_merkle_root": true,
+    "rfc3161_nonce_policy_certificate_chain_gen_time_accuracy_and_validation_receipt_required": true,
+    "transparency_entry_must_bind_exact_batch_merkle_root": true,
+    "transparency_inclusion_proof_signed_checkpoint_pinned_log_key_integrated_time_and_consistency_evidence_required": true,
+    "source_role_registry_keys_must_be_valid_for_entire_challenge_to_external_time_bracket": true,
+    "maximum_external_time_lag_after_last_envelope_seconds": 3600,
+    "proves_existence_no_later_than_external_time_not_exact_signature_creation_time": true,
+    "governed_challenge_provides_only_a_verified_not-before-bracket": true,
+    "historical_rows_preceding_challenge_do_not_gain_retroactive_point_in_time_proof": true,
+    "future_training_and_selection_envelopes_require_a_separate_causally_later_external_time_batch": true
+  },
+  "standards_basis": [
+    "https://www.rfc-editor.org/rfc/rfc3161",
+    "https://www.rfc-editor.org/rfc/rfc9162",
+    "https://in-toto.io/Statement/v1",
+    "https://github.com/secure-systems-lab/dsse/blob/master/envelope.md",
+    "https://slsa.dev/provenance/v1",
+    "https://www.w3.org/TR/prov-o/"
+  ],
+  "authorities": {
+    "real_source_artifact_package_present": false,
+    "real_source_envelopes_present": false,
+    "real_external_time_evidence_present": false,
+    "entsoe_schema_verified": false,
+    "entsoe_values_opened": false,
+    "same_snapshot_point_in_time_availability_proven": false,
+    "actual_signature_generation_time_verified": false,
+    "training_authorized": false,
+    "selection_authorized": false,
+    "model_input_authorized": false,
+    "candidate_assembly_authorized": false,
+    "promotion_authorized": false,
+    "production_authorized": false
+  },
+  "required_before_authoritative_use": [
+    "execute the separately authorized D231 metadata-only inventory and admit its exact result through the D232 gate",
+    "freeze exact physical-to-normalized ENTSO-E mappings and three bounded read-only query hashes",
+    "obtain a new explicit user authorization with a monetary estimate and currency cap before any Warehouse use",
+    "receive one complete immutable repo-local package without silent truncation",
+    "verify all batch artifact query schema statement lineage and content hashes before opening values",
+    "verify four D229-role DSSE source envelopes and one exact external-time batch root with four inclusion proofs",
+    "pass ENTSO-E units cadence coverage canonical joins quality and vintage point-in-time gates",
+    "treat the existing historical EEX snapshot and any backfilled ENTSO-E history as non-retroactive PIT evidence",
+    "establish prospective governed captures for future rolling-origin evidence",
+    "freeze a new independent future holdout distinct from sealed T057"
+  ]
+}

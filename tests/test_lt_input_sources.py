@@ -3,11 +3,13 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from io import BytesIO
 from pathlib import Path
 
 import pandas as pd
 import pytest
 
+import pfc_shaping.data.lt_input_sources as lt_input_sources_module
 from pfc_shaping.data.lt_input_sources import (
     PFC_LT_DATA_ROOT_ENV,
     LTInputPaths,
@@ -395,7 +397,11 @@ def test_parquet_receipt_represents_consumed_bytes(tmp_path: Path) -> None:
         verify_source_receipt(receipt)
 
 
-def _eligible_paths(*, role_overrides: dict[str, object] | None = None) -> LTInputPaths:
+def _eligible_paths(
+    *,
+    role_overrides: dict[str, object] | None = None,
+    schema_version: str | None = None,
+) -> LTInputPaths:
     available_at = "2026-07-13T10:00:00+00:00"
     roles = {
         role: {
@@ -403,10 +409,10 @@ def _eligible_paths(*, role_overrides: dict[str, object] | None = None) -> LTInp
             "calibration_eligible": True,
             "available_at_utc": available_at,
         }
-        for role in ("epex_ch", "epex_de", "entso", "hydro", "outages")
+        for role in ("epex_ch", "epex_de", "entso", "hydro", "epex_fr")
     }
     if role_overrides:
-        roles["outages"].update(role_overrides)
+        roles["epex_fr"].update(role_overrides)
     root = Path("C:/governed-test-root")
     return LTInputPaths(
         root=root,
@@ -417,29 +423,58 @@ def _eligible_paths(*, role_overrides: dict[str, object] | None = None) -> LTInp
         available_at_utc=available_at,
         files={role: root / f"{role}.parquet" for role in roles},
         expected_files=roles,
+        schema_version=schema_version or "lt_input_snapshot.v3",
     )
+
+
+@pytest.mark.parametrize("role", ["outages", "commodities"])
+def test_v3_consumption_rejects_roles_without_replay_governance(role: str) -> None:
+    paths = _eligible_paths()
+    paths.expected_files[role] = {
+        "path": f"{role}.parquet",
+        "calibration_eligible": True,
+        "available_at_utc": paths.available_at_utc,
+    }
+
+    with pytest.raises(ValueError, match="lack deterministic replay governance"):
+        validate_lt_input_consumption(
+            paths,
+            roles={"epex_ch", "epex_de", "entso", "hydro", role},
+            reference_timestamp="2026-07-13T11:00:00Z",
+        )
+
+
+def test_v2_consumption_is_archive_only_without_provider_raw_evidence() -> None:
+    paths = _eligible_paths(schema_version="lt_input_snapshot.v2")
+
+    with pytest.raises(ValueError, match="requires lt_input_snapshot.v3"):
+        validate_lt_input_consumption(
+            paths,
+            roles={"epex_ch", "epex_de", "entso", "hydro"},
+            reference_timestamp="2026-07-13T11:00:00Z",
+        )
 
 
 def test_consumed_optional_role_must_be_calibration_eligible_before_io() -> None:
     paths = _eligible_paths(role_overrides={"calibration_eligible": False})
 
-    with pytest.raises(ValueError, match="not calibration eligible: outages"):
+    with pytest.raises(ValueError, match="not calibration eligible: epex_fr"):
         validate_lt_input_consumption(
             paths,
-            roles={"epex_ch", "epex_de", "entso", "hydro", "outages"},
+            roles={"epex_ch", "epex_de", "entso", "hydro", "epex_fr"},
             reference_timestamp="2026-07-13T11:00:00Z",
         )
 
 
-def test_consumed_role_must_share_attested_acquisition_cutoff() -> None:
+def test_consumed_role_cannot_be_newer_than_snapshot_cutoff() -> None:
     paths = _eligible_paths(
         role_overrides={"available_at_utc": "2026-07-13T10:30:00Z"}
     )
 
-    with pytest.raises(ValueError, match="divergent acquisition cutoff: outages"):
+    with pytest.raises(ValueError, match="newer than snapshot cutoff: epex_fr"):
         validate_lt_input_consumption(
             paths,
-            roles={"epex_ch", "epex_de", "entso", "hydro", "outages"},
+            roles={"epex_ch", "epex_de", "entso", "hydro", "epex_fr"},
             reference_timestamp="2026-07-13T11:00:00Z",
         )
 
@@ -482,3 +517,50 @@ def test_consumed_roles_reject_malformed_config_sections(
 ) -> None:
     with pytest.raises(ValueError, match=rf"{label} must be a mapping"):
         consumed_lt_input_roles(config, available_roles=set())
+
+
+def test_quality_reader_rejects_hydro_row_bomb_before_dataframe_decode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    frame = pd.DataFrame(
+        {"fill_pct": 50.0},
+        index=pd.date_range("2000-01-03", periods=5_001, freq="W-MON", tz="UTC"),
+    )
+    buffer = BytesIO()
+    frame.to_parquet(buffer, index=True)
+    monkeypatch.setattr(
+        lt_input_sources_module.pd,
+        "read_parquet",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("DataFrame allocation must not occur")
+        ),
+    )
+
+    with pytest.raises(ValueError, match="parquet row budget is exceeded"):
+        lt_input_sources_module._quality_frame_metrics(
+            buffer.getvalue(),
+            role="hydro",
+            label="derived",
+        )
+
+
+def test_quality_reader_rejects_repeated_numeric_parquet_before_dataframe_decode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    frame = pd.DataFrame({"nested": [[value for value in range(10_000)]]})
+    buffer = BytesIO()
+    frame.to_parquet(buffer, index=False)
+    monkeypatch.setattr(
+        lt_input_sources_module.pd,
+        "read_parquet",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("DataFrame allocation must not occur")
+        ),
+    )
+
+    with pytest.raises(ValueError, match="flat and non-repeated"):
+        lt_input_sources_module._quality_frame_metrics(
+            buffer.getvalue(),
+            role="hydro",
+            label="derived",
+        )

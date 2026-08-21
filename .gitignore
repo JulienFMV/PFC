@@ -2,6 +2,8 @@
 __pycache__/
 *.py[cod]
 *.egg-info/
+.pytest_cache/
+.ruff_cache/
 dist/
 build/
 .eggs/
@@ -15,10 +17,13 @@ env/
 # Data caches (Parquet stores locaux — ne pas versionner)
 pfc_shaping/data/*.duckdb
 pfc_shaping/data/*.duckdb.wal
+pfc_shaping/data/*.parquet
 pfc_shaping/data/raw/
 pfc_shaping/data/raw/**/*.xlsx
 # Phase 10 root-level data caches (EPEX 2019-2025 + forwards as-of-vintage)
 data/*.parquet
+data/AFRY_*.xlsx
+/Price_Report_EEX.xlsx
 data/_cache/
 data/_h_cache/
 
@@ -29,6 +34,10 @@ data/_h_cache/
 
 # Model artifacts
 pfc_shaping/model/artifacts/
+*.safetensors
+
+# Local research source copies (keep citations and summaries in Markdown)
+docs/research/*.pdf
 
 # Output PFC — keep latest for dashboard demo
 pfc_shaping/output/*.csv
@@ -47,12 +56,16 @@ pfc_shaping/logs/*.log
 Thumbs.db
 
 # Eval / autoresearch logs
+eval.log
 eval_lear.log
 eval_stderr.log
 prod_stderr.log
+results.tsv
+results_lear.tsv
 
-# Output parquet (generated, not source)
-pfc_shaping/output/*.parquet
+# Runtime outputs (generated, never source)
+pfc_shaping/output/*
+!pfc_shaping/output/.gitkeep
 output/*.parquet
 output/*.csv
 output/*.xlsx

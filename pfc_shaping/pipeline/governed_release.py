@@ -39,6 +39,7 @@ from pfc_shaping.pipeline.governed_release_cli_contract import (
     ReleaseCliIdentityError,
     assert_installed_runtime_sealed,
     assert_phase_private_key_scope,
+    assert_production_transition_runtime_authorized,
 )
 from pfc_shaping.pipeline.process_identity import candidate_temporary_name
 from pfc_shaping.pipeline.promotion_contract import (
@@ -1408,7 +1409,9 @@ def _load_json(path: Path) -> dict[str, object]:
 
 def _assert_phase_identity(command: str) -> None:
     try:
-        if command != "status":
+        if command in {"promote", "rollback"}:
+            assert_production_transition_runtime_authorized()
+        elif command != "status":
             assert_installed_runtime_sealed()
         assert_phase_private_key_scope(command)
     except ReleaseCliIdentityError as exc:

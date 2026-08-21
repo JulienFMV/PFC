@@ -502,8 +502,15 @@ class ShapeHourly:
                     continue
 
                 if self.trend_per_hour_:
-                    # Apply horizon-dependent factors per timestamp
-                    years_ahead = (idx - reference_date).total_seconds() / (365.25 * 86400)
+                    # The hourly layer must be constant within its UTC parent hour;
+                    # only f_Q may create quarter-hour dispersion.  Evaluate the
+                    # slowly varying horizon term at the parent-hour boundary so a
+                    # 15-minute delivery grid cannot leak horizon drift into f_H.
+                    parent_hour = idx.floor("h")
+                    years_ahead = (
+                        (parent_hour - reference_date).total_seconds()
+                        / (365.25 * 86400)
+                    )
                     factors_arr = self.get(saison, type_jour)
                     trend = self.trend_per_hour_.get((saison, type_jour))
 

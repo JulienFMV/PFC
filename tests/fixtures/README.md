@@ -144,3 +144,28 @@ Schema matches `ShapeHourly.save()` at shape_hourly.py lines 443-455 (verified a
 **NOT verbatim artifacts from `main@28dfd65`** — hand-crafted to match schema.
 See generator docstring for caveat details and instructions for producing a verbatim
 legacy artifact if ever needed.
+
+## Parent-hour-v1 successor baselines
+
+The Phase 14 P1 intrahour-neutrality correction intentionally supersedes the
+historical numerical baseline without overwriting it. Horizon-dependent `f_H`
+is now evaluated at the UTC parent-hour boundary, so `f_H` is exactly constant
+across the four quarter-hours and `f_Q` remains the sole intrahour shape layer.
+
+Frozen successors generated on 2026-07-31:
+
+| Fixture | flag | SHA-256 | Size |
+|---|---:|---|---:|
+| `baseline_pfc_seed42_parent_hour_v1.parquet` | OFF | `852a64aa3d9b278c0e949ba276b58690f5fd05d201664f0b7bc1f9b866967afa` | 99,992 bytes |
+| `baseline_pfc_seed42_bowl_parent_hour_v1.parquet` | ON | `3dc1894d6de5d26e4e87a7be2df174ae008e8ac22d9f8c2a63c458df6b260d7f` | 99,992 bytes |
+
+The transition generator rejects index/schema drift, rejects changes outside
+`price_shape`, `f_H` and floating-point-ULP noise in `f_Q`, and requires the
+maximum within-parent-hour range of `f_H` to be exactly zero.
+
+```powershell
+build\pytest-runtime-v1\python.exe -I -B -m tests.fixtures._generate_parent_hour_baselines
+```
+
+The historical `baseline_pfc_seed42*.parquet` files remain unchanged for audit
+history and Phase 5 marker semantics.

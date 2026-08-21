@@ -97,19 +97,28 @@ def _scenario_lines(path: Path) -> list[str]:
     return lines
 
 
-def _validate_pfc(pfc: pd.DataFrame, *, args: argparse.Namespace) -> None:
-    expected_rows = max(int(args.horizon_days), 1) * 96
+def _validate_pfc(
+    pfc: pd.DataFrame,
+    *,
+    args: argparse.Namespace,
+    expected_index: pd.DatetimeIndex | None = None,
+) -> None:
+    if expected_index is None:
+        expected_rows = max(int(args.horizon_days), 1) * 96
+        expected_index = pd.date_range(
+            pd.Timestamp(args.start_date, tz="UTC"),
+            periods=expected_rows,
+            freq="15min",
+        )
+    else:
+        expected_index = pd.DatetimeIndex(expected_index)
+        expected_rows = len(expected_index)
     if len(pfc) != expected_rows:
         raise ValueError(f"PFC row count mismatch: expected {expected_rows}, got {len(pfc)}")
     if not isinstance(pfc.index, pd.DatetimeIndex):
         raise TypeError("PFC index must be a DatetimeIndex")
     if pfc.index.tz is None:
         raise ValueError("PFC index must be timezone-aware")
-    expected_index = pd.date_range(
-        pd.Timestamp(args.start_date, tz="UTC"),
-        periods=expected_rows,
-        freq="15min",
-    )
     if not pfc.index.equals(expected_index):
         raise ValueError("PFC index must be a complete 15-min UTC grid for the requested horizon")
     if not pfc.index.is_monotonic_increasing or not pfc.index.is_unique:

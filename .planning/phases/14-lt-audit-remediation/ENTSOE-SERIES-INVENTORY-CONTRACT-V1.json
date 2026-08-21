@@ -1,0 +1,87 @@
+{
+  "schema_version": "fmv_entsoe_series_inventory_contract.v1",
+  "status": "STATIC_BOUNDED_DIMENSION_INVENTORY_CONTRACT_NO_EXECUTION_AUTHORITY",
+  "decision": "D-20260806-243",
+  "purpose": "classify the real dev.gold ENTSO-E series families with one bounded dimension-only statement",
+  "source_query": {
+    "path": "docs/data/sql/entsoe_dev_gold_series_inventory.sql",
+    "sha256": "16a989d2b1528f79b3ecb7a2d9f8f221a6be67cc1c4d3c622516c8bd0dde95e7",
+    "statement_count": 1,
+    "source_table": "dev.gold.dimentsoeseries",
+    "fact_table_scan_count": 0,
+    "row_limit": 10001,
+    "maximum_admissible_signatures": 10000,
+    "executed_by_this_contract": false
+  },
+  "capture_preconditions": {
+    "warehouse_must_already_be_running": true,
+    "warehouse_start_authorized": false,
+    "europe_zurich_daily_reservation_required": true,
+    "maximum_capture_count_per_europe_zurich_day": 1,
+    "databricks_write_authorized": false
+  },
+  "output": {
+    "schema_version": "fmv_entsoe_series_dimension_inventory_capture.v1",
+    "exact_columns": [
+      "group_name",
+      "field_name",
+      "document_type",
+      "business_type",
+      "process_type",
+      "psr_type",
+      "from_zone",
+      "to_zone",
+      "unit",
+      "series_count",
+      "min_meta_load_timestamp_utc",
+      "max_meta_load_timestamp_utc",
+      "total_signature_count",
+      "total_series_count"
+    ],
+    "market_or_entsoe_fact_values_allowed": false,
+    "truncated_result_admissible": false,
+    "empty_result_admissible": false
+  },
+  "taxonomy": {
+    "required_groups": [
+      "actual_load",
+      "day_ahead_prices",
+      "generation_actual",
+      "generation_forecast",
+      "hydro_reservoir_storage",
+      "load_forecast",
+      "renewables_forecast_day_ahead",
+      "renewables_forecast_intraday",
+      "crossborder_physical_flows",
+      "scheduled_exchanges",
+      "ntc_day_ahead",
+      "ntc_month_ahead",
+      "ntc_year_ahead"
+    ],
+    "additional_high_value_groups": [
+      "generation_unavailability",
+      "network_unavailability",
+      "installed_generation_capacity",
+      "balancing_energy_prices",
+      "balancing_energy_volumes",
+      "imbalance_price",
+      "system_imbalance",
+      "reserve_capacity_procurement",
+      "reserve_capacity_prices",
+      "redispatch",
+      "countertrading",
+      "net_position",
+      "intraday_crosszonal_capacity"
+    ],
+    "literal_name_match_is_coverage_authority": false,
+    "owner_mapping_required_for_family_coverage": true
+  },
+  "authorities": {
+    "query_execution": false,
+    "logical_family_mapping": false,
+    "family_coverage": false,
+    "point_in_time_availability": false,
+    "model_input": false,
+    "production": false
+  }
+}

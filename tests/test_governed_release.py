@@ -1295,6 +1295,7 @@ def _candidate(root: Path, run_id: str):
                 "reference_timestamp": "2026-07-13T00:00:00+00:00",
                 "reference_timestamp_is_explicit": True,
                 "candidate_serialized_at_utc": "2026-07-13T00:01:00+00:00",
+                "run_started_at_utc": "2026-07-13T00:00:30+00:00",
                 "deterministic_artifacts": deterministic_artifacts,
                 "deterministic_artifacts_sha256": deterministic_sha256,
             }
@@ -1425,6 +1426,7 @@ def _bind_pre_run_fixture(
         "run_id": run_id,
         "as_of_utc": run["reference_timestamp"],
         "build_timestamp_utc": "2026-07-13T00:01:00+00:00",
+        "run_started_at_utc": "2026-07-13T00:01:00+00:00",
         "runtime": {
             "distribution": "fmv-pfc-lt",
             "version": __version__,

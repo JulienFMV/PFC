@@ -1,0 +1,386 @@
+name: publisher-runtime-v6
+
+on:
+  pull_request:
+    paths:
+      - ".dockerignore"
+      - ".github/workflows/publisher-runtime-v6.yml"
+      - "deploy/publisher/**"
+      - "pfc_shaping/**"
+      - "scripts/build_snapshot_publisher_runtime_closure.py"
+      - "scripts/build_snapshot_publisher_zipapp.py"
+      - "scripts/check_snapshot_publisher_container_context.py"
+      - "scripts/stage_snapshot_publisher_container_wheelhouse.py"
+      - "tests/test_snapshot_publisher_*.py"
+      - "uv.lock"
+  push:
+    branches: [main]
+    paths:
+      - ".dockerignore"
+      - ".github/workflows/publisher-runtime-v6.yml"
+      - "deploy/publisher/**"
+      - "pfc_shaping/**"
+      - "scripts/build_snapshot_publisher_runtime_closure.py"
+      - "scripts/build_snapshot_publisher_zipapp.py"
+      - "scripts/check_snapshot_publisher_container_context.py"
+      - "scripts/stage_snapshot_publisher_container_wheelhouse.py"
+      - "tests/test_snapshot_publisher_*.py"
+      - "uv.lock"
+  workflow_dispatch:
+    inputs:
+      build_container:
+        description: "Build a non-production Windows container proof"
+        required: true
+        default: false
+        type: boolean
+      base_image:
+        description: "Preloaded approved CPython Windows image with @sha256 digest"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publisher-runtime-v6-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  contract:
+    name: Fail-closed contract tests
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Select CPython
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.11.14"
+          cache: "pip"
+      - name: Install test-only tools
+        shell: pwsh
+        run: >-
+          python -m pip install --disable-pip-version-check
+          pytest==8.4.2 ruff==0.15.12
+      - name: Static checks
+        shell: pwsh
+        run: >-
+          python -m ruff check
+          scripts/check_snapshot_publisher_container_context.py
+          scripts/stage_snapshot_publisher_container_wheelhouse.py
+          tests/test_snapshot_publisher_container_contract.py
+      - name: Runtime and container contracts
+        shell: pwsh
+        run: >-
+          python -m pytest -q -p no:cacheprovider
+          tests/test_snapshot_publisher_runtime_closure.py
+          tests/test_snapshot_publisher_container_contract.py
+
+  container-proof:
+    name: Governed Windows container proof
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.build_container == true &&
+      github.ref == 'refs/heads/main'
+    needs: contract
+    runs-on: [self-hosted, Windows, X64, pfc-publisher-windows-docker]
+    environment: publisher-container-proof
+    timeout-minutes: 90
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Validate preloaded authorities
+        id: inputs
+        shell: pwsh
+        env:
+          BASE_IMAGE: ${{ inputs.base_image }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:BASE_IMAGE -cnotmatch '^[a-z0-9][a-z0-9._:/-]*@sha256:[0-9a-f]{64}$') {
+            throw 'base_image must be a canonical lowercase digest reference'
+          }
+          if (-not $env:PFC_APPROVED_PUBLISHER_WHEELHOUSE) {
+            throw 'runner must provide PFC_APPROVED_PUBLISHER_WHEELHOUSE'
+          }
+          if (-not $env:PFC_PUBLISHER_BUILD_PYTHON) {
+            throw 'runner must provide PFC_PUBLISHER_BUILD_PYTHON'
+          }
+          if ($env:PFC_PUBLISHER_BUILD_PYTHON_SHA256 -cnotmatch '^[0-9a-f]{64}$') {
+            throw 'runner must provide canonical PFC_PUBLISHER_BUILD_PYTHON_SHA256'
+          }
+          $wheelhouse = (Resolve-Path -LiteralPath $env:PFC_APPROVED_PUBLISHER_WHEELHOUSE).Path
+          if ($wheelhouse -match '[\x00-\x1f\x7f"]') {
+            throw 'approved wheelhouse path contains forbidden characters'
+          }
+          if (-not (Test-Path -LiteralPath $wheelhouse -PathType Container)) {
+            throw 'approved publisher wheelhouse is unavailable'
+          }
+          $buildPython = (Resolve-Path -LiteralPath $env:PFC_PUBLISHER_BUILD_PYTHON).Path
+          if ($buildPython -match '[\x00-\x1f\x7f"]' -or -not (Test-Path -LiteralPath $buildPython -PathType Leaf)) {
+            throw 'publisher build Python is invalid'
+          }
+          $buildPythonItem = Get-Item -LiteralPath $buildPython -Force
+          if ($buildPythonItem.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+            throw 'publisher build Python must not be a reparse point'
+          }
+          $buildPythonSha256 = (Get-FileHash -LiteralPath $buildPython -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($buildPythonSha256 -cne $env:PFC_PUBLISHER_BUILD_PYTHON_SHA256) {
+            throw 'publisher build Python differs from its protected digest'
+          }
+          $baseInspect = @(docker image inspect $env:BASE_IMAGE | ConvertFrom-Json)
+          if ($LASTEXITCODE -ne 0 -or $baseInspect.Count -ne 1) {
+            throw 'digest-pinned base image is not preloaded'
+          }
+          if ($baseInspect[0].Os -cne 'windows' -or $baseInspect[0].Architecture -cne 'amd64') {
+            throw 'publisher base image must be windows/amd64'
+          }
+          $baseVolumes = @()
+          if ($null -ne $baseInspect[0].Config.Volumes) {
+            $baseVolumes = @($baseInspect[0].Config.Volumes.PSObject.Properties)
+          }
+          if ($baseVolumes.Count -ne 0) {
+            throw 'publisher base image must not declare inherited volumes'
+          }
+          try {
+            $baseOsVersion = [Version]$baseInspect[0].OsVersion
+          } catch {
+            throw 'publisher base image OsVersion is unavailable or invalid'
+          }
+          $hostOsVersion = [Environment]::OSVersion.Version
+          if (
+            $baseOsVersion.Major -ne $hostOsVersion.Major -or
+            $baseOsVersion.Minor -ne $hostOsVersion.Minor -or
+            $baseOsVersion.Build -ne $hostOsVersion.Build
+          ) {
+            throw 'process isolation requires compatible host and base OsVersion builds'
+          }
+          $name = $env:BASE_IMAGE.Split('@', 2)[0]
+          $digest = $env:BASE_IMAGE.Split('@', 2)[1]
+          $lastSlash = $name.LastIndexOf('/')
+          $lastColon = $name.LastIndexOf(':')
+          if ($lastColon -gt $lastSlash) { $name = $name.Substring(0, $lastColon) }
+          $canonicalRepoDigest = "$name@$digest"
+          if ($canonicalRepoDigest -cnotin @($baseInspect[0].RepoDigests)) {
+            throw 'preloaded base image RepoDigests do not contain the requested digest'
+          }
+          "wheelhouse=$wheelhouse" >> $env:GITHUB_OUTPUT
+          "build_python=$buildPython" >> $env:GITHUB_OUTPUT
+          "build_python_sha256=$buildPythonSha256" >> $env:GITHUB_OUTPUT
+          "base_os_version=$($baseOsVersion.ToString())" >> $env:GITHUB_OUTPUT
+          "host_os_version=$($hostOsVersion.ToString())" >> $env:GITHUB_OUTPUT
+      - name: Stage only approved wheel archives
+        shell: pwsh
+        env:
+          WHEELHOUSE: ${{ steps.inputs.outputs.wheelhouse }}
+          BUILD_PYTHON: ${{ steps.inputs.outputs.build_python }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $buildRoot = Join-Path $env:GITHUB_WORKSPACE 'build'
+          if (Test-Path -LiteralPath $buildRoot) {
+            throw 'unowned publisher build workspace residue exists'
+          }
+          $null = [IO.Directory]::CreateDirectory($buildRoot)
+          $buildDirectory = Get-Item -LiteralPath $buildRoot -Force
+          if (-not $buildDirectory.PSIsContainer -or ($buildDirectory.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            throw 'publisher build workspace is not an ordinary directory'
+          }
+          $staging = Join-Path $buildRoot 'publisher-container-wheelhouse'
+          $manifest = Join-Path $buildRoot 'publisher-container-wheelhouse-manifest.json'
+          & $env:BUILD_PYTHON -m scripts.stage_snapshot_publisher_container_wheelhouse `
+            --source $env:WHEELHOUSE `
+            --output $staging `
+            --manifest-output $manifest
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build without network or mutable pull
+        shell: pwsh
+        env:
+          BASE_IMAGE: ${{ inputs.base_image }}
+          BUILD_PYTHON: ${{ steps.inputs.outputs.build_python }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $staging = Join-Path $env:GITHUB_WORKSPACE 'build\publisher-container-wheelhouse'
+          $manifest = Join-Path $env:GITHUB_WORKSPACE 'build\publisher-container-wheelhouse-manifest.json'
+          & $env:BUILD_PYTHON -m scripts.stage_snapshot_publisher_container_wheelhouse `
+            --audit `
+            --source $staging `
+            --manifest-output $manifest
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $iidfile = Join-Path $env:GITHUB_WORKSPACE 'build\publisher-container-image-id.txt'
+          if (Test-Path -LiteralPath $iidfile) { throw 'publisher image ID residue exists' }
+          docker build --network none --pull=false --isolation process `
+            --build-arg "PFC_PUBLISHER_BASE_IMAGE=$env:BASE_IMAGE" `
+            --file deploy/publisher/Dockerfile `
+            --iidfile $iidfile .
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $imageId = (Get-Content -LiteralPath $iidfile -Raw).Trim()
+          if ($imageId -cnotmatch '^sha256:[0-9a-f]{64}$') {
+            throw 'Docker did not return an immutable image ID'
+          }
+          docker image inspect $imageId | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw 'built image ID is unavailable' }
+          "PFC_CONTAINER_PROOF_IMAGE_ID=$imageId" >> $env:GITHUB_ENV
+      - name: Run read-only isolated smoke
+        shell: pwsh
+        run: |
+          $volume = "pfc-publisher-scratch-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          docker volume create $volume | Out-Null
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "PFC_CONTAINER_PROOF_SCRATCH_VOLUME=$volume" >> $env:GITHUB_ENV
+          docker run --rm --network none --read-only --isolation process `
+            --mount "type=volume,source=$volume,target=C:\pfc\scratch" `
+            $env:PFC_CONTAINER_PROOF_IMAGE_ID --help
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Record non-authorizing proof
+        shell: pwsh
+        env:
+          BASE_IMAGE: ${{ inputs.base_image }}
+        run: |
+          $inspect = docker image inspect $env:PFC_CONTAINER_PROOF_IMAGE_ID | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $inspect.Count -ne 1) { throw 'image inspection failed' }
+          $volumes = @()
+          if ($null -ne $inspect[0].Config.Volumes) {
+            $volumes = @($inspect[0].Config.Volumes.PSObject.Properties)
+          }
+          if ($volumes.Count -ne 0) { throw 'final image declares an implicit volume' }
+          if ($inspect[0].Config.User -cne 'ContainerUser') {
+            throw 'final image runtime user differs from the contract'
+          }
+          if ($inspect[0].Config.WorkingDir -cne 'C:\pfc') {
+            throw 'final image working directory differs from the contract'
+          }
+          $expectedEntrypoint = @(
+            'python.exe', '-I', '-S', '-B',
+            'C:\pfc\runtime\fmv-lt-snapshot-publisher.pyz'
+          )
+          if ((@($inspect[0].Config.Entrypoint) -join "`0") -cne ($expectedEntrypoint -join "`0")) {
+            throw 'final image entrypoint differs from the contract'
+          }
+          if (@($inspect[0].Config.Cmd).Count -ne 0) {
+            throw 'final image must not inherit default command arguments'
+          }
+          if (@($inspect[0].Config.Healthcheck.Test) -join ',' -cne 'NONE') {
+            throw 'final image healthcheck policy differs from one-shot contract'
+          }
+          $expectedLabels = [ordered]@{
+            'org.opencontainers.image.title' = 'FMV LT snapshot publisher'
+            'org.opencontainers.image.base.name' = $env:BASE_IMAGE
+            'org.opencontainers.image.vendor' = 'FMV SA'
+            'org.opencontainers.image.licenses' = 'LicenseRef-Proprietary'
+            'org.fmv.pfc.job-kind' = 'one-shot'
+            'org.fmv.pfc.production-authorization' = 'false'
+          }
+          foreach ($entry in $expectedLabels.GetEnumerator()) {
+            if ($inspect[0].Config.Labels.($entry.Key) -cne $entry.Value) {
+              throw "final image label differs from the contract: $($entry.Key)"
+            }
+          }
+          $contextRaw = docker run --rm --network none --read-only --isolation process `
+            --entrypoint powershell.exe $env:PFC_CONTAINER_PROOF_IMAGE_ID `
+            -NoLogo -NoProfile -NonInteractive -Command `
+            "[Console]::Out.Write((Get-Content -LiteralPath 'C:\pfc\runtime\container-build-manifest.json' -Raw))"
+          if ($LASTEXITCODE -ne 0) { throw 'container manifest extraction failed' }
+          $context = $contextRaw | ConvertFrom-Json
+          [ordered]@{
+            schema_version = 'fmv_lt_snapshot_publisher_container_ci_proof.v1'
+            status = 'PASS'
+            source_commit = $env:GITHUB_SHA
+            base_image = $env:BASE_IMAGE
+            local_image_id = $inspect[0].Id
+            isolation_mode = 'process'
+            base_os_version = '${{ steps.inputs.outputs.base_os_version }}'
+            host_os_version = '${{ steps.inputs.outputs.host_os_version }}'
+            build_python_sha256 = '${{ steps.inputs.outputs.build_python_sha256 }}'
+            runtime_user = $inspect[0].Config.User
+            entrypoint = @($inspect[0].Config.Entrypoint)
+            declared_volumes = @()
+            contract_labels = $expectedLabels
+            artifact_sha256 = $context.artifact_sha256
+            dependency_tree_sha256 = $context.dependency_tree_sha256
+            operations_contract_sha256 = $context.operations_contract_sha256
+            wheelhouse_staging_manifest_sha256 = $context.wheelhouse_staging_manifest_sha256
+            publisher_bundle_private_key_block_scan_status = $context.publisher_bundle_private_key_block_scan_status
+            base_image_secret_scan_status = $context.base_image_secret_scan_status
+            registry_image_digest = 'MISSING_NOT_PUSHED'
+            sbom_status = 'MISSING_REQUIRED_EXTERNAL'
+            release_attestation_status = 'MISSING_REQUIRED_EXTERNAL'
+            production_authorization = $false
+          } | ConvertTo-Json -Compress | Set-Content -NoNewline -Encoding ascii container-proof.json
+      - name: Retain CI proof only
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: publisher-container-proof-${{ github.sha }}
+          path: container-proof.json
+          if-no-files-found: error
+          retention-days: 14
+      - name: Remove local proof image
+        if: always()
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:PFC_CONTAINER_PROOF_IMAGE_ID) {
+            if ($env:PFC_CONTAINER_PROOF_IMAGE_ID -cnotmatch '^sha256:[0-9a-f]{64}$') {
+              throw 'refusing to remove a noncanonical publisher image ID'
+            }
+            docker image rm --force $env:PFC_CONTAINER_PROOF_IMAGE_ID
+            if ($LASTEXITCODE -ne 0) { throw 'publisher image cleanup failed' }
+          }
+          if ($env:PFC_CONTAINER_PROOF_SCRATCH_VOLUME) {
+            if ($env:PFC_CONTAINER_PROOF_SCRATCH_VOLUME -cnotmatch '^pfc-publisher-scratch-[0-9]+-[0-9]+$') {
+              throw 'refusing to remove a noncanonical publisher scratch volume'
+            }
+            docker volume rm --force $env:PFC_CONTAINER_PROOF_SCRATCH_VOLUME
+            if ($LASTEXITCODE -ne 0) { throw 'publisher scratch cleanup failed' }
+          }
+          $staging = [IO.Path]::GetFullPath(
+            (Join-Path $env:GITHUB_WORKSPACE 'build\publisher-container-wheelhouse')
+          )
+          $approvedParent = [IO.Path]::GetFullPath((Join-Path $env:GITHUB_WORKSPACE 'build'))
+          if (-not $staging.StartsWith($approvedParent + [IO.Path]::DirectorySeparatorChar)) {
+            throw 'refusing to clean publisher wheel staging outside workspace build'
+          }
+          if (Test-Path -LiteralPath $approvedParent) {
+            $buildDirectory = Get-Item -LiteralPath $approvedParent -Force
+            if (-not $buildDirectory.PSIsContainer -or ($buildDirectory.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+              throw 'publisher build workspace is not an ordinary directory'
+            }
+          }
+          if (Test-Path -LiteralPath $staging) {
+            $directory = Get-Item -LiteralPath $staging -Force
+            if (-not $directory.PSIsContainer -or ($directory.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+              throw 'publisher wheel staging is not an ordinary directory'
+            }
+            $entries = @(Get-ChildItem -LiteralPath $staging -Force)
+            foreach ($entry in $entries) {
+              if ($entry.PSIsContainer -or ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+                throw 'publisher wheel staging contains a linked or nested entry'
+              }
+            }
+            foreach ($entry in $entries) {
+              Remove-Item -LiteralPath $entry.FullName -Force -ErrorAction Stop
+            }
+            Remove-Item -LiteralPath $staging -Force -ErrorAction Stop
+          }
+          foreach ($name in @(
+            'publisher-container-wheelhouse-manifest.json',
+            'publisher-container-image-id.txt'
+          )) {
+            $path = Join-Path $approvedParent $name
+            if (Test-Path -LiteralPath $path) {
+              $entry = Get-Item -LiteralPath $path -Force
+              if ($entry.PSIsContainer -or ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+                throw "publisher cleanup target is not an ordinary file: $name"
+              }
+              Remove-Item -LiteralPath $path -Force -ErrorAction Stop
+            }
+          }
+          if (Test-Path -LiteralPath $approvedParent) {
+            if (@(Get-ChildItem -LiteralPath $approvedParent -Force).Count -ne 0) {
+              throw 'publisher build workspace contains unexpected cleanup residue'
+            }
+            Remove-Item -LiteralPath $approvedParent -Force -ErrorAction Stop
+          }

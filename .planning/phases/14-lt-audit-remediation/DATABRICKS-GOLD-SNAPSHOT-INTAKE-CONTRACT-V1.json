@@ -1,0 +1,249 @@
+{
+  "schema_version": "fmv_databricks_gold_snapshot_intake_contract.v1",
+  "decision": "D-20260806-293",
+  "status": "LOCAL_GOLD_EXPORT_INTEGRITY_GATE_READY_NO_REAL_EXPORT",
+  "purpose": "Verify one immutable governed Gold export and its mandatory ENTSO-E coverage evidence locally before any business-value profiling or model use.",
+  "input_bindings": {
+    "data_engineer_request_relative_path": ".planning/phases/14-lt-audit-remediation/DATABRICKS-SPOT-WEATHER-SWISSGRID-DATA-ENGINEER-REQUEST-20260806.md",
+    "data_engineer_request_sha256": "1ab1f396fb37455d6b91f1bd2c374870dc3910214d894294e4e8c81397056b6b",
+    "entsoe_request_relative_path": ".planning/phases/14-lt-audit-remediation/ENTSOE-REAL-MAPPING-DATA-ENGINEER-REQUEST-20260806.md",
+    "entsoe_request_sha256": "65116313a73fca108d1e8e1a406119513a689f5f14c65772764ab58371d89828",
+    "cost_preflight_contract_relative_path": ".planning/phases/14-lt-audit-remediation/DATABRICKS-PFC-SOURCE-COST-PREFLIGHT-CONTRACT-V1.json",
+    "cost_preflight_contract_sha256": "0beac8ef83e31f039b7e862987785694889ec5f946b082342931cfa4bf1a768c",
+    "cost_preflight_contract_content_id": "4d8857e09eb4fd2acadcd51faa9110a3e406cd1a04afea439d7f10c6e9da8771"
+  },
+  "gold_source_contract": {
+    "catalog": "prd",
+    "schema": "gold",
+    "package_root": "build/databricks-exports/<snapshot_id>",
+    "exact_artifacts": [
+      {
+        "role": "spot_product_dimension",
+        "source_tables": ["prd.gold.dimspotproduct"],
+        "relative_path": "spot_product_dimension.parquet",
+        "allow_empty": false
+      },
+      {
+        "role": "spot_price_interval",
+        "source_tables": ["prd.gold.factspotpriceinterval"],
+        "relative_path": "spot_price_interval.parquet",
+        "allow_empty": false
+      },
+      {
+        "role": "weather_measurement",
+        "source_tables": ["prd.gold.factweather"],
+        "relative_path": "weather_measurement.parquet",
+        "allow_empty": false
+      },
+      {
+        "role": "weather_forecast_meteoswiss_vintages",
+        "source_tables": ["prd.gold.factweatherforecasthistms"],
+        "relative_path": "weather_forecast_meteoswiss_vintages.parquet",
+        "allow_empty": false
+      },
+      {
+        "role": "weather_forecast_openmeteo_vintages",
+        "source_tables": ["prd.gold.factweatherforecasthistom"],
+        "relative_path": "weather_forecast_openmeteo_vintages.parquet",
+        "allow_empty": false
+      },
+      {
+        "role": "swissgrid_balancing",
+        "source_tables": ["prd.gold.factswissgridbalancingquarterhourly"],
+        "relative_path": "swissgrid_balancing.parquet",
+        "allow_empty": false
+      },
+      {
+        "role": "swissgrid_tender",
+        "source_tables": ["prd.gold.factswissgridtenderofferresult"],
+        "relative_path": "swissgrid_tender.parquet",
+        "allow_empty": false
+      },
+      {
+        "role": "entsoe_series_dimension",
+        "source_tables": ["prd.gold.dimentsoeseries"],
+        "relative_path": "entsoe_series_dimension.parquet",
+        "allow_empty": false
+      },
+      {
+        "role": "entsoe_series_resolution_history",
+        "source_tables": ["prd.gold.dimentsoeseriesresolutionhistory"],
+        "relative_path": "entsoe_series_resolution_history.parquet",
+        "allow_empty": false
+      },
+      {
+        "role": "entsoe_zone_history",
+        "source_tables": ["prd.gold.dimentsoezonehistory"],
+        "relative_path": "entsoe_zone_history.parquet",
+        "allow_empty": false
+      },
+      {
+        "role": "entsoe_latest",
+        "source_tables": ["prd.gold.factentsoetimeserieslatest"],
+        "relative_path": "entsoe_latest.parquet",
+        "allow_empty": false
+      },
+      {
+        "role": "entsoe_vintages",
+        "source_tables": ["prd.gold.factentsoetimeseriesvintages"],
+        "relative_path": "entsoe_vintages.parquet",
+        "allow_empty": false
+      },
+      {
+        "role": "entsoe_series_quality",
+        "source_tables": [
+          "prd.gold.dimentsoeseries",
+          "prd.gold.dimentsoeseriesresolutionhistory",
+          "prd.gold.factentsoetimeserieslatest",
+          "prd.gold.factentsoetimeseriesvintages"
+        ],
+        "relative_path": "entsoe_series_quality.parquet",
+        "allow_empty": false
+      },
+      {
+        "role": "entsoe_gap_report",
+        "source_tables": [
+          "prd.gold.dimentsoeseriesresolutionhistory",
+          "prd.gold.factentsoetimeserieslatest",
+          "prd.gold.factentsoetimeseriesvintages"
+        ],
+        "relative_path": "entsoe_gap_report.parquet",
+        "allow_empty": true
+      },
+      {
+        "role": "entsoe_source_reconciliation",
+        "source_tables": [
+          "prd.gold.dimentsoeseries",
+          "prd.gold.factentsoetimeserieslatest",
+          "prd.gold.factentsoetimeseriesvintages"
+        ],
+        "relative_path": "entsoe_source_reconciliation.parquet",
+        "allow_empty": false
+      },
+      {
+        "role": "entsoe_excluded_series",
+        "source_tables": [
+          "prd.gold.dimentsoeseries",
+          "prd.gold.factentsoetimeserieslatest",
+          "prd.gold.factentsoetimeseriesvintages"
+        ],
+        "relative_path": "entsoe_excluded_series.parquet",
+        "allow_empty": true
+      }
+    ],
+    "exact_companions": [
+      {
+        "role": "cost_receipt",
+        "relative_path": "cost_receipt.json",
+        "media_type": "application/json"
+      },
+      {
+        "role": "source_semantics",
+        "relative_path": "source_semantics.md",
+        "media_type": "text/markdown"
+      },
+      {
+        "role": "entsoe_quality_summary",
+        "relative_path": "entsoe_quality_summary.json",
+        "media_type": "application/json"
+      },
+      {
+        "role": "entsoe_family_inventory",
+        "relative_path": "entsoe_family_inventory.json",
+        "media_type": "application/json"
+      }
+    ]
+  },
+  "manifest_policy": {
+    "schema_version": "fmv_databricks_gold_snapshot_manifest.v1",
+    "evidence_class": "GOVERNED_DATABRICKS_GOLD_EXPORT_CANDIDATE",
+    "snapshot_id_derivation": "SHA256_CANONICAL_MANIFEST_WITHOUT_SNAPSHOT_ID",
+    "total_size_bytes_scope": "SUM_OF_ARTIFACT_AND_COMPANION_SIZE_BYTES",
+    "exact_top_level_fields": [
+      "schema_version",
+      "evidence_class",
+      "snapshot_id",
+      "export_batch_id",
+      "created_at_utc",
+      "source_catalog",
+      "source_schema",
+      "request_sha256",
+      "entsoe_request_sha256",
+      "cost_preflight_contract_content_id",
+      "total_size_bytes",
+      "companions",
+      "artifacts",
+      "execution",
+      "authorities"
+    ],
+    "exact_companion_fields": [
+      "role",
+      "relative_path",
+      "media_type",
+      "sha256",
+      "size_bytes"
+    ],
+    "exact_artifact_fields": [
+      "role",
+      "source_tables",
+      "format",
+      "relative_path",
+      "sha256",
+      "size_bytes",
+      "row_count",
+      "column_count",
+      "row_group_count",
+      "schema_sha256"
+    ],
+    "format": "PARQUET",
+    "minimum_columns_per_artifact": 1,
+    "maximum_manifest_bytes": 2097152,
+    "maximum_companion_bytes": 1048576,
+    "parquet_schema_sha256_derivation": "SHA256_CANONICAL_JSON_ARRAY_OF_NAME_TYPE_NULLABLE",
+    "flat_non_repeated_parquet_schema_required": true,
+    "unexpected_package_entries_allowed": false,
+    "exact_execution": {
+      "databricks_write_count": 0,
+      "source_table_mutation_count": 0
+    },
+    "exact_authorities": {
+      "source_authenticity_verified": false,
+      "cost_approval_verified_by_local_validator": false,
+      "semantic_quality_verified": false,
+      "content_quality_verified": false,
+      "point_in_time_authorized": false,
+      "model_input_authorized": false,
+      "model_selection_authorized": false,
+      "candidate_authorized": false,
+      "promotion_authorized": false,
+      "production_authorized": false
+    }
+  },
+  "execution": {
+    "databricks_connection_count": 0,
+    "databricks_statement_count": 0,
+    "business_value_row_count_opened": 0,
+    "warehouse_start_count": 0,
+    "databricks_write_count": 0,
+    "network_call_count": 0,
+    "h_drive_access_count": 0,
+    "remote_write_count": 0
+  },
+  "authorities": {
+    "local_validator_implemented": true,
+    "real_export_received": false,
+    "real_export_byte_integrity": false,
+    "source_authenticity": false,
+    "cost_approval": false,
+    "semantic_quality": false,
+    "content_quality": false,
+    "point_in_time": false,
+    "predictive_value": false,
+    "model_input": false,
+    "model_selection": false,
+    "candidate": false,
+    "ompex_superiority": false,
+    "promotion": false,
+    "production": false
+  }
+}

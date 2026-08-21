@@ -92,6 +92,59 @@ child, for example `<FMV_DATA_ROOT>/entsoe`.
   managed identity, least-privilege read/write roles, retention, backup,
   monitoring and signed promotion evidence.
 
+## Current Databricks layer contract - 2026-08-21
+
+Layer choice is role-specific rather than globally Gold-only:
+
+- EEX forward, spot, weather and Swissgrid serving inputs come from governed
+  Gold tables.
+- ENTSO-E Gold `DimEntsoeSeries` and `FactEntsoeTimeSeriesLatest` are the
+  current serving layer.
+- Gold `BridgeEntsoeSeriesResources` is a compact current-state enrichment. It
+  does not carry historical resource mappings.
+- Silver `ge_power_entsoe_time_series_vintages` is the canonical ENTSO-E PIT
+  history because it retains revisions, availability and `resource_details` at
+  vintage grain.
+- The legacy duplicate Gold ENTSO-E vintage fact is not a required consumer
+  source and must not be treated as maintained history.
+- LSEG `continuous_forward/CHE` is exported only as a bounded external
+  benchmark. It has no monthly-level, training or promotion authority.
+
+The exact intake contract is
+`docs/data/DATABRICKS-LT-SNAPSHOT-INTAKE.md`.
+
+## ENTSO-E readiness update - 2026-08-05
+
+The preferred reusable local import
+`pfc-ct-data-20260522-v3-inventory` is now profiled by
+`pfc_shaping.validation.entsoe_local_readiness`. Its exact archive hashes pass,
+but the quality verdict is
+`FAIL_LOCAL_SCHEMA_OR_CONSISTENCY_NO_GO_EMPIRICAL_USE`.
+
+The local import is useful only for schema and pipeline tooling. It is not a
+substitute for governed Databricks evidence:
+
+- its manifest explicitly declares `calibration_eligible=false`,
+  `FORBIDDEN_UNTIL_GOVERNED_IMPORT` and
+  `UNVERIFIED_MULTI_FILE_IMPORT`;
+- forecast files do not carry `as_of_utc`;
+- raw series identity, unit, native cadence, provider document and revision
+  lineage cannot be replayed;
+- neighbour actuals, physical flows, scheduled exchanges and raw NTC cover
+  only about 55 days, which is insufficient for seasonal LT diagnostics;
+- the combined and dedicated fundamentals views disagree on 11 series, while
+  the border projection is byte-semantically coherent.
+
+The selected local diagnostic bundle is
+`build/entsoe-local-readiness/2026-08-05/audits/1bc0d85177e8f98d2703d98ac9d37d3a063a4f262eb5fa74325ae0d5a22a8e77`.
+The former V1 intake contract remains historical design evidence but its
+Gold-only vintage assumption is superseded by
+`docs/data/DATABRICKS-LT-SNAPSHOT-INTAKE.md`. The current contract still
+requires native-resolution UTC series, explicit units, immutable vintages,
+per-series gaps and hashes. It forbids implicit upsampling, forward filling and
+retrospective backfill with unknown availability from being presented as PIT
+truth.
+
 ## Migration
 
 `scripts/materialize_shared_data_views.py` copies the existing LT pointer bytes

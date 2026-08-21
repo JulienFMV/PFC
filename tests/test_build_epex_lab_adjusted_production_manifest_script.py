@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import json
 import hashlib
+import json
+from pathlib import Path
 
 import pandas as pd
 import pytest
@@ -212,9 +213,9 @@ def _write_locked_holdout(tmp_path, *, passed: bool = True, schema: str = "run")
     audit = tmp_path / "locked_holdout_audit.json"
     _write_json(audit, _passing_audit(identity=identity, backtest=backtest, passed=passed))
     payload = {
-        "schema_version": "epex_lab_locked_holdout_audit.v1"
+        "schema_version": "epex_lab_locked_holdout_audit.v2"
         if schema == "audit"
-        else "epex_lab_locked_holdout_run.v1",
+        else "epex_lab_locked_holdout_run.v2",
         "status": "LOCKED_HOLDOUT_PASS" if passed else "WAITING_FOR_FULL_SPOT_COVERAGE",
         "benchmark_policy": "locked_future_no_ompex_holdout",
         "expected_plan_json_sha256": identity["plan_json_sha256"],
@@ -298,7 +299,7 @@ def _ready_coverage(*, passed: bool = True, identity: dict):
 
 def _passing_backtest(*, passed: bool = True):
     return {
-        "schema_version": "epex_shape_lab_spot_backtest.v1",
+        "schema_version": "epex_shape_lab_spot_backtest.v3",
         "status": "DIAGNOSTIC_PASS" if passed else "DIAGNOSTIC_FAIL",
         "read_only": True,
         "promotion_gate": False,
@@ -309,14 +310,24 @@ def _passing_backtest(*, passed: bool = True):
         "ompex_used_in_selection": False,
         "ompex_used_in_backtest": False,
         "strict_lab_gate_pass": passed,
+        "strict_lab_checks": {
+            "rolling_folds_unique_ordered_cutoffs": passed,
+            "rolling_folds_non_overlapping_evaluations": passed,
+        },
     }
 
 
 def _passing_audit(*, identity: dict, backtest: Path, passed: bool = True):
     return {
-        "schema_version": "epex_lab_locked_holdout_audit.v1",
+        "schema_version": "epex_lab_locked_holdout_audit.v2",
         "status": "LOCKED_HOLDOUT_PASS" if passed else "NO_GO_LOCKED_HOLDOUT_FAIL",
         "holdout_pass": passed,
+        "checks": {
+            "rolling_folds_unique_ordered_cutoffs_independently_replayed": passed,
+            "rolling_folds_non_overlapping_evaluations_independently_replayed": passed,
+            "rolling_metrics_independently_recomputed": passed,
+            "rolling_bucket_metrics_independently_recomputed": passed,
+        },
         "promotion_gate": False,
         "production_approved": False,
         "ompex_used_in_model": False,

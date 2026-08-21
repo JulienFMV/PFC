@@ -5,7 +5,8 @@ Wraps the three manual steps of a real (parquet) scorecard run into a single
 terminal entrypoint:
 
     1. Bootstrap ``data/epex_hourly.parquet`` (CH day-ahead, hourly native) from
-       the git-tracked ``pfc_shaping/data/epex_15min.parquet`` if it is missing.
+       the local ignored ``pfc_shaping/data/epex_15min.parquet`` if it is
+       available.
        The 15min cache is the hourly price ffill-upsampled, so a downsampling
        ``resample('1h').mean()`` recovers the native hourly series exactly
        (without the N x4 inflation that would bias the Plan 10-03 stat tests).
@@ -43,7 +44,7 @@ FORWARDS_REL = "data/forwards_history_phase10.parquet"
 
 
 def bootstrap_epex_hourly(force: bool = False) -> bool:
-    """Reconstruct data/epex_hourly.parquet from the tracked 15min CH cache.
+    """Reconstruct data/epex_hourly.parquet from the local 15min CH cache.
 
     Returns True if the file was (re)written, False if it already existed and
     ``force`` was not set.
@@ -59,8 +60,8 @@ def bootstrap_epex_hourly(force: bool = False) -> bool:
     src = _REPO_ROOT / EPEX_15MIN_REL
     if not src.exists():
         raise FileNotFoundError(
-            f"Cannot bootstrap {EPEX_HOURLY_REL}: tracked source {EPEX_15MIN_REL} "
-            f"is missing."
+            f"Cannot bootstrap {EPEX_HOURLY_REL}: governed local source "
+            f"{EPEX_15MIN_REL} is missing."
         )
 
     series = pd.read_parquet(src)["price_eur_mwh"]

@@ -1,0 +1,75 @@
+{
+  "schema_version": "fmv_lt_provider_verifier_runtime.v1",
+  "artifact": "fmv_lt_provider_verifier_artifact.v1",
+  "delivery_model": "ISOLATED_ZIPAPP_WITH_CONTENT_ADDRESSED_DEPENDENCY_CLOSURE",
+  "artifact_contains_dependencies": false,
+  "python": {
+    "implementation": "CPython",
+    "version": "3.11.*",
+    "abi": "cp311",
+    "binding": "INJECT_EXACT_RUNTIME_FINGERPRINT_AT_BUILD"
+  },
+  "launcher_policy": {
+    "required_invocation": "python.exe -I -S -B artifact.pyz",
+    "isolated": true,
+    "no_site": true,
+    "ignore_python_environment": true,
+    "safe_path": true,
+    "dont_write_bytecode": true
+  },
+  "dependency_loading_policy": {
+    "verified_source_root_imported": false,
+    "capture_mode": "PROCESS_PRIVATE_EXACT_BYTE_COPY",
+    "source_revalidation": "POST_CAPTURE_FULL_TREE",
+    "captured_tree_reverification": true,
+    "captured_distribution_reverification": true,
+    "capture_cleanup": "SUPERVISING_PARENT_AFTER_WORKER_EXIT",
+    "artifact_import_mode": "PROCESS_PRIVATE_EXACT_BYTE_COPY",
+    "supervisor_capability": "ONE_SHOT_TOKEN_PARENT_PID_SOURCE_BYTES_AND_GOVERNED_ROOT_BOUND",
+    "windows_process_tree": "CREATE_SUSPENDED_ASSIGN_KILL_ON_JOB_CLOSE_THEN_RESUME",
+    "worker_environment": "MINIMAL_ALLOWLIST_NO_CALLER_SECRETS",
+    "worker_timeout_seconds": 900,
+    "host_read_only_attestation": "REQUIRED_EXTERNAL_SIGNED_ATTESTATION",
+    "host_capture_isolation": "DEDICATED_IDENTITY_NO_UNTRUSTED_COPROCESS_SAME_TOKEN"
+  },
+  "dependency_closure": {
+    "binding": "INJECT_EXACT_TREE_SHA256_AT_BUILD",
+    "provenance_binding": "INJECT_VERIFIED_UV_LOCK_WHEEL_RECEIPT_AT_BUILD",
+    "root_environment": "PFC_LT_VERIFIER_DEPENDENCY_ROOT",
+    "pth_files": "FORBIDDEN",
+    "bytecode_files": "FORBIDDEN",
+    "filesystem_links": "FORBIDDEN",
+    "extra_files_or_distributions": "FORBIDDEN"
+  },
+  "locked_distributions": [
+    {"name": "cffi", "version": "2.1.0"},
+    {"name": "cryptography", "version": "47.0.0"},
+    {"name": "et-xmlfile", "version": "2.0.0"},
+    {"name": "numpy", "version": "2.0.2"},
+    {"name": "openpyxl", "version": "3.1.5"},
+    {"name": "pandas", "version": "2.3.3"},
+    {"name": "pyarrow", "version": "21.0.0"},
+    {"name": "pycparser", "version": "3.0"},
+    {"name": "python-dateutil", "version": "2.9.0.post0"},
+    {"name": "pytz", "version": "2026.2"},
+    {"name": "PyYAML", "version": "6.0.3"},
+    {"name": "six", "version": "1.17.0"},
+    {"name": "tzdata", "version": "2026.3"}
+  ],
+  "source_lock": {
+    "path": "uv.lock",
+    "sha256": "efcea25267644da75c8736b3ede0dfaaf4b6ee8e58b982a61e87edb1064eb5d6"
+  },
+  "installation_policy": {
+    "network_access": "DENIED",
+    "dependency_source": "FMV_APPROVED_HASH_VERIFIED_WHEELHOUSE",
+    "exact_versions_required": true,
+    "isolated_launcher_required": true,
+    "content_addressed_dependency_closure_required": true,
+    "target_platform_wheel_attestation": "REQUIRED_EXTERNAL_SIGNED_ATTESTATION",
+    "sbom": "REQUIRED_EXTERNAL_SIGNED_ATTESTATION",
+    "release_attestation": "REQUIRED_EXTERNAL_SIGNED_ATTESTATION"
+  },
+  "authority_class": "READ_ONLY_PROVIDER_EVIDENCE_VERIFICATION_LOCAL_NO_GO",
+  "production_authorization": false
+}

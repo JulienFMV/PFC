@@ -1,0 +1,220 @@
+{
+  "schema_version": "fmv_entsoe_normalized_quality_profile_contract.v1",
+  "status": "STATIC_OFFLINE_NORMALIZED_QUALITY_CONTRACT_NO_MODEL_AUTHORITY",
+  "purpose": "profile hash-admitted normalized ENTSO-E artifacts for structural quality, temporal leakage and model-readiness gaps without Databricks or empirical substitution",
+  "input_bindings": {
+    "governed_acquisition_package_decision": "D-20260805-233",
+    "governed_acquisition_package_proof_content_id": "314ec85590c787874e2844d7db085236144c601681a5d1722f2735e6b1219d53",
+    "physical_mapping_compiler_decision": "D-20260805-234",
+    "physical_mapping_compiler_proof_content_id": "bb7ea1894463cb2c5fc30287d2239f0285cd6a74e901ab51a2f9de7e6794b766",
+    "external_time_batch_decision": "D-20260805-235",
+    "external_time_batch_proof_content_id": "93504d69834b299ce361352adce433509cf84bce0fbbb940be00a9bd59616ff1",
+    "bounded_execution_receipt_decision": "D-20260805-236",
+    "bounded_execution_receipt_proof_content_id": "772da4e0b22540bf22e1715ca146cc0a59adf0c7a9ec508e5a893d8495539247",
+    "rfc3161_request_der_decision": "D-20260805-237",
+    "rfc3161_request_der_proof_content_id": "53e2222392f71541d28e05e1dfc912361c02003b4278f2770109827319d4e9c1",
+    "daily_capture_reservation_decision": "D-20260805-238",
+    "daily_capture_reservation_proof_content_id": "2b9f6c513e0382e685bee78fb02d6c071a6954a26e715c5784fb28efec878aa8",
+    "entsoe_intake_contract_content_id": "75cb7e9f5d4cedb55e31fbd26b0bdcdf4ff629caf641c984cfec3fc6510b2a60"
+  },
+  "accepted_evidence_classes": [
+    "SYNTHETIC_TEST_ONLY",
+    "REAL_HASH_ADMITTED_ARTIFACTS"
+  ],
+  "normalized_roles": {
+    "series_dimension": {
+      "grain": [
+        "series_id"
+      ],
+      "exact_fields": [
+        "series_id",
+        "group_name",
+        "field_name",
+        "from_zone",
+        "to_zone",
+        "unit",
+        "native_resolution",
+        "source_endpoint",
+        "document_id"
+      ]
+    },
+    "latest_values": {
+      "grain": [
+        "series_id",
+        "target_ts_utc"
+      ],
+      "exact_fields": [
+        "series_id",
+        "target_ts_utc",
+        "value",
+        "is_historical",
+        "quality_flag",
+        "revision_number",
+        "meta_load_timestamp_utc"
+      ]
+    },
+    "vintage_values": {
+      "grain": [
+        "series_id",
+        "target_ts_utc",
+        "as_of_utc"
+      ],
+      "exact_fields": [
+        "series_id",
+        "target_ts_utc",
+        "as_of_utc",
+        "value",
+        "quality_flag",
+        "revision_number",
+        "meta_load_timestamp_utc"
+      ]
+    }
+  },
+  "dimension_contract": {
+    "required_groups": [
+      "actual_load",
+      "day_ahead_prices",
+      "generation_actual",
+      "generation_forecast",
+      "hydro_reservoir_storage",
+      "load_forecast",
+      "renewables_forecast_day_ahead",
+      "renewables_forecast_intraday",
+      "crossborder_physical_flows",
+      "scheduled_exchanges",
+      "ntc_day_ahead",
+      "ntc_month_ahead",
+      "ntc_year_ahead"
+    ],
+    "required_borders": [
+      "CH-DE",
+      "CH-FR",
+      "CH-IT",
+      "CH-AT"
+    ],
+    "crossborder_groups_requiring_each_border": [
+      "crossborder_physical_flows",
+      "scheduled_exchanges",
+      "ntc_day_ahead",
+      "ntc_month_ahead",
+      "ntc_year_ahead"
+    ],
+    "required_generation_actual_fields": [
+      "solar",
+      "wind",
+      "nuclear",
+      "hydro_run_of_river",
+      "hydro_reservoir",
+      "hydro_pumped_storage"
+    ],
+    "allowed_units": [
+      "MW",
+      "MWh",
+      "EUR/MWh"
+    ],
+    "day_ahead_price_unit": "EUR/MWh",
+    "hydro_reservoir_storage_unit": "MWh",
+    "default_physical_unit": "MW",
+    "bare_eur_authorized": false,
+    "allowed_native_resolutions": [
+      "PT15M",
+      "PT30M",
+      "PT60M",
+      "PT1H",
+      "P1D"
+    ],
+    "series_identifiers_unique_after_trim_and_casefold": true,
+    "implicit_resolution_conversion_authorized": false
+  },
+  "sign_semantics_contract": {
+    "exactly_one_semantic_per_series_required": true,
+    "allowed_semantics": [
+      "NON_NEGATIVE_PHYSICAL_QUANTITY",
+      "SIGNED_POSITIVE_CH_TO_NEIGHBOR",
+      "SIGNED_POSITIVE_NEIGHBOR_TO_CH",
+      "SIGNED_SOURCE_DEFINED_DOCUMENTED",
+      "PRICE_CAN_BE_NEGATIVE"
+    ],
+    "price_series_semantic": "PRICE_CAN_BE_NEGATIVE",
+    "crossborder_series_require_signed_semantic": true,
+    "negative_non_price_value_requires_signed_semantic": true,
+    "zero_fill_missing_authorized": false
+  },
+  "row_quality_gates": {
+    "exact_fields_required": true,
+    "primary_keys_unique": true,
+    "required_fields_non_null": true,
+    "finite_values_required": true,
+    "revision_number_non_negative_integer": true,
+    "source_to_dimension_join_coverage_required": 1.0,
+    "timestamps_timezone": "UTC",
+    "timestamps_aligned_to_native_resolution": true,
+    "target_grid_step_must_be_integer_multiple_of_native_resolution": true,
+    "meta_load_not_after_snapshot_reference": true,
+    "vintage_as_of_not_after_snapshot_reference": true,
+    "vintage_as_of_not_after_meta_load": true,
+    "forecast_price_schedule_and_capacity_as_of_not_after_target": true,
+    "actual_and_storage_as_of_not_before_target": true,
+    "revision_and_meta_load_non_decreasing_by_series_target_as_of": true,
+    "latest_must_equal_last_vintage_on_overlapping_keys": true,
+    "latest_is_point_in_time_authority": false
+  },
+  "backfill_contract": {
+    "exactly_one_status_per_series_required": true,
+    "allowed_statuses": [
+      "NATIVE_VINTAGES",
+      "HISTORICAL_BACKFILL",
+      "MIXED_NATIVE_AND_BACKFILL"
+    ],
+    "historical_backfill_may_reconstruct_past_information_sets": false,
+    "earliest_trustworthy_as_of_utc_profile_required": true
+  },
+  "coverage_profile": {
+    "expected_vs_observed_native_grid_by_series_required": true,
+    "missing_slot_count_by_series_required": true,
+    "complete_utc_days_by_series_required": true,
+    "minimum_complete_days_for_seasonal_cross_market_diagnostic": 730,
+    "coverage_below_threshold_blocks_seasonal_diagnostic": true,
+    "coverage_below_threshold_does_not_invalidate_structural_profile": true,
+    "no_global_imputation_or_upsampling_authority": true
+  },
+  "point_in_time_profile": {
+    "rolling_origin_source": "vintage_values",
+    "eligible_row_rule": "as_of_utc_not_after_origin_utc",
+    "latest_values_may_not_substitute_for_historical_vintages": true,
+    "overlap_coverage_ratio_required": true,
+    "earliest_trustworthy_as_of_utc_by_series_required": true,
+    "prospective_capture_required_for_new_holdout": true
+  },
+  "output_contract": {
+    "structural_profile_may_pass_on_synthetic_fixture": true,
+    "synthetic_fixture_is_not_empirical_evidence": true,
+    "real_quality_admission_requires_prior_hash_and_receipt_admission": true,
+    "all_blockers_and_caveats_must_be_explicit": true,
+    "series_profile_contains_no_raw_values": true,
+    "model_readiness_requires_real_evidence_and_all_quality_gates": true
+  },
+  "execution_policy": {
+    "current_databricks_connection_budget": 0,
+    "current_databricks_statement_budget": 0,
+    "current_warehouse_start_budget": 0,
+    "current_network_call_budget": 0,
+    "current_h_drive_access_budget": 0,
+    "current_remote_write_budget": 0,
+    "connector_code_allowed": false,
+    "artifact_path_opening_authorized_by_static_contract": false
+  },
+  "authorities": {
+    "real_artifact_receipt_admitted": false,
+    "real_artifact_hashes_verified": false,
+    "real_entsoe_values_opened": false,
+    "same_snapshot_point_in_time_availability_proven": false,
+    "seasonal_cross_market_diagnostic_authorized": false,
+    "training_authorized": false,
+    "selection_authorized": false,
+    "model_input_authorized": false,
+    "candidate_assembly_authorized": false,
+    "promotion_authorized": false,
+    "production_authorized": false
+  }
+}

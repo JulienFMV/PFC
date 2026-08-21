@@ -118,6 +118,10 @@ must support temporally coherent scenarios.
 
 ## Scientific basis and limitations
 
+The detailed evidence docket, source hashes, source-vs-inference distinction
+and falsifiable 2026 gates are maintained in
+`PFC-2026-LITERATURE-EVIDENCE-AND-GATES-20260717.md`.
+
 - Benth shaping: market-consistent forward averages plus a smooth correction
   around an explicit seasonal component; bid/ask information should be used
   when available.
@@ -131,8 +135,10 @@ must support temporally coherent scenarios.
   ensembles and interpretability are expected, but this general review is not
   itself evidence that an HPFC is valid for Switzerland.
 
-The four supplied papers guide architecture and evaluation. None excuses stale
-data, look-ahead bias, weak provenance or a non-reproducible production path.
+The supplied corpus and corroborating primary literature guide architecture
+and evaluation. None excuses stale data, look-ahead bias, weak provenance or a
+non-reproducible production path. Short-term spot-price forecasting results do
+not by themselves validate a long-term Swiss forward valuation curve.
 
 ## Current release decision
 

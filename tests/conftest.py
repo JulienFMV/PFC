@@ -15,11 +15,50 @@ infrastructure-flag-no-op-refactor/05B-CONTEXT.md).
 from __future__ import annotations
 
 import os
+import uuid
+from pathlib import Path
 
 import pytest
 
+import pfc_shaping.cli.governed_release as governed_release_cli
+import pfc_shaping.pipeline.atomic_promotion as atomic_promotion
 import pfc_shaping.pipeline.candidate_evidence as candidate_evidence
+import pfc_shaping.pipeline.governed_release as governed_release_pipeline
 import pfc_shaping.pipeline.governed_release_cli_contract as release_cli_contract
+
+_WORKSPACE_ROOT = Path(__file__).resolve().parents[1]
+_PYTEST_WORKSPACE_ROOT = _WORKSPACE_ROOT / "build" / "test-workspaces" / "pytest"
+
+
+class _GovernedTempPathFactory:
+    """Minimal pytest temp factory constrained to the canonical workspace."""
+
+    def mktemp(self, basename: str, numbered: bool = True) -> Path:
+        if (
+            not isinstance(basename, str)
+            or not basename
+            or any(character in basename for character in ("/", "\\", ":"))
+            or basename in {".", ".."}
+        ):
+            raise ValueError("pytest temporary basename is unsafe")
+        suffix = f"-{uuid.uuid4().hex}" if numbered else ""
+        selected = _PYTEST_WORKSPACE_ROOT / f"{basename}{suffix}"
+        selected.mkdir(parents=True, exist_ok=False)
+        return selected
+
+
+@pytest.fixture(scope="session")
+def tmp_path_factory() -> _GovernedTempPathFactory:
+    """Keep all mutable pytest directories below the canonical workspace."""
+
+    return _GovernedTempPathFactory()
+
+
+@pytest.fixture
+def tmp_path(tmp_path_factory: _GovernedTempPathFactory) -> Path:
+    """Workspace-local replacement for pytest's host-temp fixture."""
+
+    return tmp_path_factory.mktemp("test")
 
 
 @pytest.fixture(autouse=True)
@@ -58,4 +97,39 @@ def _sealed_runtime_identity(monkeypatch: pytest.MonkeyPatch) -> None:
         release_cli_contract,
         "_installed_runtime_source_revision",
         lambda: runtime_revision,
+    )
+    monkeypatch.setattr(
+        release_cli_contract,
+        "_assert_isolated_runtime_flags",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        release_cli_contract,
+        "_assert_launcherless_runtime_admission",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        release_cli_contract,
+        "_installed_runtime_dependency_versions",
+        lambda: dict(release_cli_contract.REQUIRED_RUNTIME_DISTRIBUTIONS),
+    )
+    monkeypatch.setattr(
+        release_cli_contract,
+        "assert_production_transition_runtime_authorized",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        atomic_promotion,
+        "assert_production_transition_runtime_authorized",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        governed_release_pipeline,
+        "assert_production_transition_runtime_authorized",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        governed_release_cli,
+        "assert_production_transition_runtime_authorized",
+        lambda: None,
     )

@@ -19,6 +19,58 @@ Permanent project facts:
 - Far-horizon `UNSUPPORTED` can be accepted only when documented and when it
   does not hide a `CRITICAL` gate or known-bad fixture failure.
 
+Standard-user workstation execution contract:
+
+- Before every shell action, verify that both the current directory and the
+  Git top-level are exactly `C:\Users\jbattaglia\PFC_LT`. Never execute from
+  the legacy `H:` checkout.
+- The workstation has no administrator rights. Never request elevation, an
+  ASR/Defender exception, an ACL takeover, or installation into a system
+  location.
+- Keep every mutable build input and output under the canonical workspace.
+  In particular, place Conda prefixes, wheelhouses, pip/Conda caches,
+  `TEMP`/`TMP`, pytest basetemps and runtime staging below `build/` (or another
+  explicitly governed directory inside the repo), never under `AppData`,
+  `ProgramData`, another user directory, or `H:`.
+- Never construct or submit a shell command that names a mutable path outside
+  the canonical workspace, even when the target program would reject that
+  path. The VS Code/tool boundary can request approval before the program's
+  own fail-closed validation runs. Negative path tests must synthesize their
+  fixtures below a fresh repo-local `build/` basetemp.
+- Do not request a shell sandbox override or approval for this workspace.
+  Ordinary commands must use the canonical root as their working directory
+  and repo-local mutable arguments. If that is impossible, record the external
+  blocker instead of submitting an approval-triggering command.
+- Existing interpreters, Conda executables, archives and caches outside the
+  workspace (including preinstalled tools under `ProgramData`) may be read
+  without mutation only to capture or copy verified bytes below `build/`.
+  Subsequent mutable consumption must use the repo-local copy or prefix; never
+  create or mutate an environment outside the workspace.
+- Do not build or launch project `.exe` files or Playwright/browser runtimes on
+  this managed workstation. Use Python module entry points and library-level
+  tests. Route any required executable/browser E2E qualification to an
+  independently governed standard-user CI runner.
+- Ordinary read/write/test operations inside the canonical workspace must run
+  without an elevation request. If an essential action truly requires an
+  external writable authority, network entitlement, administrator right, or
+  security-policy exception, record it as an external blocker and continue
+  with safe local work; do not repeatedly ask the workstation user to approve
+  it.
+- Never submit a shell command that names a mutable path outside the canonical
+  workspace merely to demonstrate that a guard rejects it. The host may ask
+  for permission before the project guard can run. Exercise those negative
+  cases only in library-level tests with synthetic ``tmp_path`` values. Every
+  real command submitted on this workstation must keep its mutable paths below
+  ``C:\Users\jbattaglia\PFC_LT\build`` so ordinary execution remains
+  non-elevated and approval-free.
+- Use `scripts.run_workspace_local` only for its explicitly allowlisted Python
+  build/audit/test modules on this laptop. It is a non-authoritative convenience
+  boundary, not a generic shell, a filesystem sandbox, a production-admission
+  runtime or the CI runner. Conda exact-prefix creation, wheel construction and
+  installed v19 admission must use their dedicated governed recipes with
+  repo-local mutable paths. Independent CI uses its own checkout and policy;
+  it must not reuse the laptop's literal-root harness.
+
 Do not touch without explicit request:
 
 - `pfc_shaping/ct/*` during LT work.
@@ -29,6 +81,28 @@ Do not touch without explicit request:
 - Monthly solver production flag promotion without manifest-backed gates.
 - Individual month patches after the solver. Fix specification, priors,
   objective weights, or audit gates, then regenerate.
+
+Restricted AFRY scenario evidence contract:
+
+- Before any AFRY, long-term scenario or AFRY-derived shaping work, read
+  `.planning/phases/14-lt-audit-remediation/AFRY-CH-2026-Q2-AGENT-DATA-CONTEXT.md`
+  and its referenced source, semantic and shape-diagnostic contracts.
+- Access restricted AFRY values only through the current hash-verified local
+  catalog or diagnostic interfaces described in that context. Never copy raw
+  or derived values into Git, documentation, a wiki, RAG, embeddings or an
+  external prompt.
+- AFRY is descriptive benchmark/teacher-candidate evidence only. It has no
+  scenario probability, Swiss calendar, monthly-level, model-input or
+  production authority. The monthly solver remains the sole level authority.
+- The current empirical gate is
+  `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS`. Do not start AFRY-driven
+  rolling-origin selection or Batch 4 until governed EEX and ENTSO-E
+  Databricks inputs and a new independently frozen future holdout exist.
+  Legacy local and synthetic EEX/ENTSO-E substitution are forbidden; T057
+  remains sealed.
+- Durable AFRY decisions are D-20260803-206 and D-20260803-207 in the Phase 14
+  decision log. Superseded catalog or diagnostic bundles must never be used
+  merely because their files still exist below `build/`.
 
 Handoff rules:
 
@@ -106,7 +180,9 @@ exclusivement sur le LT ou sur le CT sans toucher l'autre.
 
 ## Workflow recommandé
 
-1. Travailler **dans un worktree dédié** par périmètre (cf. `git worktree add`).
+1. Sur le laptop FMV, travailler uniquement dans le worktree canonique
+   `C:\Users\jbattaglia\PFC_LT`; le contrat standard-user ci-dessus remplace la
+   recommandation générale de créer un worktree dédié.
 2. Une PR = un périmètre clair. Pas de PR mixant LT et CT sauf orchestration.
 3. Tests minimum :
    - LT : `pytest tests/test_arbitrage_free.py tests/test_cascading.py tests/test_water_value.py tests/test_lt_ct_imports.py`

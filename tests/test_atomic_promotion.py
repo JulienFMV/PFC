@@ -53,6 +53,9 @@ from pfc_shaping.pipeline.promotion_contract import (
 from pfc_shaping.version import __version__
 
 _EXPECTED_FROM_HISTORY = object()
+_REAL_PRODUCTION_TRANSITION_RUNTIME_GUARD = (
+    release_cli_contract.assert_production_transition_runtime_authorized
+)
 
 
 def promote_candidate(*args, **kwargs):
@@ -296,6 +299,7 @@ def _candidate(
                 "reference_timestamp": "2026-07-13T00:00:00+00:00",
                 "reference_timestamp_is_explicit": True,
                 "candidate_serialized_at_utc": "2026-07-13T00:01:00+00:00",
+                "run_started_at_utc": "2026-07-13T00:00:30+00:00",
                 "deterministic_artifacts": deterministic_artifacts,
                 "deterministic_artifacts_sha256": deterministic_sha256,
             }
@@ -431,6 +435,7 @@ def _bind_pre_run_fixture(
         "run_id": run_id,
         "as_of_utc": run["reference_timestamp"],
         "build_timestamp_utc": "2026-07-13T00:01:00+00:00",
+        "run_started_at_utc": "2026-07-13T00:01:00+00:00",
         "runtime": {
             "distribution": "fmv-pfc-lt",
             "version": __version__,
@@ -1156,6 +1161,11 @@ def test_direct_promotion_rejects_unsealed_checkout_before_mutation(
     bundle = _candidate(root, "run-001", "generic")
     receipt = _receipt(tmp_path / "receipt.json", bundle=bundle)
     monkeypatch.setattr(release_cli_contract, "SOURCE_REVISION", None)
+    monkeypatch.setattr(
+        atomic_promotion,
+        "assert_production_transition_runtime_authorized",
+        _REAL_PRODUCTION_TRANSITION_RUNTIME_GUARD,
+    )
 
     with pytest.raises(PromotionError, match="installed runtime with a sealed identity"):
         atomic_promotion.promote_candidate(
@@ -1388,6 +1398,10 @@ from pfc_shaping.pipeline import governed_release_cli_contract as grc
 ce.SOURCE_REVISION = "1111111111111111111111111111111111111111"
 grc.SOURCE_REVISION = "1111111111111111111111111111111111111111111111111111111111111111"
 grc._installed_runtime_source_revision = lambda: grc.SOURCE_REVISION
+grc._assert_isolated_runtime_flags = lambda: None
+grc._assert_launcherless_runtime_admission = lambda: None
+grc._installed_runtime_dependency_versions = lambda: dict(grc.REQUIRED_RUNTIME_DISTRIBUTIONS)
+ap.assert_production_transition_runtime_authorized = lambda: None
 ap._promotion_now_utc = lambda: datetime(2026, 7, 13, 0, 5, tzinfo=timezone.utc)
 ap.verify_assembled_candidate_evidence = lambda *_args, **_kwargs: {"status": "TEST_UNIT_SEAL"}
 receipt = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
@@ -2433,6 +2447,7 @@ def test_finalization_reverifies_and_quarantines_hash_rename_mutation(
                 "reference_timestamp": "2026-07-13T00:00:00+00:00",
                 "reference_timestamp_is_explicit": True,
                     "candidate_serialized_at_utc": "2026-07-13T00:01:00+00:00",
+                    "run_started_at_utc": "2026-07-13T00:00:30+00:00",
                     "deterministic_artifacts": deterministic_artifacts,
                     "deterministic_artifacts_sha256": deterministic_sha256,
             }

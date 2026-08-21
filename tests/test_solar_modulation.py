@@ -10,7 +10,8 @@ Covers the checklist in
   and the peak/off-peak spread moves toward realized,
 * the ``sota_solar`` estimator wiring keeps ``pf_cal_corr`` >= 0.85.
 
-The unit tests need only ``entso_15min.parquet`` (always shipped); the
+The real-data regression tests use a local governed ``entso_15min.parquet``;
+the
 end-to-end / wiring tests additionally need ``epex_hourly.parquet`` and the
 forwards history and are skipped when those are absent.
 """

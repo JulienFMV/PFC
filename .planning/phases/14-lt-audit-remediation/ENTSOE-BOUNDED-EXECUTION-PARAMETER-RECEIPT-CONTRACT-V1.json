@@ -1,0 +1,168 @@
+{
+  "schema_version": "fmv_entsoe_bounded_execution_parameter_receipt_contract.v1",
+  "status": "STATIC_OFFLINE_PARAMETER_AND_RECEIPT_CONTRACT_NO_EXECUTION_AUTHORITY",
+  "purpose": "validate a cost-bounded ENTSO-E capture proposal and synthetic receipt structure without authorizing or executing Databricks",
+  "input_bindings": {
+    "governed_acquisition_package_decision": "D-20260805-233",
+    "governed_acquisition_package_contract_content_id": "4f6e644b15593e8d4ae2ca196e1d52a002d4255bdf42e7a137982edb854f0fa0",
+    "governed_acquisition_package_proof_content_id": "314ec85590c787874e2844d7db085236144c601681a5d1722f2735e6b1219d53",
+    "physical_mapping_compiler_decision": "D-20260805-234",
+    "physical_mapping_compiler_contract_content_id": "5dc43e18dcf107020e24638307a707d8c7afbf894ca1131e62907f8680ad0951",
+    "physical_mapping_compiler_proof_content_id": "bb7ea1894463cb2c5fc30287d2239f0285cd6a74e901ab51a2f9de7e6794b766"
+  },
+  "proposal_manifest": {
+    "schema_version": "fmv_entsoe_bounded_capture_proposal.v1",
+    "evidence_class": "SYNTHETIC_TEST_ONLY_OR_REAL_UNAUTHORIZED_PROPOSAL",
+    "exact_top_level_fields": [
+      "schema_version",
+      "evidence_class",
+      "capture_batch_id",
+      "created_at_utc",
+      "snapshot_reference_time_utc",
+      "challenge_id",
+      "challenge_nonce_sha256",
+      "mapping_content_id",
+      "metadata_schema_fingerprint",
+      "metadata_payload_sha256",
+      "metadata_statement_id",
+      "compiled_template_sha256",
+      "execution_parameters",
+      "cost_fence",
+      "authorization"
+    ],
+    "allowed_evidence_classes": [
+      "SYNTHETIC_TEST_ONLY",
+      "REAL_UNAUTHORIZED_PROPOSAL"
+    ],
+    "authorization": {
+      "explicit_user_authorization_present": false,
+      "authorization_id": null,
+      "execution_authorized": false
+    }
+  },
+  "parameter_policy": {
+    "timestamp_format": "UTC_WHOLE_SECOND_RFC3339_Z",
+    "target_window_semantics": "HALF_OPEN_START_INCLUSIVE_END_EXCLUSIVE",
+    "target_window_boundaries_at_utc_midnight": true,
+    "target_window_minimum_days": 1,
+    "target_window_maximum_days": 31,
+    "latest_and_vintage_target_windows_identical": true,
+    "vintage_as_of_cutoff_not_after_snapshot_reference": true,
+    "vintage_as_of_cutoff_not_before_target_start": true,
+    "series_dimension_parameters": [],
+    "latest_values_parameters": [
+      "start_utc",
+      "end_utc"
+    ],
+    "vintage_values_parameters": [
+      "start_utc",
+      "end_utc",
+      "as_of_cutoff_utc"
+    ]
+  },
+  "cost_fence": {
+    "currency_format": "ISO_4217_UPPERCASE",
+    "decimal_amount_format": "NON_NEGATIVE_FIXED_DECIMAL_MAX_6_PLACES",
+    "estimate_not_above_hard_cap": true,
+    "estimate_method_required": true,
+    "warehouse_size_required": true,
+    "warehouse_auto_stop_minutes": 5,
+    "max_warehouse_starts": 1,
+    "max_read_statements": 3,
+    "statement_timeout_seconds": 300,
+    "batch_timeout_seconds": 900,
+    "max_retries": 0,
+    "max_total_local_export_bytes": 68719476736,
+    "per_role_max_rows": {
+      "series_dimension": 100001,
+      "latest_values": 1000001,
+      "vintage_values": 1000001
+    },
+    "per_role_max_bytes": {
+      "series_dimension": 268435456,
+      "latest_values": 17179869184,
+      "vintage_values": 50465865728
+    },
+    "limit_hit_requires_rejection": true,
+    "cap_breach_requires_rejection": true,
+    "retry_after_failure_authorized": false
+  },
+  "synthetic_receipt_contract": {
+    "schema_version": "fmv_entsoe_bounded_capture_receipt.v1",
+    "evidence_class": "SYNTHETIC_TEST_ONLY",
+    "exact_top_level_fields": [
+      "schema_version",
+      "evidence_class",
+      "proposal_content_id",
+      "capture_batch_id",
+      "snapshot_reference_time_utc",
+      "capture_started_at_utc",
+      "capture_completed_at_utc",
+      "warehouse_start_count",
+      "read_statement_count",
+      "retry_count",
+      "total_runtime_seconds",
+      "total_local_export_bytes",
+      "statements",
+      "authorities"
+    ],
+    "exact_statement_fields": [
+      "role",
+      "template_sha256",
+      "parameter_sha256",
+      "statement_id_sha256",
+      "statement_state",
+      "statement_class",
+      "statement_started_at_utc",
+      "statement_completed_at_utc",
+      "runtime_seconds",
+      "row_count",
+      "size_bytes",
+      "result_truncated",
+      "limit_hit",
+      "read_only_statement_verified",
+      "remote_write_count",
+      "artifact_relative_path",
+      "artifact_sha256"
+    ],
+    "statement_roles": [
+      "series_dimension",
+      "latest_values",
+      "vintage_values"
+    ],
+    "statement_state": "SUCCEEDED",
+    "statement_class": "SELECT",
+    "result_truncated": false,
+    "limit_hit": false,
+    "read_only_statement_verified": true,
+    "remote_write_count": 0,
+    "artifact_path_prefix": "build/governed-source-intake/",
+    "artifact_hashes_verified_by_this_contract": false,
+    "artifact_values_opened_by_this_contract": false,
+    "real_receipt_admission_authorized": false
+  },
+  "execution_policy": {
+    "current_databricks_connection_budget": 0,
+    "current_databricks_statement_budget": 0,
+    "current_warehouse_start_budget": 0,
+    "current_network_call_budget": 0,
+    "current_remote_write_budget": 0,
+    "connector_code_allowed": false,
+    "proposal_execution_authorized": false,
+    "synthetic_receipt_is_execution_evidence": false,
+    "real_receipt_requires_future_separate_authorization_contract": true
+  },
+  "authorities": {
+    "real_proposal_authorized": false,
+    "real_capture_receipt_admitted": false,
+    "artifact_hashes_verified": false,
+    "artifact_values_opened": false,
+    "point_in_time_availability_proven": false,
+    "training_authorized": false,
+    "selection_authorized": false,
+    "model_input_authorized": false,
+    "candidate_assembly_authorized": false,
+    "promotion_authorized": false,
+    "production_authorized": false
+  }
+}

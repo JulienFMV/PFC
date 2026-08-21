@@ -48,6 +48,18 @@ def test_solver_parity_rejects_legacy_level_authority() -> None:
         )
 
 
+@pytest.mark.skipif(
+    not all(
+        path.exists()
+        for path in (
+            Path(__file__).resolve().parents[1] / "data" / "epex_hourly.parquet",
+            Path(__file__).resolve().parents[1]
+            / "data"
+            / "eex_forwards_history.parquet",
+        )
+    ),
+    reason="requires governed local EPEX/EEX parity inputs outside Git",
+)
 @pytest.mark.slow
 def test_cal_2025_solver_parity_golden_and_future_row_invariance(
     monkeypatch: pytest.MonkeyPatch,

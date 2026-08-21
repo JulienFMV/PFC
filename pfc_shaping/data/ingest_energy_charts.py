@@ -6,8 +6,8 @@ Source de données unifiée via l'API energy-charts.info (Fraunhofer ISE).
 Remplace ingest_smard.py (prix uniquement) et ingest_entso.py (load/gen)
 par une source unique couvrant TOUTES les données nécessaires :
     - Prix day-ahead EPEX CH (bzn=CH) — résolution horaire, ffill → 15min
-    - Prix day-ahead EPEX DE-LU (bzn=DE-LU) — résolution 15min native
-      (depuis transition SDAC le 1er oct 2025, utilisé pour calibrer f_Q)
+    - Prix day-ahead EPEX DE-LU (bzn=DE-LU) — timestamps parfois espacés
+      de 15min, sans preuve liée d'identité produit/enchère/session
     - Charge réseau CH (Load)
     - Production solaire, éolienne, hydraulique
     - Flux transfrontaliers (optionnel)
@@ -16,7 +16,7 @@ Avantages :
     - API publique, sans authentification
     - Source unique = moins de points de défaillance
     - Données Fraunhofer ISE très fiables (agrègent ENTSO-E + SMARD)
-    - DE-LU 15min natif depuis oct 2025 (marché le plus liquide d'Europe)
+    - DE-LU liquide, mais identité produit à gouverner hors de ce loader legacy
 
 API docs : https://api.energy-charts.info
 Licence  : CC BY 4.0 (Bundesnetzagentur / SMARD.de)
@@ -36,6 +36,7 @@ import requests
 logger = logging.getLogger(__name__)
 
 API_BASE = "https://api.energy-charts.info"
+LEGACY_RESOLUTION_STATUS_ATTR = "lt_legacy_resolution_status"
 
 MAX_RETRIES = 3
 BASE_DELAY = 2
@@ -130,9 +131,10 @@ def load_prices(start: str, end: str, bzn: str = "CH") -> pd.DataFrame:
 
     # Spike flagging
     df = _spike_flag(df)
+    _mark_legacy_price_frame(df, bzn=bzn)
 
     logger.info(
-        "energy-charts prix chargés : %d lignes 15min (%.1f%% négatifs)",
+        "energy-charts prix chargés : %d lignes transport 15min (%.1f%% négatifs)",
         len(df), (df["price_eur_mwh"] < 0).mean() * 100 if len(df) > 0 else 0,
     )
     return df
@@ -332,6 +334,7 @@ def fetch_and_cache_prices(
         combined = combined[~combined.index.duplicated(keep="last")].sort_index()
     else:
         combined = new
+    _mark_legacy_price_frame(combined, bzn=bzn)
 
     parquet_path.parent.mkdir(parents=True, exist_ok=True)
     combined.to_parquet(parquet_path, engine="pyarrow", compression="snappy")
@@ -345,12 +348,11 @@ def fetch_and_cache_prices_de(
     parquet_path: str | Path = DEFAULT_EPEX_DE_PARQUET,
 ) -> pd.DataFrame:
     """
-    Télécharge les prix DE-LU 15min depuis energy-charts et met à jour le cache.
+    Télécharge les prix DE-LU sur grille transport 15min et met à jour le cache.
 
-    Les prix DE-LU sont en résolution 15min native depuis la transition SDAC
-    (1er octobre 2025). Avant cette date, les données sont horaires ffill.
-    Ces prix sont utilisés pour calibrer les facteurs f_Q (profil intra-horaire)
-    du modèle de shaping CH.
+    Le fournisseur peut livrer des timestamps espacés de 15 minutes après la
+    transition SDAC, mais ce loader legacy ne lie pas l'identité du produit,
+    de l'enchère ni de la session. Ces valeurs restent scientifiquement NO_GO.
     """
     new = load_prices(start, end, bzn="DE-LU")
 
@@ -361,11 +363,25 @@ def fetch_and_cache_prices_de(
         combined = combined[~combined.index.duplicated(keep="last")].sort_index()
     else:
         combined = new
+    _mark_legacy_price_frame(combined, bzn="DE-LU")
 
     parquet_path.parent.mkdir(parents=True, exist_ok=True)
     combined.to_parquet(parquet_path, engine="pyarrow", compression="snappy")
     logger.info("Cache EPEX DE-LU mis à jour (energy-charts) : %s (%d lignes)", parquet_path, len(combined))
     return combined
+
+
+def _mark_legacy_price_frame(frame: pd.DataFrame, *, bzn: str) -> None:
+    frame.attrs[LEGACY_RESOLUTION_STATUS_ATTR] = {
+        "status": "LEGACY_UNGOVERNED_NOT_SCIENTIFICALLY_ADMITTED",
+        "production_authorization": False,
+        "native_quarter_hour_truth_eligible": False,
+        "bidding_zone": bzn,
+        "reason": (
+            "This legacy loader/cache does not retain governed provider bytes "
+            "or bind auction/session/product identity. Use governed_lt_acquisition."
+        ),
+    }
 
 
 def fetch_and_cache_power(

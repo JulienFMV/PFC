@@ -3,7 +3,9 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 from datetime import datetime, timezone
+from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
 
@@ -21,14 +23,71 @@ from pfc_shaping.calibration.monthly_forward_curve import (
     MarketQuote,
     build_monthly_constraint_system,
 )
-from pfc_shaping.data.acquisition_signing import sign_acquisition_contract
+from pfc_shaping.data import ingest_entso, ingest_epex, ingest_forwards, ingest_hydro
+from pfc_shaping.data.acquisition_contract import (
+    GOVERNED_LT_INPUT_SNAPSHOT_SCHEMA,
+    PROVIDER_RAW_LT_INPUT_SNAPSHOT_SCHEMA,
+    TRUSTED_TIME_RECEIPT_SCHEMA,
+    governed_snapshot_bundle_root_sha256,
+)
+from pfc_shaping.data.acquisition_signing import (
+    sign_acquisition_contract,
+    sign_eex_trusted_time_receipt,
+    sign_source_acquisition_receipt,
+    sign_source_journal_checkpoint,
+)
+from pfc_shaping.data.eex_historical_vintage import (
+    EEX_HISTORICAL_CATALOG_SCHEMA,
+    EEX_HISTORICAL_QUOTE_SCHEMA,
+    historical_vintage_revision_id,
+    historical_vintage_row_hash,
+    historical_vintage_snapshot_id,
+    materialize_eex_forward_history_as_of,
+)
 from pfc_shaping.data.forward_proxy import (
     load_forward_snapshot,
     validate_forward_snapshot,
 )
+from pfc_shaping.data.governed_lt_acquisition import (
+    ENERGY_CHARTS_PRICE_URL,
+    ENERGY_CHARTS_SOURCE_SYSTEM,
+    ENTSOE_API_URL,
+    ENTSOE_SOURCE_SYSTEM,
+    SFOE_OGD17_URL,
+    SFOE_SOURCE_SYSTEM,
+    CapturedProviderDocument,
+    approved_provider_parser_path_for_role,
+    build_provider_transform_config,
+    build_raw_envelope,
+    transform_provider_raw,
+)
+from pfc_shaping.data.lt_input_replay import (
+    approved_parser_path_for_role,
+    build_replay_config,
+)
 from pfc_shaping.data.lt_input_sources import (
     dataframe_sha256,
+    resolve_lt_input_paths,
     validate_governed_forward_history_frame,
+)
+from pfc_shaping.data.snapshot_anchor_signing import (
+    sign_snapshot_anchor_head_observation,
+    sign_snapshot_anchor_receipt,
+)
+from pfc_shaping.data.snapshot_publication_contract import (
+    PUBLICATION_ANCHOR_TRUSTED_PUBLIC_KEY_ENV,
+    PUBLICATION_DOMAIN_ID_ENV,
+    PUBLICATION_HEAD_CHALLENGE_NONCE_ENV,
+    PUBLICATION_HEAD_OBSERVATION_PATH_ENV,
+    PUBLICATION_REQUEST_SIGNING_PRIVATE_KEY_ENV,
+    PUBLICATION_REQUEST_TRUSTED_PUBLIC_KEY_ENV,
+    publication_domain_sha256,
+    sign_snapshot_publication_intent,
+)
+from pfc_shaping.data.snapshot_publication_state import (
+    canonical_json,
+    external_head_challenge_sha256,
+    pointer_mapping_from_external_receipt,
 )
 from pfc_shaping.pipeline.atomic_promotion import (
     PromotionError,
@@ -81,10 +140,10 @@ from scripts.assemble_lt_candidate_product_evidence import main as product_evide
 from scripts.finalize_lt_candidate import main as finalize_candidate_main
 
 _SOURCE_SYSTEM_BY_ROLE = {
-    "epex_ch": "EPEX_SPOT",
-    "epex_de": "EPEX_SPOT",
-    "entso": "ENTSOE_TRANSPARENCY_PLATFORM",
-    "hydro": "FMV_HYDRO_CURATED",
+    "epex_ch": ENERGY_CHARTS_SOURCE_SYSTEM,
+    "epex_de": ENERGY_CHARTS_SOURCE_SYSTEM,
+    "entso": ENTSOE_SOURCE_SYSTEM,
+    "hydro": SFOE_SOURCE_SYSTEM,
     "eex_forwards_history": "EEX_MARKET_DATA",
 }
 
@@ -105,6 +164,11 @@ def _provision_registration_roots(
 
 @pytest.fixture(autouse=True)
 def _trusted_keys(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        capstone,
+        "verify_external_operation_receipt",
+        lambda payload: payload,
+    )
     monkeypatch.setenv(
         "PFC_PROMOTION_RELEASE_DOMAIN_ID",
         "123e4567-e89b-42d3-a456-426614174003",
@@ -123,6 +187,26 @@ def _trusted_keys(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
             "data",
             "PFC_DATA_ACQUISITION_SIGNING_PRIVATE_KEY_PATH",
             "PFC_DATA_ACQUISITION_TRUSTED_PUBLIC_KEY_PATH",
+        ),
+        (
+            "data-time",
+            "PFC_DATA_TIMESTAMP_SIGNING_PRIVATE_KEY_PATH",
+            "PFC_DATA_TIMESTAMP_TRUSTED_PUBLIC_KEY_PATH",
+        ),
+        (
+            "data-journal",
+            "PFC_DATA_JOURNAL_SIGNING_PRIVATE_KEY_PATH",
+            "PFC_DATA_JOURNAL_TRUSTED_PUBLIC_KEY_PATH",
+        ),
+        (
+            "data-publication-request",
+            PUBLICATION_REQUEST_SIGNING_PRIVATE_KEY_ENV,
+            PUBLICATION_REQUEST_TRUSTED_PUBLIC_KEY_ENV,
+        ),
+        (
+            "data-publication-anchor",
+            "PFC_TEST_DATA_PUBLICATION_ANCHOR_PRIVATE_KEY_PATH",
+            PUBLICATION_ANCHOR_TRUSTED_PUBLIC_KEY_ENV,
         ),
         (
             "quote-policy",
@@ -153,6 +237,245 @@ def _trusted_keys(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         )
         monkeypatch.setenv(private_env, str(private))
         monkeypatch.setenv(public_env, str(public))
+    for index, public_env in enumerate(
+        (
+            "PFC_DATA_PUBLICATION_BOOTSTRAP_TRUSTED_PUBLIC_KEY_PATH",
+            "PFC_PROMOTION_TRUSTED_PUBLIC_KEY_PATH",
+            "PFC_PROMOTION_EVENT_TRUSTED_PUBLIC_KEY_PATH",
+            "PFC_ROLLBACK_AUTHORIZATION_TRUSTED_PUBLIC_KEY_PATH",
+            "PFC_TIER2_TIMESTAMP_TRUSTED_PUBLIC_KEY_PATH",
+            "PFC_TIER2_EXECUTION_TRUSTED_PUBLIC_KEY_PATH",
+            "PFC_TIER2_BASE_MODEL_EXECUTION_TRUSTED_PUBLIC_KEY_PATH",
+            "PFC_TIER2_SELECTION_INPUT_EXECUTION_TRUSTED_PUBLIC_KEY_PATH",
+            "PFC_TIER2_TIMESTAMP_JOURNAL_WITNESS_TRUSTED_PUBLIC_KEY_PATH",
+        )
+    ):
+        key = Ed25519PrivateKey.generate()
+        public = tmp_path / f"global-trust-role-{index}.pem"
+        public.write_bytes(
+            key.public_key().public_bytes(
+                serialization.Encoding.PEM,
+                serialization.PublicFormat.SubjectPublicKeyInfo,
+            )
+        )
+        monkeypatch.setenv(public_env, str(public))
+    monkeypatch.setenv("PFC_DATA_TIMESTAMP_JOURNAL_ID", "candidate-source-journal")
+    monkeypatch.setenv(
+        PUBLICATION_DOMAIN_ID_ENV,
+        "2bc0bb59-88a6-4da9-b7a4-dcbea91ae36f",
+    )
+
+
+def _write_external_publication_projection(
+    data_root: Path,
+    *,
+    generation_id: str,
+    contract_sha256: str,
+    operation_id: str = "00000000-0000-4000-8000-000000000101",
+) -> dict[str, bytes | str]:
+    intent = sign_snapshot_publication_intent(
+        {
+            "schema_version": "lt_snapshot_publication_intent.v1",
+            "publication_domain_sha256": publication_domain_sha256(),
+            "operation_id": operation_id,
+            "operation_created_at_utc": "2026-07-13T23:59:20+00:00",
+            "transition_type": "PUBLISH",
+            "expected_anchor_receipt_id": "0" * 64,
+            "expected_anchor_sequence": 1,
+            "generation_id": generation_id,
+            "contract_path": (
+                Path("snapshots") / generation_id / "lt_input_snapshot.json"
+            ).as_posix(),
+            "contract_sha256": contract_sha256,
+            "generation_inventory_sha256": "a" * 64,
+            "legacy_pointer_sha256": None,
+            "bootstrap_authorization": None,
+            "bootstrap_authorization_id": None,
+            "bootstrap_authorization_sha256": None,
+        },
+        private_key_path=os.environ[PUBLICATION_REQUEST_SIGNING_PRIVATE_KEY_ENV],
+    )
+    intent_payload = canonical_json(intent)
+    receipt = sign_snapshot_anchor_receipt(
+        {
+            "schema_version": "lt_snapshot_anchor_receipt.v1",
+            "publication_domain_sha256": publication_domain_sha256(),
+            "sequence": 2,
+            "previous_receipt_id": "0" * 64,
+            "operation_id": operation_id,
+            "intent_id": intent["intent_id"],
+            "intent_sha256": hashlib.sha256(intent_payload).hexdigest(),
+            "transition_type": "PUBLISH",
+            "generation_id": generation_id,
+            "contract_sha256": contract_sha256,
+            "generation_inventory_sha256": "a" * 64,
+            "legacy_pointer_sha256": None,
+            "bootstrap_authorization_id": None,
+            "bootstrap_authorization_sha256": None,
+            "committed_at_utc": "2026-07-13T23:59:25+00:00",
+        },
+        private_key_path=os.environ["PFC_TEST_DATA_PUBLICATION_ANCHOR_PRIVATE_KEY_PATH"],
+    )
+    receipt_payload = canonical_json(receipt)
+    pointer_payload = canonical_json(
+        pointer_mapping_from_external_receipt(
+            intent,
+            receipt,
+            receipt_sha256=hashlib.sha256(receipt_payload).hexdigest(),
+        )
+    )
+    pointer = json.loads(pointer_payload)
+    challenge_nonce = "4" * 64
+    observation = sign_snapshot_anchor_head_observation(
+        {
+            "schema_version": "lt_snapshot_anchor_head_observation.v1",
+            "publication_domain_sha256": publication_domain_sha256(),
+            "receipt_id": receipt["receipt_id"],
+            "receipt_sha256": hashlib.sha256(receipt_payload).hexdigest(),
+            "sequence": receipt["sequence"],
+            "challenge_nonce": challenge_nonce,
+            "challenge_sha256": external_head_challenge_sha256(
+                pointer,
+                challenge_nonce=challenge_nonce,
+            ),
+            "observed_at_utc": "2026-07-13T23:59:30+00:00",
+            "expires_at_utc": "2026-07-14T00:04:30+00:00",
+        },
+        private_key_path=os.environ["PFC_TEST_DATA_PUBLICATION_ANCHOR_PRIVATE_KEY_PATH"],
+    )
+    observation_payload = canonical_json(observation)
+
+    view = data_root / "views" / "pfc_lt"
+    intent_path = view / "intents" / f"{intent['intent_id']}.json"
+    receipt_path = view / "receipts" / f"{receipt['receipt_id']}.json"
+    observation_path = view / "observations" / f"{observation['observation_id']}.json"
+    for path, payload in (
+        (intent_path, intent_payload),
+        (receipt_path, receipt_payload),
+        (observation_path, observation_payload),
+    ):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(payload)
+    (view / "current.json").write_bytes(pointer_payload)
+    os.environ[PUBLICATION_HEAD_OBSERVATION_PATH_ENV] = str(observation_path)
+    os.environ[PUBLICATION_HEAD_CHALLENGE_NONCE_ENV] = challenge_nonce
+    return {
+        "pointer": pointer_payload,
+        "intent": intent_payload,
+        "receipt": receipt_payload,
+        "observation": observation_payload,
+        "challenge_nonce": challenge_nonce,
+    }
+
+
+def _sign_governed_input_contract(
+    files: dict[str, object],
+    *,
+    generation_id: str,
+    acquisition_id: str,
+    available_at_utc: str,
+    schema_version: str = GOVERNED_LT_INPUT_SNAPSHOT_SCHEMA,
+) -> dict[str, object]:
+    enriched: dict[str, object] = {}
+    previous: str | None = None
+    timestamp_private = os.environ["PFC_DATA_TIMESTAMP_SIGNING_PRIVATE_KEY_PATH"]
+    for sequence, (role, raw_entry) in enumerate(sorted(files.items()), start=1):
+        entry = dict(raw_entry)
+        source_system = str(entry["source_system"])
+        receipt_artifact = dict(
+            entry.get("provider_raw_artifact")
+            if schema_version == PROVIDER_RAW_LT_INPUT_SNAPSHOT_SCHEMA
+            and role in {"epex_ch", "epex_de", "entso", "hydro"}
+            else entry.get("raw_artifact")
+            or {
+                "path": f"raw/{role}.parquet",
+                "sha256": entry["sha256"],
+                "size_bytes": entry["size_bytes"],
+            }
+        )
+        receipt = sign_source_acquisition_receipt(
+            {
+                "schema_version": "source_acquisition_receipt.v2",
+                "journal_id": "candidate-source-journal",
+                "sequence": sequence,
+                "previous_receipt_id": previous,
+                "acquisition_id": acquisition_id,
+                "source_role": role,
+                "source_system": source_system,
+                "source_locator": str(
+                    entry.get(
+                        "source_locator",
+                        {
+                            "epex_ch": ENERGY_CHARTS_PRICE_URL,
+                            "epex_de": ENERGY_CHARTS_PRICE_URL,
+                            "entso": ENTSOE_API_URL,
+                            "hydro": SFOE_OGD17_URL,
+                        }.get(role, f"fixture://{role}"),
+                    )
+                ),
+                "acquisition_method": "PROSPECTIVE_DIRECT",
+                "received_at_utc": entry["available_at_utc"],
+                "raw_sha256": receipt_artifact["sha256"],
+                "raw_size_bytes": receipt_artifact["size_bytes"],
+            },
+            private_key_path=timestamp_private,
+        )
+        previous = str(receipt["receipt_id"])
+        entry["source_receipt"] = receipt
+        entry.setdefault("raw_artifact", receipt_artifact)
+        entry.setdefault(
+            "derivation",
+            {
+                "parser_code_path": f"parser/{role}.py",
+                "parser_code_sha256": "a" * 64,
+                "parser_config_path": f"parser/{role}.json",
+                "parser_config_sha256": "b" * 64,
+                "derived_at_utc": entry["available_at_utc"],
+            },
+        )
+        entry.setdefault(
+            "quality_evidence",
+            {
+                "status": "PASS",
+                "policy_sha256": "c" * 64,
+                "report_path": f"quality/{role}.json",
+                "report_sha256": "d" * 64,
+            },
+        )
+        enriched[role] = entry
+    ordered_receipts = [
+        entry["source_receipt"] for entry in enriched.values() if isinstance(entry, dict)
+    ]
+    receipt_ids = [str(receipt["receipt_id"]) for receipt in ordered_receipts]
+    checkpoint = sign_source_journal_checkpoint(
+        {
+            "schema_version": "source_journal_checkpoint.v1",
+            "journal_id": "candidate-source-journal",
+            "acquisition_id": acquisition_id,
+            "first_sequence": 1,
+            "last_sequence": len(receipt_ids),
+            "previous_receipt_id": None,
+            "receipt_ids": receipt_ids,
+            "head_receipt_id": receipt_ids[-1],
+            "issued_at_utc": available_at_utc,
+            "bundle_root_sha256": governed_snapshot_bundle_root_sha256(enriched),
+        },
+        private_key_path=os.environ["PFC_DATA_JOURNAL_SIGNING_PRIVATE_KEY_PATH"],
+    )
+    return sign_acquisition_contract(
+        {
+            "schema_version": schema_version,
+            "layout": "external_v2",
+            "generation_id": generation_id,
+            "acquisition_id": acquisition_id,
+            "available_at_utc": available_at_utc,
+            "calibration_eligible": True,
+            "source_class": "GOVERNED_ACQUISITION",
+            "source_journal_checkpoint": checkpoint,
+            "files": enriched,
+        },
+        private_key_path=os.environ["PFC_DATA_ACQUISITION_SIGNING_PRIVATE_KEY_PATH"],
+    )
 
 
 def _write_historical_thresholds(path: Path) -> None:
@@ -185,33 +508,480 @@ def _write_historical_thresholds(path: Path) -> None:
     path.write_text("\n".join(rows) + "\n", encoding="utf-8")
 
 
+def _write_governed_eex_vintage(
+    generation: Path,
+    *,
+    history: pd.DataFrame,
+    reference: pd.Timestamp,
+) -> tuple[dict[str, object], dict[str, object], dict[str, object]]:
+    role = "eex_forwards_history"
+    catalog_root = generation / "eex-vintages"
+    history_path = catalog_root / "history.parquet"
+    history_path.parent.mkdir(parents=True, exist_ok=True)
+    source_date = pd.Timestamp(history.iloc[0]["date"]).tz_localize(None).normalize()
+    observed = source_date.tz_localize("UTC") + pd.Timedelta(hours=18)
+    product = str(history.iloc[0]["product"])
+    price = float(history.iloc[0]["price"])
+
+    workbook_path = catalog_root / "sources" / f"eex-{source_date.date()}.xlsx"
+    workbook_path.parent.mkdir(parents=True, exist_ok=True)
+    workbook = pd.DataFrame(
+        [
+            [None, f"Y01_{product}_BASE"],
+            [None, "ISIN_fixture"],
+            ["Date", None],
+            [source_date.strftime("%d.%m.%Y"), price],
+        ]
+    )
+    with pd.ExcelWriter(workbook_path, engine="openpyxl") as writer:
+        workbook.to_excel(writer, sheet_name="CH", index=False, header=False)
+    workbook_payload = workbook_path.read_bytes()
+    workbook_hash = hashlib.sha256(workbook_payload).hexdigest()
+
+    parser_code_path = catalog_root / "parser" / "ingest_forwards.py"
+    parser_code_path.parent.mkdir(parents=True, exist_ok=True)
+    parser_code_path.write_bytes(Path(ingest_forwards.__file__).read_bytes())
+    parser_code_hash = hashlib.sha256(parser_code_path.read_bytes()).hexdigest()
+    parser_config = {
+        "parser_version": "ingest_forwards.v1",
+        "selection_mode": "latest_available",
+        "markets": {"CH": source_date.date().isoformat()},
+    }
+    parser_config_path = catalog_root / "parser" / "config.json"
+    parser_config_path.write_text(json.dumps(parser_config), encoding="utf-8")
+    parser_config_hash = _sha256_json(parser_config)
+
+    receipt_unsigned: dict[str, object] = {
+        "schema_version": TRUSTED_TIME_RECEIPT_SCHEMA,
+        "source_document_id": workbook_path.name,
+        "source_document_sha256": workbook_hash,
+        "size_bytes": len(workbook_payload),
+        "received_at_utc": observed.isoformat(),
+        "journal_id": os.environ["PFC_DATA_TIMESTAMP_JOURNAL_ID"],
+        "journal_sequence": 1,
+        "previous_receipt_id": "",
+    }
+    receipt_unsigned["receipt_id"] = _sha256_json(receipt_unsigned)
+    trusted_time_receipt = sign_eex_trusted_time_receipt(
+        receipt_unsigned,
+        private_key_path=os.environ["PFC_DATA_TIMESTAMP_SIGNING_PRIVATE_KEY_PATH"],
+    )
+
+    vintage_row: dict[str, object] = {
+        "date": source_date,
+        "observed_at": observed,
+        "available_at": observed,
+        "acquisition_id": receipt_unsigned["receipt_id"],
+        "product": product,
+        "load_type": "BASE",
+        "product_type": "CAL",
+        "price": price,
+        "unit": "EUR/MWH",
+        "market": "CH",
+        "source": "EEX",
+        "source_document_id": workbook_path.name,
+        "source_document_sha256": workbook_hash,
+        "source_sheet": "CH",
+        "source_row_index": 4,
+        "source_column_index": 2,
+        "source_product_code": f"Y01_{product}_BASE",
+        "parser_version": "ingest_forwards.v1",
+        "parser_code_sha256": parser_code_hash,
+        "parser_config_sha256": parser_config_hash,
+        "revision_sequence": 1,
+        "supersedes_quote_id": "",
+        "revision_timestamp": observed,
+        "ingestion_run_id": f"fixture-{source_date.date()}",
+        "schema_version": EEX_HISTORICAL_QUOTE_SCHEMA,
+    }
+    vintage_row["snapshot_id"] = historical_vintage_snapshot_id(vintage_row)
+    vintage_row["revision_id"] = historical_vintage_revision_id(vintage_row)
+    vintage_row["row_hash"] = historical_vintage_row_hash(vintage_row)
+    vintage_row["quote_id"] = vintage_row["row_hash"]
+    vintage_frame = pd.DataFrame([vintage_row])
+    vintage_frame.to_parquet(history_path, index=False)
+    history_payload = history_path.read_bytes()
+    history_hash = hashlib.sha256(history_payload).hexdigest()
+
+    catalog_unsigned: dict[str, object] = {
+        "schema_version": EEX_HISTORICAL_CATALOG_SCHEMA,
+        "created_at_utc": observed.isoformat(),
+        "data_cutoff_utc": observed.isoformat(),
+        "calibration_eligible": True,
+        "source_class": "IMMUTABLE_DAILY_EEX_XLSX",
+        "revision_policy": "APPEND_ONLY_PRESERVE_ALL_REVISIONS",
+        "ompex_used": False,
+        "history_parquet": {
+            "path": "history.parquet",
+            "sha256": history_hash,
+            "size_bytes": len(history_payload),
+            "row_count": len(vintage_frame),
+        },
+        "source_documents": [
+            {
+                "snapshot_ids": [vintage_row["snapshot_id"]],
+                "acquisition_id": vintage_row["acquisition_id"],
+                "observed_at": observed.isoformat(),
+                "available_at": observed.isoformat(),
+                "source_document_id": workbook_path.name,
+                "path": f"sources/{workbook_path.name}",
+                "sha256": workbook_hash,
+                "size_bytes": len(workbook_payload),
+                "parser_code_path": "parser/ingest_forwards.py",
+                "parser_code_sha256": parser_code_hash,
+                "parser_config": parser_config,
+                "parser_config_sha256": parser_config_hash,
+                "trusted_time_receipt": trusted_time_receipt,
+            }
+        ],
+    }
+    catalog_unsigned["catalog_id"] = _sha256_json(catalog_unsigned)
+    catalog = sign_acquisition_contract(
+        catalog_unsigned,
+        private_key_path=os.environ["PFC_DATA_ACQUISITION_SIGNING_PRIVATE_KEY_PATH"],
+    )
+    catalog_path = catalog_root / "catalog.json"
+    catalog_path.write_text(json.dumps(catalog), encoding="utf-8")
+    catalog_payload = catalog_path.read_bytes()
+    catalog_hash = hashlib.sha256(catalog_payload).hexdigest()
+
+    quality_policy_hash = "e" * 64
+    quality_path = catalog_root / "quality.json"
+    quality_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "lt_source_quality.v1",
+                "role": role,
+                "status": "PASS",
+                "policy_sha256": quality_policy_hash,
+            }
+        ),
+        encoding="utf-8",
+    )
+    selected = materialize_eex_forward_history_as_of(
+        vintage_frame,
+        valuation_timestamp=reference,
+    )
+    validated = validate_governed_forward_history_frame(
+        selected,
+        reference_timestamp=reference,
+    )
+    source_summary = list(validated.attrs["eex_source_summary"])
+    role_entry: dict[str, object] = {
+        "path": history_path.relative_to(generation).as_posix(),
+        "size_bytes": len(history_payload),
+        "sha256": history_hash,
+        "acquisition_id": "input-001",
+        "available_at_utc": observed.isoformat(),
+        "calibration_eligible": True,
+        "expected_cadence_seconds": None,
+        "source_system": _SOURCE_SYSTEM_BY_ROLE[role],
+        "raw_artifact": {
+            "path": workbook_path.relative_to(generation).as_posix(),
+            "size_bytes": len(workbook_payload),
+            "sha256": workbook_hash,
+        },
+        "derivation": {
+            "parser_code_path": parser_code_path.relative_to(generation).as_posix(),
+            "parser_code_sha256": parser_code_hash,
+            "parser_config_path": parser_config_path.relative_to(generation).as_posix(),
+            "parser_config_sha256": hashlib.sha256(parser_config_path.read_bytes()).hexdigest(),
+            "derived_at_utc": observed.isoformat(),
+        },
+        "quality_evidence": {
+            "status": "PASS",
+            "policy_sha256": quality_policy_hash,
+            "report_path": quality_path.relative_to(generation).as_posix(),
+            "report_sha256": hashlib.sha256(quality_path.read_bytes()).hexdigest(),
+        },
+        "vintage_catalog": {
+            "path": catalog_path.relative_to(generation).as_posix(),
+            "sha256": catalog_hash,
+            "size_bytes": len(catalog_payload),
+        },
+    }
+    input_receipt = {
+        "role": role,
+        "logical_path": role_entry["path"],
+        "size_bytes": len(history_payload),
+        "sha256": history_hash,
+        "rows": len(vintage_frame),
+        "frame_sha256": dataframe_sha256(vintage_frame),
+    }
+    evidence = {
+        "history_sha256": history_hash,
+        "catalog_sha256": catalog_hash,
+        "source_summary": source_summary,
+        "consumed_frame_sha256": dataframe_sha256(validated),
+        "verified_vintage_catalog": {
+            "catalog_id": catalog_unsigned["catalog_id"],
+            "catalog_sha256": catalog_hash,
+            "history_sha256": history_hash,
+            "snapshot_count": 1,
+            "source_document_count": 1,
+            "data_cutoff_utc": observed.isoformat(),
+            "status": "VERIFIED_SIGNED_IMMUTABLE_VINTAGES",
+            "pit_selection": dict(selected.attrs["pit_selection"]),
+        },
+    }
+    return role_entry, input_receipt, evidence
+
+
+def _parquet_payload(frame: pd.DataFrame) -> bytes:
+    buffer = BytesIO()
+    frame.to_parquet(buffer, index=True)
+    return buffer.getvalue()
+
+
+def _frame_quality_metrics(frame: pd.DataFrame) -> dict[str, object]:
+    metrics = {
+        "row_count": len(frame),
+        "start_utc": frame.index.min().tz_convert("UTC").isoformat().replace("+00:00", "Z"),
+        "end_utc": frame.index.max().tz_convert("UTC").isoformat().replace("+00:00", "Z"),
+        "missing_value_count": int(frame.isna().sum().sum()),
+        "duplicate_timestamp_count": int(frame.index.duplicated().sum()),
+    }
+    if "lt_observation_resolution_provenance" in frame.attrs:
+        metrics["resolution_provenance"] = dict(
+            frame.attrs["lt_observation_resolution_provenance"]
+        )
+    return metrics
+
+
+def _entsoe_fixture_xml(frame: pd.DataFrame, *, generation: bool) -> bytes:
+    def series(column: str, psr_type: str | None = None) -> str:
+        psr = f"<MktPSRType><psrType>{psr_type}</psrType></MktPSRType>" if psr_type else ""
+        points = "".join(
+            f"<Point><position>{position}</position><quantity>{value}</quantity></Point>"
+            for position, value in enumerate(frame[column].tolist(), start=1)
+        )
+        start = frame.index.min().strftime("%Y-%m-%dT%H:%MZ")
+        end = (frame.index.max() + pd.Timedelta(minutes=15)).strftime("%Y-%m-%dT%H:%MZ")
+        return (
+            f"<TimeSeries><mRID>{column}-series</mRID>"
+            f"<businessType>{'A01' if generation else 'A04'}</businessType>"
+            f"<objectAggregation>{'A08' if generation else 'A01'}</objectAggregation>"
+            "<curveType>A01</curveType>"
+            f"<quantity_Measure_Unit.name>MAW</quantity_Measure_Unit.name>{psr}"
+            f"<Period><timeInterval><start>{start}</start>"
+            f"<end>{end}</end></timeInterval><resolution>PT15M</resolution>"
+            f"{points}</Period></TimeSeries>"
+        )
+
+    payload = (
+        series("solar_mw", "B16") + series("wind_mw", "B19") if generation else series("load_mw")
+    )
+    if generation:
+        namespace = "urn:iec62325.351:tc57wg16:451-6:generation-document:3:0"
+        identity = (
+            "<type>A75</type><process.processType>A16</process.processType>"
+            "<in_Domain.mRID>10YCH-SWISSGRIDZ</in_Domain.mRID>"
+        )
+    else:
+        namespace = "urn:iec62325.351:tc57wg16:451-6:load-document:3:0"
+        identity = (
+            "<type>A65</type><process.processType>A16</process.processType>"
+            "<outBiddingZone_Domain.mRID>10YCH-SWISSGRIDZ"
+            "</outBiddingZone_Domain.mRID>"
+        )
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        f'<GL_MarketDocument xmlns="{namespace}">{identity}{payload}'
+        "</GL_MarketDocument>"
+    ).encode("ascii")
+
+
+def _provider_envelope(
+    role: str,
+    frame: pd.DataFrame,
+    *,
+    received_at_utc: str,
+) -> tuple[bytes, str, str, str]:
+    start = frame.index.min().tz_convert("UTC")
+    end = (
+        frame.index.max() + pd.Timedelta(days=1)
+        if role == "hydro"
+        else frame.index.max() + pd.Timedelta(minutes=15)
+    ).tz_convert("UTC")
+    start_utc = start.isoformat().replace("+00:00", "Z")
+    end_utc = end.isoformat().replace("+00:00", "Z")
+    if role.startswith("epex_"):
+        zone = {"epex_ch": "CH", "epex_de": "DE-LU"}[role]
+        body = json.dumps(
+            {
+                "deprecated": False,
+                "license_info": "CC BY 4.0 test fixture",
+                "unix_seconds": [int(value.timestamp()) for value in frame.index],
+                "price": frame["price_eur_mwh"].tolist(),
+                "unit": "EUR / MWh",
+            },
+            separators=(",", ":"),
+        ).encode("ascii")
+        documents = [
+            CapturedProviderDocument(
+                document_id="day_ahead_price",
+                request_url=ENERGY_CHARTS_PRICE_URL,
+                request_parameters={
+                    "bzn": zone,
+                    "start": start.strftime("%Y-%m-%dT%H:%MZ"),
+                    "end": (end - pd.Timedelta(minutes=15)).strftime("%Y-%m-%dT%H:%MZ"),
+                },
+                response_media_type="application/json",
+                body=body,
+            )
+        ]
+        source_system = ENERGY_CHARTS_SOURCE_SYSTEM
+        source_locator = ENERGY_CHARTS_PRICE_URL
+    elif role == "entso":
+        parameters = {
+            "processType": "A16",
+            "periodStart": start.strftime("%Y%m%d%H%M"),
+            "periodEnd": end.strftime("%Y%m%d%H%M"),
+        }
+        documents = [
+            CapturedProviderDocument(
+                document_id="actual_load_ch",
+                request_url=ENTSOE_API_URL,
+                request_parameters={
+                    **parameters,
+                    "documentType": "A65",
+                    "outBiddingZone_Domain": "10YCH-SWISSGRIDZ",
+                },
+                response_media_type="application/xml",
+                body=_entsoe_fixture_xml(frame, generation=False),
+                credential_reference="env:ENTSOE_API_KEY",
+            ),
+            CapturedProviderDocument(
+                document_id="actual_generation_ch",
+                request_url=ENTSOE_API_URL,
+                request_parameters={
+                    **parameters,
+                    "documentType": "A75",
+                    "in_Domain": "10YCH-SWISSGRIDZ",
+                },
+                response_media_type="application/xml",
+                body=_entsoe_fixture_xml(frame, generation=True),
+                credential_reference="env:ENTSOE_API_KEY",
+            ),
+        ]
+        source_system = ENTSOE_SOURCE_SYSTEM
+        source_locator = ENTSOE_API_URL
+    elif role == "hydro":
+        lines = [
+            "Datum,Wallis_speicherinhalt_gwh,Graubuenden_speicherinhalt_gwh,"
+            "Tessin_speicherinhalt_gwh,UebrigCH_speicherinhalt_gwh,"
+            "TotalCH_speicherinhalt_gwh,Wallis_max_speicherinhalt_gwh,"
+            "Graubuenden_max_speicherinhalt_gwh,Tessin_max_speicherinhalt_gwh,"
+            "UebrigCH_max_speicherinhalt_gwh,TotalCH_max_speicherinhalt_gwh"
+        ]
+        lines.extend(
+            f"{timestamp.tz_convert('Europe/Zurich'):%Y-%m-%d},"
+            f"{row.fill_gwh * 0.4},{row.fill_gwh * 0.25},"
+            f"{row.fill_gwh * 0.15},{row.fill_gwh * 0.2},{row.fill_gwh},"
+            f"{row.max_capacity_gwh * 0.4},{row.max_capacity_gwh * 0.25},"
+            f"{row.max_capacity_gwh * 0.15},{row.max_capacity_gwh * 0.2},"
+            f"{row.max_capacity_gwh}"
+            for timestamp, row in frame.iterrows()
+        )
+        documents = [
+            CapturedProviderDocument(
+                document_id="ogd17_reservoir_levels",
+                request_url=SFOE_OGD17_URL,
+                request_parameters={},
+                response_media_type="text/csv",
+                body=("\n".join(lines) + "\n").encode("ascii"),
+            )
+        ]
+        source_system = SFOE_SOURCE_SYSTEM
+        source_locator = SFOE_OGD17_URL
+    else:
+        raise AssertionError(role)
+    return (
+        build_raw_envelope(
+            acquisition_id="input-001",
+            source_role=role,
+            source_system=source_system,
+            source_locator=source_locator,
+            provider_id=source_system,
+            received_at_utc=received_at_utc,
+            documents=documents,
+        ),
+        start_utc,
+        end_utc,
+        source_locator,
+    )
+
+
 def _governed_input_generation(
     root: Path,
     *,
     reference: pd.Timestamp,
-) -> tuple[dict[str, object], dict[str, object], dict[str, object], str, list[dict[str, object]]]:
+) -> tuple[dict[str, object], dict[str, object], dict[str, object], dict[str, object]]:
     generation = root / "snapshots" / "input-001"
     generation.mkdir(parents=True)
+    actual_end = reference.floor("15min") - pd.Timedelta(minutes=15)
     common_index = pd.date_range(
-        reference.floor("15min") - pd.Timedelta(days=7),
-        reference.floor("15min"),
+        actual_end - pd.Timedelta(days=7),
+        actual_end,
         freq="15min",
     )
-    frames = {
+    hydro_index = pd.date_range(
+        end=reference.tz_convert("Europe/Zurich").normalize(),
+        periods=312,
+        freq="W-MON",
+    ).tz_convert("UTC")
+    hydro_fill_pct = [
+        42.0 + float(position % 52) * 0.2 + float(position // 52) * 0.5
+        for position in range(len(hydro_index))
+    ]
+    bronze_frames = {
         "epex_ch": pd.DataFrame({"price_eur_mwh": 80.0}, index=common_index),
         "epex_de": pd.DataFrame({"price_eur_mwh": 75.0}, index=common_index),
         "entso": pd.DataFrame(
-            {"load_mw": 7000.0, "solar_mw": 1000.0, "wind_mw": 500.0},
+            {
+                "load_mw": [7000.0 + float(position % 96) for position in range(len(common_index))],
+                "solar_mw": 1000.0,
+                "wind_mw": 500.0,
+            },
             index=common_index,
         ),
         "hydro": pd.DataFrame(
-            {"fill_deviation": 0.0},
-            index=pd.date_range(
-                reference.floor("D") - pd.Timedelta(days=30),
-                reference.floor("D"),
-                freq="D",
-            ),
+            {
+                "fill_pct": hydro_fill_pct,
+                "fill_gwh": [value * 100.0 for value in hydro_fill_pct],
+                "max_capacity_gwh": 10000.0,
+                "uebrig_ch_gwh": [value * 20.0 for value in hydro_fill_pct],
+                "wallis_gwh": [value * 40.0 for value in hydro_fill_pct],
+                "graubuenden_gwh": [value * 25.0 for value in hydro_fill_pct],
+                "tessin_gwh": [value * 15.0 for value in hydro_fill_pct],
+            },
+            index=hydro_index,
         ),
+    }
+    for role in ("epex_ch", "epex_de"):
+        count = len(bronze_frames[role])
+        bronze_frames[role].attrs["lt_observation_resolution_provenance"] = {
+            "schema_version": "lt_observation_resolution_provenance.v2",
+            "role": role,
+            "source_cadence_seconds": 900,
+            "output_cadence_seconds": 900,
+            "source_observation_count": count,
+            "output_observation_count": count,
+            "resampling_method": "NONE",
+            "output_sampling_kind": "DIRECT_15_MINUTE_OBSERVATIONS_PRODUCT_IDENTITY_UNVERIFIED",
+            "native_quarter_hour_cadence_eligible": True,
+            "native_hourly_cadence_eligible": False,
+            "hourly_aggregation_eligible": True,
+            "native_quarter_hour_truth_eligible": False,
+            "product_identity_status": "EXTERNAL_PRODUCT_AUCTION_SESSION_IDENTITY_UNVERIFIED",
+            "quarter_hour_truth_blocker": "EXTERNAL_PRODUCT_AUCTION_SESSION_IDENTITY_REQUIRED",
+            "scientific_use_class": "DIRECT_15_MINUTE_OBSERVATIONS_PRODUCT_IDENTITY_UNVERIFIED",
+        }
+    frames = {
+        "epex_ch": ingest_epex._clean(bronze_frames["epex_ch"]),
+        "epex_de": ingest_epex._clean(bronze_frames["epex_de"]),
+        "entso": ingest_entso.build_features(bronze_frames["entso"]),
+        "hydro": ingest_hydro.build_water_value(bronze_frames["hydro"]),
     }
     history = pd.DataFrame(
         {
@@ -228,20 +998,141 @@ def _governed_input_generation(
     receipts: dict[str, object] = {}
     reports: dict[str, object] = {}
     for role, frame in frames.items():
+        available_at_utc = "2026-07-13T23:50:00Z"
+        provider_payload, provider_start, provider_end, _ = _provider_envelope(
+            role,
+            bronze_frames[role],
+            received_at_utc=available_at_utc,
+        )
+        provider_raw_path = generation / "provider_raw" / f"{role}.json"
+        provider_raw_path.parent.mkdir(parents=True, exist_ok=True)
+        provider_raw_path.write_bytes(provider_payload)
+        provider_parser_source = approved_provider_parser_path_for_role(role)
+        provider_parser_payload = provider_parser_source.read_bytes()
+        provider_parser_path = generation / "provider_parser" / f"{role}.py"
+        provider_parser_path.parent.mkdir(parents=True, exist_ok=True)
+        provider_parser_path.write_bytes(provider_parser_payload)
+        provider_config = build_provider_transform_config(
+            role=role,
+            start_utc=provider_start,
+            end_utc=provider_end,
+        )
+        provider_config_payload = json.dumps(
+            provider_config,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("ascii")
+        provider_config_path = generation / "provider_parser" / f"{role}.json"
+        provider_config_path.write_bytes(provider_config_payload)
+        pd.testing.assert_frame_equal(
+            transform_provider_raw(
+                envelope_payload=provider_payload,
+                parser_config=provider_config,
+            ),
+            bronze_frames[role],
+            check_freq=False,
+        )
         logical = f"inputs/{role}.parquet"
         path = generation / logical
         path.parent.mkdir(parents=True, exist_ok=True)
-        frame.to_parquet(path)
-        payload = path.read_bytes()
+        payload = _parquet_payload(frame)
+        path.write_bytes(payload)
+        raw_path = generation / "raw" / f"{role}.parquet"
+        raw_path.parent.mkdir(parents=True, exist_ok=True)
+        raw_payload = _parquet_payload(bronze_frames[role])
+        raw_path.write_bytes(raw_payload)
+        parser_code_path = generation / "parser" / f"{role}.py"
+        parser_code_path.parent.mkdir(parents=True, exist_ok=True)
+        parser_code_path.write_bytes(approved_parser_path_for_role(role).read_bytes())
+        parser_config_path = generation / "parser" / f"{role}.json"
+        parser_config_path.write_text(
+            json.dumps(
+                build_replay_config(
+                    role=role,
+                    source_system=_SOURCE_SYSTEM_BY_ROLE[role],
+                    raw_frame=bronze_frames[role],
+                    derived_frame=frame,
+                )
+            ),
+            encoding="utf-8",
+        )
+        quality_policy_hash = "c" * 64
+        quality_path = generation / "quality" / f"{role}.json"
+        quality_path.parent.mkdir(parents=True, exist_ok=True)
+        quality_payload = (
+            json.dumps(
+                {
+                    "bindings": {
+                        "provider_raw_sha256": hashlib.sha256(provider_payload).hexdigest(),
+                        "provider_parser_code_sha256": hashlib.sha256(
+                            provider_parser_payload
+                        ).hexdigest(),
+                        "provider_parser_config_sha256": hashlib.sha256(
+                            provider_config_payload
+                        ).hexdigest(),
+                        "bronze_sha256": hashlib.sha256(raw_payload).hexdigest(),
+                        "feature_parser_code_sha256": hashlib.sha256(
+                            parser_code_path.read_bytes()
+                        ).hexdigest(),
+                        "feature_parser_config_sha256": hashlib.sha256(
+                            parser_config_path.read_bytes()
+                        ).hexdigest(),
+                        "derived_sha256": hashlib.sha256(payload).hexdigest(),
+                    },
+                    "metrics": {
+                        "bronze": _frame_quality_metrics(bronze_frames[role]),
+                        "derived": _frame_quality_metrics(frame),
+                    },
+                    "policy_sha256": quality_policy_hash,
+                    "role": role,
+                    "schema_version": "lt_source_quality.v2",
+                    "status": "PASS",
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            + "\n"
+        ).encode("ascii")
+        quality_path.write_bytes(quality_payload)
         files[role] = {
             "path": logical,
             "size_bytes": len(payload),
             "sha256": hashlib.sha256(payload).hexdigest(),
             "acquisition_id": "input-001",
-            "available_at_utc": "2026-07-13T23:00:00+00:00",
+            "available_at_utc": available_at_utc,
             "calibration_eligible": True,
-            "expected_cadence_seconds": 86400 if role == "hydro" else 900,
+            "expected_cadence_seconds": 604800 if role == "hydro" else 900,
             "source_system": _SOURCE_SYSTEM_BY_ROLE[role],
+            "provider_raw_artifact": {
+                "path": provider_raw_path.relative_to(generation).as_posix(),
+                "size_bytes": len(provider_payload),
+                "sha256": hashlib.sha256(provider_payload).hexdigest(),
+            },
+            "provider_derivation": {
+                "parser_code_path": provider_parser_path.relative_to(generation).as_posix(),
+                "parser_code_sha256": hashlib.sha256(provider_parser_payload).hexdigest(),
+                "parser_config_path": provider_config_path.relative_to(generation).as_posix(),
+                "parser_config_sha256": hashlib.sha256(provider_config_payload).hexdigest(),
+                "derived_at_utc": available_at_utc,
+            },
+            "raw_artifact": {
+                "path": raw_path.relative_to(generation).as_posix(),
+                "size_bytes": len(raw_payload),
+                "sha256": hashlib.sha256(raw_payload).hexdigest(),
+            },
+            "derivation": {
+                "parser_code_path": parser_code_path.relative_to(generation).as_posix(),
+                "parser_code_sha256": hashlib.sha256(parser_code_path.read_bytes()).hexdigest(),
+                "parser_config_path": parser_config_path.relative_to(generation).as_posix(),
+                "parser_config_sha256": hashlib.sha256(parser_config_path.read_bytes()).hexdigest(),
+                "derived_at_utc": available_at_utc,
+            },
+            "quality_evidence": {
+                "status": "PASS",
+                "policy_sha256": quality_policy_hash,
+                "report_path": quality_path.relative_to(generation).as_posix(),
+                "report_sha256": hashlib.sha256(quality_payload).hexdigest(),
+            },
         }
         receipts[role] = {
             "role": role,
@@ -255,7 +1146,7 @@ def _governed_input_generation(
             "epex_ch": ["price_eur_mwh"],
             "epex_de": ["price_eur_mwh"],
             "entso": ["load_mw", "solar_mw", "wind_mw"],
-            "hydro": ["fill_deviation"],
+            "hydro": ["fill_deviation", "water_value_supported"],
         }[role]
         report = validate_input_frame(
             frame,
@@ -279,35 +1170,14 @@ def _governed_input_generation(
             "errors": report.errors,
             "metrics": report.metrics,
         }
-    history_path = generation / "inputs" / "eex_forwards_history.parquet"
-    history.to_parquet(history_path, index=False)
-    history_payload = history_path.read_bytes()
-    history_hash = hashlib.sha256(history_payload).hexdigest()
-    files["eex_forwards_history"] = {
-        "path": "inputs/eex_forwards_history.parquet",
-        "size_bytes": len(history_payload),
-        "sha256": history_hash,
-        "acquisition_id": "input-001",
-        "available_at_utc": "2026-07-13T23:00:00+00:00",
-        "calibration_eligible": True,
-        "expected_cadence_seconds": None,
-        "source_system": _SOURCE_SYSTEM_BY_ROLE["eex_forwards_history"],
-    }
-    receipts["eex_forwards_history"] = {
-        "role": "eex_forwards_history",
-        "logical_path": "inputs/eex_forwards_history.parquet",
-        "size_bytes": len(history_payload),
-        "sha256": history_hash,
-        "rows": len(history),
-        "frame_sha256": dataframe_sha256(history),
-    }
-    validated = validate_governed_forward_history_frame(
-        history,
-        reference_timestamp=reference,
+    eex_entry, eex_receipt, eex_evidence = _write_governed_eex_vintage(
+        generation,
+        history=history,
+        reference=reference,
     )
-    return files, receipts, reports, history_hash, list(
-        validated.attrs["eex_source_summary"]
-    )
+    files["eex_forwards_history"] = eex_entry
+    receipts["eex_forwards_history"] = eex_receipt
+    return files, receipts, reports, eex_evidence
 
 
 def _fixture(
@@ -369,9 +1239,7 @@ def _fixture(
                     authority_id="FMV_MODEL_GOVERNANCE_TEST",
                     issued_at_utc="2026-07-12T00:00:00Z",
                     data_cutoff_utc="2026-07-11T00:00:00Z",
-                    private_key_path=os.environ[
-                        "PFC_MODEL_GOVERNANCE_SIGNING_PRIVATE_KEY_PATH"
-                    ],
+                    private_key_path=os.environ["PFC_MODEL_GOVERNANCE_SIGNING_PRIVATE_KEY_PATH"],
                 )
             ),
             encoding="utf-8",
@@ -402,58 +1270,27 @@ def _fixture(
     eex_contract = authority / "eex-acquisition.json"
     eex_contract.write_text(
         json.dumps(
-            sign_acquisition_contract(
+            _sign_governed_input_contract(
                 {
-                    "schema_version": "lt_input_snapshot.v1",
-                    "layout": "external_v2",
-                    "generation_id": "eex-001",
-                    "acquisition_id": "eex-001",
-                    "calibration_eligible": True,
-                    "source_class": "GOVERNED_ACQUISITION",
-                    "files": {
-                        "eex_forward_source": {
-                            "path": eex_source.name,
-                            "size_bytes": eex_source.stat().st_size,
-                            "sha256": hashlib.sha256(eex_source.read_bytes()).hexdigest(),
-                            "acquisition_id": "eex-001",
-                            "available_at_utc": "2026-07-13T18:00:00+00:00",
-                            "calibration_eligible": True,
-                            "source_system": "EEX_MARKET_DATA",
-                        }
-                    },
+                    "eex_forward_source": {
+                        "path": eex_source.name,
+                        "size_bytes": eex_source.stat().st_size,
+                        "sha256": hashlib.sha256(eex_source.read_bytes()).hexdigest(),
+                        "acquisition_id": "eex-001",
+                        "available_at_utc": "2026-07-13T18:00:00+00:00",
+                        "calibration_eligible": True,
+                        "source_system": "EEX_MARKET_DATA",
+                    }
                 },
-                private_key_path=os.environ[
-                    "PFC_DATA_ACQUISITION_SIGNING_PRIVATE_KEY_PATH"
-                ],
+                generation_id="eex-001",
+                acquisition_id="eex-001",
+                available_at_utc="2026-07-13T18:00:00+00:00",
             )
         ),
         encoding="utf-8",
     )
     runtime_config = authority / "runtime-config.yaml"
     runtime_config.write_text(yaml.safe_dump(config), encoding="utf-8")
-    capture_pre_run_governance_evidence(
-        staging,
-        run_id="run-001",
-        valuation_timestamp="2026-07-13T23:59:59+00:00",
-        build_timestamp="2026-07-14T00:00:00+00:00",
-        historical_thresholds_path=thresholds_source,
-        historical_thresholds_receipt_path=receipts["historical_thresholds"],
-        selected_lambda_decision_path=selected_source,
-        selected_lambda_decision_receipt_path=receipts["selected_lambda_decision"],
-        eex_forward_source_path=eex_source,
-        eex_acquisition_contract_path=eex_contract,
-        runtime_config_path=runtime_config,
-        expected_runtime_config_sha256=hashlib.sha256(
-            runtime_config.read_bytes()
-        ).hexdigest(),
-        source_revision="1" * 40,
-        input_snapshot_sha256="2" * 64,
-        input_pointer_sha256="3" * 64,
-        input_generation_id="generation-001",
-        peak_source_policy="same_first",
-        use_seasonal_hourly_shape=True,
-    )
-
     (staging / "markets" / "CH").mkdir(parents=True)
     (staging / "evidence" / "config").mkdir(parents=True)
     (staging / "evidence" / "data").mkdir(parents=True)
@@ -461,8 +1298,6 @@ def _fixture(
 
     config_path = staging / "evidence" / "config" / "config.yaml"
     config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
-    pre_run_path = staging / "manifests" / "pre_run_governance_manifest.json"
-
     snapshot = staging / "evidence" / "data" / "lt_input_snapshot.json"
     if governed_data_root is None:
         input_files = {
@@ -477,6 +1312,31 @@ def _fixture(
             }
             for role in ("epex_ch", "epex_de", "entso", "hydro", "eex_forwards_history")
         }
+        for role in ("epex_ch", "epex_de", "entso", "hydro"):
+            entry = input_files[role]
+            provider_payload = f"provider-envelope:{role}".encode("ascii")
+            bronze_payload = f"bronze:{role}".encode("ascii")
+            entry["provider_raw_artifact"] = {
+                "path": f"provider_raw/{role}.json",
+                "size_bytes": len(provider_payload),
+                "sha256": hashlib.sha256(provider_payload).hexdigest(),
+            }
+            entry["provider_derivation"] = {
+                "parser_code_path": f"provider_parser/{role}.py",
+                "parser_code_sha256": hashlib.sha256(
+                    f"provider-parser:{role}".encode("ascii")
+                ).hexdigest(),
+                "parser_config_path": f"provider_parser/{role}.json",
+                "parser_config_sha256": hashlib.sha256(
+                    f"provider-config:{role}".encode("ascii")
+                ).hexdigest(),
+                "derived_at_utc": entry["available_at_utc"],
+            }
+            entry["raw_artifact"] = {
+                "path": f"raw/{role}.parquet",
+                "size_bytes": len(bronze_payload),
+                "sha256": hashlib.sha256(bronze_payload).hexdigest(),
+            }
         input_receipts = {
             role: {
                 "role": role,
@@ -484,67 +1344,85 @@ def _fixture(
                 "size_bytes": entry["size_bytes"],
                 "sha256": entry["sha256"],
                 "rows": 1,
-                "frame_sha256": hashlib.sha256(
-                    f"frame:{role}".encode("utf-8")
-                ).hexdigest(),
+                "frame_sha256": hashlib.sha256(f"frame:{role}".encode("utf-8")).hexdigest(),
             }
             for role, entry in input_files.items()
         }
         freshness_reports: dict[str, object] = {}
-        history_hash = ""
-        history_summary: list[dict[str, object]] = []
+        eex_evidence: dict[str, object] = {}
     else:
         (
             input_files,
             input_receipts,
             freshness_reports,
-            history_hash,
-            history_summary,
+            eex_evidence,
         ) = _governed_input_generation(
             governed_data_root,
             reference=pd.Timestamp("2026-07-13T23:59:59Z"),
         )
     snapshot.write_text(
         json.dumps(
-            sign_acquisition_contract(
-                {
-                    "schema_version": "lt_input_snapshot.v1",
-                    "layout": "external_v2",
-                    "generation_id": "input-001",
-                    "acquisition_id": "input-001",
-                    "available_at_utc": (
-                        "2026-07-13T23:00:00+00:00"
-                        if governed_data_root is not None
-                        else "2026-07-12T18:00:00+00:00"
-                    ),
-                    "calibration_eligible": True,
-                    "source_class": "GOVERNED_ACQUISITION",
-                    "files": input_files,
-                },
-                private_key_path=os.environ[
-                    "PFC_DATA_ACQUISITION_SIGNING_PRIVATE_KEY_PATH"
-                ],
+            _sign_governed_input_contract(
+                input_files,
+                generation_id="input-001",
+                acquisition_id="input-001",
+                available_at_utc=(
+                    "2026-07-13T23:50:00+00:00"
+                    if governed_data_root is not None
+                    else "2026-07-12T18:00:00+00:00"
+                ),
+                schema_version=PROVIDER_RAW_LT_INPUT_SNAPSHOT_SCHEMA,
             )
         ),
         encoding="utf-8",
     )
-    if governed_data_root is not None:
-        live_contract = (
-            governed_data_root / "snapshots" / "input-001" / "lt_input_snapshot.json"
-        )
-        live_contract.write_bytes(snapshot.read_bytes())
-    pointer = staging / "evidence" / "data" / "current.json"
-    pointer.write_text(
-        json.dumps(
-            {
-                "schema_version": "lt_data_pointer.v1",
-                "generation_id": "input-001",
-                "contract_path": "snapshots/input-001/lt_input_snapshot.json",
-                "contract_sha256": hashlib.sha256(snapshot.read_bytes()).hexdigest(),
-            }
-        ),
-        encoding="utf-8",
+    publication_root = governed_data_root or (tmp_path / "publication-data")
+    live_contract = publication_root / "snapshots" / "input-001" / "lt_input_snapshot.json"
+    live_contract.parent.mkdir(parents=True, exist_ok=True)
+    live_contract.write_bytes(snapshot.read_bytes())
+    publication = _write_external_publication_projection(
+        publication_root,
+        generation_id="input-001",
+        contract_sha256=hashlib.sha256(snapshot.read_bytes()).hexdigest(),
     )
+    pointer = staging / "evidence" / "data" / "current.json"
+    pointer.write_bytes(publication["pointer"])
+    publication_intent = staging / "evidence" / "data" / "snapshot_publication_intent.json"
+    publication_receipt = staging / "evidence" / "data" / "snapshot_anchor_receipt.json"
+    publication_observation = (
+        staging / "evidence" / "data" / "snapshot_anchor_head_observation.json"
+    )
+    publication_intent.write_bytes(publication["intent"])
+    publication_receipt.write_bytes(publication["receipt"])
+    publication_observation.write_bytes(publication["observation"])
+    pre_run_capture = tmp_path / "pre-run-capture"
+    pre_run_capture.mkdir()
+    capture_pre_run_governance_evidence(
+        pre_run_capture,
+        run_id="run-001",
+        valuation_timestamp="2026-07-13T23:59:59+00:00",
+        build_timestamp="2026-07-14T00:00:00+00:00",
+        historical_thresholds_path=thresholds_source,
+        historical_thresholds_receipt_path=receipts["historical_thresholds"],
+        selected_lambda_decision_path=selected_source,
+        selected_lambda_decision_receipt_path=receipts["selected_lambda_decision"],
+        eex_forward_source_path=eex_source,
+        eex_acquisition_contract_path=eex_contract,
+        runtime_config_path=runtime_config,
+        expected_runtime_config_sha256=hashlib.sha256(runtime_config.read_bytes()).hexdigest(),
+        source_revision="1" * 40,
+        input_snapshot_sha256=hashlib.sha256(snapshot.read_bytes()).hexdigest(),
+        input_pointer_sha256=hashlib.sha256(pointer.read_bytes()).hexdigest(),
+        input_generation_id="input-001",
+        publication_head_observation_sha256=hashlib.sha256(
+            publication_observation.read_bytes()
+        ).hexdigest(),
+        publication_head_challenge_nonce=str(publication["challenge_nonce"]),
+        peak_source_policy="same_first",
+        use_seasonal_hourly_shape=True,
+    )
+    shutil.copytree(pre_run_capture, staging, dirs_exist_ok=True)
+    pre_run_path = staging / "manifests" / "pre_run_governance_manifest.json"
     source = staging / "evidence" / "eex" / "source.xlsx"
     source.write_bytes(eex_source.read_bytes())
     spot = pd.DataFrame(
@@ -637,9 +1515,7 @@ def _fixture(
         "is_residual",
         "load_type",
     ]
-    constraint_provenance = _canonical_frame_records(
-        constraints.rows[provenance_columns]
-    )
+    constraint_provenance = _canonical_frame_records(constraints.rows[provenance_columns])
     hard_quotes = [
         dict(quote)
         for quote in forward_manifest["quotes"]
@@ -649,12 +1525,8 @@ def _fixture(
     product_policy = {
         "schema_version": "monthly_quote_hierarchy_policy.v1",
         "priority": ["MONTH", "QUARTER", "CALENDAR"],
-        "quote_conflict_tolerance_eur_mwh": float(
-            solver_settings["quote_conflict_tolerance"]
-        ),
-        "hard_repricing_tolerance_eur_mwh": float(
-            solver_settings["constraint_tolerance"]
-        ),
+        "quote_conflict_tolerance_eur_mwh": float(solver_settings["quote_conflict_tolerance"]),
+        "hard_repricing_tolerance_eur_mwh": float(solver_settings["constraint_tolerance"]),
         "stationarity_tolerance": float(solver_settings["stationarity_tolerance"]),
         "residual_lineage_required": True,
     }
@@ -696,11 +1568,15 @@ def _fixture(
     )
     if governed_data_root is not None:
         production_payload = json.loads(production.read_text(encoding="utf-8"))
+        history_summary = list(eex_evidence["source_summary"])
         production_payload["source_hashes"] = {
-            "eex_forwards_history": history_hash,
+            "eex_forwards_history": eex_evidence["history_sha256"],
             "eex_forwards_history_source_summary": _sha256_json(history_summary),
+            "eex_historical_vintage_catalog": eex_evidence["catalog_sha256"],
+            "eex_forwards_history_consumed_frame": eex_evidence["consumed_frame_sha256"],
         }
         production_payload["eex_forwards_history_source_summary"] = history_summary
+        production_payload["verified_vintage_catalog"] = eex_evidence["verified_vintage_catalog"]
         production.write_text(json.dumps(production_payload), encoding="utf-8")
     run_manifest = {
         "schema_version": "lt_candidate_run.v1",
@@ -711,14 +1587,13 @@ def _fixture(
         "interval_columns": [],
         "intervals_permitted_for_pricing_or_risk": False,
         "candidate_serialized_at_utc": "2026-07-13T23:59:59+00:00",
+        "run_started_at_utc": "2026-07-13T23:59:59+00:00",
         "reference_timestamp": "2026-07-13T23:59:59+00:00",
         "reference_timestamp_is_explicit": True,
         "config_path": config_path.relative_to(staging).as_posix(),
         "config_sha256": hashlib.sha256(config_path.read_bytes()).hexdigest(),
         "pre_run_governance_manifest": pre_run_path.relative_to(staging).as_posix(),
-        "pre_run_governance_manifest_sha256": hashlib.sha256(
-            pre_run_path.read_bytes()
-        ).hexdigest(),
+        "pre_run_governance_manifest_sha256": hashlib.sha256(pre_run_path.read_bytes()).hexdigest(),
         "data_contract": {
             "archive_path": snapshot.relative_to(staging).as_posix(),
             "sha256": hashlib.sha256(snapshot.read_bytes()).hexdigest(),
@@ -727,6 +1602,18 @@ def _fixture(
             "archive_path": pointer.relative_to(staging).as_posix(),
             "sha256": hashlib.sha256(pointer.read_bytes()).hexdigest(),
             "logical_path": "views/pfc_lt/current.json",
+        },
+        "data_publication_intent": {
+            "archive_path": publication_intent.relative_to(staging).as_posix(),
+            "sha256": hashlib.sha256(publication_intent.read_bytes()).hexdigest(),
+        },
+        "data_publication_anchor_receipt": {
+            "archive_path": publication_receipt.relative_to(staging).as_posix(),
+            "sha256": hashlib.sha256(publication_receipt.read_bytes()).hexdigest(),
+        },
+        "data_publication_head_observation": {
+            "archive_path": publication_observation.relative_to(staging).as_posix(),
+            "sha256": hashlib.sha256(publication_observation.read_bytes()).hexdigest(),
         },
         "data_generation_id": "input-001",
         "input_sources": input_receipts,
@@ -792,19 +1679,36 @@ def test_assembly_replays_hourly_export_from_staged_pfc(tmp_path: Path) -> None:
         "eex_acquisition_contract",
         "forward_quote_snapshot",
         "production_manifest",
+        "publication_anchor_receipt",
+        "publication_head_observation",
+        "publication_intent",
         "pfc_ch_15min",
         "selected_lambda_decision",
         "historical_thresholds",
     }
     hourly = pd.read_csv(staging / HOURLY_EXPORT)
-    assert len(hourly) == len(pd.read_parquet(staging / "markets" / "CH" / "pfc_15min.parquet")) // 4
+    assert (
+        len(hourly) == len(pd.read_parquet(staging / "markets" / "CH" / "pfc_15min.parquet")) // 4
+    )
     assert hourly["price_weighted_mean_eur_mwh"].iloc[0] == 83.5
     monthly_gates = pd.read_csv(staging / "audits" / "monthly_curve_gates.csv")
     assert not monthly_gates.empty
     assert not monthly_gates["status"].eq("CRITICAL").any()
-    assert verify_candidate_derived_evidence(
-        staging, expected_run_id="run-001"
-    ) == manifest
+    assert verify_candidate_derived_evidence(staging, expected_run_id="run-001") == manifest
+
+
+def test_assembly_rejects_incomplete_global_authority_registry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    staging = _fixture(tmp_path)
+    monkeypatch.delenv("PFC_TIER2_EXECUTION_TRUSTED_PUBLIC_KEY_PATH")
+
+    with pytest.raises(
+        CandidateEvidenceAssemblyError,
+        match="candidate external publication evidence is invalid",
+    ):
+        assemble_candidate_derived_evidence(staging, run_id="run-001")
 
 
 def test_assembly_rejects_interval_columns_even_if_candidate_hash_is_updated(
@@ -819,9 +1723,7 @@ def test_assembly_rejects_interval_columns_even_if_candidate_hash_is_updated(
     run_path = staging / "manifests" / "candidate_run_manifest.json"
     run = json.loads(run_path.read_text(encoding="utf-8"))
     run["markets"]["CH"]["columns"] = list(pfc.columns)
-    run["markets"]["CH"]["pfc_parquet_sha256"] = hashlib.sha256(
-        pfc_path.read_bytes()
-    ).hexdigest()
+    run["markets"]["CH"]["pfc_parquet_sha256"] = hashlib.sha256(pfc_path.read_bytes()).hexdigest()
     run_path.write_text(json.dumps(run), encoding="utf-8")
 
     with pytest.raises(CandidateEvidenceAssemblyError, match="interval columns"):
@@ -852,9 +1754,7 @@ def test_solver_delivery_grid_preserves_spring_and_autumn_dst(
     assert len(grid) == expected_quarter_hours
     assert grid.tz is not None
     assert grid.is_unique
-    assert (
-        grid.to_series().diff().dropna() == pd.Timedelta(minutes=15)
-    ).all()
+    assert (grid.to_series().diff().dropna() == pd.Timedelta(minutes=15)).all()
 
 
 def test_verifier_rejects_hourly_export_even_after_manifest_rehash(tmp_path: Path) -> None:
@@ -924,9 +1824,7 @@ def test_assembly_rejects_failed_solver_numerical_diagnostics(
     value: object,
 ) -> None:
     staging = _fixture(tmp_path)
-    production_path = (
-        staging / "manifests" / "production_monthly_curve_manifest_ch.json"
-    )
+    production_path = staging / "manifests" / "production_monthly_curve_manifest_ch.json"
     production = json.loads(production_path.read_text(encoding="utf-8"))
     production["solver_kkt"][field] = value
     production_path.write_text(json.dumps(production), encoding="utf-8")
@@ -949,9 +1847,7 @@ def test_assembly_rejects_pfc_monthly_level_drift(tmp_path: Path) -> None:
     pfc.to_parquet(pfc_path)
     run_path = staging / "manifests" / "candidate_run_manifest.json"
     run = json.loads(run_path.read_text(encoding="utf-8"))
-    run["markets"]["CH"]["pfc_parquet_sha256"] = hashlib.sha256(
-        pfc_path.read_bytes()
-    ).hexdigest()
+    run["markets"]["CH"]["pfc_parquet_sha256"] = hashlib.sha256(pfc_path.read_bytes()).hexdigest()
     run_path.write_text(json.dumps(run), encoding="utf-8")
 
     with pytest.raises(CandidateEvidenceAssemblyError, match="monthly means"):
@@ -968,9 +1864,7 @@ def test_assembly_rejects_partial_solver_month_even_after_row_count_update(
     run_path = staging / "manifests" / "candidate_run_manifest.json"
     run = json.loads(run_path.read_text(encoding="utf-8"))
     run["markets"]["CH"]["rows"] = len(pfc)
-    run["markets"]["CH"]["pfc_parquet_sha256"] = hashlib.sha256(
-        pfc_path.read_bytes()
-    ).hexdigest()
+    run["markets"]["CH"]["pfc_parquet_sha256"] = hashlib.sha256(pfc_path.read_bytes()).hexdigest()
     run_path.write_text(json.dumps(run), encoding="utf-8")
 
     with pytest.raises(CandidateEvidenceAssemblyError, match="exactly cover"):
@@ -979,13 +1873,9 @@ def test_assembly_rejects_partial_solver_month_even_after_row_count_update(
 
 def test_assembly_rejects_inflated_repricing_tolerance(tmp_path: Path) -> None:
     staging = _fixture(tmp_path)
-    production_path = (
-        staging / "manifests" / "production_monthly_curve_manifest_ch.json"
-    )
+    production_path = staging / "manifests" / "production_monthly_curve_manifest_ch.json"
     production = json.loads(production_path.read_text(encoding="utf-8"))
-    production["product_hierarchy_policy"][
-        "hard_repricing_tolerance_eur_mwh"
-    ] = 6.0
+    production["product_hierarchy_policy"]["hard_repricing_tolerance_eur_mwh"] = 6.0
     production["product_hierarchy_policy_sha256"] = _sha256_json(
         production["product_hierarchy_policy"]
     )
@@ -1028,9 +1918,7 @@ def test_assembly_rejects_misaligned_quarter_hour_grid(tmp_path: Path) -> None:
     pfc.to_parquet(pfc_path)
     run_path = staging / "manifests" / "candidate_run_manifest.json"
     run = json.loads(run_path.read_text(encoding="utf-8"))
-    run["markets"]["CH"]["pfc_parquet_sha256"] = hashlib.sha256(
-        pfc_path.read_bytes()
-    ).hexdigest()
+    run["markets"]["CH"]["pfc_parquet_sha256"] = hashlib.sha256(pfc_path.read_bytes()).hexdigest()
     run_path.write_text(json.dumps(run), encoding="utf-8")
 
     with pytest.raises(CandidateEvidenceAssemblyError, match="quarter-hour aligned"):
@@ -1048,6 +1936,41 @@ def test_assembly_rejects_missing_governed_input_snapshot(tmp_path: Path) -> Non
         assemble_candidate_derived_evidence(staging, run_id="run-001")
 
 
+def test_resolver_rejects_fully_resigned_eex_history_without_vintage_catalog(
+    tmp_path: Path,
+) -> None:
+    data_root = tmp_path / "governed-data"
+    _fixture(tmp_path, governed_data_root=data_root)
+    generation = data_root / "snapshots" / "input-001"
+    contract_path = generation / "lt_input_snapshot.json"
+    contract = json.loads(contract_path.read_text(encoding="utf-8"))
+    files = contract["files"]
+    files["eex_forwards_history"].pop("vintage_catalog")
+    resigned = _sign_governed_input_contract(
+        files,
+        generation_id="input-001",
+        acquisition_id="input-001",
+        available_at_utc="2026-07-13T23:50:00+00:00",
+        schema_version=PROVIDER_RAW_LT_INPUT_SNAPSHOT_SCHEMA,
+    )
+    contract_path.write_text(json.dumps(resigned), encoding="utf-8")
+    _write_external_publication_projection(
+        data_root,
+        generation_id="input-001",
+        contract_sha256=hashlib.sha256(contract_path.read_bytes()).hexdigest(),
+        operation_id="00000000-0000-4000-8000-000000000102",
+    )
+
+    with (
+        patch(
+            "pfc_shaping.data.snapshot_publication_state._reference_utc",
+            return_value=datetime(2026, 7, 14, 0, 1, tzinfo=timezone.utc),
+        ),
+        pytest.raises(ValueError, match="requires a signed vintage_catalog binding"),
+    ):
+        resolve_lt_input_paths(tmp_path / "project", data_root=data_root)
+
+
 def test_assembly_rejects_signed_divergent_input_acquisition_id(tmp_path: Path) -> None:
     staging = _fixture(tmp_path)
     snapshot_path = staging / "evidence" / "data" / "lt_input_snapshot.json"
@@ -1056,16 +1979,12 @@ def test_assembly_rejects_signed_divergent_input_acquisition_id(tmp_path: Path) 
     contract["files"]["entso"]["acquisition_id"] = "foreign-acquisition"
     signed = sign_acquisition_contract(
         contract,
-        private_key_path=os.environ[
-            "PFC_DATA_ACQUISITION_SIGNING_PRIVATE_KEY_PATH"
-        ],
+        private_key_path=os.environ["PFC_DATA_ACQUISITION_SIGNING_PRIVATE_KEY_PATH"],
     )
     snapshot_path.write_text(json.dumps(signed), encoding="utf-8")
     run_path = staging / "manifests" / "candidate_run_manifest.json"
     run = json.loads(run_path.read_text(encoding="utf-8"))
-    run["data_contract"]["sha256"] = hashlib.sha256(
-        snapshot_path.read_bytes()
-    ).hexdigest()
+    run["data_contract"]["sha256"] = hashlib.sha256(snapshot_path.read_bytes()).hexdigest()
     run_path.write_text(json.dumps(run), encoding="utf-8")
 
     with pytest.raises(CandidateEvidenceAssemblyError, match="authentication failed"):
@@ -1082,9 +2001,7 @@ def test_assembly_rejects_signed_input_path_escape(tmp_path: Path) -> None:
         json.dumps(
             sign_acquisition_contract(
                 contract,
-                private_key_path=os.environ[
-                    "PFC_DATA_ACQUISITION_SIGNING_PRIVATE_KEY_PATH"
-                ],
+                private_key_path=os.environ["PFC_DATA_ACQUISITION_SIGNING_PRIVATE_KEY_PATH"],
             )
         ),
         encoding="utf-8",
@@ -1132,11 +2049,32 @@ def test_assembly_rejects_rehashed_foreign_pointer_generation(tmp_path: Path) ->
     run["data_pointer"]["sha256"] = hashlib.sha256(pointer_path.read_bytes()).hexdigest()
     run_path.write_text(json.dumps(run), encoding="utf-8")
 
-    with pytest.raises(CandidateEvidenceAssemblyError, match="generation mismatch"):
+    with pytest.raises(
+        CandidateEvidenceAssemblyError,
+        match="external publication evidence is invalid",
+    ):
         assemble_candidate_derived_evidence(staging, run_id="run-001")
 
 
-def test_eex_acquisition_requires_nonempty_common_identity(tmp_path: Path) -> None:
+def test_assembly_rejects_bootstrap_publication_explicitly(tmp_path: Path) -> None:
+    staging = _fixture(tmp_path)
+    intent_path = staging / "evidence" / "data" / "snapshot_publication_intent.json"
+    intent = json.loads(intent_path.read_text(encoding="utf-8"))
+    intent["transition_type"] = "BOOTSTRAP"
+    intent_path.write_text(json.dumps(intent), encoding="utf-8")
+    run_path = staging / "manifests" / "candidate_run_manifest.json"
+    run = json.loads(run_path.read_text(encoding="utf-8"))
+    run["data_publication_intent"]["sha256"] = hashlib.sha256(intent_path.read_bytes()).hexdigest()
+    run_path.write_text(json.dumps(run), encoding="utf-8")
+
+    with pytest.raises(
+        CandidateEvidenceAssemblyError,
+        match="cannot consume a BOOTSTRAP publication",
+    ):
+        assemble_candidate_derived_evidence(staging, run_id="run-001")
+
+
+def test_eex_acquisition_rejects_legacy_v1_contract(tmp_path: Path) -> None:
     workbook = tmp_path / "eex.xlsx"
     workbook.write_bytes(b"fixture")
     contract_path = tmp_path / "eex-contract.json"
@@ -1162,15 +2100,13 @@ def test_eex_acquisition_requires_nonempty_common_identity(tmp_path: Path) -> No
                         }
                     },
                 },
-                private_key_path=os.environ[
-                    "PFC_DATA_ACQUISITION_SIGNING_PRIVATE_KEY_PATH"
-                ],
+                private_key_path=os.environ["PFC_DATA_ACQUISITION_SIGNING_PRIVATE_KEY_PATH"],
             )
         ),
         encoding="utf-8",
     )
 
-    with pytest.raises(CandidateEvidenceError, match="identity is missing"):
+    with pytest.raises(CandidateEvidenceError, match="requires a governed v2"):
         _verified_eex_acquisition(
             workbook,
             contract_path,
@@ -1186,29 +2122,21 @@ def test_renamed_ompex_source_is_rejected_by_authenticated_provider(
     contract_path = tmp_path / "eex-contract.json"
     contract_path.write_text(
         json.dumps(
-            sign_acquisition_contract(
+            _sign_governed_input_contract(
                 {
-                    "schema_version": "lt_input_snapshot.v1",
-                    "layout": "external_v2",
-                    "generation_id": "eex-ompex-001",
-                    "acquisition_id": "eex-ompex-001",
-                    "calibration_eligible": True,
-                    "source_class": "GOVERNED_ACQUISITION",
-                    "files": {
-                        "eex_forward_source": {
-                            "path": workbook.name,
-                            "size_bytes": workbook.stat().st_size,
-                            "sha256": hashlib.sha256(workbook.read_bytes()).hexdigest(),
-                            "acquisition_id": "eex-ompex-001",
-                            "available_at_utc": "2026-07-12T18:00:00+00:00",
-                            "calibration_eligible": True,
-                            "source_system": "OMPEX_HFC",
-                        }
-                    },
+                    "eex_forward_source": {
+                        "path": workbook.name,
+                        "size_bytes": workbook.stat().st_size,
+                        "sha256": hashlib.sha256(workbook.read_bytes()).hexdigest(),
+                        "acquisition_id": "eex-ompex-001",
+                        "available_at_utc": "2026-07-12T18:00:00+00:00",
+                        "calibration_eligible": True,
+                        "source_system": "OMPEX_HFC",
+                    }
                 },
-                private_key_path=os.environ[
-                    "PFC_DATA_ACQUISITION_SIGNING_PRIVATE_KEY_PATH"
-                ],
+                generation_id="eex-ompex-001",
+                acquisition_id="eex-ompex-001",
+                available_at_utc="2026-07-12T18:00:00+00:00",
             )
         ),
         encoding="utf-8",
@@ -1237,9 +2165,7 @@ def test_assembly_rejects_ompex_marker_in_model_consumed_config(
             "target_markets": ["CH"],
         }
     if section == "quality":
-        extra[section].update(
-            {"benchmark_policy": "advisory", "fail_on_benchmark": False}
-        )
+        extra[section].update({"benchmark_policy": "advisory", "fail_on_benchmark": False})
     staging = _fixture(tmp_path, extra_config=extra)
 
     with pytest.raises(CandidateEvidenceAssemblyError, match="OMPEX/HFC"):
@@ -1257,18 +2183,14 @@ def test_product_evidence_requires_then_accepts_exact_signed_policy(
 
     assert pending["status"] == "SOURCE_HIERARCHY_POLICY_REQUIRED"
     assert pending["promotion_eligible"] is False
-    assert product_evidence_main(
-        ["--staging", str(staging), "--run-id", "run-001"]
-    ) == 2
+    assert product_evidence_main(["--staging", str(staging), "--run-id", "run-001"]) == 2
     assert "SOURCE_HIERARCHY_POLICY_REQUIRED" in capsys.readouterr().out
     policy_path = tmp_path / "signed-source-hierarchy-policy.json"
     policy_path.write_text(
         json.dumps(
             sign_quote_conflict_policy(
                 pending["required_policy_payload"],
-                private_key_path=os.environ[
-                    "PFC_QUOTE_CONFLICT_POLICY_SIGNING_PRIVATE_KEY_PATH"
-                ],
+                private_key_path=os.environ["PFC_QUOTE_CONFLICT_POLICY_SIGNING_PRIVATE_KEY_PATH"],
             )
         ),
         encoding="utf-8",
@@ -1281,14 +2203,15 @@ def test_product_evidence_requires_then_accepts_exact_signed_policy(
     )
 
     assert evidence["schema_version"] == "candidate_product_normalization_evidence.v1"
-    assert verify_candidate_product_evidence(
-        staging,
-        expected_run_id="run-001",
-    ) == evidence
-    summary = json.loads(
-        (staging / "manifests" / "product_normalization_summary.json").read_text(
-            encoding="utf-8"
+    assert (
+        verify_candidate_product_evidence(
+            staging,
+            expected_run_id="run-001",
         )
+        == evidence
+    )
+    summary = json.loads(
+        (staging / "manifests" / "product_normalization_summary.json").read_text(encoding="utf-8")
     )
     assert summary["monthly_candidate_binding_status"] == "BOUND"
     assert summary["source_hierarchy_policy"]["status"] == "ACCEPTED_PRODUCTION_APPROVED"
@@ -1338,9 +2261,7 @@ def test_rejected_signed_policy_is_not_staged_and_can_be_retried(tmp_path: Path)
         json.dumps(
             sign_quote_conflict_policy(
                 wrong_payload,
-                private_key_path=os.environ[
-                    "PFC_QUOTE_CONFLICT_POLICY_SIGNING_PRIVATE_KEY_PATH"
-                ],
+                private_key_path=os.environ["PFC_QUOTE_CONFLICT_POLICY_SIGNING_PRIVATE_KEY_PATH"],
             )
         ),
         encoding="utf-8",
@@ -1359,9 +2280,7 @@ def test_rejected_signed_policy_is_not_staged_and_can_be_retried(tmp_path: Path)
         json.dumps(
             sign_quote_conflict_policy(
                 pending["required_policy_payload"],
-                private_key_path=os.environ[
-                    "PFC_QUOTE_CONFLICT_POLICY_SIGNING_PRIVATE_KEY_PATH"
-                ],
+                private_key_path=os.environ["PFC_QUOTE_CONFLICT_POLICY_SIGNING_PRIVATE_KEY_PATH"],
             )
         ),
         encoding="utf-8",
@@ -1383,9 +2302,7 @@ def test_product_evidence_rejects_mutated_conflict_inventory(tmp_path: Path) -> 
         json.dumps(
             sign_quote_conflict_policy(
                 pending["required_policy_payload"],
-                private_key_path=os.environ[
-                    "PFC_QUOTE_CONFLICT_POLICY_SIGNING_PRIVATE_KEY_PATH"
-                ],
+                private_key_path=os.environ["PFC_QUOTE_CONFLICT_POLICY_SIGNING_PRIVATE_KEY_PATH"],
             )
         ),
         encoding="utf-8",
@@ -1422,9 +2339,7 @@ def test_canonical_seal_and_locked_finalizer_replay_both_assemblies(
         json.dumps(
             sign_quote_conflict_policy(
                 pending["required_policy_payload"],
-                private_key_path=os.environ[
-                    "PFC_QUOTE_CONFLICT_POLICY_SIGNING_PRIVATE_KEY_PATH"
-                ],
+                private_key_path=os.environ["PFC_QUOTE_CONFLICT_POLICY_SIGNING_PRIVATE_KEY_PATH"],
             )
         ),
         encoding="utf-8",
@@ -1450,33 +2365,39 @@ def test_canonical_seal_and_locked_finalizer_replay_both_assemblies(
         "PFC_QUOTE_CONFLICT_POLICY_SIGNING_PRIVATE_KEY_PATH",
     ):
         monkeypatch.delenv(private_key_env)
-    assert finalize_candidate_main(
-        [
-            "--release-root",
-            str(release),
-            "--failure-root",
-            str(tmp_path / "failures"),
-            "--run-id",
-            "run-001",
-            "--source-hierarchy-policy",
-            str(policy_path),
-        ]
-    ) == 0
+    assert (
+        finalize_candidate_main(
+            [
+                "--release-root",
+                str(release),
+                "--failure-root",
+                str(tmp_path / "failures"),
+                "--run-id",
+                "run-001",
+                "--source-hierarchy-policy",
+                str(policy_path),
+            ]
+        )
+        == 0
+    )
     finalized = json.loads(capsys.readouterr().out)
     assert finalized["status"] == "CANDIDATE_FINALIZED_NOT_PROMOTED"
     assert len(finalized["candidate_bundle_manifest_sha256"]) == 64
-    assert finalize_candidate_main(
-        [
-            "--release-root",
-            str(release),
-            "--failure-root",
-            str(tmp_path / "failures"),
-            "--run-id",
-            "run-001",
-            "--source-hierarchy-policy",
-            str(policy_path),
-        ]
-    ) == 0
+    assert (
+        finalize_candidate_main(
+            [
+                "--release-root",
+                str(release),
+                "--failure-root",
+                str(tmp_path / "failures"),
+                "--run-id",
+                "run-001",
+                "--source-hierarchy-policy",
+                str(policy_path),
+            ]
+        )
+        == 0
+    )
     retried = json.loads(capsys.readouterr().out)
     assert retried == finalized
     bundle = verify_candidate_bundle(release, run_id="run-001")
@@ -1573,9 +2494,7 @@ def test_strict_finalizer_quarantines_failed_post_rename_replay(
         json.dumps(
             sign_quote_conflict_policy(
                 pending["required_policy_payload"],
-                private_key_path=os.environ[
-                    "PFC_QUOTE_CONFLICT_POLICY_SIGNING_PRIVATE_KEY_PATH"
-                ],
+                private_key_path=os.environ["PFC_QUOTE_CONFLICT_POLICY_SIGNING_PRIVATE_KEY_PATH"],
             )
         ),
         encoding="utf-8",
@@ -1635,9 +2554,7 @@ def test_assembled_release_runs_real_capstone_from_canonical_bundle(
         json.dumps(
             sign_quote_conflict_policy(
                 pending["required_policy_payload"],
-                private_key_path=os.environ[
-                    "PFC_QUOTE_CONFLICT_POLICY_SIGNING_PRIVATE_KEY_PATH"
-                ],
+                private_key_path=os.environ["PFC_QUOTE_CONFLICT_POLICY_SIGNING_PRIVATE_KEY_PATH"],
             )
         ),
         encoding="utf-8",
@@ -1717,12 +2634,9 @@ def test_assembled_release_runs_real_capstone_from_canonical_bundle(
     assert audited["approved"] is False
     assert audited["status"] == "REJECTED"
     receipts = list(
-        (
-            workflow
-            / "run-001"
-            / "audit-results"
-            / str(request["request_id"])[:32]
-        ).glob("promotion_receipt.json")
+        (workflow / "run-001" / "audit-results" / str(request["request_id"])[:32]).glob(
+            "promotion_receipt.json"
+        )
     )
     assert len(receipts) == 1
     receipt = json.loads(receipts[0].read_text(encoding="utf-8"))

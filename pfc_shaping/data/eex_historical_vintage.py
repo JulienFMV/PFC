@@ -18,6 +18,10 @@ from pfc_shaping.data.acquisition_contract import (
     verify_acquisition_contract,
     verify_trusted_time_receipt,
 )
+from pfc_shaping.path_safety import (
+    assert_absolute_path_has_no_links,
+    read_stable_single_link_file,
+)
 from pfc_shaping.pipeline.strict_structured_data import (
     StrictStructuredDataError,
     load_strict_json,
@@ -59,6 +63,65 @@ EEX_HISTORICAL_REQUIRED_COLUMNS = {
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _VERIFIED_CATALOG_TOKEN = object()
+_CATALOG_UNSIGNED_KEYS = {
+    "schema_version",
+    "catalog_id",
+    "created_at_utc",
+    "data_cutoff_utc",
+    "calibration_eligible",
+    "source_class",
+    "revision_policy",
+    "ompex_used",
+    "history_parquet",
+    "source_documents",
+}
+_CATALOG_SIGNED_KEYS = {*_CATALOG_UNSIGNED_KEYS, "acquisition_attestation"}
+_CATALOG_ATTESTATION_KEYS = {
+    "algorithm",
+    "key_id",
+    "payload_sha256",
+    "value_base64",
+}
+_HISTORY_ENTRY_KEYS = {"path", "sha256", "size_bytes", "row_count"}
+_SOURCE_DOCUMENT_ENTRY_KEYS = {
+    "snapshot_ids",
+    "acquisition_id",
+    "observed_at",
+    "available_at",
+    "source_document_id",
+    "path",
+    "sha256",
+    "size_bytes",
+    "parser_code_path",
+    "parser_code_sha256",
+    "parser_config",
+    "parser_config_sha256",
+    "trusted_time_receipt",
+}
+_TRUSTED_TIME_RECEIPT_KEYS = {
+    "schema_version",
+    "receipt_id",
+    "source_document_id",
+    "source_document_sha256",
+    "size_bytes",
+    "received_at_utc",
+    "journal_id",
+    "journal_sequence",
+    "previous_receipt_id",
+    "trusted_time_attestation",
+}
+_TRUSTED_TIME_ATTESTATION_KEYS = _CATALOG_ATTESTATION_KEYS
+_LEGACY_PARSER_CONFIG_KEYS = {"parser_version", "selection_mode", "markets"}
+_PROSPECTIVE_PARSER_CONFIG_KEYS = {
+    *_LEGACY_PARSER_CONFIG_KEYS,
+    "quote_convention",
+    "expected_quotes",
+    "intake_id",
+}
+_MAX_CATALOG_BYTES = 4 * 1024 * 1024
+_MAX_HISTORY_BYTES = 512 * 1024 * 1024
+_MAX_SOURCE_BYTES = 64 * 1024 * 1024
+_MAX_PARSER_BYTES = 2 * 1024 * 1024
 
 
 class EexHistoricalVintageError(ValueError):
@@ -383,23 +446,48 @@ def verify_eex_historical_vintage_catalog(
     *,
     catalog_path: str | Path,
     history_path: str | Path,
+    acquisition_public_key_path: str | Path | None = None,
+    acquisition_public_key_dir: str | Path | None = None,
+    trusted_time_public_key_path: str | Path | None = None,
+    trusted_time_public_key_dir: str | Path | None = None,
+    trusted_time_journal_id: str | None = None,
 ) -> tuple[pd.DataFrame, VerifiedEexHistoricalVintageCatalog]:
     """Authenticate a complete immutable vintage catalog and its exact bytes."""
 
-    catalog_file = Path(catalog_path).resolve()
+    catalog_file = assert_absolute_path_has_no_links(Path(catalog_path).absolute())
     try:
-        catalog_bytes = catalog_file.read_bytes()
+        catalog_bytes = read_stable_single_link_file(
+            catalog_file,
+            label="EEX vintage catalog",
+            max_bytes=_MAX_CATALOG_BYTES,
+        )
         persisted_catalog = load_strict_json(catalog_bytes.decode("utf-8"))
-    except (OSError, UnicodeDecodeError, StrictStructuredDataError) as exc:
+    except (ValueError, UnicodeDecodeError, StrictStructuredDataError) as exc:
         raise EexHistoricalVintageError("EEX vintage catalog file is unreadable") from exc
     if persisted_catalog != dict(catalog):
         raise EexHistoricalVintageError("EEX vintage catalog payload/path mismatch")
+    if set(catalog) != _CATALOG_SIGNED_KEYS:
+        raise EexHistoricalVintageError("EEX vintage catalog fields are not exact")
+    catalog_attestation = catalog.get("acquisition_attestation")
+    if (
+        not isinstance(catalog_attestation, Mapping)
+        or set(catalog_attestation) != _CATALOG_ATTESTATION_KEYS
+    ):
+        raise EexHistoricalVintageError(
+            "EEX vintage catalog attestation fields are not exact"
+        )
     try:
-        unsigned = verify_acquisition_contract(catalog)
+        unsigned = verify_acquisition_contract(
+            catalog,
+            trusted_public_key_path=acquisition_public_key_path,
+            trusted_public_key_dir=acquisition_public_key_dir,
+        )
     except ValueError as exc:
         raise EexHistoricalVintageError("EEX vintage catalog attestation is invalid") from exc
     if unsigned.get("schema_version") != EEX_HISTORICAL_CATALOG_SCHEMA:
         raise EexHistoricalVintageError("EEX vintage catalog schema mismatch")
+    if set(unsigned) != _CATALOG_UNSIGNED_KEYS:
+        raise EexHistoricalVintageError("EEX vintage unsigned fields are not exact")
     if unsigned.get("calibration_eligible") is not True:
         raise EexHistoricalVintageError("EEX vintage catalog is not calibration eligible")
     if unsigned.get("source_class") != "IMMUTABLE_DAILY_EEX_XLSX":
@@ -415,9 +503,9 @@ def verify_eex_historical_vintage_catalog(
     if catalog_id != expected_catalog_id:
         raise EexHistoricalVintageError("EEX vintage catalog_id mismatch")
     catalog_root = catalog_file.parent
-    selected_history = Path(history_path).resolve()
+    selected_history = assert_absolute_path_has_no_links(Path(history_path).absolute())
     history_entry = unsigned.get("history_parquet")
-    if not isinstance(history_entry, Mapping):
+    if not isinstance(history_entry, Mapping) or set(history_entry) != _HISTORY_ENTRY_KEYS:
         raise EexHistoricalVintageError("EEX vintage catalog history entry is missing")
     expected_history = _resolve_catalog_path(
         catalog_root,
@@ -427,8 +515,12 @@ def verify_eex_historical_vintage_catalog(
     if selected_history != expected_history:
         raise EexHistoricalVintageError("EEX vintage catalog selects a different history parquet")
     try:
-        history_bytes = selected_history.read_bytes()
-    except OSError as exc:
+        history_bytes = read_stable_single_link_file(
+            selected_history,
+            label="EEX vintage history parquet",
+            max_bytes=_MAX_HISTORY_BYTES,
+        )
+    except ValueError as exc:
         raise EexHistoricalVintageError("EEX vintage history parquet is unavailable") from exc
     history_sha = hashlib.sha256(history_bytes).hexdigest()
     if (
@@ -454,7 +546,7 @@ def verify_eex_historical_vintage_catalog(
     parser_payload_cache: dict[Path, bytes] = {}
     trusted_receipts: list[dict[str, object]] = []
     for raw in documents:
-        if not isinstance(raw, Mapping):
+        if not isinstance(raw, Mapping) or set(raw) != _SOURCE_DOCUMENT_ENTRY_KEYS:
             raise EexHistoricalVintageError("EEX vintage source document entry is invalid")
         snapshot_ids = raw.get("snapshot_ids")
         if (
@@ -482,8 +574,12 @@ def verify_eex_historical_vintage_catalog(
         document_ids.add(document_id)
         document_hashes.add(document_hash)
         try:
-            payload = document.read_bytes()
-        except OSError as exc:
+            payload = read_stable_single_link_file(
+                document,
+                label="EEX vintage source document",
+                max_bytes=_MAX_SOURCE_BYTES,
+            )
+        except ValueError as exc:
             raise EexHistoricalVintageError(
                 f"EEX vintage source document is unavailable: {document}"
             ) from exc
@@ -492,14 +588,23 @@ def verify_eex_historical_vintage_catalog(
             or raw.get("size_bytes") != len(payload)
         ):
             raise EexHistoricalVintageError("EEX vintage source document receipt mismatch")
+        try:
+            from pfc_shaping.data.eex_forward_vintage_intake import (
+                preflight_eex_forward_workbook_bytes,
+            )
+
+            preflight_eex_forward_workbook_bytes(payload)
+        except ValueError as exc:
+            raise EexHistoricalVintageError(
+                "EEX vintage source document XLSX preflight failed"
+            ) from exc
         receipt = raw.get("trusted_time_receipt")
-        if not isinstance(receipt, Mapping):
+        if not isinstance(receipt, Mapping) or set(receipt) != _TRUSTED_TIME_RECEIPT_KEYS:
             raise EexHistoricalVintageError("EEX trusted-time acquisition receipt is missing")
-        catalog_attestation = catalog.get("acquisition_attestation")
         timestamp_attestation = receipt.get("trusted_time_attestation")
-        if not isinstance(catalog_attestation, Mapping) or not isinstance(
-            timestamp_attestation,
-            Mapping,
+        if (
+            not isinstance(timestamp_attestation, Mapping)
+            or set(timestamp_attestation) != _TRUSTED_TIME_ATTESTATION_KEYS
         ):
             raise EexHistoricalVintageError("EEX acquisition authority metadata is missing")
         if str(catalog_attestation.get("key_id", "")) == str(
@@ -513,6 +618,9 @@ def verify_eex_historical_vintage_catalog(
                 receipt,
                 source_entry=raw,
                 source_size=len(payload),
+                trusted_public_key_path=trusted_time_public_key_path,
+                trusted_public_key_dir=trusted_time_public_key_dir,
+                trusted_journal_id=trusted_time_journal_id,
             )
         )
         parser_code = _resolve_catalog_path(
@@ -522,8 +630,12 @@ def verify_eex_historical_vintage_catalog(
         )
         if parser_code not in parser_payload_cache:
             try:
-                parser_payload_cache[parser_code] = parser_code.read_bytes()
-            except OSError as exc:
+                parser_payload_cache[parser_code] = read_stable_single_link_file(
+                    parser_code,
+                    label="EEX vintage parser code",
+                    max_bytes=_MAX_PARSER_BYTES,
+                )
+            except ValueError as exc:
                 raise EexHistoricalVintageError("EEX vintage parser code is unavailable") from exc
         parser_code_hash = hashlib.sha256(parser_payload_cache[parser_code]).hexdigest()
         if str(raw.get("parser_code_sha256", "")) != parser_code_hash:
@@ -531,6 +643,13 @@ def verify_eex_historical_vintage_catalog(
         parser_config = raw.get("parser_config")
         if not isinstance(parser_config, Mapping):
             raise EexHistoricalVintageError("EEX vintage parser config is missing")
+        if frozenset(parser_config) not in {
+            frozenset(_LEGACY_PARSER_CONFIG_KEYS),
+            frozenset(_PROSPECTIVE_PARSER_CONFIG_KEYS),
+        }:
+            raise EexHistoricalVintageError(
+                "EEX vintage parser config fields are not exact"
+            )
         parser_config_hash = _sha256_json(parser_config)
         if str(raw.get("parser_config_sha256", "")) != parser_config_hash:
             raise EexHistoricalVintageError("EEX vintage parser config hash mismatch")
@@ -592,6 +711,39 @@ def verify_eex_historical_vintage_catalog(
     return frame, evidence
 
 
+def materialize_eex_forward_history_as_of(
+    vintages: pd.DataFrame,
+    *,
+    valuation_timestamp: str | pd.Timestamp,
+) -> pd.DataFrame:
+    """Select the latest revision available at valuation for each quote identity."""
+
+    frame = validate_eex_historical_vintage_frame(vintages)
+    cutoff = pd.Timestamp(valuation_timestamp)
+    if cutoff.tzinfo is None:
+        raise EexHistoricalVintageError("EEX history valuation timestamp must be timezone-aware")
+    cutoff = cutoff.tz_convert("UTC")
+    eligible = frame.loc[frame["available_at"] <= cutoff].copy()
+    if eligible.empty:
+        raise EexHistoricalVintageError("no EEX historical vintage was available at valuation")
+    identity = ["date", "market", "load_type", "product"]
+    eligible = eligible.sort_values(
+        [*identity, "available_at", "revision_sequence", "revision_timestamp"],
+        kind="mergesort",
+    )
+    selected = eligible.drop_duplicates(identity, keep="last").reset_index(drop=True)
+    selected.attrs["verified_vintage_catalog"] = dict(
+        frame.attrs.get("verified_vintage_catalog", {})
+    )
+    selected.attrs["pit_selection"] = {
+        "valuation_timestamp": cutoff.isoformat(),
+        "selected_rows": len(selected),
+        "eligible_vintage_rows": len(eligible),
+        "max_available_at": selected["available_at"].max().isoformat(),
+    }
+    return selected
+
+
 def _replay_source_document(
     source_bytes: bytes,
     *,
@@ -606,7 +758,12 @@ def _replay_source_document(
     from pfc_shaping.data import ingest_forwards
 
     runtime_parser = Path(ingest_forwards.__file__).resolve()
-    if hashlib.sha256(runtime_parser.read_bytes()).hexdigest() != parser_code_sha256:
+    runtime_parser_payload = read_stable_single_link_file(
+        runtime_parser,
+        label="runtime EEX parser",
+        max_bytes=_MAX_PARSER_BYTES,
+    )
+    if hashlib.sha256(runtime_parser_payload).hexdigest() != parser_code_sha256:
         raise EexHistoricalVintageError("runtime EEX parser differs from archived parser code")
     if not frame["parser_code_sha256"].astype(str).eq(parser_code_sha256).all():
         raise EexHistoricalVintageError("EEX quote rows do not bind archived parser code")
@@ -630,6 +787,19 @@ def _replay_source_document(
     }
     if {str(key): str(value) for key, value in configured_markets.items()} != actual_market_dates:
         raise EexHistoricalVintageError("EEX parser config market/date inventory mismatch")
+    prospective_config = set(parser_config) == _PROSPECTIVE_PARSER_CONFIG_KEYS
+    if prospective_config:
+        if parser_config.get("quote_convention") != "EEX_SETTLEMENT_EUR_MWH":
+            raise EexHistoricalVintageError(
+                "prospective EEX replay requires settlement quote convention"
+            )
+        if not _SHA256_RE.fullmatch(str(parser_config.get("intake_id", ""))):
+            raise EexHistoricalVintageError("prospective EEX intake_id is invalid")
+        expected_quotes = parser_config.get("expected_quotes")
+        if not isinstance(expected_quotes, list) or not expected_quotes:
+            raise EexHistoricalVintageError(
+                "prospective EEX quote inventory is missing"
+            )
     document_identity = ["market", "load_type", "product"]
     if frame.duplicated(document_identity, keep=False).any():
         raise EexHistoricalVintageError(
@@ -642,6 +812,35 @@ def _replay_source_document(
         if len(dates) != 1:
             raise EexHistoricalVintageError("EEX document market has multiple snapshot dates")
         snapshot_date = pd.Timestamp(dates.iloc[0]).date().isoformat()
+        if prospective_config:
+            from pfc_shaping.data.eex_forward_vintage_intake import (
+                inspect_eex_forward_workbook_latest_market_row,
+            )
+
+            try:
+                inspected_date, inspected_quotes = (
+                    inspect_eex_forward_workbook_latest_market_row(
+                        source_bytes,
+                        market=str(market),
+                    )
+                )
+            except ValueError as exc:
+                raise EexHistoricalVintageError(
+                    "prospective EEX physical-row replay failed"
+                ) from exc
+            expected_market_quotes = [
+                dict(quote)
+                for quote in expected_quotes
+                if isinstance(quote, Mapping)
+                and str(quote.get("market", "")) == str(market)
+            ]
+            if (
+                inspected_date != snapshot_date
+                or inspected_quotes != expected_market_quotes
+            ):
+                raise EexHistoricalVintageError(
+                    "prospective EEX physical quote inventory mismatch"
+                )
         try:
             prices, parsed_date, metadata = ingest_forwards.load_base_prices_from_eex_report_bytes(
                 source_bytes,
@@ -680,9 +879,17 @@ def _verify_source_trusted_time_receipt(
     *,
     source_entry: Mapping[str, object],
     source_size: int,
+    trusted_public_key_path: str | Path | None,
+    trusted_public_key_dir: str | Path | None,
+    trusted_journal_id: str | None,
 ) -> dict[str, object]:
     try:
-        unsigned = verify_trusted_time_receipt(receipt)
+        unsigned = verify_trusted_time_receipt(
+            receipt,
+            trusted_public_key_path=trusted_public_key_path,
+            trusted_public_key_dir=trusted_public_key_dir,
+            trusted_journal_id=trusted_journal_id,
+        )
     except ValueError as exc:
         raise EexHistoricalVintageError("EEX trusted-time receipt is invalid") from exc
     if unsigned.get("schema_version") != TRUSTED_TIME_RECEIPT_SCHEMA:
@@ -764,7 +971,12 @@ def _resolve_catalog_path(root: Path, value: object, *, label: str) -> Path:
     text = str(value or "")
     if not text or Path(text).is_absolute():
         raise EexHistoricalVintageError(f"EEX vintage {label} path must be relative")
-    resolved = (root / text).resolve()
+    try:
+        resolved = assert_absolute_path_has_no_links((root / text).absolute())
+    except ValueError as exc:
+        raise EexHistoricalVintageError(
+            f"EEX vintage {label} path contains a link or reparse point"
+        ) from exc
     try:
         resolved.relative_to(root)
     except ValueError as exc:

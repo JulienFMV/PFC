@@ -24,6 +24,18 @@ def test_lt_orchestrator_injects_governed_outages_into_mlp() -> None:
     assert 'sh_fit_kwargs["outages_df"] = inputs.outages_all' in source
 
 
+def test_lt_orchestrator_fails_closed_before_intraday_fit_without_product_identity() -> None:
+    source = inspect.getsource(production_phases.run_long_term_phase)
+    frame = pd.DataFrame(
+        {"price_eur_mwh": [40.0, 41.0]},
+        index=pd.date_range("2026-01-01", periods=2, freq="15min", tz="UTC"),
+    )
+
+    assert "_require_production_intraday_price_truth(inputs.epex_de)" in source
+    with pytest.raises(ValueError, match="resolution provenance is missing"):
+        production_phases._require_production_intraday_price_truth(frame)
+
+
 def test_lt_horizon_is_anchored_to_explicit_valuation_not_runtime_clock() -> None:
     source = inspect.getsource(production_phases.run_long_term_phase)
 
@@ -67,6 +79,7 @@ def test_pit_role_failure_occurs_before_any_parquet_read(
         available_at_utc=available_at,
         files={role: tmp_path / f"{role}.parquet" for role in roles},
         expected_files=roles,
+        schema_version="lt_input_snapshot.v3",
     )
     config = {
         "forwards": {"monthly_curve_solver": {"enabled": False}},

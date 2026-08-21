@@ -27,7 +27,7 @@ DETERMINISTIC_PFC_COLUMNS = frozenset(
 )
 DETERMINISTIC_ONLY_STATUS = "DETERMINISTIC_ONLY"
 LEGACY_INTERVAL_STATUS = "QUARANTINED_UNCALIBRATED"
-GOVERNED_INTERVAL_STATUSES = frozenset({"CALIBRATED_ROLLING_ORIGIN"})
+UNVERIFIED_INTERVAL_STATUS_CLAIMS = frozenset({"CALIBRATED_ROLLING_ORIGIN"})
 _BOUND_TOKENS = frozenset({"lower", "upper", "low", "high", "lo", "hi"})
 
 
@@ -129,13 +129,23 @@ def deterministic_pfc_export_frame(frame: pd.DataFrame, *, context: str) -> pd.D
 
 
 def governed_intervals_available(frame: pd.DataFrame) -> bool:
-    """Return true only for finite bounds carrying a governed probabilistic status."""
+    """Reject interval availability until calibration evidence is verified.
+
+    ``DataFrame.attrs`` is caller-controlled metadata.  A status string can
+    describe the intended evidence class, but it cannot prove that a frozen
+    rolling-origin calibration receipt exists or that the frame is bound to
+    it.  The current repository has no independent probabilistic receipt
+    verifier, so even structurally valid bounds remain unavailable.
+    """
 
     if not frame.columns.is_unique:
         return False
     if not {"p10", "p90"}.issubset(frame.columns):
         return False
-    if frame.attrs.get("probabilistic_status") not in GOVERNED_INTERVAL_STATUSES:
+    if (
+        frame.attrs.get("probabilistic_status")
+        not in UNVERIFIED_INTERVAL_STATUS_CLAIMS
+    ):
         return False
     if frame.empty:
         return False
@@ -144,4 +154,13 @@ def governed_intervals_available(frame: pd.DataFrame) -> bool:
         return False
     numeric = raw.apply(pd.to_numeric, errors="coerce")
     values = numeric.to_numpy(dtype=float)
-    return bool(np.isfinite(values).all() and (values[:, 0] <= values[:, 1]).all())
+    structurally_valid = bool(
+        np.isfinite(values).all() and (values[:, 0] <= values[:, 1]).all()
+    )
+    if not structurally_valid:
+        return False
+
+    # A future independent verifier must return a content-bound admission
+    # object before this function may expose intervals.  Never let a caller-
+    # supplied attrs string bootstrap that authority.
+    return False

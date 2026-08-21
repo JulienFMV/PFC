@@ -9,6 +9,10 @@ from pfc_shaping.lt.model.intraday_amplitude import (
     compress_intraday_peak_amplitude,
     compress_price_peak_amplitude,
 )
+from pfc_shaping.lt.model.shape_intraday import (
+    MIN_PARENT_HOURS_FOR_RATIO_ESTIMATOR,
+    ShapeIntraday,
+)
 
 
 def _hourly_fixture():
@@ -86,3 +90,92 @@ def test_intraday_amplitude_flag_defaults_off():
 
     default = inspect.signature(PFCAssembler).parameters["enable_intraday_amplitude_shrinkage"].default
     assert default is False
+
+
+def test_horizon_flattening_preserves_exact_parent_hour_neutrality():
+    index = pd.date_range("2026-09-01T00:00:00Z", periods=4, freq="15min")
+    calendar = enrich_15min_index(index, country="DE")
+    first = calendar.iloc[0]
+    key = (first["saison"], first["type_jour"], int(first["heure_hce"]))
+    model = ShapeIntraday(enable_sparse_support_regularization=True)
+    model.base_factors_[key] = np.array([0.8, 0.95, 1.05, 1.2])
+
+    factors = model.apply(
+        index,
+        calendar,
+        reference_date=pd.Timestamp("2026-01-01T00:00:00Z"),
+    )
+
+    assert float(factors.mean()) == pytest.approx(1.0, abs=1e-15)
+
+
+def test_sparse_base_fit_uses_stable_price_space_regression_near_zero():
+    parent_hours = pd.date_range(
+        "2026-04-01T00:00:00Z",
+        periods=MIN_PARENT_HOURS_FOR_RATIO_ESTIMATOR,
+        freq="D",
+    )
+    index = pd.DatetimeIndex(
+        [hour + pd.Timedelta(minutes=15 * quarter) for hour in parent_hours for quarter in range(4)]
+    )
+    hourly_means = np.linspace(-20.0, 20.0, len(parent_hours))
+    hourly_means[len(parent_hours) // 2] = 0.001
+    expected = np.array([0.7, 0.9, 1.1, 1.3])
+    prices = np.concatenate([mean * expected for mean in hourly_means])
+    hour_data = pd.DataFrame(
+        {
+            "price_eur_mwh": prices,
+            "quart": np.tile(np.arange(1, 5), len(parent_hours)),
+            "_weight": np.ones(len(index)),
+        },
+        index=index,
+    )
+
+    fitted = ShapeIntraday(enable_sparse_support_regularization=True)._fit_base(hour_data)
+
+    assert fitted is not None
+    np.testing.assert_allclose(fitted, expected, rtol=0.0, atol=1e-12)
+    assert float(fitted.mean()) == pytest.approx(1.0, abs=1e-15)
+
+
+def test_sparse_profiles_are_contracted_to_data_derived_dense_support():
+    model = ShapeIntraday(enable_sparse_support_regularization=True)
+    dense_key = ("Hiver", "Ouvrable", 8)
+    sparse_key = ("Printemps", "Samedi", 8)
+    model.base_factors_ = {
+        dense_key: np.array([0.8, 0.95, 1.05, 1.2]),
+        sparse_key: np.array([0.1, 0.7, 1.2, 2.0]),
+    }
+    model.n_obs_ = {
+        dense_key: (MIN_PARENT_HOURS_FOR_RATIO_ESTIMATOR + 1) * 4,
+        sparse_key: MIN_PARENT_HOURS_FOR_RATIO_ESTIMATOR * 4,
+    }
+
+    model._constrain_sparse_cells_to_dense_support()
+
+    assert model.sparse_support_envelope_ == pytest.approx(0.2)
+    assert model.sparse_support_constrained_cells_ == 1
+    assert np.max(np.abs(model.base_factors_[sparse_key] - 1.0)) == pytest.approx(0.2)
+    assert float(model.base_factors_[sparse_key].mean()) == pytest.approx(1.0, abs=1e-15)
+
+
+def test_sparse_support_regularization_is_experimental_and_disabled_by_default():
+    assert ShapeIntraday().enable_sparse_support_regularization is False
+
+
+def test_sparse_support_diagnostics_survive_save_load(tmp_path):
+    model = ShapeIntraday(enable_sparse_support_regularization=True)
+    key = ("Hiver", "Ouvrable", 8)
+    model.base_factors_[key] = np.array([0.8, 0.95, 1.05, 1.2])
+    model.n_obs_[key] = 100
+    model.sparse_support_envelope_ = 0.2
+    model.sparse_support_constrained_cells_ = 1
+    path = tmp_path / "intraday.parquet"
+
+    model.save(path)
+    loaded = ShapeIntraday.load(path)
+
+    assert loaded.enable_sparse_support_regularization is True
+    assert loaded.sparse_support_envelope_ == pytest.approx(0.2)
+    assert loaded.sparse_support_constrained_cells_ == 1
+    np.testing.assert_array_equal(loaded.base_factors_[key], model.base_factors_[key])

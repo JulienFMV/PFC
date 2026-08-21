@@ -312,16 +312,20 @@ def test_forward_snapshot_validation_hashes_and_parses_one_read(
 ) -> None:
     snapshot = _snapshot(tmp_path)
     target = Path(snapshot.source_path).resolve()
-    original_read_bytes = Path.read_bytes
+    original_stable_read = forward_proxy.read_stable_single_link_file
     reads = 0
 
-    def counted_read_bytes(path: Path) -> bytes:
+    def counted_stable_read(path: Path, **kwargs) -> bytes:
         nonlocal reads
         if path.resolve() == target:
             reads += 1
-        return original_read_bytes(path)
+        return original_stable_read(path, **kwargs)
 
-    monkeypatch.setattr(Path, "read_bytes", counted_read_bytes)
+    monkeypatch.setattr(
+        forward_proxy,
+        "read_stable_single_link_file",
+        counted_stable_read,
+    )
 
     forward_proxy.validate_forward_snapshot(
         snapshot,

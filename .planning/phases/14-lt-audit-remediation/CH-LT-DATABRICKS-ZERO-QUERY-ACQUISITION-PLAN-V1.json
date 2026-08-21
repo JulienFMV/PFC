@@ -1,0 +1,130 @@
+{
+  "schema_version": "fmv-ch-lt-databricks-zero-query-acquisition-plan-v1",
+  "status": "PASS_STATIC_PLAN_ONLY_ZERO_DATABRICKS_EXECUTION",
+  "purpose": "cost-fenced offline acquisition plan that reuses the existing local EEX capture and prepares one future ENTSO-E metadata statement without executing Databricks or inventing physical data columns",
+  "execution_policy": {
+    "current_databricks_execution_authorized": false,
+    "current_warehouse_start_budget": 0,
+    "current_statement_budget": 0,
+    "current_network_call_budget": 0,
+    "current_remote_write_budget": 0,
+    "automatic_warehouse_start_authorized": false,
+    "future_execution_requires_new_explicit_user_authorization": true,
+    "future_entsoe_metadata_statement_budget_if_authorized": 1,
+    "future_entsoe_data_statement_budget_before_schema_admission": 0,
+    "future_statement_timeout_seconds": 60,
+    "future_result_row_limit": 1024,
+    "future_cost_is_not_claimed_zero_if_the_metadata_statement_is_executed": true,
+    "databricks_data_mutation_forbidden": true
+  },
+  "eex_reuse": {
+    "action": "REUSE_EXISTING_LOCAL_CAPTURE_NO_QUERY",
+    "catalog": "prd",
+    "schema": "gold",
+    "manifest_path": "build/databricks-eex-daily/2026-08-05/manifest.json",
+    "manifest_sha256": "f8ec096be43851d85b16ec2b678d4a695fb0521c2c651e8bcf7c2491a29b50c1",
+    "manifest_schema_version": "fmv_databricks_eex_daily_snapshot.v1",
+    "manifest_status": "PASS_LOCAL_SNAPSHOT_ONLY_NOT_MODEL_OR_PROMOTION_AUTHORITY",
+    "source_tables": [
+      "prd.gold.facteexpricedaily",
+      "prd.gold.dimeexproduct",
+      "prd.gold.dimeexdeliveryperiod"
+    ],
+    "source_country": "CH",
+    "source_commodity": "POWER",
+    "currency_unit": "EUR/MWh",
+    "row_count": 82552,
+    "artifact_sha256": "593e916b6aa18ad83f7bd7941ff68184cd71da8882ef4eb381de46d09ce64812",
+    "new_statement_count": 0
+  },
+  "entsoe_schema_stage": {
+    "action": "PREPARE_METADATA_ONLY_DO_NOT_EXECUTE",
+    "catalog": "dev",
+    "schema": "gold",
+    "target_tables": [
+      "dimentsoeseries",
+      "factentsoetimeserieslatest",
+      "factentsoetimeseriesvintages"
+    ],
+    "sql_path": "docs/data/sql/entsoe_dev_gold_schema_inventory.sql",
+    "sql_sha256": "dec7e207603e3a8b69f5808b42454575f1b4a985a25fa8aca3e5c6a2c95b72fa",
+    "information_schema_source": "dev.information_schema.columns",
+    "selected_metadata_fields": [
+      "table_catalog",
+      "table_schema",
+      "table_name",
+      "column_name",
+      "ordinal_position",
+      "data_type",
+      "is_nullable"
+    ],
+    "result_row_limit": 1024,
+    "select_star_forbidden": true,
+    "data_table_scan_forbidden": true,
+    "data_values_selected": false,
+    "physical_column_mapping_known": false,
+    "data_export_sql_authorized": false
+  },
+  "entsoe_target_contract": {
+    "path": ".planning/phases/14-lt-audit-remediation/ENTSOE-DATABRICKS-INTAKE-CONTRACT-V1.json",
+    "sha256": "7ede1698099390babfa1d130bfecae61fd1e090888a3d6e6e4f892119db52b87",
+    "dimension_grain": [
+      "series_id"
+    ],
+    "latest_grain": [
+      "series_id",
+      "target_ts_utc"
+    ],
+    "vintage_grain": [
+      "series_id",
+      "target_ts_utc",
+      "as_of_utc"
+    ],
+    "required_quality_dimensions": [
+      "completeness",
+      "uniqueness",
+      "validity",
+      "consistency",
+      "referential_integrity",
+      "timeliness",
+      "volume_and_shape",
+      "point_in_time_leakage"
+    ]
+  },
+  "metadata_admission_gates": {
+    "all_three_target_tables_returned": true,
+    "metadata_rows_unique_on_table_and_ordinal_position": true,
+    "metadata_rows_unique_on_table_and_column_name_casefolded": true,
+    "ordinal_positions_positive_and_contiguous_per_table": true,
+    "catalog_and_schema_exact": true,
+    "required_normalized_fields_mappable_without_ambiguity": true,
+    "time_unit_quality_revision_and_load_lineage_fields_mappable": true,
+    "no_data_query_generated_on_failed_or_ambiguous_mapping": true,
+    "schema_fingerprint_manifest_required_before_data_query": true
+  },
+  "required_after_schema_admission_before_any_model_use": [
+    "generate explicit-column bounded ENTSO-E dimension latest and vintage SELECT statements",
+    "obtain separate explicit authorization and cost budget for those data statements",
+    "capture one immutable local export with row counts sizes statement IDs query hashes and file SHA-256",
+    "verify declared grains required fields null rates duplicate rates finite values units and native resolution",
+    "verify 100 percent fact-to-dimension join coverage and no unexpected many-to-many expansion",
+    "profile gaps freshness backfills revisions and earliest trustworthy as_of_utc by series group border and calendar regime",
+    "prove rolling-origin inputs use as_of_utc not after each origin",
+    "freeze a new independent future holdout distinct from sealed T057"
+  ],
+  "authorities": {
+    "static_sql_integrity_verified_after_successful_local_validation": true,
+    "databricks_schema_verified": false,
+    "databricks_query_executed": false,
+    "warehouse_started": false,
+    "entsoe_values_opened": false,
+    "entsoe_physical_column_mapping_verified": false,
+    "point_in_time_availability_proven": false,
+    "training_authorized": false,
+    "selection_authorized": false,
+    "model_input_authorized": false,
+    "candidate_assembly_authorized": false,
+    "promotion_authorized": false,
+    "production_authorized": false
+  }
+}

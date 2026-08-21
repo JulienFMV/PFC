@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-from dataclasses import replace
 import hashlib
+from dataclasses import replace
 from pathlib import Path
 
 import pandas as pd
 import pytest
 
 from pfc_shaping.data.lt_input_sources import InputSourceReceipt, dataframe_sha256
-from pfc_shaping.pipeline.production_phases import _prepare_governed_forward_history
+from pfc_shaping.pipeline.production_phases import _validate_governed_forward_history_receipt
 
 
 def _fixture(tmp_path: Path) -> tuple[pd.DataFrame, InputSourceReceipt, Path]:
@@ -41,7 +41,7 @@ def _fixture(tmp_path: Path) -> tuple[pd.DataFrame, InputSourceReceipt, Path]:
 def test_governed_forward_history_binds_consumed_bytes_and_frame(tmp_path: Path) -> None:
     frame, receipt, _ = _fixture(tmp_path)
 
-    actual, source_hash = _prepare_governed_forward_history(
+    actual, source_hash = _validate_governed_forward_history_receipt(
         frame,
         receipt,
         reference_timestamp=pd.Timestamp("2026-07-13T00:00:00Z"),
@@ -73,7 +73,7 @@ def test_governed_forward_history_rejects_future_observation(tmp_path: Path) -> 
     )
 
     with pytest.raises(ValueError, match="observations after valuation"):
-        _prepare_governed_forward_history(
+        _validate_governed_forward_history_receipt(
             frame,
             receipt,
             reference_timestamp=pd.Timestamp("2026-07-13T00:00:00Z"),
@@ -96,7 +96,7 @@ def test_governed_forward_history_rejects_future_intraday_observation(
     )
 
     with pytest.raises(ValueError, match="observations after valuation"):
-        _prepare_governed_forward_history(
+        _validate_governed_forward_history_receipt(
             frame,
             receipt,
             reference_timestamp=pd.Timestamp("2026-07-13T10:00:00Z"),
@@ -120,7 +120,7 @@ def test_governed_forward_history_rejects_non_eex_source(
     )
 
     with pytest.raises(ValueError, match="non-EEX sources"):
-        _prepare_governed_forward_history(
+        _validate_governed_forward_history_receipt(
             frame,
             receipt,
             reference_timestamp=pd.Timestamp("2026-07-13T23:00:00Z"),
@@ -140,7 +140,7 @@ def test_governed_forward_history_requires_source_column(tmp_path: Path) -> None
     )
 
     with pytest.raises(ValueError, match="missing columns.*source"):
-        _prepare_governed_forward_history(
+        _validate_governed_forward_history_receipt(
             frame,
             receipt,
             reference_timestamp=pd.Timestamp("2026-07-13T23:00:00Z"),
@@ -165,7 +165,7 @@ def test_governed_forward_history_canonicalizes_before_duplicate_check(
     )
 
     with pytest.raises(ValueError, match="duplicate quote identities"):
-        _prepare_governed_forward_history(
+        _validate_governed_forward_history_receipt(
             frame,
             receipt,
             reference_timestamp=pd.Timestamp("2026-07-13T23:00:00Z"),
@@ -200,7 +200,7 @@ def test_governed_forward_history_rejects_invalid_product_taxonomy(
     )
 
     with pytest.raises(ValueError, match=message):
-        _prepare_governed_forward_history(
+        _validate_governed_forward_history_receipt(
             frame,
             receipt,
             reference_timestamp=pd.Timestamp("2026-07-13T23:00:00Z"),
@@ -220,7 +220,7 @@ def test_governed_forward_history_rejects_duplicate_quote_identity(tmp_path: Pat
     )
 
     with pytest.raises(ValueError, match="duplicate quote identities"):
-        _prepare_governed_forward_history(
+        _validate_governed_forward_history_receipt(
             frame,
             receipt,
             reference_timestamp=pd.Timestamp("2026-07-13T00:00:00Z"),
@@ -232,7 +232,7 @@ def test_governed_forward_history_rejects_source_mutation(tmp_path: Path) -> Non
     path.write_bytes(b"mutated")
 
     with pytest.raises(ValueError, match="changed after consumption"):
-        _prepare_governed_forward_history(
+        _validate_governed_forward_history_receipt(
             frame,
             receipt,
             reference_timestamp=pd.Timestamp("2026-07-13T00:00:00Z"),

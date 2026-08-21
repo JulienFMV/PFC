@@ -9,14 +9,14 @@ establish the quality of the delivered hourly PFC.
 from __future__ import annotations
 
 import base64
-from collections.abc import Mapping, Sequence
-from dataclasses import InitVar, dataclass
 import hashlib
 import json
 import math
 import os
-from pathlib import Path
 import stat
+from collections.abc import Mapping, Sequence
+from dataclasses import InitVar, dataclass
+from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
@@ -28,11 +28,11 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from pfc_shaping.calibration.cascading import count_hours
 from pfc_shaping.calibration.monthly_forward_curve import product_periods
+from pfc_shaping.path_safety import read_stable_single_link_file
 from pfc_shaping.pipeline.model_governance_contract import (
     MODEL_GOVERNANCE_RECEIPT_SCHEMA,
     MODEL_GOVERNANCE_TRUSTED_PUBLIC_KEY_ENV,
 )
-
 
 PLAN_SCHEMA = "tier2_monthly_eex_evaluation_plan.v1"
 SELECTION_INPUT_PLAN_SCHEMA = "tier2_monthly_eex_evaluation_plan.v2"
@@ -1754,8 +1754,10 @@ def _load_public_key(path_value: str | Path) -> Ed25519PublicKey:
         raise Tier2MonthlyEexEvaluationError("trusted public key path must be absolute")
     trusted_path = _regular_file(path)
     try:
-        key_bytes = trusted_path.read_bytes()
-    except OSError as exc:
+        key_bytes = read_stable_single_link_file(
+            trusted_path, label="trusted Tier2 public key"
+        )
+    except (OSError, ValueError) as exc:
         raise Tier2MonthlyEexEvaluationError("cannot load trusted public key") from exc
     return _load_public_key_bytes(key_bytes)
 

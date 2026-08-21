@@ -1,0 +1,35 @@
+{
+  "schema_version": "fmv_entsoe_series_semantic_binding.v1",
+  "evidence_class": "REAL_OWNER_ASSERTED",
+  "base_dimension_content_id": "<EXACT_NORMALIZED_DIMENSION_CONTENT_ID_SHA256>",
+  "inventory_content_id": "<D243_INVENTORY_CONTENT_ID_SHA256>",
+  "family_mapping_content_id": "<D253_FAMILY_MAPPING_CONTENT_ID_SHA256>",
+  "binding_owner": "<ACCOUNTABLE_DATA_OWNER>",
+  "bound_at_utc": "<YYYY-MM-DDTHH:MM:SSZ>",
+  "entries": [
+    {
+      "series_id": "<EXACT_PHYSICAL_SERIES_ID>",
+      "signature_id": "<SHA256_OF_EXACT_SOURCE_SEMANTICS_BELOW>",
+      "source_semantics": {
+        "group_name": "<EXACT_RAW_GROUPNAME>",
+        "field_name": "<EXACT_RAW_FIELDNAME>",
+        "document_type": "<EXACT_RAW_DOCUMENTTYPE_OR_NULL>",
+        "business_type": "<EXACT_RAW_BUSINESSTYPE_OR_NULL>",
+        "process_type": "<EXACT_RAW_PROCESSTYPE_OR_NULL>",
+        "psr_type": "<EXACT_RAW_PSRTYPE_OR_NULL>",
+        "from_zone": "<EXACT_RAW_FROMZONE_OR_NULL>",
+        "to_zone": "<EXACT_RAW_TOZONE_OR_NULL>",
+        "unit": "<EXACT_RAW_UNIT_OR_NULL>"
+      },
+      "reason": "<WHY_THIS_PHYSICAL_SERIES_HAS_THIS_EXACT_SIGNATURE>"
+    }
+  ],
+  "authorities": {
+    "external_binding_owner_identity_verified": false,
+    "real_series_inventory_coverage_proven": false,
+    "point_in_time_availability_proven": false,
+    "model_input_authorized": false,
+    "candidate_assembly_authorized": false,
+    "production_authorized": false
+  }
+}

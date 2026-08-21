@@ -20,9 +20,11 @@ import pandas as pd
 
 try:
     from scripts.epex_lab_selection_policy import selection_policy_manifest_value
+    from scripts.epex_lab_locked_holdout_policy import ENERGY_CHARTS_RUN_SCHEMA_VERSION
     from scripts.epex_lab_locked_holdout_policy import locked_holdout_policy as evaluate_locked_holdout_policy
 except ModuleNotFoundError:  # pragma: no cover - direct script execution
     from epex_lab_selection_policy import selection_policy_manifest_value
+    from epex_lab_locked_holdout_policy import ENERGY_CHARTS_RUN_SCHEMA_VERSION
     from epex_lab_locked_holdout_policy import locked_holdout_policy as evaluate_locked_holdout_policy
 
 
@@ -589,7 +591,7 @@ def _recommended_commands(
     energy_output_dir = (
         str(locked_holdout_policy.get("output_dir"))
         if locked_holdout_policy is not None
-        and locked_holdout_policy.get("schema_version") == "energy_charts_epex_locked_holdout_run.v1"
+        and locked_holdout_policy.get("schema_version") == ENERGY_CHARTS_RUN_SCHEMA_VERSION
         and locked_holdout_policy.get("output_dir")
         else "<ENERGY_CHARTS_LOCKED_HOLDOUT_OUTPUT_DIR>"
     )

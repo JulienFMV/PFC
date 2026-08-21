@@ -4,7 +4,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
+import scripts.build_ep2050_multi_scenario_pfc as builder
 from scripts.build_ep2050_multi_scenario_pfc import (
+    _fit_components,
     build_weighted_fan_chart,
     derive_slow_central_fast_inventory,
 )
@@ -113,3 +115,90 @@ def test_build_weighted_fan_chart_writes_ordered_structural_columns():
     assert np.all(fan["structural_scenario_low"] <= fan["structural_scenario_central"])
     assert np.all(fan["structural_scenario_central"] <= fan["structural_scenario_high"])
     assert float(fan["structural_scenario_spread"].mean()) > 0.0
+
+
+def test_fit_components_uses_distinct_cutoff_intraday_source(monkeypatch):
+    hourly_index = pd.date_range("2025-09-30T20:00:00Z", periods=4, freq="1h")
+    intraday_index = pd.date_range("2025-09-30T23:30:00Z", periods=6, freq="15min")
+    hourly = pd.DataFrame({"price_eur_mwh": np.arange(4.0)}, index=hourly_index)
+    intraday = pd.DataFrame({"price_eur_mwh": np.arange(6.0)}, index=intraday_index)
+    calls: dict[str, object] = {"calendars": []}
+
+    def fake_calendar(index, *, country):
+        calls["calendars"].append((index.copy(), country))
+        return pd.DataFrame(index=index)
+
+    class FakeHourly:
+        def __init__(self, **_kwargs):
+            pass
+
+        def fit(self, frame, calendar):
+            calls["hourly"] = (frame.copy(), calendar.copy())
+            return self
+
+    class FakeIntraday:
+        def fit(self, frame, _entso, calendar):
+            calls["intraday"] = (frame.copy(), calendar.copy())
+            return self
+
+    class FakeCascader:
+        def __init__(self, **_kwargs):
+            pass
+
+        def fit_seasonal_ratios(self, _frame):
+            return None
+
+        def fit_peak_spreads(self, _frame):
+            return None
+
+    monkeypatch.setattr(builder, "enrich_15min_index", fake_calendar)
+    monkeypatch.setattr(builder, "ShapeHourly", FakeHourly)
+    monkeypatch.setattr(builder, "ShapeIntraday", FakeIntraday)
+    monkeypatch.setattr(builder, "ContractCascader", FakeCascader)
+    monkeypatch.setattr(builder, "ArbitrageFreeCalibrator", lambda **_kwargs: object())
+
+    _fit_components(
+        hourly,
+        "CH",
+        intraday_epex=intraday,
+        intraday_market="DE",
+        intraday_cutoff="2025-10-01T00:00:00Z",
+    )
+
+    fitted_intraday = calls["intraday"][0]
+    assert fitted_intraday.index.min() == pd.Timestamp("2025-10-01T00:00:00Z")
+    assert len(fitted_intraday) == 4
+    assert [country for _, country in calls["calendars"]] == ["CH", "DE"]
+
+
+def test_fit_components_rejects_empty_intraday_after_cutoff():
+    index = pd.date_range("2025-09-30T20:00:00Z", periods=4, freq="15min")
+    frame = pd.DataFrame({"price_eur_mwh": np.arange(4.0)}, index=index)
+
+    with pytest.raises(ValueError, match="intraday EPEX calibration frame is empty"):
+        _fit_components(
+            frame,
+            "CH",
+            intraday_epex=frame,
+            intraday_market="DE",
+            intraday_cutoff="2025-10-01T00:00:00Z",
+        )
+
+
+def test_fit_components_rejects_non_quarter_hour_intraday_grid():
+    hourly_index = pd.date_range("2025-10-01T00:00:00Z", periods=4, freq="1h")
+    hourly = pd.DataFrame({"price_eur_mwh": np.arange(4.0)}, index=hourly_index)
+
+    with pytest.raises(ValueError, match="contiguous 15-minute UTC"):
+        _fit_components(
+            hourly,
+            "CH",
+            intraday_epex=hourly,
+            intraday_market="DE",
+            intraday_cutoff="2025-10-01T00:00:00Z",
+        )
+
+
+def test_legacy_direct_publication_entrypoint_is_disabled():
+    with pytest.raises(RuntimeError, match="direct multi-scenario publication is disabled"):
+        builder.main([])

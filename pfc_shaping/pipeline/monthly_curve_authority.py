@@ -9,6 +9,7 @@ must consume when the monthly solver is enabled.
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -40,6 +41,8 @@ from pfc_shaping.data.forward_proxy import (
     ForwardSnapshot,
     verify_forward_eligibility,
 )
+from pfc_shaping.data.lt_input_sources import dataframe_sha256
+from pfc_shaping.path_safety import read_stable_single_link_file
 
 DEFAULT_MONTHLY_SOLVER_CONFIG: dict[str, object] = {
     "enabled": False,
@@ -215,6 +218,10 @@ def solve_monthly_level_authority(
             "allow_unverified_inputs is restricted to non-promotional tests and research"
         )
     eex_history = eex_history.copy() if eex_history is not None else pd.DataFrame()
+    effective_source_hashes = dict(source_hashes or {})
+    effective_source_hashes["eex_forwards_history_consumed_frame"] = dataframe_sha256(
+        eex_history
+    )
     valuation_ts = _resolve_valuation_timestamp(run_timestamp)
     run_ts = _resolve_run_timestamp(run_timestamp, eex_history)
     quote_provenance = _normalize_quote_provenance(
@@ -348,7 +355,7 @@ def solve_monthly_level_authority(
         eex_history=eex_history,
         run_timestamp=run_ts,
         config=cfg,
-        source_hashes=dict(source_hashes or {}),
+        source_hashes=effective_source_hashes,
     )
     manifest = _manifest(
         market=market,
@@ -361,7 +368,7 @@ def solve_monthly_level_authority(
         structural_status=structural.status,
         fused_status=fused.status,
         structural_prior_summary=_prior_diagnostics_summary(structural),
-        source_hashes=source_hashes or {},
+        source_hashes=effective_source_hashes,
         quote_provenance=quote_provenance,
         valuation_timestamp=valuation_ts,
         forward_eligibility=(
@@ -397,8 +404,11 @@ def solve_monthly_level_authority_from_history(
     timezone: str = "Europe/Zurich",
     original_forward_prices: Mapping[str, float] | None = None,
     as_of_date: str | pd.Timestamp | None = None,
+    forwards_payload: bytes | None = None,
 ) -> MonthlyLevelAuthority:
-    history = pd.read_parquet(forwards_path)
+    history = pd.read_parquet(
+        io.BytesIO(forwards_payload) if forwards_payload is not None else forwards_path
+    )
     history["date"] = pd.to_datetime(history["date"]).dt.tz_localize(None).dt.normalize()
     market = str(market).upper()
     run_timestamp, own = _latest_base_prices(history, market=market, as_of_date=as_of_date)
@@ -420,7 +430,13 @@ def solve_monthly_level_authority_from_history(
         run_timestamp=run_timestamp,
         settings=settings,
         timezone=timezone,
-        source_hashes={"forwards_path": _file_sha256(forwards_path)},
+        source_hashes={
+            "forwards_path": (
+                hashlib.sha256(forwards_payload).hexdigest()
+                if forwards_payload is not None
+                else _file_sha256(forwards_path)
+            )
+        },
         original_forward_prices=original_forward_prices or own,
         allow_unverified_inputs=True,
     )
@@ -533,7 +549,7 @@ def _normalize_quote_provenance(
 
     payload = dict(provenance)
     source_kind = str(payload.get("source_kind") or "UNKNOWN").upper()
-    if source_kind not in {"EEX_XLSX", "EEX_UNC"}:
+    if source_kind not in {"EEX_XLSX", "EEX_UNC", "EEX_VINTAGE"}:
         raise ValueError(f"forward source kind {source_kind} is forbidden for hard constraints")
     if not bool(payload.get("hard_quote_eligible", False)):
         raise ValueError(f"forward source {source_kind} is not hard-quote eligible")
@@ -648,6 +664,8 @@ def _manifest(
             quote_provenance.get("hard_quote_eligible", False)
             and forward_eligibility.get("status") == "PASS"
             and forward_eligibility.get("requested_role") == "HARD_LEVEL"
+            and str(quote_provenance.get("source_kind", "")).upper()
+            != "EEX_VINTAGE"
         ),
         "active_constraints_hash": _hash_frame(constraints.rows),
         "constraint_provenance_rows": constraint_provenance_rows,
@@ -745,8 +763,9 @@ def _sha256_json(payload: object) -> str:
 
 
 def _file_sha256(path: str | Path) -> str:
-    h = hashlib.sha256()
-    with Path(path).open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            h.update(chunk)
-    return h.hexdigest()
+    payload = read_stable_single_link_file(
+        Path(path),
+        label="monthly authority source",
+        max_bytes=512 * 1024 * 1024,
+    )
+    return hashlib.sha256(payload).hexdigest()

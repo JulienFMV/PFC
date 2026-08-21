@@ -1,0 +1,75 @@
+{
+  "schema_version": "fmv_entsoe_lt_derived_arithmetic_execution_contract.v1",
+  "decision": "D-20260806-283",
+  "status": "SYNTHETIC_DECIMAL_ARITHMETIC_NO_REAL_OR_MODEL_AUTHORITY",
+  "purpose": "execute and content-address exact synthetic load forecast error arithmetic after D282 physical compatibility without opening real values",
+  "predecessor": {
+    "d282_contract_content_id": "2976562eb360f93da5135d3f542e57aebd0848a9ee692654bab0477b67d9985e",
+    "required_d282_status": "PASS_SYNTHETIC_DERIVED_PHYSICAL_COMPATIBILITY_NO_MODEL_AUTHORITY",
+    "required_transform_kind": "LOAD_FORECAST_ERROR",
+    "formula": "REALIZED_ACTUAL_MINUS_OPERATIONAL_FORECAST",
+    "formula_role_order": [
+      "REALIZED_ACTUAL",
+      "OPERATIONAL_FORECAST"
+    ],
+    "output_sign_convention": "POSITIVE_WHEN_ACTUAL_ABOVE_FORECAST"
+  },
+  "operand_artifacts": {
+    "schema_version": "fmv_entsoe_lt_synthetic_decimal_operand_artifact.v1",
+    "evidence_class": "SYNTHETIC_TEST_ONLY",
+    "one_artifact_per_formula_role": true,
+    "row_grain": [
+      "feature_record_id",
+      "target_start_utc",
+      "target_end_utc"
+    ],
+    "value_field": "value_decimal_mw",
+    "value_encoding": "CANONICAL_BASE10_TEXT_OR_NULL",
+    "maximum_scale": 6,
+    "maximum_significant_digits": 18,
+    "maximum_absolute_mw": "1000000000",
+    "binary_floating_point_is_admissible": false,
+    "duplicate_missing_or_orphan_rows_are_admissible": false
+  },
+  "execution_rules": {
+    "arithmetic_engine": "PYTHON_DECIMAL_IEEE_754_DECIMAL128_CONTEXT",
+    "decimal_precision": 34,
+    "rounding_mode": "ROUND_HALF_EVEN",
+    "maximum_absolute_output_mw": "2000000000",
+    "missing_value_policy": "PRESERVE_NULL",
+    "negative_zero_is_canonicalized_to_zero": true,
+    "output_rows_are_sorted_by_output_feature_record_id": true,
+    "output_artifact_is_content_addressed": true,
+    "assessment_may_persist_operand_or_output_values": false,
+    "monthly_effect_policy": "ZERO_MEAN_WITHIN_SOLVER_MONTH_IF_LATER_ADMITTED"
+  },
+  "integrity": {
+    "d282_assessment_must_remain_content_stable": true,
+    "operand_artifacts_must_remain_content_stable": true,
+    "every_d282_profile_must_execute_exactly_once": true,
+    "target_intervals_must_match_between_operands": true,
+    "target_duration_must_match_d282": true,
+    "unit_zone_resolution_and_record_ids_must_match_d282": true,
+    "synthetic_pass_grants_real_arithmetic_or_model_authority": false
+  },
+  "execution": {
+    "databricks_connection_count": 0,
+    "databricks_statement_count": 0,
+    "warehouse_start_count": 0,
+    "databricks_write_count": 0,
+    "network_call_count": 0,
+    "h_drive_access_count": 0,
+    "opened_real_value_row_count": 0
+  },
+  "authorities": {
+    "real_source_evidence": false,
+    "real_arithmetic_correctness": false,
+    "point_in_time": false,
+    "predictive_value": false,
+    "model_input": false,
+    "model_selection": false,
+    "candidate": false,
+    "promotion": false,
+    "production": false
+  }
+}

@@ -8,8 +8,8 @@ Hard-fails on critical data quality issues to avoid publishing corrupted outputs
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 import math
+from dataclasses import dataclass, field
 
 import numpy as np
 import pandas as pd
@@ -33,6 +33,7 @@ def input_grid_errors(
     *,
     name: str,
     expected_cadence_seconds: int,
+    expected_phase_offset_seconds: int = 0,
     min_grid_coverage: float = 0.95,
 ) -> list[str]:
     """Return fail-closed cadence and absolute UTC phase violations."""
@@ -56,13 +57,60 @@ def input_grid_errors(
     if coverage < float(min_grid_coverage):
         errors.append(f"{name}.grid_coverage={coverage:.6f}")
     cadence_ns = cadence_seconds * 1_000_000_000
-    if any(int(timestamp.value) % cadence_ns != 0 for timestamp in index):
+    phase_ns = int(expected_phase_offset_seconds) * 1_000_000_000
+    if phase_ns < 0 or phase_ns >= cadence_ns:
+        errors.append(f"{name}.grid_phase_policy_invalid")
+    elif any((int(timestamp.value) - phase_ns) % cadence_ns != 0 for timestamp in index):
         errors.append(f"{name}.grid_phase_mismatch")
     deltas = pd.Series(index[1:] - index[:-1]).dt.total_seconds().to_numpy()
     if any(
         abs((float(delta) / cadence_seconds) - round(float(delta) / cadence_seconds)) > 1e-9
         for delta in deltas
     ):
+        errors.append(f"{name}.off_grid_timestamps")
+    return errors
+
+
+def weekly_local_grid_errors(
+    df: pd.DataFrame,
+    *,
+    name: str,
+    timezone: str,
+    weekday: int,
+    min_grid_coverage: float = 0.95,
+) -> list[str]:
+    """Validate one weekly civil-time grid without imposing a false UTC DST phase."""
+
+    try:
+        index = pd.DatetimeIndex(df.index)
+    except (TypeError, ValueError):
+        return [f"{name}.index_not_datetime"]
+    if index.tz is None:
+        return [f"{name}.index_timezone_naive"]
+    index = index.tz_convert("UTC").sort_values().unique()
+    if index.hasnans:
+        return [f"{name}.index_contains_nat"]
+    if len(index) < 2:
+        return [f"{name}.cadence_insufficient_rows"]
+    local = index.tz_convert(timezone)
+    errors: list[str] = []
+    if any(
+        timestamp.weekday() != weekday
+        or timestamp.hour != 0
+        or timestamp.minute != 0
+        or timestamp.second != 0
+        or timestamp.microsecond != 0
+        for timestamp in local
+    ):
+        errors.append(f"{name}.local_grid_phase_mismatch")
+    local_naive = local.tz_localize(None)
+    elapsed_days = (local_naive[-1] - local_naive[0]).days
+    expected_rows = elapsed_days // 7 + 1
+    coverage = len(local_naive) / expected_rows if expected_rows > 0 else 0.0
+    if coverage < float(min_grid_coverage):
+        errors.append(f"{name}.grid_coverage={coverage:.6f}")
+    deltas = local_naive[1:] - local_naive[:-1]
+    if any(delta % pd.Timedelta(days=7) != pd.Timedelta(0) for delta in deltas):
         errors.append(f"{name}.off_grid_timestamps")
     return errors
 

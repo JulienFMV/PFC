@@ -16,7 +16,6 @@ import scipy.sparse as sp
 
 from pfc_shaping.calibration.eex_contract_selection import calibration_buckets
 
-
 _COUNTRY_TZ = {
     "CH": "Europe/Zurich",
     "DE": "Europe/Berlin",
@@ -277,8 +276,19 @@ def build_base_peak_offpeak_constraint_system(
     utc = validate_utc_index(index)
     base_system = build_base_constraint_system(utc, base_forward_prices, country=code)
     local = pd.Series(utc.tz_convert(_COUNTRY_TZ[code]), index=range(len(utc)))
-    peak_buckets, peak_targets = calibration_buckets(local, peak_forward_prices)
     peak_mask = eex_peak_mask(utc, country=country)
+    # A PEAK parent quote is an average over PEAK delivery intervals only.
+    # Building its residual hierarchy on the full BASE calendar gives nested
+    # month/quarter/year products the wrong energy weights, even if the final
+    # constraint rows are subsequently masked to PEAK hours.  Preserve the
+    # original row positions while deriving targets from the contractual
+    # PEAK-only delivery set, then expand the bucket labels back to the full
+    # horizon for row construction and source-coverage checks.
+    peak_only_buckets, peak_targets = calibration_buckets(
+        local.loc[peak_mask],
+        peak_forward_prices,
+    )
+    peak_buckets = peak_only_buckets.reindex(local.index)
     hours = interval_hours(utc)
     rows: list[ConstraintRow] = []
     represented_peak_buckets: set[str] = set()
@@ -286,7 +296,11 @@ def build_base_peak_offpeak_constraint_system(
         bucket = str(base_row.metadata["bucket"])
         peak_idx = np.where((peak_buckets.to_numpy(dtype=object) == bucket) & peak_mask)[0]
         all_idx = np.where(base_row.weights > 0.0)[0]
-        offpeak_idx = np.array([idx for idx in all_idx if idx not in set(peak_idx)], dtype=int)
+        peak_index_set = set(peak_idx.tolist())
+        offpeak_idx = np.array(
+            [idx for idx in all_idx if idx not in peak_index_set],
+            dtype=int,
+        )
         if bucket not in peak_targets or len(peak_idx) == 0:
             rows.append(base_row)
             continue

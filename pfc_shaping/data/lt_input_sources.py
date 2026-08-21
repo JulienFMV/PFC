@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 from dataclasses import dataclass
 from io import BytesIO
@@ -13,7 +14,21 @@ from typing import Any, Mapping
 import numpy as np
 import pandas as pd
 
-from pfc_shaping.data.acquisition_contract import verify_acquisition_contract
+from pfc_shaping.data.acquisition_contract import (
+    GOVERNED_LT_INPUT_SNAPSHOT_SCHEMAS,
+    PROVIDER_RAW_LT_INPUT_SNAPSHOT_SCHEMA,
+    REPLAY_GOVERNED_LT_INPUT_ROLES,
+    verify_acquisition_contract,
+)
+from pfc_shaping.data.governed_lt_acquisition import (
+    ENERGY_CHARTS_SOURCE_SYSTEM,
+    OBSERVATION_RESOLUTION_PROVENANCE_ATTR,
+    SFOE_SOURCE_SYSTEM,
+    energy_price_resolution_provenance,
+    validate_raw_envelope,
+    verify_provider_raw_replay,
+)
+from pfc_shaping.data.lt_input_replay import verify_core_lt_role_replay
 from pfc_shaping.data.shared_data_root import (
     FMV_DATA_ROOT_ENV,
     PFC_LT_DATA_ROOT_ENV,
@@ -21,19 +36,60 @@ from pfc_shaping.data.shared_data_root import (
     configured_lt_data_root,
     resolve_confined_path,
 )
-from pfc_shaping.path_safety import path_is_link
+from pfc_shaping.data.snapshot_publication_contract import (
+    PUBLICATION_HEAD_CHALLENGE_NONCE_ENV,
+    PUBLICATION_HEAD_OBSERVATION_PATH_ENV,
+)
+from pfc_shaping.data.snapshot_publication_state import (
+    verify_external_publication_evidence,
+    verify_publication_authority_separation,
+)
+from pfc_shaping.parquet_safety import validate_parquet_allocation_budget
+from pfc_shaping.path_safety import (
+    assert_absolute_path_has_no_links,
+    path_is_link,
+    read_stable_single_link_file,
+)
 from pfc_shaping.pipeline.strict_structured_data import load_strict_json, load_strict_yaml
 
 CORE_LT_INPUT_ROLES = ("epex_ch", "epex_de", "entso", "hydro")
+_MAX_PARQUET_ARTIFACT_BYTES = 256 * 1024 * 1024
+_MAX_PROVIDER_RAW_ARTIFACT_BYTES = 96 * 1024 * 1024
+_MAX_SUPPORTING_ARTIFACT_BYTES = 16 * 1024 * 1024
+_HYDRO_MIN_HISTORY_ROWS = 312
+_HYDRO_MIN_HISTORY_DAYS = 6 * 365 - 21
+_HYDRO_RECENT_SUPPORT_ROWS = 8
+_QUALITY_MAX_ROWS_BY_ROLE = {
+    "epex_ch": 2_000_000,
+    "epex_de": 2_000_000,
+    "epex_at": 2_000_000,
+    "epex_fr": 2_000_000,
+    "epex_it": 2_000_000,
+    "entso": 2_000_000,
+    "hydro": 5_000,
+}
+_QUALITY_MAX_COLUMNS = 128
+_QUALITY_MAX_CELLS = 40_000_000
+_QUALITY_MAX_ROW_GROUPS = 8_192
+_QUALITY_ALLOWED_PARQUET_PHYSICAL_TYPES = {
+    "BOOLEAN",
+    "INT32",
+    "INT64",
+    "FLOAT",
+    "DOUBLE",
+}
+PROVIDER_RAW_LT_INPUT_ROLES = frozenset(
+    {*REPLAY_GOVERNED_LT_INPUT_ROLES, "eex_forwards_history"}
+)
 GOVERNED_SOURCE_SYSTEMS_BY_ROLE = {
-    "epex_ch": frozenset({"EPEX_SPOT"}),
-    "epex_de": frozenset({"EPEX_SPOT"}),
-    "epex_at": frozenset({"EPEX_SPOT"}),
-    "epex_fr": frozenset({"EPEX_SPOT"}),
-    "epex_it": frozenset({"EPEX_SPOT"}),
+    "epex_ch": frozenset({"EPEX_SPOT", ENERGY_CHARTS_SOURCE_SYSTEM}),
+    "epex_de": frozenset({"EPEX_SPOT", ENERGY_CHARTS_SOURCE_SYSTEM}),
+    "epex_at": frozenset({"EPEX_SPOT", ENERGY_CHARTS_SOURCE_SYSTEM}),
+    "epex_fr": frozenset({"EPEX_SPOT", ENERGY_CHARTS_SOURCE_SYSTEM}),
+    "epex_it": frozenset({"EPEX_SPOT", ENERGY_CHARTS_SOURCE_SYSTEM}),
     "entso": frozenset({"ENTSOE_TRANSPARENCY_PLATFORM"}),
     "outages": frozenset({"ENTSOE_TRANSPARENCY_PLATFORM"}),
-    "hydro": frozenset({"FMV_HYDRO_CURATED"}),
+    "hydro": frozenset({"FMV_HYDRO_CURATED", SFOE_SOURCE_SYSTEM}),
     "commodities": frozenset({"FMV_COMMODITIES_CURATED"}),
     "eex_forwards_history": frozenset({"EEX_MARKET_DATA"}),
     "eex_forward_source": frozenset({"EEX_MARKET_DATA"}),
@@ -80,8 +136,12 @@ class LTInputPaths:
     available_at_utc: str | None
     files: Mapping[str, Path]
     expected_files: Mapping[str, Mapping[str, Any]]
+    schema_version: str | None = None
     pointer_receipt: InputSourceReceipt | None = None
     contract_receipt: InputSourceReceipt | None = None
+    publication_intent_receipt: InputSourceReceipt | None = None
+    publication_anchor_receipt: InputSourceReceipt | None = None
+    publication_head_observation_receipt: InputSourceReceipt | None = None
 
     def path_for(self, role: str) -> Path:
         try:
@@ -126,6 +186,15 @@ class LTInputPaths:
             raise ValueError(f"unsupported optional EPEX neighbor: {market}")
         return self.path_for(f"epex_{code}")
 
+    def supporting_path(self, role: str, binding_name: str) -> Path:
+        entry = self.expected_files.get(str(role))
+        if not isinstance(entry, Mapping):
+            raise KeyError(f"LT input role is unavailable: {role}")
+        binding = entry.get(str(binding_name))
+        if not isinstance(binding, Mapping):
+            raise KeyError(f"LT input role {role} has no {binding_name} binding")
+        return _safe_relative_path(self.snapshot_root, str(binding.get("path", "")))
+
 
 def resolve_lt_input_paths(
     project_root: str | Path,
@@ -137,6 +206,9 @@ def resolve_lt_input_paths(
     expected_snapshot_sha256: str | None = None,
     expected_pointer_sha256: str | None = None,
     expected_generation_id: str | None = None,
+    publication_head_observation: str | Path | None = None,
+    publication_head_challenge_nonce: str | None = None,
+    expected_publication_head_observation_sha256: str | None = None,
 ) -> LTInputPaths:
     """Resolve one explicit immutable external snapshot or the legacy layout."""
 
@@ -187,7 +259,7 @@ def resolve_lt_input_paths(
     root_candidate = Path(raw_selected).expanduser()
     if not root_candidate.is_absolute():
         raise ValueError(f"LT data_root must be absolute: {root_candidate}")
-    root = root_candidate.resolve()
+    root = assert_absolute_path_has_no_links(root_candidate).resolve()
     binding_values = (
         expected_snapshot_contract,
         expected_pointer_contract,
@@ -204,13 +276,14 @@ def resolve_lt_input_paths(
     else:
         pointer_path = _resolve_explicit_pointer(expected_pointer_contract)
         pointer_logical_path = "views/pfc_lt/current.json"
-    pointer, pointer_receipt = read_json_snapshot(
+    pointer, pointer_receipt, _ = _read_json_snapshot_payload(
         pointer_path,
         role="lt_data_pointer",
         logical_path=pointer_logical_path,
     )
-    if pointer.get("schema_version") != "lt_data_pointer.v1":
-        raise ValueError("LT data pointer schema_version must be lt_data_pointer.v1")
+    pointer_schema = pointer.get("schema_version")
+    if pointer_schema not in {"lt_data_pointer.v1", "lt_data_pointer.v2"}:
+        raise ValueError("LT data pointer schema_version is unsupported")
     if (
         expected_pointer_sha256 is not None
         and pointer_receipt.sha256 != str(expected_pointer_sha256).strip().lower()
@@ -245,7 +318,7 @@ def resolve_lt_input_paths(
             raise ValueError(
                 "LT data pointer contract does not match --input-snapshot-contract"
             )
-    contract, contract_receipt = read_json_snapshot(
+    contract, contract_receipt, _ = _read_json_snapshot_payload(
         contract_path,
         role="lt_input_snapshot_contract",
         logical_path=contract_rel,
@@ -260,12 +333,88 @@ def resolve_lt_input_paths(
             "LT input snapshot SHA-256 does not match --input-snapshot-sha256"
         )
     validate_lt_input_contract_semantics(contract)
-    if contract.get("schema_version") != "lt_input_snapshot.v1":
-        raise ValueError("LT input contract schema_version must be lt_input_snapshot.v1")
+    schema_version = str(contract.get("schema_version", ""))
+    if schema_version not in {"lt_input_snapshot.v1", *GOVERNED_LT_INPUT_SNAPSHOT_SCHEMAS}:
+        raise ValueError("LT input contract schema_version is unsupported")
     if contract.get("layout") != "external_v2":
         raise ValueError("LT input contract layout must be external_v2")
     if str(contract.get("generation_id", "")) != generation_id:
         raise ValueError("LT data pointer/contract generation_id mismatch")
+    publication_intent_receipt = None
+    publication_anchor_receipt = None
+    publication_head_observation_receipt = None
+    if pointer_schema == "lt_data_pointer.v2":
+        intent_id = str(pointer.get("publication_intent_id", ""))
+        receipt_id = str(pointer.get("anchor_receipt_id", ""))
+        intent_path = _safe_relative_path(
+            root,
+            f"views/pfc_lt/intents/{intent_id}.json",
+        )
+        receipt_path = _safe_relative_path(
+            root,
+            f"views/pfc_lt/receipts/{receipt_id}.json",
+        )
+        intent_document, publication_intent_receipt, intent_payload = (
+            _read_json_snapshot_payload(
+            intent_path,
+            role="lt_snapshot_publication_intent",
+            logical_path=f"views/pfc_lt/intents/{intent_id}.json",
+            )
+        )
+        receipt_document, publication_anchor_receipt, receipt_payload = (
+            _read_json_snapshot_payload(
+            receipt_path,
+            role="lt_snapshot_anchor_receipt",
+            logical_path=f"views/pfc_lt/receipts/{receipt_id}.json",
+            )
+        )
+        selected_observation = publication_head_observation
+        if selected_observation is None:
+            selected_observation = os.environ.get(
+                PUBLICATION_HEAD_OBSERVATION_PATH_ENV
+            )
+        if selected_observation is None or not str(selected_observation).strip():
+            raise ValueError(
+                "LT data pointer v2 requires a fresh external anchor HEAD observation"
+            )
+        selected_nonce = publication_head_challenge_nonce
+        if selected_nonce is None:
+            selected_nonce = os.environ.get(PUBLICATION_HEAD_CHALLENGE_NONCE_ENV)
+        (
+            observation_document,
+            publication_head_observation_receipt,
+            observation_payload,
+        ) = _read_json_snapshot_payload(
+            selected_observation,
+            role="lt_snapshot_anchor_head_observation",
+        )
+        if (
+            expected_publication_head_observation_sha256 is not None
+            and publication_head_observation_receipt.sha256
+            != str(expected_publication_head_observation_sha256).strip().lower()
+        ):
+            raise ValueError("external anchor HEAD observation SHA-256 mismatch")
+        verify_external_publication_evidence(
+            intent_payload=intent_payload,
+            receipt_payload=receipt_payload,
+            observation_payload=observation_payload,
+            pointer=pointer,
+            require_current=True,
+            expected_challenge_nonce=selected_nonce,
+        )
+        verify_publication_authority_separation(
+            contract,
+            intent=intent_document,
+            receipt=receipt_document,
+            observation=observation_document,
+        )
+    elif (
+        schema_version in GOVERNED_LT_INPUT_SNAPSHOT_SCHEMAS
+        and contract.get("calibration_eligible") is True
+    ):
+        raise ValueError(
+            "calibration-eligible LT input requires an external CAS v2 pointer"
+        )
     acquisition_id = str(contract.get("acquisition_id", "")).strip()
     if not acquisition_id:
         raise ValueError("LT input contract acquisition_id is missing")
@@ -294,10 +443,23 @@ def resolve_lt_input_paths(
         )
         files[str(role)] = _safe_relative_path(snapshot_root, logical_path)
         expected[str(role)] = dict(entry)
+        if schema_version in GOVERNED_LT_INPUT_SNAPSHOT_SCHEMAS:
+            _verify_v2_supporting_artifacts(
+                snapshot_root,
+                str(role),
+                entry,
+                require_provider_raw=(
+                    schema_version == PROVIDER_RAW_LT_INPUT_SNAPSHOT_SCHEMA
+                ),
+            )
     eligible = contract.get("calibration_eligible") is True
     if eligible:
         if contract.get("source_class") != "GOVERNED_ACQUISITION":
             raise ValueError("calibration-eligible LT input must be a GOVERNED_ACQUISITION")
+        if schema_version not in GOVERNED_LT_INPUT_SNAPSHOT_SCHEMAS:
+            raise ValueError(
+                "calibration-eligible LT input requires a governed snapshot schema"
+            )
         verify_acquisition_contract(contract)
         ineligible_roles = [
             role
@@ -317,8 +479,14 @@ def resolve_lt_input_paths(
         available_at_utc=contract_available_at.isoformat(),
         files=files,
         expected_files=expected,
+        schema_version=schema_version,
         pointer_receipt=pointer_receipt,
         contract_receipt=contract_receipt,
+        publication_intent_receipt=publication_intent_receipt,
+        publication_anchor_receipt=publication_anchor_receipt,
+        publication_head_observation_receipt=(
+            publication_head_observation_receipt
+        ),
     )
 
 
@@ -368,8 +536,9 @@ def validate_lt_input_contract_semantics(
 ) -> dict[str, object]:
     """Validate one authenticated LT snapshot independently of its storage root."""
 
-    if contract.get("schema_version") != "lt_input_snapshot.v1":
-        raise ValueError("LT input contract schema_version must be lt_input_snapshot.v1")
+    schema_version = str(contract.get("schema_version", ""))
+    if schema_version not in {"lt_input_snapshot.v1", *GOVERNED_LT_INPUT_SNAPSHOT_SCHEMAS}:
+        raise ValueError("LT input contract schema_version is unsupported")
     if contract.get("layout") != "external_v2":
         raise ValueError("LT input contract layout must be external_v2")
     generation_id = str(contract.get("generation_id", "")).strip()
@@ -388,6 +557,16 @@ def validate_lt_input_contract_semantics(
     missing = set(CORE_LT_INPUT_ROLES).difference(files)
     if missing:
         raise ValueError(f"LT input contract missing core roles: {sorted(missing)}")
+    if schema_version == PROVIDER_RAW_LT_INPUT_SNAPSHOT_SCHEMA:
+        unsupported = set(str(role) for role in files).difference(
+            PROVIDER_RAW_LT_INPUT_ROLES
+        )
+        if unsupported:
+            raise ValueError(
+                "provider-raw LT snapshot contains roles without exact replay: "
+                f"{sorted(unsupported)}"
+            )
+    role_available_times: list[pd.Timestamp] = []
     for role, entry in files.items():
         if not isinstance(entry, Mapping):
             raise ValueError(f"LT input contract role {role} must be a mapping")
@@ -397,8 +576,17 @@ def validate_lt_input_contract_semantics(
             entry.get("available_at_utc"),
             label=f"LT input role {role}",
         )
-        if role_available != available_at:
+        role_available_times.append(role_available)
+        if (
+            schema_version == "lt_input_snapshot.v1"
+            and role_available != available_at
+        ):
             raise ValueError(f"LT input role has a divergent acquisition cutoff: {role}")
+        if (
+            schema_version in GOVERNED_LT_INPUT_SNAPSHOT_SCHEMAS
+            and role_available > available_at
+        ):
+            raise ValueError(f"LT input role is newer than snapshot cutoff: {role}")
         logical_path = str(entry.get("path", "")).strip()
         if not logical_path:
             raise ValueError(f"LT input role path is missing: {role}")
@@ -407,6 +595,10 @@ def validate_lt_input_contract_semantics(
             raise ValueError(f"LT input role path is not portable and relative: {role}")
     eligible = contract.get("calibration_eligible") is True
     if eligible:
+        if schema_version not in GOVERNED_LT_INPUT_SNAPSHOT_SCHEMAS:
+            raise ValueError(
+                "calibration-eligible LT input requires a governed snapshot schema"
+            )
         if contract.get("source_class") != "GOVERNED_ACQUISITION":
             raise ValueError("calibration-eligible LT input must be a GOVERNED_ACQUISITION")
         verify_acquisition_contract(contract)
@@ -421,6 +613,20 @@ def validate_lt_input_contract_semantics(
             )
         for role, entry in files.items():
             validate_governed_source_system(str(role), entry)
+        checkpoint = contract.get("source_journal_checkpoint")
+        if not isinstance(checkpoint, Mapping):
+            raise ValueError("governed LT snapshot source journal checkpoint is missing")
+        checkpoint_issued_at = _parse_available_at(
+            checkpoint.get("issued_at_utc"),
+            label="LT source journal checkpoint",
+        )
+        if (
+            not role_available_times
+            or max(*role_available_times, checkpoint_issued_at) != available_at
+        ):
+            raise ValueError(
+                "governed LT snapshot cutoff must equal the latest governed availability"
+            )
     return {
         "generation_id": generation_id,
         "acquisition_id": acquisition_id,
@@ -428,6 +634,76 @@ def validate_lt_input_contract_semantics(
         "calibration_eligible": eligible,
         "files": {str(role): dict(entry) for role, entry in files.items()},
     }
+
+
+def validate_governed_lt_snapshot_bundle(
+    snapshot_root: str | Path,
+    contract: Mapping[str, object],
+) -> None:
+    """Validate a complete promotion-grade v2 bundle before publication."""
+
+    root = Path(snapshot_root).resolve()
+    validate_lt_input_contract_semantics(contract)
+    schema_version = str(contract.get("schema_version", ""))
+    if schema_version not in GOVERNED_LT_INPUT_SNAPSHOT_SCHEMAS:
+        raise ValueError("governed LT snapshot bundle requires a governed snapshot schema")
+    if contract.get("calibration_eligible") is not True:
+        raise ValueError("governed LT snapshot bundle must be calibration eligible")
+    if contract.get("source_class") != "GOVERNED_ACQUISITION":
+        raise ValueError("governed LT snapshot bundle must be a GOVERNED_ACQUISITION")
+    verify_acquisition_contract(contract)
+    roles = contract.get("files")
+    if not isinstance(roles, Mapping):
+        raise ValueError("LT input contract files must be a mapping")
+    missing = set(CORE_LT_INPUT_ROLES).difference(roles)
+    if missing:
+        raise ValueError(f"LT input contract missing core roles: {sorted(missing)}")
+    for role, entry in roles.items():
+        if not isinstance(entry, Mapping):
+            raise ValueError(f"LT input contract role {role} must be a mapping")
+        _verify_bound_artifact(root, entry, role=str(role))
+        _verify_v2_supporting_artifacts(
+            root,
+            str(role),
+            entry,
+            require_provider_raw=(
+                schema_version == PROVIDER_RAW_LT_INPUT_SNAPSHOT_SCHEMA
+            ),
+        )
+    eex_entry = roles.get("eex_forwards_history")
+    if eex_entry is not None:
+        if not isinstance(eex_entry, Mapping):
+            raise ValueError("EEX forward history contract entry is invalid")
+        catalog_binding = eex_entry.get("vintage_catalog")
+        if not isinstance(catalog_binding, Mapping):
+            raise ValueError(
+                "governed EEX forward history requires a signed vintage_catalog binding"
+            )
+        catalog_path, catalog_payload = _verify_bound_artifact(
+            root,
+            catalog_binding,
+            role="eex_forwards_history.vintage_catalog",
+        )
+        history_path = _safe_relative_path(root, str(eex_entry.get("path", "")))
+        try:
+            catalog = load_strict_json(catalog_payload.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError) as exc:
+            raise ValueError("EEX forward history vintage catalog is invalid") from exc
+        if not isinstance(catalog, Mapping):
+            raise ValueError("EEX forward history vintage catalog must be a mapping")
+        from pfc_shaping.data.eex_historical_vintage import (
+            verify_eex_historical_vintage_catalog,
+        )
+
+        _, evidence = verify_eex_historical_vintage_catalog(
+            catalog,
+            catalog_path=catalog_path,
+            history_path=history_path,
+        )
+        if evidence.catalog_sha256 != str(catalog_binding.get("sha256", "")):
+            raise ValueError("EEX vintage catalog contract hash binding mismatch")
+        if evidence.history_sha256 != str(eex_entry.get("sha256", "")):
+            raise ValueError("EEX vintage history contract hash binding mismatch")
 
 
 def validate_governed_source_system(
@@ -458,6 +734,10 @@ def validate_lt_input_consumption(
 
     if paths.layout != "external_v2" or not paths.calibration_eligible:
         raise ValueError("LT production consumption requires a calibration-eligible snapshot")
+    if paths.schema_version != PROVIDER_RAW_LT_INPUT_SNAPSHOT_SCHEMA:
+        raise ValueError(
+            "LT production consumption requires lt_input_snapshot.v3 provider-raw evidence"
+        )
     reference = _parse_available_at(reference_timestamp, label="LT valuation timestamp")
     contract_available = _parse_available_at(
         paths.available_at_utc,
@@ -465,6 +745,15 @@ def validate_lt_input_consumption(
     )
     if contract_available > reference:
         raise ValueError("LT input contract is not available at valuation timestamp")
+    unsupported = set(roles).difference(
+        REPLAY_GOVERNED_LT_INPUT_ROLES,
+        {"eex_forwards_history"},
+    )
+    if unsupported:
+        raise ValueError(
+            "consumed LT input roles lack deterministic replay governance: "
+            f"{sorted(unsupported)}"
+        )
     for role in sorted(roles):
         entry = paths.expected_files.get(role)
         if entry is None:
@@ -475,9 +764,16 @@ def validate_lt_input_consumption(
             entry.get("available_at_utc"),
             label=f"LT input role {role}",
         )
-        if role_available != contract_available:
+        if (
+            paths.schema_version not in GOVERNED_LT_INPUT_SNAPSHOT_SCHEMAS
+            and role_available != contract_available
+        ):
             raise ValueError(
                 f"consumed LT input role has a divergent acquisition cutoff: {role}"
+            )
+        if role_available > contract_available:
+            raise ValueError(
+                f"consumed LT input role is newer than snapshot cutoff: {role}"
             )
         if role_available > reference:
             raise ValueError(f"consumed LT input role is not PIT at valuation: {role}")
@@ -676,8 +972,8 @@ def read_parquet_snapshot(
 ) -> tuple[pd.DataFrame, InputSourceReceipt]:
     """Read and parse one immutable in-memory copy of a parquet source."""
 
-    source = Path(path).resolve()
-    payload = source.read_bytes()
+    source = assert_absolute_path_has_no_links(Path(path).expanduser().absolute())
+    payload = read_stable_single_link_file(source, label=f"{role} parquet snapshot")
     frame = pd.read_parquet(BytesIO(payload))
     receipt = _receipt(
         source,
@@ -696,8 +992,8 @@ def read_yaml_snapshot(
     role: str = "config",
     logical_path: str | None = None,
 ) -> tuple[dict[str, Any], InputSourceReceipt]:
-    source = Path(path).resolve()
-    payload = source.read_bytes()
+    source = assert_absolute_path_has_no_links(Path(path).expanduser().absolute())
+    payload = read_stable_single_link_file(source, label=f"{role} YAML snapshot")
     receipt = _receipt(source, payload, role=role, logical_path=logical_path)
     parsed = load_strict_yaml(payload.decode("utf-8"))
     if not isinstance(parsed, dict):
@@ -711,13 +1007,27 @@ def read_json_snapshot(
     role: str,
     logical_path: str | None = None,
 ) -> tuple[dict[str, Any], InputSourceReceipt]:
-    source = Path(path).resolve()
-    payload = source.read_bytes()
+    parsed, receipt, _ = _read_json_snapshot_payload(
+        path,
+        role=role,
+        logical_path=logical_path,
+    )
+    return parsed, receipt
+
+
+def _read_json_snapshot_payload(
+    path: str | Path,
+    *,
+    role: str,
+    logical_path: str | None = None,
+) -> tuple[dict[str, Any], InputSourceReceipt, bytes]:
+    source = assert_absolute_path_has_no_links(Path(path).expanduser().absolute())
+    payload = read_stable_single_link_file(source, label=f"{role} JSON snapshot")
     receipt = _receipt(source, payload, role=role, logical_path=logical_path)
     parsed = load_strict_json(payload.decode("utf-8"))
     if not isinstance(parsed, dict):
         raise ValueError(f"{role} JSON must contain a mapping: {source}")
-    return parsed, receipt
+    return parsed, receipt, payload
 
 
 def validate_receipt_against_contract(paths: LTInputPaths, receipt: InputSourceReceipt) -> None:
@@ -736,7 +1046,7 @@ def validate_receipt_against_contract(paths: LTInputPaths, receipt: InputSourceR
 
 def verify_source_receipt(receipt: InputSourceReceipt) -> None:
     source = Path(receipt.path)
-    payload = source.read_bytes()
+    payload = read_stable_single_link_file(source, label=f"{receipt.role} source receipt")
     actual = _receipt(
         source,
         payload,
@@ -762,6 +1072,10 @@ def dataframe_sha256(frame: pd.DataFrame) -> str:
         "index_dtype": str(frame.index.dtype),
         "rows": len(frame),
     }
+    if OBSERVATION_RESOLUTION_PROVENANCE_ATTR in frame.attrs:
+        metadata["resolution_provenance"] = frame.attrs[
+            OBSERVATION_RESOLUTION_PROVENANCE_ATTR
+        ]
     digest = hashlib.sha256(
         json.dumps(metadata, sort_keys=True, separators=(",", ":")).encode("utf-8")
     )
@@ -787,6 +1101,443 @@ def _safe_relative_path(root: Path, value: str) -> Path:
         raise
     except ValueError as exc:
         raise ValueError(f"LT snapshot path escapes or links outside its root: {value}") from exc
+
+
+def _verify_v2_supporting_artifacts(
+    snapshot_root: Path,
+    role: str,
+    entry: Mapping[str, object],
+    *,
+    require_provider_raw: bool,
+) -> None:
+    raw = entry.get("raw_artifact")
+    derivation = entry.get("derivation")
+    quality = entry.get("quality_evidence")
+    if not isinstance(raw, Mapping):
+        raise ValueError(f"LT input role {role} raw_artifact is missing")
+    if not isinstance(derivation, Mapping):
+        raise ValueError(f"LT input role {role} derivation is missing")
+    if not isinstance(quality, Mapping):
+        raise ValueError(f"LT input role {role} quality_evidence is missing")
+    _, raw_payload = _verify_bound_artifact(
+        snapshot_root,
+        raw,
+        role=f"{role}.raw_artifact",
+    )
+    provider_raw_payload: bytes | None = None
+    provider_parser_payload: bytes | None = None
+    provider_parser_config_payload: bytes | None = None
+    provider_derivation = entry.get("provider_derivation")
+    if require_provider_raw and role in REPLAY_GOVERNED_LT_INPUT_ROLES:
+        provider_raw = entry.get("provider_raw_artifact")
+        if not isinstance(provider_raw, Mapping):
+            raise ValueError(f"LT input role {role} provider_raw_artifact is missing")
+        if not isinstance(provider_derivation, Mapping):
+            raise ValueError(f"LT input role {role} provider_derivation is missing")
+        _, provider_raw_payload = _verify_bound_artifact(
+            snapshot_root,
+            provider_raw,
+            role=f"{role}.provider_raw_artifact",
+        )
+        _, provider_parser_payload = _verify_bound_artifact(
+            snapshot_root,
+            {
+                "path": provider_derivation.get("parser_code_path"),
+                "sha256": provider_derivation.get("parser_code_sha256"),
+            },
+            role=f"{role}.provider_parser_code",
+            size_optional=True,
+        )
+        _, provider_parser_config_payload = _verify_bound_artifact(
+            snapshot_root,
+            {
+                "path": provider_derivation.get("parser_config_path"),
+                "sha256": provider_derivation.get("parser_config_sha256"),
+            },
+            role=f"{role}.provider_parser_config",
+            size_optional=True,
+        )
+    _, parser_payload = _verify_bound_artifact(
+        snapshot_root,
+        {
+            "path": derivation.get("parser_code_path"),
+            "sha256": derivation.get("parser_code_sha256"),
+        },
+        role=f"{role}.parser_code",
+        size_optional=True,
+    )
+    _, parser_config_payload = _verify_bound_artifact(
+        snapshot_root,
+        {
+            "path": derivation.get("parser_config_path"),
+            "sha256": derivation.get("parser_config_sha256"),
+        },
+        role=f"{role}.parser_config",
+        size_optional=True,
+    )
+    report_path, report_payload = _verify_bound_artifact(
+        snapshot_root,
+        {
+            "path": quality.get("report_path"),
+            "sha256": quality.get("report_sha256"),
+        },
+        role=f"{role}.quality_report",
+        size_optional=True,
+    )
+    try:
+        report = load_strict_json(report_payload.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise ValueError(f"LT input role {role} quality report is invalid") from exc
+    if not isinstance(report, Mapping):
+        raise ValueError(f"LT input role {role} quality report must be a mapping")
+    expected_quality_schema = (
+        "lt_source_quality.v2"
+        if require_provider_raw and role in REPLAY_GOVERNED_LT_INPUT_ROLES
+        else "lt_source_quality.v1"
+    )
+    if report.get("schema_version") != expected_quality_schema:
+        raise ValueError(f"LT input role {role} quality report schema is unsupported")
+    if report.get("status") != "PASS" or str(report.get("role", "")) != role:
+        raise ValueError(f"LT input role {role} quality report did not pass")
+    if str(report.get("policy_sha256", "")) != str(quality.get("policy_sha256", "")):
+        raise ValueError(f"LT input role {role} quality policy binding mismatch")
+    if report_path.name == "lt_input_snapshot.json":
+        raise ValueError(f"LT input role {role} quality report aliases the contract")
+    if role in REPLAY_GOVERNED_LT_INPUT_ROLES:
+        try:
+            parser_config = load_strict_json(parser_config_payload.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError) as exc:
+            raise ValueError(f"LT input role {role} replay config is invalid") from exc
+        if not isinstance(parser_config, Mapping):
+            raise ValueError(f"LT input role {role} replay config must be a mapping")
+        _, derived_payload = _verify_bound_artifact(
+            snapshot_root,
+            entry,
+            role=role,
+        )
+        if require_provider_raw:
+            if (
+                provider_raw_payload is None
+                or provider_parser_payload is None
+                or provider_parser_config_payload is None
+                or not isinstance(provider_derivation, Mapping)
+            ):
+                raise ValueError(
+                    f"LT input role {role} provider replay artifacts are incomplete"
+                )
+            try:
+                provider_config = load_strict_json(
+                    provider_parser_config_payload.decode("utf-8")
+                )
+            except (UnicodeDecodeError, ValueError) as exc:
+                raise ValueError(
+                    f"LT input role {role} provider replay config is invalid"
+                ) from exc
+            if not isinstance(provider_config, Mapping):
+                raise ValueError(
+                    f"LT input role {role} provider replay config must be a mapping"
+                )
+            envelope = validate_raw_envelope(provider_raw_payload)
+            receipt = entry.get("source_receipt")
+            if not isinstance(receipt, Mapping):
+                raise ValueError(f"LT input role {role} source receipt is missing")
+            expected_envelope_identity = {
+                "acquisition_id": str(entry.get("acquisition_id", "")),
+                "source_role": role,
+                "source_system": str(entry.get("source_system", "")),
+                "source_locator": str(receipt.get("source_locator", "")),
+                "received_at_utc": str(receipt.get("received_at_utc", "")),
+            }
+            for field, expected_value in expected_envelope_identity.items():
+                if str(envelope.get(field, "")) != expected_value:
+                    raise ValueError(
+                        f"LT input role {role} provider envelope {field} mismatch"
+                    )
+            verify_provider_raw_replay(
+                role=role,
+                source_system=str(entry.get("source_system", "")),
+                envelope_payload=provider_raw_payload,
+                bronze_payload=raw_payload,
+                parser_payload=provider_parser_payload,
+                parser_code_sha256=str(
+                    provider_derivation.get("parser_code_sha256", "")
+                ),
+                parser_config=provider_config,
+            )
+            _verify_quality_v2_bindings(
+                role=role,
+                report=report,
+                entry=entry,
+                raw=raw,
+                derivation=derivation,
+                provider_raw=entry["provider_raw_artifact"],
+                provider_derivation=provider_derivation,
+                raw_payload=raw_payload,
+                derived_payload=derived_payload,
+            )
+        verify_core_lt_role_replay(
+            role=role,
+            source_system=str(entry.get("source_system", "")),
+            raw_payload=raw_payload,
+            derived_payload=derived_payload,
+            parser_payload=parser_payload,
+            parser_code_sha256=str(derivation.get("parser_code_sha256", "")),
+            parser_config=parser_config,
+        )
+    if role == "eex_forwards_history":
+        catalog = entry.get("vintage_catalog")
+        if not isinstance(catalog, Mapping):
+            raise ValueError("EEX forward history requires a signed vintage_catalog binding")
+        catalog_path, catalog_payload = _verify_bound_artifact(
+            snapshot_root,
+            catalog,
+            role="eex_forwards_history.vintage_catalog",
+        )
+        try:
+            catalog_mapping = load_strict_json(catalog_payload.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError) as exc:
+            raise ValueError("EEX forward history vintage catalog is invalid") from exc
+        if not isinstance(catalog_mapping, Mapping):
+            raise ValueError("EEX forward history vintage catalog must be a mapping")
+        history_path = _safe_relative_path(snapshot_root, str(entry.get("path", "")))
+        from pfc_shaping.data.eex_historical_vintage import (
+            verify_eex_historical_vintage_catalog,
+        )
+
+        verify_eex_historical_vintage_catalog(
+            catalog_mapping,
+            catalog_path=catalog_path,
+            history_path=history_path,
+        )
+
+
+def _verify_quality_v2_bindings(
+    *,
+    role: str,
+    report: Mapping[str, object],
+    entry: Mapping[str, object],
+    raw: Mapping[str, object],
+    derivation: Mapping[str, object],
+    provider_raw: Mapping[str, object],
+    provider_derivation: Mapping[str, object],
+    raw_payload: bytes,
+    derived_payload: bytes,
+) -> None:
+    bindings = report.get("bindings")
+    expected = {
+        "provider_raw_sha256": str(provider_raw.get("sha256", "")),
+        "provider_parser_code_sha256": str(
+            provider_derivation.get("parser_code_sha256", "")
+        ),
+        "provider_parser_config_sha256": str(
+            provider_derivation.get("parser_config_sha256", "")
+        ),
+        "bronze_sha256": str(raw.get("sha256", "")),
+        "feature_parser_code_sha256": str(
+            derivation.get("parser_code_sha256", "")
+        ),
+        "feature_parser_config_sha256": str(
+            derivation.get("parser_config_sha256", "")
+        ),
+        "derived_sha256": str(entry.get("sha256", "")),
+    }
+    if not isinstance(bindings, Mapping) or dict(bindings) != expected:
+        raise ValueError(f"LT input role {role} quality artifact bindings mismatch")
+    metrics = report.get("metrics")
+    expected_metrics = {
+        "bronze": _quality_frame_metrics(raw_payload, role=role, label="bronze"),
+        "derived": _quality_frame_metrics(
+            derived_payload,
+            role=role,
+            label="derived",
+        ),
+    }
+    invariant_fields = {
+        "row_count",
+        "start_utc",
+        "end_utc",
+        "duplicate_timestamp_count",
+    }
+    if role.startswith("epex_") and (
+        "resolution_provenance" in expected_metrics["bronze"]
+        or "resolution_provenance" in expected_metrics["derived"]
+    ):
+        invariant_fields.add("resolution_provenance")
+    if any(
+        expected_metrics["bronze"][field] != expected_metrics["derived"][field]
+        for field in invariant_fields
+    ):
+        raise ValueError(f"LT input role {role} quality frame inventories diverge")
+    if not isinstance(metrics, Mapping) or dict(metrics) != expected_metrics:
+        raise ValueError(f"LT input role {role} quality metrics are not exact")
+    if role == "hydro":
+        _verify_hydro_scientific_support(
+            derived_payload,
+            metrics=expected_metrics["derived"],
+        )
+
+
+def _verify_hydro_scientific_support(
+    payload: bytes,
+    *,
+    metrics: Mapping[str, object],
+) -> None:
+    """Reject hydro evidence that cannot support the causal seasonal estimate."""
+
+    frame = pd.read_parquet(BytesIO(payload))
+    if int(metrics["row_count"]) < _HYDRO_MIN_HISTORY_ROWS:
+        raise ValueError(
+            "LT input role hydro has insufficient scientific history: "
+            f"requires at least {_HYDRO_MIN_HISTORY_ROWS} weekly observations"
+        )
+    history_days = (frame.index.max() - frame.index.min()) / pd.Timedelta(days=1)
+    if history_days < _HYDRO_MIN_HISTORY_DAYS:
+        raise ValueError(
+            "LT input role hydro has insufficient scientific history span: "
+            f"requires at least {_HYDRO_MIN_HISTORY_DAYS} days"
+        )
+    if "water_value_supported" not in frame.columns:
+        raise ValueError("LT input role hydro lacks water_value_supported evidence")
+    support = frame["water_value_supported"]
+    if not pd.api.types.is_bool_dtype(support.dtype):
+        raise ValueError("LT input role hydro water_value_supported is not boolean")
+    recent = support.sort_index().tail(_HYDRO_RECENT_SUPPORT_ROWS)
+    if len(recent) != _HYDRO_RECENT_SUPPORT_ROWS or not bool(recent.all()):
+        raise ValueError(
+            "LT input role hydro recent water-value estimate is scientifically unsupported"
+        )
+    for column in (
+        "water_value_history_count",
+        "water_value_reference_mean_pct",
+        "water_value_reference_std_pct",
+        "water_value_reference_se_pct",
+    ):
+        if column not in frame.columns:
+            raise ValueError(f"LT input role hydro lacks {column} evidence")
+    recent_frame = frame.sort_index().tail(_HYDRO_RECENT_SUPPORT_ROWS)
+    if (
+        (recent_frame["water_value_history_count"] < 5).any()
+        or (recent_frame["water_value_reference_std_pct"] <= 1e-9).any()
+        or not np.isfinite(
+            recent_frame[
+                [
+                    "water_value_reference_mean_pct",
+                    "water_value_reference_std_pct",
+                    "water_value_reference_se_pct",
+                ]
+            ].to_numpy(dtype=float)
+        ).all()
+    ):
+        raise ValueError(
+            "LT input role hydro recent water-value diagnostics are unsupported"
+        )
+
+
+def _quality_frame_metrics(payload: bytes, *, role: str, label: str) -> dict[str, object]:
+    _validate_quality_parquet_allocation_budget(payload, role=role, label=label)
+    try:
+        frame = pd.read_parquet(BytesIO(payload))
+    except (OSError, ValueError) as exc:
+        raise ValueError(
+            f"LT input role {role} quality {label} artifact is not parquet"
+        ) from exc
+    if not isinstance(frame, pd.DataFrame) or frame.empty:
+        raise ValueError(f"LT input role {role} quality {label} frame is empty")
+    if not isinstance(frame.index, pd.DatetimeIndex) or frame.index.tz is None:
+        raise ValueError(
+            f"LT input role {role} quality {label} index is not timezone-aware"
+        )
+    metrics = {
+        "row_count": len(frame),
+        "start_utc": frame.index.min().tz_convert("UTC").isoformat().replace(
+            "+00:00", "Z"
+        ),
+        "end_utc": frame.index.max().tz_convert("UTC").isoformat().replace(
+            "+00:00", "Z"
+        ),
+        "missing_value_count": int(frame.isna().sum().sum()),
+        "duplicate_timestamp_count": int(frame.index.duplicated().sum()),
+    }
+    if role.startswith("epex_") and OBSERVATION_RESOLUTION_PROVENANCE_ATTR in frame.attrs:
+        metrics["resolution_provenance"] = energy_price_resolution_provenance(
+            frame,
+            role=role,
+        )
+    if metrics["missing_value_count"] != 0:
+        raise ValueError(f"LT input role {role} quality {label} frame has missing values")
+    if metrics["duplicate_timestamp_count"] != 0:
+        raise ValueError(f"LT input role {role} quality {label} frame repeats timestamps")
+    return metrics
+
+
+def _validate_quality_parquet_allocation_budget(
+    payload: bytes,
+    *,
+    role: str,
+    label: str,
+) -> None:
+    """Inspect only Parquet metadata before allocating a decoded DataFrame."""
+
+    validate_parquet_allocation_budget(
+        payload,
+        label=f"LT input role {role} quality {label} artifact",
+        max_rows=_QUALITY_MAX_ROWS_BY_ROLE.get(role, 2_000_000),
+        max_columns=_QUALITY_MAX_COLUMNS,
+        max_cells=_QUALITY_MAX_CELLS,
+        max_row_groups=_QUALITY_MAX_ROW_GROUPS,
+        allowed_physical_types=_QUALITY_ALLOWED_PARQUET_PHYSICAL_TYPES,
+    )
+
+
+def _verify_bound_artifact(
+    snapshot_root: Path,
+    binding: Mapping[str, object],
+    *,
+    role: str,
+    size_optional: bool = False,
+) -> tuple[Path, bytes]:
+    path = _safe_relative_path(snapshot_root, str(binding.get("path", "")))
+    maximum = _artifact_max_bytes(role)
+    expected_size = binding.get("size_bytes")
+    if not size_optional and (
+        not isinstance(expected_size, int)
+        or isinstance(expected_size, bool)
+        or expected_size < 1
+        or expected_size > maximum
+    ):
+        raise ValueError(f"LT snapshot supporting artifact size is invalid: {role}")
+    payload = read_stable_single_link_file(
+        path,
+        label=f"LT snapshot artifact {role}",
+        max_bytes=(maximum if size_optional else int(expected_size)),
+    )
+    expected_hash = str(binding.get("sha256", ""))
+    if not re.fullmatch(r"[0-9a-f]{64}", expected_hash):
+        raise ValueError(f"LT snapshot supporting artifact hash is invalid: {role}")
+    if hashlib.sha256(payload).hexdigest() != expected_hash:
+        raise ValueError(f"LT snapshot supporting artifact hash mismatch: {role}")
+    if not size_optional:
+        if expected_size != len(payload):
+            raise ValueError(f"LT snapshot supporting artifact size mismatch: {role}")
+    return path, payload
+
+
+def _artifact_max_bytes(role: str) -> int:
+    normalized = str(role).lower()
+    if "provider_raw_artifact" in normalized:
+        return _MAX_PROVIDER_RAW_ARTIFACT_BYTES
+    if normalized in {
+        "epex_ch",
+        "epex_de",
+        "epex_at",
+        "epex_fr",
+        "epex_it",
+        "entso",
+        "hydro",
+        "eex_forwards_history",
+    } or normalized.endswith(".raw_artifact"):
+        return _MAX_PARQUET_ARTIFACT_BYTES
+    return _MAX_SUPPORTING_ARTIFACT_BYTES
 
 
 def _parse_available_at(value: object, *, label: str) -> pd.Timestamp:

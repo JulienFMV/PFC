@@ -36,6 +36,7 @@ REQUEST_ID = "a" * 64
 @pytest.fixture(autouse=True)
 def _sealed_test_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(cli_contract, "SOURCE_REVISION", "1" * 64)
+    monkeypatch.setattr(release_cli, "_assert_module_runtime", lambda: None)
 
 
 def _common(tmp_path: Path, *, include_failure_root: bool = True) -> list[str]:
@@ -58,6 +59,21 @@ def _provision_failure_root(tmp_path: Path) -> Path:
     root = tmp_path / "failures"
     root.mkdir(exist_ok=True)
     return root
+
+
+def test_module_runtime_gate_precedes_help_and_argument_parsing(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def reject() -> None:
+        raise ReleaseCliIdentityError("runtime is not isolated")
+
+    monkeypatch.setattr(release_cli, "_assert_module_runtime", reject)
+
+    assert release_cli.main(["--help"]) == release_cli.EXIT_INTEGRITY_FAILURE
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "INTEGRITY_FAILURE"
+    assert "runtime is not isolated" in payload["error"]
 
 
 def test_status_does_not_resolve_irrelevant_data_root_aliases(
@@ -574,6 +590,12 @@ def _build_args(tmp_path: Path) -> list[str]:
         "d" * 64,
         "--input-generation-id",
         "generation-001",
+        "--publication-head-observation",
+        str(tmp_path / "publication-head-observation.json"),
+        "--publication-head-observation-sha256",
+        "e" * 64,
+        "--publication-head-challenge-nonce",
+        "f" * 64,
         "--data-root",
         str(tmp_path / "data"),
         "--historical-thresholds",
@@ -605,9 +627,10 @@ def test_operations_runbook_documents_every_required_build_argument() -> None:
     runbook = (ROOT / "pfc_shaping" / "tools" / "OPERATIONS.md").read_text(
         encoding="utf-8"
     )
-    build_block = runbook.split("pfc-lt build `", maxsplit=1)[1].split(
-        "```", maxsplit=1
-    )[0]
+    build_block = runbook.split(
+        "pfc_shaping.cli.governed_release build `",
+        maxsplit=1,
+    )[1].split("```", maxsplit=1)[0]
     documented_options = set(re.findall(r"--[a-z0-9-]+", build_block))
 
     missing = [
@@ -914,10 +937,16 @@ def test_controller_build_rejects_source_revision_different_from_runtime(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(cli_contract, "SOURCE_REVISION", "a" * 64)
+    monkeypatch.setattr(cli_contract, "_assert_isolated_runtime_flags", lambda: None)
     monkeypatch.setattr(
         cli_contract,
         "_installed_runtime_source_revision",
         lambda: "a" * 64,
+    )
+    monkeypatch.setattr(
+        cli_contract,
+        "_installed_runtime_dependency_versions",
+        lambda: dict(cli_contract.REQUIRED_RUNTIME_DISTRIBUTIONS),
     )
 
     with pytest.raises(SystemExit) as exc:
@@ -930,6 +959,7 @@ def test_sealed_runtime_rejects_installed_source_drift(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(cli_contract, "SOURCE_REVISION", "a" * 64)
+    monkeypatch.setattr(cli_contract, "_assert_isolated_runtime_flags", lambda: None)
     monkeypatch.setattr(
         cli_contract,
         "_installed_runtime_source_revision",
@@ -944,13 +974,41 @@ def test_sealed_runtime_accepts_exact_installed_source_revision(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(cli_contract, "SOURCE_REVISION", "a" * 64)
+    monkeypatch.setattr(cli_contract, "_assert_isolated_runtime_flags", lambda: None)
     monkeypatch.setattr(
         cli_contract,
         "_installed_runtime_source_revision",
         lambda: "a" * 64,
     )
+    monkeypatch.setattr(
+        cli_contract,
+        "_installed_runtime_dependency_versions",
+        lambda: dict(cli_contract.REQUIRED_RUNTIME_DISTRIBUTIONS),
+    )
 
     cli_contract.assert_installed_runtime_sealed()
+
+
+def test_sealed_runtime_rejects_dependency_version_drift(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(cli_contract, "SOURCE_REVISION", "a" * 64)
+    monkeypatch.setattr(cli_contract, "_assert_isolated_runtime_flags", lambda: None)
+    monkeypatch.setattr(
+        cli_contract,
+        "_installed_runtime_source_revision",
+        lambda: "a" * 64,
+    )
+    installed = dict(cli_contract.REQUIRED_RUNTIME_DISTRIBUTIONS)
+    installed["numpy"] = "0.0.0"
+    monkeypatch.setattr(
+        cli_contract,
+        "_installed_runtime_dependency_versions",
+        lambda: installed,
+    )
+
+    with pytest.raises(ReleaseCliIdentityError, match="dependency versions"):
+        cli_contract.assert_installed_runtime_sealed()
 
 
 def test_controller_build_rejects_unsealed_source_checkout_before_io(
@@ -981,16 +1039,6 @@ def test_controller_build_rejects_unsealed_source_checkout_before_io(
         ],
         ["register", "{common}", "--expect-no-current"],
         ["audit", "{common}", "--request-id", REQUEST_ID, "--data-root", "{data}"],
-        ["promote", "{common}", "--request-id", REQUEST_ID],
-        [
-            "rollback",
-            "--release-root",
-            "{release}",
-            "--failure-root",
-            "{failure}",
-            "--rollback-authorization",
-            "{authorization}",
-        ],
     ],
 )
 def test_mutating_commands_reject_unsealed_source_checkout(
@@ -1072,7 +1120,7 @@ def test_controller_has_no_multi_phase_command(forbidden_command: str) -> None:
 
 
 @pytest.mark.parametrize("arguments", [["--help"], ["build", "--help"]])
-def test_controller_help_is_process_safe_with_conflicting_data_aliases(
+def test_checkout_help_fails_closed_before_conflicting_data_aliases(
     tmp_path: Path,
     arguments: list[str],
 ) -> None:
@@ -1090,34 +1138,27 @@ def test_controller_help_is_process_safe_with_conflicting_data_aliases(
         check=False,
     )
 
-    assert result.returncode == 0
-    assert "build" in result.stdout
-    assert "finalize" in result.stdout or arguments == ["build", "--help"]
+    assert result.returncode == 50
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "INTEGRITY_FAILURE"
+    assert "isolated -I -B" in payload["error"]
+    assert result.stderr == ""
     assert list(tmp_path.iterdir()) == []
 
 
 def test_controller_build_requires_explicit_data_root_before_io(
     tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
-    env = os.environ.copy()
-    env["PYTHONPATH"] = str(ROOT)
-    env["FMV_DATA_ROOT"] = str(tmp_path / "first")
-    env["PFC_LT_DATA_ROOT"] = str(tmp_path / "second")
     arguments = _build_args(tmp_path)
     data_root_index = arguments.index("--data-root")
     del arguments[data_root_index : data_root_index + 2]
 
-    result = subprocess.run(
-        [sys.executable, str(SCRIPT), "build", *arguments],
-        cwd=tmp_path,
-        env=env,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    with pytest.raises(SystemExit) as raised:
+        release_cli._parse_args(["build", *arguments])
 
-    assert result.returncode == 2
-    assert "--data-root" in result.stderr
+    assert raised.value.code == 2
+    assert "--data-root" in capsys.readouterr().err
     assert list(tmp_path.iterdir()) == []
 
 
@@ -1161,29 +1202,18 @@ def test_phase_private_key_matrix_is_fail_closed(
 
 def test_controller_rejects_builder_with_authority_private_key_before_io(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    env = os.environ.copy()
-    env["PYTHONPATH"] = str(ROOT)
     for name in PRIVATE_KEY_ENVIRONMENTS:
-        env.pop(name, None)
-    env["PFC_MODEL_GOVERNANCE_SIGNING_PRIVATE_KEY_PATH"] = str(
-        tmp_path / "model-authority-private.pem"
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv(
+        "PFC_MODEL_GOVERNANCE_SIGNING_PRIVATE_KEY_PATH",
+        str(tmp_path / "model-authority-private.pem"),
     )
 
-    result = subprocess.run(
-        [sys.executable, str(SCRIPT), "build", *_build_args(tmp_path)],
-        cwd=tmp_path,
-        env=env,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    with pytest.raises(ReleaseCliIdentityError, match="forbidden private keys"):
+        release_cli._parse_args(["build", *_build_args(tmp_path)])
 
-    assert result.returncode == 50
-    payload = json.loads(result.stdout)
-    assert payload["status"] == "INTEGRITY_FAILURE"
-    assert "forbidden private keys" in payload["error"]
-    assert result.stderr == ""
     assert list(tmp_path.iterdir()) == []
 
 
@@ -1423,6 +1453,11 @@ def test_real_builder_operation_separates_state_from_policy_next_action(
         ),
         input_pointer_sha256="d" * 64,
         input_generation_id="generation-001",
+        publication_head_observation=(
+            tmp_path / "publication-head-observation.json"
+        ),
+        publication_head_observation_sha256="e" * 64,
+        publication_head_challenge_nonce="f" * 64,
         historical_thresholds=tmp_path / "thresholds.csv",
         historical_thresholds_receipt=tmp_path / "thresholds.receipt.json",
         selected_lambda_decision=tmp_path / "selected-lambda.json",
@@ -1448,5 +1483,10 @@ def test_real_builder_operation_separates_state_from_policy_next_action(
     )
     assert load_call["expected_input_generation_id"] == "generation-001"
     assert load_call["input_pointer_contract"] == args.input_pointer_contract
+    assert load_call["publication_head_observation"] == (
+        args.publication_head_observation
+    )
+    assert load_call["expected_publication_head_observation_sha256"] == "e" * 64
+    assert load_call["publication_head_challenge_nonce"] == "f" * 64
     assert run_call["peak_source_policy"] == "same_first"
     assert run_call["use_seasonal_hourly_shape"] is True

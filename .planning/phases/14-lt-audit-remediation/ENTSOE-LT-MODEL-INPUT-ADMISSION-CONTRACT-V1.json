@@ -1,0 +1,95 @@
+{
+  "schema_version": "fmv_entsoe_lt_model_input_admission_contract.v1",
+  "decision": "D-20260806-280",
+  "status": "SYNTHETIC_COMPOSITE_ONLY_REAL_MODEL_INPUT_NOT_AUTHORIZED",
+  "purpose": "compose one exact quality-checked ENTSO-E package, its physical-to-semantic identity, effective zones and cadence, and PIT-safe primitive feature selections without merging or escalating predecessor authorities",
+  "predecessors": {
+    "d270_cadence_package_contract_content_id": "db1ffcd92bb3ae720b44da02a6e6f151a630b9e3887bd84902e91cddc3cb717f",
+    "d272_semantic_binding_schema": "fmv_entsoe_series_semantic_binding.v1",
+    "d253_family_mapping_schema": "fmv_entsoe_series_family_mapping.v2",
+    "d254_zone_registry_schema": "fmv_entsoe_zone_configuration_registry.v1",
+    "d255_zone_binding_schema": "fmv_entsoe_series_zone_binding.v1",
+    "d273_feature_availability_contract_content_id": "c7826b4ad2fa5cdb6baff5d077f00ee5fd8d98108cebef9920c147d787df2ab0"
+  },
+  "join_rules": {
+    "base_dimension_loaded_from_verified_d270_package": true,
+    "semantic_binding_must_match_exact_dimension_content_id": true,
+    "inventory_family_zone_and_semantic_content_ids_must_match": true,
+    "every_base_series_bound_exactly_once": true,
+    "mapped_signature_cardinality_must_match_inventory": true,
+    "all_required_family_direction_and_unit_coverage_required": true,
+    "all_coupled_zone_windows_required": true,
+    "all_native_cadence_slots_required": true,
+    "selected_feature_targets_must_be_inside_cadence_window": true,
+    "selected_feature_intervals_must_match_effective_native_cadence": true,
+    "selected_feature_origins_must_not_follow_selection_or_reference": true,
+    "feature_selection_must_not_predate_predecessor_evidence": true
+  },
+  "feature_selection": {
+    "schema_version": "fmv_entsoe_lt_physical_feature_selection.v1",
+    "required_document_fields": [
+      "schema_version",
+      "evidence_class",
+      "base_dimension_content_id",
+      "semantic_binding_content_id",
+      "feature_records_content_id",
+      "selected_at_utc",
+      "entries",
+      "authorities"
+    ],
+    "required_entry_fields": [
+      "feature_record_id",
+      "feature_id_sha256",
+      "series_id",
+      "source_family",
+      "information_role",
+      "requested_use",
+      "reason"
+    ],
+    "direct_physical_roles": [
+      "REALIZED_ACTUAL",
+      "OPERATIONAL_FORECAST",
+      "LAGGED_REALIZED"
+    ],
+    "derived_forecast_error_requires_separate_transform_lineage": true,
+    "calendar_climatology_and_scenario_are_outside_entsoe_physical_selection": true,
+    "all_structurally_eligible_direct_model_records_must_be_selected_once": true,
+    "rejected_or_diagnostic_records_may_be_selected": false,
+    "maximum_entries": 100000
+  },
+  "admission_rules": {
+    "d245_incremental_quality_must_pass_through_d270": true,
+    "d270_cadence_must_be_complete": true,
+    "d272_structure_must_be_complete": true,
+    "d253_required_coverage_must_be_complete": true,
+    "d255_coupled_zone_coverage_must_be_complete": true,
+    "d273_model_records_must_be_structurally_pit_safe": true,
+    "direct_feature_selection_must_be_complete": true,
+    "nonphysical_roles_outside_physical_selection_block_admission": false,
+    "derived_transform_without_lineage_is_admissible": false,
+    "synthetic_structural_pass_grants_real_model_input_authority": false,
+    "raw_values_or_clear_ids_persisted_in_assessment": false,
+    "monthly_effects_may_rewrite_solver_mean": false
+  },
+  "execution": {
+    "databricks_connection_count": 0,
+    "databricks_statement_count": 0,
+    "warehouse_start_count": 0,
+    "databricks_write_count": 0,
+    "network_call_count": 0,
+    "h_drive_access_count": 0,
+    "opened_real_value_row_count": 0
+  },
+  "authorities": {
+    "real_source_evidence": false,
+    "external_owner_identity": false,
+    "official_zone_registry": false,
+    "point_in_time": false,
+    "predictive_value": false,
+    "model_input": false,
+    "model_selection": false,
+    "candidate": false,
+    "promotion": false,
+    "production": false
+  }
+}

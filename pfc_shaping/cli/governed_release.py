@@ -49,6 +49,7 @@ from pfc_shaping.pipeline.governed_release_cli_contract import (
     add_finalize_arguments,
     assert_installed_runtime_sealed,
     assert_phase_private_key_scope,
+    assert_production_transition_runtime_authorized,
     canonical_sha256,
     resolve_build_data_root,
 )
@@ -71,11 +72,18 @@ def package_version() -> str:
     return f"{selected} source_revision={revision}"
 
 
+def _assert_module_runtime() -> None:
+    """Admit the installed runtime before argparse can expose any command."""
+
+    assert_installed_runtime_sealed()
+
+
 def main(argv: list[str] | None = None) -> int:
     operation_id = uuid.uuid4().hex
     process_id = os.getpid()
     failure: Exception | None = None
     try:
+        _assert_module_runtime()
         args = _parse_args(argv)
     except ReleaseCliIdentityError as exc:
         print(
@@ -336,7 +344,9 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     )
     args = parser.parse_args(argv)
     assert_phase_private_key_scope(args.command)
-    if args.command != "status":
+    if args.command in {"promote", "rollback"}:
+        assert_production_transition_runtime_authorized()
+    elif args.command != "status":
         assert_installed_runtime_sealed()
     if args.command == "build":
         args = resolve_build_data_root(args, parser)

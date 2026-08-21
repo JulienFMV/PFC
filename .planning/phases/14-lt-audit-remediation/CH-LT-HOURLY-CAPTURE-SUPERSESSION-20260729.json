@@ -1,0 +1,49 @@
+{
+  "schema_version": "ch_lt_hourly_capture_supersession.v1",
+  "registry_id": "3d66ca81cd535f6b6c94beafbd418b1007502e7ade309ae002f8fd20be5d7a5e",
+  "as_of_utc": "2026-07-29T09:45:00Z",
+  "market": "CH",
+  "selected_local_diagnostic_contract_sha256": "6542043c198804b46d449051d915eb0f739c969772494adfcd600f649ff1a061",
+  "selected_local_diagnostic_receipt_sha256": "aa4d5a1d37b448a1dc268e271d422082c0260cd2e6a00c612e5420c68461a55c",
+  "selected_status": "LOCAL_UNTRUSTED_HOURLY_DIAGNOSTIC_ONLY_NOT_EXTERNAL_ADMISSION_INPUT",
+  "attempts": [
+    {
+      "attempt": 1,
+      "contract_sha256": "75bd2632e3f53418338f482c255c5196312fb54edfc812ff8311c5ad58770feb",
+      "receipt_sha256": null,
+      "status": "REJECTED_FINALIZATION_FAILED_HARDCODED_V1_WINDOW",
+      "selectable": false
+    },
+    {
+      "attempt": 2,
+      "contract_sha256": "1506fb32ebcfa01718b440f9c1e638d516ed10adaf7b3100142f4319b2926659",
+      "receipt_sha256": "cdf7b24d1abd3ae490176d0bf84a2ffd11e7ab31d05e5705cceade3c6b85fad7",
+      "status": "REJECTED_SEMANTICALLY_OBSOLETE_V1_RECEIPT_FIELDS",
+      "selectable": false
+    },
+    {
+      "attempt": 3,
+      "contract_sha256": "52a74500f9a62c0aff5a793cbb0900f7c975f43b09d8f5cfc02a7717b5134762",
+      "receipt_sha256": "00e4845b9e1ad7471a1b5d17cd64c82321d16f37e413971ba9b77817435e341f",
+      "status": "REJECTED_EXTERNAL_INPUT_AMBIGUITY_AND_PREPARED_CLAIM_INJECTION_GAP",
+      "selectable": false
+    },
+    {
+      "attempt": 4,
+      "contract_sha256": "6542043c198804b46d449051d915eb0f739c969772494adfcd600f649ff1a061",
+      "receipt_sha256": "aa4d5a1d37b448a1dc268e271d422082c0260cd2e6a00c612e5420c68461a55c",
+      "status": "SELECTED_LOCAL_UNTRUSTED_HOURLY_DIAGNOSTIC_ONLY",
+      "selectable": true
+    }
+  ],
+  "builder_input_authorized": false,
+  "external_admission_input_candidate": false,
+  "scientific_execution_authorized": false,
+  "scientific_admission": false,
+  "model_selection_authorized": false,
+  "publication_authorized": false,
+  "production_authorization": false,
+  "promotion_gate": false,
+  "future_holdout_consumed": false,
+  "t057_consumed": false
+}

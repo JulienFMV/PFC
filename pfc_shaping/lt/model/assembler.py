@@ -90,6 +90,20 @@ def _resolve_allow_negative(explicit: bool | None) -> bool:
 # Horizon standard N+3 ans en jours
 HORIZON_DAYS = 3 * 365
 
+
+def _profile_type_labels(
+    months_ahead: np.ndarray,
+    *,
+    index: pd.DatetimeIndex,
+) -> pd.Series:
+    """Return truthful maturity buckets, including horizons beyond Y+3."""
+
+    profile_type = pd.Series("Y+4+", index=index)
+    profile_type[months_ahead <= 36] = "Y+2/Y+3"
+    profile_type[months_ahead <= 12] = "M+7..M+12"
+    profile_type[months_ahead <= 6] = "M+1..M+6"
+    return profile_type
+
 # ── Country → IANA timezone + holidays constructor ──────────────────────
 # Single source of truth for the 5 markets the LT pipeline supports.
 # Adding a new market means extending these two tables and (optionally)
@@ -710,9 +724,7 @@ class PFCAssembler:
             price_raw = self._stabilize_raw_curve(price_raw, B, months_ahead)
 
         # Ã¢â€â‚¬Ã¢â€â‚¬ Profile type (pour traÃƒÂ§abilitÃƒÂ©) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
-        profile_type = pd.Series("Y+2/Y+3", index=idx)
-        profile_type[months_ahead <= 12] = "M+7..M+12"
-        profile_type[months_ahead <= 6] = "M+1..M+6"
+        profile_type = _profile_type_labels(months_ahead, index=idx)
 
         # Ã¢â€â‚¬Ã¢â€â‚¬ Calibration arbitrage-free Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         calibrated = False
@@ -744,6 +756,7 @@ class PFCAssembler:
 
         if solver_monthly_level:
             price_shape = self._preserve_monthly_base_means(price_shape, B, idx, country=country)
+            price_pre_final_projection = price_shape.copy()
             price_shape, calibrated = self._project_final_solver_products(
                 price_shape,
                 idx=idx,
@@ -751,6 +764,9 @@ class PFCAssembler:
                 quoted_keys=quoted_keys,
                 country=country,
             )
+            delta_final_product_projection = (
+                price_shape - price_pre_final_projection
+            ).rename("delta_final_product_projection")
 
         df = pd.DataFrame(
             {
@@ -769,6 +785,11 @@ class PFCAssembler:
             },
             index=idx,
         )
+        if solver_monthly_level:
+            df["price_pre_final_projection"] = price_pre_final_projection
+            df["delta_final_product_projection"] = (
+                delta_final_product_projection
+            )
 
         # Ã¢â€â‚¬Ã¢â€â‚¬ Intervalles de confiance (optionnel) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         if self.unc is not None:
@@ -1598,6 +1619,13 @@ class PFCAssembler:
         )
         bridge_strength = pd.Series(bridge_strength, index=idx, dtype=float)
         bridge_strength = bridge_strength.where((days_ahead > 10.0) & (months_ahead <= 6), 0.0)
+        # ``f_Q`` is the sole 15-minute layer inside a parent hour.  Evaluating
+        # the horizon interpolation independently at each quarter introduced a
+        # small covariance between ``f_bridge`` and mean-one ``f_Q``.  The
+        # resulting parent-hour price drift was measurable even though the
+        # factor gate passed.  Freeze the bridge strength at the delivery-hour
+        # start so the hierarchy is price-neutral before monthly projection.
+        bridge_strength = bridge_strength.groupby(idx.floor("h")).transform("first")
 
         factor = 1.0 + bridge_strength * regime_shape
         month_key = pd.Index(idx_local.strftime("%Y-%m"), name="month_key")
@@ -1640,6 +1668,10 @@ class PFCAssembler:
         )
         strength = pd.Series(strength, index=idx, dtype=float)
         strength = strength.where((days_ahead > 10.0) & (months_ahead <= 6), 0.0)
+        # Keep the post-calibration bridge on the same parent-hour grid as the
+        # pre-calibration bridge.  This prevents a later layer from silently
+        # reintroducing quarter-hour structure outside ``f_Q``.
+        strength = strength.groupby(idx.floor("h")).transform("first")
 
         factor = 1.0 + strength * shape
         month_key = pd.Index(idx_local.strftime("%Y-%m"), name="month_key")

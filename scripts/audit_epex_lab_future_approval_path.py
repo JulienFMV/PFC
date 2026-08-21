@@ -12,8 +12,10 @@ from pathlib import Path
 from typing import Any
 
 try:
+    from scripts.epex_lab_locked_holdout_policy import ENERGY_CHARTS_RUN_SCHEMA_VERSION
     from scripts.epex_lab_locked_holdout_policy import locked_holdout_policy as evaluate_locked_holdout_policy
 except ModuleNotFoundError:  # pragma: no cover - direct script execution
+    from epex_lab_locked_holdout_policy import ENERGY_CHARTS_RUN_SCHEMA_VERSION
     from epex_lab_locked_holdout_policy import locked_holdout_policy as evaluate_locked_holdout_policy
 
 
@@ -352,7 +354,7 @@ def _recommended_commands(
     energy_output_dir = (
         str(holdout_policy.get("output_dir"))
         if holdout_policy is not None
-        and holdout_policy.get("schema_version") == "energy_charts_epex_locked_holdout_run.v1"
+        and holdout_policy.get("schema_version") == ENERGY_CHARTS_RUN_SCHEMA_VERSION
         and holdout_policy.get("output_dir")
         else "<ENERGY_CHARTS_LOCKED_HOLDOUT_OUTPUT_DIR>"
     )

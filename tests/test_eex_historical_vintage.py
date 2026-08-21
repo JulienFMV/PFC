@@ -40,9 +40,24 @@ from pfc_shaping.data.eex_historical_vintage import (
     historical_vintage_revision_id,
     historical_vintage_row_hash,
     historical_vintage_snapshot_id,
+    materialize_eex_forward_history_as_of,
     validate_eex_historical_vintage_frame,
     verify_eex_historical_vintage_catalog,
 )
+from pfc_shaping.data.lt_input_sources import InputSourceReceipt, dataframe_sha256
+from pfc_shaping.data.snapshot_publisher import _bound_files
+from pfc_shaping.path_safety import read_stable_single_link_file
+from pfc_shaping.pipeline.production_phases import _prepare_governed_forward_history
+
+
+def test_stable_artifact_reader_rejects_hardlink(tmp_path: Path) -> None:
+    canonical = tmp_path / "canonical.bin"
+    alias = tmp_path / "alias.bin"
+    canonical.write_bytes(b"governed-artifact")
+    os.link(canonical, alias)
+
+    with pytest.raises(ValueError, match="single-link regular file"):
+        read_stable_single_link_file(alias, label="test artifact")
 
 
 def test_trusted_public_key_rejects_hardlink(tmp_path: Path) -> None:
@@ -131,6 +146,32 @@ def test_historical_acquisition_key_is_rejected_without_prior_commitment(
 
     with pytest.raises(AcquisitionAuthenticationError, match="historical replay is unsupported"):
         verify_acquisition_contract(signed)
+
+
+def test_historical_acquisition_key_is_replayed_from_committed_keyring(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    historical = Ed25519PrivateKey.generate()
+    active = Ed25519PrivateKey.generate()
+    active_public = _write_public_key(tmp_path / "active.pem", active)
+    historical_private = _write_private_key(
+        tmp_path / "historical-private.pem",
+        historical,
+    )
+    key_id = acquisition_contract._public_key_id(historical.public_key())
+    keyring = tmp_path / "keyring"
+    keyring.mkdir()
+    _write_public_key(keyring / f"{key_id}.pem", historical)
+    unsigned = {"schema_version": "lt_input_snapshot.v1", "snapshot_id": "snapshot-001"}
+    signed = sign_acquisition_contract(unsigned, private_key_path=historical_private)
+    monkeypatch.setenv(TRUSTED_ACQUISITION_PUBLIC_KEY_ENV, str(active_public))
+    monkeypatch.setenv(
+        acquisition_contract.TRUSTED_ACQUISITION_PUBLIC_KEY_DIR_ENV,
+        str(keyring),
+    )
+
+    assert verify_acquisition_contract(signed) == unsigned
 
 
 def test_historical_trusted_time_key_is_rejected_without_prior_commitment(
@@ -281,6 +322,35 @@ def test_revision_cannot_change_economic_quote_identity() -> None:
         validate_eex_historical_vintage_frame(pd.DataFrame([parent, revision]))
 
 
+def test_materialize_history_selects_latest_revision_available_at_valuation() -> None:
+    parent = _row("2026-03-01", "2027", 80.0, available_at="2026-03-01T08:00:00Z")
+    revision = _row(
+        "2026-03-01",
+        "2027",
+        81.0,
+        available_at="2026-03-02T08:00:00Z",
+    )
+    revision["revision_sequence"] = 2
+    revision["supersedes_quote_id"] = parent["quote_id"]
+    _repin(revision)
+    vintages = pd.DataFrame([parent, revision])
+
+    before_revision = materialize_eex_forward_history_as_of(
+        vintages,
+        valuation_timestamp="2026-03-01T12:00:00Z",
+    )
+    after_revision = materialize_eex_forward_history_as_of(
+        vintages,
+        valuation_timestamp="2026-03-02T12:00:00Z",
+    )
+
+    assert before_revision["price"].tolist() == [80.0]
+    assert after_revision["price"].tolist() == [81.0]
+    assert after_revision.attrs["pit_selection"]["max_available_at"] == (
+        "2026-03-02T08:00:00+00:00"
+    )
+
+
 def test_revision_identity_has_exactly_one_root() -> None:
     first = _row("2026-03-01", "2027", 80.0)
     second = _row(
@@ -364,6 +434,17 @@ def test_one_document_cannot_repeat_quote_under_multiple_snapshots() -> None:
         "parser_version": "ingest_forwards.v1",
         "selection_mode": "latest_available",
         "markets": {"CH": "2026-03-01"},
+        "quote_convention": "EEX_SETTLEMENT_EUR_MWH",
+        "expected_quotes": [
+            {
+                "market": "CH",
+                "source_product_code": "Y01_2027_BASE",
+                "product": "2027",
+                "load_type": "BASE",
+                "product_type": "CAL",
+            }
+        ],
+        "intake_id": "a" * 64,
     }
     parser_config_hash = _canonical_sha(parser_config)
     first = _row("2026-03-01", "2027", 80.0)
@@ -445,6 +526,17 @@ def test_signed_catalog_binds_history_and_every_archived_source_document(
         "parser_version": "ingest_forwards.v1",
         "selection_mode": "latest_available",
         "markets": {"CH": "2026-03-01"},
+        "quote_convention": "EEX_SETTLEMENT_EUR_MWH",
+        "expected_quotes": [
+            {
+                "market": "CH",
+                "source_product_code": "Y01_2027_BASE",
+                "product": "2027",
+                "load_type": "BASE",
+                "product_type": "CAL",
+            }
+        ],
+        "intake_id": "b" * 64,
     }
     parser_config_hash = _canonical_sha(parser_config)
     row = _row("2026-03-01", "2027", 80.0)
@@ -520,6 +612,101 @@ def test_signed_catalog_binds_history_and_every_archived_source_document(
     assert actual.attrs["verified_vintage_catalog"]["status"] == (
         "VERIFIED_SIGNED_IMMUTABLE_VINTAGES"
     )
+    consumed = pd.read_parquet(history_path)
+    receipt = InputSourceReceipt(
+        role="eex_forwards_history",
+        path=str(history_path.resolve()),
+        logical_path="market/eex/history.parquet",
+        size_bytes=len(history_bytes),
+        sha256=hashlib.sha256(history_bytes).hexdigest(),
+        rows=len(consumed),
+        frame_sha256=dataframe_sha256(consumed),
+    )
+    selected, source_hash, solver_evidence, forward_snapshot = (
+        _prepare_governed_forward_history(
+        consumed,
+        receipt,
+        catalog_path=catalog_path,
+        reference_timestamp=pd.Timestamp("2026-03-01T09:00:00Z"),
+        )
+    )
+    assert selected["price"].tolist() == [80.0]
+    assert source_hash == evidence.history_sha256
+    assert solver_evidence["catalog_id"] == evidence.catalog_id
+    assert solver_evidence["pit_selection"]["valuation_timestamp"] == (
+        "2026-03-01T09:00:00+00:00"
+    )
+    assert forward_snapshot.source_kind == "EEX_VINTAGE"
+    assert forward_snapshot.prices == {"2027": 80.0}
+    assert forward_snapshot.quote_lineage["2027"]["quote_id"] == selected.iloc[0][
+        "quote_id"
+    ]
+    from pfc_shaping.data.forward_proxy import validate_forward_snapshot
+    from pfc_shaping.pipeline.monthly_curve_authority import (
+        solve_monthly_level_authority,
+    )
+
+    valuation_timestamp = pd.Timestamp("2026-03-01T09:00:00Z")
+    authority = solve_monthly_level_authority(
+        market="CH",
+        delivery_months=pd.period_range("2027-01", "2027-12", freq="M"),
+        own_base_prices=dict(forward_snapshot.prices),
+        run_timestamp=valuation_timestamp,
+        settings={"allow_template_structural_fallback": True},
+        own_forward_snapshot=forward_snapshot,
+        forward_eligibility=validate_forward_snapshot(
+            forward_snapshot,
+            reference_timestamp=valuation_timestamp,
+        ),
+    )
+    quote_by_product = {quote.product: quote for quote in authority.inputs.own_quotes}
+    assert authority.manifest["forward_source_kind"] == "EEX_VINTAGE"
+    assert authority.manifest["promotion_eligible"] is False
+    assert quote_by_product["2027"].quote_id == row["quote_id"]
+    assert set(authority.constraints.rows["source_quote_ids"].explode()) == {
+        row["quote_id"]
+    }
+    catalog_bytes = catalog_path.read_bytes()
+    closure = _bound_files(
+        tmp_path,
+        {
+            "files": {
+                "eex_forwards_history": {
+                    "path": "history.parquet",
+                    "sha256": hashlib.sha256(history_bytes).hexdigest(),
+                    "size_bytes": len(history_bytes),
+                    "raw_artifact": {
+                        "path": "sources/eex-2026-03-01.xlsx",
+                        "sha256": row["source_document_sha256"],
+                        "size_bytes": source.stat().st_size,
+                    },
+                    "derivation": {
+                        "parser_code_path": "parser/ingest_forwards.py",
+                        "parser_code_sha256": parser_code_hash,
+                        "parser_config_path": "parser/ingest_forwards.py",
+                        "parser_config_sha256": parser_code_hash,
+                    },
+                    "quality_evidence": {
+                        "report_path": "catalog.json",
+                        "report_sha256": hashlib.sha256(catalog_bytes).hexdigest(),
+                    },
+                    "vintage_catalog": {
+                        "path": "catalog.json",
+                        "sha256": hashlib.sha256(catalog_bytes).hexdigest(),
+                        "size_bytes": len(catalog_bytes),
+                    },
+                }
+            }
+        },
+        b"{}",
+    )
+    assert set(closure) == {
+        "lt_input_snapshot.json",
+        "history.parquet",
+        "catalog.json",
+        "sources/eex-2026-03-01.xlsx",
+        "parser/ingest_forwards.py",
+    }
     artifacts = run_verified_lambda_calibration(
         history_path,
         catalog_path,

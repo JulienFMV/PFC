@@ -42,7 +42,7 @@ EXPECTED_CADENCE_SECONDS = {
     "epex_ch": 900,
     "epex_de": 900,
     "entso": 900,
-    "hydro": 86400,
+    "hydro": 604800,
     "outages": 900,
     "epex_at": 900,
     "epex_fr": 900,

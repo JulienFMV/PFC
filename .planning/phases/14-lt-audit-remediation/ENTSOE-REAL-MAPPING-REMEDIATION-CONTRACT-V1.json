@@ -1,0 +1,149 @@
+{
+  "schema_version": "fmv_entsoe_real_mapping_remediation_contract.v1",
+  "status": "STATIC_OFFLINE_REAL_SCHEMA_REMEDIATION_PLAN_NO_SQL_NO_MODEL_AUTHORITY",
+  "decision": "D-20260806-250",
+  "purpose": "turn the admitted real dev.gold ENTSO-E table schema into an exact fail-closed physical-to-normalized remediation plan without inventing cadence, interval edges, PIT availability, quality, revisions, lineage or sign semantics",
+  "input_bindings": {
+    "unity_catalog_schema_decision": "D-20260806-241",
+    "unity_catalog_schema_proof_content_id": "d6c006609d881b51f08be6d60e01f68b59a40be8bdf2898ef0a98491f5771544",
+    "unity_catalog_schema_capture_content_id": "d69fdab73ba1d9c55f70f77925f2253d583564d06d922f2b41e035763bca176f",
+    "unity_catalog_schema_proof_manifest_sha256": "1835f93a517e9c6769079984a376fb9879b22d7c8ce2922aa42b0dd646627ada",
+    "unity_catalog_capture_sha256": "46efff7cf0f568a59c6d0146c25b0a9095f33eed77d765807f600f95662f6312",
+    "unity_catalog_assessment_sha256": "eddf1cdb04a8ad2437cc4e90531c4f6bd756dc6575a7c5dc8f6840fed563d294",
+    "unity_catalog_validator_sha256": "2e7dfd9e13e04a77371b0bb1b883f6db5a263e7990d11b1c2e6d2da19a7ae1f4",
+    "physical_mapping_compiler_decision": "D-20260805-234",
+    "physical_mapping_compiler_proof_content_id": "bb7ea1894463cb2c5fc30287d2239f0285cd6a74e901ab51a2f9de7e6794b766",
+    "normalized_quality_profile_decision": "D-20260805-239",
+    "normalized_quality_profile_proof_content_id": "5e5aad7d04529e0efbb9926a1098a485ab3f797941ba2681c0a1609487f4df9b"
+  },
+  "standards_basis": {
+    "entsoe_time_series_guide": "https://www.entsoe.eu/Documents/EDI/Library/Introduction_of_different_time_series_v1.4.1.pdf",
+    "entsoe_time_step_formula": "period_start_plus_position_minus_one_times_resolution",
+    "entsoe_document_creation_semantics": "createdDateTime_is_document_creation_time_not_local_observation_time",
+    "local_table_timestamp_comment": "DateTimeUtc_is_the_UTC_right_edge_of_the_ENTSO_E_interval"
+  },
+  "normalized_time_semantics": {
+    "target_ts_utc": "DELIVERY_INTERVAL_START_UTC",
+    "physical_datetime_utc": "DELIVERY_INTERVAL_RIGHT_EDGE_UTC",
+    "direct_alias_of_right_edge_to_target_start_authorized": false,
+    "required_target_transform": "DateTimeUtc_MINUS_NATIVE_RESOLUTION",
+    "native_resolution_required_before_target_transform": true,
+    "dateutc_is_timestamp_authority": false,
+    "epoch_is_timestamp_authority": false
+  },
+  "point_in_time_policy": {
+    "latest_is_historical_pit_source": false,
+    "source_publication_timestamp": "PublicationTimestampUtc",
+    "local_observation_timestamp": "PullTimestampUtc",
+    "local_load_timestamp": "Meta_Load_Timestamp",
+    "candidate_conservative_as_of": "MAX_OF_PUBLICATION_PULL_AND_LOAD_AFTER_ALL_THREE_ARE_NON_NULL",
+    "candidate_rule_is_owner_approved": false,
+    "publication_timestamp_alone_authorized": false,
+    "pull_timestamp_alone_authorized": false,
+    "load_timestamp_alone_authorized": false,
+    "coalesce_missing_availability_components_authorized": false,
+    "backfill_gains_retroactive_availability": false
+  },
+  "mapping_plan": {
+    "dimension": {
+      "physical_table": "dev.gold.dimentsoeseries",
+      "normalized_role": "series_dimension",
+      "fields": {
+        "series_id": {"class": "SAFE_CAST_AFTER_CROSS_TABLE_CHECK", "source": "SeriesID", "transform": "CAST_BIGINT_TO_CANONICAL_DECIMAL_STRING"},
+        "group_name": {"class": "DIRECT_REJECT_NULL", "source": "GroupName"},
+        "field_name": {"class": "DIRECT_REJECT_NULL", "source": "FieldName"},
+        "from_zone": {"class": "DIRECT_REJECT_NULL", "source": "FromZone"},
+        "to_zone": {"class": "DIRECT_REJECT_NULL", "source": "ToZone"},
+        "unit": {"class": "DIRECT_REJECT_NULL", "source": "Unit"},
+        "native_resolution": {"class": "OWNER_OR_SOURCE_ENRICHMENT_REQUIRED", "source": null},
+        "source_endpoint": {"class": "SOURCE_LINEAGE_ENRICHMENT_REQUIRED", "source": null},
+        "document_id": {"class": "SOURCE_LINEAGE_ENRICHMENT_REQUIRED", "source": null}
+      }
+    },
+    "latest": {
+      "physical_table": "dev.gold.factentsoetimeserieslatest",
+      "normalized_role": "latest_values",
+      "fields": {
+        "series_id": {"class": "SAFE_CAST_AFTER_CROSS_TABLE_CHECK", "source": "SeriesID", "transform": "CAST_BIGINT_TO_CANONICAL_DECIMAL_STRING"},
+        "target_ts_utc": {"class": "BLOCKED_UNTIL_NATIVE_RESOLUTION", "source": "DateTimeUtc", "transform": "RIGHT_EDGE_MINUS_NATIVE_RESOLUTION"},
+        "value": {"class": "DIRECT_REJECT_NULL_NONFINITE", "source": "FieldValue"},
+        "is_historical": {"class": "DIRECT_REJECT_NULL", "source": "IsHistorical"},
+        "quality_flag": {"class": "SOURCE_QUALITY_ENRICHMENT_REQUIRED", "source": null},
+        "revision_number": {"class": "NOT_AVAILABLE_LATEST_IS_NOT_PIT", "source": null},
+        "meta_load_timestamp_utc": {"class": "DIRECT_REJECT_NULL", "source": "Meta_Load_Timestamp"}
+      }
+    },
+    "vintages": {
+      "physical_table": "dev.gold.factentsoetimeseriesvintages",
+      "normalized_role": "vintage_values",
+      "fields": {
+        "series_id": {"class": "SAFE_CAST_AFTER_CROSS_TABLE_CHECK", "source": "SeriesID", "transform": "CAST_BIGINT_TO_CANONICAL_DECIMAL_STRING"},
+        "target_ts_utc": {"class": "BLOCKED_UNTIL_NATIVE_RESOLUTION", "source": "DateTimeUtc", "transform": "RIGHT_EDGE_MINUS_NATIVE_RESOLUTION"},
+        "as_of_utc": {"class": "OWNER_APPROVAL_REQUIRED", "sources": ["PublicationTimestampUtc", "PullTimestampUtc", "Meta_Load_Timestamp"], "candidate_transform": "MAX_AFTER_ALL_NON_NULL"},
+        "value": {"class": "DIRECT_REJECT_NULL_NONFINITE", "source": "FieldValue"},
+        "quality_flag": {"class": "SOURCE_QUALITY_ENRICHMENT_REQUIRED", "source": null},
+        "revision_number": {"class": "SOURCE_REVISION_OR_DECLARED_DERIVED_ORDER_REQUIRED", "source": null},
+        "meta_load_timestamp_utc": {"class": "DIRECT_REJECT_NULL", "source": "Meta_Load_Timestamp"}
+      }
+    }
+  },
+  "forbidden_substitutions": {
+    "DocumentType_as_document_id": false,
+    "VintageID_as_source_document_or_revision": false,
+    "quality_flag_default_OK": false,
+    "missing_revision_default_zero": false,
+    "native_resolution_inferred_from_schema": false,
+    "DateTimeUtc_directly_renamed_target_ts_utc": false,
+    "PublicationTimestampUtc_alone_as_as_of_utc": false,
+    "latest_used_to_reconstruct_historical_origins": false,
+    "nulls_silently_coalesced_or_dropped": false,
+    "directional_sign_inferred_from_column_names_only": false
+  },
+  "data_engineer_required_decisions": [
+    "publish native Period.resolution per SeriesID",
+    "confirm DateTimeUtc right-edge semantics and approve conversion to interval start",
+    "publish source endpoint and source document mRID or equivalent immutable lineage",
+    "publish source quality/reason status without defaulting unknown to OK",
+    "publish source revisionNumber or approve a separately labelled derived observation order",
+    "approve conservative as_of_utc as the maximum of publication pull and load timestamps with no null component",
+    "publish exact positive direction semantics for every directional series",
+    "define rejection and coverage reporting for nullable required fields",
+    "publish exact GroupName and FieldName inventory plus supported CH borders and units"
+  ],
+  "readiness_gates": {
+    "direct_mapping_fields_verified": true,
+    "series_id_cast_design_ready": true,
+    "target_interval_start_mapping_ready": false,
+    "native_resolution_ready": false,
+    "point_in_time_rule_owner_approved": false,
+    "source_lineage_ready": false,
+    "quality_semantics_ready": false,
+    "revision_semantics_ready": false,
+    "sign_semantics_ready": false,
+    "dimension_value_inventory_ready": false,
+    "real_mapping_compilable_by_D234": false
+  },
+  "execution_policy": {
+    "current_control_plane_get_budget": 0,
+    "current_databricks_connection_budget": 0,
+    "current_databricks_statement_budget": 0,
+    "current_warehouse_start_budget": 0,
+    "current_network_call_budget": 0,
+    "current_h_drive_access_budget": 0,
+    "current_remote_write_budget": 0,
+    "connector_code_allowed": false,
+    "compiled_sql_execution_authorized": false
+  },
+  "authorities": {
+    "real_schema_observed": true,
+    "physical_to_normalized_mapping_complete": false,
+    "point_in_time_availability_proven": false,
+    "real_values_opened": false,
+    "training_authorized": false,
+    "selection_authorized": false,
+    "model_input_authorized": false,
+    "candidate_assembly_authorized": false,
+    "promotion_authorized": false,
+    "production_authorized": false
+  }
+}

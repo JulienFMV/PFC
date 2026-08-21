@@ -30,10 +30,26 @@ import numpy as np
 import pandas as pd
 
 from pfc_shaping.build_identity import SOURCE_REVISION
+from pfc_shaping.path_safety import read_stable_single_link_file
 
 logger = logging.getLogger(__name__)
 _VERIFIED_WORKBOOK_TOKEN = object()
 PRODUCTION_EEX_MAX_AGE_BUSINESS_DAYS = 1
+
+
+def _read_preflight_eex_workbook(path: str | Path, *, label: str) -> tuple[Path, bytes]:
+    selected = Path(path).resolve(strict=True)
+    payload = read_stable_single_link_file(
+        selected,
+        label=label,
+        max_bytes=64 * 1024 * 1024,
+    )
+    from pfc_shaping.data.eex_forward_vintage_intake import (
+        preflight_eex_forward_workbook_bytes,
+    )
+
+    preflight_eex_forward_workbook_bytes(payload)
+    return selected, payload
 
 
 class ForwardSourceUnavailableError(RuntimeError):
@@ -79,19 +95,23 @@ class ForwardSnapshot:
         clean_lineage: dict[str, Mapping[str, object]] = {}
         for key, raw_lineage in dict(self.quote_lineage or {}).items():
             lineage = dict(raw_lineage)
-            lineage["quote_id"] = _sha256_json(
-                {
-                    "source_sha256": self.source_sha256,
-                    "market": self.market,
-                    "source_sheet": self.source_sheet,
-                    "snapshot_date": _iso_or_none(self.snapshot_date),
-                    "product": str(key),
-                    "source_product_code": lineage.get("source_product_code"),
-                    "source_row_index": lineage.get("source_row_index"),
-                    "source_column_index": lineage.get("source_column_index"),
-                    "price_eur_mwh": clean_prices.get(str(key)),
-                }
-            )
+            if str(self.source_kind).upper() == "EEX_VINTAGE":
+                if not _is_sha256(lineage.get("quote_id")):
+                    raise ValueError("EEX vintage lineage requires its authenticated quote_id")
+            else:
+                lineage["quote_id"] = _sha256_json(
+                    {
+                        "source_sha256": self.source_sha256,
+                        "market": self.market,
+                        "source_sheet": self.source_sheet,
+                        "snapshot_date": _iso_or_none(self.snapshot_date),
+                        "product": str(key),
+                        "source_product_code": lineage.get("source_product_code"),
+                        "source_row_index": lineage.get("source_row_index"),
+                        "source_column_index": lineage.get("source_column_index"),
+                        "price_eur_mwh": clean_prices.get(str(key)),
+                    }
+                )
             clean_lineage[str(key)] = _deep_freeze(lineage)
         object.__setattr__(self, "quote_lineage", MappingProxyType(clean_lineage))
         quote_payload = [[key, clean_prices[key]] for key in sorted(clean_prices)]
@@ -109,7 +129,7 @@ class ForwardSnapshot:
             for lineage in clean_lineage.values()
         )
         eligible = (
-            source_kind in {"EEX_XLSX", "EEX_UNC"}
+            source_kind in {"EEX_XLSX", "EEX_UNC", "EEX_VINTAGE"}
             and bool(clean_prices)
             and self.snapshot_date is not None
             and self.available_at is not None
@@ -288,8 +308,12 @@ def validate_forward_snapshot(
             f"{snapshot.market} forward source path does not exist: {source_path}"
         )
     try:
-        report_bytes = source_path.read_bytes()
-    except OSError as exc:
+        report_bytes = read_stable_single_link_file(
+            source_path,
+            label=f"{snapshot.market} forward source",
+            max_bytes=64 * 1024 * 1024,
+        )
+    except (OSError, ValueError) as exc:
         raise ForwardSourceUnavailableError(
             f"{snapshot.market} forward source cannot be read: {source_path}"
         ) from exc
@@ -298,8 +322,12 @@ def validate_forward_snapshot(
             f"{snapshot.market} forward source hash does not match current source bytes"
         )
     try:
+        from pfc_shaping.data.eex_forward_vintage_intake import (
+            preflight_eex_forward_workbook_bytes,
+        )
         from pfc_shaping.data.ingest_forwards import load_base_prices_from_eex_report_bytes
 
+        preflight_eex_forward_workbook_bytes(report_bytes)
         parsed_prices, parsed_date, parsed_metadata = load_base_prices_from_eex_report_bytes(
             report_bytes,
             market=str(snapshot.source_sheet or snapshot.market),
@@ -319,18 +347,41 @@ def validate_forward_snapshot(
         raise ForwardSourceUnavailableError(
             f"{snapshot.market} forward snapshot date does not match reparsed source bytes"
         )
-    expected_lineage = {
-        key: {
-            name: value
-            for name, value in _deep_thaw(snapshot.quote_lineage[key]).items()
-            if name != "quote_id"
+    expected_lineage = dict(parsed_metadata["quote_lineage"])
+    if str(snapshot.source_kind).upper() == "EEX_VINTAGE":
+        required_vintage_fields = {
+            "quote_id",
+            "revision_id",
+            "snapshot_id",
+            "acquisition_id",
+            "source_document_id",
+            "parser_config_sha256",
         }
-        for key in snapshot.quote_lineage
-    }
-    if dict(parsed_metadata["quote_lineage"]) != expected_lineage:
-        raise ForwardSourceUnavailableError(
-            f"{snapshot.market} forward quote lineage does not match reparsed source bytes"
-        )
+        for key, parsed_lineage in expected_lineage.items():
+            observed = _deep_thaw(snapshot.quote_lineage[key])
+            missing = sorted(required_vintage_fields - observed.keys())
+            if missing:
+                raise ForwardSourceUnavailableError(
+                    f"{snapshot.market} EEX vintage lineage is incomplete for {key}: "
+                    + ", ".join(missing)
+                )
+            if any(observed.get(name) != value for name, value in parsed_lineage.items()):
+                raise ForwardSourceUnavailableError(
+                    f"{snapshot.market} EEX vintage lineage does not match reparsed source bytes"
+                )
+    else:
+        observed_lineage = {
+            key: {
+                name: value
+                for name, value in _deep_thaw(snapshot.quote_lineage[key]).items()
+                if name != "quote_id"
+            }
+            for key in snapshot.quote_lineage
+        }
+        if expected_lineage != observed_lineage:
+            raise ForwardSourceUnavailableError(
+                f"{snapshot.market} forward quote lineage does not match reparsed source bytes"
+            )
 
     reference = _utc_timestamp(reference_timestamp or pd.Timestamp.now("UTC"))
     assert reference is not None
@@ -514,8 +565,11 @@ def verify_forward_manifest_binding(
             raise ValueError("forward snapshot source_path is missing")
         source_path = Path(str(source_path_value))
         try:
-            report_bytes = source_path.read_bytes()
-        except OSError as exc:
+            source_path, report_bytes = _read_preflight_eex_workbook(
+                source_path,
+                label="forward manifest source",
+            )
+        except (OSError, ValueError) as exc:
             raise ValueError(f"forward snapshot source cannot be read: {source_path}") from exc
         if _sha256_bytes(report_bytes) != source_sha256:
             raise ValueError("forward snapshot source bytes do not match source_sha256")
@@ -872,8 +926,11 @@ def load_forward_snapshot(
             if config and not market:
                 eex_market = config.get("forwards", {}).get("eex_market", eex_market)
 
-            resolved = str(Path(path).resolve())
-            report_bytes = Path(resolved).read_bytes()
+            selected, report_bytes = _read_preflight_eex_workbook(
+                path,
+                label="EEX XLSX forward source",
+            )
+            resolved = str(selected)
             observed_at = _observation_timestamp_utc()
             source_sha256 = hashlib.sha256(report_bytes).hexdigest()
             prices, snapshot_date, snapshot_metadata = load_base_prices_from_eex_report_bytes(
@@ -897,7 +954,7 @@ def load_forward_snapshot(
                     source_sheet=eex_market,
                     _verification_token=_VERIFIED_WORKBOOK_TOKEN,
                 )
-        except (FileNotFoundError, OSError) as exc:
+        except (FileNotFoundError, OSError, ValueError) as exc:
             logger.warning("EEX XLSX not available: %s", exc)
 
     # ── Try 2: EEX report UNC path ───────────────────────────────────
@@ -909,8 +966,11 @@ def load_forward_snapshot(
             eex_market = market or "CH"
             if not market:
                 eex_market = config.get("forwards", {}).get("eex_market", eex_market)
-            resolved = str(Path(unc_path).resolve())
-            report_bytes = Path(resolved).read_bytes()
+            selected, report_bytes = _read_preflight_eex_workbook(
+                unc_path,
+                label="EEX UNC forward source",
+            )
+            resolved = str(selected)
             observed_at = _observation_timestamp_utc()
             source_sha256 = hashlib.sha256(report_bytes).hexdigest()
             prices, snapshot_date, snapshot_metadata = load_base_prices_from_eex_report_bytes(
@@ -934,7 +994,7 @@ def load_forward_snapshot(
                     source_sheet=eex_market,
                     _verification_token=_VERIFIED_WORKBOOK_TOKEN,
                 )
-        except (FileNotFoundError, OSError) as exc:
+        except (FileNotFoundError, OSError, ValueError) as exc:
             logger.warning("EEX UNC not available: %s", exc)
 
     # Databricks is an upstream acquisition concern and is deliberately
@@ -975,8 +1035,11 @@ def _load_eex_workbook_snapshot(
     from pfc_shaping.data.ingest_forwards import load_base_prices_from_eex_report_bytes
 
     eex_market = str(market or "CH").upper()
-    resolved = str(Path(path).resolve(strict=True))
-    report_bytes = Path(resolved).read_bytes()
+    selected, report_bytes = _read_preflight_eex_workbook(
+        path,
+        label="exact EEX workbook source",
+    )
+    resolved = str(selected)
     source_sha256 = hashlib.sha256(report_bytes).hexdigest()
     prices, snapshot_date, snapshot_metadata = load_base_prices_from_eex_report_bytes(
         report_bytes,
@@ -997,6 +1060,163 @@ def _load_eex_workbook_snapshot(
         source_sha256=source_sha256,
         quote_lineage=snapshot_metadata["quote_lineage"],
         source_sheet=eex_market,
+        _verification_token=_VERIFIED_WORKBOOK_TOKEN,
+    )
+
+
+def forward_snapshot_from_verified_eex_vintage(
+    history: pd.DataFrame,
+    *,
+    evidence: object,
+    catalog: Mapping[str, object],
+    catalog_path: str | Path,
+    market: str = "CH",
+) -> ForwardSnapshot:
+    """Build hard-level evidence only from a verified PIT vintage selection."""
+
+    from pfc_shaping.data.eex_historical_vintage import (
+        VerifiedEexHistoricalVintageCatalog,
+    )
+    from pfc_shaping.data.shared_data_root import resolve_confined_path
+    from pfc_shaping.pipeline.strict_structured_data import load_strict_json
+
+    if (
+        not isinstance(evidence, VerifiedEexHistoricalVintageCatalog)
+        or not evidence.verified
+    ):
+        raise ValueError("verified EEX vintage catalog evidence is required")
+    catalog_metadata = history.attrs.get("verified_vintage_catalog")
+    if (
+        not isinstance(catalog_metadata, Mapping)
+        or str(catalog_metadata.get("catalog_id", "")) != evidence.catalog_id
+        or str(catalog_metadata.get("catalog_sha256", "")) != evidence.catalog_sha256
+        or str(catalog_metadata.get("history_sha256", "")) != evidence.history_sha256
+    ):
+        raise ValueError("EEX vintage frame/catalog evidence binding mismatch")
+    selected_market = str(market).upper()
+    market_rows = history.loc[
+        history["market"].astype(str).str.upper().eq(selected_market)
+    ].copy()
+    if market_rows.empty:
+        raise ValueError(f"verified EEX vintage has no {selected_market} quotes")
+    latest_date = pd.to_datetime(market_rows["date"]).max().normalize()
+    rows = market_rows.loc[
+        pd.to_datetime(market_rows["date"]).dt.normalize().eq(latest_date)
+    ].copy()
+    if rows.empty:
+        raise ValueError("verified EEX vintage latest snapshot is empty")
+    single_value_columns = (
+        "snapshot_id",
+        "source_document_id",
+        "source_document_sha256",
+        "available_at",
+        "parser_version",
+    )
+    if any(rows[column].nunique(dropna=False) != 1 for column in single_value_columns):
+        raise ValueError("verified EEX hard-level snapshot mixes source vintages")
+    snapshot_id = str(rows["snapshot_id"].iloc[0])
+    documents = catalog.get("source_documents")
+    if not isinstance(documents, list):
+        raise ValueError("verified EEX catalog source inventory is missing")
+    matches = [
+        entry
+        for entry in documents
+        if isinstance(entry, Mapping)
+        and snapshot_id in {str(value) for value in entry.get("snapshot_ids", [])}
+    ]
+    if len(matches) != 1:
+        raise ValueError("verified EEX snapshot source document is ambiguous")
+    source_entry = matches[0]
+    parser_config = source_entry.get("parser_config")
+    required_prospective_config = {
+        "parser_version",
+        "selection_mode",
+        "markets",
+        "quote_convention",
+        "expected_quotes",
+        "intake_id",
+    }
+    if (
+        not isinstance(parser_config, Mapping)
+        or set(parser_config) != required_prospective_config
+        or parser_config.get("quote_convention") != "EEX_SETTLEMENT_EUR_MWH"
+    ):
+        raise ValueError(
+            "verified EEX hard-level source lacks prospective settlement admission"
+        )
+    source_hash = str(rows["source_document_sha256"].iloc[0])
+    if (
+        str(source_entry.get("source_document_id", ""))
+        != str(rows["source_document_id"].iloc[0])
+        or str(source_entry.get("sha256", "")) != source_hash
+    ):
+        raise ValueError("verified EEX snapshot source binding mismatch")
+    catalog_file = Path(catalog_path)
+    if not catalog_file.is_absolute():
+        raise ValueError("verified EEX catalog path must be absolute")
+    catalog_payload = read_stable_single_link_file(
+        catalog_file,
+        label="verified EEX hard-level catalog",
+        max_bytes=4 * 1024 * 1024,
+    )
+    if hashlib.sha256(catalog_payload).hexdigest() != evidence.catalog_sha256:
+        raise ValueError("verified EEX hard-level catalog bytes changed")
+    try:
+        persisted_catalog = load_strict_json(catalog_payload.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise ValueError("verified EEX hard-level catalog is unreadable") from exc
+    if persisted_catalog != dict(catalog):
+        raise ValueError("verified EEX hard-level catalog mapping/path mismatch")
+    source_path = resolve_confined_path(
+        catalog_file.parent,
+        str(source_entry.get("path", "")),
+        label="verified EEX hard-level source document",
+        require_exists=True,
+        require_file=True,
+    )
+    prices: dict[str, float] = {}
+    lineage: dict[str, dict[str, object]] = {}
+    for row in rows.to_dict(orient="records"):
+        load_type = str(row["load_type"]).upper()
+        key = str(row["product"])
+        if load_type == "PEAK":
+            key = f"{key}-Peak"
+        elif load_type == "OFFPEAK":
+            key = f"{key}-Offpeak"
+        if key in prices:
+            raise ValueError("verified EEX hard-level snapshot repeats a product")
+        prices[key] = float(row["price"])
+        lineage[key] = {
+            "quote_id": str(row["quote_id"]),
+            "revision_id": str(row["revision_id"]),
+            "snapshot_id": str(row["snapshot_id"]),
+            "acquisition_id": str(row["acquisition_id"]),
+            "source_document_id": str(row["source_document_id"]),
+            "source_product_code": str(row["source_product_code"]),
+            "source_row_index": int(row["source_row_index"]),
+            "source_column_index": int(row["source_column_index"]),
+            "parser_config_sha256": str(row["parser_config_sha256"]),
+            "is_direct_market_quote": True,
+        }
+    if not prices or not any(
+        not key.lower().endswith(("-peak", "-offpeak")) for key in prices
+    ):
+        raise ValueError("verified EEX hard-level snapshot has insufficient CH BASE coverage")
+    return ForwardSnapshot(
+        prices=prices,
+        market=selected_market,
+        source_kind="EEX_VINTAGE",
+        source_description=(
+            f"verified catalog-backed EEX vintage {selected_market} ({len(prices)} keys)"
+        ),
+        snapshot_date=latest_date,
+        available_at=pd.Timestamp(rows["available_at"].iloc[0]),
+        source_path=str(source_path),
+        source_sha256=source_hash,
+        quote_lineage=lineage,
+        source_sheet=selected_market,
+        parser_version=str(rows["parser_version"].iloc[0]),
+        selection_mode="catalog_pit_latest_snapshot",
         _verification_token=_VERIFIED_WORKBOOK_TOKEN,
     )
 

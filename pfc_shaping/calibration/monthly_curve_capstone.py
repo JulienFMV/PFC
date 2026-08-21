@@ -15,7 +15,7 @@ import json
 import math
 import os
 import re
-import tempfile
+import shutil
 import uuid
 from dataclasses import dataclass
 from io import BytesIO
@@ -32,7 +32,10 @@ from pfc_shaping.calibration.monthly_curve_config_identity import (
 )
 from pfc_shaping.calibration.monthly_curve_promotion import evaluate_monthly_curve_promotion
 from pfc_shaping.calibration.monthly_forward_curve import product_periods
-from pfc_shaping.data.acquisition_contract import verify_acquisition_contract
+from pfc_shaping.data.acquisition_contract import (
+    GOVERNED_LT_INPUT_SNAPSHOT_SCHEMAS,
+    verify_acquisition_contract,
+)
 from pfc_shaping.data.forward_proxy import (
     PRODUCTION_EEX_MAX_AGE_BUSINESS_DAYS,
     verify_forward_manifest_binding,
@@ -41,15 +44,33 @@ from pfc_shaping.data.lt_input_sources import (
     consumed_lt_input_roles,
     dataframe_sha256,
     validate_governed_forward_history_frame,
+    validate_governed_lt_snapshot_bundle,
 )
 from pfc_shaping.data.shared_data_root import (
     LT_DATA_VIEW_ID,
+)
+from pfc_shaping.data.snapshot_anchor_client import (
+    SnapshotAnchorClientError,
+    verify_external_operation_receipt,
+)
+from pfc_shaping.data.snapshot_publication_state import (
+    SnapshotPublicationStateError,
+    verify_external_publication_evidence,
+    verify_publication_authority_separation,
+)
+from pfc_shaping.path_safety import (
+    assert_absolute_path_has_no_links,
+    read_stable_single_link_file,
 )
 from pfc_shaping.pipeline.atomic_promotion import (
     PromotionError,
     verify_candidate_bundle_manifest,
 )
-from pfc_shaping.pipeline.candidate_evidence import verify_assembled_candidate_evidence
+from pfc_shaping.pipeline.candidate_evidence import (
+    CandidateEvidenceError,
+    verify_assembled_candidate_evidence,
+    verify_pre_run_governance_evidence,
+)
 from pfc_shaping.pipeline.governed_release_cli_contract import (
     ReleaseCliIdentityError,
     absolute_path,
@@ -66,6 +87,7 @@ from pfc_shaping.pipeline.quality_gate import (
     QualityGateError,
     input_grid_errors,
     validate_input_frame,
+    weekly_local_grid_errors,
 )
 from pfc_shaping.pipeline.quote_conflict_policy_contract import (
     QuoteConflictPolicyAuthenticationError,
@@ -106,7 +128,7 @@ REQUIRED_CANDIDATE_FRESHNESS_COLUMNS = {
     "epex_ch": ("price_eur_mwh",),
     "epex_de": ("price_eur_mwh",),
     "entso": ("load_mw", "solar_mw", "wind_mw"),
-    "hydro": ("fill_deviation",),
+    "hydro": ("fill_deviation", "water_value_supported"),
 }
 OPTIONAL_CANDIDATE_FRESHNESS_COLUMNS = {
     "outages": ("unavailable_mw", "n_outages"),
@@ -144,11 +166,14 @@ SANCTIONED_EXPECTED_CADENCE_SECONDS = {
     "epex_ch": 15 * 60,
     "epex_de": 15 * 60,
     "entso": 15 * 60,
-    "hydro": 24 * 60 * 60,
+    "hydro": 7 * 24 * 60 * 60,
     "outages": 15 * 60,
     "epex_at": 15 * 60,
     "epex_fr": 15 * 60,
     "epex_it": 15 * 60,
+}
+SANCTIONED_EXPECTED_PHASE_OFFSET_SECONDS = {
+    "hydro": 4 * 24 * 60 * 60,
 }
 SANCTIONED_MIN_GRID_COVERAGE = 0.95
 
@@ -162,7 +187,7 @@ class CapturedArtifact:
 
 def _capture_artifact(path: Path) -> CapturedArtifact:
     resolved = Path(path).resolve()
-    raw = resolved.read_bytes()
+    raw = read_stable_single_link_file(resolved, label="capstone input artifact")
     return CapturedArtifact(resolved, raw, hashlib.sha256(raw).hexdigest())
 
 
@@ -201,10 +226,7 @@ def main(argv: list[str] | None = None) -> int:
     except PromotionError as exc:
         raise ValueError(f"candidate bundle verification failed: {exc}") from exc
     captured["candidate_bundle_manifest"] = _capture_artifact(candidate_bundle_path)
-    if (
-        captured["candidate_bundle_manifest"].sha256
-        != verified_candidate_bundle.manifest_sha256
-    ):
+    if captured["candidate_bundle_manifest"].sha256 != verified_candidate_bundle.manifest_sha256:
         raise ValueError("candidate bundle manifest changed during initial verification")
     candidate_bundle_manifest = _load_mapping_bytes(
         _captured_raw(captured["candidate_bundle_manifest"]),
@@ -248,6 +270,12 @@ def main(argv: list[str] | None = None) -> int:
         _captured_raw(captured["candidate_run_manifest"]),
         captured["candidate_run_manifest"].path,
     )
+    governed_run_spec = _capture_candidate_pre_run_evidence(
+        candidate_run_manifest,
+        bundle_path=verified_candidate_bundle.path,
+        bundle_manifest=candidate_bundle_manifest,
+        captured=captured,
+    )
     candidate_config = _capture_candidate_config_evidence(
         candidate_run_manifest,
         bundle_path=verified_candidate_bundle.path,
@@ -266,9 +294,14 @@ def main(argv: list[str] | None = None) -> int:
         promotion_evaluated_at=promotion_evaluated_at,
         data_contract=candidate_data_evidence["contract"],
         data_pointer=candidate_data_evidence["pointer"],
+        publication_head_observation=candidate_data_evidence.get("publication_head_observation"),
+        governed_run_spec=governed_run_spec,
         active_config=candidate_config,
         data_root=args.data_root,
-        candidate_finalized_at=candidate_bundle_manifest.get("created_at_utc"),
+        candidate_finalized_at=candidate_bundle_manifest.get(
+            "candidate_finalized_at_utc",
+            candidate_bundle_manifest.get("created_at_utc"),
+        ),
     )
     if args.product_normalization_summary is not None:
         captured["product_normalization_summary"] = _capture_artifact(
@@ -301,15 +334,29 @@ def main(argv: list[str] | None = None) -> int:
         _captured_raw(captured["production_manifest"]),
         captured["production_manifest"].path,
     )
+    contract_files = candidate_data_evidence["contract"].get("files")
+    available_roles = set(contract_files) if isinstance(contract_files, Mapping) else set()
+    solver_consumes_history = "eex_forwards_history" in consumed_lt_input_roles(
+        candidate_config,
+        available_roles=available_roles,
+    )
     _verify_governed_monthly_solver_history_binding(
         production_manifest=production_manifest,
         candidate_run_manifest=candidate_run_manifest,
         data_contract=candidate_data_evidence["contract"],
         active_config=candidate_config,
-        governed_history=_load_governed_forward_history_frame(
-            data_root=args.data_root,
-            data_contract=candidate_data_evidence["contract"],
-            data_pointer=candidate_data_evidence["pointer"],
+        governed_history=(
+            _load_governed_forward_history_frame(
+                data_root=args.data_root,
+                data_contract=candidate_data_evidence["contract"],
+                data_pointer=candidate_data_evidence["pointer"],
+                publication_head_observation=candidate_data_evidence.get(
+                    "publication_head_observation"
+                ),
+                valuation_timestamp=valuation_timestamp,
+            )
+            if solver_consumes_history
+            else None
         ),
         valuation_timestamp=valuation_timestamp,
     )
@@ -446,10 +493,17 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 relative = artifact.path.relative_to(verified_candidate_bundle.path).as_posix()
             except ValueError as exc:
-                raise ValueError(f"audited artifact is outside candidate bundle: {artifact.path}") from exc
+                raise ValueError(
+                    f"audited artifact is outside candidate bundle: {artifact.path}"
+                ) from exc
             bundle_files = candidate_bundle_manifest.get("files")
-            if not isinstance(bundle_files, Mapping) or bundle_files.get(relative) != artifact.sha256:
-                raise ValueError(f"audited artifact is not hash-bound in candidate bundle: {relative}")
+            if (
+                not isinstance(bundle_files, Mapping)
+                or bundle_files.get(relative) != artifact.sha256
+            ):
+                raise ValueError(
+                    f"audited artifact is not hash-bound in candidate bundle: {relative}"
+                )
         source_policy_path: Path | None = None
         source_policy = product_normalization_summary.get("source_hierarchy_policy")
         if isinstance(source_policy, Mapping) and source_policy.get("path"):
@@ -472,7 +526,10 @@ def main(argv: list[str] | None = None) -> int:
             )
             if source_policy_capture.sha256 != str(source_policy.get("sha256", "")):
                 raise ValueError("source hierarchy policy sha256 mismatch")
-            raw_policy = load_source_hierarchy_policy(source_policy_capture.path)
+            raw_policy = load_source_hierarchy_policy(
+                source_policy_capture.path,
+                payload=_captured_raw(source_policy_capture),
+            )
             if isinstance(raw_policy, Mapping) and raw_policy.get("production_approved") is True:
                 try:
                     verify_quote_conflict_policy(raw_policy)
@@ -522,8 +579,12 @@ def main(argv: list[str] | None = None) -> int:
         product_normalization_replay=product_normalization_replay,
         product_normalization_replay_errors=product_normalization_replay_errors,
         monthly_candidate_manifest=monthly_candidate_manifest,
-        monthly_candidate_manifest_path=(monthly_candidate_capture.path if monthly_candidate_capture else None),
-        monthly_candidate_manifest_sha256=(monthly_candidate_capture.sha256 if monthly_candidate_capture else None),
+        monthly_candidate_manifest_path=(
+            monthly_candidate_capture.path if monthly_candidate_capture else None
+        ),
+        monthly_candidate_manifest_sha256=(
+            monthly_candidate_capture.sha256 if monthly_candidate_capture else None
+        ),
         product_normalization_evidence=_product_normalization_evidence(
             production_manifest=production_manifest,
             export_manifest=export_manifest,
@@ -541,7 +602,9 @@ def main(argv: list[str] | None = None) -> int:
     augmented = _replace_gate_rows(audit_gates, governance)
     manifest = _promotion_manifest(
         audit_manifest=(
-            _load_mapping_bytes(_captured_raw(captured["audit_manifest"]), captured["audit_manifest"].path)
+            _load_mapping_bytes(
+                _captured_raw(captured["audit_manifest"]), captured["audit_manifest"].path
+            )
             if "audit_manifest" in captured
             else {}
         ),
@@ -593,17 +656,13 @@ def main(argv: list[str] | None = None) -> int:
         release_request_id=args.release_request_id,
         release_operation_id=args.release_operation_id,
         expected_current_event_id=(
-            None
-            if args.expected_current_event_id == "NONE"
-            else args.expected_current_event_id
+            None if args.expected_current_event_id == "NONE" else args.expected_current_event_id
         ),
         operation_created_at_utc=args.operation_created_at_utc,
         release_root_sha256=args.release_root_sha256,
         evidence_inventory_sha256=args.evidence_inventory_sha256,
         workflow_domain_sha256=getattr(args, "workflow_domain_sha256", None),
-        release_request_document_sha256=getattr(
-            args, "release_request_document_sha256", None
-        ),
+        release_request_document_sha256=getattr(args, "release_request_document_sha256", None),
         signing_private_key_path=args.signing_private_key,
     )
     _atomic_write_json(output_path, receipt)
@@ -652,7 +711,104 @@ def _capture_candidate_data_evidence(
             role=f"candidate_data_{name}",
         )
         evidence[name] = _load_mapping_bytes(_captured_raw(artifact), artifact.path)
+    if evidence["pointer"].get("schema_version") == "lt_data_pointer.v2":
+        publication_names = (
+            "publication_intent",
+            "publication_anchor_receipt",
+            "publication_head_observation",
+        )
+        publication_payloads: dict[str, bytes] = {}
+        for name in publication_names:
+            entry = candidate_run_manifest.get(f"data_{name}")
+            if not isinstance(entry, Mapping):
+                raise ValueError(f"candidate run manifest data_{name} evidence is missing")
+            archive_path = str(entry.get("archive_path", "")).strip()
+            declared_hash = str(entry.get("sha256", "")).strip()
+            if not archive_path or not _is_sha256(declared_hash):
+                raise ValueError(f"candidate run manifest data_{name} evidence is incomplete")
+            path = (bundle_path / archive_path).resolve()
+            try:
+                path.relative_to(bundle_path.resolve())
+            except ValueError as exc:
+                raise ValueError(f"candidate data {name} escapes candidate bundle") from exc
+            artifact = _capture_artifact(path)
+            if artifact.sha256 != declared_hash:
+                raise ValueError(f"candidate data {name} hash does not match run manifest")
+            captured[f"candidate_data_{name}"] = artifact
+            _require_artifact_in_bundle(
+                artifact,
+                bundle_path,
+                bundle_manifest,
+                role=f"candidate_data_{name}",
+            )
+            publication_payloads[name] = _captured_raw(artifact)
+            evidence[name] = _load_mapping_bytes(
+                publication_payloads[name],
+                artifact.path,
+            )
+        if evidence["publication_intent"].get("transition_type") != "PUBLISH":
+            raise ValueError(
+                "promotion-grade capstone cannot consume a BOOTSTRAP publication"
+            )
+        try:
+            verify_external_publication_evidence(
+                intent_payload=publication_payloads["publication_intent"],
+                receipt_payload=publication_payloads["publication_anchor_receipt"],
+                observation_payload=publication_payloads["publication_head_observation"],
+                pointer=evidence["pointer"],
+                require_current=False,
+            )
+            verify_publication_authority_separation(
+                evidence["contract"],
+                intent=evidence["publication_intent"],
+                receipt=evidence["publication_anchor_receipt"],
+                observation=evidence["publication_head_observation"],
+            )
+            verify_external_operation_receipt(publication_payloads["publication_anchor_receipt"])
+        except (SnapshotAnchorClientError, SnapshotPublicationStateError) as exc:
+            raise ValueError(
+                "candidate external publication evidence is invalid or not authoritative"
+            ) from exc
     return evidence
+
+
+def _capture_candidate_pre_run_evidence(
+    candidate_run_manifest: Mapping[str, object],
+    *,
+    bundle_path: Path,
+    bundle_manifest: Mapping[str, object],
+    captured: dict[str, CapturedArtifact],
+) -> Mapping[str, object]:
+    archive_path = str(candidate_run_manifest.get("pre_run_governance_manifest", "")).strip()
+    declared_hash = str(
+        candidate_run_manifest.get("pre_run_governance_manifest_sha256", "")
+    ).strip()
+    if archive_path != "manifests/pre_run_governance_manifest.json" or not _is_sha256(
+        declared_hash
+    ):
+        raise ValueError("candidate pre-run governance evidence is incomplete")
+    artifact = _capture_artifact(bundle_path / archive_path)
+    if artifact.sha256 != declared_hash:
+        raise ValueError("candidate pre-run governance hash does not match run manifest")
+    captured["candidate_pre_run_governance"] = artifact
+    _require_artifact_in_bundle(
+        artifact,
+        bundle_path,
+        bundle_manifest,
+        role="candidate_pre_run_governance",
+    )
+    try:
+        pre_run = verify_pre_run_governance_evidence(
+            bundle_path,
+            expected_run_id=str(candidate_run_manifest.get("run_id", "")),
+            expected_valuation_timestamp=str(candidate_run_manifest.get("reference_timestamp", "")),
+        )
+    except CandidateEvidenceError as exc:
+        raise ValueError("candidate pre-run governance evidence is invalid") from exc
+    run_spec = pre_run.get("governed_run_spec")
+    if not isinstance(run_spec, Mapping):
+        raise ValueError("candidate governed run spec is missing")
+    return run_spec
 
 
 def _capture_candidate_config_evidence(
@@ -704,9 +860,7 @@ def _verify_governed_monthly_solver_history_binding(
         available_roles=set(contract_files),
     )
     solver_expected = "eex_forwards_history" in expected_roles
-    manifest_authority = str(
-        production_manifest.get("monthly_level_authority", "")
-    ).strip().lower()
+    manifest_authority = str(production_manifest.get("monthly_level_authority", "")).strip().lower()
     if manifest_authority not in {"solver", "legacy"}:
         raise ValueError("production manifest monthly_level_authority must be solver or legacy")
     manifest_solver = manifest_authority == "solver"
@@ -736,8 +890,44 @@ def _verify_governed_monthly_solver_history_binding(
     contract_hash = str(contract.get("sha256", ""))
     if solver_hash != receipt_hash or solver_hash != contract_hash:
         raise ValueError("monthly solver EEX forward history hash binding mismatch")
+    catalog_binding = contract.get("vintage_catalog")
+    if not isinstance(catalog_binding, Mapping):
+        raise ValueError("monthly solver signed EEX vintage catalog binding is missing")
+    catalog_hash = str(source_hashes.get("eex_historical_vintage_catalog", ""))
+    if not _is_sha256(catalog_hash) or catalog_hash != str(catalog_binding.get("sha256", "")):
+        raise ValueError("monthly solver EEX vintage catalog hash binding mismatch")
     if governed_history is None or valuation_timestamp is None:
         raise ValueError("monthly solver EEX forward history semantic evidence is missing")
+    verified_vintage = governed_history.attrs.get("verified_vintage_catalog")
+    declared_vintage = production_manifest.get("verified_vintage_catalog")
+    if not isinstance(verified_vintage, Mapping) or dict(verified_vintage) != declared_vintage:
+        raise ValueError("monthly solver EEX vintage catalog evidence mismatch")
+    if (
+        verified_vintage.get("status") != "VERIFIED_SIGNED_IMMUTABLE_VINTAGES"
+        or str(verified_vintage.get("catalog_sha256", "")) != catalog_hash
+        or str(verified_vintage.get("history_sha256", "")) != solver_hash
+    ):
+        raise ValueError("monthly solver EEX vintage catalog evidence is invalid")
+    consumed_frame_hash = str(source_hashes.get("eex_forwards_history_consumed_frame", ""))
+    if not _is_sha256(consumed_frame_hash) or consumed_frame_hash != dataframe_sha256(
+        governed_history
+    ):
+        raise ValueError("monthly solver consumed EEX history frame hash mismatch")
+    pit_selection = verified_vintage.get("pit_selection")
+    if not isinstance(pit_selection, Mapping):
+        raise ValueError("monthly solver EEX PIT selection evidence is missing")
+    pit_valuation = _aware_utc_timestamp(
+        pit_selection.get("valuation_timestamp"),
+        label="monthly solver EEX PIT valuation timestamp",
+    )
+    if pit_valuation != valuation_timestamp:
+        raise ValueError("monthly solver EEX PIT valuation timestamp mismatch")
+    pit_available = _aware_utc_timestamp(
+        pit_selection.get("max_available_at"),
+        label="monthly solver EEX PIT maximum availability",
+    )
+    if pit_available > valuation_timestamp:
+        raise ValueError("monthly solver EEX PIT selection uses future information")
     observation_dates = pd.to_datetime(governed_history.get("date"), utc=True, errors="coerce")
     summary_reference = valuation_timestamp
     if not observation_dates.isna().all():
@@ -750,9 +940,7 @@ def _verify_governed_monthly_solver_history_binding(
     declared_summary = production_manifest.get("eex_forwards_history_source_summary")
     if declared_summary != source_summary:
         raise ValueError("monthly solver EEX forward history source summary mismatch")
-    declared_summary_hash = str(
-        source_hashes.get("eex_forwards_history_source_summary", "")
-    )
+    declared_summary_hash = str(source_hashes.get("eex_forwards_history_source_summary", ""))
     if declared_summary_hash != _sha256_json(source_summary):
         raise ValueError("monthly solver EEX forward history source summary hash mismatch")
 
@@ -762,6 +950,8 @@ def _load_governed_forward_history_frame(
     data_root: Path,
     data_contract: Mapping[str, object],
     data_pointer: Mapping[str, object],
+    publication_head_observation: Mapping[str, object] | None,
+    valuation_timestamp: pd.Timestamp,
 ) -> pd.DataFrame | None:
     files = data_contract.get("files")
     if not isinstance(files, Mapping) or "eex_forwards_history" not in files:
@@ -774,6 +964,11 @@ def _load_governed_forward_history_frame(
         raise ValueError("data_root must be absolute for governed EEX forward history")
     root = root.resolve()
     contract_rel = str(data_pointer.get("contract_path", "")).strip()
+    expected_contract_rel = (
+        Path("snapshots") / str(data_contract.get("generation_id", "")) / "lt_input_snapshot.json"
+    ).as_posix()
+    if Path(contract_rel).as_posix() != expected_contract_rel:
+        raise ValueError("governed EEX data contract path is not canonical")
     try:
         snapshot_root = (root / contract_rel).resolve().parent
         snapshot_root.relative_to(root)
@@ -781,14 +976,52 @@ def _load_governed_forward_history_frame(
         source.relative_to(snapshot_root)
     except (OSError, ValueError) as exc:
         raise ValueError("governed EEX forward history path escapes data root") from exc
+    catalog_binding = entry.get("vintage_catalog")
+    if not isinstance(catalog_binding, Mapping):
+        raise ValueError("governed EEX forward history vintage catalog is missing")
     try:
-        payload = source.read_bytes()
-        frame = pd.read_parquet(BytesIO(payload))
-    except (OSError, ValueError) as exc:
-        raise ValueError("governed EEX forward history is unreadable") from exc
-    if hashlib.sha256(payload).hexdigest() != str(entry.get("sha256", "")):
-        raise ValueError("governed EEX forward history bytes do not match data contract")
-    return frame
+        catalog_path = (snapshot_root / str(catalog_binding.get("path", ""))).resolve()
+        catalog_path.relative_to(snapshot_root)
+        catalog_payload = read_stable_single_link_file(
+            catalog_path,
+            label="governed EEX vintage catalog",
+        )
+        catalog = load_strict_json(catalog_payload.decode("utf-8"))
+    except (OSError, UnicodeDecodeError, StrictStructuredDataError, ValueError) as exc:
+        raise ValueError("governed EEX vintage catalog is unreadable") from exc
+    if not isinstance(catalog, Mapping):
+        raise ValueError("governed EEX vintage catalog must be a mapping")
+    if hashlib.sha256(catalog_payload).hexdigest() != str(catalog_binding.get("sha256", "")) or len(
+        catalog_payload
+    ) != catalog_binding.get("size_bytes"):
+        raise ValueError("governed EEX vintage catalog bytes do not match data contract")
+    from pfc_shaping.data.eex_historical_vintage import (
+        materialize_eex_forward_history_as_of,
+        verify_eex_historical_vintage_catalog,
+    )
+
+    vintages, evidence = verify_eex_historical_vintage_catalog(
+        catalog,
+        catalog_path=catalog_path,
+        history_path=source,
+    )
+    if evidence.history_sha256 != str(entry.get("sha256", "")):
+        raise ValueError("governed EEX vintage history does not match data contract")
+    selected = materialize_eex_forward_history_as_of(
+        vintages,
+        valuation_timestamp=valuation_timestamp,
+    )
+    selected.attrs["verified_vintage_catalog"] = {
+        "catalog_id": evidence.catalog_id,
+        "catalog_sha256": evidence.catalog_sha256,
+        "history_sha256": evidence.history_sha256,
+        "snapshot_count": evidence.snapshot_count,
+        "source_document_count": evidence.source_document_count,
+        "data_cutoff_utc": evidence.data_cutoff_utc,
+        "status": "VERIFIED_SIGNED_IMMUTABLE_VINTAGES",
+        "pit_selection": dict(selected.attrs.get("pit_selection", {})),
+    }
+    return selected
 
 
 def _verify_candidate_run_evidence(
@@ -798,6 +1031,8 @@ def _verify_candidate_run_evidence(
     promotion_evaluated_at: pd.Timestamp,
     data_contract: Mapping[str, object],
     data_pointer: Mapping[str, object],
+    publication_head_observation: Mapping[str, object] | None,
+    governed_run_spec: Mapping[str, object],
     active_config: Mapping[str, object],
     data_root: Path,
     candidate_finalized_at: object,
@@ -823,6 +1058,10 @@ def _verify_candidate_run_evidence(
     if valuation > promotion_evaluated_at:
         structural_errors.append("reference_timestamp_after_promotion_clock")
     try:
+        run_started_at = _aware_utc_timestamp(
+            manifest.get("run_started_at_utc"),
+            label="run_started_at_utc",
+        )
         serialized_at = _aware_utc_timestamp(
             manifest.get("candidate_serialized_at_utc"),
             label="candidate_serialized_at_utc",
@@ -833,10 +1072,12 @@ def _verify_candidate_run_evidence(
         )
     except (TypeError, ValueError) as exc:
         raise ValueError(f"candidate runtime timestamp is invalid: {exc}") from exc
+    if run_started_at > serialized_at:
+        structural_errors.append("run_started_after_candidate_serialized")
     if serialized_at > finalized_at:
         structural_errors.append("candidate_serialized_after_finalized")
-    if valuation > serialized_at:
-        structural_errors.append("candidate_valuation_after_serialized")
+    if valuation > run_started_at:
+        structural_errors.append("candidate_valuation_after_run_started")
     if finalized_at > promotion_evaluated_at:
         structural_errors.append("candidate_finalized_after_promotion_clock")
     if manifest.get("data_layout") != "external_v2":
@@ -847,7 +1088,7 @@ def _verify_candidate_run_evidence(
     if not generation_id:
         structural_errors.append("data_generation_id_missing")
 
-    if data_contract.get("schema_version") != "lt_input_snapshot.v1":
+    if data_contract.get("schema_version") not in GOVERNED_LT_INPUT_SNAPSHOT_SCHEMAS:
         structural_errors.append("data_contract_schema")
     if data_contract.get("layout") != "external_v2":
         structural_errors.append("data_contract_layout")
@@ -889,7 +1130,8 @@ def _verify_candidate_run_evidence(
         structural_errors.append("data_pointer_receipt")
     elif pointer_receipt.get("logical_path") != "views/pfc_lt/current.json":
         structural_errors.append("data_pointer_not_canonical_lt_view")
-    if data_pointer.get("schema_version") != "lt_data_pointer.v1":
+    pointer_schema = data_pointer.get("schema_version")
+    if pointer_schema != "lt_data_pointer.v2":
         structural_errors.append("data_pointer_schema")
     if str(data_pointer.get("generation_id", "")) != generation_id:
         structural_errors.append("data_pointer_generation_id")
@@ -897,6 +1139,34 @@ def _verify_candidate_run_evidence(
         data_pointer.get("contract_sha256", "")
     ) != str(contract_receipt.get("sha256", "")):
         structural_errors.append("data_pointer_contract_hash")
+    if pointer_schema == "lt_data_pointer.v2":
+        publication_receipts = {
+            "intent": manifest.get("data_publication_intent"),
+            "anchor_receipt": manifest.get("data_publication_anchor_receipt"),
+            "head_observation": manifest.get("data_publication_head_observation"),
+        }
+        for name, publication_receipt in publication_receipts.items():
+            if not isinstance(publication_receipt, Mapping) or not _is_sha256(
+                str(publication_receipt.get("sha256", ""))
+            ):
+                structural_errors.append(f"data_publication_{name}_receipt")
+        snapshot_binding = governed_run_spec.get("input_snapshot")
+        observation_receipt = publication_receipts["head_observation"]
+        if (
+            not isinstance(snapshot_binding, Mapping)
+            or not isinstance(observation_receipt, Mapping)
+            or snapshot_binding.get("publication_head_observation_sha256")
+            != observation_receipt.get("sha256")
+        ):
+            structural_errors.append("data_publication_head_observation_run_spec_binding")
+        if (
+            not isinstance(snapshot_binding, Mapping)
+            or not _is_sha256(str(snapshot_binding.get("publication_head_challenge_nonce", "")))
+            or not isinstance(publication_head_observation, Mapping)
+            or snapshot_binding.get("publication_head_challenge_nonce")
+            != publication_head_observation.get("challenge_nonce")
+        ):
+            structural_errors.append("data_publication_head_challenge_run_spec_binding")
 
     contract_files = data_contract.get("files")
     input_sources = manifest.get("input_sources")
@@ -946,10 +1216,7 @@ def _verify_candidate_run_evidence(
         else:
             if role_available_at > valuation:
                 structural_errors.append(f"input_source_{role}_available_after_valuation")
-            if (
-                contract_available_at is not None
-                and role_available_at != contract_available_at
-            ):
+            if contract_available_at is not None and role_available_at > contract_available_at:
                 structural_errors.append(f"input_source_{role}_acquisition_cutoff")
         comparisons = {
             "logical_path": expected.get("path"),
@@ -986,7 +1253,7 @@ def _verify_candidate_run_evidence(
         else:
             if available > valuation:
                 structural_errors.append(f"input_source_{role}_available_after_valuation")
-            if contract_available_at is not None and available != contract_available_at:
+            if contract_available_at is not None and available > contract_available_at:
                 structural_errors.append(f"input_source_{role}_acquisition_cutoff")
         for key, expected_value in {
             "logical_path": expected.get("path"),
@@ -1149,14 +1416,15 @@ def _recompute_candidate_input_freshness(
     except (OSError, ValueError):
         return ["data_contract_path_escapes_data_root"]
     try:
-        live_contract_bytes = live_contract_path.read_bytes()
+        live_contract_bytes = read_stable_single_link_file(
+            live_contract_path,
+            label="live LT input contract",
+        )
     except OSError as exc:
         return [f"data_contract_unavailable:{exc}"]
     archived_contract = candidate_manifest.get("data_contract")
     expected_contract_hash = (
-        str(archived_contract.get("sha256", ""))
-        if isinstance(archived_contract, Mapping)
-        else ""
+        str(archived_contract.get("sha256", "")) if isinstance(archived_contract, Mapping) else ""
     )
     if hashlib.sha256(live_contract_bytes).hexdigest() != expected_contract_hash:
         return ["data_contract_live_hash_mismatch"]
@@ -1166,6 +1434,10 @@ def _recompute_candidate_input_freshness(
         return ["data_contract_live_invalid_json"]
     if live_contract != dict(data_contract):
         return ["data_contract_live_semantic_mismatch"]
+    try:
+        validate_governed_lt_snapshot_bundle(live_contract_path.parent, live_contract)
+    except (OSError, TypeError, ValueError) as exc:
+        return [f"data_contract_bundle_invalid:{exc}"]
 
     contract_files = data_contract.get("files")
     receipts = candidate_manifest.get("input_sources")
@@ -1189,7 +1461,10 @@ def _recompute_candidate_input_freshness(
             errors.append(f"{role}.source_path_escapes_generation")
             continue
         try:
-            payload = source.read_bytes()
+            payload = read_stable_single_link_file(
+                source,
+                label=f"live LT input {role}",
+            )
             frame = pd.read_parquet(BytesIO(payload))
         except (OSError, ValueError) as exc:
             errors.append(f"{role}.source_unreadable:{exc}")
@@ -1252,7 +1527,10 @@ def _recompute_candidate_input_freshness(
         try:
             source = (snapshot_root / str(contract_entry.get("path", ""))).resolve()
             source.relative_to(snapshot_root)
-            payload = source.read_bytes()
+            payload = read_stable_single_link_file(
+                source,
+                label=f"live LT optional input {role}",
+            )
             frame = pd.read_parquet(BytesIO(payload))
         except (OSError, TypeError, ValueError) as exc:
             errors.append(f"{role}.source_unreadable:{exc}")
@@ -1322,10 +1600,19 @@ def _recompute_candidate_input_freshness(
 
 
 def _candidate_cadence_errors(frame: pd.DataFrame, *, role: str) -> list[str]:
+    if role == "hydro":
+        return weekly_local_grid_errors(
+            frame,
+            name=role,
+            timezone="Europe/Zurich",
+            weekday=0,
+            min_grid_coverage=SANCTIONED_MIN_GRID_COVERAGE,
+        )
     return input_grid_errors(
         frame,
         name=role,
         expected_cadence_seconds=SANCTIONED_EXPECTED_CADENCE_SECONDS[role],
+        expected_phase_offset_seconds=SANCTIONED_EXPECTED_PHASE_OFFSET_SECONDS.get(role, 0),
         min_grid_coverage=SANCTIONED_MIN_GRID_COVERAGE,
     )
 
@@ -1379,33 +1666,39 @@ def build_manifest_governance_gates(
             promotion_timestamp=run_timestamp,
         )
 
-    base = build_monthly_curve_governance_gates(
-        run_timestamp=pd.Timestamp(run_timestamp) if run_timestamp is not None else pd.Timestamp.utcnow(),
-        active_config_hash=active_config_hash,
-        selected_config_hash=selected_config_hash,
-        production_monthly_solution_hash=_required_manifest_hash(
-            production_manifest,
-            "monthly_solution_hash",
-            role="production",
-        ),
-        export_monthly_solution_hash=_required_manifest_hash(
-            export_manifest,
-            "monthly_solution_hash",
-            role="export",
-        ),
-        production_active_constraints_hash=_required_manifest_hash(
-            production_manifest,
-            "active_constraints_hash",
-            role="production",
-        ),
-        export_active_constraints_hash=_required_manifest_hash(
-            export_manifest,
-            "active_constraints_hash",
-            role="export",
-        ),
-        require_lambda_artifact=True,
-        require_path_parity=True,
-    ).loc[lambda frame: frame["gate_id"].isin(REQUIRED_GOVERNANCE_GATES)].reset_index(drop=True)
+    base = (
+        build_monthly_curve_governance_gates(
+            run_timestamp=pd.Timestamp(run_timestamp)
+            if run_timestamp is not None
+            else pd.Timestamp.utcnow(),
+            active_config_hash=active_config_hash,
+            selected_config_hash=selected_config_hash,
+            production_monthly_solution_hash=_required_manifest_hash(
+                production_manifest,
+                "monthly_solution_hash",
+                role="production",
+            ),
+            export_monthly_solution_hash=_required_manifest_hash(
+                export_manifest,
+                "monthly_solution_hash",
+                role="export",
+            ),
+            production_active_constraints_hash=_required_manifest_hash(
+                production_manifest,
+                "active_constraints_hash",
+                role="production",
+            ),
+            export_active_constraints_hash=_required_manifest_hash(
+                export_manifest,
+                "active_constraints_hash",
+                role="export",
+            ),
+            require_lambda_artifact=True,
+            require_path_parity=True,
+        )
+        .loc[lambda frame: frame["gate_id"].isin(REQUIRED_GOVERNANCE_GATES)]
+        .reset_index(drop=True)
+    )
     extra = pd.DataFrame(
         [
             _delivered_product_normalization_row(
@@ -1439,7 +1732,13 @@ def build_manifest_governance_gates(
 
 def _replace_gate_rows(audit_gates: pd.DataFrame, governance: pd.DataFrame) -> pd.DataFrame:
     base = audit_gates[~audit_gates["gate_id"].astype(str).isin(REQUIRED_GOVERNANCE_GATES)]
-    return pd.concat([base, governance], ignore_index=True)
+    columns = list(dict.fromkeys([*base.columns, *governance.columns]))
+    nonempty_columns = [
+        frame.dropna(axis=1, how="all") for frame in (base, governance) if not frame.empty
+    ]
+    if not nonempty_columns:
+        return pd.DataFrame(columns=columns)
+    return pd.concat(nonempty_columns, ignore_index=True).reindex(columns=columns)
 
 
 def _load_mapping(path: Path) -> dict[str, object]:
@@ -1494,9 +1793,8 @@ def _capture_canonical_assembled_artifacts(
             _load_mapping(bundle_path / "candidate_bundle_manifest.json"),
             role=seal_role,
         )
-        if (
-            canonical.sha256 != str(entry.get("sha256", ""))
-            or len(_captured_raw(canonical)) != int(entry.get("size_bytes", -1))
+        if canonical.sha256 != str(entry.get("sha256", "")) or len(_captured_raw(canonical)) != int(
+            entry.get("size_bytes", -1)
         ):
             raise ValueError(f"assembled candidate role changed: {seal_role}")
         captured[argument_role] = canonical
@@ -1507,9 +1805,7 @@ def _capture_canonical_assembled_artifacts(
         entry = entries.get(seal_role)
         if not isinstance(entry, Mapping):
             raise ValueError(f"assembled candidate role is missing: {seal_role}")
-        captured[seal_role] = _capture_artifact(
-            bundle_path / str(entry.get("path", ""))
-        )
+        captured[seal_role] = _capture_artifact(bundle_path / str(entry.get("path", "")))
 
 
 def _assembled_export_manifest_view(
@@ -1553,10 +1849,9 @@ def _assembled_product_normalization_contract(
         _captured_raw(evidence_capture),
         evidence_capture.path,
     )
-    if (
-        evidence.get("schema_version") != "candidate_product_normalization_evidence.v1"
-        or str(evidence.get("run_id", "")) != str(run_id)
-    ):
+    if evidence.get("schema_version") != "candidate_product_normalization_evidence.v1" or str(
+        evidence.get("run_id", "")
+    ) != str(run_id):
         raise ValueError("assembled product evidence identity mismatch")
     parents = evidence.get("parents")
     artifacts = evidence.get("artifacts")
@@ -1711,9 +2006,7 @@ def _assert_captured_artifacts_unchanged(
 def _atomic_write_json(path: Path, payload: Mapping[str, object]) -> None:
     destination = Path(path)
     destination.parent.mkdir(parents=True, exist_ok=True)
-    temp = destination.with_name(
-        f".{destination.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp"
-    )
+    temp = destination.with_name(f".{destination.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
     try:
         with temp.open("x", encoding="utf-8", newline="\n") as handle:
             json.dump(_json_clean(payload), handle, indent=2, sort_keys=True, allow_nan=False)
@@ -1856,20 +2149,14 @@ def _verify_constraint_governance(
         "quote_conflict_tolerance_eur_mwh": float(
             solver_config.get("quote_conflict_tolerance", 0.01)
         ),
-        "hard_repricing_tolerance_eur_mwh": float(
-            solver_config.get("constraint_tolerance", 1e-9)
-        ),
-        "stationarity_tolerance": float(
-            solver_config.get("stationarity_tolerance", 1e-7)
-        ),
+        "hard_repricing_tolerance_eur_mwh": float(solver_config.get("constraint_tolerance", 1e-9)),
+        "stationarity_tolerance": float(solver_config.get("stationarity_tolerance", 1e-7)),
         "residual_lineage_required": True,
     }
     policy = manifest.get("product_hierarchy_policy")
     if not isinstance(policy, Mapping) or dict(policy) != expected_policy:
         errors.append("product_hierarchy_policy_semantic_mismatch")
-    if str(manifest.get("product_hierarchy_policy_sha256", "")) != _sha256_json(
-        expected_policy
-    ):
+    if str(manifest.get("product_hierarchy_policy_sha256", "")) != _sha256_json(expected_policy):
         errors.append("product_hierarchy_policy_sha256_mismatch")
 
     hard_quotes = manifest.get("hard_quotes")
@@ -1888,8 +2175,7 @@ def _verify_constraint_governance(
     expected_hard_quotes = [
         dict(quote)
         for quote in snapshot_quotes
-        if isinstance(quote, Mapping)
-        and str(quote.get("load_type", "")).upper() == "BASE"
+        if isinstance(quote, Mapping) and str(quote.get("load_type", "")).upper() == "BASE"
     ]
     if hard_quotes != expected_hard_quotes:
         errors.append("hard_quotes_forward_snapshot_mismatch")
@@ -1920,9 +2206,7 @@ def _verify_constraint_governance(
     if not isinstance(provenance_rows, list) or not provenance_rows:
         errors.append("constraint_provenance_rows_missing")
         provenance_rows = []
-    if str(manifest.get("constraint_provenance_hash", "")) != _sha256_json(
-        provenance_rows
-    ):
+    if str(manifest.get("constraint_provenance_hash", "")) != _sha256_json(provenance_rows):
         errors.append("constraint_provenance_hash_mismatch")
     provenance_products = [
         str(row.get("product", ""))
@@ -1956,9 +2240,7 @@ def _verify_constraint_governance(
             continue
         if str(row.get("lineage_sha256", "")) != _sha256_json(payload):
             errors.append(f"constraint_provenance_row_{index}_lineage_hash_mismatch")
-        source_ids = [
-            value for value in str(row.get("source_quote_ids", "")).split("|") if value
-        ]
+        source_ids = [value for value in str(row.get("source_quote_ids", "")).split("|") if value]
         payload_source_ids = [str(value) for value in payload.get("source_quote_ids", [])]
         if source_ids != payload_source_ids or not source_ids:
             errors.append(f"constraint_provenance_row_{index}_source_quote_ids_mismatch")
@@ -1974,7 +2256,10 @@ def _verify_constraint_governance(
         if str(payload.get("parent_product", "")) != parent_product:
             errors.append(f"constraint_provenance_row_{index}_parent_product_mismatch")
         row_load_type = str(row.get("load_type", "")).upper()
-        if parent_quote is not None and str(parent_quote.get("load_type", "")).upper() != row_load_type:
+        if (
+            parent_quote is not None
+            and str(parent_quote.get("load_type", "")).upper() != row_load_type
+        ):
             errors.append(f"constraint_provenance_row_{index}_parent_load_type_mismatch")
         try:
             if abs(float(payload.get("target")) - float(row.get("target"))) > 1e-12:
@@ -2016,9 +2301,7 @@ def _verify_constraint_governance(
                 stack=set(),
             )
         except (KeyError, TypeError, ValueError) as exc:
-            errors.append(
-                f"constraint_provenance_row_{index}_calendar_hours_invalid:{exc}"
-            )
+            errors.append(f"constraint_provenance_row_{index}_calendar_hours_invalid:{exc}")
             continue
         if abs(free_hours - expected_free_hours) > 1e-9:
             errors.append(f"constraint_provenance_row_{index}_calendar_hours_mismatch")
@@ -2026,9 +2309,7 @@ def _verify_constraint_governance(
             if abs(row_target - parent_price) > 1e-12:
                 errors.append(f"constraint_provenance_row_{index}_direct_target_quote_mismatch")
             if source_ids != [parent_quote_id]:
-                errors.append(
-                    f"constraint_provenance_row_{index}_source_quote_closure_mismatch"
-                )
+                errors.append(f"constraint_provenance_row_{index}_source_quote_closure_mismatch")
             continue
         known_bucket_names = payload.get("known_buckets")
         if not isinstance(known_bucket_names, list) or not known_bucket_names:
@@ -2081,9 +2362,7 @@ def _verify_constraint_governance(
                 residual_inputs_valid = False
             covered_periods.update(bucket_periods)
             expected_source_ids.extend(
-                value
-                for value in str(known_row.get("source_quote_ids", "")).split("|")
-                if value
+                value for value in str(known_row.get("source_quote_ids", "")).split("|") if value
             )
             try:
                 bucket_target = float(known_row.get("target"))
@@ -2098,7 +2377,11 @@ def _verify_constraint_governance(
                 )
                 residual_inputs_valid = False
                 continue
-            if not math.isfinite(bucket_target) or not math.isfinite(bucket_hours) or bucket_hours <= 0:
+            if (
+                not math.isfinite(bucket_target)
+                or not math.isfinite(bucket_hours)
+                or bucket_hours <= 0
+            ):
                 errors.append(
                     f"constraint_provenance_row_{index}_known_bucket_nonfinite:{known_bucket}"
                 )
@@ -2109,9 +2392,7 @@ def _verify_constraint_governance(
         if residual_inputs_valid:
             expected_source_ids = list(dict.fromkeys(expected_source_ids))
             if source_ids != expected_source_ids:
-                errors.append(
-                    f"constraint_provenance_row_{index}_source_quote_closure_mismatch"
-                )
+                errors.append(f"constraint_provenance_row_{index}_source_quote_closure_mismatch")
             parent_hours = expected_free_hours + known_hours
             recomputed_target = (parent_price * parent_hours - known_energy) / free_hours
             if abs(row_target - recomputed_target) > 1e-10:
@@ -2150,11 +2431,7 @@ def _expected_constraint_row_hours(
     if not bool(row.get("is_residual")):
         return parent_hours
     raw_payload = row.get("lineage_payload")
-    payload = (
-        load_strict_json(raw_payload)
-        if isinstance(raw_payload, str)
-        else dict(raw_payload)
-    )
+    payload = load_strict_json(raw_payload) if isinstance(raw_payload, str) else dict(raw_payload)
     known_buckets = payload.get("known_buckets")
     if not isinstance(known_buckets, list) or not known_buckets:
         raise ValueError(f"residual product {product!r} has no known buckets")
@@ -2188,11 +2465,7 @@ def _constraint_row_delivery_periods(
     if not bool(row.get("is_residual")):
         return parent_periods
     raw_payload = row.get("lineage_payload")
-    payload = (
-        load_strict_json(raw_payload)
-        if isinstance(raw_payload, str)
-        else dict(raw_payload)
-    )
+    payload = load_strict_json(raw_payload) if isinstance(raw_payload, str) else dict(raw_payload)
     known_buckets = payload.get("known_buckets")
     if not isinstance(known_buckets, list) or not known_buckets:
         raise ValueError(f"residual product {product!r} has no known buckets")
@@ -2242,9 +2515,7 @@ def _constraint_partition_errors(
         errors.append("delivery_months_not_canonical")
     if canonical_months != sorted(set(canonical_months)):
         errors.append("delivery_months_not_unique_sorted")
-    delivery_periods = {
-        (int(month[:4]), int(month[5:7])) for month in canonical_months
-    }
+    delivery_periods = {(int(month[:4]), int(month[5:7])) for month in canonical_months}
 
     row_partitions: list[tuple[int, Mapping[str, object], set[tuple[int, int]]]] = []
     occupied: dict[tuple[int, int], int] = {}
@@ -2316,8 +2587,7 @@ def _constraint_partition_errors(
         repricing_error = abs((delivered_energy / quote_hours) - quote_price)
         if not math.isfinite(repricing_error) or repricing_error > repricing_tolerance:
             errors.append(
-                f"hard_quote_partition_repricing_mismatch:{quote_id}:"
-                f"error={repricing_error:.12g}"
+                f"hard_quote_partition_repricing_mismatch:{quote_id}:error={repricing_error:.12g}"
             )
     return errors
 
@@ -2364,6 +2634,23 @@ def _contract_product_hours(product: str, *, load_type: str) -> float:
     return float(hours)
 
 
+def _allocate_product_replay_root() -> Path:
+    scratch_value = os.environ.get("TEMP") or os.environ.get("TMP")
+    if scratch_value is None:
+        raise ValueError("product replay requires an explicit scratch root")
+    scratch_parent = assert_absolute_path_has_no_links(Path(scratch_value))
+    if not scratch_parent.is_dir():
+        raise ValueError("product replay scratch root is unavailable")
+    for _ in range(32):
+        selected = scratch_parent / f"pfc-lt-product-replay-{uuid.uuid4().hex}"
+        try:
+            selected.mkdir()
+        except FileExistsError:
+            continue
+        return selected
+    raise ValueError("product replay scratch root cannot be allocated")
+
+
 def _replay_product_normalization_audit(
     *,
     declared_summary: Mapping[str, object],
@@ -2399,8 +2686,8 @@ def _replay_product_normalization_audit(
         return None, errors
 
     try:
-        with tempfile.TemporaryDirectory(prefix="pfc-lt-product-replay-") as raw_tmp:
-            replay_root = Path(raw_tmp).resolve()
+        replay_root = _allocate_product_replay_root()
+        try:
             replay_csv = _materialize_captured_bundle_artifact(
                 delivered_csv,
                 bundle_path=bundle_path,
@@ -2451,6 +2738,8 @@ def _replay_product_normalization_audit(
                 source_hierarchy_policy_path=replay_policy,
                 monthly_candidate_manifest_path=replay_monthly,
             )
+        finally:
+            shutil.rmtree(replay_root)
     except (OSError, TypeError, ValueError) as exc:
         return None, [f"product_replay_failed:{type(exc).__name__}:{exc}"]
 
@@ -2475,7 +2764,9 @@ def _materialize_captured_bundle_artifact(
     try:
         relative = artifact.path.resolve().relative_to(bundle_path.resolve())
     except ValueError as exc:
-        raise ValueError(f"captured replay artifact is outside candidate bundle: {artifact.path}") from exc
+        raise ValueError(
+            f"captured replay artifact is outside candidate bundle: {artifact.path}"
+        ) from exc
     destination = (replay_root / relative).resolve()
     try:
         destination.relative_to(replay_root)
@@ -2491,16 +2782,12 @@ def _materialize_captured_bundle_artifact(
 def _product_replay_comparable_summary(summary: Mapping[str, object]) -> dict[str, object]:
     excluded = {"audit_script", "command_argv", "input_csv", "forwards_path", "note"}
     comparable = {
-        str(key): _json_clean(value)
-        for key, value in summary.items()
-        if str(key) not in excluded
+        str(key): _json_clean(value) for key, value in summary.items() if str(key) not in excluded
     }
     policy = comparable.get("source_hierarchy_policy")
     if isinstance(policy, Mapping):
         comparable["source_hierarchy_policy"] = {
-            str(key): _json_clean(value)
-            for key, value in policy.items()
-            if str(key) != "path"
+            str(key): _json_clean(value) for key, value in policy.items() if str(key) != "path"
         }
     comparable.pop("monthly_candidate_manifest", None)
     return comparable
@@ -2544,7 +2831,9 @@ def _delivered_product_normalization_row(
     _compare_expected(errors, expected, "summary_sha256", actual_summary_hash)
     _compare_expected(errors, expected, "input_csv_sha256", summary.get("input_csv_sha256"))
     _compare_expected(errors, expected, "forwards_sha256", summary.get("forwards_sha256"))
-    _compare_expected(errors, expected, "forward_snapshot_date", summary.get("forward_snapshot_date"))
+    _compare_expected(
+        errors, expected, "forward_snapshot_date", summary.get("forward_snapshot_date")
+    )
     forward_binding = expected_evidence.get("forward_binding")
     forward_binding = forward_binding if isinstance(forward_binding, Mapping) else {}
     for key in (
@@ -2570,7 +2859,10 @@ def _delivered_product_normalization_row(
         if not candidate_path.is_absolute() and product_normalization_summary_path is not None:
             candidate_path = product_normalization_summary_path.resolve().parent / candidate_path
         candidate_path = candidate_path.resolve()
-        if monthly_candidate_manifest_path is None or candidate_path != monthly_candidate_manifest_path.resolve():
+        if (
+            monthly_candidate_manifest_path is None
+            or candidate_path != monthly_candidate_manifest_path.resolve()
+        ):
             errors.append("monthly_candidate_manifest_missing")
         elif str(monthly_candidate_manifest_sha256 or "") != str(candidate_hash_value):
             errors.append("monthly_candidate_manifest_sha256_mismatch")
@@ -2581,7 +2873,9 @@ def _delivered_product_normalization_row(
                 candidate_manifest = {}
             candidate_snapshot = candidate_manifest.get("forward_snapshot")
             candidate_eligibility = candidate_manifest.get("forward_eligibility")
-            if not isinstance(candidate_snapshot, Mapping) or not isinstance(candidate_eligibility, Mapping):
+            if not isinstance(candidate_snapshot, Mapping) or not isinstance(
+                candidate_eligibility, Mapping
+            ):
                 errors.append("monthly_candidate_forward_binding_missing")
             else:
                 try:
@@ -2644,7 +2938,10 @@ def _delivered_product_normalization_row(
         errors.append("gate_id_counts_missing")
         gate_id_counts = {}
     for gate_id in REQUIRED_PRODUCT_GATE_FAMILIES:
-        if _int_or_none(gate_id_counts.get(gate_id)) is None or int(gate_id_counts.get(gate_id, 0)) <= 0:
+        if (
+            _int_or_none(gate_id_counts.get(gate_id)) is None
+            or int(gate_id_counts.get(gate_id, 0)) <= 0
+        ):
             errors.append(f"{gate_id}_missing")
 
     policy = summary.get("source_hierarchy_policy")
@@ -2664,8 +2961,18 @@ def _delivered_product_normalization_row(
         else:
             if _int_or_none(policy.get("accepted_quote_conflict_count")) != quote_conflict_count:
                 errors.append("source_hierarchy_policy_accepted_conflict_count_mismatch")
-            _compare_value(errors, policy.get("input_csv_sha256"), summary.get("input_csv_sha256"), "policy_input_csv_sha256")
-            _compare_value(errors, policy.get("forwards_sha256"), summary.get("forwards_sha256"), "policy_forwards_sha256")
+            _compare_value(
+                errors,
+                policy.get("input_csv_sha256"),
+                summary.get("input_csv_sha256"),
+                "policy_input_csv_sha256",
+            )
+            _compare_value(
+                errors,
+                policy.get("forwards_sha256"),
+                summary.get("forwards_sha256"),
+                "policy_forwards_sha256",
+            )
             _compare_value(
                 errors,
                 policy.get("quote_conflict_identity_hash"),
@@ -2688,10 +2995,15 @@ def _delivered_product_normalization_row(
     status = "PASS" if not errors else "CRITICAL"
     severity = "INFO" if not errors else "P0"
     metric_value = 0.0 if not errors else 1.0
-    path_text = str(product_normalization_summary_path) if product_normalization_summary_path is not None else ""
+    path_text = (
+        str(product_normalization_summary_path)
+        if product_normalization_summary_path is not None
+        else ""
+    )
     hash_text = (
         _sha256_file(product_normalization_summary_path)
-        if product_normalization_summary_path is not None and product_normalization_summary_path.exists()
+        if product_normalization_summary_path is not None
+        and product_normalization_summary_path.exists()
         else ""
     )
     evidence = (
@@ -2738,11 +3050,12 @@ def _compare_value(errors: list[str], expected: object, actual: object, label: s
         errors.append(f"{label}_mismatch")
 
 
-def _selected_config_production_approval_row(selected_config: Mapping[str, object]) -> dict[str, object]:
+def _selected_config_production_approval_row(
+    selected_config: Mapping[str, object],
+) -> dict[str, object]:
     approved = selected_config.get("production_approved") is True
     assembled_parity = (
-        selected_config.get("schema_version")
-        == "monthly_curve_selected_config_run_parity.v1"
+        selected_config.get("schema_version") == "monthly_curve_selected_config_run_parity.v1"
     )
     promotion_approval = selected_config.get("production_promotion_approved")
     promotion_approved = promotion_approval is True or assembled_parity
@@ -2890,8 +3203,7 @@ def _selected_config_manifest_parity_row(
     missing: list[str] = []
     mismatches: list[str] = []
     assembled_parity = (
-        selected_config.get("schema_version")
-        == "monthly_curve_selected_config_run_parity.v1"
+        selected_config.get("schema_version") == "monthly_curve_selected_config_run_parity.v1"
     )
 
     expected = {
@@ -2919,15 +3231,22 @@ def _selected_config_manifest_parity_row(
         elif str(value) != str(expected_value):
             mismatches.append(f"{key}: selected={value} expected={expected_value}")
 
-    if str(export_manifest.get("monthly_solution_hash", "")) != str(expected["monthly_solution_hash"]):
+    if str(export_manifest.get("monthly_solution_hash", "")) != str(
+        expected["monthly_solution_hash"]
+    ):
         mismatches.append("export monthly_solution_hash does not match production")
-    if str(export_manifest.get("active_constraints_hash", "")) != str(expected["active_constraints_hash"]):
+    if str(export_manifest.get("active_constraints_hash", "")) != str(
+        expected["active_constraints_hash"]
+    ):
         mismatches.append("export active_constraints_hash does not match production")
     if selected_config_hash != active_config_hash:
         mismatches.append(
             f"selected_config_hash={selected_config_hash} active_config_hash={active_config_hash}"
         )
-    if not assembled_parity and str(selected_config.get("schema_version", "")) != "monthly_curve_selected_config.v1":
+    if (
+        not assembled_parity
+        and str(selected_config.get("schema_version", "")) != "monthly_curve_selected_config.v1"
+    ):
         mismatches.append("schema_version is not monthly_curve_selected_config.v1")
     if assembled_parity:
         parents = selected_config.get("parents")
@@ -2963,7 +3282,9 @@ def _selected_config_manifest_parity_row(
             if production_manifest_path is not None:
                 production_path = production_manifest_path.resolve()
                 if candidate_path != production_path:
-                    mismatches.append("candidate_manifest path does not match production manifest path")
+                    mismatches.append(
+                        "candidate_manifest path does not match production manifest path"
+                    )
                 if not actual_candidate_hash:
                     mismatches.append("production manifest captured hash is missing")
 
@@ -3086,29 +3407,43 @@ def _promotion_manifest(
 ) -> dict[str, object]:
     manifest = dict(audit_manifest)
     manifest["promotion_evidence_source"] = "prod_export_manifests"
-    manifest["production_monthly_solution_hash"] = production_manifest.get("monthly_solution_hash", "")
+    manifest["production_monthly_solution_hash"] = production_manifest.get(
+        "monthly_solution_hash", ""
+    )
     manifest["export_monthly_solution_hash"] = export_manifest.get("monthly_solution_hash", "")
-    manifest["production_active_constraints_hash"] = production_manifest.get("active_constraints_hash", "")
+    manifest["production_active_constraints_hash"] = production_manifest.get(
+        "active_constraints_hash", ""
+    )
     manifest["export_active_constraints_hash"] = export_manifest.get("active_constraints_hash", "")
     manifest["active_config_hash"] = _active_config_hash(production_manifest)
-    manifest["selected_config_hash"] = _selected_config_hash(selected_config, Path("<selected_config_artifact>"))
-    manifest["selected_config_production_approved"] = selected_config.get("production_approved", False)
+    manifest["selected_config_hash"] = _selected_config_hash(
+        selected_config, Path("<selected_config_artifact>")
+    )
+    manifest["selected_config_production_approved"] = selected_config.get(
+        "production_approved", False
+    )
     manifest["selected_config_production_promotion_approved"] = selected_config.get(
         "production_promotion_approved",
         False,
     )
     manifest["selected_config_selection_status"] = selected_config.get("selection_status", "")
-    manifest["selected_config_monthly_solution_hash"] = selected_config.get("monthly_solution_hash", "")
-    manifest["selected_config_active_constraints_hash"] = selected_config.get("active_constraints_hash", "")
+    manifest["selected_config_monthly_solution_hash"] = selected_config.get(
+        "monthly_solution_hash", ""
+    )
+    manifest["selected_config_active_constraints_hash"] = selected_config.get(
+        "active_constraints_hash", ""
+    )
     manifest["delivered_product_normalization_summary"] = (
-        str(product_normalization_summary_path) if product_normalization_summary_path is not None else ""
+        str(product_normalization_summary_path)
+        if product_normalization_summary_path is not None
+        else ""
     )
     manifest["delivered_product_normalization_summary_sha256"] = str(
         product_normalization_summary_sha256 or ""
     )
-    manifest["delivered_product_normalization_all_gates_pass"] = (
-        dict(product_normalization_summary or {}).get("all_gates_pass", False)
-    )
+    manifest["delivered_product_normalization_all_gates_pass"] = dict(
+        product_normalization_summary or {}
+    ).get("all_gates_pass", False)
     manifest["governance_gate_summary"] = governance_gates["status"].value_counts().to_dict()
     return manifest
 
@@ -3191,9 +3526,7 @@ def _promotion_receipt(
         "release_root_sha256": str(release_root_sha256 or ""),
         "evidence_inventory_sha256": str(evidence_inventory_sha256 or ""),
         "workflow_domain_sha256": str(workflow_domain_sha256 or ""),
-        "release_request_document_sha256": str(
-            release_request_document_sha256 or ""
-        ),
+        "release_request_document_sha256": str(release_request_document_sha256 or ""),
     }
     return sign_promotion_receipt(
         _json_clean(payload),
@@ -3318,9 +3651,7 @@ def _validate_promotion_authorization_context(
         raise ValueError("registered release request candidate bundle hash mismatch")
     expected_current = request.get("expected_current")
     expected_event = (
-        None
-        if args.expected_current_event_id == "NONE"
-        else str(args.expected_current_event_id)
+        None if args.expected_current_event_id == "NONE" else str(args.expected_current_event_id)
     )
     expected_contract = (
         {"kind": "NONE"}
@@ -3349,10 +3680,9 @@ def _validate_promotion_authorization_context(
         artifact = captured.get(str(role))
         if artifact is None or not isinstance(entry, Mapping):
             raise ValueError(f"registered release request artifact is absent: {role}")
-        if (
-            str(entry.get("sha256", "")) != artifact.sha256
-            or int(entry.get("size_bytes", -1)) != len(_captured_raw(artifact))
-        ):
+        if str(entry.get("sha256", "")) != artifact.sha256 or int(
+            entry.get("size_bytes", -1)
+        ) != len(_captured_raw(artifact)):
             raise ValueError(f"registered release request artifact mismatch: {role}")
 
 

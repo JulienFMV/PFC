@@ -14,11 +14,12 @@ import pandas as pd
 
 from pfc_shaping.build_identity import SOURCE_REVISION
 from pfc_shaping.data.acquisition_contract import (
+    GOVERNED_LT_INPUT_SNAPSHOT_SCHEMAS,
     AcquisitionAuthenticationError,
     verify_acquisition_contract,
 )
 from pfc_shaping.data.lt_input_sources import validate_governed_source_system
-from pfc_shaping.path_safety import path_is_link
+from pfc_shaping.path_safety import path_is_link, read_stable_single_link_file
 from pfc_shaping.pipeline.model_governance_contract import (
     ModelGovernanceAuthenticationError,
     validate_selected_lambda_decision,
@@ -110,6 +111,8 @@ def capture_pre_run_governance_evidence(
     input_generation_id: str,
     peak_source_policy: str,
     use_seasonal_hourly_shape: bool,
+    publication_head_observation_sha256: str | None = None,
+    publication_head_challenge_nonce: str | None = None,
     eex_forward_source_path: str | Path | None = None,
     eex_acquisition_contract_path: str | Path | None = None,
 ) -> dict[str, object]:
@@ -118,6 +121,14 @@ def capture_pre_run_governance_evidence(
     source_revision = str(source_revision).strip().lower()
     input_snapshot_sha256 = str(input_snapshot_sha256).strip().lower()
     input_pointer_sha256 = str(input_pointer_sha256).strip().lower()
+    if publication_head_observation_sha256 is not None:
+        publication_head_observation_sha256 = str(
+            publication_head_observation_sha256
+        ).strip().lower()
+    if publication_head_challenge_nonce is not None:
+        publication_head_challenge_nonce = str(
+            publication_head_challenge_nonce
+        ).strip().lower()
     input_generation_id = str(input_generation_id).strip()
     peak_source_policy = str(peak_source_policy).strip()
     try:
@@ -141,6 +152,18 @@ def capture_pre_run_governance_evidence(
         raise CandidateEvidenceError("input snapshot SHA-256 is not canonical")
     if not _is_canonical_sha256(input_pointer_sha256):
         raise CandidateEvidenceError("input pointer SHA-256 is not canonical")
+    if (
+        publication_head_observation_sha256 is not None
+        and not _is_canonical_sha256(publication_head_observation_sha256)
+    ):
+        raise CandidateEvidenceError(
+            "publication HEAD observation SHA-256 is not canonical"
+        )
+    if (
+        publication_head_challenge_nonce is not None
+        and not _is_canonical_sha256(publication_head_challenge_nonce)
+    ):
+        raise CandidateEvidenceError("publication HEAD challenge nonce is not canonical")
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", input_generation_id):
         raise CandidateEvidenceError("input generation id is not portable")
     if peak_source_policy not in {"same_first", "strict_same", "any"}:
@@ -194,8 +217,14 @@ def capture_pre_run_governance_evidence(
             raise CandidateEvidenceError(f"{role} artifact and receipt must be distinct")
         if not source.is_file() or not receipt_source.is_file():
             raise CandidateEvidenceError(f"{role} pre-run source evidence is unavailable")
-        source_bytes = source.read_bytes()
-        receipt_bytes = receipt_source.read_bytes()
+        source_bytes = read_stable_single_link_file(
+            source,
+            label=f"{role} pre-run artifact",
+        )
+        receipt_bytes = read_stable_single_link_file(
+            receipt_source,
+            label=f"{role} pre-run receipt",
+        )
         try:
             receipt_payload = load_strict_json(receipt_bytes.decode("utf-8"))
         except (UnicodeDecodeError, ValueError) as exc:
@@ -209,8 +238,6 @@ def capture_pre_run_governance_evidence(
             )
         except ModelGovernanceAuthenticationError as exc:
             raise CandidateEvidenceError(f"{role} authority receipt is not authentic") from exc
-        if source.read_bytes() != source_bytes or receipt_source.read_bytes() != receipt_bytes:
-            raise CandidateEvidenceError(f"{role} source changed during pre-run capture")
         destination_root = staging / "evidence" / "independent" / role
         destination_root.mkdir(parents=True, exist_ok=False)
         artifact_destination = destination_root / source.name
@@ -296,10 +323,28 @@ def capture_pre_run_governance_evidence(
             ).encode("utf-8")
         ).hexdigest(),
     }
+    input_snapshot_binding: dict[str, object] = {
+        "generation_id": input_generation_id,
+        "contract_logical_path": (
+            Path("snapshots") / input_generation_id / "lt_input_snapshot.json"
+        ).as_posix(),
+        "contract_sha256": input_snapshot_sha256,
+        "pointer_logical_path": "views/pfc_lt/current.json",
+        "pointer_sha256": input_pointer_sha256,
+    }
+    if publication_head_observation_sha256 is not None:
+        input_snapshot_binding["publication_head_observation_sha256"] = (
+            publication_head_observation_sha256
+        )
+    if publication_head_challenge_nonce is not None:
+        input_snapshot_binding["publication_head_challenge_nonce"] = (
+            publication_head_challenge_nonce
+        )
     run_spec: dict[str, object] = {
         "schema_version": GOVERNED_RUN_SPEC_SCHEMA,
         "run_id": str(run_id),
         "as_of_utc": str(valuation_timestamp),
+        "run_started_at_utc": build_timestamp,
         "build_timestamp_utc": build_timestamp,
         "runtime": {
             "distribution": "fmv-pfc-lt",
@@ -313,17 +358,7 @@ def capture_pre_run_governance_evidence(
                 entries[PRE_RUN_CONFIG_ROLE]["semantic_sha256"]
             ),
         },
-        "input_snapshot": {
-            "generation_id": input_generation_id,
-            "contract_logical_path": (
-                Path("snapshots")
-                / input_generation_id
-                / "lt_input_snapshot.json"
-            ).as_posix(),
-            "contract_sha256": input_snapshot_sha256,
-            "pointer_logical_path": "views/pfc_lt/current.json",
-            "pointer_sha256": input_pointer_sha256,
-        },
+        "input_snapshot": input_snapshot_binding,
         "model_controls": {
             "peak_source_policy": peak_source_policy,
             "use_seasonal_hourly_shape": use_seasonal_hourly_shape,
@@ -464,11 +499,16 @@ def verify_pre_run_governance_evidence(
         build_timestamp = datetime.fromisoformat(
             str(run_spec.get("build_timestamp_utc", ""))
         )
+        run_started_at = datetime.fromisoformat(
+            str(run_spec.get("run_started_at_utc", ""))
+        )
     except ValueError as exc:
         raise CandidateEvidenceError("pre-run governed timestamps are invalid") from exc
     if (
         as_of.tzinfo is None
         or build_timestamp.tzinfo is None
+        or run_started_at.tzinfo is None
+        or run_started_at != build_timestamp
         or build_timestamp < as_of
         or manifest.get("captured_at_utc") != run_spec.get("build_timestamp_utc")
     ):
@@ -504,6 +544,18 @@ def verify_pre_run_governance_evidence(
         or snapshot_binding.get("pointer_logical_path") != "views/pfc_lt/current.json"
         or not _is_canonical_sha256(snapshot_binding.get("contract_sha256"))
         or not _is_canonical_sha256(snapshot_binding.get("pointer_sha256"))
+        or (
+            "publication_head_observation_sha256" in snapshot_binding
+            and not _is_canonical_sha256(
+                snapshot_binding.get("publication_head_observation_sha256")
+            )
+        )
+        or (
+            "publication_head_challenge_nonce" in snapshot_binding
+            and not _is_canonical_sha256(
+                snapshot_binding.get("publication_head_challenge_nonce")
+            )
+        )
     ):
         raise CandidateEvidenceError("pre-run governed input snapshot binding is invalid")
     if run_spec.get("pre_run_artifacts") != _run_spec_artifact_bindings(entries):
@@ -592,7 +644,13 @@ def _verified_eex_acquisition(
         unsigned = verify_acquisition_contract(contract)
     except (CandidateEvidenceError, AcquisitionAuthenticationError) as exc:
         raise CandidateEvidenceError("EEX acquisition contract is not authentic") from exc
+    if unsigned.get("schema_version") not in GOVERNED_LT_INPUT_SNAPSHOT_SCHEMAS:
+        raise CandidateEvidenceError(
+            "EEX acquisition requires a governed v2/v3 source contract"
+        )
     files = unsigned.get("files")
+    if not isinstance(files, Mapping) or set(files) != {PRE_RUN_EEX_ROLE}:
+        raise CandidateEvidenceError("EEX acquisition contract must contain only the forward source")
     entry = files.get(PRE_RUN_EEX_ROLE) if isinstance(files, Mapping) else None
     if not isinstance(entry, Mapping):
         raise CandidateEvidenceError("EEX acquisition contract has no forward source")
@@ -616,9 +674,23 @@ def _verified_eex_acquisition(
         raise CandidateEvidenceError("EEX acquisition artifact hash mismatch")
     if int(entry.get("size_bytes", -1)) != artifact_path.stat().st_size:
         raise CandidateEvidenceError("EEX acquisition artifact size mismatch")
+    raw_artifact = entry.get("raw_artifact")
+    if not isinstance(raw_artifact, Mapping):
+        raise CandidateEvidenceError("EEX acquisition raw artifact binding is missing")
+    if str(raw_artifact.get("sha256", "")) != _sha256_file(artifact_path):
+        raise CandidateEvidenceError("EEX acquisition raw artifact hash mismatch")
+    if int(raw_artifact.get("size_bytes", -1)) != artifact_path.stat().st_size:
+        raise CandidateEvidenceError("EEX acquisition raw artifact size mismatch")
     available = pd.Timestamp(entry.get("available_at_utc"))
+    contract_available = pd.Timestamp(unsigned.get("available_at_utc"))
     valuation = pd.Timestamp(valuation_timestamp)
-    if available.tzinfo is None or valuation.tzinfo is None or available > valuation:
+    if (
+        available.tzinfo is None
+        or contract_available.tzinfo is None
+        or valuation.tzinfo is None
+        or available > valuation
+        or contract_available > valuation
+    ):
         raise CandidateEvidenceError("EEX acquisition availability is not point-in-time")
     return {
         "acquisition_id": acquisition_id,

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import scripts.epex_lab_locked_holdout_policy as policy_module
 from scripts.epex_lab_locked_holdout_policy import build_locked_plan_identity, locked_holdout_policy
 
 
@@ -16,7 +17,7 @@ def _write_plan(tmp_path: Path) -> Path:
         tmp_path / "locked_plan.json",
         {
             "schema_version": "epex_lab_locked_holdout_plan.v1",
-            "plan_id": "t057_locked_t056_future_holdout",
+            "plan_id": "test_holdout",
             "benchmark_policy": "locked_future_no_ompex_holdout",
             "frozen_at_utc": "2026-07-09T00:00:00Z",
             "holdout_start_utc": "2026-07-10T00:00:00Z",
@@ -40,8 +41,12 @@ def _passing_run_summary(tmp_path: Path) -> dict:
         tmp_path / "locked_holdout_audit.json",
         _passing_audit(identity=identity, backtest=backtest),
     )
+    capture_seal = _write_json(
+        tmp_path / "energy_charts_locked_holdout_capture_seal.json",
+        {"schema_version": "energy_charts_epex_locked_holdout_capture.v1"},
+    )
     return {
-        "schema_version": "epex_lab_locked_holdout_run.v1",
+        "schema_version": "epex_lab_locked_holdout_run.v2",
         "status": "LOCKED_HOLDOUT_PASS",
         "benchmark_policy": "locked_future_no_ompex_holdout",
         "expected_plan_json_sha256": identity["plan_json_sha256"],
@@ -63,6 +68,15 @@ def _passing_run_summary(tmp_path: Path) -> dict:
         "spot_backtest_summary_sha256": _sha256(backtest),
         "locked_holdout_audit": str(audit),
         "locked_holdout_audit_sha256": _sha256(audit),
+        "spot_provenance": {
+            "capture_seal": {
+                "required": True,
+                "pass": True,
+                "status": "T057_CAPTURE_SEAL_BOUND",
+                "capture_seal": str(capture_seal),
+                "capture_seal_sha256": _sha256(capture_seal),
+            }
+        },
     }
 
 
@@ -72,6 +86,53 @@ def test_locked_holdout_policy_accepts_plan_bound_run_summary(tmp_path: Path) ->
     assert policy["pass"] is True
     assert policy["checks"]["plan_json_file_sha_bound"] is True
     assert policy["checks"]["plan_identity_matches_plan_json"] is True
+
+
+def test_bound_json_hashes_and_parses_one_stable_capture(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    evidence = _write_json(tmp_path / "evidence.json", {"status": "PASS"})
+    calls = 0
+    original = policy_module.read_stable_single_link_file
+
+    def counted(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(policy_module, "read_stable_single_link_file", counted)
+    result = policy_module._read_bound_json(
+        {"path": str(evidence), "sha": _sha256(evidence)},
+        path_key="path",
+        sha_key="sha",
+    )
+
+    assert result == {"status": "PASS"}
+    assert calls == 1
+
+
+def test_locked_holdout_policy_rejects_legacy_backtest_without_fold_integrity(
+    tmp_path: Path,
+) -> None:
+    summary = _passing_run_summary(tmp_path)
+    backtest = Path(summary["spot_backtest_summary"])
+    backtest_payload = json.loads(backtest.read_text(encoding="utf-8"))
+    backtest_payload.pop("strict_lab_checks")
+    _write_json(backtest, backtest_payload)
+    summary["spot_backtest_summary_sha256"] = _sha256(backtest)
+
+    audit = Path(summary["locked_holdout_audit"])
+    audit_payload = json.loads(audit.read_text(encoding="utf-8"))
+    audit_payload["spot_backtest_summary_sha256"] = _sha256(backtest)
+    _write_json(audit, audit_payload)
+    summary["locked_holdout_audit_sha256"] = _sha256(audit)
+
+    policy = locked_holdout_policy(summary)
+
+    assert policy["pass"] is False
+    assert policy["checks"]["linked_backtest_unique_ordered_cutoffs"] is False
+    assert policy["checks"]["linked_backtest_non_overlapping_evaluations"] is False
 
 
 def test_build_locked_plan_identity_resolves_plan_json_path(tmp_path: Path, monkeypatch) -> None:
@@ -85,7 +146,9 @@ def test_build_locked_plan_identity_resolves_plan_json_path(tmp_path: Path, monk
     assert identity["plan_json_sha256"] == _sha256(plan)
 
 
-def test_locked_holdout_policy_rejects_passing_summary_without_plan_identity(tmp_path: Path) -> None:
+def test_locked_holdout_policy_rejects_passing_summary_without_plan_identity(
+    tmp_path: Path,
+) -> None:
     summary = _passing_run_summary(tmp_path)
     summary.pop("locked_plan_identity")
 
@@ -162,7 +225,9 @@ def test_locked_holdout_policy_rejects_coverage_without_candidate_checks(tmp_pat
     assert policy["checks"]["coverage_candidate_timestamp_sets_identical"] is False
 
 
-def test_locked_holdout_policy_rejects_coverage_without_raw_candidate_timestamp_evidence(tmp_path: Path) -> None:
+def test_locked_holdout_policy_rejects_coverage_without_raw_candidate_timestamp_evidence(
+    tmp_path: Path,
+) -> None:
     summary = _passing_run_summary(tmp_path)
     coverage = summary["coverage"]
     for key in [
@@ -240,7 +305,9 @@ def test_locked_holdout_policy_preserves_input_invalid_status(tmp_path: Path) ->
     assert policy["status"] == "NO_GO_LOCKED_HOLDOUT_INPUT_INVALID"
 
 
-def test_locked_holdout_policy_routes_energy_charts_wrapper_waiting_to_coverage_pending(tmp_path: Path) -> None:
+def test_locked_holdout_policy_routes_energy_charts_wrapper_waiting_to_coverage_pending(
+    tmp_path: Path,
+) -> None:
     run = _passing_run_summary(tmp_path)
     spot_fetch = _write_json(
         tmp_path / "spot_fetch_summary.json",
@@ -253,7 +320,7 @@ def test_locked_holdout_policy_routes_energy_charts_wrapper_waiting_to_coverage_
         },
     )
     wrapper = {
-        "schema_version": "energy_charts_epex_locked_holdout_run.v1",
+        "schema_version": "energy_charts_epex_locked_holdout_run.v2",
         "status": "LOCKED_HOLDOUT_SPOT_WAITING",
         "promotion_gate": False,
         "production_approved": False,
@@ -281,10 +348,12 @@ def test_locked_holdout_policy_routes_energy_charts_wrapper_waiting_to_coverage_
     assert policy["checks"]["locked_holdout_not_run"] is True
 
 
-def test_locked_holdout_policy_routes_energy_charts_pre_window_to_coverage_pending(tmp_path: Path) -> None:
+def test_locked_holdout_policy_routes_energy_charts_pre_window_to_coverage_pending(
+    tmp_path: Path,
+) -> None:
     run = _passing_run_summary(tmp_path)
     wrapper = {
-        "schema_version": "energy_charts_epex_locked_holdout_run.v1",
+        "schema_version": "energy_charts_epex_locked_holdout_run.v2",
         "status": "LOCKED_HOLDOUT_WINDOW_NOT_COMPLETE",
         "promotion_gate": False,
         "production_approved": False,
@@ -309,7 +378,9 @@ def test_locked_holdout_policy_routes_energy_charts_pre_window_to_coverage_pendi
     assert policy["checks"]["spot_fetch_ran"] is False
 
 
-def test_locked_holdout_policy_accepts_energy_charts_wrapper_with_bound_passing_run(tmp_path: Path) -> None:
+def test_locked_holdout_policy_accepts_energy_charts_wrapper_with_bound_passing_run(
+    tmp_path: Path,
+) -> None:
     run = _passing_run_summary(tmp_path)
     run_path = _write_json(tmp_path / "locked_holdout_run_summary.json", run)
     spot_fetch = _write_json(
@@ -323,7 +394,7 @@ def test_locked_holdout_policy_accepts_energy_charts_wrapper_with_bound_passing_
         },
     )
     wrapper = {
-        "schema_version": "energy_charts_epex_locked_holdout_run.v1",
+        "schema_version": "energy_charts_epex_locked_holdout_run.v2",
         "status": "LOCKED_HOLDOUT_PASS",
         "promotion_gate": False,
         "production_approved": False,
@@ -343,6 +414,9 @@ def test_locked_holdout_policy_accepts_energy_charts_wrapper_with_bound_passing_
         "locked_holdout_run_summary_sha256": _sha256(run_path),
         "locked_holdout": run,
         "holdout_pass": True,
+        "capture_seal": run["spot_provenance"]["capture_seal"]["capture_seal"],
+        "capture_seal_sha256": run["spot_provenance"]["capture_seal"]["capture_seal_sha256"],
+        "capture_policy": "FIRST_PROVIDER_CAPTURE_FAIL_CLOSED_NO_OVERWRITE",
     }
 
     policy = locked_holdout_policy(wrapper)
@@ -403,7 +477,7 @@ def _ready_coverage(*, identity: dict) -> dict:
 
 def _passing_backtest() -> dict:
     return {
-        "schema_version": "epex_shape_lab_spot_backtest.v1",
+        "schema_version": "epex_shape_lab_spot_backtest.v3",
         "status": "DIAGNOSTIC_PASS",
         "read_only": True,
         "promotion_gate": False,
@@ -414,14 +488,24 @@ def _passing_backtest() -> dict:
         "ompex_used_in_selection": False,
         "ompex_used_in_backtest": False,
         "strict_lab_gate_pass": True,
+        "strict_lab_checks": {
+            "rolling_folds_unique_ordered_cutoffs": True,
+            "rolling_folds_non_overlapping_evaluations": True,
+        },
     }
 
 
 def _passing_audit(*, identity: dict, backtest: Path) -> dict:
     return {
-        "schema_version": "epex_lab_locked_holdout_audit.v1",
+        "schema_version": "epex_lab_locked_holdout_audit.v2",
         "status": "LOCKED_HOLDOUT_PASS",
         "holdout_pass": True,
+        "checks": {
+            "rolling_folds_unique_ordered_cutoffs_independently_replayed": True,
+            "rolling_folds_non_overlapping_evaluations_independently_replayed": True,
+            "rolling_metrics_independently_recomputed": True,
+            "rolling_bucket_metrics_independently_recomputed": True,
+        },
         "promotion_gate": False,
         "production_approved": False,
         "ompex_used_in_model": False,

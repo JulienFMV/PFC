@@ -1,0 +1,100 @@
+{
+  "schema_version": "ch_lt_local_quality_current_selection.v1",
+  "status": "CURRENT_LOCAL_ENGINEERING_QUALITY_SELECTION_NO_GO",
+  "as_of_date": "2026-07-31",
+  "market": "CH",
+  "laptop_qualification": {
+    "qualification_id": "9b793220b301c4c619935b5ea3f12d396dea7db5952b41522b2ba48d8aa38fe0",
+    "quality_json_path": "build/local-model-qualification/ch-lt-laptop-model-pair-v4/quality.json",
+    "quality_json_sha256": "74d1b48e255b84ba5ed9aa9004e96317b7c7df5be876edacf5d6c8b7e46118be",
+    "quality_markdown_path": "build/local-model-qualification/ch-lt-laptop-model-pair-v4/QUALITY.md",
+    "quality_markdown_sha256": "456fe80f10597b470e34b8ca7aa353c4989c9fb6482543a19ee0985f5910c602",
+    "terminal_receipt_path": "build/local-model-qualification/ch-lt-laptop-model-pair-v4/qualification-receipt.json",
+    "terminal_receipt_sha256": "b14fbf36d34d5abaaf9699417ef237b873fcbdcc5500d98681daf9f1101e6a35",
+    "audit_execution_receipt_path": "build/workspace-local-runs/qa31pairv4b/execution-receipt.json",
+    "audit_execution_receipt_sha256": "29fa0c7d9147e7e49063907ac1243ee03a94a08568b066198da1884e9cccab7e",
+    "audit_supervisor_receipt_path": "build/workspace-local-supervisors/qa31pairv4b/supervisor-receipt.json",
+    "audit_supervisor_receipt_sha256": "8f22d0672dc881d64abe83f20662ac502a70c3e45e76ee50898ea2ac76bd07ff",
+    "status": "PASS_LOCAL_STRUCTURAL_REPRODUCIBILITY_ONLY_NO_GO"
+  },
+  "model_runs": [
+    {
+      "role": "A",
+      "run_root": "build/local-model-runs/run31m1",
+      "completion_manifest_path": "build/local-model-runs/run31m1/completion_manifest.json",
+      "completion_manifest_sha256": "9c72678269b46a253512efbe0f3cbcdef9e3cdcb0184265ef07b1663b3b13549",
+      "execution_receipt_path": "build/workspace-local-runs/mdl31m1/execution-receipt.json",
+      "execution_receipt_sha256": "b19108071fc00b39c6139def450631322cd858efdd3103129e325728256287e3",
+      "supervisor_receipt_path": "build/workspace-local-supervisors/mdl31m1/supervisor-receipt.json",
+      "supervisor_receipt_sha256": "02c49a786f46a6ab2c69f451aab62522e9fb00c766b2ba95496829cb1e23686c"
+    },
+    {
+      "role": "B",
+      "run_root": "build/local-model-runs/run31m2",
+      "completion_manifest_path": "build/local-model-runs/run31m2/completion_manifest.json",
+      "completion_manifest_sha256": "3b521b29faf582529dcdc95c382af78a1be038be6d761dd2b8a6cac5fc538fd6",
+      "execution_receipt_path": "build/workspace-local-runs/mdl31m2/execution-receipt.json",
+      "execution_receipt_sha256": "b8cc677d7f058849f384d2eb606af5f391603e160f3a0d6f3ab2339653771342",
+      "supervisor_receipt_path": "build/workspace-local-supervisors/mdl31m2/supervisor-receipt.json",
+      "supervisor_receipt_sha256": "593ae85f57cd99ada7bb0beab9d7e438a00a54c9f898263040c116e671f31ecc"
+    }
+  ],
+  "historical_shape_diagnostic": {
+    "path": "output/phase14/ch_lt_local_candidate_quality_20260727_v3/quality.json",
+    "sha256": "bbba2480cdc8ae7d08c6722f7d4a37680da40055f08aaacf2a83a48b6dab9d55",
+    "target": "DE_LU_QUARTER_HOUR_PRICE_GIVEN_REALIZED_PARENT_HOUR_MEAN",
+    "target_is_full_ch_lt": false,
+    "candidate_accepted": false,
+    "latest_fold_noninferior": false,
+    "model_selection_eligible": false
+  },
+  "current_data_boundary": {
+    "ledger_selection_path": ".planning/phases/14-lt-audit-remediation/CH-LT-PROSPECTIVE-CAPTURE-LEDGER-SELECTION-V3-20260731.json",
+    "ledger_selection_sha256": "0fa92b0f7915473ad7379436a1193e8c0e7bb64115722508c6d900963139feb1",
+    "current_evidence_registry_path": ".planning/phases/14-lt-audit-remediation/CH-LT-CURRENT-EVIDENCE-SELECTION-V2-20260731.json",
+    "current_evidence_registry_sha256": "f0df02ac6f1102e71d5a4848b1181c95d3b6f7044c86600592e17a691e8cb13d",
+    "independent_rolling_origin_count": 0,
+    "permitted_use": "STRUCTURAL_CADENCE_AND_EXACT_REPLAY_ONLY",
+    "price_shaping_or_economic_inference": "FORBIDDEN"
+  },
+  "current_eex_boundary": {
+    "selection_path": ".planning/phases/14-lt-audit-remediation/CH-EEX-CURRENT-LOCAL-CAPTURE-SELECTION-20260730.json",
+    "selection_sha256": "5f0b99aa04fabcb8219cfa34f20ea262a705940cbc3db3ab2e114ba99bb4a778",
+    "hard_quote_eligible": false,
+    "monthly_solver_authority": false,
+    "scientific_admission": false
+  },
+  "claim_boundary": {
+    "proven": [
+      "STANDARD_USER_LAPTOP_MODEL_EXECUTES_TO_TERMINAL_MANIFEST",
+      "EXPERIMENTAL_SPARSE_INTRADAY_REGULARIZATION_IS_EXPLICITLY_OPTED_IN",
+      "A_B_MATERIAL_OUTPUT_BYTES_ARE_DETERMINISTIC",
+      "MONTHLY_SOLVER_LEVEL_IS_PRESERVED_WITHIN_1E_9_EUR_MWH",
+      "PARENT_HOUR_PRICE_NEUTRALITY_IS_INDEPENDENTLY_VERIFIED_WITHIN_1E_12_EUR_MWH",
+      "COMPLETE_LOCAL_MONTH_DELIVERY_WINDOW_AUG2026_THROUGH_DEC2030",
+      "CAL2030_CONTAINS_EXACTLY_8760_LOCAL_HOURS",
+      "FINAL_QUOTE_AWARE_BASE_PEAK_AND_IMPLIED_OFFPEAK_REPLAY_PASSES_WITHIN_1E_9_EUR_MWH",
+      "FINAL_PRODUCT_PROJECTION_INTRODUCES_NO_NON_FQ_INTRAHOUR_STRUCTURE_WITHIN_1E_12_EUR_MWH",
+      "WORKSPACE_ROOT_APPEARS_EXACTLY_ONCE_IN_CAPTURED_SYS_PATH",
+      "NO_DESCENDANT_PROCESS_REMAINS_AFTER_EACH_RUN"
+    ],
+    "not_proven": [
+      "FRESH_GOVERNED_HARD_CH_EEX_LEVEL",
+      "SOURCE_QUOTE_CONFLICT_POLICY_PRODUCTION_APPROVAL",
+      "DIRECT_CH_SHAPING_QUALITY",
+      "CALIBRATED_PROBABILISTIC_QUALITY",
+      "INDEPENDENT_ROLLING_ORIGIN_OR_FUTURE_HOLDOUT_QUALITY",
+      "INSTALLED_WHEEL_MODEL_EXECUTION",
+      "PRODUCTION_READINESS_OR_PROMOTION"
+    ]
+  },
+  "future_holdout_consumed": false,
+  "t057_consumed": false,
+  "countable_prospective_origin": false,
+  "training_eligible": false,
+  "model_selection_eligible": false,
+  "scientific_admission": false,
+  "production_authorization": false,
+  "promotion_gate": false,
+  "selection_id": "cc884b66a2ea9751400d0f605cc765e89132f3ebd7cd2cf8a5fd170437fffce4"
+}

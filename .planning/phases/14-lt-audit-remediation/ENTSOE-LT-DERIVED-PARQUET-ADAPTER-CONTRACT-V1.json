@@ -1,0 +1,75 @@
+{
+  "schema_version": "fmv_entsoe_lt_derived_parquet_adapter_contract.v1",
+  "decision": "D-20260806-284",
+  "status": "SYNTHETIC_BOUNDED_PARQUET_ADAPTER_NO_REAL_OR_MODEL_AUTHORITY",
+  "purpose": "Prove a bounded normalized Parquet boundary into the unchanged D283 canonical-decimal arithmetic executor.",
+  "predecessor": {
+    "d282_contract_content_id": "2976562eb360f93da5135d3f542e57aebd0848a9ee692654bab0477b67d9985e",
+    "d283_contract_content_id": "92946ffd261fd2724c165e530387a13b12ed5d7b6f24a821f0bcf1c5cc3b5f08",
+    "d283_algorithm_content_id": "372ddf109142fc490210c0d09c319a6ecd46383efc348c34fdb760f416907de4"
+  },
+  "package": {
+    "manifest_schema_version": "fmv_entsoe_lt_synthetic_parquet_operand_manifest.v1",
+    "evidence_class": "SYNTHETIC_TEST_ONLY",
+    "artifact_relative_path": "derived_operand_values.parquet",
+    "row_grain": [
+      "role",
+      "feature_record_id",
+      "target_start_utc",
+      "target_end_utc"
+    ],
+    "columns_in_order": [
+      {"name": "feature_record_id", "arrow_type": "string", "nullable": false},
+      {"name": "role", "arrow_type": "string", "nullable": false},
+      {"name": "target_start_utc", "arrow_type": "timestamp[us, tz=UTC]", "nullable": false},
+      {"name": "target_end_utc", "arrow_type": "timestamp[us, tz=UTC]", "nullable": false},
+      {"name": "series_id_sha256", "arrow_type": "string", "nullable": false},
+      {"name": "logical_zone_sha256", "arrow_type": "string", "nullable": false},
+      {"name": "canonical_unit", "arrow_type": "string", "nullable": false},
+      {"name": "effective_native_resolution", "arrow_type": "string", "nullable": false},
+      {"name": "value_decimal_mw", "arrow_type": "string", "nullable": true}
+    ],
+    "value_encoding": "CANONICAL_BASE10_TEXT_OR_NULL",
+    "binary_floating_point_is_admissible": false,
+    "compression": "ZSTD"
+  },
+  "bounds": {
+    "maximum_manifest_bytes": 100000,
+    "maximum_parquet_bytes": 67108864,
+    "maximum_rows": 200000,
+    "exact_column_count": 9,
+    "maximum_cells": 1800000,
+    "maximum_row_groups": 1024,
+    "allowed_parquet_physical_types": ["BYTE_ARRAY", "INT64"]
+  },
+  "integrity": {
+    "manifest_and_parquet_must_be_stable_single_link_files": true,
+    "relative_path_is_fixed_and_sibling_only": true,
+    "manifest_hash_size_counts_and_schema_must_match": true,
+    "d282_assessment_must_remain_content_stable": true,
+    "all_rows_must_be_consumed_exactly_once_by_d283": true,
+    "arrow_type_coercion_is_admissible": false,
+    "assessment_may_persist_operand_or_output_values": false,
+    "synthetic_pass_grants_real_or_model_authority": false
+  },
+  "execution": {
+    "databricks_connection_count": 0,
+    "databricks_statement_count": 0,
+    "warehouse_start_count": 0,
+    "databricks_write_count": 0,
+    "network_call_count": 0,
+    "h_drive_access_count": 0,
+    "opened_real_value_row_count": 0
+  },
+  "authorities": {
+    "real_source_evidence": false,
+    "real_arithmetic_correctness": false,
+    "point_in_time": false,
+    "predictive_value": false,
+    "model_input": false,
+    "model_selection": false,
+    "candidate": false,
+    "promotion": false,
+    "production": false
+  }
+}

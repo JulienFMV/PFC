@@ -16,6 +16,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PublicKey,
 )
 
+from pfc_shaping.path_safety import read_stable_single_link_file
 
 TRUSTED_POLICY_PUBLIC_KEY_ENV = "PFC_QUOTE_CONFLICT_POLICY_TRUSTED_PUBLIC_KEY_PATH"
 POLICY_SCHEMA = "ch_quote_conflict_source_hierarchy_policy.v1"
@@ -76,14 +77,19 @@ def verify_quote_conflict_policy(policy: Mapping[str, object]) -> dict[str, obje
 
 
 def _load_private_key(path: str | Path) -> Ed25519PrivateKey:
-    key = serialization.load_pem_private_key(Path(path).read_bytes(), password=None)
+    key = serialization.load_pem_private_key(
+        read_stable_single_link_file(Path(path), label="quote-conflict private key"),
+        password=None,
+    )
     if not isinstance(key, Ed25519PrivateKey):
         raise QuoteConflictPolicyAuthenticationError("quote-conflict private key is not Ed25519")
     return key
 
 
 def _load_public_key(path: str | Path) -> Ed25519PublicKey:
-    key = serialization.load_pem_public_key(Path(path).read_bytes())
+    key = serialization.load_pem_public_key(
+        read_stable_single_link_file(Path(path), label="quote-conflict public key")
+    )
     if not isinstance(key, Ed25519PublicKey):
         raise QuoteConflictPolicyAuthenticationError("quote-conflict public key is not Ed25519")
     return key

@@ -1,0 +1,134 @@
+{
+  "schema_version": "fmv-afry-semantic-contract-v1",
+  "release_id": "AFRY_CH_2026_Q2_V100",
+  "classification": "restricted_client_engagement_metadata_only",
+  "contains_vendor_numeric_scenario_values": false,
+  "raw_documents_allowed_in_git": false,
+  "raw_or_derived_numeric_values_allowed_in_git": false,
+  "rag_indexing_allowed": false,
+  "source_evidence": [
+    {
+      "role": "quarterly_update_note",
+      "sha256": "dc0c0c2c06ddf95d523c418e7ae4899c0aed1ed0f8940566992e4008596769e8",
+      "page_topics": {
+        "4": "release horizon and four vendor scenario labels",
+        "9": "Central net-zero framing and Delayed Transition heat-electrification framing",
+        "19": "High shares Central demand and capacity build-out and mainly stresses commodities",
+        "20": "Swiss wind capture-rate drivers and interconnector/flexibility effects",
+        "21": "Swiss solar capture-rate recovery linked to slower PV build-out and flexibility",
+        "22": "weather-conditioned capture-price ranges widen with delivery horizon",
+        "23": "reported curtailment is economic and excludes grid or technical curtailment",
+        "29": "Swiss capacity, policy alignment claim, renewables, hydro and storage assumptions",
+        "30": "net-generation convention, imports and long-run battery net-neutrality",
+        "31": "Swiss demand construction and electrification assumptions",
+        "38": "very-low-price evolution and long-run flexibility smoothing",
+        "39": "daily-spread definition and long-run flexibility compression",
+        "40": "negative-price counting, bidder-behaviour assumption and five weather patterns",
+        "71": "negative-price drivers include policy, physical constraints and opportunity costs",
+        "72": "low-versus-negative outcomes depend on policy and trading behaviour",
+        "73": "capture-price and economic-curtailment framework",
+        "75": "capture prices depend jointly on mix, flexibility, commodities and scarcity",
+        "76": "rationale for the five representative weather patterns"
+      }
+    },
+    {
+      "role": "commodity_and_modelling_annex",
+      "sha256": "9eaa00233074fac38efe9f9d048f0f9524d833a0ef9313d5acc50773a4acfbe1",
+      "page_topics": {
+        "39": "hourly demand profiles combine annual values, weather and changing demand segments",
+        "166": "BID3 dispatch and endogenous economic build/retirement scope",
+        "168": "8760-hour dispatch, hydro, storage, demand response and weather-year capability",
+        "169": "hourly economic dispatch outputs include prices, generation, flows and congestion",
+        "170": "electricity and hydrogen co-optimisation scope"
+      }
+    }
+  ],
+  "methodological_evidence": {
+    "evidence_class": "restricted_vendor_model_documentation",
+    "observed_swiss_truth": false,
+    "independent_validation_evidence": false,
+    "probability_calibration_evidence": false,
+    "calendar_mapping_authority": false,
+    "technical_grid_curtailment_covered": false,
+    "negative_price_dynamics_include_behavioral_assumptions": true,
+    "hourly_shape_term_structure_documented": true,
+    "causal_use_constraint": "AFRY mechanisms may define hypotheses, benchmark diagnostics and stress axes; they are not identified causal effects or empirical validation.",
+    "material_model_risks": [
+      "endogenous economic build and retirement assumptions",
+      "policy and bidder-behaviour assumptions near zero and negative prices",
+      "representative weather-pattern selection without authorized probabilities",
+      "economic curtailment excluding local grid and technical curtailment",
+      "unmapped representative-hour chronology",
+      "vendor-common commodity and power-model ecosystem"
+    ]
+  },
+  "scenario_semantics": {
+    "High": {
+      "interpretation": "commodity and price upside around Central structural demand and capacity",
+      "must_not_be_mapped_to": ["fast renewable build-out", "policy compliance", "probability"]
+    },
+    "Central": {
+      "interpretation": "vendor central market scenario with broad net-zero alignment claim",
+      "must_not_be_mapped_to": ["Swiss legal-target compliance proof", "probability"]
+    },
+    "Low": {
+      "interpretation": "slower decarbonisation with lower aggregate demand",
+      "must_not_be_mapped_to": ["slow FMV scenario without an approved crosswalk", "probability"]
+    },
+    "Delayed Transition": {
+      "interpretation": "slower heat electrification and emissions abatement under a distinct transition storyline",
+      "must_not_be_mapped_to": ["Low", "slow FMV scenario", "probability"]
+    }
+  },
+  "weather_semantics": {
+    "interpretation": "conditional physical weather patterns used by BID3, not delivery-calendar timestamps",
+    "vendor_aggregation": "five-pattern average and range where documented",
+    "probability_weights_authorized": false,
+    "utc_timestamp_synthesis_authorized": false,
+    "dst_mapping_authorized": false
+  },
+  "swiss_policy_crosswalk": {
+    "public_target": {
+      "delivery_year": 2035,
+      "target_twh": 35.0,
+      "scope": "domestic electricity production from renewable energy excluding hydropower",
+      "source": "Swiss Federal Office of Energy monitoring / Energy Act Article 2",
+      "url": "https://pubdb.bfe.admin.ch/en/publication/download/12427"
+    },
+    "federal_act_context_url": "https://www.bfe.admin.ch/bfe/en/home/supply/electricity-supply/federal-act-renewable-electricity-supply.html/",
+    "ep2050_plus_status": "official but no longer adequate for all recent energy-sector developments",
+    "ep2060_url": "https://www.bfe.admin.ch/bfe/en/home/policy/energy-perspectives-2060.html",
+    "official_source_verification_as_of": "2026-08-03",
+    "ep2060_expected_publication": "end_2027",
+    "afry_reconciliation_status": "NO_GO_UNRESOLVED_SEMANTIC_AND_EXECUTION_GAP",
+    "challenge": "AFRY's policy-alignment wording does not demonstrate compliance with the binding 2035 target, and High does not span a faster Swiss renewable build-out.",
+    "required_reconciliation": [
+      "net versus gross production",
+      "behind-the-meter photovoltaic self-consumption",
+      "economic and forced curtailment",
+      "renewable fractions of waste, biomass, Other Res and Other Thermal",
+      "policy cut-off and assumed compliance path"
+    ]
+  },
+  "shaping_admission": {
+    "current_role": "benchmark_and_teacher_candidate_only",
+    "price_level_authority": false,
+    "monthly_level_authority": false,
+    "scenario_mapping_approved": false,
+    "model_input_authorized": false,
+    "production_authorized": false,
+    "permitted_research_uses": [
+      "term-dependent hourly shape diagnostics",
+      "weather-conditional capture and tail diagnostics",
+      "negative-price and daily-spread benchmarks",
+      "policy-compliance shape stress design"
+    ],
+    "prohibited_uses": [
+      "replace EEX monthly solver levels",
+      "assign probabilities to vendor scenarios",
+      "infer UTC, DST or leap timestamps from representative hours",
+      "infer 15-minute shapes from hourly AFRY output alone",
+      "publish raw or derived vendor values to Git or RAG"
+    ]
+  }
+}

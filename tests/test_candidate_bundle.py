@@ -198,9 +198,7 @@ def _fixture(tmp_path: Path) -> tuple[LongTermArtifacts, LoadedInputs, Path]:
         eex_report_path=str(source),
         reference_timestamp=pd.Timestamp("2026-07-13T12:00:00Z"),
         reference_timestamp_is_explicit=True,
-        freshness_reports={
-            "epex_ch": QualityReport("epex_ch", 5, [], [], {"age_days": 0.0})
-        },
+        freshness_reports={"epex_ch": QualityReport("epex_ch", 5, [], [], {"age_days": 0.0})},
         input_source_receipts=receipts,
         config_source_receipt=config_receipt,
         data_root=str(data_dir),
@@ -245,16 +243,12 @@ def test_lt_candidate_is_serialized_only_inside_atomic_staging(tmp_path: Path) -
     quote_snapshot = bundle.path / str(evidence["forward_quote_snapshot"])
     assert pd.read_parquet(quote_snapshot).iloc[0]["product"] == "2027"
     portable_manifest = json.loads(
-        (
-            bundle.path
-            / "manifests"
-            / "production_monthly_curve_manifest_ch.json"
-        ).read_text(encoding="utf-8")
+        (bundle.path / "manifests" / "production_monthly_curve_manifest_ch.json").read_text(
+            encoding="utf-8"
+        )
     )
     portable_source = (
-        bundle.path
-        / "manifests"
-        / portable_manifest["forward_snapshot"]["source_path"]
+        bundle.path / "manifests" / portable_manifest["forward_snapshot"]["source_path"]
     ).resolve()
     assert portable_source.is_relative_to(bundle.path)
     assert portable_source == archive.resolve()
@@ -282,9 +276,7 @@ def _seal_evidence(staging: Path, run_id: str) -> None:
     evidence.mkdir(parents=True, exist_ok=True)
     artifacts: dict[str, EvidenceArtifactInput] = {}
     run = json.loads(
-        (staging / "manifests" / "candidate_run_manifest.json").read_text(
-            encoding="utf-8"
-        )
+        (staging / "manifests" / "candidate_run_manifest.json").read_text(encoding="utf-8")
     )
     config = yaml.safe_load((staging / run["config_path"]).read_text(encoding="utf-8"))
     canonical = active_monthly_curve_config_payload(monthly_solver_settings(config))
@@ -339,9 +331,20 @@ def _seal_evidence(staging: Path, run_id: str) -> None:
 
 def _write_historical_threshold_fixture(path: Path) -> None:
     columns = [
-        "gate_id", "metric", "market", "delivery_bucket", "lookback_start",
-        "lookback_end", "n_snapshots", "min_required_n", "p50", "p90",
-        "p975", "max_observed", "regime_filter", "status",
+        "gate_id",
+        "metric",
+        "market",
+        "delivery_bucket",
+        "lookback_start",
+        "lookback_end",
+        "n_snapshots",
+        "min_required_n",
+        "p50",
+        "p90",
+        "p975",
+        "max_observed",
+        "regime_filter",
+        "status",
     ]
     lines = [",".join(columns)]
     for gate, metric in (
@@ -349,9 +352,7 @@ def _write_historical_threshold_fixture(path: Path) -> None:
         ("residual_vs_implied_comparable_block", "comparable_block_shape_delta_abs_eur_mwh"),
     ):
         for bucket in ["all", *(f"month_{month:02d}" for month in range(1, 13))]:
-            lines.append(
-                f"{gate},{metric},CH,{bucket},,,0,24,,,,,test_fixture,UNSUPPORTED"
-            )
+            lines.append(f"{gate},{metric},CH,{bucket},,,0,24,,,,,test_fixture,UNSUPPORTED")
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -404,20 +405,18 @@ def _bind_pre_run_fixture(
         "run_id": run_id,
         "as_of_utc": run["reference_timestamp"],
         "build_timestamp_utc": run["reference_timestamp"],
+        "run_started_at_utc": run["reference_timestamp"],
         "runtime": {
             "distribution": "fmv-pfc-lt",
             "version": __version__,
             "source_revision": "1" * 40,
         },
         "config": {
-            key: entries["runtime_config"][key]
-            for key in ("path", "sha256", "semantic_sha256")
+            key: entries["runtime_config"][key] for key in ("path", "sha256", "semantic_sha256")
         },
         "input_snapshot": {
             "generation_id": generation_id,
-            "contract_logical_path": (
-                f"snapshots/{generation_id}/lt_input_snapshot.json"
-            ),
+            "contract_logical_path": (f"snapshots/{generation_id}/lt_input_snapshot.json"),
             "contract_sha256": contract.get("sha256", "2" * 64),
             "pointer_logical_path": "views/pfc_lt/current.json",
             "pointer_sha256": pointer.get("sha256", "3" * 64),
@@ -445,9 +444,7 @@ def _bind_pre_run_fixture(
         encoding="utf-8",
     )
     run["pre_run_governance_manifest"] = "manifests/pre_run_governance_manifest.json"
-    run["pre_run_governance_manifest_sha256"] = hashlib.sha256(
-        pre_path.read_bytes()
-    ).hexdigest()
+    run["pre_run_governance_manifest_sha256"] = hashlib.sha256(pre_path.read_bytes()).hexdigest()
     run_path.write_text(json.dumps(run), encoding="utf-8")
 
 
@@ -510,15 +507,16 @@ def test_deterministic_artifact_hash_is_run_and_path_independent(tmp_path: Path)
             )
         )
 
-    assert manifests[0]["deterministic_artifacts"] == manifests[1][
-        "deterministic_artifacts"
-    ]
-    assert manifests[0]["deterministic_artifacts_sha256"] == manifests[1][
-        "deterministic_artifacts_sha256"
-    ]
+    assert manifests[0]["deterministic_artifacts"] == manifests[1]["deterministic_artifacts"]
+    assert (
+        manifests[0]["deterministic_artifacts_sha256"]
+        == manifests[1]["deterministic_artifacts_sha256"]
+    )
 
 
-def test_legacy_external_pointer_is_not_labelled_as_canonical_view(tmp_path: Path) -> None:
+def test_legacy_external_pointer_is_rejected_before_candidate_serialization(
+    tmp_path: Path,
+) -> None:
     long_term, inputs, project = _fixture(tmp_path)
     pointer = tmp_path / "current.json"
     pointer_payload = b'{"schema_version":"lt_data_pointer.v1"}'
@@ -539,20 +537,98 @@ def test_legacy_external_pointer_is_not_labelled_as_canonical_view(tmp_path: Pat
     )
     staging = create_candidate_staging(tmp_path / "releases", run_id="run-001")
 
-    write_long_term_candidate(
-        staging,
-        run_id="run-001",
-        long_term=long_term,
-        inputs=inputs,
-        project_root=project,
-    )
-
-    manifest = json.loads(
-        (staging / "manifests" / "candidate_run_manifest.json").read_text(
-            encoding="utf-8"
+    with pytest.raises(
+        CandidateSerializationError,
+        match="requires an external CAS v2 pointer",
+    ):
+        write_long_term_candidate(
+            staging,
+            run_id="run-001",
+            long_term=long_term,
+            inputs=inputs,
+            project_root=project,
         )
+
+
+def test_external_v2_without_pointer_is_rejected_before_candidate_serialization(
+    tmp_path: Path,
+) -> None:
+    long_term, inputs, project = _fixture(tmp_path)
+    inputs = replace(
+        inputs,
+        data_layout="external_v2",
+        data_generation_id="generation-001",
+        data_pointer_receipt=None,
+        data_pointer_bytes=None,
     )
-    assert manifest["data_root_id"] == "legacy_external_pointer"
+    staging = create_candidate_staging(tmp_path / "releases", run_id="run-001")
+
+    with pytest.raises(
+        CandidateSerializationError,
+        match="external_v2 candidate is missing the governed data pointer",
+    ):
+        write_long_term_candidate(
+            staging,
+            run_id="run-001",
+            long_term=long_term,
+            inputs=inputs,
+            project_root=project,
+        )
+
+
+def test_candidate_rejects_bootstrap_publication_explicitly(tmp_path: Path) -> None:
+    long_term, inputs, project = _fixture(tmp_path)
+
+    def evidence(name: str, payload: bytes) -> tuple[InputSourceReceipt, bytes]:
+        path = tmp_path / name
+        path.write_bytes(payload)
+        return (
+            InputSourceReceipt(
+                role=name,
+                path=str(path.resolve()),
+                logical_path=name,
+                size_bytes=len(payload),
+                sha256=hashlib.sha256(payload).hexdigest(),
+            ),
+            payload,
+        )
+
+    pointer_receipt, pointer_payload = evidence(
+        "current.json",
+        json.dumps({"schema_version": "lt_data_pointer.v2"}).encode("ascii"),
+    )
+    intent_receipt, intent_payload = evidence(
+        "publication_intent.json",
+        json.dumps({"transition_type": "BOOTSTRAP"}).encode("ascii"),
+    )
+    anchor_receipt, anchor_payload = evidence("anchor_receipt.json", b"{}")
+    observation_receipt, observation_payload = evidence("head_observation.json", b"{}")
+    inputs = replace(
+        inputs,
+        data_layout="external_v2",
+        data_generation_id="generation-001",
+        data_pointer_receipt=pointer_receipt,
+        data_pointer_bytes=pointer_payload,
+        data_publication_intent_receipt=intent_receipt,
+        data_publication_intent_bytes=intent_payload,
+        data_publication_anchor_receipt=anchor_receipt,
+        data_publication_anchor_bytes=anchor_payload,
+        data_publication_head_observation_receipt=observation_receipt,
+        data_publication_head_observation_bytes=observation_payload,
+    )
+    staging = create_candidate_staging(tmp_path / "releases", run_id="run-001")
+
+    with pytest.raises(
+        CandidateSerializationError,
+        match="cannot consume a BOOTSTRAP publication",
+    ):
+        write_long_term_candidate(
+            staging,
+            run_id="run-001",
+            long_term=long_term,
+            inputs=inputs,
+            project_root=project,
+        )
 
 
 def test_candidate_blocks_core_input_changed_after_consumption(tmp_path: Path) -> None:

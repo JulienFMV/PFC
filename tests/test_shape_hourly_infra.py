@@ -40,8 +40,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from pfc_shaping.lt.model.shape_hourly import ShapeHourly, _META_SIDECAR_SUFFIX, _meta_path
-
+from pfc_shaping.lt.model.shape_hourly import _META_SIDECAR_SUFFIX, ShapeHourly, _meta_path
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -103,6 +102,37 @@ def test_shape_hourly_apply_clip_then_renormalizes_local_day_mean():
     assert result.max() > 1.5
     assert result.min() < 0.4
     assert abs(float(result.mean()) - 1.0) < 1e-12
+
+
+def test_shape_hourly_horizon_trend_is_constant_within_parent_hour():
+    """Horizon drift belongs to f_H parent hours, never to 15-minute slots."""
+    from pfc_shaping.data.calendar_ch import enrich_15min_index
+
+    sh = ShapeHourly()
+    sh.factors_[("Hiver", "Ouvrable")] = np.ones(24)
+    sh.trend_per_hour_[("Hiver", "Ouvrable")] = np.linspace(-0.05, 0.05, 24)
+
+    timestamps = pd.date_range(
+        "2027-01-15 00:00",
+        periods=96,
+        freq="15min",
+        tz="UTC",
+    )
+    calendar = enrich_15min_index(timestamps)
+    calendar["saison"] = "Hiver"
+    calendar["type_jour"] = "Ouvrable"
+
+    result = sh.apply(
+        timestamps,
+        calendar,
+        reference_date=pd.Timestamp("2024-01-15", tz="UTC"),
+    )
+
+    parent_hour_range = result.groupby(result.index.floor("h")).agg(
+        lambda values: float(values.max() - values.min())
+    )
+    assert float(parent_hour_range.max()) == 0.0
+    assert result.groupby(result.index.floor("h")).first().nunique() > 1
 
 
 # ===========================================================================
@@ -1446,8 +1476,9 @@ def test_baseline_regression(flag):
     ships Lever 2, which introduces a genuine math change under flag=True: the f_H damping
     now splits level + anomaly so the duck curve survives at far horizon. As a result:
 
-    - flag=False (this test): MUST still equal the pre-5bis-A baseline at atol=1e-12, rtol=0.
-      The else-branch in assembler.py executes the legacy single-line damping UNCHANGED.
+    - flag=False (this test): equals the versioned parent-hour-v1 baseline at
+      atol=1e-12, rtol=0.  The historical pre-5bis-A fixture remains preserved;
+      it was superseded only because it encoded quarter-hour horizon leakage in f_H.
     - flag=True: intentionally produces DIFFERENT output (Lever 2 math change). Validated
       by test_f_H_amplitude_preserved_at_M30 (D-A4-6 / SC #3) and will be covered by
       test_flag_on_bowl_baseline (D-A4-9, Plan 05C-03) — a new frozen baseline for flag=ON.
@@ -1465,7 +1496,9 @@ def test_baseline_regression(flag):
     from tests.fixtures._generate_baseline import build_pfc
 
     df = build_pfc(seed=42, flag=flag)
-    baseline = pd.read_parquet(str(_FIXTURES_DIR / "baseline_pfc_seed42.parquet"))
+    baseline = pd.read_parquet(
+        str(_FIXTURES_DIR / "baseline_pfc_seed42_parent_hour_v1.parquet")
+    )
 
     # ── Schema: baseline columns must all be present ──
     # [Rule 1 fix: Phase 5 Plan 05-02 extended build() schema with delta_wv column;

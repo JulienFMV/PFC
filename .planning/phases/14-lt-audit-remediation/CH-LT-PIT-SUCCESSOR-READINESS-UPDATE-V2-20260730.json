@@ -1,0 +1,50 @@
+{
+  "schema_version": "ch_lt_pit_successor_readiness_update.v2",
+  "update_name": "ch_lt_pit_successor_readiness_update_20260730_v2",
+  "base_readiness_contract": {
+    "path": ".planning/phases/14-lt-audit-remediation/CH-LT-PIT-SUCCESSOR-READINESS-CONTRACT-20260729.json",
+    "sha256": "734a7824ec747c829526774b346da441b45fff7cff5c9eb79ffc653ac78c7b8e",
+    "contract_id": "5e655cab1ca090cd067100dc8eb06161811b77991132e7c299883a7eb249e706",
+    "preserved_policy_role": "ALL_POLICIES_PRESERVED_EXCEPT_CANDIDATE_CORE_LIFECYCLE_AND_T057_ACCESS_OBSERVATIONS"
+  },
+  "selected_candidate_core": {
+    "path": ".planning/phases/14-lt-audit-remediation/CH-LT-SUCCESSOR-CANDIDATE-CORE-V2-20260730.json",
+    "sha256": "a2ec1d758043b7ed4bf111e99ef4f87d814ad292b7b3c115c36de30d1da4011e",
+    "core_id": "7042b909a1ca0aeb63f26f76fccdea7256b526651685e4e1db713ca469cc3065"
+  },
+  "lifecycle": {
+    "base_observation_superseded": "successor_candidate_core_state_NOT_AUTHORED",
+    "base_t057_access_observation_superseded": "/holdout_non_consumption/allowed_t057_access=SUPERSESSION_METADATA_ONLY_NO_OUTCOME_OR_SCORE_BYTES",
+    "current_t057_access_observation": "OUTCOME_BLIND_TOMBSTONE_ONLY",
+    "current_candidate_core_state": "AUTHORED_LOCAL_HASH_CLOSED_NOT_EXTERNALLY_FROZEN_NOT_ADMITTED",
+    "candidate_core_is_admitted_successor": false,
+    "admitted_successor_state": "NOT_CREATED",
+    "readiness_complete": false,
+    "successor_creation_authorized": false
+  },
+  "current_requirement_evidence": [
+    {"requirement": "GOVERNED_POINT_IN_TIME_CH_AND_EEX_EVIDENCE", "status": "MISSING", "path": null, "sha256": null},
+    {"requirement": "NATIVE_CH_LAYER_TRUTH_AND_POST_EPISODE_OUTCOMES", "status": "MISSING", "path": null, "sha256": null},
+    {"requirement": "EXACT_ORIGIN_TARGET_MASK_AND_INNER_FOLD_INVENTORIES", "status": "MISSING", "path": null, "sha256": null},
+    {"requirement": "FROZEN_DETERMINISTIC_CANDIDATE_BASELINE_COMPLEXITY_AND_MARKET_GATES", "status": "MISSING", "path": null, "sha256": null},
+    {"requirement": "FROZEN_DEPENDENCE_POWER_AND_MULTIPLICITY_DESIGN", "status": "MISSING", "path": null, "sha256": null},
+    {"requirement": "FROZEN_PROBABILISTIC_SCENARIO_AND_MONTE_CARLO_DESIGN", "status": "MISSING", "path": null, "sha256": null},
+    {"requirement": "FMV_RISK_APPROVED_ECONOMIC_MATERIALITY", "status": "MISSING", "path": null, "sha256": null},
+    {"requirement": "QUALIFIED_CPU_ORACLE_AND_CPU_GPU_RUNTIME_PARITY", "status": "MISSING", "path": null, "sha256": null},
+    {"requirement": "INDEPENDENT_SECURITY_ITOPS_AND_QUANT_REVIEWS", "status": "MISSING", "path": null, "sha256": null},
+    {"requirement": "EXTERNAL_ADMISSION_ENVELOPE_AND_ONE_SHOT_LEDGER", "status": "MISSING", "path": null, "sha256": null}
+  ],
+  "legacy_t057_policy": {
+    "outcome_metadata_exposure_acknowledged": true,
+    "legacy_t057_confirmation_reuse": "PERMANENTLY_FORBIDDEN",
+    "selected_core_access": "OUTCOME_BLIND_TOMBSTONE_ONLY",
+    "new_independent_holdout_required": true,
+    "future_holdout_consumed_by_selected_core": false,
+    "t057_consumed_by_selected_core": false
+  },
+  "scientific_admission": false,
+  "execution_authorized": false,
+  "production_authorization": false,
+  "promotion_gate": false,
+  "readiness_id": "8825f83e8a190198d909c85eda8142b868e937969eb29c07702c0b51493647f4"
+}

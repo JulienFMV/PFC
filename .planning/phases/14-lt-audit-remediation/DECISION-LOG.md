@@ -3,6 +3,2275 @@
 Append-only. New decisions must preserve the fields: decision, reason,
 rejected alternatives, invariants not to break.
 
+## D-20260811-301 - Close LSEG known-at code blockers at `5bb89a6`; require real DEV receipt
+
+Status: FINAL for the functional follow-up review of LSEG DEV commit
+`5bb89a6c1a3ff82704877f1daa07ea97da7aeef0`.
+
+Decision:
+
+- Accept `5bb89a6` as closing the functional code blockers recorded in
+  D-20260811-300. Companion value/metadata responses are now written together
+  when either changes; `source_pull_run_id` and the common capture timestamp
+  are preserved in Bronze; Silver supports exact-capture and backward as-of
+  metadata association; duplicate vintages select one coherent evidence row;
+  curve-summary metadata is no longer treated as point-level actual
+  availability; and validation enforces complete vendor attribution for
+  forecast curves plus timestamp/source coherence.
+- Move LSEG from `NO_GO_PROD_CODE_GAP` to
+  `CODE_GO_PENDING_REAL_DEV_REBUILD_AND_RECEIPT`. Do not promote merely from
+  this source review. Require the clean DEV output to pass the committed
+  post-backfill validation with `fail_on_error=true` and zero failed checks.
+- Treat the remaining Silver actuals placeholder as non-blocking debt: landing
+  still parses the LSEG `2000-01-01` actuals `forecastDate` into
+  `source_timestamp`, although comments say actuals remain null. Gold
+  normalizes the placeholder to null and group-aware validation protects the
+  modeling fact, but Silver metrics based only on nullness can misclassify
+  actual rows as forecasts. Normalize the placeholder earlier when convenient.
+
+Reason:
+
+The revised pull makes companion landing deterministic at measure-capture
+grain and updates response state only after both files have been written. The
+Silver association prioritizes exact `source_pull_run_id`, otherwise selects
+the latest compatible metadata capture not later than the value capture. The
+vintage collapse now ranks complete rows instead of aggregating provenance
+fields independently. Forecast coverage must be 100% vendor-backed per curve;
+vendor known-at must equal vendor update; vendor update cannot exceed FMV pull
+by more than five minutes; and actual Gold rows must remain pipeline fallback
+with no vendor point timestamp.
+
+All 47 ordinary notebook cells pass read-only AST parsing. GitHub runs
+`31503992225` and `31503992147` are green, but still prove bundle deployment
+and YAML lint only, not business-row execution.
+
+Rejected alternatives:
+
+- Keep reopening the already corrected source-modeling design without
+  contradictory evidence.
+- Promote directly because the workflows are green.
+- Treat the Silver actual placeholder/comment mismatch as a Gold PIT blocker.
+- Start Databricks compute for a source-code follow-up review.
+
+Invariants not to break:
+
+- Forecast vintages used by the PFC must be filtered by their governed
+  known-at timestamp at each model origin.
+- Actual outcomes and lagged actual features must retain explicit FMV
+  availability semantics; curve-summary update time remains lineage only.
+- LSEG remains an independent benchmark/teacher candidate and cannot replace
+  the CH EEX-constrained monthly solver level.
+- Production admission requires a real commit-bound DEV validation receipt and
+  the independently governed model-evidence gates.
+
+## D-20260811-300 - Accept LSEG vendor metadata ingestion but reject non-atomic known-at attribution
+
+Status: FINAL for the functional review of LSEG DEV commit `e3bd1974`.
+
+Decision:
+
+- Accept `e3bd19746abd69b98a001d1f365ca56754f16950` as a material
+  remediation: it calls the documented forecast-list and curve-summary
+  endpoints, retains `lastUpdateTime`, publishes the provenance through
+  Bronze, Silver and the Gold vintage fact, and adds contract checks.
+- Keep LSEG at `NO_GO_PROD` for point-in-time model use. The pull notebook
+  hashes and suppresses unchanged `curve_values` and metadata responses
+  independently, while Silver joins them only inside the same landing
+  `_run_id`. A changed value with unchanged metadata therefore falls back to
+  pipeline timing, and a metadata-only change cannot enrich an existing value
+  vintage. The source pull `run_id` exists in the raw envelope but is not
+  retained as a Bronze point capture key.
+- Require either an atomic per-curve source capture that always lands value
+  and companion metadata together, or an as-of metadata join from the durable
+  Bronze metadata history using matching curve/scenario/forecast identity and
+  `metadata.pull_ts_utc <= value.pull_ts_utc`. A landing notebook run ID is not
+  a source-capture identity.
+- Do not interpret `CurveSummary/Values.lastUpdateTime` as the availability
+  timestamp of every historical actual point. The bundled Swagger describes
+  it as the last update time of the curve summary. Actual points must use an
+  explicit FMV first-seen basis unless a point-level vendor timestamp exists.
+- Keep timestamp, source label and availability flag as one coherent evidence
+  tuple when collapsing duplicate value vintages. Do not independently take
+  minimum known-at, minimum vendor timestamp and maximum source rank.
+- Require validation of vendor-metadata coverage for forecast groups and the
+  invariants `KnownAtTimestampUtc = VendorUpdatedTimestampUtc` for vendor
+  evidence and `VendorUpdatedTimestampUtc <= PullTimestampUtc` subject only to
+  a documented clock tolerance.
+
+Reason:
+
+The code parses and propagates the intended vendor field, and all 47 ordinary
+Python notebook cells pass read-only AST parsing. However, response-level
+deduplication has separate state keys per payload kind, so companion payloads
+are not guaranteed to be written in the same pull. The downstream equality
+join on landing `_run_id` therefore makes vendor attribution depend on which
+independent response happened to change. The post-backfill validation allows
+`pipeline_fallback` and does not enforce vendor coverage or temporal
+coherence, so it can pass while this failure is widespread. GitHub runs
+`31498365811` and `31498365873` succeeded, but they deployed the bundle and
+linted YAML only; they did not execute the data pipeline.
+
+Rejected alternatives:
+
+- Promote because `lastUpdateTime` now exists in Gold.
+- Assume independently hash-suppressed value and metadata payloads always
+  coexist in one landing run.
+- Use a curve-level actuals summary timestamp as point-level availability.
+- Accept a validation that permits 100% `pipeline_fallback` for forecasts.
+- Start Databricks compute for this source-code audit.
+
+Invariants not to break:
+
+- LSEG remains benchmark/teacher-candidate evidence and never overrides the
+  CH EEX-constrained monthly solver level.
+- Backtests may use only evidence available by the origin; vendor timestamps,
+  FMV first-seen timestamps and unknown historical availability must remain
+  distinguishable.
+- No inferred historical vendor update chronology may be manufactured from a
+  current curve-summary timestamp.
+- Production admission still requires a real DEV rebuild and bounded
+  validation receipt tied to the producer commit.
+
+## D-20260811-299 - Accept ENTSO-E DEV remediation only as partial; require governed rebuild and executable receipt
+
+Status: FINAL for the 2026-08-11 GitHub DEV code review.
+
+Decision:
+
+- Accept commit `8549319ff944bfcf2e8123b05907ac025a8f23b8` as a
+  material partial remediation: it carries source-series identity, interval
+  start, native resolution and first/last-seen timestamps through the curated
+  layers, and extends dense checks to Swiss NTC and physical flows.
+- Keep ENTSO-E at `NO_GO_PROD`. Existing DEV Delta tables are not migrated
+  safely by the committed job: several new Bronze/Silver columns and the two
+  new Gold dimension columns are absent from the ALTER path; `mode=full` does
+  not set `overwrite_silver=true`; and the existing Auto Loader checkpoint
+  does not prove that already processed XML is replayed.
+- Require a one-off, explicit and idempotent DEV migration/rebuild from the
+  retained raw XML, followed by `90_post_backfill_validation` with
+  `fail_on_error=true`. The receipt must identify the producer commit, job/run
+  IDs and Delta versions and show zero failed checks.
+- For entity-grain outage/per-unit families, forbid the positional
+  `series_index` fallback as a durable identity. Preserve the ENTSO-E
+  TimeSeries mRID and the registered-resource/asset mRID or EIC separately;
+  fail or quarantine rows where the required stable source identity is absent.
+- Keep LSEG at `NO_GO_PROD`: `origin/dev` is unchanged at
+  `ebc3f23ff0a7e62e65471d861e4be993f35fdde1`, so the vendor
+  `Updated`/`Corrected` and point-in-time blockers from D-20260810-298 remain.
+
+Reason:
+
+The new parser correctly reconstructs left and right interval edges for
+PT15M/PT60M in an independent smoke test, and both modified Python modules
+compile. However, GitHub success covers YAML lint and bundle deployment only;
+it does not execute the pipeline or its validation. The repository's only
+ENTSO-E unit test still fails during collection because its PySpark stub lacks
+`StructType`. Incremental merges cannot safely repair old rows after the key
+and schema changes, and a normal full job does not activate the Silver
+overwrite widget. Promotion would therefore rely on an undocumented manual
+table reset and unverified data state.
+
+Rejected alternatives:
+
+- Promote because the DEV deployment workflow is green.
+- Assume CREATE TABLE IF NOT EXISTS migrates existing Delta schemas.
+- Treat `mode=full` as a complete replay/rebuild despite the independent
+  `overwrite_silver=false` default and existing Auto Loader checkpoint.
+- Use `series_index:N` as a cross-document business identity for outages or
+  production units.
+- Start a Databricks Warehouse for a source-code review. No Databricks SQL or
+  compute was used for this decision.
+
+Invariants not to break:
+
+- The CH monthly solver remains the sole LT monthly-level authority.
+- ENTSO-E and LSEG data must be point-in-time safe before model selection or
+  production admission; backfilled availability must not be invented.
+- LSEG remains an independent benchmark/teacher candidate, never a monthly
+  level authority.
+- Production promotion still requires independent real manifests and a new
+  independently frozen future holdout.
+
+## D-20260810-298 - Block ENTSO-E and LSEG DEV-to-PROD promotion pending curated-grain and PIT receipts
+
+Status: FINAL for the 2026-08-10 read-only DEV promotion audit.
+
+Decision:
+
+- Keep both ENTSO-E and LSEG at `NO_GO_PROD` after auditing the exact DEV
+  commits `55c3c436271d320b771d8a126b284249a878abdc` and
+  `ebc3f23ff0a7e62e65471d861e4be993f35fdde1` plus the 14 deployed DEV table
+  schemas.
+- Require ENTSO-E curated identity to preserve distinct source TimeSeries or
+  resource/event grain. A latest key of `field_name x timestamp` and a Gold
+  `SeriesID` derived only from `field_name` are not admissible for multi-series
+  unit, outage or parallel-category responses.
+- Require `IntervalStartUtc`, `IntervalEndUtc` and native `Resolution` in the
+  ENTSO-E curated contract. The Bronze-only resolution plus a right-edge
+  timestamp is not sufficient for hourly/15-minute and DST-safe modelling.
+- Require a governed point-in-time contract for both sources. ENTSO-E Gold
+  must not substitute latest-observed publication/pull time for first-known
+  time; LSEG must ingest source `Updated`/`Corrected` metadata where available
+  or explicitly mark historical backfills `availability_unknown`.
+- Require final `90_post_backfill_validation` receipts with
+  `fail_on_error=true`, zero failed checks, producer commit, run identity and
+  Delta table versions before PR, staging and immutable release tagging.
+- Keep initial LSEG PROD schedules paused until the first production load and
+  validation are accepted explicitly.
+
+Reason:
+
+The schema surface and configured source coverage are materially improved:
+ENTSO-E now has 22 request groups, all eight directed Swiss borders and strong
+Bronze/Silver lineage, while LSEG exposes the Swiss continuous-forward HPFC
+candidate and both interval start/end. However, the reviewed ENTSO-E Silver
+and Gold contracts discard source-series identity and resolution, LSEG still
+derives known-at from FMV ingest/pull rather than vendor update/correction
+time, and no executable final DEV data-quality receipt was available. GitHub
+success proves YAML/bundle deployment only. The configured Warehouse was
+`STOPPED`; the audit deliberately executed zero SQL statements, started zero
+Warehouses and performed zero Databricks writes.
+
+Rejected alternatives:
+
+- Promote because all expected tables exist or because GitHub Deploy DEV is
+  green.
+- Treat ENTSO-E `createdDateTime` as proven historical availability without a
+  source contract, or use the latest observed timestamp as the vintage
+  known-at time.
+- Collapse unit/outage series by field name and repair them later in the PFC
+  repository.
+- Start the stopped SQL Warehouse merely to complete this audit, or export the
+  full LSEG vintage fact locally.
+- Let a production tag immediately activate the current LSEG schedules.
+
+Canonical local evidence:
+
+- `build/databricks-dev-promotion-audit/2026-08-10/report.html`;
+- `build/databricks-dev-promotion-audit/2026-08-10/findings.json`;
+- sanitized catalog, schema, control-plane and job-visibility receipts in the
+  same directory;
+- structural report verification receipt
+  `report-verification.json` (`PASS_STRUCTURAL_ONLY`; browser QA intentionally
+  not run under workstation policy).
+
+Invariants not to break:
+
+- The monthly CH solver remains the sole level authority; LSEG is an
+  independent benchmark candidate and cannot rewrite EEX-constrained monthly
+  means.
+- ENTSO-E/LSEG evidence cannot unblock modelling until governed real exports
+  and a new independent future holdout exist. T057 remains sealed.
+- Local export remains a separate incremental, immutable and manifest-backed
+  PFC-owned step after source promotion; the data engineer owns lakehouse
+  publication, not workstation snapshots.
+- Databricks cost controls remain fail-closed: never start a stopped Warehouse
+  for inspection without explicit authorization.
+
+## D-20260807-297 - Separate LSEG nominal forecast date from actual availability
+
+Status: FINAL for the current source-contract gap; field mapping pending the
+data engineer.
+
+Decision:
+
+- Accept 2028-12-31 as the current vendor-delivered horizon for Swiss curve
+  `110181967`; do not ask the data engineer to manufacture later values.
+- Supersede D296's description of `ForecastDateTimeUtc` as a sufficient
+  publication/availability timestamp. It is currently mapped directly from
+  LSEG `forecastDate`, while the source UI exposes distinct `Updated` and
+  nullable `Corrected Date` fields that the pipeline does not persist.
+- Require nominal forecast date, source update time, nullable source correction
+  time, FMV pull time and FMV known-at time as separate fields before strict
+  rolling-origin admission.
+- Keep the source lakehouse history complete, but limit the later PFC local
+  export to curve `110181967` and selected origin/windows.
+
+Reason:
+
+The UI shows daily vintages with a nominal forecast date and a later update
+time. The Bronze parser schema contains only `valueDate`, `forecastDate`,
+`value` and `scenarioID`, then maps `forecastDate` to `source_timestamp`.
+Consequently, a historical backtest using `ForecastDateTimeUtc` alone may use
+values before their actual source update or correction time.
+
+Rejected alternatives:
+
+- Treat the 2028 boundary as an ingestion defect after the source UI confirms
+  the same boundary.
+- Use nominal midnight forecast dates as actual availability timestamps.
+- Replace missing update/correction timestamps with guessed times.
+- Export every country and every daily vintage to the workstation merely
+  because the lakehouse retains them.
+
+Invariants not to break:
+
+- Preserve source timestamps separately and retain genuine null corrections.
+- `KnownAtTimestampUtc` remains FMV ingest/pull evidence, not retroactive proof
+  that a backfilled forecast was available to FMV at its nominal origin.
+- No strict PIT benchmark, teacher use or model selection may precede the
+  corrected source timestamp mapping.
+- LSEG remains unable to override hard CH EEX monthly constraints or solver
+  monthly-level authority.
+
+## D-20260807-296 - Confirm the Swiss LSEG HPFC and identify the missing PROD release
+
+Status: FINAL for repository identity and release-state analysis; PROD data
+qualification pending.
+
+Decision:
+
+- Confirm LSEG measure `110181967`,
+  `ContPwrPriceForward.forward.Price`, as the Swiss hourly continuous-forward
+  price curve in EUR/MWh and the primary independent vendor HPFC benchmark.
+- Supersede D295's pending CH-identity condition with repository-backed source
+  identity. Retain every other D295 restriction on independence, cost and
+  monthly-level authority.
+- Attribute the absence from `prd` to an incomplete release path: `main` is 44
+  commits behind `dev`, no `dev -> main` PR or release tag exists, and no PROD
+  deployment has run.
+- Require repository-owned promotion, governed PROD backfill and post-backfill
+  validation before local export or model comparison.
+
+Reason:
+
+The shared LSEG configuration identifies the curve's country, zone, market,
+unit, cadence, issue frequency, provider and four-year request window. Git and
+GitHub show successful DEV deployment at the current `dev` head but no release
+tag or PROD workflow. Databricks independently shows the expected seven-table
+LSEG stack only in `dev` and no LSEG/Refinitiv object among 406 visible `prd`
+objects.
+
+Rejected alternatives:
+
+- Continue treating Swiss curve identity as unknown after reading its source
+  configuration.
+- Infer that access permissions alone explain the PROD absence.
+- Deploy or backfill PROD from the PFC workstation.
+- Treat the 16-day PMT spot forecast or EPEX actuals as the LT HPFC benchmark.
+
+Invariants not to break:
+
+- LSEG remains benchmark-only on evaluation origins/targets used to establish
+  independent performance; teacher/input use requires disjoint evidence.
+- `ForecastDateTimeUtc` is vendor publication time, whereas
+  `KnownAtTimestampUtc` is local ingest/pull availability. Do not conflate them.
+- Actual delivery currently ending 2028-12-31 does not become full N+3 merely
+  because the request window is configured for four years.
+- Hard CH EEX constraints and the monthly solver remain the sole monthly-level
+  authority.
+
+## D-20260807-295 - Keep LSEG as a structurally qualified LT benchmark candidate
+
+Status: FINAL for metadata discovery; content qualification pending.
+
+Decision:
+
+- Recognize the LSEG `dev.gold` dimension/latest/vintage set as a strong
+  structural candidate for an independent LT curve benchmark.
+- Do not call it a Swiss PFC/HPFC until the 17-row dimension proves CH power
+  price identity, EUR/MWh, cadence and timezone.
+- If confirmed, use it first as an independent benchmark. It cannot be both a
+  model input/teacher and an independent benchmark on the same evaluation
+  origins and targets.
+- Keep the EEX-constrained monthly solver as the sole monthly-level authority.
+- Do not scan or export the unpartitioned 11.94 GB vintage fact before a
+  curve/window filter and cost-qualified access plan exist.
+
+Reason:
+
+Control-plane statistics show 17 LSEG curves over nine countries, latest
+delivery points through 2028-12-31 and a versioned fact with forecast, pull and
+known-at timestamps. This is the right technical shape for rolling-origin
+comparison. However, the Warehouse was stopped, category values were not
+opened, the full N+3 horizon is not covered, and known-at history begins only
+on 2026-06-15 despite forecast dates starting in 2022.
+
+Rejected alternatives:
+
+- Start the stopped Warehouse merely to inspect 17 dimension rows.
+- Infer CH/HPFC identity from table names or row counts.
+- Export the full vintage table before filtering and cost qualification.
+- Use LSEG simultaneously to train and independently score the same model
+  periods.
+
+Invariants not to break:
+
+- LSEG values must not overwrite hard CH EEX monthly constraints.
+- Historical `ForecastDateTimeUtc` is not proven PIT availability merely
+  because it predates the 2026 backfill; source semantics must justify it.
+- Any local LSEG snapshot requires confirmed contractual export rights and an
+  immutable, incremental, source-traceable capture.
+- Modelling remains paused under the existing governed EEX/ENTSO-E and future
+  holdout gate.
+
+## D-20260806-294 - Ground the data-engineer request in the lakehouse repositories
+
+Status: FINAL - repository analysis complete; Databricks content validation is
+still pending.
+
+Decision:
+
+- Use the `dev` branches of `epi-lakehouse`, `sdl-lakehouse` and
+  `opendata-lakehouse` as implementation context for the data-engineer request.
+- Ask for additive repository changes against the existing medallion pipelines,
+  not a workstation snapshot or an abstract package built by the data engineer.
+- Keep local reconstruction selective: reuse existing local inputs, wait for
+  validated Gold where possible, and acquire an external official source only
+  for a demonstrated gap.
+- The PFC team remains responsible for the later read-only immutable Parquet
+  export to `C:`.
+
+Reason:
+
+The repositories show that Euler spot already exists in hourly Silver but is
+aggregated to monthly Gold; SDL covers tenders only; and ENTSO-E `dev` already
+implements 22 request groups but still loses resolution and some PIT/source
+identity before Gold. Weather and Swissgrid balancing belong to repositories or
+jobs not yet identified. A repository-grounded delta is clearer and smaller
+than the previous generic delivery contract.
+
+Rejected alternatives:
+
+- Ask the data engineer to create the local Parquet snapshot.
+- Rebuild all Databricks and official-source data locally while Gold work is in
+  progress.
+- Treat the existence of notebook code as proof that backfill, coverage,
+  freshness and PIT fitness are already valid.
+- Request new weather or balancing pipelines without first locating their
+  actual repository/job owner.
+
+Invariants not to break:
+
+- No PFC-side Databricks write, Warehouse start or unbounded scan.
+- D287 modelling pause remains active until real Gold content passes coverage,
+  temporal, semantic, vintage and PIT gates.
+- The monthly BASE solver remains sole level authority; T057 stays sealed;
+  AFRY/OMPEX remain benchmark-only; LT stays independent from CT; no `H:` path
+  is accessed.
+
+## D-20260806-293 - Keep Gold publication and local export ownership separate
+
+Status: FINAL - ownership clarified; local bootstrap may proceed; final model
+admission remains pending.
+
+Decision:
+
+- The data engineer owns publication, backfill and documentation of the
+  governed `prd.gold` surfaces. The data engineer must not create or deposit
+  files on the workstation `C:` drive.
+- The PFC team owns the later selective read-only extraction, immutable
+  Parquet snapshot, manifest, hashes and all local profiling under
+  `build/databricks-exports/<snapshot_id>`.
+- Permit an interim local bootstrap for mapping, schema adapters, calendar
+  handling, data-quality code and exploratory feature engineering. Reuse the
+  existing local EEX Databricks snapshot and existing ENTSO-E/EPEX/hydro files
+  before acquiring anything else. Mark legacy or incomplete inputs
+  `PROVISIONAL_ENGINEERING_ONLY`.
+- Acquire external official data only for a demonstrated gap or source
+  reconciliation. Do not mass-download a second copy of data expected from
+  Gold and do not repeatedly scan Databricks.
+- Supersede the ten-artifact D292 package inventory with sixteen mandatory
+  Parquet artifacts and four mandatory companion files. Resolution history,
+  zone/EIC history, per-series quality, family inventory, gaps, source
+  reconciliation and exclusions are now part of the immutable intake. Gap and
+  exclusion Parquets may validly contain zero rows while retaining their
+  schema.
+
+Reason:
+
+The earlier wording incorrectly made the data engineer responsible for a file
+on the local workstation. It also allowed a structurally valid package that
+could not prove ENTSO-E cadence, zone history, family coverage, gaps or
+exclusions. At the same time, rebuilding every source immediately would
+duplicate existing local evidence, create avoidable Databricks cost and mix
+provisional sources with the future governed truth.
+
+Rejected alternatives:
+
+- Ask the data engineer to write or manage the local `C:` snapshot.
+- Wait idly for every Gold table before developing any ingestion or quality
+  code.
+- Rebuild the complete source universe from Databricks and public APIs before
+  checking what already exists locally.
+- Treat legacy local ENTSO-E/EPEX/hydro data as final PIT calibration or model
+  selection evidence.
+- Force a fake row into an otherwise empty gap or exclusion report.
+
+Verification:
+
+- corrected data-engineer and ENTSO-E Gold-publication requests are bound by
+  the local intake contract;
+- the D293 intake contract validates sixteen Parquet artifacts and four
+  companions, including valid empty gap/exclusion reports;
+- targeted request, cost-preflight and Gold-intake matrix: `78 passed`;
+- Ruff format/check: pass;
+- Databricks statements, business rows, Warehouse starts and writes in D293:
+  `0/0/0/0`.
+
+Invariants not to break:
+
+- D287 modelling pause remains active. Provisional local inputs can advance
+  engineering but cannot authorize calibration, model selection, OMPEX
+  superiority, promotion or production.
+- Gold remains the final consumption contract; Silver remains a diagnostic and
+  reconciliation layer.
+- The monthly BASE solver remains sole level authority; hourly and
+  quarter-hourly features must remain zero-mean within the solver month.
+- T057 stays sealed, AFRY/OMPEX remain benchmark-only, LT remains independent
+  from CT and no `H:` path is accessed.
+
+## D-20260806-292 - Admit one immutable Gold export locally before profiling
+
+Status: FINAL - integrity gate ready; real Gold export remains pending.
+
+Decision:
+
+- Require one direct child of `build/databricks-exports/<snapshot_id>` with an
+  exact content-addressed manifest, `cost_receipt.json`,
+  `source_semantics.md` and ten Parquet artifacts bound to the D291
+  `prd.gold` consumption surfaces.
+- Reject Silver substitution, missing or extra files, path drift, hardlinks,
+  byte tampering, non-canonical snapshot identity, false row/column/row-group
+  counts and Parquet schema drift.
+- Verify large artifacts with streaming SHA-256 and inspect only Parquet
+  footers. Do not decode business-value columns during this integrity stage.
+- Treat successful integrity as a prerequisite for later semantic, temporal,
+  PIT and content-quality gates. It grants no model, selection, candidate,
+  OMPEX-superiority, promotion or production authority.
+
+Reason:
+
+The D291 Gold-first decision is not enforceable if the future local export can
+silently omit a family, substitute Silver, change after delivery or carry a
+manifest that disagrees with the actual Parquet footer. Byte and structural
+integrity are stable checks that can be prepared without Databricks access or
+business values.
+
+Rejected alternatives:
+
+- Accept an arbitrary folder or a free-form data-engineer file list.
+- Trust declared hashes, row counts or schemas without recomputing them.
+- Decode all Parquet values merely to establish package integrity.
+- Admit `dev` or Silver artifacts as the final PFC consumption snapshot.
+- Treat a valid export container as evidence of PIT safety or predictive value.
+
+Verification:
+
+- focused adversarial D292 roast: `29 passed in 2.46s`;
+- D289-D292 Databricks contract matrix: `76 passed in 2.47s`;
+- LT/CT import boundary: `17 passed, 1 skipped in 6.31s`;
+- Ruff format/check and Python compilation: pass;
+- contract raw/content SHA-256:
+  `5153a3a7398352b0d76042990a7d02d731f9999ac8eef7a716ed6ea5fbd95f91` /
+  `1235c2cb9cc15750d2bcbe693e414928b9fa9d9b99dc1d51b8c8b0bd88db8522`;
+- validator/tests/operational-document SHA-256:
+  `af247f3c6239198f2fbeba8dcdf20fa813c7818deb19a998ebc67e18d1e02f5e` /
+  `e6ff28a9ddee4d6ae445fda690f97ef8365751f3cd6a07ede3f3092459bfe150` /
+  `2f65297db304a9a910d5c853002a1616a354dd8d8430c0460b593d31e82e14a6`;
+- final synthetic fixture residue count: `0`;
+- Databricks connections/statements/business rows/Warehouse starts/writes,
+  network calls and `H:` accesses in D292: all zero.
+
+Invariants not to break:
+
+- D287 modelling pause and D288 cost gate remain active. D292 cannot authorize
+  a profile query, export, model run or production action.
+- Gold remains the final consumption contract; Silver is reconciliation-only.
+- Real content must still pass semantic, unit/sign, coverage, revision and PIT
+  gates after export integrity succeeds.
+- The monthly BASE solver remains sole level authority; T057 stays sealed,
+  AFRY/OMPEX remain benchmark-only and LT stays independent from CT.
+
+## D-20260806-291 - Make Gold the consumption contract and resolve NTC sourcing
+
+Status: FINAL - Gold-first contract frozen; content export remains pending.
+
+Decision:
+
+- Use Silver only to audit source fidelity. Require governed Gold surfaces,
+  followed by one immutable Parquet snapshot under repo-local
+  `build/databricks-exports/<snapshot_id>` for all iterative PFC work.
+- Stop delegating known catalog conclusions back to the data engineer. The
+  control-plane inventory already proves no interval spot in `prd.gold`, no
+  explicit forecast issue time in weather Gold, material loss of Swissgrid
+  components between Silver and Gold, and ENTSO-E Gold only in `dev`.
+- Treat Swissgrid month-ahead, D-2/day-ahead and intraday NTC as distinct
+  products and reconcile each with ENTSO-E by border, direction, target
+  interval, publication timestamp, document and revision.
+- Admit the user-provided `NTC-202609.pdf` only as a versioned month-ahead
+  Swissgrid source for CH-DE and CH-AT. It cannot stand in for CH-FR, CH-IT,
+  D-2 or intraday NTC.
+- Rebind the D290 value-blind cost-preflight validator to the D291 Gold/NTC
+  request. The prior D290 request binding is historical and must fail closed.
+
+Reason:
+
+The earlier request asked the data engineer to classify families whose catalog
+status was already known and did not state the final Gold consumption model.
+Swissgrid also states that monthly NTC is indicative, D-2 and intraday are
+separate publications, and CH-IT/IT-CH is published on ENTSO-E. Mixing these
+timeframes would create false capacity histories and point-in-time leakage.
+
+Rejected alternatives:
+
+- Train or iterate directly from Silver exports.
+- Use `dev.gold.factspotpricemonthly` as interval spot truth.
+- Treat the September monthly PDF as the sole NTC authority.
+- Assume ENTSO-E intraday NTC exists because day/month/year-ahead
+  macro-families were observed.
+- Repeatedly scan Databricks during feature engineering instead of exporting
+  one immutable Gold snapshot to `C:`.
+- Leave D290 bound to a superseded request hash.
+
+Verification:
+
+- full visible catalog examined locally: 534 `dev` and 406 `prd` objects;
+- local PDF: 4 pages, 86,483 bytes, SHA-256
+  `3b690c5f281321dd16609e2db168fc67f986d05432b864a82886dd6439b6de36`;
+- Gold/NTC request, ENTSO-E request and source audit SHA-256:
+  `43a838a159267e59eae165eb77a551666b31f0ba7c5b9d5554aa9b9dd7a3f67f` /
+  `288995d5d4abf6b6e6a3fb2e5d055ccd76ba5993dce87ef0a8ffa43238a5a96b` /
+  `7e2499a51a37b274e9d4277a08f3bc0bd055c15c49d69991bd0a9e88bf0fb799`;
+- rebound cost contract raw/content SHA-256:
+  `96051c3843ddea6d9f09a26241767be7453c33c449c04bfd6e34547a7a7efdc9` /
+  `3428e12004eb7ec69f8b600afd557eba9e94923d6bbcedca7c38664e53e03d6c`;
+- request, SQL and preflight-validator roast: `47 passed in 0.81s`;
+- Databricks SQL, business rows, Warehouse starts and writes in D291:
+  `0/0/0/0`.
+
+Invariants not to break:
+
+- D287 modelling pause and D288 cost gate remain active. D290/D291 receipt
+  validation never grants Phase A GO.
+- Gold publication does not grant PIT or model-input authority; exported
+  vintages, mappings, gaps and reconciliations must pass local gates.
+- The monthly BASE solver remains sole level authority; NTC, weather,
+  Swissgrid and ENTSO-E variables remain zero-mean shape candidates.
+- T057 remains sealed, AFRY/OMPEX remain benchmark-only, LT stays independent
+  from CT and no `H:` path is accessed.
+
+## D-20260806-290 - Validate the cost preflight receipt fail-closed
+
+Status: FINAL - local validator and synthetic proof complete; no execution authority.
+
+Decision:
+
+- Define one content-addressed, value-blind receipt for D288 Phase 0 and bind
+  the enriched data-engineer request plus the four SQL versions qualified by
+  D289. Require four exact source roles, a maximum age of 24 hours and a
+  canonical snapshot ID.
+- Validate Warehouse state without ever starting it, exact zero business
+  profiles/rows/writes/retries, Delta size/file consistency, partition/pruning
+  claims, scan lower/upper bounds and canonical DBU/runtime estimates.
+- Return only three possible integrity verdicts:
+  `READY_FOR_HUMAN_COST_REVIEW_NO_EXECUTION_AUTHORITY`,
+  `STOP_NO_ACTIVE_WAREHOUSE` or `STOP_UNCAPPED_SCAN`. Even `READY` is not a
+  Phase A GO and all model/production authorities remain false.
+- Accept receipt files only below repo-local `build/`, with stable single-link
+  reads, strict duplicate-key rejection and a final TOCTOU reread.
+
+Reason:
+
+A human request alone cannot prevent a stale receipt, substituted query,
+uncapped scan, hidden retry, accidental Warehouse start or false elevation from
+cost review to execution approval. These are stable rules worth automating
+before any remote work is considered.
+
+Rejected alternatives:
+
+- Let a data engineer's free-form note implicitly authorize Phase A.
+- Choose a cost threshold on the user's behalf or encode synthetic DBU values
+  as a real approval.
+- Treat a running Warehouse or capped scan as sufficient GO evidence.
+- Persist Warehouse identifiers or business values in the proof.
+
+Verification:
+
+- focused mutation roast: `35 passed`;
+- adjacent request/SQL/LT-boundary matrix: `63 passed, 1 skipped`;
+- LT package boundary: `26 passed`;
+- Ruff format/check and Python compilation: pass;
+- deterministic synthetic materializer replay count: `2`;
+- contract raw/content SHA-256:
+  `74111f4e1e3cf3d3e9843b2b3300517fb8647eef908b57d5b22c41b065af160f` /
+  `950ebfaa02a5ebbf81efb7ecfa3b7697684440e9c88c69590cc5bde14e404f14`;
+- validator/tests/materializer SHA-256:
+  `21d8b1f7eb6c7e1946da6271acdadec81fa29fe6202534a8331f187ce417aafc` /
+  `a1283d3dd92532fbe037f5a6cff17eb4377bdf6429cebab8af41dba69b35041b` /
+  `0ca51160cf1fa06048d182519f11d4c1f2018a4f1e83d7c81ae6b84bb124816b`;
+- proof/ready-assessment content IDs:
+  `e3d3d7643bce35137cd8f9dd1c537e4d640021ba7fe86da59ed9f577a8f50cfc` /
+  `8082c5f62d456cb3979f3f8e27e0162d4e0d4dc707db89cb70c5b67ac01cfd8a`;
+- proof raw SHA-256:
+  `75966436443bbd1091a32e3e065502e1367c7b6ce5ae8cf6253c1b25685b535c`;
+- D290 Databricks connections/statements, business rows, Warehouse starts,
+  writes, network calls and `H:` accesses: all zero.
+
+Invariants not to break:
+
+- D287 modelling pause and D288 separate-GO phases remain in force. D290
+  validates a receipt but can never issue GO.
+- D289 qualified SQL hashes and the enriched request are exact predecessors;
+  any subsequent edit requires a new contract binding.
+- The D286 CH BASE solver remains sole monthly-level authority; no Databricks
+  candidate gains PIT, predictive, model, candidate or production authority.
+- T057 stays sealed, AFRY/OMPEX remain benchmark-only and LT stays independent
+  from CT.
+
+## D-20260806-289 - Qualify the Databricks profile SQL without compute
+
+Status: FINAL - offline dialect review passed; remote execution remains blocked.
+
+Decision:
+
+- Bind the four prepared profiles to documented Databricks SQL functions and
+  keep them non-authorized until the D288 cost preflight and a later written GO.
+- Check Swissgrid quarter-hour alignment with
+  `PMOD(UNIX_MICROS(ts_start_utc), 900000000)` so the diagnostic is anchored to
+  the UTC epoch and does not depend on the session-local rendering of a
+  `TIMESTAMP`.
+- Count null or non-positive spot frequencies explicitly and return zero,
+  rather than `NULL`, for Swissgrid duplicate diagnostics on an empty source.
+
+Reason:
+
+Databricks documents `MINUTE` and `SECOND` extraction from `TIMESTAMP_LTZ` as
+session-timezone dependent. The previous alignment check was syntactically
+valid but unnecessarily coupled to session configuration. Invalid spot
+frequencies and empty-table duplicate summaries were also silent edge cases.
+
+Rejected alternatives:
+
+- Keep the timezone-dependent extraction because the Warehouse default is
+  normally UTC.
+- Add a `SET TIME ZONE` statement, which would expand the execution surface and
+  still leave the diagnostic dependent on session state.
+- Claim successful Databricks execution or row-level validation from an
+  offline documentation and static-test review.
+
+Verification:
+
+- Databricks SQL, business rows, Warehouse starts and Databricks writes:
+  `0/0/0/0`;
+- combined request and SQL safety roast: `11 passed in 0.65s`;
+- spot/weather/Swissgrid-balancing/Swissgrid-tender SQL SHA-256:
+  `2852484c01335a348475230d5cd9c91c1d6f6ad70edb4dddba93e9c8647656c0` /
+  `8183f34dfd9ce322b0ec4011145d62d4984e3250807c4aa107aec644ebae049c` /
+  `12bfcd9dbd12ac337c0e701116a50d612a8737507f75e487e9e5626101a32be3` /
+  `acfe34cbf60c96ad221be1ec51dde4349164dccdef3d0cf843fa0723fdb814d2`;
+- focused SQL-test SHA-256:
+  `d710e1e35a23075ff64135a59ff566f555f9097ec30d6c5ce2baef3da859d71a`.
+
+Invariants not to break:
+
+- A valid SQL dialect is not a cost authorization or data-quality admission.
+- Modelling remains paused under D287; D288 Phase 0 remains mandatory before
+  any profile execution.
+- The BASE solver remains sole monthly-level authority, T057 stays sealed,
+  AFRY/OMPEX stay benchmark-only, LT remains independent from CT and no `H:`
+  path is accessed.
+
+## D-20260806-288 - Cost-gate the Databricks data-engineer request
+
+Status: FINAL - request frozen; no remote execution authorized.
+
+Decision:
+
+- Insert a mandatory Phase 0 before every spot, weather or Swissgrid business
+  profile. It must return Delta bytes/files, partition columns, estimated bytes
+  read, Warehouse state, timeout and cost ceiling without opening business rows
+  or starting compute.
+- Keep all four prepared profiles explicitly non-authorized until a separate
+  written GO after the Phase 0 receipt. A query whose scanned bytes cannot be
+  estimated or capped must be replaced by a governed platform export under the
+  data team's cost authority.
+- If Phase A is later authorized, allow at most four read-only statements, one
+  execution each, with no automatic retry. Require four untouched Parquet
+  results plus `source_semantics.md`, `cost_receipt.json` and a hash/count/size
+  manifest.
+- Keep the full fact export/backfill in a separate Phase B requiring another
+  GO. Profile results grant descriptive quality only, never PIT, model,
+  selection, promotion or production authority.
+
+Reason:
+
+The previous request bounded returned rows but not scanned bytes. Aggregations
+can still read complete Delta tables despite a final `LIMIT`, creating avoidable
+Warehouse cost and violating the user's explicit no-cost boundary.
+
+Rejected alternatives:
+
+- Treat output row limits as scan-cost controls.
+- Start a stopped Warehouse to collect cost metadata.
+- Retry expensive statements automatically or combine profiling with a full
+  export/backfill.
+- Infer missing source, unit, sign, forecast-origin or revision semantics in
+  the data-engineering batch.
+
+Verification:
+
+- request SHA-256:
+  `5c761405b566c010cfef93f9f8ed362c7da53b11abce87dee662882206c1bdc6`;
+- request-test SHA-256:
+  `1a1b623a65b7445e91f9bdc5f6a10fb2df232298250414fa0c9d370dd93a6826`;
+- combined request and SQL safety roast: `11 passed`;
+- Ruff format/check: pass;
+- Databricks SQL, business rows, Warehouse starts, writes and network calls in
+  D288: `0/0/0/0/0`.
+
+Invariants not to break:
+
+- Modelling remains paused under D287 and the D286 BASE solver remains sole
+  monthly-level authority.
+- No profile file is an execution authorization. Only an explicit post-receipt
+  GO can open Phase A; Phase B requires its own later GO.
+- T057 remains sealed, AFRY/OMPEX remain benchmark-only, LT stays independent
+  from CT and no `H:` path is accessed.
+
+## D-20260806-287 - Pause modelling pending the complete Databricks source audit
+
+Status: FINAL - pause active; control-plane audit completed, content audit pending.
+
+Decision:
+
+- Suspend new model fitting, feature selection, AFRY calibration and OMPEX
+  candidate comparison until Databricks spot, weather, Swissgrid and ENTSO-E
+  inputs are empirically profiled and admitted.
+- Treat table presence and schema compatibility as discovery only, not source,
+  PIT, predictive or model-input authority.
+- Reuse Unity Catalog control-plane metadata while both SQL Warehouses are
+  stopped. Do not start a Warehouse solely for the audit; prepare bounded
+  read-only profiles and run them only under a separately authorized active
+  compute window or from a governed data-engineer export. A result `LIMIT` is
+  not a scan-cost bound: Delta size, partitions and estimated plan must be
+  approved first.
+- Keep reactive-power/node-billing Swissgrid tables outside the baseline PFC.
+  Prioritize control-area balance, balancing energy/prices and reserve tenders.
+
+Reason:
+
+The catalog contains material sources not yet included in the empirical gate:
+granular spot candidates in `dev`, rich weather actual/forecast tables in
+`prd`, and Swissgrid balancing/tender tables in `prd`. Continuing model work
+before checking their history, spatial/product coverage, units, signs,
+revisions, gaps and point-in-time semantics would create avoidable leakage and
+selection risk.
+
+Rejected alternatives:
+
+- Continue fitting with legacy/local substitutes while governed Databricks
+  families remain unqualified.
+- Treat `dev.silver.ge_market_euler_spot` as licensed EPEX truth from its name.
+- Infer weather forecast origin from a string lead time without owner evidence.
+- Treat indicative Swissgrid real-time values as final settlement truth.
+- Start either stopped classic `2X-Small` Warehouse merely to finish discovery.
+
+Verification:
+
+- full visible catalog surface: 534 `dev` and 406 `prd` objects;
+- selected spot/weather schema GETs: `9`;
+- selected Swissgrid schema GETs: `16`;
+- cumulative control-plane GETs for the spot/weather/Swissgrid discovery:
+  `44`, including one Warehouse-status GET;
+- SQL statements, business rows opened, Warehouse starts and Databricks writes:
+  `0/0/0/0`;
+- Swissgrid schema capture SHA-256:
+  `d5c351ad5eae71ba6863105c9c00a2759039bc6bc8a281833729d9ffe78d47b0`;
+- prepared SQL static-roast tests: `5 passed`;
+- technical report/source-matrix SHA-256:
+  `1ed339a20b044dbc6a899fcb92bae6513f61fc1c51ea198996b687ced651c244` /
+  `da96752b4b830a9749086618916e1a45f42baab5c08e638e945f8073d3d08bbf`;
+- spot/weather/Swissgrid-balancing/Swissgrid-tender SQL SHA-256:
+  `8e58b0f151dfa1d2ada5beb925aedd7dffebb886a49f6ee5a1f88e4ed6d974eb` /
+  `8183f34dfd9ce322b0ec4011145d62d4984e3250807c4aa107aec644ebae049c` /
+  `28b672f052d4911dc3306f81d2c035ab9e5fa4fef691b996023c4f067100dcea` /
+  `acfe34cbf60c96ad221be1ec51dde4349164dccdef3d0cf843fa0723fdb814d2`;
+- SQL safety-test SHA-256:
+  `6aa7b95594b1b9358281383b5f645c6b5e242cf3e2c0ded33f8d26ee48baec1f`;
+- profile-first data-engineer request SHA-256:
+  `a7d840eee5a834f6496290f5e0dc866f1209b946686f1c3f9ec5416b070470df`;
+- SQL parser qualification: unavailable locally; no query is represented as
+  Databricks-syntax-qualified until executed in an authorized active window.
+
+Invariants not to break:
+
+- The CH monthly BASE solver remains sole monthly-level authority; any future
+  spot/weather/Swissgrid effect must be zero-mean inside solver month.
+- D286 remains a local current-surface research artifact, not PIT, candidate,
+  superiority, promotion or production evidence.
+- Do not use legacy/synthetic ENTSO-E as empirical substitution. T057 remains
+  sealed, AFRY/OMPEX remain benchmark-only and LT stays independent from CT.
+- Persist any future bounded query result under governed repo-local `build/`
+  and perform subsequent profiling offline.
+
+## D-20260806-286 - Materialize the current CH EEX monthly research solution
+
+Status: FINAL - implemented, materialized locally and roasted.
+
+Decision:
+
+- Bind the exact selected D212 local `prd.gold` normalization, D212 surface
+  audit and D213 horizon audit, then materialize a content-addressed 76-month
+  CH BASE solution from the 2026-08-04 quote surface. Start at 2026-09, the
+  first wholly undelivered month; do not fabricate an LT level for the already
+  delivering August contract.
+- Use only BASE CAL/Q/M quotes as hard monthly constraints. Preserve the exact
+  PEAK CAL/Q/M quotes in a separate shaping sidecar; they may not rewrite
+  monthly BASE means. DAY/WEEK/WEEKEND remain outside monthly authority.
+- Let historical CH quote information enter only through a zero-mean
+  within-parent shape prior. Use no neighbor, ENTSO-E, AFRY or OMPEX level.
+- Persist price-bearing outputs only below ignored `build/`; keep the proof and
+  durable documentation price-free.
+- Grant local research/mechanical repricing evidence only. PIT, prediction,
+  model input, candidate, superiority, promotion and production remain false.
+
+Reason:
+
+D212 proves normalized real quote bytes and D211 proves feasibility, but no
+replayable current monthly solution exists as a governed local research
+artifact. Without it, the project cannot inspect the first actual level layer
+before ENTSO-E shaping arrives.
+
+Rejected alternatives:
+
+- Treat PEAK as a second monthly-level solver or average it into BASE.
+- Use short-tenor products as hard monthly constraints.
+- Fill far-horizon monthly detail with invented direct quotes.
+- Claim PIT or OMPEX superiority from one current local surface.
+
+Verification:
+
+- selected surface: 38 exact quotes, split into 19 BASE and 19 PEAK;
+- monthly output: 76 rows from 2026-09 through 2032-12;
+- exact hard system: 17 independent active constraints and 2 redundant
+  consistency quotes;
+- active hard maximum absolute repricing residual:
+  `4.263256414560601e-14 EUR/MWh`;
+- all displayed BASE quotes remain within the declared `0.01 EUR/MWh`
+  conflict tolerance; the maximum is `0.0017519239474950155 EUR/MWh`;
+- zero-mean prior maximum absolute parent mean is below `1e-10 EUR/MWh`;
+- focused D286 mutation roast: `31 passed`;
+- EEX/D212/D213 matrix including D286: `54 passed`;
+- adjacent monthly solver and LT boundary matrix: `153 passed, 1 skipped`;
+- Ruff and Python compilation: pass;
+- deterministic independent materializer replay count: `2`;
+- contract raw/content SHA-256:
+  `3faa859d50b136d06df29afe02e635662c1641b7321f1bb105dddc3cf95c691a` /
+  `e93e0c31903c93ad6ba382f9f34b05f5842c6f17d7ea0f8fe4e22eaf9eee2ca3`;
+- validator/tests/materializer SHA-256:
+  `2990cbf316fe190192234f4c4e54473b21ce81b80130db8e54be8bbdb445ab6a` /
+  `e10410384d3c84bb3b9fd404caddf2fbed1cb0ea6835e42b5489da57f107daed` /
+  `97f284254da5393968ad67f3005bbeb57c7e96a3de6c01892b48404cba05860b`;
+- bundle/proof/assessment content IDs:
+  `a2e27c4e78515d2e7473769e60d7fa9767756fd2078ce5698388880e3a329a5b` /
+  `5db497336ddc218cb9256809a3f3005fbce7d475cfc2d048004163f461d2c8bd` /
+  `d67c42823fc47242bdadd56dca1c2d6960ddb9c69afbd5f55acb19f5bd8e218b`.
+
+Invariants not to break:
+
+- The one CH monthly BASE solver remains sole level authority; historical
+  information is recentered inside each hard parent.
+- D286 performs no Databricks/network/H access, Warehouse start or remote
+  write, and opens only the selected local D212 artifacts.
+- T057 remains sealed, AFRY/OMPEX remain benchmark-only and LT stays
+  independent from CT.
+
+## D-20260806-285 - Bind the complete ENTSO-E delivery envelope
+
+Decision:
+
+- Define one content-addressed, value-blind envelope for every artifact already
+  required by the data-engineer request, including cadence/zone history, gap,
+  family and source-reconciliation evidence omitted from the D244 core package.
+- Require fixed sibling names, stable single-link files, bounded streaming
+  SHA-256 verification, exact inventory and an explicit zero/non-zero exclusion
+  rule before any Parquet or JSON content is decoded.
+- Grant only local byte-envelope integrity. Source authenticity, schema/data
+  quality, PIT, predictive and model authorities remain false and must be
+  established by the existing downstream gates.
+
+Reason:
+
+D244-D284 cover the normalized core and derived operands, while the delivery
+request also requires several governance sidecars without a single exact
+machine-readable inventory. A delivery could therefore look complete to a
+human while silently omitting cadence, EIC history, gaps or reconciliation.
+
+Rejected alternatives:
+
+- Expand or reinterpret the frozen D244 three-role package in place.
+- Read values while checking whether the delivery is complete.
+- Make `excluded_series.parquet` optional without binding an explicit zero
+  exclusion count.
+- Treat local hashes as source authenticity or model-input evidence.
+
+Verification:
+
+- focused D285 mutation roast: `34 passed`;
+- adjacent D244-D285 matrix: `376 passed`;
+- all current `tests/test_entsoe_*.py`: `563 passed`;
+- Ruff check and format check: pass;
+- deterministic independent materializer replay count: `2`;
+- contract raw/content SHA-256:
+  `231fcda0a3bf0a8257571275ea5a5debfadfb5651edc94920b6a9ddc7bb9fcb4` /
+  `fdad6cecd95b3714521949b0dd2663e616b03f968f9cf6e5f033ec5237e00ea6`;
+- data-engineer request SHA-256:
+  `70d836da1bfe4f830c168be55da3137fb348c7d6c02800a497f955413f19996e`;
+- validator/tests/materializer SHA-256:
+  `010f69a5ce3934898d16bf9b4c4dbeaf0e07ff4339a73a88bf1b02f403d4f554` /
+  `4d5e2b515c6877df2eafbe84803d0bc7a91d9b8115146cd5cf3bb99443f4117e` /
+  `9566dee78748bfa8366ebfa91e51f827c85bf8c578b705286d16d2b000883f7e`;
+- proof/assessment content IDs:
+  `9b0f83b111eab55eb65e77fd340a38b248c882090ab5bbbbe129f58309839f84` /
+  `f1de7175487c9c6787fa830b55f311d1eca5a76e9b1bd89bba681c0b1640e32d`.
+
+Invariants not to break:
+
+- D285 performs no Databricks/network/H access, Warehouse start, remote write
+  or row/value decoding.
+- D244-D284 remain independent fail-closed gates; no predecessor hash or
+  authority is weakened.
+- Monthly solver level authority, T057 sealing and OMPEX post-freeze benchmark
+  status remain unchanged.
+
+## D-20260806-284 - Admit a bounded synthetic Parquet operand package
+
+Decision:
+
+- Add a read-only, synthetic-only adapter from one exact normalized Parquet
+  package to the two canonical-decimal operand artifacts required by D283.
+- Bind every row to the exact D282 assessment and require the grain
+  `role + feature_record_id + target interval`; do not infer roles or physical
+  semantics from names, order or values.
+- Validate stable single-link bytes, manifest hash/size/count declarations,
+  Parquet footer allocation budgets and an exact flat Arrow schema before
+  decoding any column. Binary floating-point value columns are inadmissible.
+- Invoke D283 unchanged and persist only hashes, counts and false authorities
+  in the D284 assessment/proof.
+
+Reason:
+
+D283 proves exact arithmetic on in-memory synthetic mappings but not that a
+future normalized Parquet delivery can cross a bounded filesystem and Arrow
+boundary without type coercion, row substitution or allocation abuse.
+
+Rejected alternatives:
+
+- Read a remote/raw ENTSO-E Parquet directly or let Arrow infer/coerce types.
+- Infer operand role from series names or positional order.
+- Persist operand/output values in the proof.
+- Treat a synthetic adapter pass as real-data, PIT, predictive or model-input
+  authority.
+
+Verification:
+
+- focused D284 mutation roast: `25 passed`;
+- D280/D281/D282/D283/D284 chain: `113 passed`;
+- adjacent D244/D245/D243/D253/D254/D255/D261/D270/D272/D273/D280/D281/
+  D282/D283/D284 matrix: `342 passed`;
+- all current `tests/test_entsoe_*.py`: `529 passed`;
+- Ruff check and format check: pass;
+- deterministic independent materializer replay count: `2`;
+- contract raw/content SHA-256:
+  `58133559b8079b35e244fa31bf7e32dc85d35acb7c16698103715f60feb8a3ae` /
+  `1ebcd75defc4e7641927117a56f19c718fa4278ef9fae2dfc16c735ee8b0635c`;
+- Arrow schema content ID:
+  `ccda708fbdbd7187ca2e8f860f172ce85101d9424ba63840844f79414e9e6d90`;
+- validator/tests/materializer SHA-256:
+  `0ea365f84d60ea6874f75b04c2194c971c659cd47438aa22f5237e8b55e612bf` /
+  `41e4e34a1fdb0f69f4a80316f61bb98a339e2b14cbb1dc980c63e13b03fc5acb` /
+  `11b7d9224c17f370bb899db128d4c2eeda4739437ca2050a36c5d9900557674a`;
+- proof/assessment/D283-output content IDs:
+  `860b652a495089234fbc546fb5743a63f0d6bcc2b8cba45f6a7dee2c974921fd` /
+  `59800e3cbb00f2d0938d1e64dde6278a898e7d387e031efa7145279a3130e0b5` /
+  `4b65a9ca95180dea3d1bcf3b6dbf5c7b8008a057a7d2847d7f14b13db079861d`.
+
+Invariants not to break:
+
+- No Databricks/network/H access, Warehouse start, remote write or real-value
+  read occurs in D284.
+- D281-D283 remain fail-closed predecessors and the D283 decimal engine is not
+  duplicated or weakened.
+- The monthly solver remains sole monthly-level authority; any later admitted
+  effect is zero-mean within solver month. T057 stays sealed and OMPEX remains
+  post-freeze benchmark only.
+
+## D-20260806-283 - Execute synthetic derived arithmetic
+
+Decision:
+
+- Add a synthetic-only arithmetic executor for the first D281/D282 derived
+  feature, load forecast error. It accepts one realized-load artifact and one
+  operational-forecast artifact, both bound to the exact D282 assessment and
+  joined by the exact D281 feature-record hashes.
+- Encode values only as canonical base-10 decimal text or `NULL`; reject binary
+  floats, exponent notation, non-canonical zero, non-finite values, excess
+  scale/precision and implausible magnitude. Execute with decimal precision 34
+  and `ROUND_HALF_EVEN`.
+- Compute exactly `REALIZED_ACTUAL_MINUS_OPERATIONAL_FORECAST`. Preserve
+  `NULL` whenever either operand is `NULL`, canonicalize negative zero to zero,
+  sort output rows by derived record hash and content-address the full output.
+- Revalidate unit, zone, native resolution, target interval, duration, series
+  and record identities against D282. Reject missing, duplicate, orphan,
+  substituted, future-dated or mid-execution-mutated inputs.
+- Persist no operand or output value in the assessment or proof. Commit their
+  exact content only through hashes and counts. Grant no real arithmetic, PIT,
+  predictive, model-input, candidate, promotion or production authority.
+
+Reason:
+
+D281 proves lineage and operand order; D282 proves physical compatibility.
+Neither proves that an implementation actually applies the formula, preserves
+nulls or produces deterministic bytes. D283 closes that implementation gap on
+synthetic values without pretending that real ENTSO-E values or predictive
+usefulness have been validated.
+
+Rejected alternatives:
+
+- Use Python/NumPy binary floats and accept platform-dependent decimal tails.
+- Coalesce a missing operand to zero, forward-fill it or drop the target row.
+- Infer operands from row order or feature names instead of exact record IDs.
+- Persist clear synthetic values in the proof merely to make inspection easy.
+- Let a synthetic arithmetic PASS admit the feature into training or rewrite a
+  solver monthly mean.
+
+Verification:
+
+- focused D283 mutation roast: `30 passed`;
+- D280/D281/D282/D283 chain: `88 passed`;
+- adjacent D244/D245/D243/D253/D254/D255/D261/D270/D272/D273/D280/D281/
+  D282/D283 matrix: `269 passed`;
+- all current `tests/test_entsoe_*.py`: `504 passed`;
+- Ruff check and format check: pass;
+- deterministic independent materializer replay count: `2`;
+- contract raw/content SHA-256:
+  `d0c2ce35c10c30d772f57cccc06c24377161bf8353b65eeadb751bec064370b8` /
+  `92946ffd261fd2724c165e530387a13b12ed5d7b6f24a821f0bcf1c5cc3b5f08`;
+- algorithm content ID:
+  `372ddf109142fc490210c0d09c319a6ecd46383efc348c34fdb760f416907de4`;
+- validator/tests/materializer SHA-256:
+  `4228c242073c3254c884f210acabd0d47a2d641643e1bccc877cd94fe7a4f247` /
+  `b8cd7dd9b6a9c466269593eee6a2ef01082e6bb886c27cdcdd976b843b30709c` /
+  `16023554b6e9a6d075863f37a33739aaed50dcbfa8838153a78f5abca4775cc6`;
+- proof/assessment/output content IDs:
+  `a2304c18e44f785a4f9e66bc200b0c50decb57e9f1646473ee0e25e218b10631` /
+  `217732da8aa26ece2a578985256e3e7020474282b932200c5bac3c1836f32b1f` /
+  `6c715e1c01cf4f7e122694ff8d793391565f99c84f168df55f294c1cefdc7232`.
+
+Invariants not to break:
+
+- D283 accepts only synthetic values and performs zero Databricks/network/H
+  request, Warehouse start, remote write or real-value read.
+- D281 formula/sign/null policy and every D282 physical/content binding remain
+  fail-closed predecessors; D283 cannot reinterpret their failure as a PASS.
+- The proof stores hashes and counts, not operand or output values.
+- Real arithmetic correctness, real PIT, predictive value, model input,
+  selection and production remain unproven until a governed real package and
+  independent frozen holdout exist.
+- Any later admitted forecast-error effect remains zero-mean inside the solver
+  month. The monthly BASE solver remains sole level authority; T057 stays
+  sealed and OMPEX remains post-freeze benchmark only.
+
+## D-20260806-282 - Compose derived-feature physical compatibility
+
+Decision:
+
+- Compose exact D280 physical-selection evidence with exact D281
+  forecast-error lineage. Before composition, D280 must have exactly one
+  blocker, `DERIVED_TRANSFORM_LINEAGE_REQUIRED`; D281 must pass with every
+  authority false.
+- Join each D281 primitive record hash to exactly one D280-selected physical
+  series, then to its exact D272 semantic signature, D253 family/unit and D255
+  effective temporal-zone binding. Orphan, duplicate or substituted joins
+  fail closed.
+- Require distinct `actual_load` and `load_forecast` series, canonical `MW`
+  on both, the same logical bidding zone and complete zone validity over the
+  common target interval. D281 proves the target interval is identical; D280
+  proves that interval equals each series' effective native slot. Their common
+  duration therefore proves the effective cadence matches without resampling.
+- Bind the UTC verification cutoff and all predecessor content IDs in the
+  assessment. Re-read hashes after both predecessor evaluations so an input
+  mutation during composition fails closed.
+- Let the forecast-error output inherit only this synthetic physical profile.
+  Do not open feature or real values, recompute subtraction, assert predictive
+  value or grant model-input authority.
+
+Reason:
+
+D280 identifies physical series but excludes derived records; D281 identifies
+the exact transform operands but deliberately knows nothing about their series
+semantics. Neither predecessor alone prevents subtracting load values from two
+different zones, units or cadence regimes. D282 closes that cross-document join
+without collapsing the independent authority boundaries.
+
+Rejected alternatives:
+
+- Infer zone, unit or cadence from feature names or family labels.
+- Accept any D280 blocker other than the single lineage blocker.
+- Treat equal target duration as cadence evidence without D280's per-series
+  effective-regime validation.
+- Persist clear series/feature identifiers in the proof.
+- Recompute synthetic arithmetic or treat structural compatibility as evidence
+  of predictive improvement.
+
+Verification:
+
+- focused D282 roast: `20 passed`;
+- adjacent D244/D245/D243/D253/D254/D255/D261/D270/D272/D273/D280/D281/D282
+  matrix: `239 passed`;
+- exact ENTSO-E contractual regression matrix through D282: `646 passed`;
+- Ruff check and format check on validator and tests: pass;
+- deterministic replay count: `2`;
+- proof ID:
+  `5961fba69241f0de74d14d3d0db062c03182eeb9b4748a2540f6553c0b9d4092`;
+- assessment content ID:
+  `93968ee86e2351d592cc221341478593e6bd023a181a2a55035371c92cdc5842`;
+- contract raw/content SHA-256:
+  `81158dedb6aaefcfe895590b7a0ac92d94a68c5fa7f4bda5f89f2ae7a163a04d` /
+  `2976562eb360f93da5135d3f542e57aebd0848a9ee692654bab0477b67d9985e`;
+- validator SHA-256:
+  `7f167bd536b08667f7a63dc798d561ab2790a4a711360ee704bc58b8ff01862e`;
+- tests SHA-256:
+  `dcfe7bafbd7b6952c12eee4c168dca9724ca5b2d295d43e3c14f5c64fd03b611`;
+- materializer SHA-256:
+  `a4b6d760b16065202af890a3f62cb30ff35225d54827c6b06ae417680e2504ba`.
+
+Invariants not to break:
+
+- D280 and D281 remain independently replayed predecessors; D282 cannot edit
+  their evidence or reinterpret a predecessor failure as a PASS.
+- Physical compatibility requires exact record, selection, series, signature,
+  family, unit, temporal-zone and effective-cadence joins.
+- D282 performs zero Databricks/network/H request, Warehouse start, remote
+  write or real/feature-value read.
+- Arithmetic correctness, real PIT, predictive value, model input, candidate,
+  promotion and production authorities remain false.
+- Any later derived effect remains shape-only and zero-mean inside each solver
+  month; the monthly BASE solver remains sole level authority.
+
+## D-20260806-281 - Bind lagged ENTSO-E forecast-error lineage
+
+Decision:
+
+- Add a value-free, content-addressed lineage gate for the first supported
+  derived feature: lagged load forecast error with the exact formula
+  `REALIZED_ACTUAL_MINUS_OPERATIONAL_FORECAST`.
+- Bind the output D273 `FORECAST_ERROR` record to one exact `actual_load`
+  `REALIZED_ACTUAL` record and one exact `load_forecast`
+  `OPERATIONAL_FORECAST` record in formula order. Require identical target
+  interval and origin across all three records.
+- Require the output dependency-role order and availability timestamps to
+  identify those exact inputs. Output availability is the later primitive
+  availability; calculation cannot precede it or follow lineage declaration.
+- Preserve nulls, define positive error as actual above forecast, reject
+  missing/duplicate/self dependencies and require every forecast-error record
+  exactly once.
+- Keep semantic unit, zone and effective-cadence binding explicitly unproven
+  until a later D280 composite consumes D281. Do not open or recompute values.
+  D280 therefore continues to block derived model inputs.
+
+Reason:
+
+D273 proves only that two dependency timestamps exist and that the output is
+knowable at origin. It does not identify which actual and forecast records
+created the error, fix operand order or prove that the output lineage was
+declared after both primitives were available. D281 closes that identity and
+chronology gap without pretending to prove physical compatibility or
+arithmetic correctness.
+
+Rejected alternatives:
+
+- Infer forecast-error sign or operand order from a feature name.
+- Reference roles and timestamps without content hashes of the exact records.
+- Allow a forecast-error record without a transform, two transforms for one
+  output, the same input twice or an output depending on itself.
+- Treat zero or another neutral fill as a valid missing-input policy.
+- Self-declare unit/zone/cadence compatibility or actual arithmetic
+  recomputation without composing the physical D280 evidence and real values.
+- Let a structural D281 PASS override D280's derived-feature blocker.
+
+Verification:
+
+- focused D281 roast: `19 passed`;
+- adjacent D244/D245/D243/D253/D254/D255/D261/D270/D272/D273/D280/D281
+  matrix: `219 passed`;
+- Ruff check and format check on validator and tests: pass;
+- deterministic replay count: `2`;
+- proof ID:
+  `7bbeab342f8d687068ec7591c69ad5690f63196e1916dd0d8c68fcb2794b0495`;
+- assessment content ID:
+  `39cc9af0e22ed25bcfa770e50a53ab17ec7960038f51d5446cbf903a273a6033`;
+- contract raw/content SHA-256:
+  `d9157ebce9aaf02950231c2bac21bb28a10ee8577b0450bbbbd6eb8b33447919` /
+  `7f3fdde5c5d5f192cee06b570063173eb4a55344fe2f871a5441bf140cb8c2ac`;
+- validator SHA-256:
+  `f7e77b8cb5809631ac6d59241f0ba0a06a3cfdafd6ced5cfcb6b389a3fea4613`;
+- tests SHA-256:
+  `e1b9882bb1e73e647d31d3a0dc76074bf3b0b7caba2e0af7af3693c7bc0ea281`.
+
+Invariants not to break:
+
+- D281 accepts only D273 metadata and lineage hashes; it never reads a feature
+  value, queries Databricks, starts a Warehouse, writes remotely or accesses
+  `H:`.
+- Formula, operand order, exact input identities, target, origin, dependency
+  availability, missingness and sign convention fail closed.
+- Unit, zone, cadence, arithmetic correctness, real PIT, predictive value,
+  model input, candidate and production authorities remain false.
+- The monthly solver remains sole level authority; any later error feature can
+  only compete as a zero-mean shape after independent rolling-origin evidence.
+
+## D-20260806-280 - Compose ENTSO-E LT model-input admission evidence
+
+Decision:
+
+- Compose the exact D270 cadence-bound D244/D245 package with D253 family
+  coverage, D272 physical-series semantics, D254/D255 temporal coupled zones
+  and D273 feature availability without merging predecessor authority.
+- Require complete native cadence, family/direction/unit coverage, exact
+  physical-series cardinality and every required coupled-zone interval.
+- Select only structurally eligible `REALIZED_ACTUAL`,
+  `OPERATIONAL_FORECAST` and `LAGGED_REALIZED` records, each exactly once and
+  bound to an exact semantic series. Selected targets must be inside the
+  cadence window, align exactly to the effective native grid and have a
+  duration equal to one native slot. Origins cannot follow selection or
+  reference time, and selection cannot predate any predecessor evidence.
+- Keep `FORECAST_ERROR` blocked until a separate content-addressed transform
+  lineage exists. Calendar, climatology and governed scenario shapes remain
+  outside the ENTSO-E physical selection.
+- Persist hashes, counts and blocker codes only. A synthetic PASS grants no
+  real-source, PIT, predictive-value, model-input, candidate or production
+  authority.
+
+Reason:
+
+The predecessor contracts close individual gaps but do not prove that the
+same physical series, semantic signature, zone interval, native grid and
+origin-safe request join without drift. D280 makes that composition explicit
+and fail-closed before any real export can enter feature engineering.
+
+Rejected alternatives:
+
+- Treat independent predecessor PASS results as implicitly joined.
+- Select features by names or families without exact physical-series binding.
+- Allow targets outside the audited cadence window or origins created after
+  selection/reference.
+- Treat a misaligned or wrong-duration target as if family-level cadence were
+  sufficient, or sign a selection before all bound predecessors existed.
+- Materialize forecast errors without separately proven dependency and
+  transform lineage.
+- Interpret synthetic completeness as evidence that real `dev.gold` data are
+  complete, PIT-safe or predictively useful.
+
+Verification:
+
+- focused D280 roast: `19 passed` (16 test functions, including parametrized
+  content-binding cases);
+- adjacent D244/D245/D243/D253/D254/D255/D261/D270/D272/D273/D280 matrix:
+  `200 passed`;
+- exact ENTSO-E contractual regression matrix (27 files, including governed
+  EEX/ENTSO-E acquisition and external-time contracts): `607 passed`;
+- Ruff check and format check on validator and tests: pass;
+- deterministic replay count: `2`;
+- proof ID:
+  `c9821d3666f1f402c1214ad49f62dcb1a26d2661a18e16fd5fd5ce553a129753`;
+- assessment content ID:
+  `f576186cc902aba357e3b223cdde77a554e22192b778ffd60fe37c52dfc77310`;
+- contract raw/content SHA-256:
+  `59e3f61f0cd6f44e7efe0c990eee9834d94fe5b45616af8058bb3da7e1e6d30c` /
+  `20144a9715eb6892756f8648c1e25090d4635247ac9683dd3a8ea896166f7d34`;
+- validator SHA-256:
+  `1a3f26f0697e3652d8827ce25b0c9e49a13a7950cf442e88dac85c974f20fbae`;
+- tests SHA-256:
+  `ece46e36db94491b191afd57e6066bc197155f753a0d38b7f059429ca08c7cfd`.
+
+An intentionally broader text-reference sweep is not D280 admission evidence:
+it reported `1230 passed`, `5 skipped` and `9 failed`, all in AFRY diagnostic
+runtime-location checks or governed snapshot external-publication evidence.
+Those failures neither touched the D280 files nor invalidate the exact green
+ENTSO-E contractual matrix; they remain visible as separate pre-existing
+qualification debt rather than being silently excluded.
+
+Invariants not to break:
+
+- D280 never queries Databricks, starts a Warehouse, writes remotely, opens a
+  real value row or accesses `H:`.
+- Exact D270 package/cadence and D272 dimension bindings remain mandatory; no
+  fuzzy or label-only join is allowed.
+- Monthly effects remain zero-mean inside each solver month and cannot rewrite
+  the CH monthly BASE level authority.
+- Real model-input admission remains false until independently captured real
+  evidence satisfies every gate.
+
+## D-20260806-273 - Enforce PIT-safe ENTSO-E feature roles
+
+Decision:
+
+- Classify every proposed LT ENTSO-E feature row as one of seven explicit
+  information roles: realized actual, operational forecast, forecast error,
+  lagged realized, known calendar, origin-frozen climatology or governed
+  scenario shape.
+- Evaluate only value-free metadata at an exact forecast origin. Require
+  `available_at_utc <= origin_utc`; derived availability must equal the latest
+  dependency availability. Backfills never gain retroactive availability.
+- Require every training target and every lagged target to have ended by the
+  fold origin. For contemporaneous prediction roles, the target cannot start
+  before the origin. This closes relabelling attacks that disguise future
+  rows as training or lagged covariates.
+- Admit operational forecasts structurally only when their issue precedes the
+  origin and target start and the target lies inside their issued horizon.
+  Therefore a short operational forecast cannot directly shape an N+3 target.
+- Admit forecast errors only as lagged/diagnostic information after both the
+  forecast and realized truth are available. Admit climatology only with a
+  fold-specific cutoff strictly before the origin; scenario shape must have
+  been published by the origin.
+- Preserve missing/unknown support as null. Forbid zero and neutral fill.
+  Require every non-calendar effect to remain zero-mean inside each solver
+  month. Classify temporal leakage as `CRITICAL`, other rejected support or
+  policy defects as `HIGH`, and structurally eligible rows as `INFO`.
+
+Reason:
+
+ENTSO-E `latest`, backfilled actuals and revised forecasts can make a historical
+fold look artificially informed. A role-aware availability contract is needed
+before any fundamental feature, feature selection or OMPEX comparison; a
+timestamp being present in a local file is not proof that it was knowable at
+the model origin. The added training, lagged and contemporaneous-target rules
+close three label-based temporal bypasses found during roast.
+
+Rejected alternatives:
+
+- Use the current `latest` snapshot to reconstruct past forecast origins.
+- Treat an actual, forecast error or backfill as a future covariate because its
+  target timestamp matches the PFC grid.
+- Infer historical availability from pull time alone or let later corrections
+  appear available at an earlier origin.
+- Fill absent fundamentals with zero or a neutral number.
+- Let an ENTSO-E shape feature change the solver monthly mean.
+- Treat structural PIT eligibility as proof of real availability, predictive
+  value, model selection or production readiness.
+
+Verification:
+
+- focused D273 role/leakage/missingness matrix: `33 passed`;
+- complete current offline ENTSO-E matrix: `588 passed in 21.03s` with stable
+  receipt `TARGET_EXIT_ZERO_NOT_AUTHORITY`, target/runner exit `0`, complete
+  output, zero failures and zero errors;
+- Ruff on validator and tests: pass;
+- contract file SHA-256:
+  `3cb013cf11ef787538473fdcceef6287259106a4eb7cf97bfba27ef26693dfb6`;
+- contract canonical content ID:
+  `c7826b4ad2fa5cdb6baff5d077f00ee5fd8d98108cebef9920c147d787df2ab0`;
+- validator SHA-256:
+  `89a9d90195db78f5f82ffd715c7e94a41e5eef1ecd177345b601b7eff6dc75b5`;
+- tests SHA-256:
+  `9b7f217ee66121a517f92359e168665a39994e393929b07e8fb3e444ffadccd2`.
+
+Invariants not to break:
+
+- D273 accepts no raw value field and persists only hashed feature identity.
+  It performs zero Databricks/network/H access, Warehouse start, remote write
+  or real-value-row read.
+- Actuals and forecast errors for the same future target remain forbidden.
+  Training and lagged intervals end no later than origin; contemporaneous
+  prediction intervals start no earlier than origin.
+- Native cadence, series semantics, temporal zone, quality and artifact
+  integrity remain independent D243-D272 gates. D273 cannot manufacture them.
+- Real availability, owner semantics, PIT evidence, predictive value, model
+  input, selection, candidate, promotion and production authorities remain
+  false even on structural PASS.
+- The monthly solver remains sole level authority; ENTSO-E layers are
+  zero-mean shape candidates only. LT remains independent of CT.
+
+## D-20260806-272 - Bind physical series IDs to semantic signatures
+
+Decision:
+
+- Add an offline, content-addressed binding from every exact normalized
+  `SeriesID` to one D243 raw semantic signature and its D253 owner-reviewed
+  logical family.
+- Require every base-dimension series exactly once and require the number of
+  bound physical series per mapped signature to equal D243 `series_count`.
+- Recompute each signature from the exact raw `GroupName`, `FieldName`,
+  `DocumentType`, `BusinessType`, `ProcessType`, `PsrType`, `FromZone`,
+  `ToZone` and `Unit`; reject semantic drift, unknown signatures and every
+  non-`MAPPED` disposition.
+- Reconcile the normalized family, logical field, canonical unit, current
+  resolution and directional CH border orientation against D253. Bind the
+  document to exact dimension, inventory and mapping content IDs.
+- Keep the engineer template value-free and deliberately non-admissible.
+  Capture this binding in the same bounded dimension stream so it requires no
+  additional Databricks query.
+
+Reason:
+
+D243 inventories aggregate semantic signatures and D253 maps those signatures
+to logical families, while the D244 package carries physical `SeriesID`
+values. Without an exact per-series join, a temporally correct value could be
+silently assigned to the wrong family. D272 closes that referential-integrity
+gap without opening a value column.
+
+Rejected alternatives:
+
+- Infer a family from a normalized `GroupName` or fuzzy label at feature-build
+  time.
+- Assume one physical series per signature or ignore D243 `series_count`.
+- Join on unit, zone, cadence or field name separately instead of the full raw
+  semantic signature.
+- Grant real coverage, PIT, zone, cadence-package, model or production
+  authority merely because the structural binding validates.
+
+Verification:
+
+- focused D243/D253/D255/D272 matrix: `61 passed`;
+- Ruff on the validator and tests: pass;
+- complete ENTSO-E functional pass before concurrent D273 edits: `555 passed`;
+  its governed execution receipt was intentionally invalidated because the
+  repository identity changed during the run, so it is not cited as stable
+  execution authority;
+- validator SHA-256:
+  `638e454f2fba355d66b043841c505e9b3f76f54a4e800367fd370ec3b941f096`;
+- tests SHA-256:
+  `ffc1c7bc1f0b06bfefd0622fd99a21e07f511ceb789d6aa40beccc954b04a52c`;
+- value-free binding template SHA-256:
+  `9cce2bbc02612797bb46bdfe1664f104ccfe485fe104fe299df9c327aaaefd94`.
+
+Invariants not to break:
+
+- The exact raw semantic tuple and case-sensitive physical `SeriesID` are
+  preserved before normalization; a many-to-one signature remains explicit.
+- Cardinality, unit, resolution, family and border-direction mismatches fail
+  closed. No value column is accepted or read by this validator.
+- D254/D255 temporal zone evidence, D260/D261/D270 effective cadence, D245
+  quality and future PIT feature-role evidence remain independent gates.
+- All real-data, PIT, model-input, candidate-assembly and production
+  authorities remain false. The validator reports zero Databricks request,
+  Warehouse start, remote write and real value row opened.
+- The PFC remains read-only in Databricks and the monthly solver remains the
+  sole monthly level authority.
+
+## D-20260806-271 - Preserve native ENTSO-E cadence and null semantics
+
+Decision:
+
+- Remove every implicit hourly-to-quarter-hourly resample and forward fill
+  from the legacy ENTSO-E API ingest. Normalize timezone and ordering only;
+  keep the exact source observation grid.
+- Preserve source nulls and absent generation technologies instead of
+  encoding them as zero. Reject duplicate timestamps and ambiguous
+  multi-column load responses rather than guessing the last column.
+- Preserve CH-to-neighbour and neighbour-to-CH schedules, physical flows and
+  NTC as separate series. Derive a net or total only when both directions are
+  present at the same timestamp; unmatched timestamps remain null.
+- Refuse an existing legacy cache before any network action. Its rows may have
+  been fabricated by the superseded upsampling path and cannot be distinguished
+  safely without effective cadence evidence. Every future local capture must
+  use a new immutable path.
+- Keep the ingest legacy/local and non-admissible. D260/D261/D270 cadence,
+  lineage, PIT, quality and model gates remain mandatory.
+
+Reason:
+
+The source module still converted any cadence coarser than 15 minutes into
+quarter-hour rows with `forward-fill`, filled absent generation/directions
+with zero, and calculated cross-border nets after replacing the missing side
+with zero. Those transformations create fictitious quarter-hour truth,
+confound missingness with physical zero and bias residual-load, net-import and
+congestion features. They directly contradict the effective-cadence and
+directional-completeness contracts already adopted for the governed path.
+
+Rejected alternatives:
+
+- Keep upsampling because the final PFC grid is 15 minutes.
+- Treat missing renewable output or an unavailable border direction as zero.
+- Infer actual load from the last response column when several columns exist.
+- Merge the fixed capture into the historical cache and assume its old rows
+  are native.
+- Promote the corrected legacy capture without D243/D253/D254/D255/D260/D261/
+  D270 and PIT evidence.
+
+Canonical local evidence:
+
+- current ingest / mutation tests SHA-256:
+  `52da22e3e5b6833f3e7ae17084016c8878f647ebae0d7a211d98d0b17cf460e5` /
+  `e97e459210bbd713ab1be3dc8406286784fe6df4f6d99ffc443f08d6d9ceeb8f`;
+- focused native-cadence/replay/LT contract matrix: `23 passed`; complete
+  offline ENTSO-E matrix: `540 passed`; Ruff passes;
+- D271 API/network requests, Databricks requests, SQL statements, Warehouse
+  starts, Databricks writes, heavy-data writes and real-value rows opened:
+  all zero.
+
+Invariants not to break:
+
+- Historical hourly market or fundamental observations remain hourly truth;
+  the target PFC cadence is not source-data cadence authority.
+- Missing, unavailable and physical zero remain distinct states. Derived
+  two-sided border features require both sides at the same timestamp.
+- A cache with unproven cadence is quarantined by refusal, never silently
+  repaired, merged or admitted.
+- The monthly solver remains the sole monthly-level authority. LT stays
+  independent from CT; T057 remains sealed; AFRY remains a restricted
+  descriptive benchmark/teacher candidate only.
+
+## D-20260806-255 - Bind ENTSO-E series to effective-dated coupled zones
+
+Decision:
+
+- Bind every non-directional coupled-zone series to the exact raw `FromZone`
+  or `ToZone` value captured by D243, the D253 logical family and one D254
+  registry entry covering the complete series interval.
+- Pin each binding document to the exact inventory, family-mapping and
+  zone-registry content IDs. Any change invalidates the binding.
+- Require baseline coverage for day-ahead prices, load actual/forecast,
+  generation actual/forecast and day-ahead/intraday renewable forecasts in
+  `CH`, `DE_LU`, `FR`, `IT_NORTH` and `AT`; require hydro storage in `CH`,
+  `FR`, `IT_NORTH` and `AT`.
+- Keep physical flows, scheduled exchanges and NTC outside this zone binding:
+  they remain governed by D253's explicit border-and-direction matrix.
+- Report absent signatures and temporal gaps without inferring aliases or
+  filling intervals. Owner assertion never grants official-registry, fact,
+  PIT, model or production authority.
+
+Reason:
+
+The 2026-08-03 discovery proves useful macro-families in `dev.gold`, but a
+family name alone does not prove which bidding zone a physical series belongs
+to over time. Current aliases can silently misjoin historical data after a
+zone-code or configuration change. D255 composes the existing exact inventory,
+family mapping and temporal registry into one deterministic join gate while
+remaining offline and value-free.
+
+Rejected alternatives:
+
+- Treat `CH`, `DE`, `FR`, `IT` or `AT` labels as timeless identities.
+- Copy an expected zone into the binding without resolving the raw inventory
+  field through the governed registry.
+- Let one interval cross a zone-code or alias change.
+- Route directional border series through the non-directional zone gate.
+- Consider owner-reviewed structure proof of real row coverage or model value.
+
+Canonical local evidence:
+
+- zone registry / series-zone validator SHA-256:
+  `f4a685d54d20c57a1464ab5497c46841c2f91cba3bed45cb76d2c529250ee624` /
+  `eb1953dc7e44b9b1f8090a33634e66f46bbdce58756ccf6cbc33a4a2178b8dd1`;
+- zone / binding tests SHA-256:
+  `92757274c0c9c30b35b0bcd9a3ca46056c1fb20bfa7fc23049e68408029fcb0f` /
+  `bda28238301dbaed074c8b8f76c786d7ad9841675a774b2943bdcbd4e395cf68`;
+- focused composition matrix: `73 passed`; complete offline ENTSO-E matrix:
+  `520 passed`; Ruff passes;
+- value-free engineer template hashes (README / registry / binding):
+  `edaf09a068267c478fe249c36dbe873d6438b4e85ace39f70038659fb02317c7` /
+  `37565aa6f19b569461f44c7af917a66d18d962e2808e4a47bfecce38b524c591` /
+  `f218bbf486aecd6f4ec025ddd5275bde729dc85f1c399c70d87ecbeb7d6ee745`;
+- Databricks requests, SQL statements, Warehouse starts, writes and opened
+  real rows: zero.
+
+Invariants not to break:
+
+- A raw zone identifier and its validity interval are evidence; a display
+  label is not. Historical registry entries must remain effective-dated.
+- Directional border completeness remains separate and requires both useful
+  directions, except one explicitly signed physical-flow series under D253.
+- Cadence remains series-specific under D260/D261; D255 must not fabricate
+  15-minute history from hourly market truth.
+- The monthly solver remains sole monthly-level authority. LT stays independent
+  from CT; T057 stays sealed; AFRY remains descriptive only.
+
+## D-20260806-270 - Bind effective cadence to the streamed ENTSO-E package
+
+Decision:
+
+- Keep the D244 base package exactly unchanged with its three roles
+  (`series_dimension`, `latest_values`, `vintage_values`). Add cadence as a
+  separately content-addressed `series_resolution_regimes.parquet` sidecar.
+- Bind the sidecar manifest to the exact D244 snapshot ID, base-manifest
+  content ID, D245 quality-context content ID, explicit assessment window and
+  metadata as-of. Reject another snapshot, extra file, altered hash or raised
+  authority before cadence use.
+- Require the complete D245 incremental-quality profile to pass first. Then
+  open only `series_id`, `group_name`, `native_resolution` and
+  `target_ts_utc` in the cadence pass; never decode its numeric `value`
+  columns.
+- Spill only ephemeral repo-local keys/timestamps/regimes to bounded SQLite.
+  Compare sorted observed timestamps with generated piecewise native slots as
+  streams, so memory does not grow with the full expected-timestamp set.
+- Report leading, internal and trailing missing native slots without fill,
+  upsampling or downsampling. Keep the composite synthetic-only until a real
+  independently governed package and sidecars pass every admission gate.
+
+Reason:
+
+D261 made cadence correct at DataFrame level, but D244 and D245 intentionally
+accept an exact three-role Parquet inventory. Adding a fourth file there would
+invalidate their immutable integrity contract, while leaving cadence detached
+would allow a future export to pass quality with one timeless resolution per
+series. A cryptographically bound sidecar plus a streaming composite verifier
+preserves both properties and creates the real-package admission shape without
+opening Databricks or retaining values.
+
+Rejected alternatives:
+
+- Add a fourth artifact directly to the D244 manifest or weaken its exact
+  directory inventory.
+- Store cadence only in the single `native_resolution` dimension column.
+- Run the pandas D261 implementation over a fully materialized real export.
+- Infer cadence transitions from observed timestamp spacing or a Swiss market
+  roadmap.
+- Upsample hourly rows to the 15-minute PFC target grid or fill missing edges.
+- Let a caller assert real/model authority in the synthetic sidecar manifest.
+
+Canonical local evidence:
+
+- contract raw SHA-256 / canonical content ID:
+  `b390cdb3eb19791bd540a07833769fa18f0db3a529c56eed6c05b6567ae508d5` /
+  `db1ffcd92bb3ae720b44da02a6e6f151a630b9e3887bd84902e91cddc3cb717f`;
+- validator / tests / materializer SHA-256:
+  `7f0f34596f040895d9462d41472eae8abcf28cc41d45e7bbed353899fd2ee809` /
+  `05963d99057557821d51eb021795f93e4ee053cb1afa946aa68dff8c92ae12a1` /
+  `f7bf50cc3a2f1a094299c545264e5551227e4a484705f18ef00206a07edb9d8b`;
+- deterministic proof/content ID / manifest SHA-256:
+  `e05afce560c93a7d897c67cd8caa36b04026a950dc1ac03d149e1dc32e4a9018` /
+  `63132ee50ef270582cebb64b80eeed84719c81e25e2b38698865b116bbe25c7a`;
+- proof assessment SHA-256:
+  `68db19407319edb7716e0a9186fa05adccfb2fd08165c176b105e1d2f382bfe4`;
+- focused mutation roast: `12 passed`; final adjacent D244/D245/D261/D270
+  matrix: `70 passed`; Ruff passes;
+- valid proof: 33 series, 33 regimes, 792 expected/observed timestamps, zero
+  missing slots and 69,632 SQLite bytes. The expanded-window mutation reports
+  exactly 66 missing edge slots; two materializations returned the same ID;
+- zero Databricks connections/statements/writes, zero Warehouse starts, zero
+  network/H access and zero opened real rows.
+
+Invariants not to break:
+
+- D244's three-role package remains immutable; cadence is an independently
+  hashed but physically bound sidecar.
+- D245 quality must pass before cadence can pass. Cadence does not supersede
+  family, zone, unit, sign, lineage, revision, PIT or predictive-value gates.
+- Native source cadence is preserved. The 15-minute PFC grid never authorizes
+  fabricated 15-minute source observations.
+- Sidecar, base snapshot, quality context, window and metadata cut-off remain
+  one indivisible evidence set.
+- D270 grants no real-source, owner, PIT, value, model, candidate, promotion or
+  production authority. The monthly solver remains sole level authority;
+  OMPEX remains a post-freeze benchmark only and T057 stays sealed.
+
+## D-20260806-261 - Bind cadence completeness to an explicit UTC window
+
+Decision:
+
+- Supersede D260's use of first/last observed timestamps as the completeness
+  window. Require an immutable left-closed/right-open
+  `[assessment_start_utc, assessment_end_utc)` for every cadence assessment.
+- Require `metadata_as_of_utc >= assessment_end_utc`. Compare the dimension's
+  current resolution with the effective regime at that evidence instant, not
+  with the regime of the last available observation. The as-of instant itself
+  need not lie on a delivery grid.
+- Build every expected native slot over the full requested window. Preserve a
+  physical series with zero observations and report its entire window as
+  missing; reject any observation outside the window.
+- Require owner confirmation no later than the metadata as-of. Reject source
+  locators without a real HTTPS host or with credentials, query parameters or
+  fragments.
+- Keep the algorithm synthetic-only. It grants no real-source, PIT, value,
+  model, candidate, promotion or production authority.
+
+Reason:
+
+D260 correctly modelled cadence transitions per physical series, but it
+derived `minimum_ns` and `maximum_ns` from the observations. Removing leading
+or trailing rows therefore shrank the expected grid and could produce a false
+complete result. It also checked current dimension resolution against the
+last observed regime, which fails when the tail is missing, and required a
+metadata evidence instant to coincide accidentally with a delivery grid.
+Explicit window and as-of inputs close all three paths before any real local
+export is admitted.
+
+Rejected alternatives:
+
+- Continue deriving completeness bounds from observed rows.
+- Require at least one row per series and silently drop entirely absent
+  series from the diagnostic.
+- Infer the requested window from the earliest/latest series jointly.
+- Compare current resolution with the last available row.
+- Round metadata as-of to a delivery grid or accept future owner confirmation.
+- Allow opaque HTTPS query strings as provenance locators.
+
+Canonical local evidence:
+
+- v2 contract raw SHA-256 / canonical content ID:
+  `a661cd047ab498e2286ce4f082bca345b75318a2e94aebf8f54d325279fd0e7d` /
+  `450d3628bf7dc83e16d630fe001709b58561f74bdad66d73b155b199f5d96821`;
+- validator / tests / v2 materializer SHA-256:
+  `8080aa85eeb851fb020ae3c9461a7a289384e1e018072db2f62b662bcf636f25` /
+  `0e4d2556aa38e9ef38512f39868ad68898eb168a34381f3305258402abc3121d` /
+  `e5c8ccae583fa65e8326f09ea277e059ac2fa928f634310eb633bd0c8e89378a`;
+- deterministic v2 proof/content ID / manifest SHA-256:
+  `681089851d35af5fc67a86c77319daa3508355260ff9498aa86b1ee18bd94f05` /
+  `2da79c8b4363bc8843584a86c3f660297c8b5f7e5489a79b730626f4690dfeae`;
+- final exact-current cadence/zone/series-binding/family/coverage integration
+  roast: `88 passed`; Ruff passes. Earlier focused and adjacent runs returned
+  `30 passed` and `131 passed` before a mechanical formatter changed hashes;
+- two broader supervised launches never reached pytest before their local
+  shell timeout. Their exact process identities were stopped, their stale
+  receipts reconciled as `ABANDONED_RUN_CONFIRMED_NO_AUTHORITY`, and they are
+  not cited as test evidence;
+- D261 execution counters are zero for Databricks connections/statements/
+  writes, Warehouse starts, network calls, `H:` accesses and real rows.
+
+Invariants not to break:
+
+- Native hourly Swiss history remains valid hourly truth. A later 15-minute
+  regime never rewrites it and a 15-minute PFC target never fabricates source
+  observations.
+- `target_ts_utc` remains delivery-interval start. D241 right-edge conversion
+  must use the resolution effective at the interval.
+- Completeness, cadence, family, zone, unit, sign, lineage, quality, revision,
+  PIT and predictive-value gates remain separate and fail closed.
+- The monthly solver remains sole monthly-level authority. LT remains
+  independent from CT; T057 stays sealed; OMPEX remains post-freeze benchmark
+  only and AFRY descriptive only.
+
+## D-20260806-260 - Model ENTSO-E cadence as effective-dated series regimes
+
+Decision:
+
+- Supersede a single per-series `native_resolution` as complete historical
+  cadence truth. Keep it only as current/single-regime metadata and require a
+  separate sidecar at grain `series_id, valid_from_utc` before any real
+  regime-changing series can be quality-admitted.
+- Use left-closed/right-open UTC regimes with an optional open final interval,
+  exact per-series coverage, no gaps or overlaps and transition boundaries
+  that close the previous delivery grid.
+- Build expected timestamps piecewise from the active regime. Report missing
+  slots without upsampling, downsampling or forward fill; reject observations
+  that lie outside their active native grid.
+- Let different products, borders and physical series use different cadence
+  schedules. A Swiss roadmap date or a later 15-minute market cannot redefine
+  earlier hourly truth.
+- Keep the algorithm synthetic-only until an independently hashed sidecar and
+  accountable owner/source evidence exist. Grant no real-data, PIT, value,
+  model, candidate, promotion or production authority.
+
+Reason:
+
+D239/D245 and D250 correctly rejected implicit upsampling, but their dimension
+contract still carried one `native_resolution` for the full life of a series.
+That representation creates two symmetric risks: falsely classifying valid
+hourly history as missing quarter hours after a market transition, or
+manufacturing historical quarter hours to satisfy a later cadence. Official
+EPEX SPOT and Swissgrid material also describes Swiss evolution by market and
+border, with planned dates distinct from proof that a particular physical
+series actually changed. A series-specific effective schedule is therefore
+the smallest safe temporal model.
+
+Rejected alternatives:
+
+- Apply one Switzerland-wide hourly-to-quarter-hourly transition date.
+- Treat every historical price or fundamental series as 15-minute because the
+  target PFC is 15-minute.
+- Keep one resolution in the dimension and split/rename series silently at
+  ingestion time.
+- Infer transitions from timestamp spacing, row counts or a public roadmap.
+- Fill missing quarter hours, average native observations or let a caller label
+  a synthetic schedule as real owner evidence.
+
+Canonical local evidence:
+
+- contract raw SHA-256 / canonical content ID:
+  `561679a368f054e2117a9912540eb0fb5c049e8e4fd90006a011fd9b2775d112` /
+  `3d412d38dc76b2d7eb6e2441b64bfc1b7323f7258af20a0752d7bfd0feea4185`;
+- validator / tests / materializer SHA-256:
+  `487af0c3ac9769c3649470a6b4486c026714270b5dc9d83ebcd7c9a00f6339b9` /
+  `c884060734e886a9c3f463b05ded11c7f49412307dec7c74172362f0fde72011` /
+  `b670e44f8c4fa65d2980eaf65aeb0cfb46d31a83c8f7eb02e78102d4ba0b3cd7`;
+- deterministic proof ID / manifest SHA-256:
+  `740de518f8f4afc2b135f7cb3217f301c883897d39b78fa8a83d80b61fbf2739` /
+  `f767373192ce83d85620fe7bfec0680714086ef4fbac9c30b51e36dae42ee881`;
+- focused mutation roast: `18 passed`; adjacent normalized-quality,
+  incremental-quality, real mapping, inventory and directional-family matrix:
+  `92 passed`; Ruff passes;
+- an initial adjacent launch correctly failed ten D245 cases because inherited
+  `TEMP/TMP` pointed to `AppData`; the conforming repo-local rerun passed. One
+  concurrent staging snapshot collision was isolated and then passed alone;
+- two final materializations are byte-identical. The proof contains no value
+  column and no clear physical series identifier;
+- D260 execution counters are zero for Databricks connections/statements/
+  writes, Warehouse starts, network calls, `H:` accesses and opened real rows.
+
+Invariants not to break:
+
+- `target_ts_utc` is the delivery interval start. Converting D241's right edge
+  must subtract the resolution active for that interval, not one global/current
+  resolution.
+- Historical hourly observations remain hourly truth; native quarter-hourly
+  observations remain quarter-hourly truth. Neither is fabricated from the
+  other.
+- Cadence validation is separate from family, zone, unit, sign, lineage,
+  quality, revision, PIT and predictive-value admission.
+- The monthly solver remains sole monthly-level authority. LT remains
+  independent from CT; T057 stays sealed; OMPEX remains post-freeze benchmark
+  only and AFRY descriptive only.
+
+## D-20260806-254 - Make coupled-zone identity temporal and explicit
+
+Decision:
+
+- Define one offline temporal registry for the baseline price zones `CH`,
+  `DE_LU`, `FR`, `IT_NORTH` and `AT`.
+- Require exact source identifier scheme, source identifier, logical zone,
+  domain kind and left-closed/right-open validity window for every mapping.
+- Validate EIC area identifiers as fixed 16-character codes with object type
+  `Y`, while keeping official registry membership and check-digit authority
+  false until independently verified against governed official evidence.
+- Reject overlapping validity for one source identifier or simultaneous EIC
+  mappings for one logical bidding zone. Report uncovered intervals rather
+  than filling them, and count contiguous code changes explicitly.
+- Require an explicit official-registry or governed-snapshot lineage kind,
+  document ID and clean HTTPS endpoint. `DocumentType` is not an admissible
+  registry-entry identity.
+- Allow an owner registry to announce a future configuration window, but keep
+  owner identity, current dev coverage, PIT, model and production authority
+  false.
+
+Reason:
+
+The D252 coupled-zone audit makes neighbouring price zones baseline evidence,
+but neither D241 nor D253 provides historical zone identity. Reusing one
+current alias across renamed or reconfigured areas can create false gaps,
+duplicate joins or artificial structural breaks in cross-zone spreads. The
+official ENTSO-E EIC specification uses fixed-length codes and object type `Y`
+for areas such as bidding zones, but format alone does not prove that a code is
+official, active or applicable to the requested interval.
+
+Rejected alternatives:
+
+- Hard-code one timeless `CH`/`DE_LU`/`FR`/`IT_NORTH`/`AT` alias map.
+- Infer bidding-zone identity from a display name or the third-party table
+  label alone.
+- Treat gaps between old and new identifiers as zero or forward-fill them.
+- Treat a syntactically valid EIC or owner boolean as verified registry
+  membership, check digit, PIT or model authority.
+- Open Databricks facts or retry the consumed capture day to validate an
+  offline metadata contract.
+
+Canonical local evidence:
+
+- zone validator / tests SHA-256:
+  `a8bf37d373e0711e97daa63a22cd23c927bda64c88fdc7ddbfabe8fb41e06422` /
+  `3344f85879bf838eeeadd5c5163b67cb84122b17f3b30009bde2b6d80526a54b`;
+- focused D251-D254 matrix: `58 passed`; final adjacent ENTSO-E matrix:
+  `493 passed`; Ruff passes;
+- the prior adjacent attempt with `474 passed` is non-authoritative because a
+  concurrent D245 staging directory changed during its cleanup assertion; no
+  directory was deleted, and the clean rerun passed;
+- D254 Databricks requests, SQL statements, Warehouse starts, writes and
+  opened real ENTSO-E rows: all zero.
+
+Invariants not to break:
+
+- Logical-zone joins must be evaluated at the delivery instant using exact
+  source identity and configuration validity; missing mapping remains missing.
+- Format validation never substitutes for official EIC membership, check
+  digit, owner identity, source lineage, PIT or real-value coverage.
+- Zone and coupled-market evidence may shape within a solver month only; it
+  cannot rewrite solver monthly means.
+- Historical Swiss hourly prices remain hourly truth for their regime. LT
+  remains independent from CT; T057 stays sealed; OMPEX remains benchmark-only
+  and AFRY descriptive only.
+
+## D-20260806-253 - Require directional completeness and downgrade owner assertions
+
+Decision:
+
+- Supersede the D251 v1 family-mapping schema with v2 for all future use.
+- Require every mapped cross-border signature to declare explicit direction
+  coverage. For each required family and CH-DE/FR/IT/AT border, report
+  `CH_TO_NEIGHBOR_ONLY` and `NEIGHBOR_TO_CH_ONLY` separately.
+- Permit `BOTH_DIRECTIONS_IN_ONE_SIGNED_SERIES` only for physical flow and
+  only with an explicit positive sign convention. NTC, scheduled exchanges
+  and allocated balancing capacity cannot use that shortcut.
+- Reject a mapping timestamp earlier than its bound inventory capture and a
+  real evidence class whose owner is labelled synthetic.
+- Distinguish owner assertion from verification. A complete real mapping may
+  set `owner_asserted_family_mapping_complete`, but external owner identity
+  and `family_mapping_verified` remain false. Model and production authority
+  remain false.
+
+Reason:
+
+D251 checked whether every border existed, but a single CH-DE signature could
+make that border appear complete without proving the reverse direction. This
+would bias net-import, congestion and scarcity features and could give a false
+coverage result before model selection. D251 also used the word `verified`
+after only a caller-declared owner review, although no external identity or
+signed assertion was admitted.
+
+Rejected alternatives:
+
+- Treat border presence as equivalent to directional completeness.
+- Assume all physical-flow, scheduled-exchange or NTC series are symmetric.
+- Let any cross-border family claim two directions from one series.
+- Promote a caller string and boolean to verified owner authority.
+- Open ENTSO-E facts or retry the consumed Databricks day to resolve an
+  offline contract defect.
+
+Canonical local evidence:
+
+- current v2 mapper / tests SHA-256:
+  `243e494475950f729cf302113630bfe34d22d696577f5e1035c64f6970c2d8ae` /
+  `ba6b34ca9485f0fb9fdc30ba5ff3043fa8bd7e13ff636efd7b4db1bda6398536`;
+- focused mapper/inventory matrix: `32 passed`; adjacent ENTSO-E matrix:
+  `459 passed`; Ruff passes;
+- D253 Databricks requests, SQL statements, Warehouse starts, remote writes
+  and opened ENTSO-E rows: all zero.
+
+Invariants not to break:
+
+- Cross-border feature construction must preserve source direction and sign;
+  absence or ambiguity remains a missing-data finding, never zero.
+- Mapping structure or owner assertion alone cannot prove value quality, PIT,
+  predictive usefulness or superiority to OMPEX.
+- Historical Swiss hourly prices remain hourly truth for the applicable
+  market regime; no 15-minute history may be fabricated.
+- The CH monthly solver remains sole level authority. LT remains independent
+  from CT; T057 stays sealed; OMPEX remains benchmark-only and AFRY
+  descriptive only.
+
+## D-20260806-252 - Audit ENTSO-E dev coverage against coupled-zone PFC needs
+
+Decision:
+
+- Classify the current `dev.gold` evidence as partial macro discovery, not as
+  proof that all required ENTSO-E data types are present. Preserve the D247
+  finding that the 2026-08-03 audit observed 11 macro-signals while D243's exact
+  current dimension inventory remains unexecuted.
+- Add coupled-zone coverage as an explicit requirement. Day-ahead prices must
+  cover logical zones CH, DE_LU, FR, IT_NORTH and AT; neighbouring load,
+  forecasts, generation and renewable horizons are high-value requirements for
+  a superior Swiss shape, and Alpine reservoir evidence must extend beyond CH.
+- Preserve the existing 13-group baseline, six generation technologies and
+  four CH borders. Require exact EIC/version mapping, cadence, units, horizons,
+  directions, sign, document lineage, quality, revisions and PIT semantics;
+  never convert a macro-name match into coverage authority.
+- Extend the exploration list from current ENTSO-E documentation with intraday
+  prices, battery/storage production and capacity, explicit FCR capacity and
+  prices, transmission-outage impact on net positions, long-term flow-based
+  parameters, short-term adequacy forecasts, consumption-unit unavailability,
+  zone/EIC history and balancing elastic demand/product selection.
+- Treat only zone/EIC configuration history as a new baseline metadata blocker.
+  All other newly identified families remain non-blocking candidates that must
+  earn model use through independent rolling-origin evidence.
+- Publish a readable Markdown report and a self-contained Data Analytics HTML
+  report. Keep all Databricks, model, candidate and production authorities
+  false.
+
+Reason:
+
+The prior checklist was strong on Swiss macro-fundamentals and cross-border
+flows, but it did not explicitly require complete coupled-zone fundamentals.
+That omission can hide the main external drivers of Swiss hourly shape:
+French nuclear, German renewables, Alpine hydro and neighbouring residual load.
+The ENTSO-E MoP revisions also make intraday energy prices, energy storage,
+balancing-product detail and newer flow-based/outage publications explicit.
+Separating baseline blockers from candidate features prevents an ever-growing
+wish list from delaying the first admissible baseline while retaining the
+signals most likely to improve it later.
+
+Rejected alternatives:
+
+- Declare all required types present from the 2026-08-03 macro audit.
+- Interpret `non prouvé` as `absent` without the bounded D243 inventory.
+- Restrict non-directional fundamentals to CH and use border flows alone as a
+  substitute for neighbouring prices, load and generation.
+- Treat a raw zone label as a stable EIC mapping across history.
+- Make every newly documented ENTSO-E publication a baseline blocker.
+- Start the stopped Warehouse or spend Databricks merely to answer this audit.
+- Launch a browser runtime for report QA on the managed workstation; the HTML
+  is validated and structurally verified without violating the no-browser
+  execution contract.
+
+Canonical evidence:
+
+- audit raw SHA-256 / canonical content ID:
+  `a6697680dda8164f9dc7e96c65c79ee637ab483fe70cf1587acb10b80f6d3cd7` /
+  `a032c630091b491adc2925b7432ed6a916080f10f21ba631975291b7f8b1470c`;
+- validator / tests SHA-256:
+  `23261b557234db509c46b8ae305908a9deb6cb695f0bb88bf15a0deeacccbeac` /
+  `c793883c4159de30093452416f3f9b959c6fb720c13bd6b45ff83591d1595e83`;
+- Markdown report SHA-256:
+  `8d13d9f7a037a9087174817a919d4a65260c808b991f10c100367d7bd69423b0`;
+- HTML artifact source / generated report SHA-256:
+  `7dd5e8aa069eaea67c5db461ecc95d0830a76dfbe8e7be62e3a0297eb88672f5` /
+  `2802ec79d5f3dfc7ebf88d25cc6da777ad135fdf3fe3d020c23fc5e52ad67b81`;
+- focused roast: `10 passed`; adjacent D243/D250/D251/D252 matrix:
+  `56 passed`; Ruff passes;
+- portable report validation: one chart, two tables and 13 ordered blocks;
+  structural verification passed, and all three local SQLite source queries
+  exactly reproduce the 5/10/9 snapshot rows;
+- official evidence reviewed: ENTSO-E Manual of Procedures, EDI Library and
+  MoP v3.5 consultation; this public documentation review did not touch
+  Databricks;
+- D252 execution: zero Databricks connections/statements, zero Warehouse
+  starts, zero Databricks writes, zero real ENTSO-E rows, zero `H:` access.
+
+Invariants not to break:
+
+- A historical hourly Swiss series is valid when hourly was its native market
+  regime; a 15-minute PFC target never creates 15-minute source truth.
+- Current family presence or absence cannot be claimed until D243 is captured
+  under its existing cost guard and D251 receives exact owner mapping.
+- Coupled-zone labels are logical model areas until exact EIC identifiers and
+  validity windows are governed.
+- Additional ENTSO-E families shape within the monthly solver solution only;
+  they cannot rewrite solver monthly means.
+- The monthly solver remains sole monthly-level authority. LT remains
+  independent from CT; T057 stays sealed; OMPEX remains post-freeze benchmark
+  only and AFRY descriptive only.
+
+## D-20260806-251 - Require exact owner mapping before ENTSO-E family coverage
+
+Decision:
+
+- Derive one stable identifier from the nine raw D243 semantic fields and map
+  only that exact identifier; never infer coverage from fuzzy labels.
+- Require each mapped signature to declare its PFC family, technology where
+  applicable, canonical unit, native resolution, border, sign semantics and
+  owner-confirmed source semantics. Allow explicit `AMBIGUOUS` and
+  `OUT_OF_SCOPE` dispositions without normalized values.
+- Report missing core groups, CH-DE/FR/IT/AT borders, generation technologies,
+  solar/wind forecast horizons, unmapped signatures and the observed raw
+  `EUR` versus required canonical `EUR/MWh` price mismatch.
+- Add a non-blocking exploration tier for per-unit generation, available
+  capacity, curtailment, load forecast margin, flow-based capacity parameters
+  and allocated cross-zonal balancing capacity.
+- Keep value quality, PIT, model-input and production authority false. Execute
+  no Databricks request, Warehouse start, SQL statement or remote write.
+
+Reason:
+
+The 2026-08-03 audit observed most useful macro-families, but D241 proves that
+the raw schema omits cadence, signs and source lineage, while D247 could not
+freeze the exact dimension inventory because the Warehouse was stopped. An
+explicit owner mapping is therefore the smallest safe bridge from future D243
+inventory metadata to a reproducible answer about which ENTSO-E types really
+exist. Official ENTSO-E documentation also confirms that balancing capacity,
+balancing energy, cross-zonal capacity, system balance and newer intraday or
+flow-based publications deserve a secondary exploration tier.
+
+Rejected alternatives:
+
+- Declare a family present from `GroupName` or `FieldName` substring matches.
+- Infer resolution from timestamp spacing, direction from a column name, or
+  `EUR/MWh` from a bare `EUR` label without an accountable mapping.
+- Treat all raw signatures as required, silently drop unknown series, or let a
+  partial/synthetic mapping authorize model use.
+- Retry Databricks on the already-consumed 2026-08-06 capture day.
+
+Canonical local evidence:
+
+- inventory validator / exact family mapper / mapper tests SHA-256:
+  `563da7dce3d4b9c6307c9a9e432219ee458359dee122f2f71f14bb49dcc94d1b` /
+  `a2a2fec240780eba9dbed7e347d380ff2ec6964eba0bf2f6ddb591ba03f08418` /
+  `1bd2d8d2c3e73143e5db9338fe863f6d4f4b45d21c28be93365ce31bf6109065`;
+- focused mapping/inventory matrix: `26 passed`; adjacent ENTSO-E matrix:
+  `443 passed`; Ruff passes;
+- Databricks requests, SQL statements, Warehouse starts, remote writes and
+  opened ENTSO-E value rows in D251: all zero.
+
+Invariants not to break:
+
+- A real owner-reviewed mapping can prove classification only; values,
+  timeliness, completeness, PIT history and predictive value remain separate
+  hard gates.
+- Historical hourly Swiss prices remain valid for the hourly market regime;
+  no native 15-minute history may be invented by upsampling.
+- The CH monthly solver remains sole level authority. LT remains independent
+  from CT; T057 stays sealed; OMPEX remains benchmark-only and AFRY
+  descriptive only.
+
+## D-20260806-250 - Normalize ENTSO-E interval starts without inventing PIT semantics
+
+Decision:
+
+- Bind the exact D241 real Unity Catalog schema capture and classify every
+  normalized field as safe direct reuse, safe cross-table cast, required
+  transformation, or missing owner/source enrichment.
+- Define normalized `target_ts_utc` as the delivery interval start. Because
+  both real fact-table comments declare `DateTimeUtc` to be the interval right
+  edge, forbid direct renaming and require
+  `DateTimeUtc - native_resolution`.
+- Keep native resolution unavailable until published per `SeriesID`; do not
+  infer it from schema metadata. Cast the common bigint `SeriesID` to one
+  canonical decimal string only after cross-table type consistency is proven.
+- Preserve publication, pull and load timestamps separately. Propose the
+  conservative `as_of_utc=max(publication,pull,load)` only when all components
+  are non-null, but keep it inactive until the responsible data owner approves
+  the semantics. Never use latest as historical PIT evidence.
+- Forbid `DocumentType` as document lineage, `VintageID` as source revision,
+  default quality `OK`, default revision zero, silent null coalescing and sign
+  inference from column names.
+- Generate no SQL and grant no value, PIT, model, candidate or production
+  authority.
+
+Reason:
+
+The D241 compatibility assessment correctly found missing normalized fields,
+but treated physical `DateTimeUtc` as a direct `target_ts_utc` candidate. The
+real table comments define it as the right edge, while ENTSO-E's official time
+series rule places each point at period start plus `(position-1)*resolution`.
+For the PFC and its calendar/fundamental joins, retaining a right edge as an
+interval-start timestamp would shift every feature by one native step. The
+availability timestamps also describe different events: source publication,
+local observation and local load. A conservative maximum avoids optimistic
+availability but still requires an accountable owner decision.
+
+Rejected alternatives:
+
+- Rename `DateTimeUtc` directly and tolerate a one-step shift.
+- Guess hourly or quarter-hourly cadence from the market regime or schema.
+- Use only `PublicationTimestampUtc`, only `PullTimestampUtc` or only the load
+  timestamp as universal PIT truth.
+- Use `VintageID`, `DocumentType`, synthetic `OK`, zero revisions or silently
+  dropped nulls to satisfy the normalized column list.
+- Execute SQL or open fact values merely to make the mapping look complete.
+
+Canonical local evidence:
+
+- contract raw SHA-256 / canonical content ID:
+  `4a0d69a770fe0b45063bc4e5b4be4b9aca1e86c546b40d2bf8816a001cd06b8f` /
+  `56826ff4d97074a58f961e08f4c0fe2769431ad9ab3d1afebd5d032e635d8c7b`;
+- validator/tests/materializer SHA-256:
+  `406309d4315f4b0cf20a985152201b7f71fbc2caf4dee24989e728e14468cad0` /
+  `66ffecc78e4c44594616f90edb6756d5f0f7a4417b508d53b467b0316806663a` /
+  `f979a91638fadeeae24e2366e2af7fe98367b65331a44433b60a3a818eeefa7d`;
+- deterministic proof ID / manifest SHA-256:
+  `5269f46ac8bc078eacbd57e41ab6a447f9153ce9662880e99c846bc3774d3576` /
+  `b1e49ebba72da7d3cf0a40ce5b0764ceda32ecfe813b2cc67ed5af057568fd8a`;
+- pre-final-identity adjacent semantic matrix: `88 passed`; final D250 focused
+  assertions: `14 passed` three times. All final supervisor receipts were
+  rejected because concurrent ENTSO-E source files changed during the runs;
+  they are explicitly non-authoritative rather than falsely green;
+- repo-local copied Ruff `0.15.12` SHA-256
+  `ccfbe6e11d75c3c2b6b419adf1fd018de519055543d28d261caad3cf78335754`:
+  all selected files pass;
+- D250 execution counters are zero for control-plane GETs, Databricks
+  connections/statements, Warehouse starts, network calls, `H:` accesses,
+  remote writes and opened table-value rows.
+
+Invariants not to break:
+
+- Normalized target timestamps represent interval starts; a physical right
+  edge must never be silently relabelled.
+- No timestamp column alone or caller assertion may bootstrap PIT authority.
+- Unknown cadence, lineage, quality, revision or sign remains unknown until
+  governed source evidence or an accountable owner decision exists.
+- The monthly solver remains sole monthly-level authority. LT remains
+  independent from CT; T057 stays sealed; OMPEX remains post-freeze benchmark
+  only and AFRY descriptive only.
+
 ## D-20260622-01 - Solver Monthly Level Authority
 
 Decision: when `monthly_level_authority="solver"`, the monthly BASE curve
@@ -9555,3 +11824,8628 @@ PIT capture, regenerated CH LT candidate, delivered-product audit, strict
 export and independent benchmark assessment are required. Exact-volume
 ACL/WORM, HSM/KMS, multi-host SMB, power-loss, backup/restore and DR evidence
 remain external IT prerequisites.
+
+## D-20260716-146 - Bronze replay is defense in depth, not provider-raw provenance
+
+Decision:
+
+- The canonical repository is `C:\Users\jbattaglia\PFC_LT`, and the reusable
+  shared data root is `C:\Users\jbattaglia\pfc_local_data`.
+- Calibration-grade v2 snapshots must fail closed on hard-forward v1
+  acquisition, missing signed EEX vintage catalogs, core artifact aliases,
+  non-replayable bronze-to-derived transforms, and unsafe publication locks.
+- Bronze Parquet replay is accepted only as an intermediate control. It does
+  not satisfy the final provenance criterion until exact provider response
+  bytes are retained and replayed by pure, allow-listed source transforms.
+- The next producer must be separate from publication and must emit an exact
+  `lt_raw_envelope.v1` for Energy Charts, ENTSO-E, and SFOE/BFE sources.
+
+Reason:
+
+Cryptographic bindings cannot prove that an already-normalized bronze file was
+derived from the provider response that the receipt claims. Source-specific
+exact-byte envelopes and pure transforms are required to make upstream parser,
+source-selection, fallback, and cache contamination independently auditable.
+
+Rejected alternatives:
+
+- Treat bronze Parquet as the provider-raw artifact.
+- Archive only request URLs, timestamps, or parsed frames.
+- Let the publisher perform acquisition or hold acquisition signing keys.
+- Merge Energy Charts, ENTSO-E, SFOE/BFE, Databricks, and local caches under
+  generic source identities.
+- Promote the migrated seed or a candidate built from it.
+
+Invariants:
+
+- The monthly solver remains the sole monthly level authority when configured
+  as `monthly_level_authority="solver"`; no individual month is patched after
+  solve.
+- OMPEX remains benchmark-only and absent from all model inputs and selection.
+- LT does not import `pfc_shaping.ct.*`; CT and Power BI files remain untouched.
+- Heavy local data and generated candidates are never part of the curated
+  commit.
+- Production remains `NO_GO` until prospective provider-raw acquisition,
+  candidate regeneration, product/export audits, and external IT controls pass.
+
+Verification: post-roast v2/input-source/capstone matrix
+`53 passed, 2 skipped`; fully re-signed missing-catalog attack `1 passed`;
+canonical real capstone with FutureWarnings fatal `1 passed`; targeted Ruff and
+`git diff --check` passed. See
+`SESSION-HANDOFF-20260716-GOVERNED-PIT-REPLAY-HARDENING.md`.
+
+Post-roast amendment: all EPEX neighbor roles that production may consume are
+now included in the same replay/alias policy as CH/DE. V2 commodities and
+outages are fail-closed before model I/O until dedicated transforms exist. EEX
+catalog, history, source documents, and parser code are read through stable
+single-link descriptors, and verified history must match the consumed receipt.
+The publication-event chain remains a P1: event signatures must use a distinct
+publication authority and be coupled to a monotone checkpoint outside the data
+root; signing an internally stored chain alone is explicitly rejected as
+insufficient against rollback or truncation.
+
+## D-20260716-147 - Filesystem signed prefixes are not monotone publication
+
+Decision: reject the current signed external-directory prototype as a merge or
+production authority. A directory of signed anchors remains rewindable when a
+suffix and the local pointer are restored together, and per-data-root locks do
+not serialize one publication domain across hosts. The replacement protocol is
+`PREPARE -> EXTERNAL CAS -> FINALIZE`, with pairwise-distinct acquisition,
+publisher-event and IT-anchor authorities. The IT anchor service alone owns the
+domain-wide CAS, durable monotone head and anchor signing key.
+
+Candidate and capstone evidence must archive and replay the publication event,
+external anchor receipt and authoritative inclusion proof. The migrated seed
+may enter history only through an explicit signed `BOOTSTRAP` event that binds
+its exact legacy pointer hash and preserves its noneligible classification.
+
+Reason: signatures authenticate documents but do not prove that a valid signed
+suffix was never deleted. Anti-rollback requires an independently controlled
+high-water mark and a domain-wide compare-and-append operation. Publication
+admission is also ineffective if its proof is discarded before candidate and
+promotion replay.
+
+Rejected alternatives:
+
+- Infer the authoritative head from the files currently present.
+- Let the publisher sign both events and anchors.
+- Treat an external path as a trust boundary without separate credentials,
+  CAS and retention controls.
+- Bootstrap silently from the migrated pointer.
+- Archive only the acquisition contract and local pointer in the candidate.
+
+Invariants: the filesystem prototype remains uncommitted and non-promotional;
+production remains `NO_GO`; the heavy EEX parquet is excluded; CT, Power BI,
+monthly-solver authority and OMPEX benchmark-only rules remain unchanged.
+
+Specification:
+`.planning/phases/14-lt-audit-remediation/LT-SNAPSHOT-PUBLICATION-EXTERNAL-CAS-RFC-20260716.md`.
+
+Post-roast amendment: D147 is implemented as publisher-signed intent,
+authenticated external `get_head`, linearizable compare-and-append receipt,
+fresh nonce-bound HEAD observation, and fail-closed final projection. A durable
+SQLite authority provides a non-production reference implementation and attack
+matrix for concurrency, stale genesis, alternative branch, ambiguous response,
+operation reuse, nonce/TTL and historical anchor keys. The rejected filesystem
+writer is excluded from the sealed LT runtime and its public API always raises
+`SnapshotPublicationRetired`.
+
+The final software corrections include request/acquisition/anchor historical
+keyrings, exact retry after an observation was persisted, pinned-CA mTLS with
+single-capture credentials, resolver-time authority separation, distinct
+run/serialization/finalization timestamps, portable pure replay transforms,
+descriptor-bound EEX and quote-policy reads, authenticated HEAD discovery and
+exit `51` for `COMMITTED_REPAIR_REQUIRED`. Independent Security and Quant/Data
+re-roasts report no remaining P0 and software merge GO after their P1 closure.
+The subsequent independent IT/Operations roast remains merge `NO_GO` on
+bootstrap, rotation-safe HEAD verification, expired-observation recovery,
+structured operational status/exit codes and publisher delivery packaging.
+
+Software merge-readiness does not authorize production. The SQLite authority
+is `NON_PRODUCTION_TEST_ONLY`; the real IT service, ACL/HSM/WORM/multi-host/
+power-loss/monitoring/backup/DR evidence, prospective provider-raw capture and
+a fresh audited candidate remain mandatory. EEX withdrawal tombstones remain a
+separate PIT data-model improvement.
+
+## D-20260717-148 - Publisher runtime imports only a private verified capture
+
+Decision:
+
+- The deployment-provided dependency root is verification input only and must
+  never enter `sys.path`. Runtime v6 copies the exact admitted closure into a
+  process-private root, revalidates source and capture, and makes only that
+  captured `site-packages` importable.
+- The zipapp may bind wheel/RECORD provenance only when the bind-time tree hash
+  and file count equal the independently replayed receipt. The artifact audit
+  captures one stable mono-linked byte image and reports the hash of those same
+  audited bytes.
+- The Windows supervisor creates the worker suspended, assigns it to a
+  parent-owned `KILL_ON_JOB_CLOSE` Job Object, then resumes it. The consumed
+  capability binds token, parent PID, artifact path and exact scratch.
+- PREPARE and FINALIZE require authoritative `FMV_DATA_ROOT`; an explicit
+  `--data-root` is accepted only when it resolves to the same path.
+- This closes the demonstrated runtime/packaging P1 code slice. It does not
+  authorize production or the external CAS infrastructure.
+
+Reason:
+
+Validation followed by importing the mutable source tree still admits a
+TOCTOU. Hashing a different tree after receipt validation falsely carries old
+wheel provenance forward. A runnable pre-Job Windows worker can escape process
+tree ownership, and a separately reread artifact can return a hash for bytes
+that were not audited. Exact private capture, receipt equality, one stable
+artifact image and suspended-before-containment startup make these boundaries
+falsifiable and fail closed.
+
+Rejected alternatives:
+
+- Add the verified deployment root directly to `sys.path` after hashing it.
+- Allow arbitrary Python-base-relative paths because `-I -S` was used.
+- Rehash the current closure and retain provenance from an older receipt.
+- Start a Windows worker normally and assign the Job Object afterward.
+- Audit a zip path and then reopen it to compute the reported artifact hash.
+- Let `--data-root` silently override `FMV_DATA_ROOT`.
+- Delete temp residue by glob while a publisher Python process may be active.
+
+Invariants:
+
+- Production remains `NO_GO`; no candidate or data snapshot was promoted.
+- The monthly solver remains the sole monthly level authority; no post-solve
+  month patch is permitted.
+- OMPEX remains benchmark-only and absent from model inputs and selection.
+- LT never imports `pfc_shaping.ct.*`; CT and Power BI remain untouched.
+- `data/eex_forwards_history.parquet` remains excluded from staging/commit.
+- Host ACL/read-only, signed release attestation, SBOM/wheel approval, real
+  CAS/HSM/WORM, multi-host/power-loss/monitoring/backup/DR and prospective
+  provider-raw data remain external prerequisites.
+
+Verification:
+
+- final real reproducibility: `1 passed, 31 deselected in 613.58s`, wall
+  `614.7710607s`;
+- two byte-identical 85,451-byte artifacts, SHA-256
+  `854f3a7b738f34b30d72e81e9b620f3a7bf2d7fe4cc04da0f65b712f2f8fb663`;
+- capture inventory `12 -> 12`, no new supervisor residue or related process;
+- real attack matrix `3 passed, 28 deselected in 163.41s`;
+- runtime `31 passed, 9 skipped`; publication/CAS `120 passed`; packaging
+  `22 passed`; targeted Ruff and `py_compile` passed;
+- final `git diff --check` exited `0` with expected Windows CRLF notices only;
+- final independent Security and IT/Operations re-roasts found no remaining
+  P0/P1 code issue in this runtime/packaging slice.
+
+Scientific doctrine for subsequent candidate work is recorded in
+`PFC-2026-LITERATURE-EVIDENCE-AND-GATES-20260717.md`. The locked T057 plan is
+unchanged and must not be evaluated or tuned before its future window matures.
+
+## D-20260723-149 - Reopen and reclose publisher P1; bind T057 pre-score evidence
+
+Decision:
+
+- Reopen D148 because subsequent independent roasts demonstrated artifact
+  hardlink/same-size rewrite, destructive real-closure attack-test and lexical
+  data-root validation gaps. A prior green handoff is not authority over new
+  counter-evidence.
+- Treat a deployment dependency tree only as immutable verification input.
+  Stable reads require one regular link and two identical descriptor reads;
+  adversarial tests mutate a private copy.
+- Measure runtime admission inside the admitted worker, after exact runtime
+  verification and before publisher business code. Seal the metric under the
+  one-shot supervisor capability and emit it only on successful completion so
+  failure output remains a single JSON document.
+- Keep T057 as a locked future evaluation with rolling-origin historical
+  evidence. The Energy Charts wrapper acquires the necessary pre-valuation
+  history, while residual centering and scoring use only the exact half-open
+  holdout `[start_utc,end_utc)`. Provider-raw bytes, derived Parquet and audit
+  hashes are transitive evidence.
+- Store bibliographic synthesis and gates in the repository, not supplied PDF
+  binaries. Copyrighted/local papers are evidence inputs, not runtime assets.
+
+Reason:
+
+File identity metadata alone cannot exclude a same-size in-place rewrite on
+all supported Windows/Python combinations, and a test that attacks the retained
+real closure can corrupt the very evidence it intends to validate. Resolving a
+path before lexical reparse rejection can erase evidence of a linked operator
+input. A supervisor-side wall clock over the whole worker is not honestly an
+admission metric. Finally, a 14-day future holdout alone cannot generate the
+two-year rolling folds required by the registered protocol, and centering spot
+before window filtering makes the score depend on out-of-window observations.
+
+Rejected alternatives:
+
+- Preserve the earlier P1-closed label because its matrices were green.
+- Accept `st_size` plus restored `mtime` as stable file evidence.
+- Mutate and repair the retained real dependency closure during an attack test.
+- Resolve `FMV_DATA_ROOT` first and validate only the resolved target.
+- Call total publisher execution time `admission_duration_seconds`.
+- Drop rolling-origin folds from the locked T057 path instead of acquiring the
+  registered historical window.
+- Commit the supplied PDFs into `docs/` without a licensing need.
+
+Invariants:
+
+- Production remains `NO_GO`; no snapshot or candidate is promoted.
+- Monthly solver remains sole level authority and OMPEX benchmark-only.
+- T057 outcomes are not fetched, read, scored or used for tuning before the
+  registered end-exclusive maturity instant.
+- LT does not import `pfc_shaping.ct.*`; CT and Power BI remain untouched.
+- `data/eex_forwards_history.parquet` is not touched or staged by this work.
+- External CAS/ACL/HSM/WORM/SBOM/service/DR evidence remains independent and
+  mandatory even when all software tests pass.
+
+Verification:
+
+- real zipapp proof with pytest assertions active: `2 passed` in `742.14s`,
+  wall `743.5003502s`; provider-raw path runs the artifact internally with
+  `-O`;
+- copied-closure and zip-member attacks: `2 passed, 1 skipped` in `294.84s`;
+- `sys.path`: `4 passed, 1 skipped`; runtime `36 passed, 12 skipped`;
+- publication/CAS `123 passed`; packaging/governance `176 passed`;
+- T057 synthetic pre-score matrix `30 passed`;
+- targeted Ruff, `py_compile` and `git diff --check` pass.
+
+Final re-closure amendment (2026-07-23):
+
+- The D149 verification block above is an intermediate checkpoint, not final
+  current-source evidence. Later Security/IT/Quant roasts reopened environment,
+  cleanup, metric/PID, post-import path, mTLS scratch and T057 provenance P1s.
+- Worker environment admission is now an executable allowlist. Forbidden and
+  phase-mis-scoped authorities fail before spawn; permitted request/mTLS
+  private-key paths are consumed from the capability and activated only after
+  dependency verification/import plus metric sealing.
+- Post-import `sys.path` is revalidated exactly. Admission status uses the
+  serialized metric value and the parent binds the metric to the actual worker
+  PID. Cleanup retries clear stale errors and never append a second JSON after
+  worker failure.
+- mTLS temporary key material is staged under governed supervisor scratch, and
+  Windows capture path headroom fails before copy. The runbook now requires
+  scratch, deadline and SLO settings and documents residue/capacity controls.
+- T057 provider raw is semantically replayed to the scored Parquet. Candidate
+  residuals are centered on the exact holdout overlap, folds and hashes are
+  independently replayed, and schema v2 makes that semantic change explicit.
+  The canonical wrapper and output path are frozen in
+  `T057-LOCKED-ONE-SHOT-EXECUTION-SIDECAR-20260723.md`; a first-capture seal is
+  mandatory through runner, audit and promotion policy. No T057 data was
+  acquired before maturity.
+- Real artifact execution then demonstrated and closed two implementation
+  defects: phase keys were compared as `set` versus `dict`, and
+  `PFC_DATA_TIMESTAMP_JOURNAL_ID` was missing from the worker allowlist.
+
+Final verification superseding the intermediate counts:
+
+- optimized provider-raw artifact `1 passed` in `181.76s`, wall
+  `183.5911397s`;
+- final reproducibility/help `1 passed` in `650.97s`, wall `652.8908070s`;
+  two byte-identical 110,342-byte artifacts, SHA-256
+  `8736839266ebbe37d0f6dbf5b623c82005e49cb0794cf62467101604f4319cf4`;
+- real attacks `2 passed, 1 skipped` in `163.74s`, wall `165.9601543s`;
+- runtime `45 passed, 11 skipped, 1 deselected`; publication/CAS `124 passed`;
+  packaging/governance `176 passed`; T057/promotion `112 passed`;
+- targeted Ruff, `py_compile` and `git diff --check` pass.
+
+These results close the demonstrated software P1 slice only. Production stays
+`NO_GO`; no commit, snapshot publication or candidate promotion is authorized.
+External release attestation, ACL/service identity, approved SBOM/wheelhouse,
+HSM/KMS, real CAS/WORM, multi-host/power-loss/monitoring/backup/DR and fresh
+prospective evidence remain independent gates.
+
+## D-20260723-150 - Defer signing authority until post-admission and replay T057 exactly
+
+Decision:
+
+- Treat D149's earlier "final" block as an intermediate checkpoint because
+  later independent counter-evidence is authoritative.
+- Keep request-signing and mTLS private-key paths out of the initial worker
+  capability. Deliver them only through a separate PID/token-bound one-shot
+  capability after dependency verification/import and admission-metric
+  sealing.
+- Publish the metric and post-admission capability by private temp file,
+  flush/`fsync`, then exclusive hardlink. Retry reads only during the exact
+  transient two-link publication window; reject invalid mono-linked content.
+- Make the manifest-locked dependency closure an explicit local runtime TCB.
+  Removal of hostile same-interpreter dependencies from that TCB requires an
+  external crypto authority boundary, not another Python protocol.
+- Require T057 to use its exact canonical route and system-derived valuation
+  clock, create an irreversible local attempt seal before any provider call,
+  and have the audit independently re-derive residuals, registered cutoffs and
+  every fold statistic from source evidence.
+
+Reason:
+
+Putting secret paths in the initial capability made their authority visible
+while admitted dependencies were still importing, even if environment
+activation happened later. A fully written temporary file is not safely
+published until durability and namespace visibility are ordered. For T057,
+hash consistency alone cannot show that all registered rolling-origin folds
+were retained: a cherry-picked fold set can be rehashed with internally
+consistent summary counts. Deferred authority, atomic durable publication and
+independent semantic replay make these claims falsifiable and fail closed.
+
+Rejected alternatives:
+
+- Include private-key paths in the initial capability but promise not to read
+  them before admission.
+- Rename or link a capability before flushing it, or retry every JSON parse
+  failure until timeout.
+- Claim protection against arbitrary hostile code already running in the same
+  interpreter without an external HSM/broker boundary.
+- Allow a caller-selected T057 `as_of_utc`, create an attempt marker after the
+  provider call, or trust submitted fold hashes and counts without replay.
+- Promote because the software matrices are green while external operational
+  and prospective-data evidence is absent.
+
+Invariants:
+
+- Production remains strict `NO_GO`; no snapshot, T057 acquisition or
+  candidate promotion is authorized by this decision.
+- Only the process-private captured dependency root may enter `sys.path`.
+- Monthly solver remains sole monthly level authority; OMPEX remains
+  benchmark-only.
+- T057's frozen plan is not changed, evaluated early or retuned after outcome
+  observation; the canonical first provider attempt remains one-shot.
+- LT does not import `pfc_shaping.ct.*`; CT and Power BI remain untouched.
+- `data/eex_forwards_history.parquet` remains outside staging and commit.
+- External signed release/SBOM/wheelhouse attestation, service ACLs,
+  HSM/KMS/broker, CAS/WORM/trusted time, provider authenticity, monitoring,
+  multi-host/power-loss, backup/restore and DR proofs remain mandatory.
+
+Verification:
+
+- runtime `48 passed, 12 skipped in 92.07s`; T057 route/audit/policy
+  `47 passed in 259.74s`; exact `sys.path` subset `3 passed in 1.22s`;
+- publication/CAS `201 passed, 13 skipped in 197.94s`;
+- packaging/governance `544 passed, 4 skipped in 829.06s`;
+- real optimized provider-raw zipapp selected test: exit `0`, wall
+  `394.66066s`;
+- targeted Ruff, `py_compile` and `git diff --check`: pass;
+- final independent Security, IT/Operations and Quant/Data read-only roasts:
+  no remaining P0/P1 software finding in the reviewed scope under the explicit
+  locked-wheel TCB.
+
+The detailed commands, retained real paths and residual risks are recorded in
+`SESSION-HANDOFF-20260723-PUBLISHER-POST-ADMISSION-T057-FINAL-RECLOSURE.md`.
+
+## D-20260723-151 - Govern publisher runtime v6 as a Windows process-isolation image contract
+
+Decision:
+
+- Define one publisher container lane: Windows `amd64` with Hyper-V excluded
+  and Docker build/run forced to `--isolation process`.
+- Require one fully qualified digest-pinned base image for builder and runtime,
+  inspect both base and final image configurations, address the result by its
+  immutable image ID and reject inherited or final anonymous volumes.
+- Build only from an exact positive-list context: the publisher zipapp, its
+  captured dependency closure and receipt, an independently staged exact
+  wheelhouse, and hash-bound environment and operations contracts.
+- Re-admit the staged wheelhouse immediately before build, run the publisher
+  four-surface help smoke, verify write denial/allowance and perform a second
+  internal zipapp build whose receipt and artifact bytes must match.
+- Bind orchestration to `restartPolicy=Never`, six total executions at most
+  with only exit `41` and `52` retryable, one stable operation ID, and exact
+  rollback compatibility plus a fresh authenticated CAS HEAD observation.
+- Treat this as conditional software closure only. A real Windows container
+  build, true PREPARE/CAS/FINALIZE phase drill and external supply-chain and
+  operations evidence remain mandatory before any production authorization.
+
+Reason:
+
+The runtime admission protocol cannot be industrialized by a Dockerfile alone.
+The build context, base provenance, host/build compatibility, image
+configuration, mounts, secrets, retry semantics, rollback target and emitted
+metrics must all be independently checkable and fail closed. An immutable
+image ID and exact context remove mutable-tag and accidental-context authority;
+process isolation preserves the Windows Job Object security model on which
+runtime v6 depends.
+
+Rejected alternatives:
+
+- A Linux or Hyper-V lane that silently changes the Job Object/runtime
+  isolation assumptions.
+- Mutable base or output tags, a broad `*.whl` context, inherited `VOLUME`, or
+  copying the repository/data tree into the image.
+- Passing signing or mTLS private-key material during build or initial worker
+  admission, or claiming a syntactic key-block scan proves the base image
+  secret-free.
+- Automatic restart of non-retryable failures, unbounded retries, a new
+  operation ID per attempt, or rollback by rewinding an external CAS HEAD.
+- Calling the packaging production-ready because unit and real zipapp tests
+  pass while Docker, registry, service identity, monitoring and DR proofs are
+  absent.
+
+Invariants:
+
+- Production remains strict `NO_GO`; no image push, snapshot publication,
+  T057 acquisition, candidate promotion or commit is authorized here.
+- Only the process-private captured dependency root may enter `sys.path`.
+- The monthly solver remains sole monthly level authority; OMPEX remains
+  benchmark-only.
+- LT does not import `pfc_shaping.ct.*`; CT and Power BI remain untouched.
+- `data/eex_forwards_history.parquet` remains outside staging and commit.
+- The private-key claim is exactly
+  `PASS_NO_SYNTACTIC_PEM_OR_OPENSSH_PRIVATE_KEY_BLOCKS`; DER/PFX/JWK, semantic
+  key validation and base-image scanning are not claimed.
+- Signed base/release/SBOM/wheelhouse attestations, locked/JIT builder,
+  registry policy, service ACLs, external HSM/KMS or crypto broker, real
+  CAS/WORM and trusted time, monitoring, multi-host/power-loss,
+  backup/restore and DR remain external gates.
+
+Verification:
+
+- real non-authorizing container-context bundle after scanner correction:
+  `1 passed in 337.97s`; the optimized real provider-raw zipapp test passed in
+  the preceding combined run;
+- runtime/artifact/container: `70 passed, 13 skipped in 35.35s`;
+- explicit captured-root-only `sys.path`: `3 passed in 0.24s`;
+- publication/CAS: `202 passed, 14 skipped in 198.93s`;
+- packaging/governance: `544 passed, 4 skipped, 2 warnings in 857.17s`;
+- real wheelhouse prebuild re-admission: `PASS`, 11 wheels, 58,746,108 bytes,
+  manifest SHA-256
+  `f79357a48cf83c1d3887da7b6eab03dc2d86d5a05355e5e36a3e82e9590addcf`;
+- YAML, targeted Ruff and `py_compile`: pass;
+- independent Security and IT/Operations read-only roasts: no remaining
+  demonstrated P0/P1 software finding in the reviewed slice.
+
+The exact commands, hashes, retained paths and external blockers are recorded
+in `SESSION-HANDOFF-20260723-PUBLISHER-WINDOWS-CONTAINER-CI-CONTRACT.md`.
+
+## D-20260723-152 - Bind provider-raw acquisition to pinned namespaces and quarantine authority
+
+Decision:
+
+- Keep the acquisition Builder networkless, unsigned and non-publishing. Its
+  output is explicitly `BUILDER_MUTABLE_UNTRUSTED_QUARANTINE` and cannot become
+  signed evidence until an independent identity copies exact bytes into a
+  Builder-inaccessible namespace, replays them and signs the post-copy result.
+- Admit only absolute canonical Windows paths on a direct physical local-volume
+  mapping. Reject UNC, ADS, reparse traversal, SUBST/DOS indirection, 8.3 alias
+  markers, trailing aliases, reserved device names, controls and forbidden
+  Win32 filename characters.
+- Pin the output-parent ancestry and staging directory by native identity. On
+  Windows rename the staging directory with `NtSetInformationFile` and
+  `RootDirectory=parent_handle`; never resolve the destination from the process
+  cwd or from an absolute DOS path.
+- Require a proved exclusive writer lease before exact hardlink-residue
+  recovery: Windows `DELETE` without `FILE_SHARE_DELETE`, POSIX nonblocking
+  `flock(LOCK_EX)`. The shared durable writer retains its concurrency-safe
+  behavior; divergent or ambiguous residues are preserved and rejected.
+- Reject provider observations outside the point-in-time envelope before
+  window filtering: ENTSO-E and SFOE cannot exceed `received_at`; Energy Charts
+  day-ahead may extend by at most exactly 48 hours.
+
+Reason:
+
+Path validation followed by path-based rename left a namespace TOCTOU: a
+relative name with a null root was resolved from the process cwd, and a DOS
+drive mapping could redirect an absolute destination. Recovery of a two-link
+residue is safe only when no concurrent writer can own that candidate.
+Provider-side future rows must be rejected before filtering or they can leak
+future knowledge while leaving an apparently eligible frame. Finally, hashes
+created in a namespace still writable by the Builder do not establish an
+independent publication boundary.
+
+Rejected alternatives:
+
+- Use `Path.rename`, an absolute DOS destination, or a relative destination
+  with `RootDirectory=NULL` and rely only on post-rename validation.
+- Treat `GetDriveTypeW(DRIVE_FIXED)` as sufficient while accepting SUBST or
+  other indirect DOS-device targets.
+- Pass a literal `exclusive_writer_lease_proven=True`, recover globally in the
+  shared durable writer, or unlink a divergent hardlink residue.
+- Sign in the Builder namespace, infer immutability from a manifest hash, or
+  call the runbook requirement itself an executed handoff proof.
+- Filter a provider frame to the requested window before checking its maximum
+  raw observation timestamp.
+
+Invariants:
+
+- Production remains strict `NO_GO`; no snapshot, T057 acquisition, candidate
+  promotion, image push, commit or production flag change is authorized.
+- The monthly solver remains sole monthly level authority; OMPEX remains
+  benchmark-only.
+- Only the process-private captured dependency root may enter `sys.path`.
+- LT does not import `pfc_shaping.ct.*`; CT and Power BI remain untouched.
+- `data/eex_forwards_history.parquet` remains unstaged and outside this work.
+- The independent namespace/ACL/freeze receipt, service-identity replay and
+  post-copy signature are external release gates, not Builder claims.
+
+Verification on the final source:
+
+- acquisition: `66 passed, 1 skipped`; acquisition plus package contract:
+  `88 passed, 1 skipped`;
+- independent Quant/Data PIT/replay matrix: `152 passed, 3 skipped in 214.43s`;
+- publication/CAS: `165 passed, 13 skipped in 198.26s`;
+- runtime/artifact/container: `70 passed, 13 skipped in 41.11s`; explicit
+  captured-root-only `sys.path`: `3 passed in 0.29s`;
+- real optimized provider-raw zipapp using the retained exact handoff paths:
+  `1 passed in 324.71s`;
+- two fresh 79-member wheels are byte-identical, both audits PASS, SHA-256
+  `05f8fb6d39f7aea55522406f408b149c5ed34a4310bbb75519de024beec3f7bc`,
+  embedded source revision
+  `3658cca4abdda274401bad12e6018aaf8681be7fb09ddcf8f6bef7acd27e2391`;
+  installed wheel Builder entrypoint: `1 passed in 4.61s`;
+- Ruff, `py_compile`, source portability scan and targeted `git diff --check`:
+  pass;
+- final independent Security: no residual P0/P1/P2 on the delta; IT/Operations
+  found no local Builder P0/P1 but retains a release P1 until the independent
+  namespace handoff and its ACL/freeze/replay evidence are executed.
+
+Full commands, artifacts and residual risks are recorded in
+`SESSION-HANDOFF-20260723-PROVIDER-RAW-PIT-WINDOWS-NAMESPACE-HARDENING.md`.
+
+## D-20260724-153 - Separate reproducible local PFC diagnostics from production authority
+
+Decision:
+
+- Keep `scripts/build_local_test_ch_pfc.py` as the only executable legacy
+  scenario runner and make the monthly BASE solver mandatory and unconditional
+  as level authority. Disable the direct, non-governed CLI in
+  `build_ep2050_multi_scenario_pfc.py` while retaining its pure helpers.
+- Publish each local artifact without replacement, reject any pre-existing or
+  aliased output set before work, and write a durable completion manifest last.
+  That manifest binds stable pre/post input hashes, code hashes, exact output
+  hashes, arguments and explicit `COMPLETE_LOCAL_TEST_NO_GO` authority fields.
+- Surface both the monthly manifest's negative authority facts
+  (`TEST_FIXTURE`, no hard-quote or promotion eligibility, null internal source
+  hash) and the actual SHA-256 of the forward-history file consumed.
+- Classify horizons beyond 36 months as `Y+4+`, not `Y+2/Y+3`.
+- Treat the locked T057 result through a deterministic reporter that requires a
+  caller-held run-summary SHA-256, descriptor-stable reads, exact positive-uplift
+  arithmetic and complete positive fold/bucket counts.
+
+Reason:
+
+A model that runs locally is useful only if a failed run is distinguishable
+from a complete one, inputs and outputs are replay-bound, the solver cannot be
+silently bypassed, and horizon labels are truthful. T057 is positive evidence
+but its 336-hour future holdout and historical folds do not authorize
+production or establish economic materiality.
+
+Rejected alternatives:
+
+- Optional local monthly solving, mutable sequential overwrite, or treating
+  the presence of some Parquet files as a completed run.
+- Copying the monthly manifest's null fixture hash into a positive provenance
+  claim, or allowing the old scenario CLI to write under `data/`.
+- Calling all 480 intraday cells learned when only 96 are direct fits and 384
+  are fallbacks, or relabelling a 53-month horizon as Y+2/Y+3.
+- Reporting uplift from self-declared hashes, unchecked subtraction or partial
+  fold counts.
+
+Invariants:
+
+- Production remains strict `NO_GO`; neither the local completion manifest nor
+  the T057 report is a promotion manifest.
+- The monthly solver remains sole level authority. OMPEX remains benchmark-only.
+- The DE-LU 15-minute proxy is not validated as a CH proxy; spring and summer
+  direct-fit coverage is absent and p10/p90 are uncalibrated/null.
+- No CT or Power BI code is touched. The dirty
+  `data/eex_forwards_history.parquet` remains unstaged and unmodified by this
+  work.
+
+Verification on final source:
+
+- locked T057 reporter: Ruff/compile pass, `7 passed`; v3 JSON/Markdown SHA-256
+  `d16787c8d28d4c0ddd0cfd346cda786b09385684c66a5663454af584fcfcd389`
+  and `7fd80eedb98a206faf555ab465a956105b2824e9f37fac3aabfd67ccfe3917a7`;
+- two full local runs over 155,616 quarters each: 8/8 model artifacts
+  byte-identical, monthly-mean error at most `5.491074261954054e-11`, KKT
+  constraint residual `2.842170943040401e-14`, and hourly `f_Q` mean error
+  `2.220446049250313e-16`;
+- LT/model matrix `183 passed, 1 skipped`; packaging/runtime
+  `158 passed, 14 skipped`; publication/CAS `165 passed, 13 skipped`; explicit
+  captured-root-only `sys.path` `3 passed`;
+- two fresh audited 79-member wheels are byte-identical, SHA-256
+  `efe917d2d1cc2a3df3aeeeeab69a7560e05cf480d7b5c84c4c2e4133e0e26d76`,
+  with `promotion_eligible=false`.
+
+Full commands, paths, hashes and remaining scientific/operations blockers are
+recorded in `SESSION-HANDOFF-20260724-T057-LOCAL-PFC-QUALITY.md`.
+
+## D-20260724-154 - Reject the sparse intraday candidate and preserve a fail-closed experimental boundary
+
+Decision:
+
+- Admit six exact public Energy Charts captures only into unsigned local
+  quarantine, independently replay them, and build a continuous DE-LU
+  15-minute panel whose manifest remains
+  `COMPLETE_LOCAL_MIXED_AUTHORITY_NO_GO`.
+- Evaluate sparse intraday price-space estimation and contraction to the
+  maximum dense-cell amplitude in a hash-bound 16-fold rolling-origin harness.
+  Require aggregate MAE/RMSE and sparse MAE improvements, a reduced learned
+  surface tail, sufficient sparse evaluation, no MAE-regressing fold, and a
+  non-inferior latest evaluable fold.
+- Reject this candidate. The final authoritative experiment is
+  `intraday_shape_rolling_origin_20260724_v3`, schema v2, status
+  `LOCAL_DIAGNOSTIC_CANDIDATE_REJECTED_NOT_PRODUCTION`: 6 wins, 6 losses, 4
+  ties, and the latest evaluable fold is inferior.
+- Keep sparse price-space/dense-envelope logic behind an explicit local
+  experimental flag disabled by default. Do not silently replace the incumbent
+  and do not describe the incumbent as scientifically validated.
+- Capture every data input consumed by the local runner as stable exact bytes;
+  parse hourly, intraday, inventory, governance and forwards from those captured
+  bytes; bind the intraday manifest to the exact panel path and SHA; pass the
+  captured forward bytes into the monthly solver; reject unsafe output prefixes;
+  and write a last completion manifest over the exact outputs.
+
+Reason:
+
+The proposed candidate improved aggregate MAE by about 1.75% and reduced the
+learned surface tail, but its paired-fold evidence is regime-sensitive and not
+statistically decisive. Reusing the same folds during candidate development
+also prevents treating them as a fresh selection holdout. A local runner whose
+manifest hashes files but consumes later path reads would overstate replay
+integrity, so all claimed input bytes must be the bytes actually parsed.
+
+Rejected alternatives:
+
+- Promote the new estimator from aggregate metrics while ignoring 6/16 losing
+  folds and the most recent regression.
+- Clip individual quarter factors or patch future hours after model fit.
+- Treat the incumbent ratio estimator as validated merely because the new
+  candidate was rejected. The incumbent still contains an untested sparse
+  spring-Saturday surface cell with maximum deviation `1.26001738`.
+- Treat public local captures, a workstation clock, or the ungoverned base
+  panel segment as production point-in-time authority.
+- Hash path contents before and after a run while allowing different transient
+  bytes to be consumed between those checks.
+
+Invariants:
+
+- Monthly solver remains sole level authority; final KKT constraint residual is
+  `2.842170943040401e-14` and hourly `f_Q` neutrality remains
+  `2.220446049250313e-16`.
+- OMPEX remains benchmark-only. No CT or Power BI source is touched.
+- Production and promotion remain false. Forwards remain `TEST_FIXTURE`, the
+  DE-LU-to-CH transfer is unvalidated, p10/p90 are null, and external CAS/service
+  identity/ACL/Docker/DR evidence remains absent.
+- `data/eex_forwards_history.parquet` stays outside this change and unstaged;
+  observed SHA-256 remains
+  `21ba73e70b6a16e88ba4c7d21985eafbdbc8efa2641ebe5d97c74b33f64e4013`.
+
+Verification on final source:
+
+- rolling v3 summary SHA-256
+  `523169da91a3ec3ab46f341608274a449f035488bf671d2af82481112a3d8f09`;
+  fold CSV SHA-256
+  `910dd2dbe0a2c87f345f05431be14769d45e4113e1f54301176ba25fc7ecfe45`;
+- local incumbent run8/run9 completion SHA-256
+  `de2ba171a803a322a8dab69e6f7467ed2d7aa466e9bfcd488483676f745b61bc`
+  and
+  `fd07fc0c11f2fe545c738912cabddfe7513cf8c5e2d3587a21ea7c4abc11c939`;
+  eight computed/governance artifacts are byte-identical, while the path-bound
+  Markdown and completion manifests differ as expected;
+- LT/model/solver matrix `191 passed, 1 skipped`; packaging/runtime/acquisition
+  `165 passed, 14 skipped`; publication/CAS `240 passed, 2 skipped`; explicit
+  captured-root-only `sys.path` `3 passed`;
+- real optimized provider-raw zipapp with the three retained handoff paths:
+  `1 passed, 53 deselected in 260.65s`;
+- independent Security, IT/Operations and Quant/Data reviews found no P0.
+  Security/IT software findings in this delta were closed; scientific P1s on
+  sparse tails, coverage and DE-LU-to-CH transfer deliberately remain NO-GO.
+
+Full commands, artifacts and next actions are recorded in
+`SESSION-HANDOFF-20260724-PROSPECTIVE-INTRADAY-ROLLING-ORIGIN.md`.
+
+## D-20260724-155 - Govern conditional quote-to-curve sensitivity without expanding runtime authority
+
+Decision:
+
+- Reconstruct the exact CH monthly authority from caller-held monthly-manifest
+  and forward-payload hashes and measure a deterministic central-difference
+  quote-to-month Jacobian on the active independent quote basis.
+- Require exact source-quote repricing derivatives, active-constraint
+  derivatives, fixed topology, input-order and repeat invariance, redundant
+  parent removal invariance, direct KKT solution, full active-basis rank and a
+  declared objective-term allowlist.
+- Retain the full-horizon weighted gain as diagnostic-only and gate four
+  horizon-invariant views: quote-support weighted gain `<=2`, delivery-year
+  gain `<=2`, cascade-bucket gain `<=sqrt(5)`, and maximum monthly row-L1
+  response to independently bounded quote shocks `<=3`.
+- Declare the conditional algebra for `2/sqrt(5)/3`: one disjoint residual
+  step with pre-covered hours `H_K <= H_F` residual hours. Treat the annual
+  `2` cap as separate conservative local policy, not a theorem or production
+  risk appetite. Classify redundant parents and outside-grid products as
+  non-differentiated domain boundaries rather than zero-risk dimensions.
+- Keep the audit non-promotional and outside the governed production wheel.
+  The wheel contains the monthly solver and monthly authority, but a local
+  evidence generator is not a production runtime dependency.
+- Describe code hashes observed after import as observations only, with no
+  claim that those bytes are the code previously executed.
+- Build CSV and summary under a random 128-bit, same-parent staging directory
+  with inherited Windows ACL and publish the complete directory by rename.
+  Crash before summary must leave the final path absent and retryable.
+
+Reason:
+
+Exact product repricing alone does not bound the aggregate economic response
+of a residual cascade. Conversely, forcing every monthly response below one
+would reject valid energy residuals. The first full-grid weighted norm was
+horizon-dilutable: a five-year counterexample passes it at `1.5957989` despite
+monthly derivative `11.80645`. Support-, year-, bucket- and row-local views
+cannot hide that leverage by appending unrelated months. Under
+`H_K <= H_F`, the residual parent coefficient is at most `2`, bucket L2 at
+most `sqrt(5)` and row L1 at most `3`; the year cap remains separate policy.
+The full raw feed is not differentiable at redundant hierarchy boundaries, so
+an active-basis PASS must state its domain. Minimal production packaging should
+include executed runtime dependencies, not local diagnostics merely because
+they live under the package source tree. A complete-directory rename also
+prevents a crash from publishing a partial final artifact.
+
+Rejected alternatives:
+
+- Call the reported spectral/Frobenius or full-grid weighted norm sufficient;
+  it can be diluted by extending the delivery horizon.
+- Treat redundant or outside-grid products as ordinary zero-sensitivity
+  columns, or claim an end-to-end full-feed Jacobian.
+- Use an unconditional one-for-one monthly cap that rejects valid Cal/quarter
+  residual geometry, or leave the aggregate threshold unspecified.
+- Describe `2/sqrt(5)/3` as guaranteed by "one residual layer" without the
+  essential `H_K <= H_F` and disjoint-block conditions.
+- Add the local audit script/module and a console entrypoint to the governed
+  wheel despite no production execution path.
+- Claim that a source file read after execution attests the bytes imported and
+  executed earlier.
+- Rename a `tempfile.mkdtemp` directory whose private ACL survives into the
+  final Windows artifact, or write CSV directly under the final directory.
+
+Invariants:
+
+- The monthly solver remains sole level authority and hard repricing tolerance
+  is exactly `1e-9`; hourly shaping cannot rewrite monthly means.
+- The sensitivity PASS is conditional on the 16 active independent quotes,
+  frozen hierarchy/prior/objective and local v2 structural policy. It does not
+  validate quote provenance, freshness, CH transfer, prior economics,
+  volatility/covariance/liquidity scenarios or production risk appetite.
+- OMPEX remains benchmark-only. CT, Power BI and heavy desk data are untouched.
+- `data/eex_forwards_history.parquet` remains unstaged with observed SHA-256
+  `21ba73e70b6a16e88ba4c7d21985eafbdbc8efa2641ebe5d97c74b33f64e4013`.
+- Production, publication and promotion remain strict `NO_GO`.
+
+Verification on current source:
+
+- local PFC run14/run15 bind the same monthly manifest SHA-256
+  `86bc2a3611c767d6dfa10fd1bebd13106865af2119cd88b634be91d538088714`,
+  monthly solution hash
+  `af6b5a5fb991f87e25cc882d94ac4c97d7d403bc52d7d3916a3f4ff7b1c5582a`
+  and exact `1e-9` constraint tolerance;
+- sensitivity v2 run11/run12 CSV SHA-256
+  `29de930ca7455b9eb42c3a9a3080032f38c12e36b744d190f320a746b762274f`
+  and summary SHA-256
+  `c1dfc8edd479213a7e210809546e3068b0df1649fbc509fa561710b45fc7ffac`
+  are independently readable and byte-identical; 18/18 gates pass with
+  full-grid diagnostic `0.7098419`, support `1.9886801/2`, year
+  `1.5049066/2`, bucket `2.1079831/sqrt(5)` and row-L1 `2.9773602/3`;
+- the registered narrow-residual counterexample passes the old global metric
+  but fails all four new gates; crash injection leaves the final path absent,
+  retry succeeds, and separate processes read run11/run12;
+- two fresh 79-member wheels are byte-identical, both audits pass, SHA-256
+  `42e3ea813e11f4461747929f2c93c54fd7e0bb91784494d9e77ebe9b651790c0`,
+  embedded source revision
+  `59d90d36a5289441badbeedced9a9b4ecdeae223cc444a4e80de09b0d6a8e54a`;
+- isolated wheel smoke confirms solver, authority and governed CLIs load only
+  from the installed root, while the local sensitivity module is absent;
+- final monthly/solver `245 passed, 2 warnings`; packaging/runtime
+  `295 passed, 14 skipped`; publication recertification split by cost:
+  candidate bundle/evidence/assembler `10 + 13 + 42 passed`, atomic promotion
+  `116 passed, 2 skipped`, governed release `37 passed`, quality gate
+  `27 passed`, external CAS `18 passed`; LT core `71 passed, 1 skipped`;
+  targeted Ruff passes;
+- final independent Security, IT/Operations and Quant/Data re-roasts report no
+  P0 or local P1 and return local GO; production remains `NO_GO`.
+
+Full commands, artifacts, independent roasts and residual risks are recorded
+in `SESSION-HANDOFF-20260724-MONTHLY-SENSITIVITY-PACKAGING-RECLOSURE.md`.
+
+## D-20260724-156 - Revoke duplicated T057 fold evidence and version the corrected proof chain
+
+Decision:
+
+- Revoke the former statement that `12/12` T057 historical rolling-origin
+  folds improved MAE. The canonical CSV has twelve rows but only one distinct
+  cutoff, `2026-06-24T00:00:00Z`; eleven rows are exact duplicates and their
+  evaluation windows overlap.
+- Preserve the immutable one-shot T057 directory unchanged. Do not rerun or
+  overwrite it. Publish a separate append-only correction sidecar bound to the
+  caller-held hashes of the legacy wrapper, the superseded quality report and
+  the non-promotable forensic replay.
+- Retain only the future result as one partial prospective episode: 336 unique
+  hourly observations, MAE `18.27968231685799 -> 18.010889719387755`, uplift
+  `0.26879259747023454 EUR/MWh` or `1.470445%`. This does not establish
+  historical robustness, regime robustness or economic materiality.
+- Version the corrected contracts rather than silently tightening old schemas:
+  spot backtest `v3`, locked audit `v2`, locked run `v2`, Energy Charts wrapper
+  `v2`, local quality report `v2`. Legacy v1/v2 PASS documents are not accepted
+  under the current policy.
+- Make the quality reporter a fail-closed consumer of the complete canonical
+  T057 policy. It must require the exact T057 plan id/SHA/path and canonical
+  wrapper route, exact linked-versus-embedded equality, audit-versus-backtest
+  path/SHA equality, independent fold replay checks and aggregates recomputed
+  from the captured fold and bucket CSV bytes.
+- Capture audit evidence bytes once per invocation and reuse those bytes for
+  parsing, hashing and Parquet/CSV/provider-raw replay. Reject links/reparse
+  points, duplicate JSON keys and non-finite JSON constants. Audit output is
+  append-only and durably written; an existing output is never overwritten.
+- Cap generic rolling schedules at twelve origins and never emit a non-daily
+  fallback cutoff. This cap is not a minimum: the next immutable plan must
+  preregister an exact ordered cutoff list and a scientifically sufficient
+  minimum before data observation.
+
+Reason:
+
+The old automatic scheduler used a periodic construction whose degenerate
+single-origin range produced twelve identical cutoffs. Hashes and arithmetic
+were internally consistent, but they proved only repeated evaluation of one
+fold. The old reporter also trusted JSON aggregates without reconstructing
+them from the CSVs, so a locally rehashed chain could overstate rolling
+performance. Silent acceptance tightening under unchanged schema versions
+would create an operational split-brain between stale PASS files and current
+policy. Append-only revocation, explicit versioning and byte-captured replay
+preserve forensic history while preventing the defective proof from being
+reaccepted.
+
+Rejected alternatives:
+
+- Call the duplicated rows twelve independent folds because every row has a
+  positive uplift.
+- Rewrite the canonical one-shot T057 directory or edit the frozen T057 plan.
+- Keep `pfc_local_quality_report.v1` and merely add two Boolean summary flags.
+- Trust rolling means/counts/buckets from `spot_backtest_summary.json` without
+  recomputing them from hash-bound CSV bytes.
+- Treat 336 hourly errors as 336 independent prospective experiments or use
+  the ex-post 13/14 positive-day observation as a new gate.
+- Promote the forensic replay or correction sidecar; both are explicitly
+  non-promotional.
+
+Invariants:
+
+- Monthly solver remains the sole level authority; no hourly layer may rewrite
+  solver monthly means.
+- OMPEX remains benchmark-only. CT and Power BI are untouched.
+- `data/eex_forwards_history.parquet` remains unstaged and unchanged at
+  SHA-256
+  `21ba73e70b6a16e88ba4c7d21985eafbdbc8efa2641ebe5d97c74b33f64e4013`.
+- No commit, production promotion or production publication is authorized.
+- The next validation plan must use a new non-colliding id, exact PIT origins,
+  full per-origin refit/selection, multiple seasons/regimes and probabilistic
+  gates for pinball/WIS/CRPS, coverage, sharpness, PIT/reliability and coherent
+  non-crossing monthly-level-preserving scenarios.
+
+Verification on current source:
+
+- legacy wrapper SHA-256
+  `7b1f8613ffdf8c5771c6d493299fbeec5ac8fc15d136d3ed428282e4e081ffc7`;
+  legacy fold CSV SHA-256
+  `9fc671dcb5be86cc1402ac7930647b6839008e936c74b48ad8f2310c24c4d607`;
+- forensic replay summary SHA-256
+  `0102105bc2320e0df99882e4104616c281c5cdd9b6e10ce24a9f9a49ac102624`;
+  corrected fold CSV SHA-256
+  `34d160327bfa44d78b31e8c6b5bc443f8d40ca6754d70c4719d5cd79bb9f117b`;
+- superseded quality report SHA-256
+  `d16787c8d28d4c0ddd0cfd346cda786b09385684c66a5663454af584fcfcd389`;
+  correction sidecar SHA-256
+  `58bb50ea0efa1528164b9681b11e808d797b21d5427a42e67070a83e167967bf`;
+- focused T057 and downstream matrix `139 passed`; runtime/packaging
+  `92 passed, 13 skipped`; publication split into external-CAS/atomic
+  `134 passed, 2 skipped`, candidate evidence `65 passed`, and governed
+  release/monthly promotion `240 passed`;
+- targeted Ruff, `py_compile` and `git diff --check` pass. The first combined
+  publication command timed out at 304 seconds without a conclusion and is not
+  counted; all three isolated sub-matrices subsequently passed.
+
+Full commands, sidecar, review outcomes and next protocol are recorded in
+`SESSION-HANDOFF-20260724-T057-FOLD-INTEGRITY-RECLOSURE.md`.
+
+## D-20260724-157 - Make T057 revocation canonical, replay-complete and non-overwriteable
+
+Decision:
+
+- Supersede correction sidecar v1 with append-only
+  `t057_fold_integrity_correction.v2`, SHA-256
+  `2cc0b67a509fe79baf4136da65e5eec3cc424a8f1d8739c300357a26b282e1c6`.
+  V2 accepts only the registered paths and caller-held hashes for the canonical
+  T057 wrapper, superseded quality report, forensic replay and frozen plan. It
+  cross-binds candidate, spot, plan/config and evaluation-window identities and
+  recomputes rolling and future metrics from the bound CSV bytes.
+- Make supersession machine-discoverable through
+  `T057-EVIDENCE-SUPERSESSION-REGISTRY.json`. The registry binds ten exact
+  superseded paths, including every generated quality JSON/Markdown v1/v2/v3,
+  to the v2 correction and effective `n=1`, non-material, production-`NO_GO`
+  claims. The local quality reporter rejects a registered
+  run-summary hash before interpreting stale PASS fields.
+- Require the independent audit to compare every replayable fold determinant,
+  metric and flag with the reconstruction from captured spot/candidate bytes.
+  Reconstruct bucket rows independently with `_fold_bucket_rows`, compare them
+  row-by-row, and aggregate only reconstructed rows. A forged CSV plus
+  recascaded JSON hashes/aggregates must fail.
+- Treat locked-run and backtest evidence namespaces as one-shot. The runner
+  creates its output directory with `exist_ok=False` before any write; the
+  backtest refuses any pre-existing artifact name, opens CSV outputs in
+  exclusive-create mode and durably publishes the summary. Never rerun the
+  canonical T057 one-shot directory.
+
+Reason:
+
+The Security roast demonstrated that the prior audit compared only a subset of
+fold columns and aggregated buckets directly from producer-declared CSV rows.
+The IT/Operations roast demonstrated that the direct runner could overwrite
+backtest CSV/summary files before append-only audit publication failed, that
+sidecar v1 authenticated caller hashes but not canonical source identity, and
+that revocation was not discoverable by a verifier or consumer. All were local
+P1 because a coherent but forged or accidentally rerun evidence chain could be
+misread as robust T057 proof.
+
+Rejected alternatives:
+
+- Keep accepting arbitrary 12-to-1-shaped correction fixtures because their
+  caller-provided hashes are internally consistent.
+- Trust improvement, correlation, independence or bucket columns after only
+  recomputing aggregate self-consistency.
+- Rely on prose banners alone to supersede stale PASS files.
+- Permit idempotent re-execution in a completed one-shot namespace or repair it
+  automatically after a partial crash.
+- Rewrite/delete sidecar v1 or any canonical T057 evidence.
+
+Invariants:
+
+- The canonical T057 one-shot directory and all superseded artifacts remain
+  byte-for-byte unchanged; revocation is append-only.
+- All correction, registry and verifier outputs deny production authorization
+  and promotion authority.
+- Monthly solver remains level authority, OMPEX remains benchmark-only, LT
+  remains independent from CT, and Power BI is untouched.
+- `data/eex_forwards_history.parquet` is never edited, restored or staged by
+  this work. No commit or production promotion is authorized.
+
+Verification:
+
+- canonical supersession verifier after exhaustive report inventory:
+  `status=T057_SUPERSESSION_VERIFIED`, ten superseded paths, registry
+  SHA-256
+  `0efec38b768b5e14add6cbc35c9b0cf9f10eb23f2cbf040813e68fe734ca4cf6`;
+- focused adversarial groups: audit `17 passed`, runner/backtest `18 passed`,
+  correction/registry/reporter `14 passed`;
+- fresh T057/downstream matrix after all final deltas:
+  `146 passed in 130.90s` on the exact final canonical-path verifier (the prior
+  `145 passed in 142.42s` run preceded single-capture/integer/inventory
+  hardening, and an intermediate `146 passed in 148.74s` preceded the exact
+  kind-to-path mapping);
+- fresh runtime/packaging matrix: `92 passed, 13 skipped in 66.38s`;
+- fresh publication matrices: external CAS/atomic
+  `134 passed, 2 skipped in 130.34s`, candidate evidence
+  `65 passed in 102.54s`, governed release/monthly promotion
+  `267 passed in 185.65s`.
+
+The first monolithic publication run that timed out and earlier Windows pytest
+ACL setup errors remain explicitly non-conclusive and are not counted. Final
+Ruff, `py_compile`, `git diff --check` and independent re-roast results are
+recorded in the active session handoff.
+
+## D-20260724-158 - Close final T057 verifier TOCTOU and exhaustive-path findings
+
+Decision:
+
+- Parse and hash the supersession registry from one captured byte string. Never
+  reopen the registry to populate the verification result.
+- Treat integer-valued fold and bucket evidence as exact finite integers;
+  reject fractional values before comparison instead of truncating them.
+- Supersede every generated T057 local-quality path: JSON and Markdown
+  v1/v2/v3. Require the exact immutable ten-entry `kind -> canonical relative
+  path` mapping, not only a count or set of labels. Same-byte shadow paths,
+  omissions, additions and path swaps fail closed.
+- Keep the registry untracked until the requested audited commit. Describe it
+  as canonical only in this workspace; do not claim clean-clone portability or
+  external-CAS durability before that commit and independent publication.
+
+Reason:
+
+Final independent roasts demonstrated three residual ambiguity classes: a
+parse/hash registry TOCTOU, integer truncation accepting `1.9` as `1`, and
+stale Markdown/alternate JSON paths outside the first registry. Quant/Data also
+showed that label-only inventory could be redirected to a same-byte shadow
+path. Each could make a verifier report stronger evidence than the exact bytes
+or canonical paths it had actually reviewed.
+
+Rejected alternatives:
+
+- Hash the registry through a second stable read after parsing.
+- Cast numeric evidence to integer and compare the truncated values.
+- Register only one JSON because v2/v3 reports share bytes.
+- Accept any path carrying the expected hash or rely on a glob-family prose
+  warning.
+- Commit or promote before the final perimeter audit.
+
+Verification and independent review:
+
+- canonical verifier:
+  `T057_SUPERSESSION_VERIFIED`, exact count `10`, registry SHA-256
+  `0efec38b768b5e14add6cbc35c9b0cf9f10eb23f2cbf040813e68fe734ca4cf6`,
+  correction SHA-256
+  `2cc0b67a509fe79baf4136da65e5eec3cc424a8f1d8739c300357a26b282e1c6`;
+- same-byte shadow path and missing-entry regressions fail; registry capture
+  instrumentation permits exactly one read; `1.9` fold/bucket counters fail;
+- exact final T057/downstream matrix: `146 passed in 130.90s`;
+- Security, IT/Operations and Quant/Data final read-only re-roasts each report
+  no residual P0/P1 and return local PASS/GO for this slice;
+- T057 remains scientific `NO_GO` because historical effective `n=1`, and
+  production remains strict `NO_GO`.
+
+Invariants remain those of D156/D157: immutable T057 evidence is not rewritten,
+monthly solver is level authority, OMPEX is benchmark-only, CT/Power BI and the
+protected forward parquet are untouched, and no commit, staging or production
+promotion is authorized by this decision.
+
+## D-20260724-159 - Keep CH LT PIT probabilistic preregistration v1 structure-only
+
+Decision:
+
+- Adopt schema `ch_lt_pit_probabilistic_preregistration.v1` only as a
+  hash-bound structural draft for the next prospective CH LT evaluation.
+- Make authorization impossible in v1: `execution_authorized`, production
+  authorization and promotion are always false, including for a document that
+  self-declares a frozen structure. The lifecycle label is explicitly
+  `FROZEN_STRUCTURE_UNVERIFIED_EXTERNAL_ADMISSION_REQUIRED` so it cannot be
+  mistaken for an admitted evaluation capability.
+- Require a future receipt-free immutable plan core plus a separately issued,
+  independently signed external admission envelope before any one-shot
+  evaluation. Neither object may authorize production.
+- Treat the draft values `n=24`, moving-block length `3`, HAC lag `2`, the four
+  14-day episodes, quantile grid and 1,000 scenarios as preregistration
+  hypotheses only. They are not scientifically frozen and must be replaced or
+  justified by a power/MDE/dependence and Monte-Carlo-error study.
+
+Reason:
+
+Initial Security, IT/Operations and Quant/Data roasts demonstrated that a
+self-attested frozen document, caller-supplied receipts, mapping/byte rebinding,
+Python bool/integer equality, shared role manifests, contradictory hydro
+regimes and cross-season future episodes could make a structural document look
+stronger than its evidence. Quant/Data also showed that the initial sample,
+dependence, target, truth, probabilistic-family and economic-materiality design
+was not sufficient to authorize a scientifically defensible run.
+
+Rejected alternatives:
+
+- Let a preregistration validate its own governance, trusted time or admission
+  receipts.
+- Interpret successful draft validation as permission to run T057, a future
+  holdout or a new CH candidate.
+- Freeze the initial statistical constants without prospective power and
+  dependence evidence.
+- Reprice every marginal quantile to the monthly solver mean; only complete
+  scenarios may preserve solver monthly means pathwise.
+- Use the unsigned local CH hourly quarantine or the mixed-authority DE proxy
+  panel as direct CH 15-minute truth.
+
+Invariants and unresolved boundary:
+
+- Eight execution-boundary families remain unconditional blockers: external
+  core/envelope admission, power/MDE/effective sample size, exact LT
+  horizon/target/truth/mask/inner-fold inventories, direct CH 15-minute truth
+  plus post-episode outcomes, complete deterministic/probabilistic hypotheses
+  plus Monte-Carlo error, exact FMV profile economics, durable one-shot ledger,
+  and CPU/GPU reproducibility.
+- Monthly solver remains level authority; final EEX repricing, cascade
+  invariance and quote-to-curve sensitivity remain hard deterministic gates.
+- OMPEX remains diagnostic benchmark-only. LT remains independent from CT.
+- T057 and the prospective evaluation remain scientific `NO_GO`; production
+  remains strict `NO_GO`.
+- No commit, staging, evidence rewrite or production promotion is authorized.
+
+Verification and independent review:
+
+- canonical draft SHA-256
+  `aba798530084b7031a0ac38b1c48b20cff575d6082edbcf37c9a04528900ba61`,
+  semantic `plan_id`
+  `ae5557fd7e58a6ee4164e7f8a949cb379fc2d8ac23766e17a1873c4de420c5f6`;
+- `python -m scripts.audit_ch_lt_pit_preregistration ... --mode
+  validate-draft` exits `0`; the same audit with `--mode admit-execution`
+  exits `3` and reports fourteen blockers;
+- focused adversarial suite: `17 passed in 0.19s`;
+- integrated acquisition/monthly/cascade/probabilistic/shaping matrix:
+  `357 passed, 3 skipped in 98.52s`;
+- Ruff, `py_compile` and canonical JSON/hash checks pass;
+- final read-only Security, IT/Operations and Quant/Data re-roasts report no
+  residual P0/P1 for the structure-only v1. Their verdict is local PASS/GO to
+  retain and audit the draft, evaluation `NO_GO`, production `NO_GO`.
+
+## D-20260724-160 - Reject a CH required-n claim from the DE-LU intrahour pilot
+
+Decision:
+
+- Preserve the 16-origin DE-LU intrahour calculation only as schema
+  `ch_lt_dependence_power_preflight.v2`, status
+  `LOCAL_DE_LU_INTRAHOUR_PLUGIN_SENSITIVITY_NO_GO`.
+- Bind the exact source target
+  `quarter_hour_price_given_realized_parent_hour_mean`, 14-day window, UTC
+  quarter-hour alignment and 1,344 observations per complete window. This is
+  not the full delivered CH LT estimand.
+- Label HAC long-run variance, effective sample size and required-origin values
+  as observed post-selection plug-in sensitivities, never confidence bounds.
+  Set the CH acquisition requirement to `UNSUPPORTED/null`.
+- Forbid reuse of the pilot fold CSV and source summary in a future
+  confirmatory evaluation. A future power design must use independent direct
+  CH evidence or cross-fitting and independently frozen uncertainty choices.
+- Supersede the earlier v1 diagnostic because it mislabeled the delete-one
+  value `500` as a conservative acquisition floor. Keep its bytes immutable,
+  but reject its exact path/hash through the canonical selection verifier.
+
+Reason:
+
+The pilot candidate was selected on the same 16 DE-LU origins and its target
+uses the realized parent-hour mean. The observed 1.7523702% MAE improvement is
+below the draft 2% target, with six wins, six losses and four ties; autumn is
+absent. Conditional normal/HAC arithmetic gives plug-in required-origin values
+272/387/443 for family sizes 1/4/8 and a delete-one maximum of 500. Five
+hundred sequential non-overlapping 14-day windows would span about 19.17 years,
+making it evidence of design infeasibility under stationarity, not an
+acquisition target for Switzerland.
+
+Rejected alternatives:
+
+- Interpret maximum observed HAC variance over lags 0..4 as an upper
+  confidence bound.
+- Treat leave-one-out sensitivity as a selection-bias correction or a
+  confidence interval.
+- Reuse the same 16 selected-candidate origins for confirmation.
+- Translate DE-LU intrahour conditional error into full CH LT power.
+- Delete or overwrite the misleading v1 artifact.
+- Let an output-directory glob select the newest-looking JSON without the
+  supersession verifier.
+
+Opposable supersession:
+
+- registry:
+  `.planning/phases/14-lt-audit-remediation/CH-LT-DEPENDENCE-POWER-PREFLIGHT-SUPERSESSION-20260724.json`;
+- registry SHA-256:
+  `9fd9cf706c768716a42967962527a49a9f92c7a16d1e60de0b3d910565312b72`;
+- superseded v1 SHA-256:
+  `614a7a79cd2d22c1e7abe8303900f861a7c660ca199ce1e656268a291157cadd`;
+- current local v2 SHA-256:
+  `34fc3621ea9082ac6c4c0306c4f7f77e333a33fef83a7f673e62c462ec6d5907`;
+- forbidden confirmatory fold CSV SHA-256:
+  `910dd2dbe0a2c87f345f05431be14769d45e4113e1f54301176ba25fc7ecfe45`;
+- forbidden confirmatory source-summary SHA-256:
+  `523169da91a3ec3ab46f341608274a449f035488bf671d2af82481112a3d8f09`.
+
+The supported verifier invocation is the module form
+`python -m scripts.verify_ch_lt_dependence_power_preflight_supersession`.
+Selecting exact v1 returns exit `3` and
+`SUPERSEDED_DEPENDENCE_POWER_PREFLIGHT_REJECTED`; selecting exact v2 returns
+exit `0` and `CURRENT_LOCAL_DIAGNOSTIC_SELECTION_VERIFIED_NO_GO`, while
+scientific admission, execution, production and promotion remain false.
+
+Verification:
+
+- focused preflight and supersession tests: `28 passed in 1.84s`;
+- final integrated acquisition/monthly/cascade/probabilistic/shaping matrix:
+  `385 passed, 3 skipped in 114.53s`;
+- same-byte shadow selection, missing denylist entry, wrong path/hash,
+  duplicate/ambiguous data, 15-minute fake windows, inconsistent observation
+  counts, target relabeling, numeric overflow and degenerate variance all fail
+  closed;
+- final Quant/Data, IT/Operations and independent governance reviews report no
+  residual P0/P1 after the verifier and documentation closure. The diagnostic
+  v2 is locally usable only as an exploratory DE-LU sensitivity; CH science
+  and production remain `NO_GO`.
+
+Invariants:
+
+- no T057 or future holdout was consumed;
+- monthly solver remains level authority, OMPEX remains benchmark-only and LT
+  remains independent from CT;
+- no protected data, CT or Power BI file is modified or staged;
+- no commit or production promotion is authorized.
+
+## D-20260724-161 - Freeze a non-executable full CH LT estimand/economic contract
+
+Decision:
+
+- Adopt `ch_lt_estimand_and_economic_design.v1` as the closed structural
+  specification for the next CH LT scientific design, never as evaluation or
+  production authorization. Unknown top-level and lifecycle fields are
+  rejected, including rehashed shadow approval fields.
+- Cover full local delivery months M01-M36 through four non-compensable layers:
+  CH EEX/solver market consistency, direct CH hourly shape, one pre-development
+  frozen native CH quarter-hour product, and joint probabilistic paths.
+- Keep the monthly solver as deterministic level authority. Full-price scenario
+  ensembles must equal the solver forward in energy-weighted expectation;
+  scenario-specific monthly level risk is permitted only under zero-mean
+  ensemble and frozen-covariance rules. Pathwise fixed-level scenarios are a
+  separate shape-only diagnostic.
+- Require external exact manifests for origins/masks, dependence/power/MDE and
+  simultaneous inference, EEX vintage/solver/candidate/baseline identities,
+  calendar/strata, truth products, probabilistic design, FIL/ACC populations,
+  Bloc 13 payoff, hydro policy, valuation/FX and market-consistency outcomes.
+- Treat FIL/ACC economics on full delivered price with explicit direction;
+  treat Bloc 13 as a frozen payoff, not a generic profile; compare hydro models
+  under the same optimizer class/constraints/information while permitting
+  model-specific non-anticipative actions and a feasible clairvoyant regret
+  benchmark. OMPEX and `DEFAULT_CAPTURE_PREMIUM` remain forbidden as truth or
+  validation/MDE evidence.
+- Ship `pfc-lt-audit-estimand` in the governed LT wheel. Draft validation exits
+  0, default admission exits 3, and invalid input exits 2. Audit output requires
+  an explicit absolute audit root, exact `.json` namespace and no overwrite.
+
+Reason:
+
+The prior PIT preregistration correctly blocked execution but still left the
+full target, truth product, origin schedule, economic populations and decision
+metrics under-specified. Initial independent roasts demonstrated semantic
+smuggling through unknown keys, missing wheel delivery, incomplete statistical
+and EEX bindings, ambiguous FIL/ACC direction and FX, an over-constrained hydro
+comparison, late quarter-hour product selection and missing scenario scores.
+A subsequent Quant roast also demonstrated that pathwise solver means for full
+price scenarios would suppress monthly-level uncertainty and option value.
+
+Rejected alternatives:
+
+- Invent FIL/ACC/Bloc 13/hydro values or infer them from `pfc_flavors` defaults.
+- Use OMPEX, neighboring-market proxies, hourly duplication or interpolation as
+  direct CH truth.
+- Let an origin/mask hash stand in for EEX vintage, solver configuration,
+  candidate/baseline identity, statistical design or market-consistency proof.
+- Call every origin independent, select dense origins post hoc, ignore overlap
+  dependence or reuse the DE-LU pilot origins for confirmation.
+- Force every full-price scenario to the deterministic solver mean pathwise, or
+  permit ensemble drift away from the solver forward.
+- Validate only from checkout or leave the validator outside the wheel allowlist.
+- Interpret draft validation, a wheel-contract PASS or a local durable audit as
+  scientific admission, publication authority or production readiness.
+
+Canonical identities and evidence:
+
+- source document SHA-256:
+  `4209931e28a7c1cf2a4224d779f73648c4c9c5eac55df0a7ba1ad872226e2931`;
+- semantic SHA-256:
+  `41ce07d1cf04e77a6936dc2d6f6fece387cbb415aa4588fa40406072e741b384`;
+- contract ID:
+  `da4090073a4566f662e47fa59e206e1485d683305a1134f2089ebb13a4daa344`;
+- validator policy SHA-256:
+  `52c90167c51779724509d8a69ecc368c77a547f2eb2f3f55dbac10b98185a276`;
+- durable wheel-runtime draft audit SHA-256:
+  `95898331006a995b25e94bad70f7cbd5aaadaedcbc69459de889a2a1675bb688`;
+- final governed wheels C/D: 437,672 bytes, 81 members, byte-identical SHA-256
+  `1ba55cafe85514d6030aa867cb1026d09c163fd651190363573f37abe96a89d5`,
+  embedded source revision
+  `04f2fa0f223ce3ccf49224650963ff221f01a63b688027f93270fa603ec1e11f`,
+  wheel-contract `PASS`, `promotion_eligible=false`;
+- focused contract/package suite: `45 passed in 2.50s`;
+- final acquisition/monthly/cascade/probabilistic/shaping matrix:
+  `430 passed, 3 skipped in 115.28s`;
+- final runtime/packaging/publication-CAS matrix:
+  `169 passed, 13 skipped in 72.99s`;
+- Ruff, in-memory compilation and `git diff --check` pass on the reviewed slice.
+
+Independent review and residual boundary:
+
+- final Security/Governance and Quant/Data re-roasts report no residual P0/P1
+  in the source/structural scope after the demonstrated findings were fixed;
+- IT/Operations reports no residual P0/P1 code/package defect. The actual
+  Windows console launcher was generated by the local pip wheel installer, but
+  sandbox policy denied executing the `.exe`; PEP 517 pip build/install and the
+  launcher E2E therefore remain non-conclusive operational evidence, not a
+  production pass;
+- fifteen evidence blockers plus the external admission envelope remain. T057,
+  future holdout, scientific execution, publication and production remain
+  strict `NO_GO`.
+
+Invariants:
+
+- monthly solver remains level authority; EEX repricing and cascade invariance
+  remain separate hard gates;
+- LT stays independent from CT; no CT or Power BI file is touched;
+- no protected data is staged or modified by this decision slice;
+- no commit, staging, candidate promotion or production promotion is authorized.
+
+## D-20260727-162 - Close provider-verifier import TOCTOU as non-authoritative local observation
+
+Decision:
+
+- Keep provider acquisition and legacy-resolution verification in a dedicated
+  audited zipapp. Exclude verifier runtime and both business-audit modules from
+  the general governed LT wheel. Checkout wrappers are fail-closed stubs and
+  direct core calls cannot accept caller-forged runtime claims.
+- Capture the exact verifier artifact and dependency tree into a private
+  supervised runtime before import. On Windows, create the worker suspended,
+  assign it to a kill-on-close Job Object, then resume it. Bind the one-shot
+  capability to parent PID, source bytes, captured artifact, governed scratch
+  and supervisor root, and pass only a minimal allow-listed environment.
+- Require the exact runtime-path receipt: captured artifact `1`, source artifact
+  `0`, captured dependency root `1`, source dependency root `0`. Any other
+  count, source mutation, dependency mutation, output overlap, input mutation
+  or cleanup failure returns fail-closed exit `50`.
+- Separate the direct business audit from the hash-bound runtime receipt. Both
+  remain unsigned local observations with `runtime_authority=false` and
+  `production_authorization=false`; neither can publish, promote or sign.
+- Classify the writer output namespace honestly as mutable local quarantine.
+  The durable writer hardlinks a temporary name and then unlinks it, so the
+  same identity cannot prove that the published name is undeletable. Durable
+  evidence requires an independent retention identity and the ordered handoff
+  ingestion, reread/hash, WORM/CAS seal or rights removal, owner/DACL and
+  negative probes, stable final reread/hash, then signed receipt.
+
+Reason:
+
+The former architecture could mix dependency verification and later import,
+inherit caller secrets, expose a worker process tree before containment, and
+let direct function callers provide runtime-looking metadata. It also lacked
+an operator contract matching the actual hardlink publication mechanics. The
+new boundary makes exact-byte capture and local observation defensible without
+misrepresenting either process supervision or local filesystem retention as a
+production trust authority.
+
+Rejected alternatives:
+
+- Trust an already verified host `site-packages` tree during later imports.
+- Put verifier/audit authority modules in the general model wheel.
+- Treat direct function parameters, a same-token capability or an unsigned
+  supervisor report as runtime authority.
+- Resume a Windows worker before Job Object assignment.
+- Inherit arbitrary API keys, tokens, passwords or signing credentials.
+- Claim append-only or immutable local JSON under the same identity that must
+  unlink the hardlinked temporary file.
+- Promote a snapshot, candidate or production curve from these local results.
+
+Canonical evidence:
+
+- verifier zipapps v13/v14: 63,939 bytes, 17 members, byte-identical SHA-256
+  `b9afe8358492658214d4bcf01ad1207084ec992df545611c9cb0f02cd0dfa3b5`,
+  source revision
+  `dac885fa91157cbadca37c6525d77b986b212ce6341b100cee59514bcf8101c2`;
+- locked dependency tree SHA-256
+  `0ecb7997997cc124375e92614ca08d9c5274c683c6738448b9bd3c5eafaf78f1`;
+- real runtime-check: exit `0`, wall `159.5221386s`, exact `sys.path` counts
+  `1/0/1/0`, zero new `vv-*` residue;
+- pinned v2 manifest SHA-256
+  `87396febd322e3fbb519a3fbc04a7312edbcd73dc35763068d6304669cdb05f0`;
+- v14 business audit SHA-256
+  `42ed85c7d8e82cd96b0d49b4882fe475d68484a990fbc9820fc46381b36c8b7c`;
+- v14 runtime receipt SHA-256
+  `18e734d6f3b15819e34bfe6632066837cf274534f75658eca28e11b28dbd9e7d`;
+- two fresh 81-member governed LT wheels: 440,221 bytes, byte-identical
+  SHA-256
+  `841113ef3134113464c2749ccbe0860eacb5ed3bac550ea85f49cf229c637f95`,
+  embedded source revision
+  `deb555b1880942518d73cf86af395864ad238e8c3eec6bb70b46307bfcc02dc8`;
+- real optimized current-source publisher test: `1 passed in 348.22s`;
+- final runtime/packaging matrix: `100 passed, 12 skipped, 2 deselected in
+  116.72s`;
+- final publication/CAS/candidate matrix with short Windows basetemp:
+  `499 passed, 2 skipped in 554.17s`;
+- earlier acquisition/replay/panel matrix: `178 passed, 3 skipped` with one
+  pre-existing timezone warning; Ruff and `git diff --check` pass;
+- final independent Security and IT/Operations re-roasts: no demonstrated
+  P0/P1 code or documentation finding remains in this slice.
+
+Residual boundary and invariants:
+
+- dedicated identity, real owner/DACL, WORM/external CAS, network denial,
+  signed Python/wheel/SBOM/release attestations and Windows/SMB/power-loss
+  drills remain external production gates;
+- monthly solver remains level authority; OMPEX remains benchmark-only; LT
+  remains independent from CT;
+- `data/eex_forwards_history.parquet` remains pre-existing modified with
+  SHA-256
+  `21ba73e70b6a16e88ba4c7d21985eafbdbc8efa2641ebe5d97c74b33f64e4013`
+  and is neither edited nor staged by this slice;
+- no CT, Power BI, commit, staging, snapshot publication, candidate promotion
+  or production promotion is authorized. Production remains strict `NO_GO`.
+
+## D-20260727-163 - Freeze a non-authoritative CPU/GPU compute and runtime-manifest boundary
+
+Decision:
+
+- Keep monthly solve, EEX repricing, cascade/quote-sensitivity, ensemble monthly
+  consistency, final market-coherence projection and every hard gate on the
+  CPU float64 oracle. GPU v1 is limited to scenario transform, scenario
+  scoring and shaping inference from frozen weights. GPU fit/model selection,
+  solver, repricing, cascade calibration, acquisition, publication and
+  promotion are forbidden.
+- Require energy-weighted ensemble expectation, not every scenario path, to
+  equal the monthly solver forward. Scenario-specific monthly risk is allowed
+  only as a frozen zero-mean ensemble; a pathwise fixed-level product is a
+  separate shape-only diagnostic. The PIT preregistration v1 remains
+  non-executable and explicitly superseded on this point.
+- Generate standardized shocks with candidate-independent CPU NumPy PCG64
+  seeds and copy identical hashed bytes to GPU. Require a fresh-process CUDA
+  bootstrap, float64, TF32/AMP/compile disabled, deterministic algorithms,
+  exact ordering, three clean repeats, CPU score recomputation and the frozen
+  absolute/relative parity tolerances.
+- Package both the structural policy CLI and a separate relational runtime
+  manifest CLI in the governed LT wheel. The manifest validator closes every
+  top-level and nested inventory, binds contract/document/plan/attempt/origin/
+  candidate, input/code/runtime/backend/seed/order/fallback facts through one
+  canonical execution-context hash carried by every receipt, and verifies
+  physically distinct mono-linked receipt and payload bytes.
+- Require an exact pre-freeze scenario/Monte Carlo design, exact MC error study
+  and exact local freeze receipt. Recompute scenario count, chunk and shock
+  bindings; enforce the declared non-holdout CRN precision rules; bind the
+  freeze receipt to a non-cyclic design core and the study. The local receipt
+  explicitly denies external signature, trusted time and ledger sequence.
+- Bound wheel audit resources before any member read: 16 MiB wheel, 128
+  members, 4 MiB per uncompressed member, 32 MiB total and compression ratio
+  200. The operations runbook treats exit 0 as structural validation only,
+  forbids checkout wrappers on service hosts and requires admitted wheel/venv,
+  external journaling, timeout/memory/alerting and an independent admission
+  envelope.
+
+Reason:
+
+The original preregistration would suppress monthly scenario risk by forcing
+every path back to the solver mean. The first runtime draft also allowed a
+manifest to reuse receipts after changing the wheel, inputs, GPU, flags, seeds,
+order or backend, and allowed arbitrary payload, MC-study and freeze hashes
+without supplying their bytes. Independent Security, IT/Operations and
+Quant/Data roasts demonstrated these counterexamples and the unbounded-wheel
+DoS. The final boundary preserves solver authority and enables future GPU
+acceleration without converting local self-assertions into scientific or
+production authority.
+
+Rejected alternatives:
+
+- Use CUDA for the monthly solver, hard gates, repricing, calibration or model
+  fitting in v1.
+- Seed shocks with `candidate_id`, use CUDA RNG, widen tolerances after holdout
+  or reduce scenario/chunk counts after OOM.
+- Project every full-price scenario path to deterministic monthly means.
+- Accept receipts that bind only textual IDs/workload or hashes without the
+  referenced payload bytes.
+- Treat `structure_valid`, receipt status strings, a local freeze timestamp,
+  an exit-0 CLI or a wheel-contract PASS as evaluation admission.
+- Read an arbitrarily large or highly compressed wheel before enforcing
+  resource budgets.
+
+Canonical identities and evidence:
+
+- compute contract ID
+  `d06710ba8ebee2364b81930fce51d17768f206521edfe62336ff2abdef60930a`;
+- compute document SHA-256
+  `b231345e96e7664ae02b7dbf3514af87d47ded7783034eaab1f8d449a28fe96f`;
+- manifest-validator policy SHA-256
+  `7d86b9a94d9ab176ff30db80ca6943693362717a24ee1e045691344e7c5fc99f`;
+- manifest-validator implementation SHA-256
+  `bdbca66585f378a38a16aaa1e4aa809536a76ce1c879bfb5068df6d0e49d7ee2`;
+- final wheels O/P: 456,904 bytes, 85 members, byte-identical SHA-256
+  `7d985c9fd7b77d253f0924f9b7dda04172930b12560b26e8743c86dfc582a577`,
+  embedded source revision
+  `6e52bcfd8700e425dd684807cc42c27805e332516995e75c44dac89c6a927989`,
+  both wheel audits `PASS`, `promotion_eligible=false`;
+- isolated wheel-root import: PASS, checkout absent from `sys.path`, no
+  `scripts` or `pfc_shaping.ct` import;
+- focused final suite: `70 passed in 11.42s`;
+- final runtime/packaging matrix: `148 passed, 12 skipped, 2 deselected in
+  94.39s`;
+- final publication/CAS/candidate coverage, split only to fit the wall timeout:
+  `77 passed`, `116 passed, 2 skipped`, `65 passed`, `241 passed`, therefore
+  `499 passed, 2 skipped` over the exact original inventory;
+- final Security, IT/Operations and Quant/Data read-only roasts: no residual
+  P0/P1 in the explicitly local non-authoritative slice.
+
+Residual boundary and invariants:
+
+- the validator does not recompute MC half-widths from raw replications and
+  cannot prove trusted time, attempt uniqueness or seal-before-truth causality;
+  an independently signed monotone ledger/admission envelope remains required;
+- PEP 517 builds in independent clean trees, hashed build frontend/backend,
+  SBOM/scans/signature, offline dependency closure, Windows launchers/service
+  identity and memory/timeout/observability drills remain external IT gates;
+- no CH truth, future holdout or T057 was consumed. The current local candidate
+  remains fixture-backed and scientifically `NO_GO`;
+- monthly solver remains level authority, OMPEX benchmark-only and LT remains
+  CT-independent;
+- no data, CT, Power BI, staging, commit, snapshot publication, candidate
+  promotion or production promotion is authorized. Production remains strict
+  `NO_GO`.
+
+## D-20260727-164 - Supersede the pathwise-fixed monthly scenario preregistration
+
+Decision:
+
+- Register the PIT preregistration v1 as structurally superseded before any
+  execution. Its rule forcing every scenario path back to the deterministic
+  solver monthly mean is not an admissible probabilistic design.
+- Preserve the monthly solver as expectation-level authority: the
+  energy-weighted ensemble expectation must equal the solver monthly forward,
+  while scenario-specific monthly risk may vary only through a frozen
+  zero-mean ensemble.
+- Require any successor preregistration to bind the estimand, compute contract,
+  frozen scenario covariance, candidate-independent shock bytes, scoring and
+  external admission envelope. No successor is currently admitted.
+
+Reason:
+
+Pathwise monthly projection would erase the very monthly level uncertainty the
+scenario layer is intended to represent. A discoverable hash-bound
+supersession prevents an obsolete draft from being executed or mistaken for
+authority.
+
+Canonical evidence:
+
+- supersession registry SHA-256
+  `6bfa49831c91693bd355beace39a6fdd2a74cfa1d25517292634a71dbcfe2282`;
+- superseded preregistration SHA-256
+  `aba798530084b7031a0ac38b1c48b20cff575d6082edbcf37c9a04528900ba61`;
+- estimand SHA-256
+  `4209931e28a7c1cf2a4224d779f73648c4c9c5eac55df0a7ba1ad872226e2931`;
+- compute-contract SHA-256
+  `b231345e96e7664ae02b7dbf3514af87d47ded7783034eaab1f8d449a28fe96f`.
+
+No holdout or T057 outcome was consumed. Execution, promotion and production
+authorities remain false.
+
+## D-20260727-165 - Classify run15 as a structural local diagnostic, not a quality claim
+
+Decision:
+
+- Accept run15 only as evidence that its captured output bytes are internally
+  coherent and preserve monthly solver means. Do not accept it as evidence of
+  CH predictive skill, calibrated uncertainty, exact production EEX repricing
+  or reproducible execution.
+- Keep the intrahour challenger rejected. Its 16-origin DE-LU pilot gain is
+  1.752%, with 6 wins, 6 losses and 4 ties; the latest fold is not noninferior.
+  The pilot cannot be reused as confirmatory CH evidence.
+- Treat the slow/central/fast paths as structural scenarios only. Their P10/P90
+  fields are empty and they are not calibrated probabilistic forecasts.
+
+Reason:
+
+The run uses fixture forwards and a mixed-authority DE-LU proxy, direct CH
+15-minute truth is absent, corrected T057 contains only one historical fold and
+one future episode, and the exact run code bytes were not captured. Reporting
+the strong structural residuals without these limitations would overstate
+model quality.
+
+Canonical evidence:
+
+- completion manifest SHA-256
+  `7ff70c65f49d53f0f1ceba29dacf71826df45547bf3c334fd327b3d03573540d`;
+- 155,616 exact 15-minute rows from `2026-07-24T22:00:00Z` through
+  `2030-12-31T21:45:00Z`;
+- maximum scenario monthly-mean residual versus solver
+  `5.5010218602546956e-11 EUR/MWh`;
+- maximum solver constraint residual `2.842170943040401e-14`;
+- observed run-code SHA-256
+  `8e4f91824d73b89d58faa44757718c8a3effc4b03a811dd0b8c5d1562c3dde98`
+  differs from current checkout SHA-256
+  `08f270bc3587d14c2ff7fdd347f342fa9edc3ef4af1cf6158e3ce2a7f6dbf316`,
+  so execution reproducibility is false.
+
+The resulting status is `LOCAL_STRUCTURAL_DIAGNOSTIC_ONLY_NO_GO`; all
+promotion and production flags remain false.
+
+## D-20260727-166 - Keep current Swiss day-ahead truth hourly and gate future 15-minute truth
+
+Decision:
+
+- Define current CH day-ahead shape truth as the native hourly auction price.
+  Never duplicate hourly observations into four quarters and call them native
+  quarter-hour truth.
+- Treat EPEX CH Continuous 15-minute data as a separate intraday product. If
+  licensed and externally admitted, it may support a product-labelled
+  diagnostic or a frozen zero-mean within-hour sensitivity only; it may never
+  replace day-ahead absolute-level truth.
+- Record the explicit Swiss day-ahead/intraday 15-minute auction transition as
+  planned for Q3 2026, not live. Keep the canonical status
+  `PLANNED_NOT_CONFIRMED_UNSUPPORTED_15MIN` until exact official go-live bytes,
+  first delivery date, product/session/settlement identity, licensed schema and
+  sufficient post-go-live history are independently captured and admitted.
+- Gate the EPEX CH day-ahead energy-auction transition separately from JAO
+  cross-border-capacity auctions. A 15-minute capacity-auction go-live does not
+  prove that the Swiss day-ahead energy clearing price is natively 15-minute.
+- Keep the monthly solver with hard governed CH EEX forward quotes as level
+  authority. OMPEX remains benchmark-only.
+
+Reason:
+
+Hourly day-ahead, continuous intraday quarter-hour and a future explicit
+quarter-hour auction are different estimands. Pooling them would introduce
+product, liquidity and information-set leakage precisely where native Swiss
+quarter-hour validation is currently absent.
+
+Canonical evidence:
+
+- prospective acquisition plan ID
+  `a0faf97bc10b4d51e23b21c200a73cdd95f92ffa9f8ea7976bc4a10859a8688f`;
+- plan document SHA-256
+  `99361b488e5a031f66c64866c7d69f21a7d8d031e30cf37b097a452bb5627c5a`;
+- primary planning references: Energy Charts API day-ahead endpoint, EPEX Spot
+  market-results product catalogue and Swissgrid Balancing Roadmap 2026-2030.
+
+Market-status verification on 2026-07-27:
+
+- the captured CH day-ahead public series still contains 720 native hourly
+  observations for the frozen 30-day window; its 2,880-row quarter-hour
+  transport representation is stepwise and is not native quarter-hour truth;
+- EPEX SPOT publicly exposes 15-minute CH Continuous products, confirming that
+  intraday continuous and day-ahead are distinct products;
+- the Swissgrid Balancing Roadmap 2026-2030 plans 15-minute products in
+  explicit day-ahead and intraday auctions for Q3 2026;
+- JAO's 2026-05-19 market notice provisionally schedules delivery date
+  2026-09-02 for 15-minute DA/ID cross-border-capacity auctions on CH-FR,
+  CH-DE and CH-IT, conditional on NRA approvals and successful tests; CH-AT is
+  planned for Q4 2026 with no exact date in that notice.
+
+These dates are planning evidence, not a confirmed EPEX CH day-ahead energy
+go-live. The transition status therefore remains fail-closed.
+
+The references were observed for planning but their exact bytes were not
+captured as admission evidence. The plan is structurally valid but blocked;
+scientific admission, promotion and production remain false.
+
+Post-roast correction:
+
+- Security and Quant/Data demonstrated that caller-provided hashes and a
+  self-recomputed `plan_id` could admit reserialized or policy-smuggling shadow
+  documents. The supersession verifier now requires the frozen registry hash;
+  the prospective validator requires canonical path, frozen physical document
+  hash, captured-byte/mapping equality and the frozen plan ID.
+- Adversarial tests now reject reserialization, unknown authority keys,
+  altered allowed/forbidden continuous-15-minute uses, T057/pilot reuse
+  actions, changed source observations and noncanonical copies.
+- Local quality v2 explicitly labels structural display weights as
+  non-probabilistic, recomputes aggregate MAE/RMSE from bound fold rows,
+  distinguishes T057 supersession-metadata read from selection reuse and caps
+  the cumulative captured output inventory at 128 MiB.
+- The first corrected report still declared schema v1 despite its changed
+  shape. IT/Operations classified that ambiguity P1. The contract now declares
+  `ch_lt_local_candidate_quality.v2`; the directory-v2 local artifact is
+  superseded by directory v3 rather than overwritten.
+
+After these corrections, the original P1 findings are closed locally. They do
+not extend external trust or production authority.
+
+## D-20260727-167 - Replace endpoint console launchers with one launcherless local runtime
+
+Supersession notice (2026-07-28): the no-console-launcher/module-route decision
+remains valid, but every v7 admission/provenance claim below is revoked and
+superseded by D-20260728-168. V7 must not be launched or treated as current
+evidence.
+
+Decision:
+
+- Remove every project console-script declaration from `pyproject.toml` and
+  reject `entry_points.txt` in the governed LT wheel. No PFC `.exe`, `.cmd`,
+  `.bat` or `.ps1` launcher is part of the endpoint runtime contract.
+- Invoke the five governed command surfaces only through the absolute admitted
+  CPython path with `-I -B -m pfc_shaping.cli.<module>`. The dedicated provider
+  verifier remains the separate `python -I -S -B <verifier.pyz>` artifact.
+- Admit `build/conda-runtime-v7` for local model execution and quality
+  inspection only. Its positive import closure is
+  `governed-site-packages`, selected by `python311._pth`; normal Conda
+  `Lib/site-packages`, the checkout, user-site and `ppa_env` are absent from
+  runtime `sys.path`.
+- Build that closure without package installation: replay the previously
+  admitted 11-wheel publisher closure, verify seven UV extracted archives
+  against wheel `RECORD`, UV cache metadata and `uv.lock`, copy them into new
+  mono-linked files, revalidate the UV sources after capture, then extract the
+  governed project wheel after its positive-inventory audit.
+- Treat UV extracted-cache provenance as sufficient for a reproducible local
+  quality runtime but not as production wheel admission. Production still
+  requires retained original wheels, external hash/SBOM/signature provenance,
+  approved Python, endpoint qualification and IT service controls.
+- Preserve `build/conda-runtime-v6` as a rejected partial attempt. It has no
+  `python311._pth` and no receipt and must never be launched or relabelled.
+
+Reason:
+
+Microsoft Defender ASR blocked the setuptools-generated unsigned PFC launcher
+executables on the corporate laptop. Keeping a console-script surface would be
+operationally incompatible with the endpoint and would also contradict the
+runtime's mandatory isolated Python flags. An absolute Python module route
+removes the synthesized project PE wrapper from the trusted computing base and
+allows exact interpreter, closure, origin and `sys.path` attestation without
+admin rights or Defender exclusions.
+
+Rejected alternatives:
+
+- Add a Defender exclusion, weaken ASR, request admin rights, copy/rename the
+  blocked executables or retry them.
+- Use Playwright or any browser automation on this endpoint.
+- Install the project with pip/uv and accept generated console launchers.
+- Mutate or upgrade the existing `ppa_env` to match the governed versions.
+- Call the checkout by manipulating `PYTHONPATH`, user-site, editable installs
+  or `.pth` injection.
+- Claim production admission from UV's extracted cache after the original
+  wheels are no longer all retained.
+
+Canonical local evidence:
+
+- reproducible wheels C/D: 84 members, byte-identical SHA-256
+  `f0bd93e3b37f98553d184c457c87b53c586ac8eb69bb2869014f956959bcbef3`,
+  source revision
+  `fcfa51808ff7116f5b1af24cc98e95bc143af5f9bf8c16644b8d71ee82150c64`;
+- runtime receipt:
+  `build/launcherless-runtime-receipt-20260727-v2.json`, SHA-256
+  `5227f2162b1e285351692c82d04f65b8d1d3d26c88323a4c13c17dcac731c0a6`;
+- exact CPython 3.11.13 SHA-256
+  `50bfb90ee93bb0cb51175b546f133798dfe4b778677d95d81391e7bf6d85e5ac`;
+- closure: 19 distributions, 8,488 files, tree SHA-256
+  `dffb264fbef6b3be33a7ca7714dfdc114f37b8f34f2d08727a222960fd25796d`;
+- explicit import probe: governed root count `1`, checkout root count `0`,
+  and every governed module origin under the single closure root;
+- five foreign-cwd module routes: `5/5` exit `0`;
+- CH acquisition v2 manifest SHA-256
+  `c580b0e9472dd281258eb4969ecd10cb414eb6035c5c99df147aeea8c9d7077f`;
+- independent verifier v14 business audit SHA-256
+  `f6d97d72753679d47d4f1cce5912c58bcaab26342cbb77ce72e68b0ebf60bd7f`;
+- verifier runtime receipt SHA-256
+  `0bae2d7b056ed90356ead384afa10b589107dc0161f67e43e6c7c2a9c7eababb`,
+  exact captured/source path counts `1/0/1/0`, zero scratch residue,
+  `runtime_authority=false` and `production_authorization=false`;
+- focused launcherless/runtime suite: `211 passed in 18.47s`;
+- runtime/packaging matrix: `116 passed, 12 skipped, 2 deselected in
+  67.55s`;
+- publication/CAS/candidate matrix: `500 passed, 2 skipped in 386.08s`.
+
+The acquisition remains native hourly CH day-ahead truth with a stepwise QH
+transport proxy only. No T057 outcome, candidate promotion, publication or
+production promotion was performed. Monthly solver authority, OMPEX
+benchmark-only status and the strict production `NO_GO` are unchanged.
+
+## D-20260728-168 - Separate local execution admission from production transition authority
+
+Decision:
+
+- Keep the launcherless absolute CPython `-I -B -m` endpoint surface and the
+  prohibition on project `.exe`, `.cmd`, `.bat`, `.ps1` and console scripts.
+- Revoke runtime v7 after Security demonstrated extracted-cache provenance,
+  root shadowing and verification/import TOCTOU. Revoke v9 after its unreadable
+  closure ACL and failed independent import probe. Preserve incomplete v8/v10,
+  revoked v7/v9/v11 and their residues as negative evidence.
+- Supersede v11 with v12 for local model execution only. V12 is built from
+  retained original additional wheels, a caller-held full Python-prefix
+  manifest, a resumable internal closure staging directory and a final stable
+  exact `python311._pth` replay.
+- Treat local runtime admission and production transition authority as two
+  different capabilities. A launcherless local receipt always has
+  `production_authorization=false` and can never authorize `promote` or
+  `rollback`.
+- Require `promote_candidate` and `rollback_to_candidate` to call a distinct
+  production-runtime guard before path I/O. Until an independently signed,
+  IT-admitted production runtime attestation exists, that guard rejects
+  unconditionally after local admission. Never change a caller-held local
+  receipt to `production_authorization=true`.
+- Preserve the deterministic acquisition-build manifest independently of the
+  execution environment. Add a separate immutable execution sidecar in future
+  work rather than polluting or overwriting that deterministic evidence.
+- Treat v11 revocation as documentary until IT independently quarantines or
+  denies execution of its preserved prefix, or enforces an immutable external
+  runtime allowlist. Do not delete, move, repair or ACL-edit retained evidence
+  from this non-admin user-space project.
+- Put the production-transition guard at the CLI, high-level workflow and
+  atomic API layers before release/failure/authorization-path I/O. The current
+  source implements all three layers; the already-built v12 artifact proves
+  only the atomic layer and must not be relabelled.
+- Do not declare packaging closed: same-user mutable runtime code is imported
+  before self-admission, the Conda base is not archive-locked, atomic base-prefix
+  recovery and main-runtime CI/ASR/rollback are absent, and verifier attempt5
+  still needs formal incident closure.
+
+Reason:
+
+Security and IT/Operations independently demonstrated that v11 explicitly
+required `production_authorization=false` but reused the same local admission
+as the runtime precondition for public promote and rollback APIs. Because the
+runtime, receipt, manifest and their caller-held hashes are all controlled by
+the workstation user, this label was descriptive rather than an enforced
+capability. Phase-separated business signatures remain necessary, but they
+cannot compensate for executing mutable transition code. The production
+runtime boundary must therefore be independent and command-specific.
+
+Rejected alternatives:
+
+- Set `production_authorization=true` in the local receipt.
+- Rely on the existing business gates while allowing a non-authoritative
+  runtime to cross the transition-runtime guard.
+- Hide the issue behind test fixtures, documentation or a second
+  caller-controlled path/hash pair.
+- Repair or relabel v7/v9/v11 in place.
+- Request admin rights, Defender exclusions or ASR weakening.
+- Claim that post-import self-verification closes verification-before-import.
+
+Canonical local evidence:
+
+- wheels G/H: 84 members, byte-identical SHA-256
+  `a461403b7db0a37fb8ef570e8a5fb698aa972c5b86879c9eeea3ff3e74aff6c5`,
+  embedded source revision
+  `3784cf5b3ddfe50d6249f213660514b0de31d0328220b4bf9d2fac156fc3c764`,
+  both audits `PASS`, promotion false;
+- v12 caller-held Python manifest SHA-256
+  `54a7eeb6519d9eb4056efc36e4a0cd0039dc47a0745978c4667dd275e8494e6e`,
+  6,285 files, tree SHA-256
+  `985d82b94f8890af53219f793a0374d1252aa3873c8cde911b4900870554db4b`;
+- v12 runtime receipt SHA-256
+  `2050b2a6b84ea941f7a4b4609029c1f55903db56e83f1f7d5b976dea0f3a316f`;
+- v12 closure: 19 distributions, 8,488 files, tree SHA-256
+  `c041dca7ad37def239b83d775fe59572aadd92035b51a273ae984490f350c93e`;
+- exact `sys.path` probe: prefix root `0`, governed closure `1`; no PFC
+  launcher and no staging residue;
+- installed public API probe:
+  `PROMOTE_LOCAL_RUNTIME_REJECTED=PASS` and
+  `ROLLBACK_LOCAL_RUNTIME_REJECTED=PASS`, before invalid path I/O;
+- runtime/packaging matrix:
+  `127 passed, 12 skipped, 2 deselected in 155.31s`;
+- publication/CAS/candidate inventory:
+  `500 passed, 2 skipped` as groups `77 + 116 + 65 + 242`;
+- targeted Ruff: `All checks passed!`.
+- post-roast current-source transition matrix:
+  `164 passed in 147.29s`; this delta is not embedded in v12.
+- post-roast current-source runtime/packaging matrix:
+  `130 passed, 12 skipped, 2 deselected in 158.76s`;
+- post-roast affected governed-release/manifests matrix:
+  `240 passed in 477.93s`.
+
+Operational qualification:
+
+The first v12 builder supervisor timed out at 904.1 s while its child later
+completed and emitted the receipt. Independent replay subsequently proved zero
+changed, missing or extra base-prefix files and the exact 6,285-file tree, and
+the installed admission passed. This makes v12 usable as a local-quality
+runtime, but it is also direct evidence that parent/child timeout, orphan and
+terminal-receipt handling must be redesigned before industrial deployment.
+
+The preserved v11 runtime is still directly executable by the workstation
+user. Consequently its revocation is not operationally effective and remains
+an IT P1 until an independent quarantine/execute-deny or immutable external
+allowlist is demonstrated. Documentation and caller discipline do not close
+that gate.
+
+The real attempt5 CH acquisition remains deterministic at manifest SHA-256
+`c580b0e9472dd281258eb4969ecd10cb414eb6035c5c99df147aeea8c9d7077f`.
+Its retry3 verifier business audit and runtime receipt SHA-256 values remain
+`2af291e944752822124e8f39d9e2cf3e4d9e491f3b99f607bf84595109803f09`
+and
+`4781d62fe08fe5585489961ffda5db206cac93d21b10dc46c256a439032687ff`.
+All runtime, publication, promotion and production authorities remain false.
+
+## D-20260728-169 - Bind local runtime v14 to retained Conda archives and repo-local assembly
+
+Decision:
+
+- Supersede v12 with v14 for local model execution and quality inspection only.
+  V14 remains a same-user local observation with
+  `production_authorization=false`; it is not a transition capability.
+- Lock the 19-package CPython 3.11.13 base to every retained exact `.conda`
+  archive byte, including channel, subdir, filename, build, size, MD5, SHA-256,
+  source record, package file inventory and deterministic archive-set identity.
+- Replay the base into a new namespace using only Conda
+  `--offline --copy --file <exact-local-@EXPLICIT-spec>`, with no solver,
+  network or admin rights. Capture the full 6,285-file Python-prefix manifest
+  before the first target-Python execution and issue a separate prefix-build
+  receipt only after replaying Conda history, package records and file
+  inventories.
+- Upgrade the launcherless runtime receipt to
+  `fmv_lt_launcherless_local_runtime.v3`. The builder and launch-time admission
+  must bind and re-read the external prefix-build receipt, its caller-held hash,
+  prefix receipt ID, archive-set ID, package/file counts and the same Python
+  manifest identity. Never infer production authority from these local hashes.
+- Stage retained publisher inputs, all temporary paths and build outputs below
+  the canonical repository `build/` tree. This is the non-admin workstation
+  workflow; do not write build state to `AppData`, request elevation, weaken
+  Defender/ASR or synthesize a project executable.
+- Preserve the timed-out/incomplete v13 namespace as negative evidence. Never
+  repair or retry an ambiguous prefix in place; use a new name and wait for the
+  single supervised child to reach a terminal state.
+- Preserve the demonstrated test-harness correction: tests that intend to
+  restore the production-transition guard must capture the real function before
+  the global sealed-runtime fixture replaces it. A fixture-injected lambda is
+  not evidence that the guard ran.
+
+Reason:
+
+D168 left the Conda base as a post-hoc manifest and the v12 outer transition
+guard delta outside the installed artifact. All exact Conda archives were in
+fact retained locally, so the remaining software provenance slice could be
+closed without network, admin rights or an endpoint-policy exception. The
+repo-local staging also removes the unnecessary permission boundary created by
+the old `AppData\Local\pfc-lt-build` inputs. Building a fresh artifact is the
+only valid way to embed the current guard and prefix-receipt contract; v12 must
+not be relabelled.
+
+Rejected alternatives:
+
+- Reuse the solved v12 prefix, accept its post-hoc package metadata or repair
+  the partial v13 prefix.
+- Fetch or re-solve packages online, use hardlinks, mutate `.conda` caches or
+  treat patched repodata dependency strings as stronger than exact archive
+  identity and complete installed-file replay.
+- Keep publisher inputs under `AppData` and request repeated sandbox/admin
+  approvals for an otherwise repo-local build.
+- Trust a receipt status string without its exact caller-held bytes/hash and
+  Python-manifest binding, or set `production_authorization=true` locally.
+- Hide the same-user pre-import boundary behind an additional local hash or
+  reduce launch-time verification merely to improve latency.
+
+Canonical local evidence:
+
+- Conda archive lock:
+  `build/launcherless-conda-archive-lock-20260728-v12.json`, SHA-256
+  `451ce7b960683414e8fad74b3668e2bb0ea530c644c14aa30fb08aef4e8d2f31`,
+  archive lock ID
+  `235edd15a174e84cab2bb8b126a7e259a80c6c9e8af9f55ef0fbc643d5c91ee5`,
+  archive-set ID
+  `05d73b203f0401f0034c42e7b29c43ef04f54a2632455648e254f2e8581d8535`,
+  19 packages and 38,648,096 archive bytes;
+- exact explicit spec SHA-256
+  `c1da60c9c3474453ebc21580cecc15c556c9bcd82e9113c73bdaa62ec883e4eb`;
+- v14 Python manifest SHA-256
+  `b10daeaf63691f37a72db80e37d690d3c44c42108b12d58308efebdacc55afb5`,
+  6,285 files and base tree SHA-256
+  `4ab93b1dbe6b33eab88907a97cde3eb13ded0e5c0dcfe33302fdea7aaf43b4e5`;
+- v14 prefix-build receipt SHA-256
+  `fb333a8f855284672c3a42a8832a49615d3d4c416908e458d594419dc4bcd98e`,
+  prefix receipt ID
+  `1cb82d795cc53c8d1ba291065f97725de5fba89ebe55972ccc2c37b551c09f83`;
+- reproducible wheels I/J: 461,476 bytes, 84 members, byte-identical
+  SHA-256
+  `48bdb58134506422a76669ed4343b5b81c9b7eef000204ce5303a4a59b6e3734`,
+  embedded source revision
+  `51946b9b60f024c8230d004b87a75fe9646c6c32c7a020f8247facedfd49bcb6`,
+  both wheel audits `PASS`, `promotion_eligible=false`;
+- v14 runtime receipt SHA-256
+  `6ec9638fade90c2730f90079af794d63452428afe6db830fd22b67fa4702bccf`;
+  closure 8,488 files / 19 distributions, tree SHA-256
+  `09bca4a65c0bc6c9b39a036be2cc49384f0371851625f539e8d9a9ebabfcfcba`;
+- exact runtime `sys.path`: `python311.zip`, `Lib`, `DLLs` and exactly one
+  governed closure; prefix root and checkout are absent;
+- repo-local assembly: exit 0 in 863.5 seconds; installed admission via
+  absolute v14 Python `-I -B -m ... --version`: exit 0 in 607.3 seconds;
+- focused lock/runtime/admission suite: `39 passed`; final runtime/packaging
+  matrix: `143 passed, 12 skipped, 2 deselected`;
+- publication/CAS/candidate groups: `77 passed`, `116 passed, 2 skipped`,
+  `65 passed`, `240 passed`;
+- demonstrated harness correction: targeted `1 passed`, then the complete
+  atomic matrix `116 passed, 2 skipped`;
+- targeted Ruff and `git diff --check`: pass.
+
+Residual boundary and invariants:
+
+- The P1 verification-before-import boundary remains open: same-user writable
+  target code is imported before its self-admission. Only an independently
+  admitted bootstrap/supervisor or externally read-only service identity can
+  close it.
+- V11 remains physically executable; documentary revocation is not an IT
+  execute-deny. V13 proves Conda-prefix creation is not atomic/resumable.
+- The 863.5-second build and 607.3-second per-launch admission are incompatible
+  with an unqualified operational SLO. Windows CI, ASR qualification, signed
+  SBOM/provenance, structured logs, job-object supervision, active-runtime CAS
+  and rollback drills remain required.
+- Attempt5 still lacks an immutable execution sidecar and independent
+  publication/retention boundary. No prospective data, T057 outcome, candidate
+  or production promotion was consumed.
+- Monthly solver authority, exact EEX repricing, LT/CT separation and OMPEX
+  benchmark-only status are unchanged. Production remains strict `NO_GO`.
+
+## D-20260728-170 - Supersede v14 with archive-payload-verified runtime v17
+
+Decision:
+
+- Invalidate D169's claim that v14 closed local Conda byte provenance. Retain
+  D169 and v14 as historical evidence; do not delete or relabel them.
+- Make archive-lock schema v2, prefix-receipt schema v2 and runtime-receipt
+  schema v4 the current local contract. Installed bytes must be derived from
+  and compared with `info/paths.json` payloads from every retained archive,
+  not trusted from target `conda-meta/files` alone.
+- Accept only explicit, replayed Conda transformations. On Windows, text uses
+  forward-slash prefix replacement and non-pyzzer binary payloads stay exact;
+  unsupported pyzzer replacement fails closed. Explicit empty payload lists
+  are allowed for metadata-only packages.
+- Treat archive/source dependency strings and patched target dependency
+  strings as separately recorded, hash-bound observations. Bind the former to
+  the lock and the latter to the installed target record; neither overrides
+  archive payload bytes as installation authority.
+- Supersede v15 and v16 after their installed admissions failed closed. Never
+  repair or relabel those namespaces. V17 is the current local-quality runtime
+  only, with `production_authorization=false`.
+- Preserve the exact four-entry `sys.path` contract and the independent
+  unconditional production-transition guard. Do not weaken verification to
+  meet a latency target.
+
+Reason:
+
+The v14 Security roast demonstrated that hashing archive containers and
+trusting target file lists did not prove that installed prefix bytes came from
+those archives. The v2 parser now independently verifies archive indexes,
+paths, payload hashes, prefix transformations and installed bytes. V15 and v16
+then exposed two real Conda cases (`noarch: generic` and patched target
+dependency strings); both were rejected before argparse and corrected only in
+fresh artifacts. V17 passed installed admission and a live exact-sys.path
+probe.
+
+Rejected alternatives:
+
+- Amend D169 silently or declare its v14 evidence sufficient.
+- Trust caller-supplied archive/prefix IDs without recomputing them.
+- Treat target dependency strings as byte provenance or require them to remain
+  equal to the archive record after Conda repodata patching.
+- Repair v15/v16 in place, delete negative evidence, fetch new packages,
+  request admin rights or weaken Defender/ASR.
+- Promote v17 or interpret same-user local hashes as an IT production
+  capability.
+
+Canonical local evidence:
+
+- archive lock v2 SHA-256
+  `346c6edcce71dea86816ec6938a1d6a87872a3cd30a01984c8577e7800c33fdb`,
+  lock ID
+  `7fd90fd7a1a2f672da1890cb308870f5c7d1df5e38dbafe91f6da27ca486a813`,
+  archive-set ID
+  `f3cd775e79648df9a9926a01eb97eadc8e951c5055c778ca9ca92b60bc8068e7`,
+  19 packages / 38,648,096 bytes;
+- v17 prefix receipt SHA-256
+  `3ad67d66d277a6783a2b1731fed93a847ff4f346283670a0a5c12047d6b91834`,
+  5,859 archive-verified files, 406 generated non-runtime files and prefix ID
+  `145e28c66ce49e4127d130e78e7354483d74c6c8bf9dbb9d99847608ba498b2e`;
+- reproducible wheels O/P SHA-256
+  `2eb23e57c45bedb7c65ca44fbe99df3bda41bc9a78b1698b1c90bd5f759c72e4`,
+  source revision
+  `d41e6a3524d673c84450d4e4327588994d0bf2f74b769854f8c9a256d5e656c2`;
+- v17 runtime receipt SHA-256
+  `dc944cdd9d13f96ee7dfa9d20010d3905670a3547931542eb914c1ce12300e19`,
+  8,488-file closure tree
+  `e733f26c6a1120f6b09e284fa7d74cc30764bc3fe3029741fef812c20453d30a`;
+- installed admission exit 0 in 140.0 s; exact live `sys.path` count four,
+  prefix root zero and governed root one;
+- matrices: runtime/packaging `147 passed, 12 skipped, 2 deselected`, external
+  publication split `66 + 59 passed`, atomic `116 passed, 2 skipped`, candidate
+  `65 passed`, governed release/manifests `267 passed`;
+- Ruff and `git diff --check` pass; staged count zero; protected parquet hash
+  unchanged.
+
+Residual invariants and blockers:
+
+- V17 is local-quality only. Same-user import-before-admission, durable signed
+  archive/Conda CAS, atomic prefix construction, execution sidecars, Windows
+  CI/ASR, SBOM/provenance, observability, active-runtime CAS and rollback drills
+  remain production blockers.
+- No prospective data, T057 outcome, candidate or production promotion was
+  consumed. Monthly solver authority, LT/CT separation and OMPEX
+  benchmark-only status remain unchanged. Production is strict `NO_GO`.
+
+## D-20260821-250 - Make local data and generated outputs non-versioned repository state
+
+Decision:
+
+- Remove local business datasets, DuckDB state, copied research PDFs and model
+  weight files from the Git index while preserving their physical bytes on the
+  workstation.
+- Keep deterministic test fixtures and compact governed evidence in Git.
+- Treat all of `output/` and all non-`.gitkeep` content below
+  `pfc_shaping/output/` as reproducible runtime output.
+- Extend `scripts/clean_repo_generated.ps1` with an explicit
+  `-IncludeOutputs` scope that is dry-run by default and refuses tracked paths,
+  reparse points, unexpected parents and non-canonical workspaces.
+- Reduce `.planning/HANDOFF.md` to a current pointer and invariants; retain
+  durable history in the decision log and dated handoffs.
+
+Reason:
+
+The worktree mixed source code and governance contracts with about 15 GiB of
+reproducible output, a 45 MiB mutable DuckDB database, local market datasets,
+model weights and source-document copies. That made Git status unreliable,
+encouraged accidental data commits and obscured the actual PFC baseline.
+
+Rejected alternatives:
+
+- Commit the current local datasets or model weights as the new baseline.
+- Delete local business inputs merely to obtain a visually empty directory.
+- Keep dated runtime output in Git because some consumers use those filenames.
+- Discard the untracked Phase 14 source/tests/contracts as if they were caches.
+- Collapse governed decision evidence into one undocumented code snapshot.
+
+Invariants not to break:
+
+- Local data can be deleted only through a separate, explicit data-retention
+  decision; removal from Git must not remove workstation bytes.
+- Fresh clones must use governed external/local snapshots rather than silently
+  depending on repository-bundled business data.
+- Test fixtures must remain deterministic, synthetic or independently
+  admissible and small.
+- The monthly solver remains sole level authority; LSEG and AFRY remain
+  benchmark-only; ENTSO-E Gold/Silver layer authority remains D-20260821-248.
+- Model admission remains
+  `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS`; T057 remains sealed.
+
+## D-20260821-248 - Separate the ENTSO-E Gold serving layer from the Silver PIT authority
+
+Decision:
+
+- Keep `gold.BridgeEntsoeSeriesResources` as a compact current-state reference
+  for equipment-level outage enrichment, traceability and data-quality checks.
+  It is useful but is not a mandatory primary fact for the core PFC.
+- Treat `silver.ge_power_entsoe_time_series_vintages` as the canonical ENTSO-E
+  point-in-time source for historical revisions, availability-time backtests
+  and vintage-specific resource mappings.
+- Treat `gold.FactEntsoeTimeSeriesLatest`, `gold.DimEntsoeSeries` and the Gold
+  bridge as serving tables. The bridge grain is current `SeriesID x resource`,
+  not historical `VintageID x resource`.
+- Permit retirement of the legacy `gold.FactEntsoeTimeSeriesVintages` only
+  after the migration run succeeds and its consumers are shown to be absent.
+  Never retire or truncate the Silver vintage table needed by the LT evidence
+  contract.
+- Admit ENTSO-E commit `db3a93316cd431a95b4e096d8482e482fda3491e`
+  and LSEG commit `c81a41237d27101564b13959eede05ee3460b9fa` to
+  controlled DEV observation. Production remains conditional on bounded real
+  runtime evidence; repository CI alone is not data admission evidence.
+
+Reason:
+
+- Duplicating about 16.8 million vintage rows into Gold adds substantial
+  compute and storage cost without adding information required by the PFC.
+- The current bridge remains valuable for asset-level outage features, while
+  its former vintage foreign key would incorrectly suggest that it still
+  carries historical resource state.
+- The ENTSO-E compatibility fix drops the legacy vintage foreign key before
+  rebuilding Gold constraints and is idempotent. The LSEG head only ignores
+  local Databricks bundle state; the material incremental/CDF cost controls
+  are in its immediately preceding commits.
+
+Rejected alternatives:
+
+- Require a duplicate Gold vintage fact as the model's PIT source.
+- Interpret the current Gold bridge as vintage-complete history.
+- Drop Silver vintages after the Gold simplification.
+- Promote directly from green static/unit CI without observing the first
+  rebuild, the next incremental run and their validation/cost telemetry.
+
+Invariants not to break:
+
+- The governed local export must include the Silver vintage source when
+  point-in-time or historical resource semantics are required.
+- A manual ENTSO-E Gold incremental run without an upstream Silver marker must
+  be bounded explicitly with `since_date`; otherwise it can reread all Silver.
+- LSEG production schedules are currently `UNPAUSED`, so a production bundle
+  deployment activates them unless the engineer deliberately pauses them or
+  explicitly accepts immediate activation.
+- This architecture review does not clear
+  `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS`, does not unseal T057 and
+  does not authorize model promotion.
+
+## D-20260821-249 - Establish a mixed-layer LT intake and a conservative repository cleanup boundary
+
+Decision:
+
+- Replace the active Gold-only ENTSO-E acceptance policy with a role-specific
+  contract: Gold dimension/latest/spot for serving, Silver
+  `ge_power_entsoe_time_series_vintages` for PIT history, and the Gold bridge
+  as optional current equipment enrichment.
+- Classify LSEG `continuous_forward/CHE` curve `110181967` as a bounded
+  benchmark only. Preserve vendor-update and FMV-first-seen semantics without
+  interpreting the deprecated known-at alias as vendor PIT evidence.
+- Remove superseded root audits/handoffs, unreferenced ad-hoc LT analysis
+  scripts and committed experiment logs/results. Keep their recovery in Git
+  history rather than maintaining contradictory active documents.
+- Keep the repository-local historical Parquet/DuckDB files for this pass.
+  They still feed CT paths and some LT tests, and must be migrated to governed
+  `FMV_DATA_ROOT` snapshots before they can be removed safely.
+- Keep the 576 meaningful untracked Phase 14/code/test files untouched until
+  their integration status is reviewed. Untracked does not mean disposable.
+- Treat the 35 root test/cache directories as reproducible generated waste.
+  Their exact guarded cleanup is implemented in
+  `scripts/clean_repo_generated.ps1`; physical deletion remains pending because
+  the workstation execution policy rejected the recursive delete operation.
+
+Reason:
+
+The audited data-engineer repositories invalidated the former requirement for
+a duplicate Gold ENTSO-E vintage fact. Cleaning only filenames would leave a
+more dangerous semantic contradiction in model admission. Conversely, deleting
+legacy local data or uncommitted Phase 14 work solely to obtain a clean Git
+status would destroy still-referenced or not-yet-integrated work.
+
+Rejected alternatives:
+
+- Continue requiring `FactEntsoeTimeSeriesVintages` in Gold.
+- Treat Silver as a generic fallback for missing Gold columns.
+- Use the current Gold resource bridge for historical as-of mappings.
+- Delete all untracked files or all repository-local Parquet files blindly.
+- Hide arbitrary root `pytest-*` sandboxes in `.gitignore` instead of keeping
+  new mutable test output below `build/`.
+
+Invariants not to break:
+
+- Unknown ENTSO-E backfill availability cannot pass as known-at evidence.
+- The core PFC may operate without the current resource bridge, but asset-level
+  outage enrichment must disclose its absence.
+- The monthly solver remains the level authority; LSEG, ENTSO-E and AFRY are
+  not allowed to rewrite monthly means.
+- The empirical gate remains
+  `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS`; this cleanup neither
+  authorizes data nor promotes a model.
+
+## D-20260806-242 - Reject caller-declared probabilistic interval authority
+
+Decision:
+
+- Treat pandas `DataFrame.attrs` probabilistic status as descriptive metadata,
+  never as evidence that P10/P90 were calibrated by governed rolling origin.
+- Make `governed_intervals_available` fail closed even for finite,
+  non-crossing bounds carrying the claimed status
+  `CALIBRATED_ROLLING_ORIGIN`.
+- Keep deterministic LT output available. Probabilistic intervals may become
+  available only after a future independent verifier returns a content-bound
+  admission tied to frozen origins, targets, calibration scores and artifacts.
+
+Reason:
+
+The current function allowed a caller to set one mutable pandas attribute and
+obtain a positive availability result. Numeric finiteness and quantile order
+prove only structural plausibility; they do not prove PIT data, rolling-origin
+calibration, coverage, sharpness, CRPS/WIS performance or artifact lineage.
+The probabilistic preregistration is still draft and no independently verified
+calibration receipt exists, so a positive path would overstate the evidence.
+
+Rejected alternatives:
+
+- Trust the status string because current production exports remain
+  deterministic-only.
+- Admit any finite non-crossing P10/P90 as calibrated.
+- Populate placeholder P10/P90 or reinterpret the three structural LT
+  scenarios as calibrated probabilities.
+- Freeze the draft probabilistic preregistration before governed CH evidence,
+  a new holdout and the required dependence/power design are available.
+
+Canonical local evidence:
+
+- implementation SHA-256:
+  `735ac0cee3b36c582eeedf7170d007ba7018a67e57592775dd3fd6f31e9565ac`;
+- test SHA-256:
+  `6bd2fb319bcfe411ef9493a3b4b920e876783ae9e945d9a4b26fd15495d9a602`;
+- workspace-supervised focused matrix: `45 passed in 0.27s`, zero failures
+  and errors, target exit zero; execution-receipt SHA-256
+  `6779d2b8a0b18906e9f8acd1b5a9fb15efac1b2f687413372ebc3f3aafe34cb8`;
+- `git diff --check` passed. Ruff was not qualified because the repo-local
+  scientific runtime has no `ruff` module; this is recorded as missing tool
+  coverage, not as a passing or failing lint result;
+- zero Databricks connection/statement, Warehouse start, network call,
+  `H:` access and remote write.
+
+Invariants not to break:
+
+- No dataframe attribute, caller boolean or unverified manifest may bootstrap
+  probabilistic authority.
+- The CH monthly solver remains the sole monthly-level authority; hourly and
+  quarter-hour layers may shape only with zero monthly mean effect.
+- Structural scenarios remain sensitivities, not probabilities, until they
+  are independently calibrated and admitted.
+- Governed EEX/ENTSO-E data, direct CH rolling-origin truth and a new future
+  holdout remain mandatory before candidate selection. T057 stays sealed;
+  OMPEX remains benchmark-only and AFRY descriptive only.
+
+## D-20260805-238 - Consume the Europe/Zurich capture day at reservation time
+
+Decision:
+
+- Bind the daily guard to the exact D233 ceiling, D235 external-time proof and
+  D236 bounded proposal proof. Validate only synthetic ledger/candidate
+  structure offline.
+- Derive the capture day from the embedded D236 proposal creation time in
+  `Europe/Zurich`. Permit at most one ledger entry per local day and require
+  unique reservation, capture-batch and proposal IDs plus strictly increasing
+  reservation times.
+- Treat `AUTHORIZED_RESERVED`, `EXECUTION_STARTED`, `SUCCEEDED` and `FAILED`
+  as day-consuming states. Reservation consumes the day before any Warehouse
+  start; a failure cannot authorize a same-day replacement or retry.
+- Keep reservation persistence, authorization admission, connectors and every
+  Databricks/production authority false. Structural eligibility is not an
+  execution authorization.
+
+Reason:
+
+D233 declared a one-capture-per-Zurich-day ceiling and D236 bounded one future
+batch, but neither executable local guard prevented two separately valid
+proposals from consuming the same day. D238 closes that cost-control and
+concurrency gap without touching Databricks or ENTSO-E values.
+
+Rejected alternatives:
+
+- Count only successful captures, which would permit costly retries after a
+  failed Warehouse start.
+- Key the ceiling on UTC day, ignore Europe/Zurich DST/calendar boundaries, or
+  allow reused reservation/batch/proposal identities.
+- Implement a mutable registry or cross-process lock before a separately
+  authorized real-reservation protocol exists.
+
+Canonical evidence:
+
+- contract raw SHA-256 / canonical content ID:
+  `827efab999bd7bb9446f753b4b98be57f2638ff4673481d1f3683458084be251` /
+  `18bf70f82ae3ab078660b765cf131369757002c056a96873fd66e93ded959544`;
+- validator/tests/materializer SHA-256:
+  `d8a932d2f813cbf457d7906234c29c4e84c8f010f6486ef197d26a2a05efc69a`,
+  `2a1074f95e1d86bfaf0742008e8017593e90a9b2a7389f86480824e9d559ae95`
+  and `0f9a30b3e851757c845dfb5fcdd69dafc679c24e47b8f3609f8ed6cb1476cb38`;
+- proof content ID / manifest / assessment SHA-256:
+  `2b9f6c513e0382e685bee78fb02d6c071a6954a26e715c5784fb28efec878aa8`,
+  `922a31ce0bf54b28e00b352bae1e4fa1d66fa357adf687c9a5f456e94d4511f6`
+  and `264abefb49b92a06a77c1dfda3d9389f263a0a4771c73d86d4abb0b3b532d671`;
+- focused `20 passed`; adjacent D233-D238 `261 passed`; Ruff passed; two
+  materializations returned the same proof ID;
+- zero Databricks connection/statement, Warehouse start, network call, `H:`
+  access and remote write.
+
+Invariants not to break:
+
+- D238 has no real ledger admission, authorization receipt, atomic persistence
+  or cross-process lock. It cannot reserve a day or authorize execution.
+- Real metadata/mapping/values, data quality, PIT and the independent holdout
+  remain missing. Training, selection, model input, candidate assembly,
+  promotion and production stay false; T057 remains sealed.
+
+## D-20260805-208 - Admit the Databricks EEX normalization as local solver-compatible evidence only
+
+Decision:
+
+- Normalize the single captured `prd.gold` CH POWER daily-price snapshot
+  entirely offline; do not issue another Databricks statement for modelling.
+- Use `SettlementPrice` in EUR/MWh and never fill sparse `LastPrice` values.
+  Preserve zero and negative settlements.
+- Retain only MONTH, QUARTER and YEAR products for the LT monthly-solver
+  interface. Reconstruct CAL/Q/M identities from delivery dates and verify
+  full calendar bounds for BASE versus first/last Monday-Friday bounds for
+  PEAK.
+- Select the content-addressed local normalization bundle
+  `25d40dcc74f17bae0486c8f27581fb4903bcfa8132098d2e6a1b79649c5780f6`
+  as current research evidence. The earlier root-level derived Parquets are
+  superseded because their first exact replay exposed non-canonical string
+  dtypes. The first content-addressed normalization `8e796e72...88d3e` is also
+  superseded after the API roast added timezone-naive as-of enforcement and
+  side-effect-free solver-map construction. The immutable raw Databricks
+  capture itself is unchanged.
+- Admit this bundle only as
+  `PASS_LOCAL_NORMALIZATION_ONLY_NOT_PIT_OR_PROMOTION_AUTHORITY`.
+
+Reason:
+
+The local snapshot already contains the complete visible EEX quote history
+needed to develop the monthly solver without repeated Warehouse use. A naive
+calendar-bound rule falsely rejected 3,023 PEAK rows. The explicit EEX
+Monday-Friday delivery convention validates all 36,753 CAL/Q/M rows and keeps
+BASE/PEAK identities unambiguous. One observed quotation date is selected as a
+surface; no per-product fill-forward can manufacture a mixed vintage.
+
+Rejected alternatives:
+
+- Query Databricks again for every model run or quality check.
+- Treat PEAK delivery dates as full calendar bounds.
+- Drop zero or negative settlements, or substitute `LastPrice` when it is
+  missing.
+- Fill stale products into the latest surface from earlier quotation dates.
+- Convert this local capture into signed PIT, rolling-origin, candidate or
+  promotion evidence without the missing external authorities.
+
+Canonical local evidence:
+
+- source snapshot raw SHA-256
+  `593e916b6aa18ad83f7bd7941ff68184cd71da8882ef4eb381de46d09ce64812`;
+- input Parquet SHA-256
+  `cf0535420c16b97d28caa8002cd3dddc59d000d39011940aa9e02ec602e2c54d`;
+- normalized history: 36,753 rows, SHA-256
+  `40f8b0e2add669a051840df6c21f80c7febc7e0c1289128d58275beffced5501`;
+- latest 2026-08-04 surface: 20 BASE plus 20 PEAK products, SHA-256
+  `d223c3055d07f12d6bfd4f479f53b948fe12892c946c4b5a9c5c8284d2796ce7`;
+- exact Parquet replay, canonical ingest-parser round-trip and monthly product
+  parser pass over 222 distinct identities;
+- real BASE solve over 77 delivery months has maximum hard-constraint residual
+  `8.526512829121202e-14` EUR/MWh against `1e-9`;
+- targeted tests: `5 passed`; adjacent LT tests: `132 passed, 4 skipped`.
+  Ruff was not installed in the repo-local runtime and was not fetched.
+
+Invariants not to break:
+
+- The normalization proves product identity and local solver compatibility,
+  not independently trusted historical availability.
+- Signed EEX vintage evidence, governed ENTSO-E Databricks evidence and a new
+  independent future holdout remain mandatory before rolling-origin selection
+  or promotion. Legacy local EEX/ENTSO-E substitution remains forbidden.
+- The CH monthly solver remains sole level authority. AFRY and OMPEX remain
+  benchmark-only; T057 remains sealed; LT/CT separation is unchanged.
+
+## D-20260805-209 - Retain the offline EEX surface audit as conflict-aware local evidence only
+
+Status: **SUPERSEDED BY D-20260805-210 AND D-20260805-211.** Its 437 reported
+CAL conflicts came from an overlapping child-strip estimand and must not be
+cited as EEX market evidence. The immutable bundle remains forensic evidence
+only.
+
+Decision:
+
+- Audit the D208 normalized EEX history entirely offline and select
+  content-addressed bundle
+  `080b3f58b110a03926c3b948618cf8ee9c37dbeaae4eca5ea70babeb79acbcdd`
+  for local research and pipeline development only.
+- Measure quotation coverage by date, full-child CAL/Q/M nesting residuals and
+  BASE/PEAK-implied OFFPEAK recomposition. Preserve negative implied OFFPEAK
+  values if observed; do not silently reject or floor them.
+- Classify a parent-versus-strip deviation above 0.01 EUR/MWh as
+  `QUOTE_CONFLICT`, not source corruption. Keep finer strips active under the
+  existing solver priority and retain redundant parent quotes as diagnostics;
+  do not force incompatible CAL, quarter and month marks simultaneously exact.
+- Keep point-in-time, rolling-origin, model-selection, promotion and production
+  authority false. Reuse the local capture for subsequent audit batches and do
+  not start or query a Databricks Warehouse.
+
+Reason:
+
+The normalized history is structurally coherent but quoted redundant products
+are not always internally identical. Among 3,255 fully covered parent strips,
+437 conflicts exceed 0.01 EUR/MWh; all occur for CAL versus finer products.
+All 1,640 quarter-versus-month comparisons remain below the threshold. The
+BASE/PEAK identity is algebraically sound for all 11,525 observed pairs, with
+no OFFPEAK recomposition failure. PEAK history starts only on 2023-06-26, so
+pre-mid-2023 direct PEAK calibration or validation is unsupported by this
+source.
+
+Rejected alternatives:
+
+- Query Databricks again to repeat checks already supported by the immutable
+  local snapshot.
+- Treat every nested quote difference as source corruption or hide it by
+  overwriting one market mark with another.
+- Make all redundant CAL/Q/M quotes simultaneous hard constraints.
+- Backfill PEAK history before its first observed quotation date.
+- Infer signed PIT availability, conduct rolling-origin selection or promote a
+  model from this local audit.
+
+Canonical local evidence:
+
+- surface-audit content ID
+  `080b3f58b110a03926c3b948618cf8ee9c37dbeaae4eca5ea70babeb79acbcdd`;
+- manifest SHA-256
+  `e0fb958bcf7cd012b2733c232f0184369ebbc287dac992bb9d54678611e8a5ab`;
+- 36,753 history rows over 1,939 quotation dates, with first PEAK quote on
+  2023-06-26;
+- 3,255 full-child nesting comparisons, 437 conflicts, overall conflict rate
+  13.4255% and maximum absolute residual 8.599210 EUR/MWh;
+- 1,640 quarter-versus-month comparisons, zero conflicts and maximum absolute
+  residual 0.004433 EUR/MWh;
+- 11,525 OFFPEAK identities, zero negative implied value in the observed sample,
+  zero recomposition failure and maximum floating residual
+  `2.842170943040401e-14` EUR/MWh;
+- exact fresh-process replay of summary and three Parquets; targeted tests
+  `5 passed`; adjacent LT matrix `187 passed, 4 skipped`.
+
+Invariants not to break:
+
+- The audit is descriptive and does not choose a model or rewrite monthly
+  levels. The CH monthly solver remains sole level authority.
+- Missing historical PEAK observations must remain missing; no fill-forward or
+  synthetic/local replacement can create empirical authority.
+- Governed ENTSO-E, signed EEX vintage availability and an independent future
+  holdout remain required before rolling-origin selection or promotion.
+- AFRY and OMPEX remain benchmark-only, T057 remains sealed and LT/CT
+  separation is unchanged.
+
+## D-20260805-210 - Separate the live all-product EEX layer from the monthly-solver view
+
+Status: **PARTIALLY SUPERSEDED BY D-20260805-211.** The live all-product
+normalization and quarantine remain selected. D211 supersedes only the
+surface-audit bundle and the claim that excluding already-started deliveries
+caused the 437 conflicts to disappear.
+
+Decision:
+
+- Retain DAY, WEEK, WEEKEND, MONTH, QUARTER and YEAR quotes in one governed
+  offline research layer. Expose a separate CAL/Q/M-only view to the monthly
+  solver; short products do not acquire monthly-level authority.
+- Admit a quote to the live forward layer only when `QuotationDateID` is
+  strictly before `DeliveryStartDate`. Preserve excluded rows in a typed,
+  reason-coded quarantine rather than deleting them.
+- Validate delivery bounds against EEX Contract Details dated 2026-07-22:
+  DAY is one day; WEEK BASE is Monday-Sunday; WEEK PEAK is Monday-Friday;
+  WEEKEND is Saturday-Sunday; CAL/Q/M BASE uses calendar bounds and PEAK uses
+  first/last weekdays.
+- Select all-product normalization bundle
+  `bb258371a96f19a8e08b54f9126635c3a478314e3284b7bf1249dba3feaaaeb5`
+  and live-CAL/Q/M surface-audit bundle
+  `8d301f964074b1030df3f30b00195c3cfe919a5f33647ca17ee1e8a1ffcbab3f`
+  as current local research evidence. They supersede the D208/D209 derived
+  bundles; the immutable one-statement raw capture is unchanged.
+- Keep all PIT, rolling-origin, model-selection, candidate, promotion and
+  production authority false. Do not issue another Databricks request for
+  this work.
+
+Reason:
+
+The source contains useful DAY, WEEK and WEEKEND products that must not be
+discarded. It also contains 10,376 observations whose quotation date is at or
+after delivery start; these are historical settlement records, not live
+forward observations for the associated delivery. One WEEK PEAK record also
+violates the published delivery boundary. After quarantine, the all-product
+layer contains 72,175 live rows: 38,070 DAY/WEEK/WEEKEND and 34,105 CAL/Q/M.
+The 437 nesting conflicts reported by D209 disappear from the live CAL/Q/M
+population: all 3,255 fully nested comparisons are below 0.01 EUR/MWh. This
+shows that the earlier conflicts were generated by non-live observations, not
+by the admissible live forward surface.
+
+Rejected alternatives:
+
+- Drop DAY/WEEK/WEEKEND because the monthly solver currently consumes CAL/Q/M.
+- Mix DAY/WEEK/WEEKEND directly into monthly hard constraints.
+- Treat settlement records dated during or after delivery as live forward
+  quotations.
+- Silently delete invalid rows or repair the anomalous WEEK PEAK boundary.
+- Query Databricks again for checks reproducible from the frozen local capture.
+- Treat the corrected local bundle as signed PIT evidence or use it to select
+  or promote a model.
+
+Canonical local evidence:
+
+- source snapshot SHA-256
+  `593e916b6aa18ad83f7bd7941ff68184cd71da8882ef4eb381de46d09ce64812`;
+- public EEX Contract Details SHA-256
+  `e03e51125b5e0b76668bc66bd736351799323abcb57b85e940ea574cd9ff1232`;
+- normalization manifest SHA-256
+  `7806daf9f4b0572facc0b750c6d0b790d4ece611c8dcff92c9693ff3a233f4dd`;
+- source rows 82,552; live all-product rows 72,175; live CAL/Q/M rows 34,105;
+  quarantine rows 10,377; latest live surface 74 rows, including 38 CAL/Q/M;
+- surface-audit manifest SHA-256
+  `b0b9322698f9ffd31dea8e29a0ef5381a7b2403fa43d54e5f7abd86f95eda768`;
+- 3,255 fully nested live comparisons and zero conflicts above 0.01 EUR/MWh;
+  10,766 BASE/PEAK identities and zero recomposition failures;
+- deterministic second materialization returned both selected content IDs;
+  targeted normalization/audit tests: `13 passed`.
+
+Invariants not to break:
+
+- The all-product layer is descriptive local research evidence. DAY/WEEK/
+  WEEKEND may support future shaping diagnostics but cannot rewrite monthly
+  means or bypass the monthly solver.
+- Quarantined rows remain traceable and cannot re-enter live surfaces without
+  a reviewed semantic-contract change.
+- Signed EEX vintage availability, governed ENTSO-E Databricks evidence and a
+  new independently frozen future holdout remain mandatory before empirical
+  rolling-origin selection or promotion.
+- AFRY and OMPEX remain benchmark-only, T057 remains sealed, production stays
+  strict `NO_GO`, and LT/CT separation is unchanged.
+
+## D-20260805-211 - Bind EEX nesting to complete non-overlapping child partitions
+
+Decision:
+
+- Retain D210 all-product live normalization bundle
+  `bb258371a96f19a8e08b54f9126635c3a478314e3284b7bf1249dba3feaaaeb5`
+  and its 10,377-row reason-coded quarantine.
+- Supersede live-CAL/Q/M audit bundle
+  `8d301f964074b1030df3f30b00195c3cfe919a5f33647ca17ee1e8a1ffcbab3f`
+  with v2 bundle
+  `c3891655e5cf043c904dba9d5584ce0adf845807e019ce4195697866d9d7e8d7`.
+- Compare a quarter only with all three direct months. Compare a CAL quarter by
+  quarter, using all three months only when the complete monthly strip exists;
+  otherwise use the direct quarter for that entire quarter. Never splice a
+  partial month set with the overlapping full-quarter quote.
+- Retain the strict monthly-solver conflict behavior. Do not add a
+  source-hierarchy bypass because the corrected real surface has no material
+  nesting conflict.
+- Keep point-in-time, rolling-origin, model-selection, promotion and production
+  authority false. Reuse the local capture; do not start or query Databricks.
+
+Reason:
+
+The D210 live filter is semantically necessary: a quote at or after delivery
+start is not a live forward observation. It was not, however, the cause of the
+437 D209 conflicts. The v1 audit selected one or two direct month quotes and
+then used the overlapping full-quarter price only for the uncovered month. A
+quarter settlement represents the whole quarter; this construction was not an
+arbitrage-valid child partition.
+
+With the corrected algorithm, the live 34,105-row CAL/Q/M history has zero
+conflict among 3,255 comparisons. The unfiltered 36,753-row CAL/Q/M history
+also has the identical corrected nesting Parquet SHA-256, proving that the
+algorithmic correction—not the live filter—explains the nesting result. The
+live filter independently governs which observations are eligible as forwards.
+
+Rejected alternatives:
+
+- Preserve the D210 causal explanation because the live-only result is green.
+- Treat a full-quarter settlement as the price of only a residual month.
+- Increase the 0.01 EUR/MWh threshold to hide the invalid comparison.
+- Add a conflict-policy relaxation that the corrected data does not require.
+- Requery Databricks instead of replaying the immutable local capture.
+
+Canonical local evidence:
+
+- v2 live audit content ID
+  `c3891655e5cf043c904dba9d5584ce0adf845807e019ce4195697866d9d7e8d7`;
+- v2 live audit manifest SHA-256
+  `15deddb8a31c56a9bff2c1c6cf1dc5cf99bd2e09e53479f9b7ef14f410ba5766`;
+- audit implementation SHA-256
+  `2c7a52149d41f09f6fd611c6352ea9ea77d402ebd3438786e3818f8ee65ac94b`;
+- audit test SHA-256
+  `4f61b23cc634409063e74e05a9ebb2ffa16c0286399f2a48803803325b86d6bd`;
+- 34,105 live CAL/Q/M rows over 1,939 dates; 3,255 complete non-overlapping
+  comparisons and zero conflict above 0.01 EUR/MWh;
+- CAL: 1,615 comparisons, maximum absolute residual 0.005370 EUR/MWh;
+  quarter: 1,640 comparisons, maximum 0.004433 EUR/MWh;
+- 10,766 live BASE/PEAK identities, zero OFFPEAK recomposition failure;
+- corrected live and unfiltered nesting Parquets share SHA-256
+  `dc3876c4c8d6c6a1ff26596381f65e2a7eecd6c8bcac03cb33bdd200e18a9652`;
+- strict latest BASE solve: 77 months, 18 active constraints, two
+  `redundant_consistent` parents and maximum hard residual
+  `8.526512829121202e-14` EUR/MWh;
+- exact fresh-process v2 replay; focused audit tests `6 passed`; adjacent LT and
+  product-normalization matrix `193 passed, 4 skipped`.
+
+Invariants not to break:
+
+- Every nesting comparison must be an exact non-overlapping partition of the
+  parent period. Reproducibility does not validate a wrong estimand.
+- D210 live-delivery eligibility and quarantine remain enforced and traceable.
+- The strict CH monthly solver remains sole level authority and continues to
+  fail closed on a genuine redundant-quote conflict.
+- Governed ENTSO-E, signed EEX vintages and an independent future holdout remain
+  mandatory before empirical rolling-origin selection or promotion.
+- AFRY and OMPEX remain benchmark-only, T057 remains sealed, production stays
+  strict `NO_GO`, and LT/CT separation is unchanged.
+
+## D-20260805-212 - Bind Swiss short-tenor EEX semantics to the exact official schedule
+
+Decision:
+
+- Supersede D210 normalization bundle
+  `bb258371a96f19a8e08b54f9126635c3a478314e3284b7bf1249dba3feaaaeb5`
+  with bundle
+  `2837dc4849dc4b573c441059574973e0b8cc0fbb5023203509cb2929dd636a3f`.
+  The normalized quote frames are unchanged; the new manifest additionally
+  binds and verifies the exact public EEX Contract Details workbook.
+- Supersede D211 audit bundle
+  `c3891655e5cf043c904dba9d5584ce0adf845807e019ce4195697866d9d7e8d7`
+  with v2 audit bundle
+  `bb1a09932b4bbff31dfdbb4ada561befb02050413ee819b03bf6c28f4858ab54`
+  solely to bind the new normalization identity. Preserve D211 complete,
+  non-overlapping nesting semantics and all resulting diagnostics.
+- For the exact Swiss short-tenor families, treat DAY PEAK as 08:00-20:00 on
+  every delivery day including Saturday and Sunday; WEEK PEAK as
+  Monday-Friday, 60 hours total; and WEEKEND PEAK as 12 hours Saturday plus 12
+  hours Sunday, 24 hours total. Do not confuse these families with the
+  weekday-only monthly PEAK calendar.
+- Keep DAY/WEEK/WEEKEND in the descriptive all-product layer only. They do not
+  become hard monthly constraints and cannot rewrite solver monthly means.
+
+Reason:
+
+A review correctly identified that a generic statement about PEAK calendars
+was too ambiguous. The product-level official EEX workbook resolves the
+ambiguity. All 14,082 Swiss DAY/WEEK/WEEKEND rows reproduce their published
+contract sizes exactly, including Europe/Zurich DST effects for BASE. The
+schedule contains 1,564 weekend DAY PEAK rows. WEEKEND PEAK's 24 hours are the
+sum of two 12-hour peak windows, not a continuous 24-hour band per day.
+
+Rejected alternatives:
+
+- Apply the monthly weekday-only PEAK calendar to every short-tenor family.
+- Interpret WEEKEND PEAK as 24 hours on Saturday and another 24 on Sunday.
+- Rely on prose alone without binding and replaying the exact official file.
+- Requery Databricks for contract definitions already available in the public
+  EEX schedule.
+
+Canonical local evidence:
+
+- official EEX Contract Details dated 2026-07-22, SHA-256
+  `e03e51125b5e0b76668bc66bd736351799323abcb57b85e940ea574cd9ff1232`;
+- 14,082 rows verified, zero contract-size mismatch and 1,564 weekend DAY PEAK
+  rows;
+- normalization manifest SHA-256
+  `f91805f3004e746ac588e19aa6745ae0dc0f490a9ef5c49aae0918e7ec3f8f53`;
+- v2 audit manifest SHA-256
+  `7f5d565ad7191b5f455e7a29280de078422cd95b3a846d06dc8cc6f29bf131a0`;
+- two independent materializations returned both selected content IDs;
+- focused normalization tests `7 passed`; focused and adjacent LT roast
+  `138 passed, 4 skipped`.
+
+Invariants not to break:
+
+- The CH monthly solver remains sole level authority. Short-tenor products are
+  research and future-shaping evidence only unless a separate governed model
+  contract is approved.
+- The local capture does not prove point-in-time availability. Rolling-origin,
+  model selection, promotion and production authority remain false.
+- Governed ENTSO-E, signed EEX vintages and an independent future holdout
+  remain required. AFRY and OMPEX remain benchmark-only, T057 remains sealed,
+  and LT/CT separation is unchanged.
+
+## D-20260805-213 - Treat local EEX horizon coverage as descriptive, not point-in-time evidence
+
+Decision:
+
+- Select the offline horizon-audit bundle
+  `435ecbc737f95268f03f7f347dfafc4163f5b5a4cb5b8dc9cec87e05f1645108`
+  for local research and pipeline development only. It is bound to D212
+  normalization `2837dc4849dc4b573c441059574973e0b8cc0fbb5023203509cb2929dd636a3f`
+  and D212 surface audit
+  `bb1a09932b4bbff31dfdbb4ada561befb02050413ee819b03bf6c28f4858ab54`.
+- Measure quote coverage at the exact
+  `quotation_date/load_type/product_type/horizon_bucket` grain, including
+  explicit zero-count dates. Do not fill products forward and do not use price
+  values in the coverage metrics.
+- Treat direct monthly support as ending at approximately six months: maximum
+  lead is 185 days for BASE and 187 days for PEAK, with zero monthly quote
+  beyond 365 days. Far-horizon monthly shaping therefore remains prior-driven
+  and cannot rewrite solver monthly means.
+- Treat `FactLoadTimestamp` as ingestion lineage only, not as authenticated
+  provider availability. Historical PIT inference, rolling-origin selection,
+  model selection, promotion and production authority remain false.
+- Keep the single long-gap finding descriptive: BASE `2023-Q2` has a proxy gap
+  of 172 missing Monday-Friday days between 2021-07-29 and 2022-03-29. Request
+  an upstream explanation without claiming market inactivity.
+
+Reason:
+
+The local Parquet is sufficient to describe which CAL/Q/M tenors and lead
+times are present without generating Databricks cost. It is not sufficient to
+reconstruct what was truly available at each historical forecast origin. The
+61 ingestion timestamps show a delayed-load/backfill-or-restatement signature:
+91.15% of rows were loaded more than 30 days after quotation and 65.07% more
+than 365 days after quotation. Using those timestamps as PIT truth would make
+rolling-origin evidence unauditable.
+
+Rejected alternatives:
+
+- Requery or start Databricks to recompute metrics already reproducible from
+  the frozen local Parquet.
+- Fill missing product dates forward to manufacture a continuous surface.
+- Use `FactLoadTimestamp` as a surrogate provider-availability timestamp.
+- Claim that a Monday-Friday proxy gap proves an EEX market closure or data
+  outage without the governed upstream calendar and lineage.
+- Infer long-horizon monthly shape evidence from CAL or quarter availability.
+
+Canonical local evidence:
+
+- 34,105 live CAL/Q/M rows, 1,939 quotation dates and 220 product lifecycles;
+- 49,194 zero-filled daily horizon cells and 36 aggregate horizon cells;
+- bundle manifest SHA-256
+  `949a1598710ad6198b569fd4cb00a99750707e162dbc0c709fefaa04f28e0ed1`;
+- exact independent replay of all three Parquets and `summary.json`;
+- focused tests `10 passed`; unchanged-code adjacent LT roast `248 passed, 4
+  skipped, 2 existing insufficient-history warnings`;
+- zero Databricks request, zero SQL Warehouse start and zero Databricks write.
+
+Invariants not to break:
+
+- The CH monthly solver remains the sole monthly-level authority.
+- This bundle has descriptive/local-development authority only. It is not a
+  PIT vintage catalog and cannot authorize empirical selection or promotion.
+- Governed ENTSO-E, signed EEX vintages and a new independently frozen future
+  holdout remain required. AFRY and OMPEX remain benchmark-only, T057 remains
+  sealed, production remains strict `NO_GO`, and LT/CT separation is unchanged.
+
+## D-20260805-214 - Admit the local ENTSO-E audit as failed empirical evidence and schema tooling only
+
+Decision:
+
+- Capture the exact preferred reusable import
+  `pfc-ct-data-20260522-v3-inventory` below governed repo-local `build/`, verify
+  all nine archive members and retain its original authority labels.
+- Select local readiness bundle
+  `1bc0d85177e8f98d2703d98ac9d37d3a063a4f262eb5fa74325ae0d5a22a8e77`
+  with status `FAIL_LOCAL_SCHEMA_OR_CONSISTENCY_NO_GO_EMPIRICAL_USE`.
+- Permit the import only for schema, parser and quality-control development.
+  Forbid training, historical validation, rolling-origin selection, candidate
+  assembly, promotion and production use.
+- Adopt `ENTSOE-DATABRICKS-INTAKE-CONTRACT-V1.json` as the target normalized
+  export contract. Require UTC native cadence, explicit units, long grains,
+  immutable vintages, per-series quality/gap evidence and hash-bound snapshots.
+- Do not query or write Databricks for this local batch.
+
+Reason:
+
+The archive's byte integrity passes, but authority and data quality do not.
+Its own manifest declares calibration ineligible, model activation forbidden
+and multi-file coherence unverified. All three forecast surfaces lack
+`as_of_utc`; source document, revision, unit, native resolution and series
+lineage cannot be replayed. Neighbour actuals, physical flows, scheduled
+exchanges and raw NTC span only about 55 days, below the explicit 730-day
+minimum for a seasonal cross-market diagnostic.
+
+The combined border view exactly matches its dedicated 40-series projection.
+The combined fundamentals view does not: 11 of 27 projected series diverge,
+with 490,560 mismatching cells. Seven raw CH physical series disagree during
+the 2026-05-08 through 2026-05-21 window; three derived signals also diverge
+over broad historical ranges. This is direct evidence against choosing either
+local view as model truth without upstream lineage reconciliation.
+
+Rejected alternatives:
+
+- Use the nearly complete CH actual columns while ignoring the import-level
+  `NO_GO` and cross-file divergence.
+- Treat recently backfilled forecasts as point-in-time historical vintages.
+- Infer native cadence from a 15-minute output index or silently forward-fill
+  hourly/weekly source series.
+- Train cross-border shaping on the approximately 55-day local history.
+- Requery Databricks before a bounded offline export contract is agreed.
+
+Canonical local evidence:
+
+- source manifest SHA-256
+  `f07dc8a1bbcff4d296f2e17fc45d8c97c9ec2850f0a829e1914b92eb98f13040`;
+- readiness content ID
+  `1bc0d85177e8f98d2703d98ac9d37d3a063a4f262eb5fa74325ae0d5a22a8e77`;
+- readiness manifest SHA-256
+  `1272dc25bd0e0f97b8adfe00295875c47230e6f7d62867c417a796cbc9c31cb6`;
+- target contract SHA-256
+  `7ede1698099390babfa1d130bfecae61fd1e090888a3d6e6e4f892119db52b87`;
+- seven file profiles, 159 series profiles and 67 duplicate-view projection
+  checks;
+- two deterministic materializations returned the same content ID;
+- focused tests `8 passed`; final archive/shared/replay/LT-input matrix
+  `132 passed, 4 skipped`, including the governed LT snapshot boundary.
+
+Invariants not to break:
+
+- Legacy local ENTSO-E remains forbidden as empirical substitute for governed
+  Databricks evidence. A valid hash proves integrity, not PIT or fitness.
+- Missingness stays missing; no zero fill, implicit upsampling or forward fill
+  may manufacture observations or cadence.
+- The monthly solver remains sole CH level authority. AFRY and OMPEX remain
+  benchmark-only, T057 remains sealed and LT/CT separation is unchanged.
+- Production remains strict `NO_GO`; governed ENTSO-E, signed EEX vintages and
+  a new independently frozen future holdout remain mandatory.
+
+## D-20260805-215 - Admit short-tenor EEX as coherent local shape diagnostics with localized gaps
+
+Decision:
+
+- Select offline DAY/WEEK/WEEKEND audit bundle
+  `f84ac6c9461bf9b8a0c5e36618f74b9b155b9c3050969f42ba780602014f433e`
+  with status `PASS_LOCAL_INTEGRITY_WITH_LOCALIZED_TEMPORAL_GAPS` for local
+  research and pipeline development only.
+- Bind it to D212 normalization
+  `2837dc4849dc4b573c441059574973e0b8cc0fbb5023203509cb2929dd636a3f`,
+  its reason-coded quarantine, the exact EEX Contract Details workbook and the
+  official EEX holiday calendar dated 2025-06-19.
+- Measure the exact live quotation horizons, product lifecycles, BASE/PEAK
+  pairing, WEEK/WEEKEND-versus-complete-DAY nesting and implied OFFPEAK energy
+  identity. Use Europe/Zurich DST hours and exact D212 short-product PEAK
+  schedules.
+- Keep 52 unexplained candidate gaps visible; do not fill them. Reconcile the
+  separate 2025-09-03 WEEK PEAK gap with its existing normalization quarantine
+  rather than reporting it to the data engineer as an upstream omission.
+- Permit these products as future short-horizon day/week/weekend shape
+  diagnostics only. They do not become hourly/15-minute truth, monthly hard
+  constraints, model-selection evidence or production authority.
+
+Reason:
+
+The 38,070 live short-tenor observations have bounded, relevant horizons: DAY
+J-1 to J-13, WEEK J-3 to J-28 and WEEKEND J-1 to J-12. PEAK starts only on
+2023-06-26; the 46.99% historical pairing rate is therefore a coverage-regime
+effect, not random missingness. DAY and WEEK reach full pairing in 2024 and
+the three families are approximately 99-100% paired in 2025-2026 apart from
+documented exceptions.
+
+All 4,900 same-vintage complete DAY-strip comparisons are consistent with
+their WEEK/WEEKEND parents below 0.01 EUR/MWh. All 12,170 BASE/PEAK pairs
+recompose exactly. Two negative implied OFFPEAK observations belong to the
+same Sunday DAY product at PEAK launch and are economically admissible, not
+algebraic failures.
+
+The holiday-adjusted lifecycle audit finds 53 initial diagnostics. One is the
+already quarantined boundary mismatch. The remaining 52 span six dates: 30 on
+2026-07-08, 18 on a source-wide absent 2026-07-20, and one each on 2020-05-20,
+2025-09-26, 2025-09-29 and 2025-09-30. These localized gaps require upstream
+lineage confirmation before any empirical use that assumes continuous daily
+settlements.
+
+Rejected alternatives:
+
+- Discard DAY/WEEK/WEEKEND because the monthly solver consumes CAL/Q/M.
+- Mix short-tenor quotes into solver-authoritative monthly hard constraints.
+- Fill missing quotation dates or carry products forward across vintages.
+- Interpret the aggregate pre/post-2023 pairing rate as one stationary missing
+  data process.
+- Reject negative implied OFFPEAK values automatically or floor them at zero.
+- Treat short-tenor settlements as hourly or 15-minute shape truth.
+- Requery Databricks for diagnostics reproducible from the selected local
+  normalization.
+
+Canonical local evidence:
+
+- audit content ID
+  `f84ac6c9461bf9b8a0c5e36618f74b9b155b9c3050969f42ba780602014f433e`;
+- manifest SHA-256
+  `5a3d2c6af24a7f6ecc6c577f1eee5a3a80ba4aea2ed8c882424c716af78da703`;
+- summary SHA-256
+  `0364358c0f0de00541643c88b06e3e307eedd3db47c7de1b4a2e14291449544a`;
+- audit implementation SHA-256
+  `604a867bf502fb0a41e226bf1198edf74a6f1904f51cc35b207dbb7356dc68e3`;
+- audit tests SHA-256
+  `21b5cd45c4dab2c4cb93062c3d6bee888c550ca6255f2398503169491d6310b5`;
+- official EEX holiday calendar SHA-256
+  `17f170941ad6765b2e53d06733a49afcc40895acaf28510b39c528677f9fed8d`;
+- 38,070 rows, 1,938 quotation dates, 5,054 product/load lifecycles;
+- 4,900 complete nesting comparisons and zero conflict; 12,170 BASE/PEAK
+  pairs and zero recomposition failure;
+- 53 gap diagnostics, one quarantine-explained and 52 unexplained candidates
+  over six dates;
+- two materializations from D212 returned the same selected content ID;
+- focused audit tests `11 passed`; adjacent EEX/LT matrix `209 passed, 4
+  skipped`.
+
+Invariants not to break:
+
+- Short-tenor evidence may shape only within solver-authoritative monthly
+  means and only after a separately governed feature/model contract exists.
+- Missing quotations stay missing. Calendar closures and reason-coded
+  quarantine must be reconciled before classifying an upstream data gap.
+- Local settlement chronology is not signed PIT availability. Rolling-origin,
+  model selection, candidate assembly, promotion and production remain false.
+- Governed ENTSO-E, signed EEX vintages and a new independently frozen future
+  holdout remain mandatory. AFRY and OMPEX remain benchmark-only, T057 remains
+  sealed, production stays strict `NO_GO`, and LT/CT separation is unchanged.
+
+## D-20260805-216 - Fail closed when normalization quarantine explains a short-tenor gap
+
+Decision:
+
+- Supersede D215 audit bundle
+  `f84ac6c9461bf9b8a0c5e36618f74b9b155b9c3050969f42ba780602014f433e`
+  with hardened bundle
+  `b09eb3250df5a3c0616eb169c512319c514ddf540251b405023d9351bd5d8bde`.
+- Permit a quarantine row to explain a CH short-tenor gap only when its exact
+  schema, quotation/load timestamps, finite settlement price, delivery bounds,
+  canonical product, CH/POWER domain, BASE/PEAK load type and reason-coded enum
+  all pass validation.
+- Accept only `DELIVERY_BOUNDARY_MISMATCH` and
+  `QUOTATION_NOT_BEFORE_DELIVERY_START` as current short-tenor quarantine
+  reasons. Unknown reasons fail closed until their semantics are governed.
+- Preserve all D215 analytical results and authority limits. The six Parquets
+  and `summary.json` are byte-identical; no quote, gap or price result changes.
+
+Reason:
+
+The D215 roast showed that reconciliation previously keyed quarantine rows by
+date, family, load and product without first proving country, commodity,
+reason and lineage metadata. A malformed or cross-market row could therefore
+have hidden a CH candidate gap in a synthetic or future caller. The selected
+D212 input happens to be valid, so hardening changes only implementation
+evidence, not the 53 diagnostics or their classifications.
+
+Rejected alternatives:
+
+- Trust every row merely because it came from a hash-bound quarantine file.
+- Silently ignore malformed matching rows and leave the gap unexplained.
+- Accept arbitrary future reason strings without a governed semantic contract.
+- Requery Databricks to validate metadata already present in the local D212
+  artifact.
+
+Canonical local evidence:
+
+- hardened content ID
+  `b09eb3250df5a3c0616eb169c512319c514ddf540251b405023d9351bd5d8bde`;
+- manifest SHA-256
+  `5978fd0383c64138cac0486f891361a07fb4160ee0e6fb22465ffe60ef5bb63d`;
+- audit implementation SHA-256
+  `715717cafee80bf659b6090842c8a646cf0b85b71e50014d222c33c32c259485`;
+- audit tests SHA-256
+  `a2258f97271055ca5adb999bd444086bac2408c9ef0ca02d760c1eb613f362f9`;
+- two exact materializations returned the same content ID;
+- focused tests `18 passed`; adjacent EEX/LT matrix `226 passed, 4 skipped`;
+- zero Databricks request, Warehouse start, write or network call.
+
+Invariants not to break:
+
+- D215 economic and temporal findings remain unchanged: 38,070 rows, 4,900
+  consistent nesting comparisons, 12,170 exact BASE/PEAK recompositions, one
+  quarantine-explained diagnostic and 52 unexplained candidates.
+- Quarantine is traceable exclusion evidence, never a license to fill missing
+  quotations or invent availability.
+- The monthly solver remains sole level authority. Local chronology is not
+  signed PIT; selection, candidate, promotion and production authority remain
+  false. Governed ENTSO-E, signed EEX vintages and a new independent holdout
+  remain mandatory; AFRY/OMPEX are benchmark-only and T057 stays sealed.
+
+## D-20260805-217 - Admit a dormant solver-neutral EEX short-tenor shape contract
+
+Decision:
+
+- Admit `EEX-CH-SHORT-TENOR-SHAPE-CONTRACT-V1` and
+  `pfc_shaping.lt.model.short_tenor_shape_contract` as local mathematical
+  boundary evidence only, with activation, model-input, candidate and
+  production authority all false.
+- Bind the contract to D212 normalization
+  `2837dc4849dc4b573c441059574973e0b8cc0fbb5023203509cb2929dd636a3f`
+  and hardened D216 short-tenor audit
+  `b09eb3250df5a3c0616eb169c512319c514ddf540251b405023d9351bd5d8bde`.
+- Permit only additive EUR/MWh signals at maximum native grain local delivery
+  day by short PEAK block, where the short block is 08:00-20:00 every delivery
+  day. Forbid arbitrary hourly or quarter-hour variation within either block.
+- Require contiguous complete Europe/Zurich calendar months, finite inputs,
+  a valuation timestamp before first delivery and exact provenance IDs.
+- Orthogonally project the signal into the nullspace of every active CH
+  BASE/PEAK/OFFPEAK constraint. Require both maximum constraint residual and
+  monthly weighted-mean residual at or below `1e-9` EUR/MWh.
+- Keep the module disconnected from quote fitting, the LT assembler and the
+  production pipeline.
+
+Reason:
+
+The coherent DAY/WEEK/WEEKEND settlements can eventually identify additive
+day, weekend and short-block contrasts, but they are not observed hourly or
+15-minute truth. A strict native-grain guard prevents the available prices
+from fabricating intrablock structure. Nullspace projection makes future shape
+experiments mathematically incapable of changing solver-authoritative monthly
+levels or already accepted PEAK/OFFPEAK constraints. Additive price space also
+remains valid for zero and negative prices.
+
+Rejected alternatives:
+
+- Feed short-tenor settlements directly into monthly hard constraints.
+- Infer an hourly or quarter-hour curve inside DAY or WEEKEND blocks.
+- Use multiplicative ratios that become unstable in negative-price space.
+- Fill missing quotes, mix quotation vintages or accept partial child strips.
+- Fit amplitudes, select a feature or activate assembly using the local
+  descriptive history, AFRY values, OMPEX or sealed T057 evidence.
+- Requery Databricks for a mathematical qualification reproducible offline.
+
+Canonical local evidence:
+
+- selected qualification content ID
+  `1c3b833e2c7abc8ddc60867c2cdee8b152e2128a9699e4f38958a3b7062b8343`,
+  file SHA-256
+  `f1cce0e7b762cc248dcb8717fbe6f91999a83626516af6a950013748c4c35304`;
+- contract SHA-256
+  `cddea7b1a47e81bfa3e85a1ed70bfb1adfa39ed56cc6b546bad415f9c9dce9ee`;
+- module SHA-256
+  `951274f220ac7b5d3dc4a992ec83e672cc10e6b0b28036ecfca1336a2cbb981e`;
+- tests SHA-256
+  `7f29aaa91982633a60f929cb5e202e90c54cdaa3606934d0de2a4c1a5a38dd97`;
+- focused contract roast `11 passed`; adjacent LT matrix
+  `232 passed, 1 skipped`;
+- qualification covers a complete hourly year and both 15-minute DST months;
+  maximum observed mathematical residual is below `4e-14` EUR/MWh and no
+  intrablock dispersion is introduced;
+- zero Databricks request, Warehouse start, network call or remote write.
+
+Invariants not to break:
+
+- The CH monthly solver remains the sole level authority. The contract may
+  remove level components from a future signal but may never restore them by
+  a later month patch.
+- The native evidence supports day/block contrasts only; no hourly or
+  quarter-hour truth claim follows from the successful projection.
+- Signed EEX PIT vintages, governed ENTSO-E, preregistered rolling-origin
+  evaluation and a new independently frozen future holdout remain mandatory
+  before activation. AFRY and OMPEX remain benchmark-only, T057 stays sealed,
+  production remains strict `NO_GO`, and LT/CT separation is unchanged.
+
+## D-20260805-218 - Freeze OMPEX as an hourly post-candidate independent benchmark only
+
+Decision:
+
+- Admit structural audit bundle
+  `228deb1fb1adca0e7a4e6cb64406d2f33621c8dc1e2a98c21294fd68354fb3bf`
+  as `PASS_LOCAL_STRUCTURAL_AUDIT_NO_GO_SCIENTIFIC_SCORING`.
+- Treat OMPEX as a frozen read-only prediction benchmark opened only after the
+  candidate, configuration and input manifests are frozen. Never use OMPEX as
+  truth, model input, target, loss, tuner, selector or promotion authority.
+- Score the candidate and OMPEX only against the same independent realised
+  truth, same authenticated origin, target window, UTC calendar, EUR/MWh unit
+  and missingness mask. Exclude delivery intervals already started at origin.
+- Register the observed OMPEX curves as native hourly. Permit stepwise
+  quarter-hour transport for alignment only; never call it native 15-minute
+  data or multiply the effective sample size by four.
+- Require explicit timestamp semantics. The observed Europe/Zurich local
+  hour-ending interpretation is structurally valid across selected DST
+  transitions but is not vendor/desk authenticated. Error-minimizing automatic
+  alignment is forbidden for scientific scoring.
+- Pre-register numeric improvement, subgroup non-inferiority, alpha and
+  multiple-testing rules before outcomes. Scientific scoring stays `NO_GO`
+  until those decisions, governed truth and countable future origins exist.
+
+Reason:
+
+The directory name and template say 15 minutes, but six hash-frozen curve
+samples contain one value per native hour. Their labels become exact unique
+contiguous UTC hours only under a local hour-ending interpretation. The archive
+also behaves as a vintage system, not an immutable historical curve: one
+adjacent pair changes 37,753 of 43,824 common delivery rows, including 11 rows
+before the later filename timestamp. A latest workbook therefore cannot
+reconstruct an earlier information set.
+
+“Superior from every point of view” cannot mean smaller error at every single
+timestamp or closer agreement with OMPEX. That would overfit an imperfect
+external curve. It means strict preregistered improvement on primary estimands,
+non-inferiority on mandatory subgroups and no regression on PIT, calendar,
+monthly-solver, provenance and operations guardrails, all measured against
+independent realised truth.
+
+Rejected alternatives:
+
+- Tune or rank candidates by distance to OMPEX.
+- Select timestamp alignment by whichever shift minimizes candidate/OMPEX
+  error.
+- Use the latest workbook for past origins or score its pre-origin history.
+- Call four repeated hourly values native quarter-hours or count four
+  independent observations.
+- Demand a 15-minute price accuracy gate in periods where the governed Swiss
+  price truth remains hourly.
+- Claim a literal win at every timestamp or choose metrics/margins after
+  reading outcomes.
+
+Canonical local evidence:
+
+- six selected curve vintages plus one template: 4,926,902 frozen bytes;
+- read-only folder inventory: 353 XLSX files, 351 dated curves, two templates,
+  49 missing calendar dates and no duplicate filename date;
+- manifest, summary and workbook-profile SHA-256 respectively
+  `33966d3a7e5724ee3152ae966d647234218aa1047cc1cb1067e738d6d8bf1aac`,
+  `fb2cbc684979507044b5b765f6e97b010e7904a16b5242d4c144226a2b25e82a`
+  and `bb358c3247a1257151907112dbbebc9a4a0bc24f0a4ffcedcf87a4db3ed1c5e5`;
+- two exact materializations returned the same content ID and byte-identical
+  three-member outputs;
+- focused tests `7 passed`; adjacent OMPEX/PIT/scoring/import matrix `52
+  passed, 1 skipped`; JSON validation, Python byte-compilation and Ruff pass;
+- no price value or price statistic in the structural bundle;
+- zero Databricks request, Warehouse start, write or network call.
+
+Invariants not to break:
+
+- The CH monthly solver remains the sole level authority; hourly layers cannot
+  rewrite monthly means.
+- OMPEX and AFRY remain separate benchmark-only evidence and never enter
+  training, tuning, model selection or promotion.
+- Swiss truth is scored at its independently governed native cadence; hourly
+  periods cannot manufacture 15-minute accuracy evidence.
+- Governed ENTSO-E, signed EEX availability, authenticated OMPEX origin
+  semantics, a new independent holdout and multiple countable future origins
+  remain mandatory. T057 stays sealed and production remains strict `NO_GO`.
+
+## D-20260805-219 - Strengthen the dormant short-tenor contract proof without activating it
+
+Decision:
+
+- Retain the D217 machine contract and implementation unchanged. Supersede its
+  three-case qualification as selected proof with content-addressed bundle
+  `4da441b09c5559d772fd507214b2989489314bd9114a9328752a150f3957450a`.
+- Add explicit tests that the nullspace projection is invariant to numeric
+  forward levels, that adding the projected delta preserves an already
+  solver-admissible affine curve, and that no LT production orchestrator
+  imports or consumes the contract.
+- Expand deterministic proof coverage to five cases: a complete hourly year,
+  both 15-minute DST months, partial monthly PEAK geometry and BASE-only
+  geometry. Persist constraint and monthly residuals for inspection.
+- Keep all fixtures algebraic and value-free with respect to market/vendor
+  evidence. They prove mathematics only and cannot substitute for empirical
+  rolling-origin validation.
+
+Reason:
+
+D217 proved zero residual on representative calendar cases, but its report did
+not directly demonstrate price-level invariance, affine preservation of an
+existing solver curve, partial-PEAK geometry or the absence of orchestration
+wiring. These are independent failure modes for a supposedly solver-neutral,
+dormant layer. The stronger bundle closes them without changing any formula,
+source evidence, feature amplitude or activation flag.
+
+Rejected alternatives:
+
+- Treat low residuals on three fixtures as sufficient proof of the broader
+  integration contract.
+- Persist synthetic projected price curves that could be confused with market
+  or empirical evidence.
+- Wire the contract into the assembler merely to exercise an integration path.
+- Use OMPEX, AFRY, T057 or local non-PIT quote outcomes to tune an amplitude.
+
+Canonical local evidence:
+
+- proof content ID
+  `4da441b09c5559d772fd507214b2989489314bd9114a9328752a150f3957450a`;
+- manifest SHA-256
+  `b6892ba9b4de7c165ad5f70a01800cdd2a471b51f21fa6b94a7ebbacc97d5bb6`;
+- contract module SHA-256
+  `951274f220ac7b5d3dc4a992ec83e672cc10e6b0b28036ecfca1336a2cbb981e`;
+- shape-constraint module SHA-256
+  `9298534b42d7fde3c867394a237c4b4665dd15273bde56568e5077eaf27798ad`;
+- test SHA-256
+  `7f29aaa91982633a60f929cb5e202e90c54cdaa3606934d0de2a4c1a5a38dd97`;
+- two exact proof materializations returned the same content ID;
+- five persisted cases: maximum constraint residual
+  `6.772360450213455e-15` EUR/MWh and maximum monthly residual
+  `2.9844704963041844e-15` EUR/MWh;
+- deterministic 30-case cadence/calendar/PEAK-policy roast: maximum constraint
+  residual `1.0058620603103918e-13` and monthly residual
+  `7.474069153304495e-14` EUR/MWh;
+- focused tests `14 passed`; adjacent LT matrix `256 passed, 4 skipped`;
+- zero Databricks request, Warehouse start, network call or remote write.
+
+Invariants not to break:
+
+- D219 is mathematical contract evidence only. Model input, candidate assembly,
+  selection, promotion and production authorities remain false.
+- The proof bundle contains no market/vendor values and no persisted synthetic
+  curve; it cannot count as empirical evidence or a synthetic substitute.
+- The monthly solver remains sole level authority, no month patch is allowed,
+  and the contract stays disconnected from LT orchestration.
+- Signed EEX PIT vintages, governed ENTSO-E, preregistered rolling-origin and a
+  new independent future holdout remain mandatory. AFRY/OMPEX stay
+  benchmark-only, T057 stays sealed, and LT/CT separation remains unchanged.
+
+## D-20260805-220 - Construct separate same-vintage EEX short-tenor contrasts without activation
+
+Decision:
+
+- Admit `EEX-CH-SHORT-TENOR-CONTRAST-CONSTRUCTION-V1` and
+  `pfc_shaping.lt.model.short_tenor_contrasts` as deterministic local
+  construction evidence only. Model-input, fitting, assembly, selection,
+  promotion and production authority remain false.
+- Construct four separate additive families: DAY within WEEK, DAY within
+  WEEKEND, WEEKEND versus implied WEEKDAY BASE, and BASE/PEAK with algebraic
+  implied OFFPEAK. Never sum the families automatically or fit an amplitude.
+- Require one quotation date, one hash-bound local snapshot, exact child
+  counts, canonical non-overlapping delivery periods, Europe/Zurich contract
+  hours and a parent/child residual no greater than `0.01 EUR/MWh`. Missing or
+  conflicting strips emit diagnostics and no contrast rows.
+- Center every accepted component to an hour-weighted parent mean of zero.
+  Preserve negative implied OFFPEAK in additive price space. Keep the maximum
+  native grain at local delivery day by short block 08:00-20:00 versus its
+  complement.
+- Permit materialization of exactly one component on contiguous complete local
+  months at hourly or 15-minute cadence. Zero outside its quoted support is
+  only the additive identity, never a filled quote. Require exact delivery-hour
+  reconciliation before handing the component to the dormant D219 nullspace
+  projector.
+- Select offline local panel bundle
+  `7a4c2a601e169d8c471e0939919f12cf56b03d132d8691a82d6bfef5b392bd03`
+  as `PASS_LOCAL_DESCRIPTIVE_CONSTRUCTION_ONLY_NO_MODEL_AUTHORITY`.
+
+Reason:
+
+D216 proves that complete same-vintage short strips are internally coherent,
+while D219 proves that a day/block additive signal can be made solver-neutral.
+The missing boundary was a pure, inspectable construction that does not blend
+overlapping evidence or invent within-block shape. Centering on the complete
+child strip preserves relative day differences and exact zero energy; the
+parent quote is used as a fail-closed consistency check, not as a level patch.
+
+The selected D212 history yields 17,635 accepted separate components and
+95,783 native-grain cells from 38,070 short-tenor quotes. All accepted
+components are zero-parent-mean within `8.53e-14 EUR/MWh`; the largest accepted
+parent/child residual is `0.00438 EUR/MWh`, and no quote-conflict component is
+emitted. Two negative implied OFFPEAK observations remain valid.
+
+Coverage limitations remain explicit. BASE/PEAK construction accepts 12,170
+of 25,900 diagnostics (46.99%); DAY within WEEK accepts 1,123 of 10,884
+(10.32%); DAY within WEEKEND accepts 3,777 of 3,821 (98.85%); and WEEKEND
+versus WEEKDAY BASE accepts 565 of 7,719 (7.32%). Rejections are missing
+same-vintage components, not filled values. The overall accepted diagnostic
+rate rises from about 4.7% in 2019-2022 to 72.5% in 2025-2026, consistent with
+the documented product-coverage regime change, but this chronology is still
+not signed PIT evidence.
+
+Rejected alternatives:
+
+- Sum every available component into one raw curve or choose weights from the
+  local descriptive history.
+- Fill a missing child from another quotation date, carry a quote forward or
+  infer an absent BASE/PEAK pair.
+- Use WEEK monthly weekday-only PEAK semantics for DAY or WEEKEND products.
+- Convert additive contrasts to ratios, floor negative implied OFFPEAK or use
+  a parent/child quote discrepancy as a level signal.
+- Wire the constructor into the assembler before governed rolling-origin,
+  amplitude/clipping policy and independent holdout admission.
+- Use OMPEX, AFRY or sealed T057 evidence for construction or selection.
+- Query Databricks for evidence already present in the local D212 Parquet.
+
+Canonical local evidence:
+
+- selected panel content ID
+  `7a4c2a601e169d8c471e0939919f12cf56b03d132d8691a82d6bfef5b392bd03`;
+- manifest SHA-256
+  `a62e5656febf38b088e18b9e463c2eb9851cb0d0c90ac7584e7d527dfa4e89f1`;
+- contrast/diagnostic/summary SHA-256 respectively
+  `99933b4e4fce7e208f3f57017f6ba1ad6b1342e97804958b64465cdc4e550dcc`,
+  `f06f024de5e8f8d1e758195c7a260f64ff49bd9a488f10092c87294ee199e049`
+  and `663bbc40827efe51e3a0f8e7b32b60b1f1679ea097a8d1e3a8816257bff42694`;
+- constructor contract/module/tests SHA-256 respectively
+  `8d18107356ae60e1379baaee5392ff7f2fc2c79895140c6e4423105ad970a802`,
+  `95ca6087f9ea213111abed2c06ba87978d21cb4d4c4221bb40e953abba626b0b`
+  and `4f2986eba1e91b1b68f057b68a36567570c119b2173cbf600bed55cd80ae9b6a`;
+- build-only materializer SHA-256
+  `481314d1aa07375bcf02c290306723384f35620542098b21200d0ed858958435`;
+- two exact materializations returned the same content ID;
+- focused tests `19 passed`; adjacent EEX/solver/LT matrix `200 passed, 4
+  skipped`;
+- deterministic 336-projection roast across 12 ISO weeks, both cadences, DST
+  and cross-month support: maximum constraint residual
+  `2.6645352591003757e-14` and monthly residual
+  `5.4737133025664514e-15 EUR/MWh`;
+- zero Databricks request, Warehouse start, network call or remote write.
+
+Invariants not to break:
+
+- Each contrast family and component remains separate until a future
+  preregistered amplitude/selection policy exists. Successful construction is
+  not empirical model admission.
+- The monthly solver remains sole level authority. Only D219 may remove active
+  BASE/PEAK/OFFPEAK components, and no later month patch may restore them.
+- Missing quotations remain missing; local quotation dates and load timestamps
+  do not prove provider PIT availability.
+- Governed ENTSO-E, signed EEX vintages, preregistered rolling-origin and a new
+  independent future holdout remain mandatory. AFRY/OMPEX stay benchmark-only,
+  T057 stays sealed, production remains strict `NO_GO`, and LT/CT separation
+  remains unchanged.
+
+## D-20260805-221 - Restrict H to explicit read-only OMPEX refreshes and run routinely from C
+
+Decision:
+
+- Make `C:\Users\jbattaglia\PFC_LT` the only canonical workspace for code,
+  tests, calculations, reports, manifests and mutable artifacts.
+- Permit `H:` only as an exceptional, explicitly requested, read-only source
+  for refreshing the independent OMPEX benchmark. No command may use an `H:`
+  default, scheduled scan or runtime dependency, and nothing may be written,
+  moved, deleted or metadata-mutated there.
+- Select full-archive byte inventory
+  `336700af0b38324bbfc99c5332b5f360a01e00f2fd14baab090ebcb8e087a57a`
+  as local benchmark-refresh evidence only. Routine scoring must consume an
+  explicitly selected, hash-bound local vintage on `C:` and must not rescan
+  `H:`.
+- Keep all OMPEX model-input, fitting, tuning, selection, promotion,
+  production and truth authority false. OMPEX remains a post-candidate
+  independent benchmark under D218.
+
+Reason:
+
+The full recursive inventory contains 353 XLSX workbooks: 351 dated curves and
+two templates. All 351 dated curves have the same schema, contain no formulas
+or active/external links, and fall into two row-count regimes (136 at 43,824
+rows and 215 at 52,584 rows). Two complete byte scans produced exactly the
+same content ID and output hashes. This is sufficient to freeze what was read
+without making the network drive part of routine PFC execution.
+
+The archive is not rolling-origin evidence. Its 400-day filename interval has
+49 absent calendar dates, including a 47-day initial gap, and filenames do not
+authenticate when a workbook became available to the desk. Therefore zero of
+351 curve files are countable scientific forecast origins today. The selected
+status is `PASS_CURRENT_BYTE_INVENTORY_NO_GO_ROLLING_ORIGIN`, not empirical
+model admission.
+
+Rejected alternatives:
+
+- Work routinely from `H:`, use it as a checkout, cache, model-input root or
+  implicit dependency.
+- Copy or rescan the whole OMPEX archive for every score instead of selecting
+  a hash-bound local vintage on `C:`.
+- Fill the 49 missing dates, use the latest vintage retrospectively or treat a
+  filename timestamp as an authenticated `as_of` timestamp.
+- Use OMPEX to train, tune or select the PFC, or make it the monthly-level
+  authority.
+
+Canonical local evidence:
+
+- two inventories under
+  `build/ompex-benchmark/2026-08-05/full-inventory-v3-a` and
+  `build/ompex-benchmark/2026-08-05/full-inventory-v3-b`, both content ID
+  `336700af0b38324bbfc99c5332b5f360a01e00f2fd14baab090ebcb8e087a57a`;
+- selected inventory/summary/manifest SHA-256 respectively
+  `7dc64cd40d341072cbe264402a0fffb0bbf80183977e49de9dbecc16f89317aa`,
+  `23ffd8e78848595a47f87c12db32a30925181d3a7e60fae3d41ef903c2408670`
+  and `4166c84e8378a685c39ee636fe9ac119a8fc5467bf19d0fd5f565245a6fd77f6`;
+- access contract SHA-256
+  `9d74beea0319ec730c03c2d1ffc1041c28562aac83430b220801910a5e1f3d1e`;
+- inventory module/runner/tests SHA-256 respectively
+  `2569cc089eb8e9ccc6213a95d8341477bc422d88b7cbdec776982107f4bdee52`,
+  `69c73d116bebad9d3afabb572e76867c902ed2764fea3dc6c85aafbdba0d060d`
+  and `87381a35786de97da259dff88c087a8fa8ce02d2a3fc3841edd2fc5e5219e487`;
+- access tests SHA-256
+  `2adb5163deef261d4e57849f032b7e0e1af863f7305114a6966e7b8cab8e040a`;
+- technical report SHA-256
+  `e0658e4b51f15910a939e6418dcf27009657740a39794e9e18935d03736b1cc5`;
+- focused/adjacent matrix: `59 passed, 1 skipped`; Ruff, JSON validation,
+  Python compilation and two-scan equality passed;
+- zero Databricks request, Warehouse start, network write or `H:` mutation.
+
+Invariants not to break:
+
+- `H:` is benchmark source only, explicit and read-only. Failure to reach it
+  may block a benchmark refresh, never normal PFC work.
+- No live `H:` path may appear as a default in code, configuration or an
+  automated command. All mutable paths remain below the canonical `C:` repo.
+- OMPEX is scored only after candidate freeze against independent truth; it
+  cannot influence fitting, tuning, selection or monthly levels.
+- Governed ENTSO-E, signed EEX vintages, preregistered rolling-origin and a new
+  independent future holdout remain mandatory. T057 stays sealed and
+  production remains strict `NO_GO`.
+
+## D-20260805-222 - Admit an explicit dormant combination boundary without selecting weights
+
+Decision:
+
+- Admit `EEX-CH-SHORT-TENOR-COMBINATION-CONTRACT-V1` and
+  `pfc_shaping.lt.model.short_tenor_combination_contract` as local mathematical
+  boundary evidence only. Training, model input, candidate assembly, selection,
+  promotion and production authority remain false.
+- Require an exact one-to-one match between named component keys and explicit
+  finite coefficients. Require separate pairwise-distinct content IDs for the
+  normalization, D216 audit, D220 contrast bundle, combination policy,
+  training receipt and selection receipt. This module binds but does not
+  authenticate the latter receipts.
+- Require explicit positive coefficient, per-component contribution and
+  combined-signal caps. Reject bools, non-finite values, missing/extra keys and
+  every cap breach. Do not supply defaults and never clip a coefficient or
+  signal silently.
+- Project every component independently through D219, form the explicit linear
+  weighted sum, then project once more through D219. Require the final result
+  to equal the sum of individually projected components within `1e-9 EUR/MWh`.
+  Forbid all post-projection clipping and individual month patches.
+- Keep future coefficient/cap selection outside this boundary. It must be
+  nested inside each governed outer origin, use common targets/masks, refit
+  from training only with the declared embargo, compare transparent regularized
+  baselines and a justified nonlinear challenger, and treat missing components
+  as unsupported rather than zero.
+- Select value-free proof bundle
+  `21c557df75260ce162c15af6fbe0c91de4c8a6fcd233564403a04e7b1fc53ad0`
+  as `PASS_LOCAL_MATHEMATICAL_COMBINATION_ONLY_NO_MODEL_AUTHORITY`.
+- Validate the outcome-blind combination policy independently of the runtime
+  combiner. Its candidate/baseline families and successor-core binding are
+  structural only: every numeric coefficient, cap and candidate-grid field
+  remains null, policy execution is false and no empirical fit is authorized.
+
+Reason:
+
+D220 deliberately keeps overlapping EEX contrast families separate. A future
+model nevertheless needs one deterministic algebraic boundary at which
+explicitly selected contributions can be combined without losing the D219
+monthly solver invariants. The new module closes that boundary while remaining
+incapable of learning a weight, inventing a default, authenticating a receipt
+or activating an assembler.
+
+The scientific design follows the existing CH preregistration and published
+electricity-price-forecasting evidence: Lago et al. (2021,
+doi `10.1016/j.apenergy.2021.116983`) require rigorous common-sample comparison
+against strong transparent baselines; Ziel and Weron (2018,
+doi `10.1016/j.eneco.2017.12.016`) show that no single high-dimensional
+structure dominates every season/hour and that regularization plus forecast
+combination must earn out-of-sample value. These references justify testing a
+combination, not preselecting its coefficients from the current non-PIT panel.
+
+Rejected alternatives:
+
+- Sum all D220 components with unit weights or infer missing weights from key
+  order.
+- Silently clip large coefficients/contributions and report the clipped result
+  as if it were the requested policy.
+- Clip after D219, which could rewrite active monthly or PEAK/OFFPEAK
+  constraints.
+- Authenticate training/selection authority from a syntactically valid hash or
+  a self-declared boolean.
+- Select coefficients, caps, hyperparameters or feature families from the
+  current local quotation chronology, OMPEX, AFRY or sealed T057 evidence.
+- Treat repeated quarter-hours from hourly Swiss truth as independent evidence.
+- Wire the dormant combiner into `production_phases` before governed empirical
+  admission.
+
+Canonical local evidence:
+
+- proof content ID
+  `21c557df75260ce162c15af6fbe0c91de4c8a6fcd233564403a04e7b1fc53ad0`;
+- manifest/summary/residual Parquet SHA-256 respectively
+  `c2cddd1ba59b3f0cf77ff16f5debcbf915c46b9373dd6a36e238d144d58bb21c`,
+  `5f68ca8c6089df2cacb76db202160720655fe6b3e3ffdcf2522e04e41e9b6db3`
+  and `45123d43c5978d115838308cb8028a4c13a3b842cebb34486d5c60a3286bed08`;
+- contract/module/tests SHA-256 respectively
+  `0be8ab62cbaba4c28de14179a749d47046b8e41aa967da8c06a2d49a5bc250ba`,
+  `311a34c154a93cb3389debee2edb948117428b94c1fd3890b7b28bcac5eb7f6e`
+  and `f5cb2bc621d897af54c741b4383d48de1f9c16a00a2634a07b47c7bb8a54dcb8`;
+- build-only materializer SHA-256
+  `a17304d563df43e911568af67dd17fa3628f51e33ea23b0ea0da21563fa172c6`;
+- canonical outcome-blind policy content ID
+  `00a2b2087589d14ef1330cfa0de109fe9dfcce81436e0a0265fb96067d10fbb6`;
+- two exact materializations returned the same content ID;
+- six persisted algebraic cases cover 1h/15min, both DST transitions,
+  BASE-only, zero/positive/negative coefficients and negative fixture levels;
+  maximum linearity/constraint/monthly residuals are respectively `0`,
+  `8.31279489688086e-15` and `2.6981399962886943e-15 EUR/MWh`;
+- independent 24-case random-coefficient roast: maximum linearity residual `0`,
+  constraint residual `1.4432899320127035e-14` and monthly residual
+  `4.8110657888588664e-15 EUR/MWh`;
+- focused tests `33 passed`; adjacent D219/D220/solver/preregistration/LT matrix
+  `209 passed, 4 skipped`;
+- zero Databricks request, Warehouse start, network call or remote write.
+
+Invariants not to break:
+
+- D222 proves algebra only. A coefficient hash, training hash or selection hash
+  is not authenticated execution evidence and does not authorize model use.
+- No numeric coefficient, cap or candidate grid is selected by the D222
+  contract or proof fixtures. Future values must be frozen before outcomes and
+  selected inside governed nested rolling origins.
+- The monthly solver remains sole level authority. D219 is the only accepted
+  projection boundary and no later clip or month patch may undo it.
+- Missing components stay unsupported. Signed EEX PIT vintages, governed
+  ENTSO-E, exact origin/target/inner-fold inventories, external admission and a
+  new independent holdout remain mandatory.
+- AFRY/OMPEX remain benchmark-only, T057 stays sealed, production remains
+  strict `NO_GO`, and LT/CT separation remains unchanged.
+
+## D-20260805-223 - Freeze an outcome-blind short-tenor selection scaffold and correct the proof binding
+
+Decision:
+
+- Retain D222 as the dormant algebraic combination boundary, but demote its
+  `21c557df75260ce162c15af6fbe0c91de4c8a6fcd233564403a04e7b1fc53ad0`
+  proof from current selection because its manifest binds the non-selected
+  descriptive D220 bundle `7a4c2a...`. Select instead proof bundle
+  `c06dfcf5fbda16cd5bab04005d4581e35216116c30c6c9df6cef94f2d949f67b`,
+  which binds the governed D220 bundle `ae7b962c...` and its manifest
+  `fd5af41e...`.
+- Admit the expanded combination policy only as
+  `PASS_LOCAL_STRUCTURE_ONLY_NO_EMPIRICAL_EXECUTION`. It is a local
+  outcome-blind scaffold, not an executable, externally frozen or trusted-time
+  preregistration.
+- Freeze two candidate families and two baselines before outcomes:
+  `ROBUST_REGULARIZED_LINEAR_GAM_SHAPE_V1`,
+  `MONOTONE_HIST_GRADIENT_BOOSTING_SHAPE_V1`,
+  `MARKET_CONSTRAINED_SEASONAL_NAIVE_V1` and
+  `INCUMBENT_CH_LT_FROZEN_V1`. Require the one-standard-error rule within a
+  family and a fixed family tie order.
+- Use native-regime within-month shape MAE as the primary loss. Require bias,
+  RMSE, median absolute error, ramps, tails, negative-price, peak/offpeak,
+  weekday/weekend/holiday, season, DST, horizon and vintage-stability
+  diagnostics on common origins, targets and masks.
+- Keep minimum inner origins, effective clusters, embargo, coefficient grid,
+  coefficient/contribution/signal caps, superiority/noninferiority margins,
+  power floors and required outer-origin counts null. These quantities may be
+  fixed only by a direct-CH dependence/power design before outcomes and an
+  external freeze.
+- Require nested selection, contrast-specific overlap-aware studentized block
+  bootstrap, Holm familywise-error control, one-shot post-freeze holdout and no
+  hourly-to-quarter-hour multiplication of effective evidence. Model confidence
+  sets are diagnostic only.
+- Fail closed on OMPEX training/tuning/selection/cap/margin use, AFRY numeric
+  use, T057 access, local non-PIT EEX as rolling-origin evidence, legacy or
+  synthetic ENTSO-E substitution, outcome opening or any model/assembly/
+  production authority escalation.
+- Recheck the combined-signal cap after the final D219 projection as well as
+  before it. Keep all month patches, implicit components, defaults and silent
+  clipping forbidden.
+
+Reason:
+
+D220 provides coherent but non-PIT descriptive DAY/WEEK/WEEKEND contrasts and
+D222 proves that explicit combinations can preserve the monthly solver
+constraints. The remaining local risk was adaptive researcher freedom: choosing
+families, metrics, caps, sample sizes or margins after seeing outcomes, and a
+stale proof manifest that referred to the wrong descriptive bundle identity.
+The D223 scaffold closes those degrees of freedom that can be fixed honestly
+today while leaving evidence-dependent numeric decisions unset. This follows
+the common-sample out-of-sample discipline of Lago et al. (2021), conditional
+predictive-ability framing of Giacomini and White (2006), dependent
+multiple-testing control of Romano and Wolf (2005), and selection uncertainty
+of Hansen, Lunde and Nason (2011).
+
+Rejected alternatives:
+
+- Treat `21c557df...` as current merely because its mathematical residuals are
+  green while its source manifest binds the non-selected D220 identity.
+- Choose unit weights, caps, an embargo of one month, twelve inner origins or
+  numeric margins from the current descriptive panel.
+- Search arbitrary model families or metrics after opening future truth, use
+  OMPEX distance as a selection loss or use AFRY/T057 values as priors.
+- Count four duplicated quarter-hours as four observations in the hourly Swiss
+  price regime, ignore overlapping origins or test many subgroups without
+  multiplicity control.
+- Activate the combiner because a structural validator and algebraic fixtures
+  pass.
+
+Canonical local evidence:
+
+- selected proof content ID
+  `c06dfcf5fbda16cd5bab04005d4581e35216116c30c6c9df6cef94f2d949f67b`;
+- manifest/summary/residual Parquet SHA-256 respectively
+  `b76eb64b493a154c66def95a2dc13c448f2f93f048f2a3a45e5caf057e7783c8`,
+  `5f68ca8c6089df2cacb76db202160720655fe6b3e3ffdcf2522e04e41e9b6db3`
+  and `4232684e7dda0fb223474f8a74a1bb953f80a9118662f4f953fb388a9c48be27`;
+- policy content ID
+  `00a2b2087589d14ef1330cfa0de109fe9dfcce81436e0a0265fb96067d10fbb6`;
+- contract/module/tests SHA-256 respectively
+  `0be8ab62cbaba4c28de14179a749d47046b8e41aa967da8c06a2d49a5bc250ba`,
+  `311a34c154a93cb3389debee2edb948117428b94c1fd3890b7b28bcac5eb7f6e`
+  and `f5cb2bc621d897af54c741b4383d48de1f9c16a00a2634a07b47c7bb8a54dcb8`;
+- build-only materializer SHA-256
+  `a17304d563df43e911568af67dd17fa3628f51e33ea23b0ea0da21563fa172c6`;
+- three deterministic materializer replays selected or re-adopted the same
+  content ID; the final replay used the Ruff-clean materializer;
+- six persisted 1h/15min/DST cases: maximum linearity, constraint and monthly
+  residuals respectively `0`, `8.31279489688086e-15` and
+  `2.6981399962886943e-15 EUR/MWh`;
+- focused tests `33 passed`; adjacent D219/D220/OMPEX/ENTSO-E/LT matrix `127
+  passed, 1 skipped`; Ruff passes on module, tests and materializer;
+- zero Databricks request, Warehouse start, network call or remote write.
+
+Invariants not to break:
+
+- D223 selects no coefficient, cap, margin, required sample size or production
+  candidate. Null numeric decisions are blockers, not defaults.
+- The monthly solver remains sole level authority; D219 remains the only
+  projection boundary and no later clip or month patch may alter its result.
+- OMPEX remains closed until a candidate is frozen, then benchmark-only against
+  the same independent truth. AFRY remains descriptive, T057 sealed and local/
+  synthetic ENTSO-E substitution forbidden.
+- Signed EEX PIT vintages, governed ENTSO-E, exact origin/target/fold inventories,
+  external trusted-time freeze and a new independent future holdout remain
+  mandatory before empirical selection.
+
+## D-20260805-225 - Reconcile the short-tenor evidence chain on current local bytes
+
+Decision:
+
+- Supersede the D220/D223 artifact selections only, without changing the D220
+  scientific contrast payload or the D223 outcome-blind modelling policy.
+- Select D220 contrast bundle
+  `309b9f07236d1cfb32b3d92c1ed5413bde6966fa383629882a539ccbd60e9cb5`.
+  It binds the current contract, module and test bytes and was re-adopted by
+  two exact runs of the governed repo-local Python runtime.
+- Treat `ae7b962c...` and `7a4c2a60...` as superseded implementation receipts.
+  Their contrast, diagnostic and summary artifact hashes are byte-identical to
+  the selected bundle; neither is rejected for market performance.
+- Select the regenerated D222/D223 algebraic proof
+  `122afd7292549b00a946a2893487d344e459c420a8bbdf99c11714c7308a8cfd`.
+  It binds the selected `309b9f07...` contrast bundle and outcome-blind policy
+  `189e7ab9...`. Supersede `21c557df...` and `c06dfcf...`, which bind the two
+  superseded contrast identities.
+- Admit `EEX-CH-SHORT-TENOR-EVIDENCE-SELECTION-V1` and
+  `pfc_shaping.lt.model.short_tenor_evidence_selection` only as local
+  evidence-chain reconciliation. The validator requires the exact six
+  selected/superseded manifest bytes, equal scientific contrast payloads,
+  current implementation hashes, pairwise identities, zero remote execution
+  and all empirical/model/production authorities false.
+- Select proof bundle
+  `ca099abf04153724254663a880152ba9ed6979638b89eb3462b716a0af8fb041`
+  as `PASS_LOCAL_EVIDENCE_CHAIN_RECONCILED_NO_MODEL_AUTHORITY`.
+
+Reason:
+
+D220's decision text selected `7a4c2a60...`, a later handoff note selected
+`ae7b962c...`, D223 selected a combination proof bound to `ae7b962c...`, while
+the current combination-policy validator required `7a4c2a60...`. All three
+contrast manifests contain the same scientific Parquet and summary bytes; the
+content IDs differ because their bound test bytes differ. Leaving this
+contradiction unresolved would allow a syntactically valid future training
+receipt to bind a non-current upstream identity. D225 removes that ambiguity
+using current source/test bytes and exact local replays, never a performance
+comparison or market outcome.
+
+Rejected alternatives:
+
+- Keep the last textual handoff as authority when it contradicts the decision
+  log, validator constants and current implementation bytes.
+- Choose among `ae7b...`, `7a4c...` and `309b...` from price performance; their
+  scientific payloads are identical and no outcome is admissible here.
+- Accept a combination proof that binds any superseded contrast identity.
+- Delete old content-addressed evidence or silently rewrite historical D220,
+  D222, D223 or the independent OMPEX D224 decision.
+- Interpret a reconciled hash chain as PIT, model-input, candidate, promotion
+  or production authority.
+
+Canonical local evidence:
+
+- selected contrast bundle/manifest SHA-256:
+  `309b9f07236d1cfb32b3d92c1ed5413bde6966fa383629882a539ccbd60e9cb5` /
+  `57b571bef311cf22955edc415e650f55671ad2f243141d4f334ccac425d8bb0f`;
+- shared contrast/diagnostic/summary SHA-256:
+  `99933b4e4fce7e208f3f57017f6ba1ad6b1342e97804958b64465cdc4e550dcc`,
+  `f06f024de5e8f8d1e758195c7a260f64ff49bd9a488f10092c87294ee199e049`,
+  `663bbc40827efe51e3a0f8e7b32b60b1f1679ea097a8d1e3a8816257bff42694`;
+- selected combination proof/manifest SHA-256:
+  `122afd7292549b00a946a2893487d344e459c420a8bbdf99c11714c7308a8cfd` /
+  `d9772a5e18eea9adb3f6aa9a085558fe0bf91534b03d2e172c4d3c16b0626dab`;
+- combination summary/residual SHA-256:
+  `5f68ca8c6089df2cacb76db202160720655fe6b3e3ffdcf2522e04e41e9b6db3` /
+  `45123d43c5978d115838308cb8028a4c13a3b842cebb34486d5c60a3286bed08`;
+- outcome-blind policy content ID:
+  `189e7ab9d460daefbaa689f1dc8ae4c3bb269f7b5bcb5eae95e77b6d0d4d3e43`;
+- selection document SHA-256/content ID:
+  `2517c106e5cfa9e6ab2dc39df301cb620df53aeb91948c652e58ef40015ac643` /
+  `792149a7d46834b17507ea4ec6a15dbfeb2ab9233b058b9783673a58a57c26aa`;
+- selection proof/manifest/summary SHA-256:
+  `ca099abf04153724254663a880152ba9ed6979638b89eb3462b716a0af8fb041`,
+  `6f0212a01490104c0e5fde40d3b4004ad0e9589424ca0766404eaff7c71b036d`,
+  `a38294a2111d9dc3fae79e857fbbf980839f49dbadc94da822dbb15a73ff770f`;
+- selection module/tests/materializer SHA-256:
+  `7990a11afb05a7416a7decb5bdacd955525a105ab206464f722297e50ea7b27c`,
+  `e34870c88cca6f524c59fc152a6274a7d447289e04858df668ab1dae9443f0fa`,
+  `f0fb570579767523a87c92ff36a1ce8a25e1988a474214b506345d016e68eccf`;
+- focused D220/D223/D225 tests `66 passed`; adjacent solver/PIT/ENTSO-E/
+  OMPEX/LT matrix `244 passed, 4 skipped`;
+- Python AST parsing, JSON parsing and 100-character code-line audit passed;
+  Ruff is absent from the governed repo-local runtime and is not claimed;
+- zero Databricks request, Warehouse start, network call or remote write.
+
+Invariants not to break:
+
+- D225 changes evidence identity only. The 17,635 contrast components, 95,783
+  contrast rows, formulas, tolerances and algebraic residuals are unchanged.
+- The selected combination proof must bind `309b9f07...`; neither a historical
+  decision nor a self-declared receipt may override the frozen chain.
+- The monthly solver remains sole level authority. No weight, cap, margin,
+  candidate, empirical fit or individual month patch is admitted.
+- Signed EEX PIT vintages, governed ENTSO-E, exact fold inventories, external
+  freeze and a new independent holdout remain mandatory. OMPEX stays
+  post-candidate benchmark-only, AFRY descriptive and T057 sealed.
+
+## D-20260805-224 - Replace direct OMPEX distance with an exact paired-truth diagnostic
+
+Decision:
+
+- Supersede the executable behaviour of the historical
+  `scripts/compare_hpfc_ompex_benchmark.py`. It may no longer select a timestamp
+  shift by minimizing candidate/OMPEX distance or compare the candidate to
+  OMPEX without realised truth.
+- Admit `pfc_shaping.validation.ompex_truth_comparison` and the rewritten entry
+  point as `DESCRIPTIVE_ONLY_NO_SUPERIORITY_DECISION`. Both forecasts must be
+  scored against the same truth on one exact, complete, native-hour UTC grid.
+- Require local regular non-reparse files and caller-supplied SHA-256 for the
+  candidate, OMPEX vintage and truth. Reject missing values, duplicates,
+  unsorted timestamps, inner-join denominator changes, target rows before the
+  origin and outputs outside `build/`.
+- Report paired MAE, RMSE, bias, median/p95/maximum absolute error, ramp error
+  and protected descriptive subgroup diagnostics. A negative candidate-minus-
+  OMPEX MAE delta is descriptive only and cannot authorize selection,
+  promotion or production.
+- Keep countable origins at zero until candidate-freeze chronology, OMPEX
+  at-origin availability/timestamp semantics and independent truth publication
+  timing are authenticated. D218 and D223 remain the scientific authority.
+
+Reason:
+
+The legacy comparator optimized among three alignments using the distance
+between the candidate and OMPEX, then reported direct candidate/OMPEX errors.
+That can reward an arbitrary timestamp shift and measures resemblance to OMPEX,
+not forecast accuracy. Exact paired losses against the same observed outcome
+are the minimum valid comparison primitive under Diebold-Mariano and
+Giacomini-White predictive-ability framing. Multiple origins, dependence-aware
+inference and family-wise multiplicity control remain necessary before a
+superiority decision.
+
+Rejected alternatives:
+
+- Retain `--alignment auto`, choose the lowest-error shift or inspect all
+  shifts after outcomes and select one retrospectively.
+- Treat OMPEX as truth, a training/tuning target or a selection loss.
+- Inner join incomplete forecasts, average duplicate timestamps or permit one
+  forecast to benefit from a smaller denominator.
+- Read a live `H:` workbook during routine scoring, accept unhashed inputs or
+  write comparison output outside the canonical `C:` workspace.
+- Claim superiority from one descriptive window or synthetic fixtures.
+
+Canonical local evidence:
+
+- diagnostic contract SHA-256
+  `a3887bd8778f0e9b3342bd202d5b2cb731933c92f8fb6fdd5d77196e9b5f9754`;
+- module/entry-point/tests SHA-256 respectively
+  `dc62dc47a55af91f0ce42f8a5c0708066450676a0df8c4e785533a717ea4fec0`,
+  `0b8ab7b3e9a7483258d4a3de91e7fa28ca8db93a3fcaec78f06bb72e2a218f54`
+  and `deeb69d69c143739cfac3f9c56c80d96062a11bce3f9657564b1660fa0688195`;
+- technical report SHA-256
+  `0b54db7a907c09ef7e538d24711949e4fedb8918d5cf14e81688270b9d2ddec8`;
+- final focused/adjacent matrix `40 passed, 1 skipped`; Ruff passed;
+- synthetic roast covers a favourable candidate delta without decision
+  authority, missing truth, bad hashes, pre-origin targets, DST round-trips,
+  absent auto alignment and the machine authority boundary;
+- no real price outcome, `H:` access, Databricks request, Warehouse start,
+  network write or remote mutation occurred.
+
+Invariants not to break:
+
+- OMPEX is opened only after candidate freeze and remains a post-candidate
+  benchmark against the same independent truth. Direct candidate/OMPEX
+  distance is never an accuracy or selection objective.
+- Exact common grid and missingness are hard gates. Hourly evidence is never
+  multiplied into four independent quarter-hours.
+- Numeric margins, sufficient origins, dependence-aware inference and
+  multiplicity control must be frozen before outcomes. Descriptive output is
+  not empirical admission.
+- The monthly solver remains sole level authority. AFRY remains descriptive,
+  T057 sealed, governed ENTSO-E and signed EEX PIT evidence remain mandatory,
+  and production remains strict `NO_GO`.
+
+## D-20260805-226 - Admit a price-free OMPEX receipt-chain reference with zero authority
+
+Decision:
+
+- Admit `pfc_shaping.validation.ompex_benchmark_evidence_chain` and its local
+  audit entry point only as
+  `PASS_LOCAL_REFERENCE_STRUCTURE_ONLY_NO_COUNTABLE_ORIGIN`.
+- Require three exact canonical and domain-separated Ed25519 receipts with
+  distinct role keys: candidate freeze, OMPEX availability and independent
+  truth publication. Bind caller-held receipt and artifact hashes, the exact
+  origin/target window and every cross-receipt identity.
+- Enforce candidate cutoff/freeze before delivery, OMPEX first availability no
+  later than origin and opening only after candidate freeze, then truth
+  publication only after target delivery and opening only after publication.
+- Keep the verifier price-free. It reads receipts and public keys only, writes
+  an exclusive-create local assessment below `build/` and never contacts `H:`
+  or Databricks.
+- Declare the `.reference.v1` schemas incompatible with a future production
+  wire. A locally supplied key verifies signature integrity only; it does not
+  authenticate the external key owner or establish independently trusted
+  time. Every passing local chain therefore retains zero countable origins and
+  all scientific, selection, superiority, promotion and production authority
+  false.
+
+Reason:
+
+D218/D224 correctly require candidate freeze, at-origin OMPEX availability and
+post-delivery independent truth, but they did not provide one executable
+cross-receipt chronology primitive. The new reference closes that software
+gap without manufacturing external evidence. RFC 8032 supplies the Ed25519
+signature primitive, while NIST SP 800-89 and RFC 3161 make explicit the
+separate owner-identity and trusted-time assurances that the local reference
+does not possess.
+
+Rejected alternatives:
+
+- Treat self-generated keys, a valid local signature or a signer-asserted UTC
+  field as external organizational identity or trusted time.
+- Reuse one key for candidate, OMPEX and truth roles, accept broken receipt
+  links or infer chronology from filenames and filesystem modification times.
+- Open prices during chain verification, replay the reference as a real origin
+  or let a structurally passing chain authorize a comparison or model choice.
+- Read a live `H:` workbook during routine execution, write anything to `H:`
+  or Databricks, or depend on a remote service for the local reference.
+- Reuse the reference schemas in production instead of introducing external
+  trust anchors, key lifecycle, trusted timestamps and append-only/WORM
+  retention.
+
+Canonical local evidence:
+
+- reference contract SHA-256
+  `3fe0f79419b5edfb25b78be3ecd4af3c82b36fe338d3040b0bfffda0586d2ab8`;
+- module/entry-point/tests SHA-256 respectively
+  `f04c68aa540da22245d6a30dfaf6c4485f30f49d22d3f88fb880592688106b86`,
+  `2be1a83bb66cec25f2475af4c57163dcef1d1118c44268c4982bf2b69c81e2d5`
+  and `8e9d3a605b3c968a7226d255abb234f06fab0b481c69b75c047748063aceb86f`;
+- technical report SHA-256
+  `f9e79b3ea2e4f7ca7778588595e19b27399bf6eedc9143ecd8801a6cae8eac81`;
+- focused tests `15 passed`; final adjacent matrix `66 passed, 1 skipped`;
+  Ruff passed on module, entry point and tests;
+- no real receipt, price value, countable origin, `H:` access, Databricks
+  request, Warehouse start, network write or remote mutation occurred.
+
+Invariants not to break:
+
+- OMPEX remains an occasional explicit read-only post-candidate benchmark and
+  is never truth, an input, a tuning target or selection authority.
+- Local cryptographic integrity is not external identity or trusted time. Only
+  a new independently governed production wire can admit a real origin.
+- Candidate and OMPEX must ultimately be scored against the same independent
+  truth on the exact native-hour UTC grid; multiple origins and preregistered
+  dependence-aware inference remain mandatory for any superiority claim.
+- The monthly solver remains sole level authority. AFRY remains descriptive,
+  T057 sealed, governed ENTSO-E and signed EEX PIT evidence remain mandatory,
+  and production remains strict `NO_GO`.
+
+## D-20260805-227 - Freeze structural short-tenor training and selection receipts
+
+Decision:
+
+- Admit `EEX-CH-SHORT-TENOR-RECEIPT-CONTRACT-V1` and
+  `pfc_shaping.validation.eex_short_tenor_receipts` only as
+  `PASS_LOCAL_RECEIPT_SCHEMA_ONLY_NO_AUTHENTICATED_RECEIPTS`.
+- For every future outer origin, require exact hash bindings for the D219-D225
+  evidence chain, EEX and ENTSO-E PIT catalogs, origin/target mask, candidate
+  grid, fold inventory, implementation closure and runtime lock. Every
+  material must declare availability no later than the outer origin.
+- Require each inner fold to bind its inventory entry, EEX cutoff receipt,
+  ENTSO-E cutoff receipt and input snapshot. Exclude the outer origin from all
+  inner training and validation origins; require validation truth to be
+  available before the outer origin.
+- Require the training receipt to bind the outer-origin entry, frozen candidate
+  allowlist and inner-loss commitment as an exact training byproduct. Require
+  the selection receipt to bind the exact training receipt, origin, grid,
+  folds and loss commitment; the selected configuration must belong to the
+  frozen allowlist and use the frozen one-standard-error/tie-order rule.
+- Reject unknown fields, duplicate JSON keys, unsafe logical names, numeric
+  values and every access to outer truth, OMPEX, restricted AFRY values, T057,
+  the future holdout or post-origin data. Keep the receipt layer absent from LT
+  production orchestration.
+- Align the structural profile with in-toto Attestation Framework v1.2,
+  `Statement/v1`, DSSE and SLSA provenance v1. This local profile is stricter
+  than generic SLSA parsing but performs no signature or trusted-time
+  authentication.
+
+Reason:
+
+D223/D225 froze the outcome-blind candidate policy and made the upstream
+evidence identity unambiguous, but future training could still leak an outer
+origin, substitute a fold snapshot or change the candidate grid unless the
+execution receipts bind these identities explicitly. The pre-fix targeted
+test run exposed a real implementation contradiction: the JSON contract,
+validator and fixtures disagreed, producing 14 failures. Reconciliation and
+the added adversarial cases now make the future wire internally coherent
+without selecting a coefficient, cap, loss threshold, fold count or market
+winner.
+
+Rejected alternatives:
+
+- Treat a receipt ID, self-declared key ID, boolean or local timestamp as
+  cryptographic authentication, external PIT evidence or trusted time.
+- Permit the outer origin inside inner training/validation folds, reuse one
+  aggregate cutoff for both EEX and ENTSO-E, or leave fold snapshots unbound.
+- Recompute inner losses during selection, select a candidate outside the
+  frozen allowlist or change the selection rule after outcomes are visible.
+- Put prices, coefficients, caps, losses or margins in the structural receipts
+  or use OMPEX/AFRY/T057/future truth to fill null numeric decisions.
+- Activate the receipt validator in production orchestration before external
+  trust anchors, governed PIT catalogs and an independently frozen holdout
+  exist.
+
+Canonical local evidence:
+
+- contract file SHA-256 / canonical content ID:
+  `3168d75e245f033daa44f4c6dab9061f51e06f2b993797b7fb7d9c46dbe6b665` /
+  `d4f7e4e87b8e059255e1a85a589f41d54596756d731ce4a9781b2dbc46d61068`;
+- module/tests SHA-256 respectively
+  `12e54315ac26702c9effd06c7ffd135cfe2fed51a2e79e5e19a6df3998631c97`
+  and `7de01220936dbbd2b35fa376a2e8bf9652795d3df439a951da374941a52f6ae0`;
+- updated research note SHA-256
+  `cf3c13cd9ff0da0a9390d060d11411ed321c7a3aa71cafeb698667a232cd44dc`;
+- build-only materializer SHA-256
+  `a9012fd6f96bf599941c831febdb1ee8654557e1b2feaa154ed870cdd00de6d8`;
+- reproducible proof content ID / manifest / assessment SHA-256:
+  `398b6ff48128a577f06a0106473a3cf71cdc6d411e3d1e877270d433cc6091cc`,
+  `ad564fea14b6adcd126f93c745c08d3b9719c25826fa66f05e8d32a3707b5c3d`
+  and `f84599b5996b629c68ee684833650b24be14b0af97b38d693b65baa89742c8b7`;
+- focused roast `55 passed`; adjacent PIT/fold/combination/LT/OMPEX matrix
+  `329 passed, 4 skipped`; Ruff is unavailable in the governed repo-local
+  runtime and is not claimed;
+- no real training/selection receipt, price, coefficient, cap, loss or margin
+  was emitted or consumed; no `H:` access, Databricks request, Warehouse start,
+  network write or remote mutation occurred.
+
+Invariants not to break:
+
+- D227 proves structural receipt consistency only. Training, selection, model
+  input, candidate assembly, promotion and production authority remain false.
+- Numeric hyperparameters remain null until direct-CH dependence/power choices
+  are externally frozen. Signed EEX PIT vintages, governed ENTSO-E, exact
+  future inventories and a new independent holdout remain mandatory.
+- OMPEX remains post-candidate benchmark-only; AFRY remains descriptive and
+  T057 stays sealed. Hourly truth is never counted as four independent
+  quarter-hours.
+- The monthly solver remains sole level authority; short-tenor layers may
+  shape only within the hard monthly constraints. LT remains independent of
+  CT and production remains strict `NO_GO`.
+
+## D-20260805-228 - Admit a value-free DSSE/SLSA replay with zero external authority
+
+Decision:
+
+- Admit `EEX-CH-SHORT-TENOR-SIGNED-REPLAY-CONTRACT-V1` and
+  `pfc_shaping.validation.eex_short_tenor_signed_replay` only as
+  `PASS_LOCAL_DSSE_AND_TIME_LINK_REPLAY_ONLY_NO_EXTERNAL_TRUST`.
+- Require seven caller-anchored, absolute and pairwise-distinct mono-link
+  files: training and selection envelopes, their execution/governance public
+  keys, one trusted-time public key and two time-observation envelopes. Every
+  file must match its caller-held SHA-256; JSON, base64 and PEM are canonical.
+- Wrap each exact D227 receipt in an in-toto Statement v1 with SLSA provenance
+  v1. Bind the receipt as external parameters, its exact output as subject,
+  role-specific resolved dependencies, and exact builder, invocation,
+  timestamps and byproducts. Training is signed by the execution key and
+  selection by the governance key.
+- Bind each run to a separately signed time-observation Statement through the
+  exact execution-attestation SHA-256 and the receipt's trusted-time payload
+  hash. Require different training/selection execution attestations, one
+  expected time-source ID, run-finish/observation/outer-origin chronology and
+  pairwise-separated governance, execution and time keys.
+- Keep key ID as a consistency check after the caller-selected key verifies
+  the signature; it must never select a trust anchor. Keep the verifier absent
+  from LT production orchestration and prevent it from opening material,
+  subject, source-time or price artifacts.
+- A successful local replay proves byte/signature/link integrity only. It does
+  not prove external key ownership, key lifecycle, independently trusted time,
+  EEX/ENTSO-E PIT availability, predictive quality or superiority over OMPEX.
+
+Reason:
+
+D227 froze a coherent structural receipt but deliberately performed no signed
+path replay. D228 closes that local software gap while preserving every
+empirical blocker. The roast exposed and corrected one substantive design bug:
+selection receipts do not carry the training material inventory, so their
+SLSA resolved dependencies must instead bind the training receipt, candidate
+grid, fold inventory, loss commitment, policy and successor core. Reusing the
+training dependency rule would have rejected valid selections or encouraged a
+fabricated material inventory.
+
+Rejected alternatives:
+
+- Relabel a custom receipt as in-toto without a real Statement, subject and
+  predicate, or cite SLSA without replaying build definition and run details.
+- Use the same resolved-dependency inventory for training and selection, omit
+  byproducts, or allow a signed but structurally invalid D227 receipt.
+- Let an untrusted DSSE `keyid` choose its own trust anchor, accept ambiguous
+  JSON/base64/PEM, reuse role keys or accept path aliases/hard links.
+- Treat a caller-supplied public key as authenticated organizational identity,
+  or a signer-asserted observation as independently trusted time.
+- Open OMPEX, AFRY values, T057, future truth or any bound market artifact; run
+  a fit; start Databricks; or grant model, promotion or production authority.
+
+Canonical local evidence:
+
+- signed-replay contract file SHA-256 / canonical content ID:
+  `f9f447f31458a88aaaf4ce5863f9f23dbd6a77d1683b7759885783457780a957` /
+  `09dfd36125132a1a1c8089f603a381414853c393d23dda633354938843382606`;
+- module/tests/materializer SHA-256 respectively
+  `b3e845797582751e8b2ba741d1d3add9a9f438c1dfa6880980c44b57e8feb4c8`,
+  `39aa2f9ed8a83dee213aa5f172a54d7d3bf6bb2577a9009e4cc782aae9542553`
+  and `78ea89afb578c9b9a54d9917e238ef851505591c9f3e31fe887e4a2a009289a2`;
+- reproducible proof content ID / manifest / assessment SHA-256:
+  `eed94d79109a5f196f49cf2bb11950b79889c8384cc82c1ef70a33a69cdebc5e`,
+  `18b5c3c394ddba05393fefd7b62fa2fbe0eb60c497c3e093d5a73e677ad2d8e9`
+  and `d8b54043da2eba9062bfe385eeb639f0d46aafdaa5a2f367d93eda230cae51ef`;
+- updated research note SHA-256
+  `9845d734b6bc18c8095f0cf2ab50ef44782ebf09c3ef1ceff7f50e2aa5937908`;
+- focused roast `27 passed`; expanded adjacent
+  EEX/PIT/monthly/ENTSO-E/OMPEX/LT matrix `455 passed, 2 skipped`; Ruff passed
+  on the contract validator, tests and build-only materializer;
+- two exact materializations returned the same proof content ID. No real
+  receipt, price, coefficient, cap, loss or margin was persisted; no `H:`
+  access, Databricks request, Warehouse start, network call or remote write
+  occurred.
+
+Invariants not to break:
+
+- D228 is a deterministic local reference, not a production trust system.
+  External trust anchors, owner/role identity, key lifecycle, trusted time,
+  WORM retention and same-snapshot EEX/ENTSO-E replay remain mandatory.
+- Training, selection, model input, candidate assembly, promotion and
+  production remain false. A green signature cannot override a D227 failure.
+- OMPEX remains post-candidate benchmark-only; AFRY remains descriptive and
+  T057 stays sealed. No outcome can enter training or selection.
+- The monthly solver remains sole level authority; short-tenor layers may only
+  shape within hard monthly constraints. LT remains independent from CT.
+
+## D-20260805-229 - Admit a value-free threshold-signed short-tenor trust-registry reference
+
+Decision:
+
+Admit the D229 local reference contract and validator for a caller-pinned
+`2-of-3` Ed25519 governance registry. Require a complete sequence-one chain,
+predecessor payload hashes, finite registry/key expiry, a caller-held head
+checkpoint, seven distinct operational roles and append-only key lifecycle
+events. Scheduled rotations must be continuous and non-overlapping. Incident
+replacements may leave a fail-closed gap after revocation or compromise but may
+not overlap the invalid key.
+
+Reason:
+
+D228 proved only local receipt-signature integrity with caller-supplied keys.
+D229 supplies the deterministic lifecycle and event-time resolution layer
+needed before those signers can be bound to governed identities, without
+opening market values or pretending that local fixtures establish external
+authority.
+
+Rejected alternatives:
+
+- Let an envelope choose its own trust anchor, accept a simple caller key list,
+  or treat a green signature as organizational identity.
+- Permit infinite-lived keys, ambiguous active keys, rollback, version gaps,
+  overlapping replacements or retroactive continuity after an incident.
+- Claim full TUF/X.509 compliance, trusted time, point-in-time availability,
+  model-input authority or production readiness from this local reference.
+- Query Databricks, access `H:`, open OMPEX/AFRY/T057, or persist any price,
+  coefficient, cap, loss, margin or private key for this batch.
+
+Canonical local evidence:
+
+- contract file SHA-256 / canonical content ID:
+  `e7fbf4f099bcc355073d0f5b591d988100df4168c22b172ce8fc08e4c4a0ed9c` /
+  `3ecf96f83be71c5beb24160793d5fcbce2d771edbda74e190bda3d5b851b54fa`;
+- validator/tests/materializer SHA-256 respectively
+  `9cb2f1360ffc83cfa52361bb4f7e58576e95f1c8021d3840f5ce96172ee7e45c`,
+  `aa0c9562279232f92f053075f642f4bfed9d08e797c596f502949ff99b035aba`
+  and `c8ef25efe82ddb9716a15335e8c396ab57cad856c0b2c3744a1f1f03edd0cdd4`;
+- proof content ID / manifest / assessment SHA-256:
+  `72483a8aee28241db716a07355ed27ac4065b049d74e42f1c2224809821cbf61`,
+  `555e67f9ac2f9fdb964418923821fc227aba8f1c37831bbe4a91173fe91b21c6`
+  and `3e189297537210250e0ace1187a74c518fa56caf0d17b213693de234670d797c`;
+- focused roast `34 passed`; expanded 27-file adjacent matrix
+  `466 passed, 1 skipped`; Ruff passed; two exact materializations returned the
+  same content ID;
+- zero Databricks request, Warehouse start, network call, `H:` access or remote
+  write; no private key or numeric market/model value persisted.
+
+Invariants not to break:
+
+- Governance-root bootstrap and rotation, external owner identity,
+  independently trusted time, WORM retention and governed same-snapshot
+  EEX/ENTSO-E PIT availability remain unproven.
+- Training, selection, model input, candidate assembly, promotion and
+  production remain false. D229 cannot override a downstream failed gate.
+- The monthly solver remains the sole monthly-level authority; short-tenor
+  EEX inputs may shape within a month only. LT remains independent from CT.
+- OMPEX remains an independent post-candidate benchmark, AFRY descriptive and
+  T057 sealed.
+
+## D-20260805-230 - Bind D228 signers to D229 keys only at asserted payload times
+
+Decision:
+
+Admit the D230 value-free combined replay. Re-execute exact D228 and D229,
+require identical absolute public-key paths and caller-held hashes for
+`training_execution`, `selection_governance` and `trusted_time`, and resolve
+those key IDs at the two signed-payload `observed_at_utc` values. Require a
+post-event registry head, valid at caller reference time, with at most 31 days
+of local publication lag. Replay D229 twice so the shared trusted-time key must
+resolve at both observations.
+
+Reason:
+
+D228 verified signatures but accepted caller keys with no governed lifecycle;
+D229 verified a lifecycle registry but did not bind it to the D228 files. D230
+closes that identity/path/hash composition gap. The roast also established that
+D228 has no independently timestamped signature-generation time, so D230 must
+not rename an execution-observation time into a cryptographic signing time.
+
+Rejected alternatives:
+
+- Treat `observed_at_utc` as the actual DSSE signature time or claim backdating
+  resistance from a locally signed payload assertion.
+- Match only key IDs or copied bytes while allowing D228 and D229 to reference
+  different path identities.
+- Resolve the trusted-time key at only one of the two observations.
+- Pretend that the unlabeled source-key sets in D227/D228 authenticate named
+  EEX and ENTSO-E acquisition or source-time roles.
+- Query Databricks, access `H:`, open OMPEX/AFRY/T057, or persist a private key
+  or numeric market/model value for this batch.
+
+Canonical local evidence:
+
+- contract file SHA-256 / canonical content ID:
+  `849cb6cea28913b87b69cea463d54ea9f110150467343cbd8f27f602a07fca23` /
+  `2fa6d60542f513faf132bc33dbf6ea17c98693b7658c37ad9e92195dcdd053f0`;
+- validator/tests/materializer SHA-256 respectively
+  `98b3fda4e7f2ca6e83ca9bf4f7e72582c7402f7010722583c4588939ff02ab15`,
+  `d0cbe3770c0e939c72afa089c994137112bfdcde6b95599cfa79a47cdb9f699d`
+  and `0b8e9d6da3918a7dda3bc95c475427e79564e406e3a753878f362d4d70eafbfc`;
+- proof content ID / manifest / assessment SHA-256:
+  `db365ca3045f989cd7257594f37ccec0c8b306475e9f4149b525f1732fff2ad3`,
+  `e2c2cfb19ada0f864fa655ffb42de267397294a6b80ed35fb96efe9dd6e9a240`
+  and `a72fa04eb2b0660b8557b35e8294b823be453e00fc9f8a4e8a81588f928d188a`;
+- focused roast `25 passed`; expanded 28-file
+  EEX/PIT/monthly/ENTSO-E/OMPEX/LT adjacency `491 passed, 1 skipped`; Ruff
+  passed; two exact materializations returned the same content ID;
+- zero Databricks request, Warehouse start, network call, `H:` access or remote
+  write; no private key or numeric market/model value persisted.
+
+Invariants not to break:
+
+- Actual signature-generation time, non-backdating, RFC3161-equivalent time,
+  external owner identity and registry-root authority remain unproven.
+- Named EEX/ENTSO-E source receipts and governed same-snapshot PIT availability
+  remain missing. D230 provides no empirical or model-input authority.
+- Training, selection, model input, candidate assembly, promotion and
+  production remain false; T057 stays sealed.
+- The monthly solver remains sole monthly-level authority; short-tenor inputs
+  may shape within a month only. LT remains independent from CT. OMPEX remains
+  post-candidate benchmark-only and AFRY descriptive.
+
+## D-20260805-231 - Freeze a zero-query EEX reuse and ENTSO-E schema-discovery plan
+
+Decision:
+
+- Reuse the exact existing local EEX `prd.gold` capture; issue no new EEX
+  statement.
+- Prepare, but do not execute, one metadata-only ENTSO-E query against
+  `dev.information_schema.columns`, with seven explicit metadata fields, three
+  exact `dev.gold` table names and `LIMIT 1024`.
+- Keep current Databricks, Warehouse, network and remote-write budgets at zero.
+  Any future metadata execution requires a new explicit user authorization; it
+  then has a one-statement, 60-second, 1,024-row budget and is not claimed free.
+- Keep the ENTSO-E data-statement budget at zero until the physical schema is
+  mapped without ambiguity and its fingerprint is frozen.
+
+Reason:
+
+The EEX values are already available in a content-bound local snapshot, so a
+second Warehouse query would add cost without new evidence. ENTSO-E physical
+column names are not governed locally. A static metadata statement is the
+smallest safe bridge to an explicit-column export and avoids inventing a schema
+or scanning data prematurely.
+
+Rejected alternatives:
+
+- Start the SQL Warehouse or execute the prepared metadata query in this batch.
+- Re-query EEX despite the existing 82,552-row local capture.
+- Generate ENTSO-E value queries before exact physical-column admission.
+- Use `SELECT *`, unbounded results, data-table scans, DDL/DML, legacy local or
+  synthetic substitution, or open AFRY/OMPEX/T057.
+
+Canonical local evidence:
+
+- plan raw SHA-256 / canonical content ID:
+  `f62bd9e0a9ffe6f0daa2b02917b47763b64a340f28ab59cdd664cbdd8ec58999` /
+  `3395f45bd1d22663386aa7cd4e93cfe2bc02079fa7cb8b103825b9c5650dc1af`;
+- prepared SQL SHA-256:
+  `dec7e207603e3a8b69f5808b42454575f1b4a985a25fa8aca3e5c6a2c95b72fa`;
+- validator/tests/materializer SHA-256 respectively
+  `cd407a7209fbaf4f8ecdb35ef485676cd3ebab6ff6ff8b992a04e13336cc83fb`,
+  `4190774d9beb6124589698e5c0582081a7d378125cc1161e567d7d5c25d98ac2`
+  and `a2c19771760191499b399de5dcd07e7893900875335a97bd4aa17a203dbbf237`;
+- proof content ID / manifest / assessment SHA-256:
+  `127506f29101c98738d4fc876fb428295722a8253c4ee290e820b55ef67d3a83`,
+  `40a13e9a4931d028c8ec296136b8395c5dd342adcd19b043658b5c45913c620a`
+  and `3d6195e3763abf7b1c80189375eb6efa32f049a70bf74a2b10ee5e95d8d211df`;
+- focused roast `25 passed`; five-file adjacent acquisition/publication suite
+  `127 passed, 1 skipped, 1 warning`; Ruff passed; two exact materializations
+  returned the same proof content ID;
+- zero Databricks request, Warehouse start, network call, `H:` access or remote
+  write in D231.
+
+Invariants not to break:
+
+- The prepared SQL is not an execution authorization. No automatic Warehouse
+  start or connector call may follow from D231.
+- Before model use, assess completeness, uniqueness, validity, consistency,
+  referential integrity, timeliness, volume/native resolution and point-in-time
+  leakage; freeze an immutable local export and schema/query/file evidence.
+- Governed ENTSO-E values and a new independently frozen future holdout remain
+  missing. Training, selection, model input, candidate assembly, promotion and
+  production remain false; T057 stays sealed.
+- The monthly solver remains sole monthly-level authority; LT remains independent
+  from CT. OMPEX remains post-candidate benchmark-only and AFRY descriptive.
+
+## D-20260805-232 - Admit only content-bound ENTSO-E metadata results offline
+
+Decision:
+
+- Add a local-only admission gate for the future output of the exact D231
+  `dev.information_schema.columns` statement. Do not add a connector or execute
+  the statement.
+- Require canonical UTF-8/LF CSV and an exact receipt containing the D231 query
+  hash, lowercase UUID statement ID, `SUCCEEDED` state, caller UTC capture time,
+  exact row count and payload SHA-256, non-truncation, metadata-only read and
+  zero remote writes.
+- Reject a result at the 1,024-row SQL limit, stale beyond one hour, missing any
+  target table, unordered, non-contiguous, duplicated by ordinal or case-folded
+  column name, or inconsistent with exact `dev.gold` metadata semantics.
+- Produce a canonical schema fingerprint and per-table counts only. Keep
+  physical-column mapping, data SQL, PIT evidence and every model or production
+  authority false.
+
+Reason:
+
+D231 safely prepares schema discovery but had no reusable gate for its future
+result. D232 makes the smallest next remote step inspectable and fail-closed
+without inventing physical columns. Databricks documents `ORDINAL_POSITION` as
+one-based, `IS_NULLABLE` as `YES`/`NO`, `DATA_TYPE` as a simple type name, and
+unique keys on both column name and ordinal position. It also documents that
+`LIMIT` is not pushed down for Information Schema, so selective catalog/schema/
+table filters and separate authorization remain the cost controls.
+
+Rejected alternatives:
+
+- Execute the metadata statement or wake the Warehouse in D232.
+- Treat `LIMIT 1024` as proof of zero scan or zero cost.
+- Accept a result that hits the limit, omits its receipt/hash, uses `SELECT *`,
+  contains ambiguous identifiers, or is older than one hour at admission.
+- Infer the normalized ENTSO-E mapping from fixture names or generate data-value
+  SQL before a real admitted result exists.
+- Grant training, selection, candidate, promotion or production authority from
+  schema metadata alone.
+
+Canonical local evidence:
+
+- contract raw SHA-256 / canonical content ID:
+  `19033d5e24800abc240d3de4974cc44ec7a3fc7afc6f69db07ee1cf0a6191c43` /
+  `ac0ccb6b5a94e0dee46050b5a765f92efcf800f078b93645917247a3be206564`;
+- exact D231 SQL SHA-256:
+  `dec7e207603e3a8b69f5808b42454575f1b4a985a25fa8aca3e5c6a2c95b72fa`;
+- validator/tests/materializer SHA-256 respectively
+  `9702c27e8ab2629d9fbf505dd93ad04c0edd6ff9828411d072f8a9f21b3c646e`,
+  `0919b255dfa864b1766328d97bebf3ff886b588e7e61476ab4f77bb7796507c8`
+  and `d5d16ac214ce7cfcdb7cc553fa97f0efbb9649dce174c4b08c35903c0a440698`;
+- proof content ID / manifest / assessment SHA-256:
+  `9a270975187e9ff334d80afba308ad0021f0df97a4269348943a62d655bc4147`,
+  `197b5c89598b0328ce5bc3bdcb103e5a58adba089fe36d51df2921b0c0063420`
+  and `3f4e9112e535156dcd55dcad682806b759b3c8c62bde9c4a587343a7da9f9e39`;
+- focused roast `40 passed`; six-file adjacent acquisition/ENTSO-E/publication
+  suite `167 passed, 1 skipped, 1 warning`; Ruff passed; two exact
+  materializations returned the same proof content ID;
+- proof fixture count one, real receipt/row count zero, and zero Databricks
+  request, Warehouse start, network call, `H:` access or remote write.
+
+Invariants not to break:
+
+- The synthetic fixture proves validator behaviour only. It is not the real
+  Databricks schema and must never be substituted for it.
+- A caller timestamp and statement ID are traceability assertions, not
+  independently trusted time or external ownership evidence.
+- A real metadata admission still cannot authorize values. Mapping, explicit
+  value SQL, a separately authorized bounded capture, quality/PIT checks and a
+  new independent future holdout remain mandatory.
+- Training, selection, model input, candidate assembly, promotion and
+  production remain false; T057 stays sealed. The monthly solver remains sole
+  level authority, LT remains independent from CT, OMPEX benchmark-only and
+  AFRY descriptive.
+
+## D-20260805-233 - Freeze the governed EEX/ENTSO-E source-evidence package before acquisition
+
+Decision:
+
+- Freeze one value-free, local-only package contract that composes the exact
+  D231 zero-query plan, D232 ENTSO-E metadata-admission gate, D227 receipt
+  structure, D229 trust registry, D230 registered-signer limitation, the EEX
+  normalizer and the ENTSO-E intake contract.
+- Reuse the exact D231 EEX `prd.gold` local artifact and manifest. Issue no new
+  EEX query. The historical artifact remains non-retroactive PIT evidence.
+- Require three normalized ENTSO-E artifacts only after a real D231 metadata
+  result passes D232, the physical mapping and query hashes are frozen, and the
+  user grants a new explicit costed authorization.
+- Freeze the inactive future ceiling at one capture batch, one Warehouse start,
+  three read-only statements, 300 seconds per statement, 900 seconds per batch,
+  zero retries and 64 GiB total local export. Require a monetary estimate and
+  currency cap before activation; reject any cap breach or silent truncation.
+- Require four exact DSSE/in-toto source envelopes mapped to the D229 roles
+  `eex_acquisition`, `eex_source_trusted_time`, `entsoe_acquisition` and
+  `entsoe_source_trusted_time`. Bind their exact hashes into one RFC 9162 Merkle
+  root and require either one RFC 3161 timestamp or one transparency-log entry,
+  plus four inclusion proofs. A separate, causally later time batch remains
+  mandatory for future training and selection envelopes.
+
+Reason:
+
+D231 and D232 safely govern schema discovery but do not define the complete
+local handoff expected from the data engineer, its resource ceilings or a
+non-self-declared existence-time proof. D233 closes that specification gap
+without opening values or turning a prepared ceiling into execution authority.
+Batching the four envelope hashes under one Merkle root minimizes external-time
+operations while keeping each envelope individually provable.
+
+Rejected alternatives:
+
+- Query EEX again despite the frozen local artifact, or generate ENTSO-E value
+  SQL before a real D232 metadata admission.
+- Treat an unbounded export, `SELECT *`, retries, temporary objects, DDL/DML,
+  truncation or a caller-only timestamp as acceptable evidence.
+- Timestamp a batch root without per-envelope inclusion proofs, mix timestamp
+  profiles, or claim that a timestamp obtained now reconstructs a historical
+  information set or the exact signature-generation time.
+- Access `H:`, write to Databricks, use legacy/synthetic ENTSO-E, open AFRY,
+  OMPEX or T057, or grant model/production authority from a preparation proof.
+
+Canonical local evidence:
+
+- contract raw SHA-256 / canonical content ID:
+  `97edaf93c639953365d20d7539380a706f0f8fdbec9476af94262fb1d4b2204d` /
+  `4f6e644b15593e8d4ae2ca196e1d52a002d4255bdf42e7a137982edb854f0fa0`;
+- validator/tests/materializer SHA-256 respectively
+  `95b6875d9d4b42c164473d0f36127dfbcd4cecbcde7b6597784bb48f04704ff8`,
+  `c34f70c903875ec02492e2e768299e15bc1fbdbc508cf301668a5b044e20de94`
+  and `da576f365ba162788119161ad50558e062d3a4a66a366d4f5b10dd740e433b80`;
+- proof content ID / manifest / assessment SHA-256:
+  `314ec85590c787874e2844d7db085236144c601681a5d1722f2735e6b1219d53`,
+  `d7f6ad3af60d2efd087718e0515c8b73a6534387ab12c7c7a5f88f42aeadf2b4`
+  and `314ec85590c787874e2844d7db085236144c601681a5d1722f2735e6b1219d53`;
+- focused D233 roast `44 passed`; combined D231+D232+D233 matrix `109 passed`;
+  expanded acquisition, receipt, trust, PIT and ENTSO-E matrix
+  `418 passed, 3 skipped, 1 warning`; Ruff passed; two exact materializations
+  returned the same proof content ID;
+- zero Databricks statement/write, Warehouse start, network call, `H:` access,
+  remote write or parsed market-value row in D233.
+
+Invariants not to break:
+
+- D233 is a request/readiness contract, not a Databricks execution
+  authorization and not proof that the four real source envelopes or external
+  time evidence exist.
+- RFC 3161/RFC 9162 evidence proves a bounded existence statement, not exact
+  signature time; historical rows before the governed challenge do not acquire
+  retroactive PIT authority.
+- Governed ENTSO-E values, prospective captures and a new independently frozen
+  holdout remain missing. Training, selection, model input, candidate assembly,
+  promotion and production remain false; T057 stays sealed.
+- The monthly solver remains sole level authority, short-tenor effects remain
+  zero-mean within month, LT remains independent from CT, OMPEX remains a
+  post-candidate benchmark only and AFRY remains descriptive.
+
+## D-20260805-234 - Compile admitted ENTSO-E physical mappings offline only
+
+Decision:
+
+- Bind the physical-mapping compiler contract to the exact D233 governed
+  acquisition package, D232 metadata-admission contract and ENTSO-E intake
+  contract. Preserve D233 unchanged and assign this batch D234.
+- Require an exact owner-asserted mapping manifest tied to the admitted metadata
+  payload hash, schema fingerprint and statement ID. Require all normalized
+  fields and injective physical columns per table; reject implicit columns,
+  casts, upsampling or forward-fill.
+- Validate compatible physical type classes and exact cross-table type equality
+  for shared identifiers, timestamps, values, quality, revisions and load time.
+  Keep UTC semantics owner-asserted rather than inferred from SQL types.
+- Compile three explicit-column, qualified, delimited and deterministically
+  ordered SQL templates in memory. Use named parameters for half-open target
+  windows and the vintage `as_of` cutoff, plus fixed rejection limits.
+- Persist template hashes, parameters and limits only. Keep execution and every
+  data/model/production authority false.
+
+Reason:
+
+D233 defines the governed delivery package and future ceilings but deliberately
+does not invent physical columns. D234 makes the first post-metadata step
+deterministic and inspectable: a real D232 result can be mapped without
+`SELECT *`, semantic aliases are explicit, incompatible joins fail before any
+value query and parameter values remain separate from SQL structure. This moves
+the future ENTSO-E intake toward model-ready grains without spending Databricks
+or pretending that schema metadata proves value quality or PIT availability.
+
+Rejected alternatives:
+
+- Reuse decision number D233 or overwrite its governed package evidence.
+- Infer physical names from normalized fixture names, accept fuzzy aliases or
+  map one physical column to multiple normalized meanings.
+- Permit silent casts, mismatched cross-table key types, latest-as-PIT,
+  interpolation, forward-fill or upsampling.
+- Generate `SELECT *`, interpolate literal timestamps into SQL, parameterize
+  unvalidated identifiers, omit deterministic order/limits, or execute a
+  compiled template.
+- Persist synthetic SQL text as if it were a real data-engineer mapping or grant
+  model authority from an owner assertion.
+
+Canonical local evidence:
+
+- contract raw SHA-256 / canonical content ID:
+  `f33bc696d8e7a535f7700b40c13dc90d73e2526073400edcd2588e57432a9b3a` /
+  `5dc43e18dcf107020e24638307a707d8c7afbf894ca1131e62907f8680ad0951`;
+- validator/tests/materializer SHA-256 respectively
+  `2100c9d126edf063b663790993b75bb9a190dbdde1281ab8057e44133ed796a5`,
+  `8670c1e883356308454893aad5be7b2788702f63adb606901994acb8967becf8`
+  and `bade17d6246805e3d5cd85f02ab4ff45a58aa1d2910e18d3bd10197bb0bd753a`;
+- proof content ID / manifest / assessment SHA-256:
+  `bb7ea1894463cb2c5fc30287d2239f0285cd6a74e901ab51a2f9de7e6794b766`,
+  `7d86330e2143e2009947b486eb1e8428dd6022735ebc33c9aa4cfc4b871c5268`
+  and `47a65e11c12e848b2c0cbc8d568e9f1b97e84996bcb92d52c9d242e507ffde9b`;
+- focused D234 roast `47 passed`; D231-D234 matrix `156 passed`; expanded
+  acquisition/receipt/trust/PIT/ENTSO-E matrix
+  `465 passed, 3 skipped, 1 warning`;
+  Ruff passed and two exact materializations returned the same proof content ID;
+- D233 proof content ID and manifest hash are bound in D234; zero Databricks
+  request, Warehouse start, network call, `H:` access or remote write.
+
+Invariants not to break:
+
+- The synthetic fixture proves compiler behaviour only. No physical name in it
+  may be reused as a real mapping without exact D232 metadata evidence.
+- Named parameters protect literal values, not untrusted identifiers. Physical
+  identifiers remain exact, admitted, regex-safe and delimited by the compiler.
+- Fixed limits and a 31-day future ceiling are not cost guarantees. Parameter
+  validation, explicit user authorization, statement receipts and rejection on
+  a hit limit remain prerequisites to any execution.
+- Real metadata, semantic owner verification, values, data-quality/PIT gates and
+  a new independent holdout remain missing. Training, selection, model input,
+  candidate assembly, promotion and production remain false; T057 stays sealed.
+- The monthly solver remains sole level authority, LT remains independent from
+  CT, OMPEX benchmark-only and AFRY descriptive.
+
+## D-20260805-235 - Verify the four-envelope RFC 9162 batch before real external time
+
+Decision:
+
+- Bind the external-time batch contract to the exact D233 governed acquisition
+  package, D234 physical-mapping compiler and D229 role registry.
+- Canonicalize exactly four challenge- and batch-bound leaf payloads in the
+  fixed source-role order. Compute RFC 9162 SHA-256 leaves with the `0x00`
+  prefix, internal nodes with `0x01`, the largest-power-of-two split rule and
+  one inclusion path per role. Derive proof direction from leaf index and tree
+  size; caller direction bits are forbidden.
+- Define the future RFC 3161 `TimeStampReq` binding: SHA-256 OID, exact Merkle
+  root as `messageImprint.hashedMessage`, positive nonce, explicit TSA policy,
+  `certReq`, and retained request-DER hash before any submission.
+- Freeze a 46-field future validation receipt requiring independent DER/CMS and
+  `TSTInfo` replay, exact imprint/nonce/policy/status, certificate chain,
+  exclusive critical time-stamping EKU, validity, revocation, pinned root,
+  governed challenge bracket and one-hour maximum lag.
+- Materialize only a synthetic four-leaf vector and a receipt-schema fixture.
+  No request DER, TSA policy endorsement, network submission, token, real DSSE
+  envelope or trusted-time authority exists in D235.
+
+Reason:
+
+D233 specified one economical batch timestamp but did not implement the Merkle
+algorithm or make a self-declared receipt fail closed. D235 independently
+replays the RFC 9162 tree and proofs and makes explicit what a future RFC 3161
+verifier must prove from bytes. Batching keeps one future TSA operation while
+retaining individual inclusion evidence for every exact source envelope.
+
+Rejected alternatives:
+
+- Concatenate hashes without canonical leaf payloads or RFC 9162 domain
+  separation; sort roles dynamically; accept duplicate envelope hashes,
+  missing/extra proof nodes or caller-supplied direction bits.
+- Hash the Merkle root again before placing it in the frozen message-imprint
+  field, omit the request nonce or accept `grantedWithMods` silently.
+- Treat validation booleans, caller time, a synthetic policy OID, a self-signed
+  token or a receipt without independent token-byte replay as trusted time.
+- Claim exact signature-generation time or retroactive PIT for historical rows.
+- Contact a TSA, Databricks or `H:`, open market values or grant model authority.
+
+Canonical local evidence:
+
+- contract raw SHA-256 / canonical content ID:
+  `e9da2a73dd1bd62b5357e1f507bff3ef8e48918806c918bd4fdb1f609a71d138` /
+  `8f0f13315c382da7163a1f451752a6ddf84857a50133d89d3a3a31f340b264d0`;
+- validator/tests/materializer SHA-256 respectively
+  `a0e715b5f6adaf97f985ba93d99d35612b488289c464c30f852a4c03579e879e`,
+  `7aa6c2bf2640fb1176e8bd9d8543de340e8ac34b69d0254b2a36142356d085a0`
+  and `55ca77d5c62cd8e7f50c48b98cfb42cefed69bc34ec87fb05d58f45173ee5595`;
+- synthetic four-leaf root:
+  `496c92c29ab1b4f1ad0f3491cbd4e38f500936973bc6ff8e8ac8ebeb3b0aa85c`;
+- proof content ID / manifest / assessment SHA-256:
+  `93504d69834b299ce361352adce433509cf84bce0fbbb940be00a9bd59616ff1`,
+  `a10bbfa380652365684213197862139bf958dc33e706d81635cc2a6ae4582f02`
+  and `93504d69834b299ce361352adce433509cf84bce0fbbb940be00a9bd59616ff1`;
+- focused roast `50 passed`; seven-file D229/D231-D235 adjacent matrix
+  `265 passed`; Ruff passed; two exact materializations returned the same proof
+  content ID;
+- zero Databricks connection/statement, Warehouse start, network/TSA call,
+  `H:` access, remote write, real DSSE envelope or market-value row in D235.
+
+Invariants not to break:
+
+- The synthetic fixture proves local algorithm behaviour only. Its deterministic
+  nonce, policy OID, envelope hashes and Merkle root have no external authority.
+- A future receipt is insufficient unless the exact DER request, response,
+  token, certificates, roots and revocation evidence are independently parsed
+  and cryptographically replayed. Receipt booleans never bootstrap trust.
+- RFC 3161 `genTime` bounds token creation/existence evidence; it is not exact
+  source-envelope signature time and does not reconstruct older PIT states.
+- Real source envelopes, an approved TSA policy, a real token, prospective PIT,
+  values and a new holdout remain missing. Training, selection, model input,
+  candidate assembly, promotion and production remain false; T057 stays sealed.
+- The monthly solver remains sole level authority, LT remains independent from
+  CT, OMPEX benchmark-only and AFRY descriptive.
+
+## D-20260805-236 - Validate bounded ENTSO-E parameters and synthetic receipts offline only
+
+Decision:
+
+- Bind the bounded-capture proposal to the exact D233 governed acquisition
+  package and D234 physical-mapping proof. Accept only exact lowercase hashes,
+  canonical UUIDs and UTC whole-second timestamps.
+- Require one half-open UTC-midnight target window shared by latest and vintage
+  values, between one and 31 days. Require the vintage `as_of` cutoff to fall
+  between target start and the frozen snapshot reference.
+- Freeze a cost fence with explicit currency, fixed-decimal estimate and hard
+  cap, estimate not above cap, Warehouse size/method, five-minute auto-stop,
+  at most one future start, exactly three bounded reads, 300-second statement
+  and 900-second batch ceilings, zero retries, and exact per-role row/byte caps.
+- Validate only a synthetic receipt structure: exact statement order and
+  template/parameter hashes, reconciled durations and bytes, read-only SELECT,
+  no truncation, no reached row limit, no cap breach, no retry and no remote
+  write. Artifact paths must remain relative below
+  `build/governed-source-intake/`; their bytes and values are not opened.
+- Keep the current connection, statement, Warehouse-start, network and remote-
+  write budgets at zero. A valid proposal is not executable and a synthetic
+  receipt is not execution evidence.
+
+Reason:
+
+D234 safely compiles bounded templates but fixed `LIMIT` clauses do not bound
+Warehouse cost by themselves. D236 makes the future operator-supplied window,
+cost ceiling and execution receipt fail closed before any connector may be
+used. It also prevents a fabricated or synthetic receipt from being mistaken
+for proof that Databricks ran or that ENTSO-E values are fit for modelling.
+
+Rejected alternatives:
+
+- Start the SQL Warehouse merely to test connectivity or estimate cost.
+- Treat `LIMIT`, a 31-day window or a declared hard cap as an automatic cost
+  guarantee; permit retries, hit-limit results, truncation or overlapping
+  statements.
+- Admit a real receipt from self-declared booleans, unbound statement IDs,
+  unreconciled totals, unchecked artifacts or a receipt paired with a changed
+  proposal.
+- Open ENTSO-E values, reuse local/synthetic data as empirical evidence, start
+  training/selection, unseal T057 or grant production authority.
+
+Canonical local evidence:
+
+- contract raw SHA-256 / canonical content ID:
+  `9ae529cb242ea79d97a8deae32317c8d0fc2522c7afd216863c9f7c885a6c7b2` /
+  `834cbba541395072886e1ba80012a76cc55a0a8990b6d354f6d1bfe110a12156`;
+- validator/tests/materializer SHA-256 respectively
+  `0f41a0147e06128d5912c40e0d8c14e0b99aa1f932f4263bb61cae1c895a18d8`,
+  `2827c16ac120d5e179b4d672658e8461650c766a4335e2056350e66c5fb923c1`
+  and `224f71bcb40d15045259abf0e398d1f49676fb2b46b030ac6911c76daa65e19f`;
+- proof content ID / manifest / assessment SHA-256:
+  `772da4e0b22540bf22e1715ca146cc0a59adf0c7a9ec508e5a893d8495539247`,
+  `9d76631395176718b600ca0de8f7303ad8faea931c24298f514a54354da3d6e0`
+  and `8fbe37824d333902a9c2eb87bbb11eb65d82efa62a4cee1d33cc4dfecd67e724`;
+- focused roast `31 passed`; inclusive D231-D236 acquisition matrix
+  `237 passed`;
+  Ruff passed; two exact materializations returned the same proof content ID;
+- zero Databricks connection/statement, Warehouse start, network call, `H:`
+  access, remote write or market-value row in D236.
+
+Invariants not to break:
+
+- No Databricks action is authorized by D236. Any future real execution needs
+  a new, separate user authorization that acknowledges the explicit maximum
+  cost and exact proposal content ID.
+- Real values, artifact hashes, data quality, point-in-time availability and a
+  new independent holdout remain unverified. Training, selection, model input,
+  candidate assembly, promotion and production remain false; T057 stays sealed.
+- The monthly solver remains sole level authority, LT remains independent from
+  CT, OMPEX benchmark-only and AFRY descriptive.
+
+## D-20260805-237 - Canonically encode and replay the RFC 3161 request without token authority
+
+Decision:
+
+- Bind the exact D235 four-leaf Merkle proof and define the timestamped datum
+  unambiguously as the 65-byte RFC 9162 final-node preimage
+  `0x01 || left_subtree_hash || right_subtree_hash`. Its SHA-256 must equal the
+  exact D235 Merkle root carried in `messageImprint`.
+- Generate one strict 89-byte DER `TimeStampReq`: version 1, SHA-256 OID with
+  absent parameters, exact 32-byte root, explicit synthetic policy OID, positive
+  nonce and canonical DER `certReq=TRUE`; extensions are forbidden in D237.
+- Replay the exact generated bytes with shortest definite lengths, minimal
+  positive INTEGERs, canonical OIDs, exact field order and byte-for-byte
+  re-encoding. Reject BER indefinite lengths, trailing data, NULL parameters in
+  the self-generated vector, missing fields, false `certReq` and any extension.
+- Keep the interoperability boundary explicit: RFC 5754 generators omit SHA-2
+  parameters, while a general interoperable parser must accept both absent and
+  NULL parameters. D237 is an exact self-replay parser, not a general CMS/TSP
+  response verifier.
+- Fail the dependency preflight closed. `cryptography==47.0.0` supplies hashing,
+  X.509 parsing and public-key primitives but does not expose the complete
+  CMS `SignerInfo`/`TSTInfo`, timestamping-specific path and offline revocation
+  replay required here. `asn1crypto==1.5.1` and `pyHanko==0.35.2` remain
+  uninstalled, unadmitted candidates only.
+
+Reason:
+
+D235 froze the semantic request fields but did not produce or independently
+replay DER bytes. Calling the Merkle root itself the timestamped datum while
+also setting it directly as `hashedMessage` would be ambiguous under RFC 3161,
+which defines `messageImprint` as the hash of a datum. Timestamping the final
+RFC 9162 node preimage preserves the exact D235 root while making that relation
+cryptographically explicit. The capability preflight also prevents certificate
+extraction or receipt booleans from being mislabeled as complete token
+verification.
+
+Rejected alternatives:
+
+- Timestamp the 32-byte root as datum but omit the additional SHA-256, or
+  silently double-hash it and break D235's exact-root binding.
+- Accept non-canonical BER, SHA-256 NULL parameters in the exact generated
+  vector, a missing policy, weak/fixed real nonce, false/missing `certReq` or
+  extensions not covered by this profile.
+- Treat `load_der_pkcs7_certificates`, an `asn1crypto` parse, a pyHanko status
+  boolean, shell OpenSSL or a self-signed/local token as end-to-end RFC 3161
+  verification.
+- Contact a TSA, select a real policy, generate a real nonce, use Databricks,
+  open `H:`, admit market values or grant model/production authority.
+
+Canonical local evidence:
+
+- contract raw SHA-256 / canonical content ID:
+  `d087736e548f579c03eaf84e89c2ee268edca0a9e8bf4e42db3044e533e8234b` /
+  `2333f35a9df0500cac5826a47105cf610c607cc64ad07ab904daf23038a68199`;
+- validator/tests/workspace-runner SHA-256 respectively
+  `bf265576afb518b92ae05f00d5425b203509f4bd37a15aa0a8316888b83cffb4`,
+  `b64b090554bbb1a934b07ed1217dbdb3dca2ed58281e8ebe96b235b882299dce`
+  and `c69382ec88ec998b5a8cc8987b33e62f05e13cef07d14a607e14d3ef25381243`;
+- exact conformance request DER SHA-256 / size:
+  `75fc863d2083fb1bc6d816d993cfb762764c6735c33acdecc4645b9db88ab3c4` /
+  89 bytes;
+- proof content ID / manifest SHA-256:
+  `53e2222392f71541d28e05e1dfc912361c02003b4278f2770109827319d4e9c1` /
+  `c5d8be620f1c2f5012aa7174a5949adbc0d74708a162ac215c44f40f1f8dcdcf`;
+- focused roast `71 passed`; adjacent D229/D231-D237 matrix `367 passed`;
+  workspace-runner matrix `150 passed`; Ruff passed; two exact final
+  materializations returned the same proof content ID;
+- ten execution counters are zero and only
+  `synthetic_request_der_verified=true`; Databricks, Warehouse, network, TSA,
+  `H:`, remote-write, real-envelope, real-token and market-value counts are zero.
+
+Invariants not to break:
+
+- D237 authorizes neither a real request nor a TSA submission. Owner-approved
+  policy, genuinely unpredictable nonce, governed parser/path/revocation
+  dependencies, real response bytes and independent trust roots remain absent.
+- A future timestamp proves existence no later than `genTime`; it does not prove
+  exact source-envelope signing time or retroactive point-in-time availability.
+- Real ENTSO-E metadata/mapping/values, prospective PIT and a new holdout remain
+  missing. Training, selection, model input, candidate assembly, promotion and
+  production remain false; T057 stays sealed.
+- The monthly solver remains sole level authority, LT remains independent from
+  CT, OMPEX benchmark-only and AFRY descriptive.
+
+## D-20260805-239 - Profile normalized ENTSO-E quality without real-artifact authority
+
+Decision:
+
+- Bind the exact D233-D238 acquisition, mapping, external-time, bounded-cost,
+  request-DER and daily-reservation proofs plus the ENTSO-E intake contract.
+  Keep every Databricks, network, `H:` and write budget at zero.
+- Require the three normalized roles at their exact grains and fields. Enforce
+  non-null required fields, unique keys, finite values, non-negative integer
+  revisions, 100% fact-to-dimension and dimension-to-fact series coverage.
+- Require all Swiss groups, the six generation components and CH-DE/FR/IT/AT
+  coverage for physical flow, scheduled exchange and all three NTC horizons.
+  Enforce `MW`, `MWh` and `EUR/MWh`, native ISO resolutions and one explicit
+  sign convention per series; bare `EUR`, implicit resampling and silent
+  zero-fill remain forbidden.
+- Enforce UTC native-grid alignment, availability and load timestamps not after
+  the snapshot, `as_of <= target` for forecast/price/schedule/capacity series,
+  `as_of >= target` for actual/storage series, non-decreasing revision/load
+  chronology and exact latest-versus-last-vintage equality on overlap.
+- Produce a value-free per-series profile with expected/observed native slots,
+  missing slots, complete UTC days, earliest trustworthy `as_of`, backfill
+  status and latest/vintage overlap. Keep 730 complete days as a separate
+  seasonal-diagnostic threshold, not as a structural-schema condition.
+- Provide a rolling-origin helper that selects only vintages with
+  `as_of_utc <= origin_utc`. Reject real evidence in D239 even if caller
+  booleans claim hashes or receipts: only a future independently composed
+  artifact/receipt verifier may open that path.
+
+Reason:
+
+The acquisition chain specified schemas, limits and provenance but did not yet
+turn normalized rows into a reproducible decision-oriented quality profile.
+D239 closes the local algorithmic gap while avoiding two common errors: using
+latest values as historical PIT truth and confusing clean schema with enough
+history for selection. The explicit rejection of caller booleans prevents a
+self-declared receipt from bootstrapping real-data authority.
+
+Rejected alternatives:
+
+- Query Databricks, start a Warehouse, inspect local legacy values or substitute
+  synthetic outputs as empirical ENTSO-E evidence.
+- Treat hourly Swiss history as a missing 15-minute defect, upsample or fill
+  gaps silently, infer cadence from row counts or accept bare `EUR` prices.
+- Average duplicated keys, tolerate orphan series, compare latest to an
+  arbitrary vintage, ignore revision chronology or let post-origin revisions
+  leak into rolling-origin folds.
+- Grant model readiness from a structurally green one-day fixture, a 100%
+  overlap ratio, caller-provided admission booleans, AFRY or OMPEX.
+
+Canonical local evidence:
+
+- contract raw SHA-256 / canonical content ID:
+  `3cfe59d8700e8b29662918de3dc2941678267520353fc271c852874321f345e1` /
+  `7ff2d5b7808f636f2c181fa92b80cc4ae86dccdcaad84f6da8dc3d13499736ab`;
+- validator/tests/materializer SHA-256 respectively
+  `bf08642a7ce6641c47f8c47eff81d676e4e35b87d195a7398479cf77dde090cd`,
+  `d2dfd393ba581dfba3d20f2c4eb46a5816b979be50e3aabe955c0db2f0249517`
+  and `5f6cd352ca868a00e2b4fcc909a00cd7c32c199be678f1b2c6f73119d518b42c`;
+- proof content ID / manifest / assessment / value-free series-profile SHA-256:
+  `5e5aad7d04529e0efbb9926a1098a485ab3f797941ba2681c0a1609487f4df9b`,
+  `2d733c356b34ad0280802ed9d77b47f4d445e4d82e2ac6c45595f26f81787789`,
+  `4dffdaa6abc48c25c80009e6c88e4d8c401053dd074580be34b50e74de07ccb0`
+  and `b77f37f74594737e21fc7dffa5dc15ca39f196f77ba2a23ffa325bebd1c62415`;
+- synthetic coverage fixture: 33 series, 792 latest rows, 792 vintage rows,
+  exact overlap, one complete UTC day and no raw value persisted in the proof;
+- focused roast `16 passed`; D231-D239 acquisition matrix `344 passed`; local
+  quality matrix `31 passed`; Ruff passed; two final materializations returned
+  the same proof content ID;
+- all Databricks connection/statement, Warehouse-start, network, `H:` and
+  remote-write counters are zero.
+
+Invariants not to break:
+
+- D239 proves validator behaviour only. It admits no real receipt, artifact,
+  hash or ENTSO-E value and cannot authorize a seasonal diagnostic, training,
+  selection, model input, candidate assembly, promotion or production.
+- Historical backfills never reconstruct old information sets. Latest values
+  remain non-PIT; rolling-origin uses only eligible vintages. A new prospective
+  independently frozen holdout remains mandatory and T057 stays sealed.
+- The CH monthly solver remains sole level authority. LT remains independent
+  from CT; OMPEX remains benchmark-only and AFRY descriptive.
+
+## D-20260806-240 - Verify synthetic ENTSO-E artifact bytes before parsing
+
+Decision:
+
+- Bind the exact D233 acquisition-package, D236 bounded-receipt, D238 daily-
+  reservation and D239 normalized-quality proofs plus the ENTSO-E intake
+  contract. Keep Databricks connections/statements, Warehouse starts, network,
+  `H:` and remote writes at zero.
+- Admit only a content-addressed `SYNTHETIC_TEST_ONLY` package below the
+  governed repo-local synthetic intake root. Require exactly three ordered
+  UTF-8 NDJSON artifacts, exact paths, hashes, byte sizes, positive row counts,
+  columns, logical types and normalized-schema hashes before parsing.
+- Reject BOM, CRLF, missing final LF, blank lines, duplicate JSON keys,
+  non-finite constants, wrong column order/type, undeclared files, unsafe or
+  linked paths, truncation, cap breaches, manifest drift and source-proof
+  drift. Run D239 immediately in memory only after integrity succeeds.
+- Derive a value-free integrity receipt containing descriptors and hashes, not
+  values. Give it synthetic-integrity authority only; real receipt, real hash,
+  source authenticity, external time, PIT, diagnostics, model and production
+  authorities remain false.
+- Leave real large-Parquet streaming and real-artifact admission unimplemented.
+  A future real path must extend this boundary without treating the synthetic
+  receipt or caller assertions as evidence.
+
+Reason:
+
+D239 validated already-loaded frames but deliberately could not prove which
+bytes produced them. D240 closes that local integrity gap for small synthetic
+fixtures and keeps it distinct from analytical quality and real-data
+authority. This separation prevents a valid parser result or self-consistent
+manifest from being promoted into empirical ENTSO-E evidence.
+
+Rejected alternatives:
+
+- Query Databricks, start a Warehouse, import connector code or inspect a real
+  export while the explicit zero-cost instruction is active.
+- Parse before hashing, trust filenames or caller row counts, accept unordered
+  or permissive JSON, silently ignore extra files, or persist raw values in the
+  proof bundle.
+- Claim that the in-memory D239 result proves 730-day coverage, point-in-time
+  history, source authenticity, a new holdout or model readiness.
+- Generalize the small-file reader to real large Parquet without a separately
+  governed streaming, resource-cap and receipt contract.
+
+Canonical local evidence:
+
+- contract raw SHA-256 / canonical content ID:
+  `26631c82495df6f4616c2841bc73cbb5b9da13f5a265091fac5bcfcb5a21fe49` /
+  `c4b69dd9e1ba790a5bfe3ec3c2ddc7c6555d907902f7ff429d582b820d43369e`;
+- validator/tests/materializer SHA-256 respectively
+  `d485f6a3c39c4aacab2979640fd4eefec61a197d83ed0a6f352e1c62246188a6`,
+  `a5ea73ea9e239ff59e6347424ed148e3668b5545fadcf2028468af37766126ac`
+  and `a9701a5c1c8995ca0db73b3a0d45b33ec54ca87637b97d0deb6a6fc620e9bf2c`;
+- proof content ID / manifest SHA-256:
+  `5595a20c5b997485bbaa0e3aa41f90b131190e3e89d812b1acfdfaaebc88536b` /
+  `97fc381771033c31da4f79789750638c70676bf32d1d3e844edc2609b3448ec3`;
+- integrity receipt content ID:
+  `f3e4ea1f550c63af578ca31d09db56404694fe4b9fcb0b3cefd8990b3180c104`;
+- synthetic package: 33 dimension rows, 792 latest rows and 792 vintage rows;
+  no real row and no raw value in the proof bundle;
+- focused roast `14 passed`; D231-D240 acquisition matrix `358 passed`; Ruff
+  passed; two materializations returned the same proof content ID;
+- all Databricks connection/statement, Warehouse-start, network, `H:` and
+  remote-write counters are zero.
+
+Invariants not to break:
+
+- D240 proves only integrity of an explicitly synthetic small-file package and
+  subsequent D239 behaviour. It admits no real receipt, artifact, hash, source
+  authenticity, ENTSO-E value, PIT history or model/production authority.
+- Real metadata/mapping ownership, trustworthy vintages, 730 complete days,
+  same-snapshot PIT and a new independent future holdout remain missing. T057
+  stays sealed; legacy and synthetic data remain forbidden substitutes.
+- The CH monthly solver remains sole level authority. LT remains independent
+  from CT; OMPEX remains benchmark-only and AFRY descriptive.
+
+## D-20260806-241 - Admit the real Unity Catalog table schemas as structural evidence only
+
+Decision:
+
+- Admit one sanitized, content-addressed capture of the three real ENTSO-E
+  Unity Catalog table schemas as `REAL_CONTROL_PLANE_OWNER_ASSERTED` structural
+  evidence only.
+- Require exact managed Delta table names, columns, positions, metadata types,
+  three control-plane GETs and zero SQL, Warehouse start, opened row or
+  Databricks write. Keep PIT, model-input and production authorities false.
+- Fail admission because the normalized contract cannot be mapped without
+  fabricating native resolution, source endpoint/document lineage, quality
+  flags, revision numbers, a canonical `as_of_utc` and directional sign
+  semantics. Require explicit completeness checks for nullable fields.
+- Do not infer `GroupName`/`FieldName` family coverage or value quality from
+  table metadata. Defer the dimension-only SQL inventory while both classic
+  `2X-Small` Warehouses are stopped with 45-minute auto-stop.
+
+Reason:
+
+The real physical schemas are now known at negligible control-plane cost, so
+synthetic mapping assumptions can be tested against reality. Structural table
+existence is useful evidence, but it does not prove that all required Swiss
+series exist, that histories are complete, or that vintages reconstruct the
+information available at a historical forecast origin.
+
+Rejected alternatives:
+
+- Start a stopped Warehouse merely to enumerate dimension values.
+- Treat `latest` as point-in-time history or silently choose between
+  `PublicationTimestampUtc` and `PullTimestampUtc`.
+- Infer native cadence, sign convention, revision or source-document lineage
+  from field names, or fabricate missing normalized columns.
+- Promote real control-plane ownership into model-input or production
+  authority.
+
+Canonical local evidence:
+
+- proof ID:
+  `d6c006609d881b51f08be6d60e01f68b59a40be8bdf2898ef0a98491f5771544`;
+- capture content ID:
+  `d69fdab73ba1d9c55f70f77925f2253d583564d06d922f2b41e035763bca176f`;
+- exact column counts 11/8/10 and no type failure on directly mapped fields;
+- focused pytest `11 passed`; Ruff passed;
+- D241 execution: three control-plane GETs, zero SQL, Warehouse starts, opened
+  rows and Databricks writes. Full 2026-08-06 session/day: eight successful
+  control-plane GETs and still zero SQL, Warehouse starts, opened rows and
+  Databricks writes.
+
+Invariants not to break:
+
+- This evidence proves schemas only, not family coverage, data freshness,
+  completeness, cadence, sign, PIT history, a new holdout or predictive value.
+- `latest` remains non-PIT. Historical selection may use only admitted
+  vintages with a documented availability-time rule.
+- T057 stays sealed; legacy and synthetic ENTSO-E values cannot substitute for
+  governed real evidence.
+- The CH monthly solver remains sole level authority. LT remains independent
+  from CT; OMPEX remains benchmark-only and AFRY descriptive.
+
+## D-20260806-244 - Stream-verify the normalized ENTSO-E Parquet target offline
+
+Decision:
+
+- Bind the exact D240 artifact-integrity proof and the D241 real Unity Catalog
+  schema proof. Treat the three Parquet roles as the future normalized target
+  interface, not as the current raw 11/8/10-column Delta schemas. Preserve the
+  D241 mapping failure and forbid fabrication of missing cadence, lineage,
+  quality, revision, sign or canonical PIT fields.
+- Admit only a content-addressed `SYNTHETIC_TEST_ONLY` package below the exact
+  repo-local synthetic Parquet root. Require exact inventory, paths, hashes,
+  sizes, rows, row groups, normalized and Arrow schemas, codec set, Parquet
+  format version and `created_by` before emitting a receipt.
+- Hash every file in bounded chunks before and after scanning through the same
+  open descriptor. Reject link/reparse/hardlink aliases, identity changes,
+  bad `PAR1` magic, footer mismatch, metadata or Thrift-limit breaches,
+  unsupported codecs/versions, excessive row groups, rows, compressed or
+  uncompressed bytes and excessive decompression ratio.
+- Visit every Arrow `RecordBatch` with page-checksum verification enabled;
+  bound batch rows/bytes and string bytes; reject nulls, non-finite numeric
+  values and negative revisions. Do not import pandas, materialize whole file
+  bytes in Python or run the full D239 profile in this batch.
+- Derive a value-free synthetic streaming receipt. Keep incremental quality,
+  real receipt/hash/value, source authenticity, external time, PIT, model and
+  production authorities false. Keep every current Databricks, Warehouse,
+  network, `H:` and remote-write counter at zero.
+
+Reason:
+
+D240 proved a small NDJSON path, while D241 proved that the real raw tables do
+not yet match the normalized contract. D244 closes the resource-bounded
+Parquet mechanics needed after a future governed normalization without hiding
+that mapping blocker. Separating byte integrity, batch-level validity,
+incremental analytical quality and real source authority prevents a safe file
+reader from being mislabeled as empirical PFC evidence.
+
+Rejected alternatives:
+
+- Query Databricks, start a stopped Warehouse, reuse D241 control-plane GETs as
+  D244 execution, open real rows or treat current raw Delta schemas as already
+  normalized.
+- Read entire Parquet files into bytes or pandas, trust footer declarations,
+  skip the second hash, accept arbitrary codecs/versions or scan beyond a
+  package-wide decompressed-byte budget.
+- Invent missing D241 fields, choose a PIT timestamp implicitly, or call batch-
+  level null/finite checks a complete temporal and coverage profile.
+- Grant real, model-input or production authority from a synthetic receipt,
+  clean schema, reproducible fixture or caller assertion.
+
+Canonical local evidence:
+
+- contract raw SHA-256 / canonical content ID:
+  `f5c7e34d383ec476fb8893348b91ac3aab011d42d36d7321b172d081461e8cca` /
+  `9a79779d7ebe01b0e4dbfc65c40eaa23ead4f1f984685bc5055cc16f7a23969b`;
+- validator/tests/materializer SHA-256 respectively
+  `784f900307542dcd68c3e6a476a078c56361ef626294e2106f7b20128404147f`,
+  `a8f44f673316ad98d1cf834021a9698764c87f9fc0811bb634f4463fa31b6e58`
+  and `7e27a3c36c509491fb5db51d0f80c582031df5491bdbe1699b6e1a4b4b66b922`;
+- proof content ID / manifest SHA-256:
+  `42c1065bf66117a2be2c792424f08d08511056d0df5f3b4b706ac57af1fcf564` /
+  `53e4fe281d405fea64e6f6084d0ae129f608c4f6ff88e944d60be3bf904177d4`;
+- streaming receipt content ID:
+  `e9f6b8e93488fe9da66a44fb7aebfbc38a477e84707ab235c5d318f2c7c83986`;
+- synthetic fixture: three dimension rows, 8,193 latest rows, 8,193 vintage
+  rows, seven visited record batches and 485,578 declared uncompressed bytes;
+- focused roast `16 passed`; D231-D244 acquisition matrix `374 passed`; Ruff
+  passed; two final materializations returned the same proof content ID;
+- D244 counters are zero for Databricks connections/statements, Warehouse
+  starts, network, `H:` and remote writes. The bound D241 source separately
+  records its prior three control-plane GETs and zero SQL/rows/Warehouse start.
+
+Invariants not to break:
+
+- D244 proves only synthetic normalized-target Parquet mechanics and stable
+  batch-level validity. It does not admit the current raw Unity Catalog export,
+  real values, a complete quality profile, PIT history or model authority.
+- A future incremental profiler must establish grains, joins, family/zone/unit
+  coverage, cadence, freshness, gaps, revisions and rolling-origin availability
+  from independently admitted normalized real artifacts. T057 stays sealed.
+- The CH monthly solver remains sole level authority. LT remains independent
+  from CT; OMPEX remains benchmark-only and AFRY descriptive.
+
+## D-20260806-245 - Accumulate normalized ENTSO-E quality with bounded memory
+
+Decision:
+
+- Compose the exact D244 synthetic Parquet streaming verifier with a second,
+  independent batch pass that accumulates normalized ENTSO-E quality without
+  pandas or whole-table materialization.
+- Spill only structural keys, UTC nanoseconds and SHA-256 value fingerprints
+  into a repo-local SQLite database capped at 1 GiB. Never store raw numeric
+  market values in SQLite or in the proof bundle, and remove the staging
+  database on both success and failure.
+- Fail closed on duplicate grains, orphan facts, missing dimension series,
+  native-grid gaps, invalid units/sign semantics, availability violations,
+  revision/load chronology, required Swiss families, production technologies,
+  borders and latest-versus-last-vintage mismatches.
+- Publish separate counts, rates, value-free per-series coverage and findings.
+  Keep the 730 complete UTC-day seasonal threshold distinct from structural
+  validity, so a clean short fixture cannot masquerade as empirical history.
+- Grant only synthetic incremental-quality authority. Current raw Unity
+  Catalog schemas, the unexecuted D243 series inventory, real PIT, training,
+  selection, model input, candidate assembly, promotion and production remain
+  unauthorised.
+
+Reason:
+
+D244 proves that normalized Parquet bytes can be opened safely in bounded
+batches, but it does not establish analytical quality. The former D239 logic
+materializes pandas tables and therefore cannot safely profile a future large
+local export. D245 preserves the same exact normalized interface while making
+key and coverage checks incremental and memory-bounded. It also keeps data
+integrity, analytical quality and real-source authority as separate verdicts.
+
+Rejected alternatives:
+
+- Load the complete export into pandas or retain every raw value in memory.
+- Store raw prices, loads or generation values in the SQLite spill or proof.
+- Treat hourly history as missing merely because the PFC target is 15 minutes;
+  native cadence is checked per series and is not rewritten.
+- Infer missing cadence, sign, lineage, revision or PIT semantics from names.
+- Treat the one-day synthetic fixture as the required two-year empirical
+  history, or use latest data as historical point-in-time evidence.
+- Query Databricks or start a stopped Warehouse to complete this offline lot.
+
+Canonical local evidence:
+
+- contract raw SHA-256 / canonical content ID:
+  `15b9c24bb5b0cfefb27fef038497227baa926edb1433434ce0d0f7018f019c7c` /
+  `1baf72727872e0013fd6a70c1e04c2ef0eeabd0faf66659a7f17fb10956c4184`;
+- validator/tests/materializer SHA-256:
+  `892e50a560f5af6810c1c8ba72d06a0a85a546ad8775d1dc17e09243e9ffe98c` /
+  `2cae80f49da6a13e56b7618387e3e1f4abafcc0897671059ae5dea61cf203e6a` /
+  `2085304a3d4f3a97d4b2be23faf8436ee5f2362ba3d5528122153a4f5bf0b485`;
+- deterministic proof ID / manifest SHA-256:
+  `a5840e92c5ea783d9931069a8725352398e882831faf4e3fd6beb8f80a9653a1` /
+  `9bf0f6333bbb024352ee8006441ad5b54e2280c65f8cdb147bcc578a4d55ded5`;
+- synthetic fixture: 33 series, 792 latest rows, 792 vintage rows, exact
+  792-key latest/last-vintage overlap, one complete UTC day and 303,104 peak
+  SQLite bytes; all staging was removed;
+- focused D245 roast: `12 passed`; D231-D245 acquisition chain:
+  `386 passed in 18.66s`; Ruff passes; two materializations produced the same
+  proof ID;
+- execution counters: zero Databricks connections/statements, Warehouse
+  starts, network calls, `H:` accesses and remote writes.
+
+Invariants not to break:
+
+- D244 byte/schema verification must pass before D245 reads any Arrow batch.
+- Bounded structural state and value fingerprints may support quality checks;
+  raw numeric values must never be persisted in the spill or proof.
+- Native cadence remains a per-series source fact. Hourly and 15-minute series
+  may coexist; neither is silently upsampled as source truth.
+- Synthetic quality evidence cannot bootstrap real receipt, PIT, model or
+  production authority. D241/D243 and the independent future holdout remain
+  explicit blockers.
+- The monthly solver remains sole monthly-level authority. LT remains
+  independent from CT; T057 stays sealed; OMPEX remains post-freeze benchmark
+  only and AFRY descriptive only.
+
+## D-20260806-246 - Consume the real workstation capture day before any SQL action
+
+Decision:
+
+- Replace D238's synthetic-only daily rule, for local workstation cost control
+  only, with one real repo-local marker per Europe/Zurich day.
+- Create `YYYY-MM-DD.json` using exclusive creation below the exact governed
+  `build/databricks-control-plane/entsoe-daily-reservations` root. Require a
+  single-link regular file and file `fsync`.
+- Treat every existing, partial, corrupt or failed-publication marker as a
+  consumed day. Forbid same-day retry, replacement and automatic deletion.
+- Bind the exact D243 query/contract, fresh UTC-to-Europe/Zurich date and a
+  hashed Warehouse identifier. Persist no token, host, HTTP path or plaintext
+  Warehouse identifier.
+- Keep Warehouse state checks and SQL execution outside D246. Keep PIT,
+  model-input and production authorities false.
+
+Reason:
+
+The user's one-pull-per-day cost ceiling cannot rely on D238 because that
+ledger explicitly admits synthetic fixtures only and implements no real atomic
+persistence. Consuming the day before any network or compute action ensures
+that failure cannot create a same-day retry path on this workstation.
+
+Rejected alternatives:
+
+- Let the future executor reserve only after checking or starting a Warehouse.
+- Treat an identical reservation as idempotently reusable for another SQL
+  attempt.
+- Delete malformed or partial markers automatically, use caller-selected roots,
+  persist connection details, or claim a local file is a distributed lock.
+- Grant data or model authority from a successful cost reservation.
+
+Canonical local evidence:
+
+- contract raw SHA-256 / canonical content ID:
+  `20deb61e362362c46ab5864020a3a70d9f16bcebc41cb729030707cbea7de5e3` /
+  `66f846bd91ad23e9111a216acff3ed8058929269175dc5da8d893054a176c312`;
+- implementation/tests SHA-256:
+  `09a9dec36db450054bba56f09a3767983273b4e03a9ae6f28f6105af98f2c0a0` /
+  `f305679dea992ea427a23a33fd84cd1256979f9b7700251f493471c0df7aece2`;
+- focused roast `16 passed`; adjacent D238/D243/D244/D246 `67 passed`; Ruff
+  passed;
+- 32 concurrent contenders produced one winner and 31 already-consumed
+  results; injected `fsync` failure still consumed the day;
+- all D246 Databricks request, SQL statement, Warehouse-start and write counters
+  are zero.
+
+Invariants not to break:
+
+- Reserve before any future control-plane or SQL request. Never retry on a day
+  whose marker exists, regardless of marker validity or prior failure.
+- D246 is one-workstation cost control only. Cross-host uniqueness, external
+  monotone time and Windows power-loss durability remain unproven.
+- It authorizes neither Warehouse access nor SQL. A later executor must refuse
+  stopped Warehouses and the exact D243 query remains the only candidate.
+- T057 stays sealed; the monthly solver remains sole level authority; LT stays
+  independent from CT; OMPEX remains benchmark-only and AFRY descriptive.
+
+## D-20260806-247 - Stop the real dev-family attempt before SQL when the Warehouse is stopped
+
+Decision:
+
+- Consume the D246 Europe/Zurich reservation before any Databricks request.
+- Use one control-plane GET to inspect the configured Warehouse and stop the
+  attempt when it reports `STOPPED`, classic `2X-Small`, non-serverless and
+  45-minute auto-stop. Do not start it, submit SQL or retry the same day.
+- Retain the 2026-08-03 real SQL audit as discovery evidence that actual load,
+  day-ahead prices, actual/forecast generation, solar/wind forecasts, reservoir
+  storage, physical flows, scheduled exchanges and day/month/year-ahead NTC
+  macro-families existed in dev at that date.
+- Keep load forecast, renewable forecast horizon, generation technology,
+  border/direction, native cadence, metadata consistent with the confirmed
+  `EUR/MWh` business unit, sign, lineage, revision, quality and PIT coverage
+  unproven until the exact D243 dimension inventory is captured.
+- Add outages/capacity, balancing/imbalance, reserves, congestion actions, net
+  positions and intraday cross-zonal capacity to the high-value search list.
+
+Reason:
+
+The user asked for actual dev family coverage but also required minimum cost,
+no Databricks writes and at most one daily pull. Starting a stopped classic
+Warehouse solely for a small dimension inventory would violate the chosen cost
+policy. Existing evidence can support a partial classification, but not the
+missing exact labels or a claim that every required series exists today.
+
+Rejected alternatives:
+
+- Start the Warehouse, wait for it, submit the query or retry later the same
+  day.
+- Relabel 2026-08-03 discovery evidence as a fresh exhaustive inventory.
+- Treat the legacy local archive as proof of current dev contents or empirical
+  model authority.
+- Infer `EUR/MWh`, cadence, direction, revisions or PIT from labels and
+  timestamps alone.
+
+Canonical local evidence:
+
+- reservation content ID / marker SHA-256:
+  `baaa32ea74e36e13280ea30ced5adbacbe58b35bc92f0758d5e6b66ba29ee770` /
+  `ff61e1383fd4fdfb225424923dac769181be768c0c39c31a8d3311ecc1b3fb4a`;
+- D247 attempt counters: one control-plane GET, zero SQL statements, zero
+  Warehouse starts, zero Databricks writes and zero ENTSO-E rows opened;
+- source reports:
+  `build/databricks-intake-audit/SUMMARY-20260803.md`, D241 proof and
+  `build/entsoe-local-readiness/2026-08-05`;
+- consolidated status:
+  `ENTSOE-DEV-FAMILY-COVERAGE-STATUS-20260806.md`.
+
+Invariants not to break:
+
+- The 2026-08-06 day is consumed; no same-day retry or automatic marker
+  deletion is allowed.
+- Discovery of a family does not prove completeness, trustworthy vintages or
+  model usefulness. Legacy local evidence remains tooling-only.
+- T057 stays sealed; the monthly solver remains sole level authority; LT stays
+  independent from CT; OMPEX remains benchmark-only and AFRY descriptive.
+
+## D-20260806-243 - Prepare one bounded ENTSO-E series inventory without executing it
+
+Decision:
+
+- Bind one exact read-only statement over `dev.gold.dimentsoeseries`; scan no
+  fact table and execute nothing in this batch.
+- Group the nine available semantic descriptors, retain only series counts and
+  dimension load-timestamp bounds, and use window totals plus `LIMIT 10001` to
+  detect truncation. Admit at most 10,000 signatures.
+- Require the Warehouse to be already `RUNNING`, attribute zero Warehouse
+  starts to the capture, consume the Europe/Zurich daily reservation and allow
+  at most one capture that day. Keep Databricks writes forbidden.
+- Compare normalized literal `GroupName` spellings with 13 required and 13
+  additional high-value families only as a diagnostic. Require owner-reviewed
+  mapping before declaring a family present or absent.
+- Keep query execution, logical mapping, coverage, PIT, model-input and
+  production authority false.
+
+Reason:
+
+D241 proves the real table structures but cannot answer which business series
+exist. The smallest useful next read is the series dimension alone. Binding its
+query, cost preconditions, output grain and offline validator first prevents a
+future low-cost capture from becoming an unbounded scan or an unjustified
+model-admission shortcut.
+
+Rejected alternatives:
+
+- Start either stopped classic `2X-Small` Warehouse now.
+- Scan latest or vintage facts merely to discover taxonomy.
+- Use fuzzy label matching as proof that a required family or border exists.
+- Omit a truncation sentinel, accept caller totals, permit multiple daily
+  attempts, or let a successful inventory authorize model use.
+
+Canonical local evidence:
+
+- contract raw SHA-256 / canonical content ID:
+  `ba8f6945b4a43b54762fa475228edabea4018bfea5871f2581dc53536c0743a1` /
+  `1e183fc51f2673cfc3fed0035dc4a5e3d84664f51ff8447a355264e5e819ddc6`;
+- query SHA-256:
+  `16a989d2b1528f79b3ecb7a2d9f8f221a6be67cc1c4d3c622516c8bd0dde95e7`;
+- validator/tests SHA-256:
+  `b9ef41e6e54b032b79fc7451770ac8d4eb3d0712e2eee4e76f43aa554c198311` /
+  `a22531918c7ed51a7f278c4e0aa02a1bcd1d85f6df04c7fdb0a1ae2a67568611`;
+- focused roast `15 passed`; adjacent ENTSO-E matrix `143 passed`; Ruff passed;
+- D243 Databricks requests, SQL statements, Warehouse starts and writes are all
+  zero.
+
+Invariants not to break:
+
+- Run the bound query at most once on a reserved Europe/Zurich day and only
+  when the selected Warehouse was already running.
+- Inventory metadata cannot prove value freshness, completeness, native
+  cadence, signs, PIT history, a new future holdout or predictive value.
+- T057 stays sealed; legacy or synthetic evidence cannot replace governed real
+  ENTSO-E values.
+- The CH monthly solver remains sole level authority. LT remains independent
+  from CT; OMPEX remains benchmark-only and AFRY descriptive.
+
+## D-20260731-205 - Consume full prospective wheel source inventory without claiming loaded-code authority
+
+Decision:
+
+- Retain V6 and its sealed V7 origin/prediction bytes unchanged. Select two
+  byte-identical 109-member wheels at SHA-256
+  `0e7d69b14493a6959222709835a0ca00ea373b99df50a24344cf35bd97e80f37`
+  with build-generated source revision
+  `5f544d90a81077d7aec8d893339c5f2ca0928489e9e950ee02d65c9797b44da7`
+  as local engineering evidence only.
+- Select implementation Closure V3, closure ID
+  `cedd9356744eddda6aec87666a64017f3946b5561219800b31c74e4e35d6fa1f`,
+  SHA-256
+  `a7d6c37044845fcb5a162d89c4aa6c8fafc4a2b64afb3616538051bc88f9652e`.
+  It must require 105 exact sources, one installed wheel root, zero checkout
+  roots, exact dependencies and no loaded `scripts.*` or CT module.
+- Treat `wheel unpack` as byte-equivalent purelib staging, not as a pip
+  installation receipt. Treat the prior launcherless runtime receipt as
+  substrate context because it binds an older wheel.
+- Replace generic temporary-directory creation in the demonstrated publisher
+  and monthly capstone paths with direct random repo-local scratch directories
+  that inherit the governed parent ACL. Preserve mandatory fail-closed cleanup.
+- Select only the final split green matrices. Keep the earlier ACL-affected
+  aggregate runs non-conclusive. Require the exact governed runtime for the
+  historical provider fingerprint; an incompatible ambient Python must fail
+  closed and is not a product regression.
+- Keep scientific admission, candidate assembly, publication, promotion and
+  production authority false. Keep T057 and future truth unopened.
+
+Reason:
+
+The V6 package refactor removed checkout-only runtime dependencies, but direct
+source bindings did not cover every runtime-consumed project source. The wheel
+build identity now binds the complete package inventory and the isolated run
+demonstrates the exact `sys.path` boundary. The ACL remediations address the
+specific managed-Windows failures without changing monthly formulas, products,
+tolerances or gates. Independent roasts nevertheless show that source bytes
+cannot attest code already loaded before the check and that the current wheel
+observation lacks a durable fresh supervised full-runtime receipt. Those are
+explicit admission blockers, not grounds to overstate local evidence.
+
+Rejected alternatives:
+
+- Include checkout `scripts.*` in the production wheel or permit the checkout
+  root to coexist on `sys.path`.
+- Relabel source inventory verification as an immutable loaded-code
+  attestation, or reuse an older runtime receipt for changed wheel bytes.
+- Call `wheel unpack` a pip installer receipt, request admin/ACL/Defender
+  exceptions, or mutate external user/system locations.
+- Weaken provider runtime fingerprints so the ambient Python passes, call the
+  historical ACL failures green, or alter monthly capstone formulas/gates to
+  accommodate the workstation.
+- Count V6 as another origin, open T057/future truth, use OMPEX as a model
+  input, rewrite monthly solver levels or promote production.
+
+Canonical evidence and roast disposition:
+
+- V6 SHA-256 / selection ID:
+  `11966d1ee85ace46e97006fa74f8aab4789c71f7438de909ed71541aab480df7` /
+  `5340bb8c5cd0c2ba65f346c70e75ba7aa6bb17a5553df353f476ef8c50f03984`;
+- final matrices: `63 passed`; `110 passed, 12 skipped, 2 deselected`;
+  `7 passed`; `92 passed`; `37 passed`; `116 passed, 2 skipped`;
+- exact governed truth/scoring replay: `17 passed in 12.61s`;
+- Security P0/P1/P2 = `0/2/2`; IT/Operations = `0/2/4`, including zero
+  product P1, one runtime-attestation P1 and one external operations blocker;
+  Quant/Data delta = `0/0/0`;
+- protected `data/eex_forwards_history.parquet` SHA-256 remains
+  `21ba73e70b6a16e88ba4c7d21985eafbdbc8efa2641ebe5d97c74b33f64e4013`.
+
+Invariants not to break:
+
+- The monthly solver remains sole level authority; hourly layers shape only
+  within month. OMPEX remains benchmark-only. LT never imports CT.
+- Swiss truth remains native hourly until the separate 15-minute transition
+  protocol is independently admitted.
+- A fresh immutable runtime, minimal independent pre-import bootstrap,
+  loaded-code evidence and durable supervised receipt remain mandatory before
+  runtime admission.
+- Trusted time, independent registry/signature, external CAS/WORM, scheduled
+  truth capture, fresh PIT inputs, multiple rolling origins and prospective
+  quality evidence remain mandatory before any promotion.
+- V4 remains compromised; V5/V6 remain the same non-countable origin. T057
+  stays sealed. Production remains strict `NO_GO`.
+
+## D-20260731-204 - Select packaged prospective-scoring source boundary V6 without quality authority
+
+Decision:
+
+- Supersede future-origin selection V5 with V6 for the same V7 local origin.
+  Preserve V5 bytes and the sealed prediction/commitment identities; V6 does
+  not create an additional origin.
+- Move the prospective scorer, native-hourly truth builder, structural
+  commitment builder and selection auditor into `pfc_shaping.*`. Keep the
+  `scripts.*` files as compatibility wrappers and require the LT package
+  contract to include the operational package modules.
+- Keep the V5 truth lifecycle semantics: audit the selected chain before any
+  outcome path, require target maturity against both the actual local wall
+  clock and declared read time before ledger/bronze access, treat the truth
+  publication receipt as post-read evidence only, require exact fixture/real
+  agreement, and publish truth/score outputs atomically with exact empty-
+  staging resume.
+- Select only the terminal V6 audit, targeted truth/scoring matrix and package
+  contract as positive local evidence. Record the ACL-affected broad runtime
+  and publication matrices as non-conclusive, not green and not demonstrated
+  product failures.
+- Preserve every scientific, candidate, publication, promotion and production
+  authority as false. Do not open future truth or T057.
+
+Reason:
+
+The D202 IT/Operations roast correctly identified that the operational logic
+was bound to checkout-only `scripts.*` dependencies absent from the package.
+The V6 refactor removes that packaging contradiction while preserving the
+sealed prediction bytes. Targeted terminal evidence demonstrates the local
+source/package contract. It cannot establish predictive quality: the origin
+is not independently registered, target outcomes are unopened and the
+independent rolling-origin count remains zero.
+
+Rejected alternatives:
+
+- Mutate V5 in place, relabel V4, or count V6 as a second origin.
+- Treat checkout source hashes as installed-wheel/import/runtime closure.
+- Call a post-read publication receipt permission to open outcomes.
+- Interpret an ACL-driven pytest failure as product evidence, request admin or
+  Defender exceptions, or repeatedly rerun the same laptop-sensitive matrix.
+- Consume T057, tune after truth, use OMPEX as model input, rewrite monthly
+  solver levels or promote production.
+
+Canonical local evidence:
+
+- V6 path
+  `.planning/phases/14-lt-audit-remediation/CH-LT-LOCAL-FUTURE-ORIGIN-SELECTION-V6-20260731.json`,
+  SHA-256
+  `11966d1ee85ace46e97006fa74f8aab4789c71f7438de909ed71541aab480df7`,
+  selection ID
+  `5340bb8c5cd0c2ba65f346c70e75ba7aa6bb17a5553df353f476ef8c50f03984`;
+- package-source SHA-256 values: scoring core
+  `7faf157e6e83c78c5de3b1419a8418ea1ad7fc8886297f0e7322ee08e37c1cac`,
+  scoring CLI
+  `481a7c21dfeefbf7a7f998d634a4924632320b12d21b620fe55fb30170992cb0`,
+  truth builder
+  `698a06b698277d1fe542337c93df5f77831e7f3f74f7767ffa58dd2d05caaedf`,
+  and commitment builder
+  `9949f8e818aba79d198853a03208e526fe90ef4c6ef937917bfe676aacbf8bef`;
+- `fvaudit6`: target exit zero, status
+  `VALID_LOCAL_FUTURE_ORIGIN_REHEARSAL_V7_PACKAGED_MODULE_SOURCES_BOUND_NONCOUNTABLE_NO_GO`,
+  execution/supervisor SHA-256
+  `2ebe566e52e25c0cbfcc336400585d7a86f8f4b2cf81b7779b0df1121f33c3a6` /
+  `28940f7e3f0ba681accb5dc0adb0c105f5f719751c06f3b88638bd1f3855f5ff`;
+- `ftruth36`: `17 passed in 12.28s`, execution/supervisor SHA-256
+  `fdf0d8ab2a88544d0527916a166708bf43e91b42b51fad3a2652c409f0fc8820` /
+  `b029fe90c38e469ffeabc6a8aeed0f18dde5326586501c913548deb6c8dfd119`;
+- `fpack38`: `26 passed in 2.69s`, execution/supervisor SHA-256
+  `996ac994f66cb430777345867634c855328dfcf2407faea9469e7ac00c46ce71` /
+  `e2ade6c2ff54c97cb2290c63131d317b47d5c56e1a3e94d66ad4873e63897517`;
+- final current-byte direct replay through the physically distinct repo-local
+  `build/pytest-runtime-v2-final/python.exe`: V6 audit exit zero,
+  truth/scoring `17 passed in 12.06s`, package contract `26 passed in 2.79s`;
+  five captured `sys.path` entries are repo-local and the canonical checkout
+  root occurs exactly once. This is not a supervised/installed authority;
+- non-conclusive `fpub38`: `235 passed, 2 skipped, 1 failed` after a
+  repo-local temporary product-replay access failure; non-conclusive `fpack36`:
+  `69 passed, 12 skipped, 1 deselected, 6 failed` from repo-local Windows temp
+  access/cleanup failures;
+- later external-parent and concurrent-source-change supervisor attempts are
+  retained as non-selectable negative provenance; no green receipt is inferred
+  from their green native pytest payloads;
+- protected `data/eex_forwards_history.parquet` SHA-256 remains
+  `21ba73e70b6a16e88ba4c7d21985eafbdbc8efa2641ebe5d97c74b33f64e4013`.
+
+Independent roast disposition and residual blockers:
+
+- Security/Governance found no local P0/P1 in the truth lifecycle snapshot;
+  supersession/TOCTOU, installed runtime and independent-authority boundaries
+  remain explicit.
+- IT/Operations' checkout-only packaging P1 is closed by V6. Installed module
+  execution, exhaustive loaded-import closure, scheduler/SLA/owner/lease/
+  retry/watermark/alerting and the first real matured truth-to-score run remain
+  open.
+- Quant/Data accepts only structural repeatability: exact hourly/DST target
+  grids, recursive evidence, monthly-level preservation and metric separation.
+  Zero countable origins means zero prospective quality proof. The 0/108
+  negative predictions remain a support/calibration risk to test, not a reason
+  to inject negative values.
+- Fresh PIT CH EEX levels, direct CH shaping authority, independent rolling
+  origins, calibrated scenarios, future holdout, external CAS/WORM, trusted
+  time/signature, CI/ASR/SBOM, observability and rollback are still mandatory.
+  Monthly solver level authority, LT/CT separation, native-hourly Swiss truth,
+  OMPEX benchmark-only status and strict production `NO_GO` remain unchanged.
+
+## D-20260731-202 - Seal prospective CH hourly scoring and truth lifecycle as local NO-GO evidence
+
+Decision:
+
+- Select future-origin selection V5 for the existing local V7 origin. It binds
+  36 delivery-month targets, 108 slow/central/fast structural predictions, the
+  hourly scoring contract V2, and the exact local scorer, CLI and native-hourly
+  truth-builder source bytes.
+- Require selection, commitment, inventory and scoring-contract verification
+  before any truth path is opened. In the truth builder, require both the
+  caller-declared open time and the actual local wall clock to be at or after
+  target maturity, and forbid the declared time from exceeding the wall clock,
+  before reading the prospective ledger or any bronze parquet.
+- Treat `truth-publication-receipt.json` only as post-read publication evidence,
+  never as independent authorization to open outcomes. Require exact
+  fixture/real biconditional classification and the wall-clock maturity gate
+  for fixtures as well as real bundles.
+- Publish truth bundle plus publication receipt as one staging directory and
+  atomic rename. Permit exact partial-staging resume; reject divergent residue.
+  Apply the same empty-staging resume rule to score publication.
+- Retain V4 permanently as compromised, non-authoritative local evidence. Its
+  `SEALED` bytes were mutated in place during remediation; V5 records the
+  incident rather than concealing it.
+- Supersede the closure-V1 wording with closure correction V2. The proven scope
+  is six direct bindings, not a transitive import/runtime closure.
+
+Reason:
+
+Independent Security and IT/Operations roasts demonstrated three local P1
+defects: caller-supplied future time could reach outcome-bearing inputs in the
+truth builder; a fixture receipt could bypass the scorer wall-clock gate and
+reclassify a real bundle; and an empty score staging directory was not
+resumable. They also showed that the initial closure name overstated its
+six-file scope. Each demonstrated local defect was corrected and regression
+tested. The remaining import/runtime closure, scheduler/SLA and independent
+authority gaps are explicit blockers rather than implicit claims.
+
+Rejected alternatives:
+
+- Trust a caller-supplied truth-open timestamp without checking the current
+  wall clock.
+- Describe a receipt emitted after reading outcomes as an authorization to
+  perform that read.
+- Let `allow_test_fixture=True` waive target maturity or permit receipt/bundle
+  classification disagreement.
+- Repair a divergent or partially different staging directory silently.
+- Mutate another sealed selection in place, claim six source hashes as a full
+  import closure, open T057, or promote a candidate to production.
+
+Canonical local evidence:
+
+- V5 path
+  `.planning/phases/14-lt-audit-remediation/CH-LT-LOCAL-FUTURE-ORIGIN-SELECTION-V5-20260731.json`,
+  SHA-256
+  `77e8480a563cf64d095ade55282af64e9b569fa9e77c003084d639adf94d35f5`,
+  selection ID
+  `4f13d9fe274087449cca92a5ed234f997aefb9fb3bc8ac0e799cf42fc0fbf5e7`;
+- direct closure V1 SHA-256
+  `4af806154a28f98e0f92f6185d6cd5c80d568150b2c68640d28a95c003ae03b1`,
+  ID `025523e39b36436550fefc0ade910e5f5982ead24a84cfe0096da890d05aa6e3`;
+- closure correction V2 SHA-256
+  `fc9d548a17f8f51f3e7b1115677d7505892133a81a0f54e9168e5fee8da8f573`,
+  ID `a24dcb3b89c5804199df5c744bcdc24be39c0d70f6ccbbd74b3b5e1f30f3a0a2`;
+- final targeted matrix `37 passed`; Ruff passes; `git diff --check`
+  passes. A broad matrix reached `83 passed, 9 skipped, 2 deselected` before
+  `120` setup errors caused solely by the managed Windows pytest basetemp ACL;
+  the mandated repo-local rerun reproduced the same setup ACL blocker and is
+  non-conclusive, not green and not a product failure.
+- protected `data/eex_forwards_history.parquet` SHA-256 remains
+  `21ba73e70b6a16e88ba4c7d21985eafbdbc8efa2641ebe5d97c74b33f64e4013`.
+
+Residual invariants and blockers:
+
+- Security final: P0 `0`; local P1 is the missing generated and runtime-consumed
+  transitive import closure; external P1 is the absent trusted time,
+  independent registry/signature and builder-inaccessible CAS/WORM. ABA,
+  reparse and Windows power-loss durability remain P2.
+- IT/Operations final local P0/P1/P2 is `0/2/4`: the current wheel does not
+  package the `scripts.*` auditor dependency; the collector has no governed
+  scheduler/SLA/owner/lease/retry/watermark/alerting runbook; the local runtime,
+  crash drills and first real matured truth-to-score cycle remain incomplete.
+- Countable prospective origins remain `0`. T057 and future outcomes were not
+  opened. Monthly solver authority, LT/CT separation, hourly Swiss truth,
+  OMPEX benchmark-only status and strict production `NO_GO` remain unchanged.
+
+## D-20260731-201 - Select CH hourly ledger v10 and close recursive current-evidence verification
+
+Decision:
+
+- Select `build/prospective-ledgers/ch-hourly-local-ledger-20260731-v10.json`
+  for local structural diagnostics only through prospective selection V4 and
+  current-evidence registry V3.
+- Keep the native source classification hourly. The 15-minute rows are
+  stepwise transport proxies, add no independent information and cannot
+  support intrahour or native-quarter-hour claims.
+- Require the current-evidence auditor to reconstruct the selected ledger
+  recursively from the hash-bound request. It must reopen, rehash and replay
+  every capture summary, specification, provider body, acquisition manifest,
+  acquisition artifact, isolated audit and audit runtime receipt, then require
+  exact equality with the selected ledger.
+- Bind the complete selection supersession chain V4 -> V3 -> V2 -> V1 and
+  its exact reasons. Reject absolute, traversal, drive-relative, NTFS ADS,
+  empty/dot, control-character, trailing-dot/space and reserved Windows path
+  forms before reading a linked document.
+- Keep laptop-model qualification V5 frozen on its original evidence boundary.
+  Ledger v10 does not retrain, requalify or improve any model-quality claim.
+- Preserve all scientific, training, candidate, publication, promotion and
+  production authorities as false. Do not consume T057 or a future holdout.
+
+Reason:
+
+The new capture extends the exact local hourly prefix by six hours, but it was
+captured after delivery using an untrusted workstation clock. It is useful for
+continuity and exact-replay diagnostics only. Independent Security review then
+demonstrated that the first current-evidence auditor trusted nested ledger
+references transitively and accepted lexical `..` paths before normalization.
+Both gaps were locally correctable and had to be closed before selecting the
+successor evidence chain.
+
+Rejected alternatives:
+
+- Treat 3,104 quarter-hour transport rows as independent or native-quarter-
+  hour observations.
+- Count five capture episodes as five rolling origins or infer point-in-time
+  availability from post-delivery downloads.
+- Reuse the frozen model qualification as evidence that v10 improved model
+  quality.
+- Leave nested evidence revalidation to the historical construction receipt,
+  trust lexical `commonpath`, or permit Windows drive-relative/ADS aliases.
+- Use an ambient Python after its governed runtime fingerprint fails, request
+  administrator/Defender exceptions, mutate external environments or promote
+  any artifact.
+
+Canonical local evidence:
+
+- capture v2 window `[2026-07-31T00:00:00Z, 2026-07-31T06:00:00Z)`, six
+  native hourly observations and 24 QH transport rows; summary SHA-256
+  `71a19f45382a2d818a0bea0612f06af5e6fc0b2b07793e3f43355062d34495a6`;
+- acquisition manifest SHA-256
+  `37e057ba4191023affadf4d552879fbc313e66803fe91d3c30b1f28e6d2700b3`;
+  audit/runtime-receipt SHA-256 values
+  `89ea389a54bea8e774590d0c1a032800c0579eac6b1de12242dbef6384d7408f` /
+  `988ceae574054adef8d39acfdb0936948d1100e83563f42ad62c784f2883e822`;
+- request v5 SHA-256
+  `bc79c1f8a793ed3391ae3dd4a7df5b7793b3319144162b7ecaf55d56430fb136`;
+  ledger v10 SHA-256 / ID
+  `3805b71f1368a0e742c8627d4995a85c791de1360257f97b78be0b1665723140` /
+  `cd759fb51a042d0a9f7b3a0c67f2badb3c6aadb098b33a37800bc6bb8c4f25df`;
+  ledger execution-receipt SHA-256
+  `cd6f4e5134293546e81ae6f4628e9d31211d3598afd3f1bf2829572e75e9f575`;
+- selected window `[2026-06-28T22:00:00Z, 2026-07-31T06:00:00Z)`,
+  776 contiguous native hours, 3,104 QH proxies, five capture episodes and
+  zero independent rolling origins;
+- selection V4 SHA-256
+  `1adcf532d4df2508491dd4a1fb7ed5429d111a8d3721d900eb9529e4594575be`;
+  registry V3 SHA-256 / ID
+  `6518f7e876ce1c233fc055d3d20ad213088d361d784afbe5aa16d4f165e744f7` /
+  `748aba2e2f85711d0a5dcdb07e0acacbf8dbce7a76ab4a4b07ef48371ec25488`;
+- final source/test SHA-256 values
+  `017f17e6d41edd6b47e39b2f3af3650ab4ef368d3a4ab97bf27a71f922300f40` /
+  `5e157d6770b9460ba329612e4c6711f783fa2ce66b8209afe1f1c3cd84891395`;
+- final direct data-governance matrix: `270 passed, 1 deselected`, zero
+  failure; final supervised `cev31v3h`: `32 passed`, source tree
+  `4b54a1879e71b52dc542b35bff975b25f22727016984d940cd401429dada0b3c`,
+  execution/supervisor receipt SHA-256 values
+  `c0c63129c36b2e6c25070a3851defa822e060ab89ca7817c9e7021fc43f26994` /
+  `6a5663c6b24a7b68effbedfe10638da2e95ca36f2667c36a30e469a25f364a04`,
+  one canonical checkout root in `sys.path`, zero active process, one terminal
+  write and every authority false;
+- final independent roasts: Security/Governance P0/P1/new-P2 `0/0/0`,
+  IT/Operations `0/0/4`, Quant/Data `0/0/0` for the admitted local scope.
+
+Invariants and residual blockers:
+
+- The capture clock, provider product/session identity and revision lineage are
+  not trusted. There is no independent signature, external CAS/WORM/fresh
+  monotone HEAD or power-loss durability proof.
+- Five post-delivery episodes provide zero preregistered forecast origins,
+  cover only about 32 summer days and cannot support rolling-origin, seasonal,
+  probabilistic, economic or candidate claims.
+- The next scientific milestone is a real outcome-blind prediction commitment
+  registered before delivery, followed later by independent outcome intake and
+  dependence-aware scoring. T057 remains sealed and must not be opened to fill
+  this gap.
+- Monthly solver authority, exact EEX product repricing, LT/CT separation,
+  OMPEX benchmark-only status and the protected data hash remain unchanged.
+  Production is strict `NO_GO`.
+
+## D-20260731-200 - Select exact-window final product replay and local qualification V5 only
+
+Decision:
+
+- Freeze the local delivery interval as
+  `[2026-08-01 00:00 Europe/Zurich, 2031-01-01 00:00 Europe/Zurich)`, so
+  Cal2030 contains exactly 8,760 local hours.
+- Pass eligible PEAK quotes into the canonical final solver-product projection.
+  Keep the monthly BASE solver as level authority and derive implied OFFPEAK
+  through the energy identity; do not add a second local projection path.
+- Require a final delivered-price replay of BASE, PEAK and implied OFFPEAK at
+  `1e-9 EUR/MWh`, with fail-closed partial/critical/unsupported products and
+  explicit source-quote conflicts.
+- Serialize gate residuals with 15-digit precision; values around `1e-12` must
+  remain observable rather than being rounded to JSON `0.0`.
+- Select A/B runs `mdl31n1c`/`mdl31n2`, qualification V5, selection V5 and
+  structural commitment V3 for local engineering only. The commitment remains
+  non-countable and no selected object has scientific or production authority.
+- Retain the obsolete v9/AppData route as forbidden historical evidence. All
+  mutable runtime state remains below canonical `build/`, without admin,
+  Defender/ACL exception, project executables or Playwright.
+
+Reason:
+
+The previous horizon omitted the last local hour of Cal2030 and therefore
+could not exactly reprice the annual product. A monthly-only check was also
+insufficient after hourly shaping and final product projection. Independent
+Quant review then demonstrated that the first closure rounded individual
+sub-tolerance residuals to zero in JSON even though the scenario maximum
+retained them. Exact end-exclusive delivery, end-to-end product replay and
+precision-preserving serialization close these demonstrated traceability
+defects without weakening monthly solver authority.
+
+Rejected alternatives:
+
+- Accept 35,036 Cal2030 quarter-hours or treat the missing final hour as
+  immaterial.
+- Reprice only BASE, ignore PEAK/OFFPEAK, or rely on pre-projection checks.
+- Reconcile contradictory parent quotes silently, patch individual months
+  after the solver, or use OMPEX as a model input.
+- Treat a tolerance-passing residual rounded to `0.0` as adequate audit detail.
+- Reuse V4 qualification, selection, commitment or matrix receipts after the
+  serialization source changed.
+- Request admin rights, Defender exception, writable AppData authority or run
+  project executables on the managed laptop.
+
+Canonical local evidence:
+
+- model runs `mdl31n1c`/`mdl31n2`, common model source tree
+  `5ee25178ffa27028f0b532c7c75f12df64bda6001a528b908ba4f24ceaa5db01`,
+  final replay SHA-256
+  `9a9bfbe50c551e715fe422075b0f5411e3e05b86b88ea8dfe0b0a1d617a220b1`;
+- qualification V5 ID
+  `c90dba9deaa3de1938353843aa5dc713a5aebcef40a02e61d5157fed341a5a36`;
+- selection V5 SHA-256/ID
+  `f61509834d692d64ee17dad6030f3672969788aac39d3cb3d56b7d5db9b7207b` /
+  `aa4233b4b42159bc4d0b6868fe3c3f0ec3e2449db593dbb14cd363c5e27336c6`;
+- commitment V3 ID
+  `954b95559f71aa8aa3454482ee985d697588392bc07934a58806256a6e969d86`;
+- final selection/commitment/matrix source tree
+  `374c1c7cfb77ff0ccca2f6df271e6b8ab788533dd6d99c98c38b80e2caf54510`;
+  `lmqmat31v5a` reports `691 passed, 16 skipped, 2 deselected`, and
+  `pkgpub31v5a` reports `489 passed, 18 skipped, 1 deselected`;
+- Ruff and `git diff --check` pass; protected forward hash remains
+  `21ba73e70b6a16e88ba4c7d21985eafbdbc8efa2641ebe5d97c74b33f64e4013`.
+
+The source identities form a staged acyclic chain: A/B share their executed
+model tree; the successor qualification binds those receipts by SHA; the final
+selection and commitment bind qualification and model ancestors; the two final
+matrices share the final code tree. A single source hash across every stage is
+neither claimed nor possible because the successor auditor must first bind the
+already emitted A/B receipt hashes.
+
+Invariants and residual blockers:
+
+- Production remains strict `NO_GO`. The forward source is `TEST_FIXTURE`, 18
+  scenario conflict rows lack approved production hierarchy, and direct-CH
+  shaping, calibrated probabilities, rolling-origin/new holdout, installed
+  wheel, external CAS/trusted time, CI/ASR/SBOM, SLO, observability and rollback
+  are not proven.
+- Matrix skips for wheelhouse and symlink capabilities must run on a governed
+  IT runner; they must not be converted into admin requests on this laptop.
+- No outcome T057, production data promotion, snapshot publication or commit
+  occurred. LT/CT separation and OMPEX benchmark-only status remain unchanged.
+
+## D-20260731-199 - Select laptop model qualification v2 for local engineering only
+
+Decision:
+
+- Select
+  `.planning/phases/14-lt-audit-remediation/CH-LT-LOCAL-QUALITY-CURRENT-SELECTION-V2-20260731.json`
+  as the canonical current local-engineering quality chain.  Its physical
+  SHA-256 is
+  `e9cc9f7db6274df37102e7d72e6fc0596d6067a4209a219cf8bcb0ed1361cd69`
+  and selection ID is
+  `93504ab8a9c6b1f063fdd31029fae23264a59a85aa1ded291bdabcfd7e40c828`.
+- Select model runs `run31e2` and `run31f2`, executed by supervised standard-
+  user runs `mdl31e2` and `mdl31f2`, for deterministic source-checkout laptop
+  evidence only.  Both must opt in exactly once to
+  `--enable-experimental-sparse-intraday-regularization`.
+- Preserve the historical flag-OFF intraday maturity calculation and frozen
+  baselines.  Parent-hour maturity, the sparse price-space estimator and its
+  dense-support envelope apply only under the explicit experimental flag.
+- Select qualification directory
+  `build/local-model-qualification/ch-lt-laptop-model-pair-v2`, qualification
+  ID
+  `7bca8042742e3054144bf798b048cae2acce43417cd2d2308389a6f92faedf95`.
+  Eight material roles must remain byte-identical across A/B; only the
+  path-bearing quality Markdown may pass bounded path normalization.
+- Keep every authority false.  The pair is not installed-wheel execution,
+  scientific admission, model selection, future-holdout evidence, candidate
+  assembly, publication or production promotion.
+
+Reason:
+
+The user needs a robust model that actually runs on the managed laptop and a
+visible quality boundary.  The first integrated matrix exposed a real
+flag-isolation regression: parent-hour maturity had leaked into the default
+path and changed three quarters of the frozen output.  Restoring the legacy
+path when OFF, making the scientifically motivated candidate explicit when ON
+and rerunning both model executions produces an auditable result without
+rewriting baselines or recycling stale hashes.  The current evidence still
+cannot support CH scientific quality claims: levels are `TEST_FIXTURE`, shape
+is a DE-LU proxy, direct governed CH 15-minute truth and calibrated P10/P90 are
+absent, and independent prospective-origin count is zero.
+
+Rejected alternatives:
+
+- Relax or regenerate the frozen baselines to hide the unguarded numerical
+  change.
+- Keep parent-hour maturity enabled implicitly under the default OFF flag.
+- Rebind the old v1 pair after source bytes changed, or treat `lmqmat31b` as a
+  passing matrix.
+- Score the current CH ledger as price/shaping evidence; its selected policy
+  explicitly permits cadence/replay only and forbids economic inference.
+- Claim the historical DE-LU conditional-quarter-hour diagnostic as full CH
+  LT validation or accept its candidate despite latest-fold non-inferiority
+  failure.
+- Build/launch a project executable, Playwright, mutate AppData or request
+  admin/Defender exceptions.
+- Consume T057, assemble a candidate or promote production.
+
+Canonical local evidence:
+
+- `mdl31e2` receipt SHA-256
+  `563ce1bf9421ecda4957b431548f1bafd8cafa9944f8597695fb1fe7f881af99`,
+  completion SHA-256
+  `e9d486171a2ea85dbd36e046c16231aced2c72b3de77aa2ec7220ec5e7be753c`,
+  46.484 seconds and 7,105,343,488-byte peak Job memory;
+- `mdl31f2` receipt SHA-256
+  `6c3fb8fa4717446e3ed92c8137f50c739808601d661154a15b20ffd7fcd201ba`,
+  completion SHA-256
+  `75721ad892fc482d72d9c6cf004bd2fefe1dff10365f6178dae1ea036c51571c`,
+  46.844 seconds and 7,080,230,912-byte peak Job memory;
+- common source tree SHA-256
+  `7a90d8fbec9bb3443b066ba49e914a61c73568e39f9f6fe0060b04eae0e120fa`,
+  `BOUND_REPO_LOCAL_PTH`, five entries, exact checkout root count one, and zero
+  active processes after each run;
+- pair `quality.json` / Markdown / terminal receipt SHA-256 values
+  `a3cdf2543ff5bc74990d46516df49be5dbf851090d704750ece6c1ca04a2f844`,
+  `7941598f00a352d4aec69ca9666d153c76fb7d8a780f6a32f51018380ebbce0b`,
+  `2a254cc4c4305b2a65097c59aaf440098e789cc6178e61555f9adf71bdd0d0d5`;
+- structural gates: solver constraint residual
+  `2.8421709430404007e-14`, maximum monthly mean residual
+  `5.4924953474255744e-11`, maximum hourly quarter-factor neutrality residual
+  `2.220446049250313e-16`;
+- `qa31pairv2` and `qsel31v4` execution receipt SHA-256 values
+  `9e8289710f7935d11bd732b653eb0d0a194311fff7b36b289f103abe1fa56762` /
+  `91678e84ee1cacb5c8135b9abd9c859def88556e34de2cd61af783f6955a8ba4`;
+- selected A/B outer supervisor receipt SHA-256 values
+  `636c72af09094700a1e9225adb5ef647adfe3e2c419675bf9d49d8fec8a0aa40` /
+  `ed684d9e5e3e197a4ff109e046809d98fd6801cb0a561a45ede6faf1aeab8275`;
+- focused tests `165`, pair/runner tests `141`, current-chain tests `143`,
+  Ruff pass;
+- final `lmqmat31d`: `676 passed, 16 skipped, 2 deselected`, zero failure,
+  receipt SHA-256
+  `ee443bc43def6dd916770858fa969714005778ebb4bfae7a041a3a78eaa182d7`,
+  112.875-second Job wall, 5,327,126,528-byte peak and zero active members;
+- `git diff --check` passes, staged set is empty, and protected EEX history
+  SHA-256 remains
+  `21ba73e70b6a16e88ba4c7d21985eafbdbc8efa2641ebe5d97c74b33f64e4013`.
+- final read-only differential roasts: Security/Governance, IT/Operations and
+  Quant/Data P0/P1/P2 `0/0/3`, `0/0/4` and `0/0/3`.  The corrected outer-
+  supervisor binding and upstream semantic validation are confirmed closed.
+
+Residual invariants and blockers:
+
+- Direct governed CH truth, fresh point-in-time hard EEX levels, independent
+  rolling origins, an externally frozen new holdout and calibrated
+  probabilistic quality remain mandatory scientific blockers.
+- The approximately 7.1 GB observed pair peak has no prefrozen capacity SLO;
+  cold/warm workstation budgets and retention remain operational debt.
+- The `2.220446049250313e-16` gate proves mean quarter-factor neutrality, not
+  exact end-to-end price neutrality.  Independent counterfactual diagnostics
+  found maximum/p99 hourly residual `0.001613` / `0.000117` EUR/MWh before
+  calibration because other hourly factors vary within the parent hour.
+- Sparse direct support is 192/480 cells with 60% fallback, median 22 parent
+  hours, nine envelope contractions and no direct-CH/rolling-origin admission
+  of this exact hash.  This is accepted only for local smoke evidence.
+- `v2` denotes the selected artifact instance while the stable serialized
+  qualification/selection schema remains `v1`; future naming should make the
+  instance/schema distinction explicit.
+- Installed-wheel model execution remains unproved.  Runtime v40 remains the
+  selected installed packaging runtime; the v2 pair binds the live checkout.
+- External trusted time/signatures, independent registry/CAS/WORM/fresh HEAD,
+  CI/ASR/SBOM, production observability, atomic recovery and rollback remain
+  mandatory.
+- Monthly solver level authority, LT/CT separation, OMPEX benchmark-only,
+  hourly Swiss truth pending separately admitted 15-minute transition, T057
+  non-reuse and strict production `NO_GO` remain unchanged.
+
+## D-20260731-198 - Keep the executable origin registry reference intrinsically non-countable
+
+Decision:
+
+- Select `pfc_shaping/data/ch_lt_origin_registry_reference.py` only as a
+  source-only, local protocol-semantics drill. Keep it excluded from
+  `ALLOWED_RUNTIME_PYTHON_FILES`, every governed LT wheel and every consumer,
+  candidate, publication or promotion path.
+- Use the receipt schema
+  `ch_lt_origin_registration_receipt.non_production_reference.v1`, a registry
+  domain derived from
+  `FMV_CH_LT_CONFIRMATORY_ORIGINS_V2_NON_PRODUCTION_REFERENCE_V1`, and a
+  reference-only receipt-ID signing domain. Require signed raw and effective
+  `countable_prospective_origin=false`; the reference signer must reject the
+  production receipt schema and `true` countability.
+- Validate the real canonical structural target-mask inventory and derive the
+  first target delivery from its minimum target timestamp. Keep every other
+  scientific commitment an external, unresolved obligation; local hash
+  availability is not semantic or scientific admission.
+- Persist rejected requests only as hash, size, bounded error type/code and,
+  only after exact schema/signature validation, safe request/operation IDs.
+  Never retain attacker-controlled rejected payload bytes or free-form error
+  text.
+- Pin four disjoint Ed25519 role IDs, the schedule, protocol, classification,
+  reference domain and SQLite `user_version=2`; verify the signed persisted
+  request/receipt chain on clean startup. Keep the database and all trust
+  material below canonical repo `build/`.
+- Select supervised receipt `orgrf31v4` as the current proof for these exact
+  source bytes. The only approved launcher for a repeat is the absolute
+  repo-local `build/pytest-runtime-v1/python.exe`; generic `python`, user
+  `.conda`, AppData, admin/elevation, Defender exceptions, project executables
+  and Playwright are forbidden.
+
+Reason:
+
+The first reference revision misleadingly used the production v2 receipt
+schema and a signed raw `countable=true` even though local assessment overrode
+authority. It also retained rejected payload bytes and error text. Independent
+Security and Quant roasts demonstrated wire-confusion and leakage risks. The
+current design makes local non-authority cryptographically intrinsic instead
+of relying on a downstream boolean override, while still making scheduling,
+inventory, chronology, CAS and retry semantics executable.
+
+Rejected alternatives:
+
+- Emit a production-schema receipt with `countable=true` and rely on the local
+  verifier to override it.
+- Claim exact protocol-v2 receipt-wire conformance from an intentionally local
+  SQLite service, or amend production protocol v2 silently.
+- Retain rejected canonical JSON below a size threshold, attacker-controlled
+  error messages, unsigned IDs or secrets for debugging.
+- Put the reference module in the governed wheel, treat SQLite as independent
+  WORM/CAS, or project its receipt into the prospective ledger.
+- Reuse `orgrf31v3`, whose target interpreter was external/unbound, or treat
+  the caller-shell timeout before `orgrf31v4` terminalized as a test failure.
+- Request admin/ACL/Defender rights or revive the historical v9/AppData
+  assembly path.
+
+Canonical local evidence:
+
+- reference source SHA-256
+  `f05a902d03f6a3747e80f2a110257802892b9dc3dd8effa27d84c1983ff32510`;
+  tests SHA-256
+  `41caf0981be6582161a5124bd6de7562354026811e06bb800794ea47045f6bd2`;
+  package-boundary test SHA-256
+  `ab161c633b4e3d558ce9dcaab3c0e18e00ec555b023ef5a9661060facf289636`;
+- direct current matrix: `215 passed`, zero skip/failure/error;
+- `orgrf31v4` supervisor/execution receipt SHA-256
+  `fbf85f5e9b3e9a8214691d30b09df0664b21b3f14037704e60627544081a5161` /
+  `bd39f487fbda91e4c4bbdc89038948ebcef5b9bb707ea9cc190efbef88fa3831`;
+  `113 passed, 4 skipped`, zero failure/error, capability consumed then absent,
+  zero active processes and every authority false;
+- exact source tree: 538 files / 9,614,514 bytes, SHA-256
+  `89778238fbd2173d582afe45c545c5a7aa39f2ac559c47e10157fac8635e1ab9`;
+  import closure `BOUND_REPO_LOCAL_PTH`; the canonical checkout root appears
+  exactly once at `sys.path` position 3;
+- independent terminal roasts on the selected source/test/receipt bytes:
+  Security/Governance P0/P1 `0/0`, IT/Operations `0/0`, Quant/Data `0/0`.
+
+Invariants and residual blockers:
+
+- The local same-user SQLite path remains replaceable between checks/open and
+  is neither independent nor WORM. Startup verifies the chain, but every
+  operation does not revalidate all historical bytes. Negative corruption,
+  hardlink/sidecar, PRAGMA, forged predecessor/TTL and crash/power-loss tests
+  remain P2 regression debt.
+- A real service still needs independent ownership, mTLS/ACL, trusted time,
+  approved UTC cadence, active/historical keyrings, external CAS/WORM/fresh
+  HEAD, crash recovery, multiprocess concurrency, SLO/capacity, backup/PITR,
+  observability and rollback.
+- Protocol v2 remains incomplete with zero countable origins and eleven
+  external requirements missing. Opaque solver/candidate/prediction/scenario
+  commitments remain a P1 external scientific blocker before any countable
+  implementation.
+- No T057 outcome was read, no new origin/candidate/snapshot was admitted and
+  no publication, promotion or production transition occurred. Monthly solver
+  authority, LT/CT separation and OMPEX benchmark-only status are unchanged.
+Production remains strict `NO_GO`.
+
+## D-20260731-203 - Harden official EEX DataSource v2 acquisition locally but refuse secret forwarding
+
+Decision:
+
+- Select `pfc_shaping.data.eex_datasource_v2_capture` as the only intended
+  official EEX REST v2 capture implementation and include it in the LT package
+  contract. REST v1, rolling symbols and checkout-wrapper operation are not
+  supported.
+- Preserve exact response bytes and provider order; bind `/rd` reference data
+  recursively before settlement; validate exact CH POWER product segments,
+  ISIN, `New`/`Change` chronology, EUR/MWh and the 60,000-record ceiling.
+- Keep the independent TLS-root allowlist empty. The observed FMV interception
+  root is evidence only, never provider identity or Security approval.
+- Refuse every nonempty EEX token in the workspace supervisor before workspace
+  checks, Git, subprocesses or receipts. Do not reactivate forwarding until an
+  independently admitted immutable runtime and minimal secret handoff remove
+  worker/target TOCTOU.
+- Keep every capture, quote and downstream authority false. Monthly solver
+  remains level authority; no T057 outcome or production promotion is consumed.
+
+Reason:
+
+Independent roasts demonstrated credential reflection through escaped JSON,
+percent/Base64 encodings, query values and TLS key logging; nested authority
+smuggling; injectable test transports; Windows path aliases; input TOCTOU; and
+link-following rate locks. Those local defects are closed and regression-tested.
+The same roasts then showed that a mutable repo-local runtime or captured worker
+cannot safely receive a bearer merely because its path is under `build/`.
+Fail-closed refusal is therefore the only defensible current policy.
+
+Rejected alternatives:
+
+- Approve `CN=pa850.net.fmv.ch` from a local observation, use the ambient Windows
+  trust store, request Defender/admin exceptions or write outside the workspace.
+- Pass the bearer to an external Conda interpreter, an arbitrary
+  `build/conda-runtime-*`, a mutable worker file, argv, a spec or a receipt.
+- Treat successful local HTTPS or HTTP `Date` as PIT/source authority, collapse
+  corrections, admit rolling symbols or retry a failed capture ID in place.
+- Promote desk history or OMPEX into hard model levels.
+
+Canonical evidence:
+
+- readiness ID
+  `7ff67541f66b91ff414d8f269d1e8fc76e645bd5572b8dd9b2d268dc50ade2df`;
+- guide v006 SHA-256
+  `d24cc35c7600622cba44d00dd988045be20ec01ad325bbb85552626bfcc7ad81`;
+- capture source SHA-256
+  `bd7a1fb87815c2813285eef7d6dfbd378525c291bdf506aa7b02163188d5db62`;
+- targeted governed matrix `221 passed, 1 skipped, 1 deselected`; supervisor
+  E2E `4 passed`; adjacent data `267 passed, 3 skipped, 1 deselected`; packaging
+  `110 passed, 12 skipped, 2 deselected`; publication splits `48 passed`, then
+  `147 passed, 12 skipped, 1 deselected`, then candidate `65 passed`; final
+  targeted EEX reconciliation `222 passed, 1 skipped`; release/promotion splits
+  `116 passed, 2 skipped`, `37 passed`, `27 passed` and `18 passed`;
+- Security/Governance final P0/P1 `0/0`, IT/Operations final P0/P1 `0/0`, and
+  Quant/Data P0/P1 `0/0` after the demonstrated fixes.
+
+Residual invariants and blockers:
+
+- Authenticated OpenAPI, token/entitlement, exact CH endpoint/schema/licence,
+  Security-approved CA/egress, trusted time, independent signature, immutable
+  runtime/copy, external CAS and independent conformance remain absent.
+- Portable no-clobber/power-loss qualification, orphan reconciliation,
+  multi-host quota coordination and SLO/alerting remain P2 work.
+- The earlier aggregate release/promotion timeout remains invalid evidence; its
+  four constituent files were rerun separately and all produced the terminal
+  green counts recorded above. No production state changed.
+- Protected `data/eex_forwards_history.parquet` remains untouched at SHA-256
+  `21ba73e70b6a16e88ba4c7d21985eafbdbc8efa2641ebe5d97c74b33f64e4013`.
+  Production remains strict `NO_GO`.
+
+## D-20260731-197 - Select workspace-local supervisor v6 for local packaging quality only
+
+Decision:
+
+- Select execution receipt schema `pfc_lt_workspace_local_execution.v6`,
+  supervisor receipt schema `pfc_lt_workspace_local_supervisor.v1` and stale
+  reconciliation schema `pfc_lt_workspace_local_reconciliation.v1` for
+  standard-user laptop packaging/runtime/publication quality evidence only.
+  This does not supersede launcherless runtime v40 and grants no scientific,
+  evaluation, runtime, publication, promotion or production authority.
+- Bound the one-shot internal capability to the exact run ID, captured worker
+  source hash, worker argv hash, finite wall budget, supervisor PID/start token
+  and the worker's real direct-parent relation. Require an exclusive
+  hash-bound admission sidecar and capability absence before accepting worker
+  exit zero.
+- On Windows, create the supervisor and target processes suspended, assign
+  them to `KILL_ON_JOB_CLOSE` Job Objects before resume, and fail closed on
+  timeout, interrupt or surviving descendants. Keep stale reconciliation
+  append-only and require exact PID/start-token inactivity; never rewrite a
+  pending receipt into apparent success or reuse its run ID.
+- Remove ambient `APPDATA`, `LOCALAPPDATA` and `PROGRAMDATA` and redirect them,
+  plus `HOME`, `USERPROFILE`, Conda/pip/uv caches and all temporary roots, to
+  fresh namespaces below canonical repo `build/`. The explicit preinstalled
+  `C:\ProgramData` interpreter remains read-only only.
+- Treat `--wall-timeout-seconds` as a complete-cycle admission budget, not a
+  strict return-time SLO. Reclassify postflight/first-terminal-fsync deadline
+  crossings to exit 124; record measured overshoot and
+  `strict_return_bound=false`. Read Windows Job I/O from information class 8
+  and memory limits from class 9.
+- Preserve `sv6cur1` as negative timeout evidence. Select only `sv6cur2` and
+  `sv6mx1` as current positive local-quality evidence. Do not build another
+  project wheel/runtime solely for this change because `scripts/` is excluded
+  from the governed LT wheel and the package-contract matrix confirms that
+  boundary.
+
+Reason:
+
+Runtime v40 left global process supervision, resource telemetry and stale-run
+reconciliation as P2 debt. The first v6 proofs became stale after capability
+admission hardening, and IT then demonstrated missing AppData environment
+confinement, zero-prone Job I/O accounting and missing real crash E2E evidence.
+The current bytes close those findings without admin rights, external mutable
+paths, project executables, Playwright, network access or production claims.
+The measured cold/warm verification cost is intentionally visible rather than
+hidden behind a nominal target duration.
+
+Rejected alternatives:
+
+- Cite historical `rnv6sup1`/`rnv6mx1` receipts after the runner changed, or
+  cite `sv6cur1` as a pass merely because its pytest child finished 131 tests.
+- Retry a live namespace, delete negative evidence, omit capability admission,
+  trust PID without a start token, or launch a process before Job assignment.
+- Inherit AppData/ProgramData destinations, use the obsolete v9/AppData route,
+  request elevation/ACL/Defender exceptions, launch a project `.exe` or use
+  Playwright.
+- Report the wall budget as a strict response-time bound even though terminal
+  fsync and cleanup may overshoot, or report class-9 zero I/O as measured use.
+- Treat the same-user harness, local publication fixtures or passing package
+  tests as external CAS, scientific admission or production authority.
+
+Canonical local evidence:
+
+- current runner SHA-256
+  `0c570e1865f3684572574528834c69540dd0e9dd64861a21acd3338413791912`;
+  tests SHA-256
+  `5b1bd4b444b15e61ca0a73188ffce884b5ea695c2c3ac073144649bc6d36ceee`;
+  reviewed runbook SHA-256
+  `71fb91c614ad936c162d1fbb0acbb39593795e4a082cadf4166664009577ddba`;
+  current source-tree SHA-256
+  `8c259783d414a17636de583e3a6341c94cff1d8a3df87dcf4d7eece044ab8c7a`,
+  536 files / 9,523,936 bytes;
+- `sv6cur1` negative: supervisor receipt SHA-256
+  `08bc35b92afc2f85bddf0f8d19ff70adbff8983b87a09645500d0913f72b2d90`,
+  execution receipt SHA-256
+  `e8eaf3674719797aa354207b4504520a5d3064eed7c240cdbdcfee56081a6542`,
+  exit 124, 300.093 seconds, 0.093-second declared overshoot, 52 total / 0
+  active processes, capability absent and all authorities false;
+- `sv6cur2` positive: supervisor receipt SHA-256
+  `7c259be55205544bac2b96824a841269f40216fece127b5cf9bbffdae7a91c1d`,
+  execution receipt SHA-256
+  `474425a985667ebafece69165a7c2ade3eefea781c3083d2a04834fb3859350f`,
+  `131 passed`, zero failure/error/skip/deselect, 575.562 seconds, peak Job
+  memory 1,477,988,352 bytes and 0 active processes;
+- `sv6mx1` integrated runtime/packaging/publication matrix: supervisor receipt
+  SHA-256
+  `f56958989827f5e7c0c2b6a3f628740963846845df52081cd0694de60964d983`,
+  execution receipt SHA-256
+  `cc21a0eed9ce8afee7ed946996571a60cce6254beab66302604b192ad1968a9a`,
+  `481 passed, 18 skipped, 1 deselected`, zero failure/error, 311.672
+  seconds, peak Job memory 3,012,988,928 bytes, read/write transfers
+  1,586,611,167 / 55,280,382 bytes and 0 active processes;
+- real E2E evidence inside the selected test run: zero
+  `e2ezb62dffa7b` supervisor/execution hashes
+  `c89a25861aa65afa2c8944887b20d22034d6a0d6a0443ec230c291ffede3087c` /
+  `81f18a0c96146ec913946870af4ed699b66d3909be19a4247402abc053101233`;
+  pre-admission timeout `e2eb7c50f0061` supervisor hash
+  `d04617b7e3c116738221c5fa2c0e2daaecc9a00b8dd3ce2df5ec6f7fcc25eee7`;
+  post-admission timeout `e2ea8508b90c4` supervisor/execution hashes
+  `e2ea3ae2230a729a907181fc35a5b062d9e328d9bcd9704e8e47c3df61465472` /
+  `41fbe409f332d580d5ec090cdae2c618bc1e3b1a049bdb809d1c10b292064647`;
+  abrupt supervisor death `e2ece989de712` with exclusive reconciliation
+  receipt SHA-256
+  `2bc2ce5f296c493623c9afc06fb2963ce7409ee55c477e3c8e225e270cd78b31`;
+  and Job-owner drill `jobc627df770c`, whose child and descendant identities
+  were both absent after owner termination;
+- focused Ruff pass; direct and supervised runner suite pass; `git diff
+  --check` pass; staged count zero; CT and Power BI status empty; protected
+  `data/eex_forwards_history.parquet` SHA-256 remains
+  `21ba73e70b6a16e88ba4c7d21985eafbdbc8efa2641ebe5d97c74b33f64e4013`;
+  user `.conda/environments.txt` and `.condarc` hashes remain respectively
+  `554db8db49b573851d3d299b962ad8048cfe404231d032791c0ce0d58d2bc92d`
+  and `998e455f1c09e5fd8abbee8560e1e576030cbdc0dd1b5c00bc27ca06d99c6f6e`.
+
+Independent terminal re-roasts:
+
+- Security/Governance: P0/P1/P2 `0/0/1`. Residual P2 is same-user TOCTOU in
+  the initially loaded supervisor bytes before worker-source capture.
+- IT/Operations: P0/P1 `0/0`, local-quality closure accepted, with six P2:
+  cold/warm SLO/capacity/retention; transient first terminal receipt before a
+  deadline-crossing second fsync; Windows directory durability/power-loss;
+  declared-root telemetry rather than a filesystem sandbox; one combined
+  post-`EXECUTION_STARTED` crash-with-descendant capstone; and the POSIX
+  branch's missing parent-death primitive.
+- Quant/Data: P0/P1/P2 `0/0/0`. Monthly solver authority, protocol v2, masks
+  and LT/CT separation are unchanged; no T057 outcome was read. The 18 skips
+  do not qualify optional CT dependencies, publisher wheelhouse/symlink cases
+  or independent CI.
+
+Invariants and residual blockers:
+
+- The harness is same-user, literal-Windows and explicitly not a security or
+  filesystem sandbox. It must not be reused as a POSIX CI or production
+  admission boundary.
+- External registry/lease, FMV cadence, trusted time/signatures, PIT
+  commitments, builder-inaccessible CAS/WORM/fresh HEAD, independent Windows
+  CI/ASR/SBOM, production SLOs, atomic prefix power-loss recovery,
+  observability and rollback remain absent.
+- No prospective origin, T057 outcome, candidate, snapshot, publication,
+  promotion or production transition occurred. Monthly solver authority,
+  LT/CT separation and OMPEX benchmark-only status remain unchanged.
+  Production is strict `NO_GO`.
+
+## D-20260730-196 - Select origin-registry protocol v2 and runtime v40 for local quality only
+
+Decision:
+
+- Supersede origin-registry protocol v1 and runtimes v37, v38 and v39. Select
+  only `ch_lt_origin_registry_protocol.v2` and launcherless runtime v40 for
+  local-quality work. They grant no scientific, publication, promotion or
+  production authority.
+- Make scheduled slot, origin timestamp, commit deadline and first target
+  delivery executable cross-field invariants. Bind request identity to the
+  complete ex-ante request and distinguish the final evaluation mask from
+  later truth/maturity masks. Continue to forbid shifted slots, backfill,
+  reweighting, alternate branches and outcome-bearing T057 reuse.
+- Build Conda prefixes only through the standard-user repo-local recipe. Every
+  mutable input/output, cache, `HOME`, `USERPROFILE`, `CONDARC`, `TEMP` and
+  `TMP` must stay below canonical `build/`; the existing ProgramData Anaconda
+  interpreter is read-only. Reject links/junctions/reparse points on the
+  target and all parents before directory creation or subprocess launch.
+- Require a machine-checkable chain from the caller-held repo-local Conda
+  confinement receipt to prefix receipt v3, runtime receipt v5 and the
+  installed launch-time validator. The prefix ID must include the confinement
+  receipt hash and external-guard digest; the installed validator must reopen
+  and rehash every caller-held receipt and rederive the prefix ID.
+- Keep runtime v40 `sys.path` exactly to its `Lib`, `DLLs` and one
+  `governed-site-packages`. User site, checkout root, prefix root and AppData
+  are forbidden. No project executable, Playwright, elevation, Defender/ASR
+  exception, network access or production transition is permitted.
+
+Reason:
+
+The v37 roasts demonstrated an incomplete temporal/request contract and an
+actual user Conda-registry timestamp mutation. Protocol v2 closes the semantic
+P1s. The repo-local prefix recipe closes the workstation-policy P1, while the
+v3/v5 receipt chain prevents a valid prefix/runtime receipt from being
+detached from the exact standard-user confinement proof. The v38 IT roast then
+demonstrated two further P1s: the confinement receipt was not chained into
+runtime evidence and new build paths did not reject reparse parents. Runtime
+v40 closes both and proves installed enforcement without claiming that the
+external origin registry exists.
+
+Rejected alternatives:
+
+- Treat protocol v1 prose or runtime v37 as sufficient after its terminal
+  P1s, or select v38 without closing its two IT P1s.
+- Select v39 after its builder-level PASS: its installed package still
+  expected runtime schema v4 and rejected the v5 receipt.
+- Invoke `conda create` directly, mutate or repair the user Conda registry,
+  use AppData wheelhouses, request admin/ACL/Defender exceptions, or retry a
+  partial prefix in place.
+- Trust matching path strings, nested JSON copied into a later receipt, or a
+  pre-creation path check without reopening caller-held bytes at launch.
+- Cite the monolithic `reg40mx` as positive evidence; its historical v36
+  installed test timed out under contention and the receipt is negative.
+- Count the protocol, dry-run inventory or local registry fixture as a
+  prospective origin, consume T057, or promote any candidate/production flag.
+
+Canonical local evidence:
+
+- protocol v2: 15,589 bytes, SHA-256
+  `6ea896ccdb35414b52237f2bcf1065755c3c10444b308ce905b60f472e68c697`,
+  protocol ID
+  `0fcf13246c50f6bc79d203437f7c5294495dc233f93873abbe2aeaf3dc282204`;
+  registry implemented false, countable origin count zero and all authorities
+  false;
+- repo-local Conda build receipt: SHA-256
+  `cbafa53aec714bd6f1b1430b7c9e649491b83350e645f83095a38824aeba4451`,
+  status `PASS_REPO_LOCAL_MUTABLE_PATHS_NOT_PRODUCTION`, target exit zero;
+  `.conda/environments.txt` SHA-256
+  `554db8db49b573851d3d299b962ad8048cfe404231d032791c0ce0d58d2bc92d`
+  and `.condarc` SHA-256
+  `998e455f1c09e5fd8abbee8560e1e576030cbdc0dd1b5c00bc27ca06d99c6f6e`
+  are byte/size/mtime identical before and after;
+- Python manifest: SHA-256
+  `e96d7258944abc038f141c71a363b89b619fc6d4fe5b731f1aabff2b92a74f8f`,
+  6,285 files, tree
+  `083ac24a2c621622d43e4504ecfbbe2183201d260e695f336410bd738d64c050`;
+- prefix receipt v3: SHA-256
+  `753ce5af1975320c2ab02cd9a73e267710e3cca0b13320d0a701922ded3b3346`,
+  prefix ID
+  `b08d09f31cf4bbfff5b73227fd81fd892796915bc4afa3d5c6fa4734f0e8f8d9`,
+  archive-set ID
+  `f3cd775e79648df9a9926a01eb97eadc8e951c5055c778ca9ca92b60bc8068e7`;
+- wheels reg40a/reg40b: 103 members / 564,873 bytes, byte-identical
+  SHA-256
+  `369028f0983b9bb719284b91881a874af7896f4b4cb80d24e3b319a1edf26615`,
+  source revision
+  `6ee9a8457a8e831f62c110c2d2774a22998a277199d7eb2c7fbc66ea55012284`;
+- runtime receipt v5: SHA-256
+  `651c8caa548d2e1fdd874f7173397c6f2a05a5d2f3b01ae4a084fbf49468f561`,
+  8,507 files / 19 distributions, closure tree
+  `914b0c683a0f83319584db3af46bfa6fcb3a202e5aa7bba2d890e2797244d31e`;
+  exact live `sys.path` is runtime `Lib`, runtime `DLLs`, then runtime
+  `governed-site-packages`;
+- execution receipts: manifest `7d687bbf...682`, prefix audit
+  `be1e4919...ac6`, assembly `554181c2...759`; terminal test receipts
+  `reg40pt` `112a1d90...bcf` (`80 passed`), `reg40v36`
+  `2bc2deb4...dee` (`1 passed`) and `reg40mx2`
+  `90db23a1...7f2` (`825 passed, 18 skipped, 2 deselected`). Their
+  non-overlapping terminal partition is `827 passed, 18 skipped, 2
+  deselected`, zero failure/error. Source test tree SHA-256 is
+  `20ad68d37bbad30c7b4f6c3487e74be22505b8ab6da5a96da08c6d1db4c66c22`;
+- `reg40mx` is retained negative evidence: `826 passed, 18 skipped, 2
+  deselected, 1 failed` because installed v36 exceeded its 600-second child
+  timeout under monolithic contention; receipt SHA-256
+  `aad3c65adbe05659f3955fa475507467f0a9ae2f69e0de6f021afd261bc74310`.
+
+Independent terminal re-roasts:
+
+- Security/Governance: P0/P1/P2 `0/0/2`. Residuals are the loaded-byte
+  pre-import TOCTOU (`python -m` imports before runtime admission) and the
+  runner's missing global wall timeout, Job Object/process-tree containment
+  and stale-run reconciliation.
+- IT/Operations: P0/P1/P2 `0/0/3`, local-quality GO only. Residuals are
+  missing global supervision/resource telemetry; high cost/contention without
+  a robust CI SLO/partition strategy; and non-atomic/non-resumable Conda
+  prefix construction without exact-volume power-loss, active-runtime CAS,
+  rollback and recovery-observability drills.
+- Quant/Data: P0/P1/P2 `0/0/0`. Protocol hash and temporal/request/mask
+  invariants are unchanged; no T057 outcome was read. The registry and eleven
+  external evidence slots remain absent.
+
+Invariants and residual blockers:
+
+- This closes the demonstrated local P1s only. The external compare-and-append
+  registry/lease, independent identities/keyrings/ACLs, FMV-approved exact UTC
+  cadence, official calendar/settlement evidence, trusted time/signatures,
+  builder-inaccessible CAS/WORM/fresh HEAD, PIT commitments, independent
+  future truth and independent CI remain absent.
+- Independent rolling-origin count remains zero. The registry must exist and
+  seal new prospective origins before a future holdout can be used. T057 stays
+  outcome-blind/unconsumed and permanently ineligible for confirmatory reuse.
+- Final delivered-candidate EEX repricing, probabilistic/scenario calibration,
+  shaping validation, Docker/CI/SBOM, observability and rollback remain open.
+- Monthly solver remains level authority; LT remains independent of CT; OMPEX
+  remains benchmark-only. No candidate, snapshot, publication, promotion or
+  production transition occurred. Production is strict `NO_GO`.
+
+## D-20260730-195 - Freeze the outcome-blind external origin-registry protocol and runtime v37
+
+Decision:
+
+- Hash-close `ch_lt_origin_registry_protocol.v1` as a local, outcome-blind,
+  incomplete protocol. Do not claim that an external registry or one
+  countable prospective origin exists.
+- Propose one monthly statistical slot, pending FMV approval and an externally
+  frozen exact UTC schedule. Forbid CET/CEST inference, shifted slots,
+  backfill and reweighting. Permit at most one countable origin per slot.
+- Require an independent compare-and-append/CAS namespace before first target
+  delivery. Reject duplicate origin/slot commitments, make an exact retry
+  idempotent with an identical receipt and reject divergent retries or
+  alternate branches. Local filesystem/SQLite is test-reference only.
+- Commit PIT input inventory, prediction, scenarios, final mask, runtime,
+  source/config/candidate and trusted-time identities while truth is unopened.
+  Keep truth opening and scientific admission as later independent events.
+- Package the validator/CLI in two reproducible wheels and launcherless runtime
+  v37. Keep its exact `sys.path` to `Lib`, `DLLs` and one
+  `governed-site-packages`, all mutable state below repo `build/`, and all
+  production/promotion authority false.
+
+Reason:
+
+The v36 IT/Operations roast demonstrated that origin uniqueness, cadence and
+lease semantics existed only as a missing requirement. A scientifically valid
+rolling-origin program needs a protocol that prevents duplicate branches,
+retrospective origin manufacture, backfill/reweighting and truth leakage before
+FMV commissions external infrastructure. Hash-closing this design makes the
+missing external evidence explicit without fabricating local authority.
+
+Rejected alternatives:
+
+- Count the structural origin/target/mask dry-run as a prospective origin.
+- Treat EEX web pages as captured/signed cadence or settlement evidence.
+- Infer a schedule from CET/CEST abbreviations or move a missed slot.
+- Use a local JSON/SQLite registry, repo file lock or builder-owned storage as
+  global authority.
+- Allow multiple branches, divergent retries, post-delivery registration,
+  truth-open registration or T057 reuse.
+- Reuse v36 after packaged source changed, repair a runtime in place, restore
+  the historical AppData wheelhouse, request admin/Defender permission or
+  promote production.
+
+Canonical local evidence:
+
+- protocol: 11,857 bytes, SHA-256
+  `67e0b63a6eca5ec843847725b2f3097f7f0fbeeac615bcdb2b2c8be92e1b43fc`,
+  semantic ID
+  `190044244ce09054f89ccda6b1387dbd3bbf331c500e6529a682d30a1100406c`;
+- wheels E/F: 103 members / 562,637 bytes, byte-identical SHA-256
+  `62b1cb371f3e03e887488aebfe795c66a5b0b36332f009712e7428ef67bc6752`,
+  source revision
+  `317da4000afbcd0938af076659249088f648bd558ce5cbd23c0bae8db95da9ca`;
+- Python manifest SHA-256
+  `af7331d31565a237e6bfab36cbc3dcbb3f925557c4224b60fd655b0b606da4c1`,
+  6,285 files, tree
+  `e87c8e4587ab4ae67e2b4cdf0784f04336fa142cda86b013324bae7bbeedcc66`;
+- Conda prefix receipt SHA-256
+  `6f4feecc2759e21a942a0f94534ff88b1ec76d7ce29d96d4ccc80e22290d0502`,
+  19 packages, archive set
+  `f3cd775e79648df9a9926a01eb97eadc8e951c5055c778ca9ca92b60bc8068e7`;
+- runtime receipt SHA-256
+  `44a69422a06d9ee4ec9d01aa9989e1bb150b6e96b0188bad2bf906823d8a1dbb`,
+  8,507-file closure tree
+  `5b5c6a64b41b6c36e9cc45f542aef2d86edb0023843e82b84ff26fdf46dc7826`;
+- installed run `reg37pt3`: `1 passed`, receipt SHA-256
+  `07e523a81f3e2adf260c26694c1733fa4e025a90d29faf8289cb3973d57de505`;
+- unified `reg37mx`: `823 passed, 18 skipped, 2 deselected`, zero
+  failure/error, receipt SHA-256
+  `27c645e7d2479e438c6fe25287ab8f87a77588d2f936c26bc8fef07b1ae116ac`;
+- scoped Ruff and `git diff --check`: pass; staged count zero; protected
+  parquet unchanged; CT and Power BI status counts zero.
+
+Independent terminal roasts:
+
+- Security/Governance: P0/P1/P2 `0/2/3`. The two P1 findings are missing
+  cross-field origin/schedule/commit/delivery-time enforcement and the
+  demonstrated mutation of the user Conda registry during direct prefix
+  creation. P2 findings cover request/final-mask ambiguity, the remaining
+  pre-import loaded-byte TOCTOU boundary, and bounded runner/process-tree
+  supervision.
+- IT/Operations: P0/P1/P2 `0/1/4`. The P1 is the changed
+  `C:\Users\jbattaglia\.conda\environments.txt` timestamp during the v37
+  build. P2 debt covers global timeout/reconciliation, complete-hash cost and
+  resource telemetry, Windows power-loss/rollback recovery, and the missing
+  operational runbook/cadence procedure.
+- Quant/Data: P0/P1/P2 `0/1/1`. The P1 is the absent executable cross-field
+  ordering between scheduled slot, origin, commit deadline and first
+  delivery. The P2 is ambiguous derivation/binding of request identity and
+  the ex-ante evaluation mask versus later truth/maturity masks.
+- Therefore v37 is negative/superseded evidence and is never selectable for
+  local closure or production.
+
+Invariants and residual blockers:
+
+- Protocol hash closure is not external freeze, implementation, lease,
+  countable origin, scientific admission or execution authority.
+- FMV cadence/schedule, official calendar/settlement evidence, trusted time,
+  independent registry/request identities and keyrings, builder-inaccessible
+  CAS/WORM/fresh HEAD, PIT inputs and sealed prediction/scenario/final-mask
+  commitments remain missing.
+- Independent rolling-origin count remains zero. A new prospective future
+  holdout is required; outcome-bearing T057 is permanently ineligible.
+- Final delivered-candidate EEX repricing, probabilistic/scenario calibration,
+  bounded process supervision, resource telemetry, Docker/CI/SBOM,
+  observability, Windows power-loss recovery and rollback drills remain.
+- Monthly solver remains level authority; LT remains independent of CT; OMPEX
+  remains benchmark-only. No candidate, publication, promotion or production
+  transition occurred. Production is strict `NO_GO`.
+
+## D-20260730-194 - Freeze origin/target/mask schema v2 and bind installed generation to runtime v36
+
+Decision:
+
+- Supersede the ambiguous v35 origin/target/mask artifacts with internal
+  schema `ch_lt_origin_target_mask_inventory.v2`; assessment schema and
+  inventory name are also v2. Reject any rehashed schema-v1 document.
+- Select only the outcome-blind artifact
+  `structural-dry-run-20260730T120000Z-schema-v2.json`, SHA-256
+  `0dcc3411cb962e5ba4df2e36ea7bf67d97e0c56d1dcf3cb32a2684e26016c7d1`.
+  It remains a non-countable structural dry-run with every authority false.
+- Select byte-identical wheels C/D and launcherless runtime v36 for local
+  quality only. Require exact live `sys.path` of runtime `Lib`, runtime
+  `DLLs`, then one `governed-site-packages`; the checkout root is forbidden.
+- Make installed provenance exercise `build` and then `audit`, not merely
+  audit pre-existing bytes. Bind that proof to the exact runtime receipt,
+  wheel/source revision, artifact hash, JUnit/native results and receipt-v5
+  import closure.
+- Keep all mutable execution below canonical repo `build/`. The historical
+  v9/AppData route, admin/elevation, ACL/Defender exception, project `.exe`,
+  Playwright, network fetch and `H:` remain forbidden.
+
+Reason:
+
+The terminal Security/Governance roast of v35 demonstrated two P2 findings.
+First, a historical artifact rejected by the current validator and the newer
+artifact both declared schema v1, despite incompatible semantics; a filename
+suffix was not a schema boundary. Second, the v35 installed test audited
+existing bytes but did not prove that the selected runtime generated them.
+The v2/v36 closure removes both ambiguities and provides a durable test receipt
+whose installed subprocess first builds and then audits the exact artifact.
+
+Rejected alternatives:
+
+- Keep schema v1 and explain semantic drift only in prose or filenames.
+- Add a runtime string to unchecked documentation while continuing to
+  generate through the checkout wrapper.
+- Cite the negative `otm35ib1` receipt or the v35 audit-only installed smoke as
+  generation provenance.
+- Modify/repair runtime v35 in place, overwrite historical artifacts, reuse a
+  failed namespace or accept a non-governed `SOURCE_DATE_EPOCH`.
+- Restore the old AppData wheelhouse, request user/admin/Defender permission,
+  build an executable, consume T057 or promote production.
+
+Canonical local evidence:
+
+- selected artifact: 37,053 bytes, schema v2, 36 targets, inventory ID
+  `5fff80e90abe874a6e85e4d3e1cc667bfeb2da9c1f827fc51c0523a7d62b0ed0`,
+  SHA-256
+  `0dcc3411cb962e5ba4df2e36ea7bf67d97e0c56d1dcf3cb32a2684e26016c7d1`;
+- wheels C/D: 101 members / 555,836 bytes, byte-identical SHA-256
+  `14c4e44127409a30b3110d07432bcaecd4171db4e669beaf8dd4eac99162bbf0`,
+  source revision
+  `036219d574b2f675fd6c06c5c8fd0417228acc54a63b76abfa97002befec8024`;
+- Python manifest SHA-256
+  `abbabeb035cf9e9f8de33370045fec60ca6c0ea0b850382b6b1936272f4e9a3d`,
+  6,285 files, tree
+  `ebdb821e40e89577d017c42a7c7d73c2294bc33ce6b95ee5d5d264e2b2b57d0e`;
+- Conda prefix receipt SHA-256
+  `e537fea234fccf81497f564b88e511ff5b4e4ee30de1651cc504558471fabebc`,
+  19 packages and archive set
+  `f3cd775e79648df9a9926a01eb97eadc8e951c5055c778ca9ca92b60bc8068e7`;
+- runtime receipt SHA-256
+  `a23f1af134aa374db038aba5c37935167d4fd2f6b471a64ef72fe6fdf605bbe4`,
+  8,505-file/19-distribution closure tree
+  `eb404848b9e127583ba2468825fcd3bee2171912b9934d7a74c9968cbd5963fc`;
+- installed build-then-audit run `otm36p3`: `12 passed`, receipt SHA-256
+  `ca5f7dd4207a1f2440a8e38a8ef617460cf92a4987bcebd50f45d6ca1baac51d`;
+- unified scientific/runtime/packaging/publication/CAS run `otm36mx2`:
+  `798 passed, 18 skipped, 2 deselected`, zero failure/error, source tree
+  `e4dce8e16de6dc67557b41a5aae16daea8c4e34247e4b0fc999928476f5d49f9`,
+  receipt SHA-256
+  `cc89ff1f50bf09c6ae5bfa333344ace9a81a1a72ad09180b95a6373798c95ce5`;
+- both direct wheel audits and Ruff: PASS; promotion eligibility remains
+  false.
+
+Independent terminal roasts:
+
+- Security/Governance: P0/P1/P2 `0/0/0`. It independently confirmed the v2
+  schema/rehashed-v1 rejection, installed build-then-audit timestamps inside
+  the `otm36p3` receipt window, exact three-root runtime and all authorities
+  false.
+- Quant/Data: P0/P1/P2 `0/0/0`. It independently recomputed M01..M36,
+  contiguous UTC windows, 6/6/12/12 buckets, DST 743/745-hour months, QH=4x,
+  unique IDs, exact four governance bindings, outcome blindness and the
+  hourly/unadmitted-transition masks without reading T057 outcomes.
+- IT/Operations: local-slice GO, production NO-GO, P0/P1/P2 `0/0/3`. Its P2s
+  are no global runner timeout/Job Object/process-tree containment or resource
+  telemetry; no global inter-artifact origin registry/lease or FMV-approved
+  cadence; and Windows power-loss/rollback/observability durability remains
+  unqualified. It found no demonstrated AppData/admin/network/ASR/project-exe/
+  Playwright path in v36.
+
+Invariants and residual blockers:
+
+- The artifact contains no prediction/outcome and is not a countable origin.
+  FMV issuance cadence/calendar, global origin uniqueness lease, PIT EEX
+  inventory, prediction/final-mask sealing, mature native truth, trusted time,
+  independent signature and external CAS/WORM/fresh HEAD remain absent.
+- Independent rolling-origin count is zero. T057 remains permanently
+  ineligible for confirmatory reuse; a new future holdout is required.
+- Current Swiss native truth remains hourly and quarter-hour evaluation stays
+  unsupported until an exact independently admitted transition boundary.
+- Final candidate repricing, official EEX semantics, probabilistic/scenario
+  calibration, CPU/GPU parity, container/CI/SBOM, global timeout/process-tree
+  control, resource telemetry, Windows power-loss recovery, observability and
+  rollback drills remain production blockers.
+- Monthly solver remains level authority; LT remains independent of CT; OMPEX
+  remains benchmark-only. No candidate, publication, promotion or production
+  transition occurred. Production is strict `NO_GO`.
+
+## D-20260730-193 - Bind the repo-local test import closure before and after execution
+
+Decision:
+
+- Bump the workspace-local receipt to
+  `pfc_lt_workspace_local_execution.v5` and include a
+  `pfc_lt_target_import_closure.v1` identity for every repo-local target
+  interpreter.
+- Require exactly one adjacent `python*._pth`, forbid import directives,
+  resolve every listed root strictly below the canonical workspace, preserve
+  order as the exact expected `sys.path`, and reject duplicate roots or
+  reparse chains.
+- Content-hash the complete launcher tree and every non-source import root
+  with canonical `path/size/SHA-256` entries. Bind the workspace root to the
+  existing source-tree identity and bind resolved origins for the target
+  module plus `pytest`, `pluggy`, `requests`, `dotenv` and `pfc_shaping` when
+  present.
+- Recompute the whole execution identity after the target exits. Any `_pth`,
+  launcher, dependency, source, import-root or module-origin change makes the
+  receipt `TARGET_EVIDENCE_INVALID`.
+- Retire the prose-only harness digest
+  `4f3ae5b31fc6a8517266544ee589d3facd34ea6f6db23309377a2c1f833730d4`
+  and every pre-freeze `rl34*` receipt as canonical final evidence. Retain
+  them only as historical/negative closure evidence.
+
+Reason:
+
+Security demonstrated that v4 receipts bound `python.exe` and source bytes
+but not `python311._pth`, the captured pytest/dependency tree, `sys.path` or
+module origins. IT/Operations further demonstrated that `rl34t2`, `rl34au1`
+and `rl34sm1` predated the later `python-dotenv` and `requests` closure
+captures. The documented 1,429-file digest therefore described a later tree
+than those executions and had no durable digest schema. A green target result
+could not prove which test dependency bytes were imported.
+
+Rejected alternatives:
+
+- Cite the pre-freeze receipts because `python.exe` itself was unchanged.
+- Keep an ad-hoc prose hash without a receipt-bound digest algorithm.
+- Bind only file names, sizes or timestamps, or verify the closure only once
+  before execution.
+- Request admin, ACL, symlink, Defender or ASR exceptions.
+- Treat the local runner as a production pre-import admission boundary.
+
+Canonical closure and execution evidence:
+
+- launcher tree: 1,429 files / 45,398,809 bytes, canonical SHA-256
+  `49f0bfef8cf6751e0826e80da6402fd08b9ad7adb315e74878ec359029af97e0`;
+- `python311._pth` SHA-256
+  `c6fadd6c79ecb9cf96ed3092b22cfbbc5ba8eb71363b9c3dc7c5dec50ad74d96`;
+- exact ordered `sys.path`: runtime `Lib`, runtime `DLLs`, harness
+  `test-site-packages`, canonical workspace source, runtime
+  `governed-site-packages`;
+- runtime `Lib`: 3,833 files / 57,070,931 bytes, tree
+  `7333607a7fc735c4b1eeb04b270a4dfffab2778a071d7b0f80df484919b991a6`;
+  runtime `DLLs`: 32 files / 2,894,429 bytes, tree
+  `99be62d9afbc41f982d315a2aef1524126d62721fae6d130ee071e477df0d63f`;
+  test dependencies: 1,359 files / 18,410,091 bytes, tree
+  `b188d5c07f5838153f8081cecc0dff60951d2b30beac752b94ea5c9e5857da75`;
+  governed packages: 8,503 files / 368,105,764 bytes, tree
+  `092c65999bb58a49f1014f968142f6736898cd0761f51784b7a53e969ddb6447`;
+- shared final source tree: 522 files / 9,278,814 bytes, SHA-256
+  `ea55935f9e5a3ae02cf14ffdca860258b3330678f4695171747071ee40fdef68`;
+- runner unit/TOCTOU run `cl35u1`: `94 passed`, receipt
+  `a420ff3284e2768a90942e5210d7ca198195a7379afc673eb7be96c5338dfe19`;
+  quantitative/installed smoke `cl35t1`: `13 passed`, receipt
+  `2238190d8ab4481dc8149c2bd0666a8e03bd0dc88aa2ff56e683e1a5986517ba`;
+- current EEX audit `cl35au1`: exit zero/NO-GO, receipt
+  `65dc1d46e82c669c4cb47f5b62c448c5fbfac1981caa069224e5922346c28022`;
+- unified matrix `cl35mx1`: `680 passed, 18 skipped, 2 deselected`, receipt
+  `12c2ad50f5e198babae1ea36a43272cf38311ef24d50d601c5f77d48336310d7`.
+  JUnit partitions reproduce scientific `275 passed, 4 skipped`, packaging
+  `169 passed, 12 skipped` plus two explicit slow deselections, publication
+  `88 passed`, and CAS `193 passed, 2 skipped`, with zero failures/errors.
+- Final read-only re-roasts: Security P0/P1/P2 `0/0/0`; Quant/Data `0/0/0`;
+  IT/Operations local-slice GO with `0/0/2`. Its two P2 findings are the
+  content-hashing cost and missing global timeout/stale-run reconciliation,
+  process/resource telemetry and rollback exercise. They grant no production
+  authority and remain explicit roadmap debt.
+
+Invariants and residual blockers:
+
+- Every `cl35*` receipt remains `TARGET_EXIT_ZERO_NOT_AUTHORITY`; this is
+  stronger local evidence, not production admission.
+- Full content revalidation is intentionally expensive on this Windows
+  workstation. Cold focused sealing took about 378 seconds; the unified run
+  took 373.7 seconds including 302.48 seconds of tests. CI must retain the
+  proof while optimizing it through immutable artifacts or a separately held
+  manifest, never by weakening content identity.
+- Publisher-wheelhouse, standard-user symlink and two slow zipapp
+  qualification cases remain explicitly skipped/deselected. Stale-run global
+  timeout/reconciliation and resource telemetry remain open.
+- T057 remains unconsumed; OMPEX remains unused; no candidate, publication,
+  promotion or production transition occurred. Production is strict `NO_GO`.
+
+## D-20260730-192 - Derive nested PEAK residuals on contractual PEAK hours
+
+Decision:
+
+- Build the month/quarter/calendar residual hierarchy for PEAK quotes from
+  EEX PEAK delivery intervals only, then reindex the selected buckets onto the
+  full UTC delivery horizon for joint row construction.
+- Keep the monthly BASE solver as the sole level authority. The hourly joint
+  layer may replace a matching BASE bucket by disjoint PEAK and implied
+  OFFPEAK rows, but it may not alter the source hierarchy or hide redundant
+  parent conflicts.
+- Admit runtime v34 for local-quality execution of the current packaged bytes
+  only. Its prefix, wheelhouses, Conda state, caches, temporaries and staging
+  remain below repo `build/`; production authorization remains false.
+- Treat `peak30pb1` as an abandoned, non-evidence run. Its externally killed
+  runner receipt remains `EXECUTION_PENDING` and may never be cited as a pass.
+
+Reason:
+
+The previous joint constraint builder called `calibration_buckets` on every
+BASE hour and applied the PEAK mask only afterward. For nested PEAK products,
+the residual target was therefore weighted by total calendar hours rather
+than contractual PEAK hours. A Q1/January fixture showed an internally
+feasible system with an exact row residual while the raw Q1 PEAK quote missed
+by `0.22990282685543662` EUR/MWh. Building the hierarchy on the PEAK-only
+delivery set removes that false proof.
+
+Current non-disclosing local evidence over 56,281 hourly intervals from
+2026-08 through 2032-12 reports 34 independent rows of rank 34: 17 PEAK and
+17 implied OFFPEAK. Maximum active-row error is
+`1.5234036254696548e-11` EUR/MWh against `1e-9`; active PEAK and active shared
+OFFPEAK maxima are `2.1742607714259066e-12` and
+`7.87281351222191e-12`. The redundant parents `2026-Q4` and `2027` remain
+inconsistent: all-source PEAK and implied OFFPEAK maxima are
+`0.0031034482764908944` and `0.003105151728362898` EUR/MWh. These gates remain
+failures and are not converted into tick/rounding passes.
+
+Rejected alternatives:
+
+- Continue deriving PEAK residuals on the all-hour BASE calendar.
+- Accept an internally exact residual row as proof of the original raw parent
+  quote without repricing that parent on its contractual delivery mask.
+- Treat the minimum-norm hourly oracle as the delivered final candidate.
+- Suppress the redundant parent conflicts, infer a rounding interval without
+  official EEX semantics, or insert OMPEX into the model.
+- Repair runtime v33 in place, reuse its receipt for changed source bytes,
+  resume the obsolete v9/AppData route, or request admin/Defender exceptions.
+
+Canonical local evidence:
+
+- reproducible wheels A/B: 99 members, 547,965 bytes, byte-identical SHA-256
+  `cfd9a8db3c7a05154dfac45b473201aa29e0069c7e3e005a8fa7acc2e6ae4388`,
+  source revision
+  `545fe6d9be82aba0069766685a0165de7b6fea20d487dd2d29cbd345feb2834c`;
+- v34 Python manifest SHA-256
+  `f50d83fab7cd3ceff0f2d303990e682f47c55e590fa1b55bbdf35f8be100a463`,
+  6,285 files, tree
+  `ca27db7083a959f614c2c6c032c22c27409e6d33ac7e5e9a56cf1bc899d28a72`;
+- v34 Conda prefix receipt SHA-256
+  `bd348f5145963bfc3ae4c157b723807d52c5a24adbd6a98589f2b1b3d891a233`,
+  archive set
+  `f3cd775e79648df9a9926a01eb97eadc8e951c5055c778ca9ca92b60bc8068e7`;
+- v34 runtime receipt SHA-256
+  `8f6f36e36a2707b1c71ff98cce20691e8c648bdda02eeb5f6ffa1335c8c4d405`,
+  8,503-file/19-distribution closure tree
+  `d51e3a4c333d3dd64b78a4319564201842703e662569bf649f2df9333875f787`;
+- exact installed `sys.path`: runtime `Lib`, runtime `DLLs`, then one
+  `governed-site-packages`; installed PEAK/OFFPEAK smoke `1 passed`;
+- final current-tree SHA-256
+  `d8c30477de7a0a9f22c2ebfd04b0c86bf3365fefb69c177e4df6aa795c83b2bf`.
+
+Superseded standard-user execution evidence:
+
+- The `rl34*` replay established behavior but did not bind its mutable import
+  closure, and its early runs preceded final dependency capture. D193
+  supersedes every `rl34*` receipt for canonical final execution evidence.
+- Earlier `peak34*` test/audit receipts targeted an interpreter outside the
+  workspace. They are superseded as workstation-execution evidence and may
+  be used only as historical comparison. `rl34pk1` and `rl34pk2` are retained
+  as negative dependency-closure evidence (`python-dotenv`, then `requests`);
+  `rl34pk3` is the terminal packaging matrix.
+- Scientific skips are CT-only optional imports (`lightgbm`, `torch`,
+  `tensorflow`). Packaging skips are the unavailable approved publisher
+  wheelhouse and standard-user symlink capability; CAS skips are the two
+  symlink-privilege cases. No skip grants authority.
+
+Invariants and residual blockers:
+
+- The oracle is mechanical feasibility evidence, not a final delivered hourly
+  candidate and not scientific admission.
+- Official product/session/settlement/tick semantics, trusted point-in-time
+  authority, independent signature, builder-inaccessible external CAS/WORM
+  plus fresh HEAD, final candidate repricing, rolling-origin validation,
+  probabilistic calibration and a new sealed future holdout remain open.
+- A killed runner cannot self-terminalize; stale-run reconciliation, process
+  supervision, resource telemetry and rollback drills remain production
+  observability work. `peak30pb1` is retained only as negative evidence.
+- T057 remains unconsumed. No candidate, publication, promotion or production
+  transition occurred. Production remains strict `NO_GO`.
+
+## D-20260730-191 - Separate exact independent BASE repricing from contradictory source points
+
+Decision:
+
+- Bind the selected `eex-ch-20260730-v1` quarantine capture to a
+  non-disclosing local current-price BASE repricing and quote-to-month
+  sensitivity audit.
+- Exclude every product whose delivery has begun at the local untrusted
+  snapshot boundary; the current domain starts at 2026-08.
+- Treat exact repricing of the active independent hierarchy and exact point
+  repricing of every displayed source quote as distinct gates.
+- Keep redundant `2026-Q4` and `2027` source points consistency-only. Their
+  maximum residual `0.0017745586238220312` EUR/MWh is above the `1e-9` exact
+  tolerance and remains a blocking all-source-point failure.
+- Do not reinterpret that mismatch as an accepted tick, rounding interval,
+  session or settlement effect until provider semantics and an FMV-approved
+  conflict policy are independently attested.
+- Require deterministic sensitivity at symmetric 0.1 and 1.0 EUR/MWh scales
+  and cross-scale derivative agreement within `1e-7`.
+- Keep current PEAK and final delivered hourly repricing explicitly open.
+
+Reason:
+
+The selected workbook contains 19 wholly undelivered BASE products but only 17
+independent hierarchy constraints. Those 17 reprice to
+`7.105427357601002e-14` EUR/MWh and the sensitivity response is stable across
+scales (`5.329198415893188e-09`). However, no monthly curve can satisfy the two
+redundant displayed points simultaneously at `1e-9`. Calling the independent
+basis exact without disclosing the contradictory source points would overstate
+EEX repricing. Calling the small mismatch an accepted tick would invent source
+semantics that have not been attested.
+
+Rejected alternatives:
+
+- Increase the exact repricing tolerance from `1e-9` until all source points
+  pass.
+- Drop or hide the redundant products, classify them as `UNSUPPORTED`, or
+  patch individual months.
+- Treat the existing `0.01` quote-conflict tolerance as an automatic
+  rounding/tick acceptance policy.
+- Use only the noisy 0.01 EUR/MWh finite-difference shock or silently relax
+  its derivative threshold; the fixed-topology affine response is instead
+  checked at two stable scales.
+- Claim full EEX repricing before current PEAK and final hourly outputs are
+  evaluated.
+- Admit the local quarantine workbook as trusted PIT or use it for candidate
+  assembly.
+
+Canonical evidence:
+
+- selected registry SHA-256
+  `5f0b99aa04fabcb8219cfa34f20ea262a705940cbc3db3ab2e114ba99bb4a778`;
+- source SHA-256
+  `fb71338f51334128878526877b802e48819b555639913a786a35d710a6b151e5`;
+- quote value commitment
+  `399d524c2c002b55bf844a5410791d0fa33ba7fc4ed843896f01b26769ece258`;
+- current report ID
+  `c7fa4d7cca2fe5dd20d4884249a13201d340b67502fc4c1c6ec6d5da49f46446`;
+- current audit receipt SHA-256
+  `b0f368443a474bdd77233e2adcd7b5084d412aba49e9ab9ce57eab9fdf97dcec`;
+- current matrix receipt SHA-256
+  `54eacbfd21c2a44a489a1b25371dd0f5d4fadaea5edbb29ac511ee471b0cc4ce`;
+- shared source-tree SHA-256
+  `f37bb4ce5acac4e1c76065579f32e80c0e7f908e6a88932571eb27ee97fca114`;
+- matrix `263 passed, 1 skipped`;
+- terminal Security, IT/Operations and Quant/Data read-only roasts each report
+  P0/P1/P2 `0/0/0` for this local slice.
+
+Invariants not to break:
+
+- Monthly solver remains the sole BASE level authority. The local capture is
+  not hard-level eligible until independent time, authenticity and semantics
+  admission exists.
+- An active-independent PASS must never imply an all-source-point PASS.
+- `QUOTE_CONFLICT` and contradictory redundant points remain promotion
+  blockers unless a manifest-backed policy explicitly resolves them.
+- Final BASE/PEAK/OFFPEAK delivered-product repricing remains a separate hard
+  gate after every shaping and calibration layer.
+- The workspace runner is post-import local evidence, not production
+  pre-import admission. Old v1/mx1 receipts are superseded by v2/mx2.
+- OMPEX remains benchmark-only, LT remains independent from CT, T057 remains
+  unconsumed and every scientific/publication/promotion/production authority
+  stays false. Production remains strict `NO_GO`.
+
+## D-20260730-190 — Adopt contrast-aware CH power core v3 and runtime v33 for local quality only
+
+Decision:
+
+- Supersede core v2 for current policy use with outcome-blind core v3. Retain
+  v2 as historical scaffold only and forbid its global 36-origin rule for
+  primary bucket contrasts.
+- Use exact monthly overlap/block lower bounds `0/1`, `5/6`, `5/6`, `11/12`,
+  `11/12`; keep full-horizon `35/36` diagnostic-only unless separately
+  preregistered and powered.
+- Define the stationary-bootstrap parameter as an expected mean geometric
+  block length, taking the maximum of the contrast mechanical bound and the
+  pre-frozen automatic direct-CH estimate without an upper cap.
+- Require direction-oriented least-favourable null boundaries, strong-FWER
+  calibration under every attainable partial-null configuration (or an
+  external proof of marginal p-value super-uniformity under every
+  configuration), distinct FMV-approved alternative effects, conjunctive
+  gatekeeping power LCB95 at least 0.80, marginal floors and one common grid of
+  origin counts with contrast-specific block lengths.
+- Admit `build/conda-runtime-v33-core-v3-base` for local-quality execution
+  only. Retain and reject V32 as negative evidence because redirecting
+  `PYTHONPYCACHEPREFIX` during Conda creation removed generated bytecode from
+  the prefix inventory.
+- Keep every active mutable runtime/build path below canonical repo `build/`.
+  Treat all AppData/v9 paths as historical-only and never convert a local
+  failure into an elevation, ACL or Defender/ASR request.
+- Preserve strict `NO_GO`: the ten core evidence slots and six design inputs
+  remain missing; no future truth, T057 outcome, candidate or production
+  promotion was consumed.
+
+Reason:
+
+Independent Quant/Data review demonstrated that a universal 36-origin block
+confused full-horizon support with narrower contrasts and destroyed effective
+sample size. Its follow-up review also demonstrated that complete-null
+centering, marginal power alone and per-contrast multiples did not establish
+strong FWER, conjunctive FMV decision power or an unambiguous common required
+N. These are policy defects that must be corrected before prospective evidence
+exists. Security then showed that source tests were not installed-package
+evidence, requiring reproducible V3 wheels and a fresh runtime. IT/Operations
+showed that V32 was structurally incoherent and must be replaced rather than
+repaired.
+
+Rejected alternatives:
+
+- Keep a universal 36-origin block or use it as a conservative shortcut for
+  every contrast.
+- Calibrate only the complete null, reuse a noninferiority margin as the
+  alternative effect, or accept minimum marginal power as the FMV decision
+  power.
+- Use per-contrast N grids or an implicit least-common-multiple rule.
+- Reuse legacy T057, DE-LU pilot required N or OMPEX as variance, margin,
+  truth or model input.
+- Install the V3 wheel into V31, repair V32 in place, reuse stale receipts or
+  accept source-level packaging tests as an installed-runtime proof.
+- Use AppData, request admin/elevation, change ACLs, request an ASR/Defender
+  exception, launch project executables or Playwright.
+
+Canonical local evidence:
+
+- core v3 SHA-256
+  `e2c2a6f9d3ca677991f3f76f03dec1328492e2f60a4015b7796a2ff6aa6f905a`,
+  ID `d86dab183dd95a2ca3cda0862f2c9f50cec01716a37c6cdc1c3a15763254dcc3`;
+- dependence/power design SHA-256
+  `005b8655b817db10e7f3c227b1c5912d545305b68e262ab82d9aa0b5817a6a91`,
+  ID `2147af9d2fd277a43df6f88f10dfa6c4061a7184c7b84ca0b09af5e66fa120c9`;
+- wheels G/H: 99 members / 547,694 bytes, byte-identical SHA-256
+  `7fa4e36160717bbd535f717b2f62d95098fd547f8286c6085a64c88ab8969de7`,
+  source revision
+  `11696869165c70e4b3d98f8d13ca4e38ff74fb38df2fecb77ec792cc3d1baee6`;
+- V33 Python manifest SHA-256
+  `42b102047dbc2a4bcee189c8d2e3f81ec8a63df6f1f9ff8ed55ade38526c16e8`,
+  6,285 files;
+- prefix receipt SHA-256
+  `f6d69286061362ed8d73ace3ae8b2caac1d9128887a248fc34e6a1505175256a`;
+- runtime receipt SHA-256
+  `3e9af2e9b3ccbb9092e84aa26beaa7b499ba7397e1b1c1b5eaf0d4d0bbd7475d`,
+  closure 8,503 files / 19 distributions, exact three-entry `sys.path`;
+- installed foreign-cwd V33 smoke `1 passed`; fresh matrices `268`,
+  `133/12/1`, `88`, and `193/2`;
+- final Security, Quant/Data and IT/Operations read-only re-roasts: P0/P1/P2
+  `0/0/0` each.
+
+Residual invariants and blockers:
+
+- Current CH truth remains hourly. Native 15-minute scoring is forbidden until
+  an independently admitted transition/go-live.
+- External freeze/signature/trusted time/CAS/WORM/fresh head, exact hypothesis
+  family, direct-CH development losses, FMV margins/effects/floors,
+  origin/target inventory, qualified MC CPU/GPU parity, new independent
+  holdout, CI/SBOM/observability/rollback and service identity/ACL evidence are
+  still absent.
+- Monthly solver level authority, LT/CT separation, Power BI exclusion, OMPEX
+  benchmark-only and protected data invariants remain unchanged. Production is
+  strict `NO_GO`.
+
+## D-20260730-189 — Supersede outcome-aware core v1 and admit runtime v31 for local quality only
+
+Decision:
+
+- Permanently forbid execution or admission use of the CH LT successor core v1
+  assessment because its validator opened the outcome-bearing T057 registry.
+  Retain its JSON bytes only as a policy scaffold.
+- Make
+  `CH-LT-SUCCESSOR-CANDIDATE-CORE-V2-20260730.json` the current authored
+  outcome-blind policy core. It may read only the hash-bound T057 tombstone;
+  legacy T057 confirmation reuse is forbidden and a new independent holdout
+  is mandatory.
+- Treat v2 as local hash-closed, not externally frozen, not scientifically
+  admitted and not executable. Ten required evidence slots remain missing.
+- Admit `build/conda-runtime-v31-core-base` for local-quality execution only,
+  bound to runtime receipt SHA-256
+  `4cc404d6fdceee4f1b41384ce1366cb9177b318c8074bbf740515519130e5323`
+  and project wheel SHA-256
+  `3e3f4e24c23f36ac0f4bd43a77d46d23ed23e846c0f329ba922c8534cb89f00b`.
+- Never submit or request approval for a command with mutable state outside
+  `C:\Users\jbattaglia\PFC_LT`. Existing interpreters may be invoked
+  read-only; no admin, elevation, Defender exception, project `.exe`,
+  Playwright or external environment mutation is permitted.
+
+Reason:
+
+- V1 outcome metadata exposure invalidates outcome-blind confirmation.
+- V2 corrects overlap, selection/multiplicity, market-time scoring,
+  Monte Carlo, conditioning and future-episode design without consuming
+  outcomes.
+- V31 supplies byte-reproducible wheels, audited prefix construction, exact
+  three-entry `sys.path`, a sealed installed foreign-cwd smoke and completely
+  repo-local mutable paths on the managed standard-user workstation.
+- Final independent read-only re-roasts report Security, IT/Operations and
+  Quant/Data P0/P1/P2 `0/0/0` on this local slice.
+
+Rejected alternatives:
+
+- Rehash or reuse the v1 assessment, outcome-bearing T057 registry, or any T057
+  score/outcome metadata.
+- Call an authored core an admitted candidate before external freeze and
+  independent hash-bound evidence closure.
+- Add the packaged CLI to the workspace runner while that runner deliberately
+  scrubs the sealed runtime receipt environment.
+- Reuse the obsolete v9/AppData wheelhouse, request elevation or ASR/Defender
+  exceptions, create a system/user environment outside the repo, or build a
+  project executable.
+
+Invariants not to break:
+
+- Monthly solver remains authority of the monthly level; shaping may not
+  rewrite monthly means. OMPEX remains benchmark-only.
+- LT remains independent from `pfc_shaping.ct.*`; do not touch CT or Power BI.
+- All mutable workstation paths remain under the canonical repo and every
+  shell action verifies exact cwd and Git root first.
+- Runtime local-quality admission is not scientific, promotion or production
+  authority. Production remains strict `NO_GO`.
+- Do not touch or stage `data/eex_forwards_history.parquet`.
+
+Canonical evidence and handoff:
+
+- core v2 SHA-256
+  `a2ec1d758043b7ed4bf111e99ef4f87d814ad292b7b3c115c36de30d1da4011e`;
+- tombstone SHA-256
+  `e7b7524375d431004c2dfe1aff9d7fea10a9bf7742c4044f53a9cda3cdb594ea`;
+- runtime v31 prefix receipt SHA-256
+  `704853b90ba051bf3551b131944870054d27a3ddc0753d0489123382766adf97`;
+- matrices: 415 passed; 305 passed / 12 skipped; 200 passed; 181 passed /
+  2 skipped; Ruff pass;
+- `SESSION-HANDOFF-20260730-CH-LT-OUTCOME-BLIND-CORE-V2-RUNTIME-V31.md`.
+
+## D-20260730-188 - Prevent approval prompts before repo-local preflight
+
+Decision:
+
+- Keep the builder and `scripts.run_workspace_local` fail-closed checks that
+  reject every launcherless-runtime input/output outside canonical repo
+  `build/`, with `uv.lock` as the sole root-level exception.
+- Add an agent-side invariant: never construct or submit a shell command that
+  names a mutable path outside the canonical workspace, even for a negative
+  test or a command expected to fail. Negative path fixtures must be synthetic
+  descendants of a fresh repo-local basetemp.
+- Do not request a sandbox override, administrator right, ACL takeover or
+  Defender/ASR exception. Record an external blocker when a safe repo-local
+  command cannot perform the work.
+- Retire the quoted runtime-v9/AppData assembly command. Current work must use
+  current repo-local evidence and fresh `build/` namespaces; no v9 rebuild is
+  needed or authorized.
+
+Reason:
+
+VS Code or the command-execution boundary can ask the user for permission as
+soon as a submitted command names `AppData`, before the Python builder gets a
+chance to reject it. Program-level validation alone therefore cannot prevent
+the nuisance prompt. Refusing to construct the command closes that earlier
+boundary while preserving the independent fail-closed checks in case another
+caller bypasses the agent contract. The laptop has no administrator
+entitlement and none is required for ordinary repo-local work.
+
+Rejected alternatives:
+
+- Submit the obsolete AppData command and rely on the builder to reject it.
+- Treat broad read access to `C:` as administrator authority or permission to
+  mutate user/system locations outside the workspace.
+- Ask for elevation, repeated UI approval, Defender exclusion or ACL repair.
+- Remove the builder/runner path checks and rely only on agent discipline.
+
+Canonical local evidence:
+
+- `scripts.build_launcherless_local_runtime` already rejects every explicit
+  runtime build path outside repo `build/` before assembly;
+- `scripts.run_workspace_local` independently rejects the same path family
+  before target execution;
+- focused no-prompt revalidation under fresh namespace `permfix30a`:
+  `101 passed in 4.28s`;
+- execution receipt
+  `build/workspace-local-runs/permfix30a/execution-receipt.json`, SHA-256
+  `a90f46a684d6002d9c70ca87879f3366ee6d38f573f81a05a98d4b9819c69ee8`,
+  status `TARGET_EXIT_ZERO_NOT_AUTHORITY`, target exit `0`;
+- final read-only Security and IT/Operations re-roasts both report P0/P1/P2
+  `0/0/0`. Security explicitly retains the builder/runner guards because the
+  agent-side rule cannot constrain another caller; IT/Operations confirms
+  zero mutable path outside `build/`, zero reparse point and zero residual
+  process in the observed namespace.
+
+Invariants not to break:
+
+- Read-only use of an existing external interpreter or approved source is not
+  permission to create or mutate an environment outside the workspace.
+- This closes workstation command prompting only. It grants no scientific,
+  runtime-admission, release, promotion or production authority.
+- Monthly solver authority, LT/CT separation, OMPEX benchmark-only status,
+  T057 supersession and strict production `NO_GO` remain unchanged.
+
+## D-20260730-187 - Select fresh CH EEX quarantine and seal its local verifier v20
+
+Decision:
+
+- Supersede `eex-ch-20260729-v2` as the current local EEX capture. Select only
+  `eex-ch-20260730-v1` through
+  `CH-EEX-CURRENT-LOCAL-CAPTURE-SELECTION-20260730.json`; retain v2 as
+  historical quarantine evidence only.
+- Bind the exact current workbook, manifest, workspace-run receipt, two parser
+  sources, 40 quote identities and non-disclosing identity/value commitments.
+  This is deterministic local replay, never trusted PIT, official EEX
+  semantics or monthly-solver eligibility.
+- Supersede checkout audit execution as the operative verification route with
+  provider verifier v20. The v20 zipapp freezes the registry-bound parsers,
+  admits a hash-verified 13-distribution closure, captures artifact and
+  dependency bytes into process-private roots and imports business code only
+  after exact `python -I -S -B` admission.
+- Require verifier outputs to be the two exact filenames under one fresh
+  direct child of `build/provider-verifier-eex-results`. Protect `.planning`,
+  both EEX capture roots, both workspace-run roots and both parser paths before
+  the first durable write. Preserve every failed namespace and retry only with
+  fresh scratch/output identities.
+- Keep every mutable input/output/cache/temp below repo `build/`. Existing
+  user CPython may execute read-only; no AppData mutation, admin right,
+  Defender/ASR exception, project executable or Playwright is permitted.
+
+Reason:
+
+The canonical workbook advanced from the 2026-07-28 to the 2026-07-29 CH row.
+The first checkout validator proved exact parsing and commitments but imported
+same-user-writable parser code before admission, so Security correctly kept it
+non-attestable. V19 closed import-before-admission but its first roast found an
+output-boundary P2: an attacker could leave durable JSON inside evidence
+roots. V20 rejects such paths before writing and records the exact CPython
+runtime fingerprint in its non-authoritative receipt.
+
+Rejected alternatives:
+
+- Continue calling the checkout audit proof of runtime integrity, or admit the
+  historical v2 capture as current.
+- Consume the fresh quotes in the solver, repricing, T057, training or a
+  candidate before trusted time, source authentication, product/session/
+  settlement semantics and external CAS are independently admitted.
+- Build a project `.exe`, use Playwright, mutate AppData, request elevation or
+  a Defender exception, or revive the legacy `H:` checkout.
+- Allow caller-chosen output paths and rely on post-write replay to detect
+  evidence-root pollution.
+
+Canonical local evidence:
+
+- current source SHA-256
+  `fb71338f51334128878526877b802e48819b555639913a786a35d710a6b151e5`,
+  62,490 bytes; manifest SHA-256
+  `823eeb1095e48a49db6df28cda4fd6f96e0f054154252016be76cdbeca4e1801`;
+- selection registry SHA-256
+  `5f0b99aa04fabcb8219cfa34f20ea262a705940cbc3db3ab2e114ba99bb4a778`
+  and selection ID
+  `3be51903d7ed2774d464f8bfd49b20fe283fb5d1b2c0bb93f677e99fe4884667`;
+- quote identity/value commitments
+  `74ba58f6d00c8734ea668d487c8fb48d6e12e35642045be7a2c834daddbdfc95`
+  and
+  `399d524c2c002b55bf844a5410791d0fa33ba7fc4ed843896f01b26769ece258`;
+- closure receipt SHA-256
+  `999e5f5a31631a4562f0c415f1f8ee2172a988007fd94609c524e004cd843d38`,
+  13 distributions / 4,928 files and tree SHA-256
+  `9eb10eecc91ed6e676e5605d77eb50c2c15b5dcb6dba311a3b14ad9cda6f1541`;
+- reproducible v20 zipapps a/b, 111,858 bytes, SHA-256
+  `efd896c8c19dc3e4ad1cb04270c09605d86a83e4a126386db4ab8084053a153c`,
+  source revision
+  `6e6ac43f935060bc0495de9d5c401f6d2dfdf548e471bf3256b03c2cc216c9c6`;
+- admitted v20 audit SHA-256
+  `917dfd899e12c2795b5b3546eb785efdbfb4f4e8c20d5e31cf0840ad2a940dbf`
+  and runtime receipt SHA-256
+  `a3ed33c946048bd0d742b518dcaa288bad49d133390f5ade21530db75deb36d7`;
+  captured/source path counts `1/0/1/0`, scratch residue zero;
+- matrices: unit `30 passed, 1 deselected`, runtime/packaging `221 passed, 12
+  skipped, 2 deselected`, publication `155 passed, 2 skipped`; scoped Ruff
+  passes.
+
+Invariants not to break:
+
+- The monthly solver remains the only level authority. These local quotes are
+  hard-level-ineligible until independent acquisition and semantics evidence
+  exists. OMPEX remains benchmark-only and LT must not import CT.
+- The v20 receipt is an unsigned local process observation. Trusted time,
+  independent signatures, builder-inaccessible external CAS/WORM/fresh HEAD,
+  official EEX semantics, current-price repricing, rolling-origin/T057,
+  candidate assembly, publication, promotion and production remain open.
+- No production state was changed. Production remains strict `NO_GO`.
+
+## D-20260730-186 - Select prospective ledger v8 and reject pre-end delivery capture leakage
+
+Decision:
+
+- Select only
+  `build/prospective-ledgers/ch-hourly-local-ledger-20260730-v8.json` for
+  current local structural diagnostics. It contains 748 contiguous native
+  hourly observations over `[2026-06-28T22:00:00Z,
+  2026-07-30T02:00:00Z)`. Its 2,992 quarter-hour transport rows are stepwise
+  proxies and add no independent information.
+- Exclude the full-day v2 capture from every prospective ledger because it was
+  received at `2026-07-30T02:29:12.648104Z` while its delivery window ended at
+  `2026-07-30T22:00:00Z`. Retain it only as local archive evidence. Use the v3
+  capture ending at `02:00:00Z`, received at `02:50:44.544684Z`, as the third
+  contiguous local episode.
+- Make
+  `CH-LT-CURRENT-EVIDENCE-SELECTION-20260730.json` the sole cross-domain
+  resolver. Prospective selection v2/v8 is current; v5 remains only a
+  historical selection and the frozen hourly snapshot embedded in market-time
+  contract v1. The market-time contract controls regime semantics, never the
+  current prospective-ledger pointer.
+- Require the strict current-selection audit before the sealed ledger command.
+  Any changed registry/link/hash/ID or v5/v8 precedence ambiguity fails closed.
+- Keep independent rolling-origin count at zero. Delivery-end chronology is a
+  conservative anti-leakage gate, not trusted `available_at`, revision lineage
+  or scientific PIT evidence.
+
+Reason:
+
+Energy Charts exposed the complete delivery-day price vector before the end of
+delivery. The local capture was technically valid, but admitting it as an
+outcome prefix would have mixed known future deliveries into the prospective
+ledger. The existing ledger validator correctly rejected it with `capture
+chronology is invalid`. A new post-window capture of the four elapsed hours
+closed the contiguous prefix without weakening that gate. IT/Operations then
+demonstrated a selection split-brain because Operations and market-time
+evidence still pointed to v5; the current-evidence registry and strict link
+validator now resolve the domains explicitly.
+
+Rejected alternatives:
+
+- Treat a day-ahead price's early publication as proof of trusted
+  `available_at` or as an already realized rolling-origin outcome.
+- Weaken `received_at >= delivery_window_end`, include v2 in the ledger, count
+  the duplicated quarter-hours as independent data, or call three capture
+  episodes three independent origins.
+- Modify or relabel the frozen market-time contract/audit receipt, overwrite
+  v1-v5, reuse failed v6/v7 identities, consume T057, train/select a candidate
+  or promote production.
+- Resolve the v5/v8 disagreement through prose alone without a hash-bound
+  machine registry and executable validation.
+
+Canonical local evidence:
+
+- v3 capture summary SHA-256
+  `b8d6a4187e55165b80d608290ef1fdcf7a0725f8bfea1dfabf557d6ce2f9a7db`,
+  provider body SHA-256
+  `296f5281b20e37aa79e402e3038a85ff67bf64b804dfbab15b08c0a9723d011a`
+  and workspace-run receipt SHA-256
+  `ab014aaed30596f36535f430f378fdffef9696d0be58fbc9369fe4fb6aa13531`;
+- v3 acquisition manifest SHA-256
+  `992b22f24be5acb98671ae4168aab29001876f6760a64e7e97fb5e83a900165d`;
+- v3 isolated audit SHA-256
+  `30376809b7d3dd5bd68c3384b0b91862cc4478a3696836ae6af5b6c4af9d94b4`
+  and runtime-receipt SHA-256
+  `a7bc7cfe471dcf096ab9ec8d74a05a015c0dd260e14c6961e7bdf2955eb14c8b`;
+- ledger request v3 SHA-256
+  `d62ae24b5612da8a13b7b56102e9f77ce358c8b507e8dd8be613e82bc67f5f80`;
+- ledger v8 SHA-256
+  `ac347cb709fc1ae7c75bf516621901851c08656921e3b4d960eb695a8ad32433`,
+  ledger ID
+  `2921ae31951aed2e9918811c511b88020ee5e6e882ae38902949da851410e1d0`
+  and execution-receipt SHA-256
+  `06cd8e34297e9f29b7a8b8ac65ea0e350d9cd6245393088efc4d22e1b2e63c49`;
+- prospective selection v2 SHA-256
+  `e22cf06793ccd866e0b37577e76bd03b26ae7873c12889c6e672b1ddb730194a`;
+- current-evidence registry SHA-256
+  `644a6c436fa426376f4d2f3e9e0f28a309264b428e0283bc219e9213a4a40ffb`
+  and registry ID
+  `2a05f414b713ebda5a6489370be3eddfd08377ff3a63780ac7744fc45bf1b9fd`;
+- exact ledger retry preserved both v8 and receipt bytes; verifier scratch
+  residue was zero;
+- intermediate tests: `18 passed`, `54 passed`, `66 passed, 1 skipped` and
+  current-selection/ledger `23 passed`; final exact-tree matrices are `59
+  passed`, `105 passed, 12 skipped, 2 deselected` and `343 passed, 2 skipped`;
+  scoped Ruff passed;
+- Security and Quant/Data terminal read-only roasts report P0/P1/P2 `0/0/0`.
+  IT/Operations' terminal re-roast reports P0/P1/P2 `0/0/1`: the split-brain
+  P1 and missing-validator P2 are corrected; only the lack of original durable
+  failure receipts for v6/v7 remains as local observability P2. It grants no
+  authority and must not be repaired with retroactive evidence.
+
+Invariants not to break:
+
+- V8 is local continuity/replay evidence only. Training, model selection,
+  rolling-origin confirmation, T057, candidate, publication, promotion and
+  production remain forbidden.
+- Monthly solver remains sole monthly-level authority; OMPEX remains
+  benchmark-only; LT must not import CT.
+- The market-time contract's embedded v5 must remain byte-stable historical
+  evidence; it cannot override the current v8 prospective selection.
+- Independent trusted time, source revision/availability, official product
+  semantics, signatures, external CAS/WORM/fresh HEAD, multi-season origins,
+  dependence-aware power, probabilistic calibration and sealed future holdout
+  remain blockers. Production is strict `NO_GO`.
+
+## D-20260730-185 - Freeze the Swiss market-time transition and select runtime v29 for local audit only
+
+Decision:
+
+- Keep native Swiss day-ahead and intraday-auction truth at 60-minute MTU
+  until an independently captured actual go-live notice and exact effective
+  first-delivery UTC boundary satisfy all eight requirements in
+  `CH-MARKET-TIME-REGIME-CONTRACT-20260730.json`.
+- Treat EPEX's locally observed 3 November 2026 date only as a planned first
+  trading day. It is not an admitted go-live event or delivery boundary.
+- Keep the model's 15-minute valuation grid distinct from native market truth.
+  Before transition, duplicated/interpolated quarter-hours are proxies only;
+  after admission, DA and IDA auction MTU may be 15 minutes, DA CPM may be
+  15/30/60 minutes, IDA CPM remains absent, and an hourly DA index is the
+  strict arithmetic mean of four quarter-hour clearing prices.
+- Require origin-specific publication and revision vintages, `available_at <=
+  forecast_origin`, post-origin revisions for scoring only, DST cardinalities
+  92/96/100 and no resampling across the transition boundary.
+- Select launcherless repo-local runtime v29 and audit receipt v1 only for this
+  structural diagnostic. All scientific, execution, promotion and production
+  authorities remain false.
+- Execute ordinary build/test/audit actions without approval prompts, but only
+  as a standard user with every mutable path below repo `build/`; never request
+  elevation, Defender/ASR exceptions, ACL takeover, AppData mutation, a project
+  executable or Playwright.
+
+Reason:
+
+Official local evidence is not temporally consistent enough to admit a switch:
+Swissgrid and BGM documents contain earlier conditional targets, while the
+current EPEX page states a planned trading date but no exact delivery UTC
+boundary. Conflating the 15-minute valuation lattice, continuous-capacity
+information and native auction clearing truth would create look-ahead and
+measurement errors. The sealed audit therefore revalidates the contract,
+seven evidence objects including the superseded plan, runtime identity and
+module origins before durable write and fails closed with eight blockers.
+
+Rejected alternatives:
+
+- Hard-code 3 November 2026 as an effective delivery boundary or claim the
+  Swiss transition has occurred.
+- Infer quarter-hour market truth from repeated hourly values, interpolation,
+  smoothing, cross-border capacity or an hourly index.
+- Apply one generic CPM rule to DA and IDA, resample across the boundary, or
+  use post-origin notice revisions in training information sets.
+- Run the obsolete v9 command with a mutable publisher wheelhouse under
+  `AppData`, use non-selectable runtime attempts v27/v28, request admin or an
+  ASR exception, launch a project `.exe`/Playwright, consume T057 or promote.
+
+Canonical local evidence:
+
+- contract SHA-256
+  `71711ae80b64556b8deab88e70581e1c7a0ef7c684d672b2cb550f2058c19c25`,
+  contract ID
+  `898d35e37a2df9dc9814039698eb605fdf220ece33d2035c7c7a2ea1b7bc9dba`;
+- EPEX HTML SHA-256 `73c0c7b6010d3b8d14ade3936233f940abe4fb956fd7a9623fc32a5f5f42edec`,
+  Swissgrid roadmap SHA-256
+  `879b287916d5be571b3cbffc1a50b7af891c6b63685d8ba59dd2732ff25faef7`
+  and BGM report SHA-256
+  `60d321d39b5544bba91e4fe521552c01d322fdfea104cfd625bc26bdf15482c0`;
+- byte-identical wheels AI/AJ SHA-256
+  `896a24ede95ce38110942ce6217d1af994dc003589f9c0da35505a85be51652b`;
+- runtime-v29 receipt SHA-256
+  `f4ff1d309a7800056e254fe506b61cea5a46e691308e9263d1a9ab701825e8c3`,
+  exact `Lib`, `DLLs`, `governed-site-packages` `sys.path` and installed
+  CLI/validator origins;
+- durable audit receipt SHA-256
+  `9288b10f535974bb512ff33fabb330d3e86fc23a069c3344397c5874b9fdfa68`,
+  audit-operation ID
+  `64d7251d52289f6f8425f8f0c81a695409a878f39fd9963460ac31ba521b8449`
+  and normalized-command SHA-256
+  `65fe9e1a85f1b7ba03c969b173c88baa85949fb79c65efc00bbf285d4e1af533`;
+- exact documented retry exited zero and preserved receipt bytes;
+- final matrices: `113 passed, 1 skipped` scientific and `70 passed`
+  runtime/packaging; scoped Ruff passed;
+- terminal Security, IT/Operations and Quant/Data read-only re-roasts each
+  report P0/P1/P2 `0/0/0`. The IT/Ops P1 for two missing runtime arguments in
+  the first runbook draft was corrected and replayed before this verdict.
+
+Invariants not to break:
+
+- Monthly solver remains the sole monthly-level authority; OMPEX remains
+  benchmark-only; LT must not import CT.
+- Unknown or disputed transition timing resolves to pre-transition or
+  `UNSUPPORTED`, never to an inferred post-transition observation.
+- T057 remains sealed until its independent one-shot admission; no candidate,
+  publication, promotion or production transition follows from this audit.
+- Trusted official timing, licensed native quarter-hour data and semantics,
+  external signatures/CAS, operational DST replay, monitoring and independent
+  atomic transition/rollback evidence remain production blockers.
+
+## D-20260730-184 - Select only the v26-built local CH prospective ledger v5
+
+Decision:
+
+- Select `build/prospective-ledgers/ch-hourly-local-ledger-20260730-v5.json`
+  only for local structural diagnostics. Its SHA-256 is
+  `089aaa82d1025fd550cd9cdceba6a20cfb1aef1871a57f4cdca2c2e23470bdb6`
+  and ledger ID is
+  `b1698c22e28df075aacfecd04c752e7c028d9283229b64ca0c34b4555352264d`.
+- Make
+  `CH-LT-PROSPECTIVE-CAPTURE-LEDGER-SELECTION-20260730.json` the
+  machine-readable selection and mark v1-v4 non-selectable. V1/v2 overclaim
+  native-hourly truth eligibility, v3 predates exact replay and claim-smuggling
+  hardening, and v4 lacks the v26-bound durable execution receipt.
+- Bind v5 construction to execution-receipt SHA-256
+  `439b3a155c8912f8b96a088aa720e1eb0180d84695f65b25b7de06d2ec6cfd37`
+  and launcherless runtime-v26 receipt SHA-256
+  `0ac27e95ec28835e3a34e17d62f8903655874737d580ab01656502d5991fa87f`.
+- Permit only local continuity, native-hourly cadence observation, exact local
+  provider replay and hash-bound integrity-at-construction claims. Keep PIT,
+  scientific truth, official product semantics, rolling origin, T057,
+  training, selection, candidate, publication, promotion and production
+  authority false.
+
+Reason:
+
+Two adjacent captures provide 744 contiguous native-hourly observations and
+2,976 stepwise 15-minute transport rows. Exact replay now binds provider body,
+raw envelope, allowlisted parser, transform config, semantic bronze frame,
+Builder manifest, local isolated audit and verifier receipt. Security roasts
+demonstrated metadata-only cadence claims, a body reread TOCTOU, misleading
+verifier hash wording and positive claim smuggling; all were fixed. IT/Ops
+required a single explicit operator selection, terminal installed runtime,
+exact retry/collision behavior and a durable execution receipt. Quant/Data
+required explicit hourly-versus-quarter-hour proxy limits, no economic
+inference and proof that T057 was unconsumed.
+
+Rejected alternatives:
+
+- Treat Energy Charts bytes or workstation time as trusted PIT or scientific
+  truth.
+- Count 2,976 quarter-hour transport rows as independent native observations.
+- Weaken the captured dependency fingerprint to replay with the ordinary
+  workspace interpreter.
+- Select v1-v4, overwrite historical evidence, patch a generated ledger, use
+  AppData, request admin/Defender rights, build a project executable or launch
+  Playwright.
+- Promote a candidate or production snapshot from this local diagnostic.
+
+Canonical local evidence:
+
+- request SHA-256
+  `7b855b50c1dc3f0ef1c1a50c04cbabc75b63b4fac38c645c9129683f0c8fa4b4`;
+- terminal wheels AG/AH: 91 members, byte-identical SHA-256
+  `7f4801114f6e247505110030fa02af21fbd4978dccabdc8767a4454e2ea6d4b3`,
+  source revision
+  `98f51af0f735db7faa7e5f4156686e9e29fba2d8daaeb15ce72440f93b21ea48`;
+- runtime v26: 8,495 files / 19 distributions, closure tree
+  `51bcb269f99739819ab32845091d8cade15036217f222b8a1595f9dd14d50e03`,
+  exact `Lib`, `DLLs`, `governed-site-packages` `sys.path`, and explicit
+  installed CLI origin;
+- exact installed retry retained identical v5 and execution-receipt bytes;
+- terminal matrices: `256 passed, 12 skipped, 2 deselected` runtime/packaging
+  and `195 passed, 12 skipped, 1 deselected` publication/external-CAS;
+- terminal Security, IT/Operations and Quant/Data read-only re-roasts each
+  report P0/P1/P2 `0/0/0` for this local diagnostic slice;
+- production authorization is false throughout.
+
+Invariants not to break:
+
+- Monthly solver remains the sole authority of monthly level; OMPEX remains
+  benchmark-only; LT must not import CT.
+- Native CH data remains hourly for the captured period. Stepwise quarter-hour
+  rows add no information and cannot establish the future Swiss 15-minute
+  product regime.
+- T057 outcome/score and future-truth bytes remain unread until the independent
+  one-shot admission is complete.
+- No production promotion may occur before independent trusted time,
+  authenticated product semantics, signature, external CAS/WORM/fresh HEAD,
+  rolling-origin evidence and all readiness gates are closed.
+
+## D-20260729-183 - Freeze successor readiness and select packaged runtime v24 for local quality only
+
+Decision:
+
+- Keep CH LT preregistration v1 superseded and create no admitted successor.
+- Freeze ten distinct, hash-bound prerequisite families covering governed PIT
+  evidence, native CH outcomes, exact folds/masks, deterministic market gates,
+  dependence/power, probabilistic/MC design, FMV economic materiality,
+  CPU/GPU qualification, independent reviews and external one-shot admission.
+- Permit a non-executable candidate core, then require reviews and admission
+  to bind its exact hash before it becomes a successor.
+- Require exact readiness bytes, mapping-to-bytes equality, stable mono-link
+  reads and physical role disjointness; never read T057 outcome/score bytes.
+- Package the verifier and require sealed installed identity, `-I -B`,
+  absolute canonical evidence paths and the exact registry hash.
+- Select fresh repo-local runtime v24 only for current local-quality source
+  execution. Grant no scientific, publication, promotion or production
+  authority.
+
+Reason:
+
+The initial seven-item checklist did not bind native CH product identity, hard
+EEX/solver/sensitivity and complexity gates, CPU/GPU qualification or closed
+probabilistic/economic manifests. It also allowed a mapping-only API to claim
+canonical identity and lacked an installed wheel/runtime route. Independent
+roasts additionally required exact `HYDRO_DISPATCH` concordance, admitted
+native truth semantics and a CPU numerical-reference boundary. The final
+contract closes these findings without consuming holdout truth.
+
+Rejected alternatives:
+
+- Treat cross-fitting as independent confirmation or as new independent
+  sampling units; pass with insufficient power/calibration evidence.
+- Let GPU outputs become authority for solver, repricing or hard market gates.
+- Call CPU float64 a scientific/data authority rather than a numerical oracle.
+- Review a mutable/unhashed plan or call an unadmitted candidate core a
+  successor.
+- Qualify only the checkout, reuse an old runtime for changed source bytes,
+  install outside the repo, request admin/Defender exceptions, or build
+  project executables.
+
+Canonical local evidence:
+
+- readiness contract ID
+  `5e655cab1ca090cd067100dc8eb06161811b77991132e7c299883a7eb249e706`,
+  SHA-256
+  `734a7824ec747c829526774b346da441b45fff7cff5c9eb79ffc653ac78c7b8e`;
+- supersession registry SHA-256
+  `76dba0b05948d336268b0a50c16df82ecd1c5138626c3fa87ee219148cb8e5e8`;
+- wheels AC/AD: 89 members, byte-identical SHA-256
+  `3ebe242cd8b09b5b98c56ffbe4357ef2fccecb5be0d35be5ec9c400cb776597c`,
+  source revision
+  `e2b7c89a6413ff6cb84c7b6e2e31e4412fc72fc32157b0fdbffb2b4a39f42cc8`;
+- v24 runtime receipt SHA-256
+  `2eeb80e212cff3301c4e8a9349cffc2e93a41e20514dd2cd4cf6d95749219c2d`,
+  8,493-file closure tree
+  `d977fb87e97e2d14b430318a8bd4b1351e39e31ebfe32cb6f40f3e799a872158`;
+- installed foreign-cwd verifier exit 0 with ten blockers and all authorities
+  false; live `sys.path` is runtime `Lib`, `DLLs` and
+  `governed-site-packages` only;
+- matrices: `380/2 deselected`, `269/12 skipped/2 deselected`, `200`,
+  `181/2 skipped`, Ruff PASS and `git diff --check` exit 0.
+- terminal read-only Security, IT/Operations and Quant/Data re-roasts each
+  report P0/P1/P2 `0/0/0` for the local non-authoritative slice.
+
+Invariants and residual blockers:
+
+- Every readiness evidence entry remains missing. No T057 result, future
+  truth, candidate, successor, publication or promotion was consumed.
+- Same-user writable pre-import, external signature/CAS/WORM/fresh HEAD,
+  service identity, CI/ASR, SBOM/scans, supervision, observability, rollback
+  and disaster recovery remain production blockers.
+- Monthly solver authority, LT/CT separation and OMPEX benchmark-only status
+  remain unchanged. Production is strict `NO_GO`.
+
+## D-20260729-182 - Preserve the current FMV CH EEX workbook as a local non-authoritative handoff only
+
+Decision:
+
+- Permit one exact, caller-hash-pinned read of the canonical FMV desk workbook
+  `\\fmvfs1\data\Energy\GeCom\MARCHE & NEGOCE\Prix\EEX - ER\Price_Report_EEX.xlsx`.
+- Require both the capture API and workspace runner to reject every other
+  local, `AppData`, repo or network source, even with the canonical basename.
+- Preserve exact bytes, an attempt and a manifest only below a fresh
+  `build/eex-forward-local-captures/<capture-id>` namespace. Never retry,
+  repair, delete or relabel a used capture ID.
+- Admit the result only as local quarantine and a syntactic CH inventory. It
+  is not PIT, semantic, solver, training, selection, holdout, candidate,
+  release, promotion or production evidence.
+- Keep the monthly solver as sole level authority, OMPEX benchmark-only and
+  T057 unconsumed.
+
+Reason:
+
+The FMV share exposed a current 61,813-byte workbook whose CH sheet has a
+logical latest row dated 2026-07-28 and 40 syntactically admissible products.
+Preserving exact bytes enables a later independent authority handoff, but
+workstation time, SMB metadata and a same-user copy do not prove PIT
+availability or product/session/settlement semantics. The first Security
+roast also showed that the initial API accepted any external same-name file
+although the runner rejected it. The API now independently pins the exact UNC
+and a regression test rejects the former bypass.
+
+Rejected alternatives:
+
+- Use the obsolete `AppData` runtime command, request admin/Defender rights,
+  launch project `.exe`/Playwright or use `H:`.
+- Rely only on the runner while allowing the public API to capture arbitrary
+  external same-name files.
+- Treat caller hashing, workstation time, SMB last-write time or a local
+  receipt as independent trusted-time/acquisition authority.
+- Feed the bytes into solver, shaping, T057, candidate or production before
+  independent admission.
+- Repair or overwrite `eexcap01`, capture v1 or any failed namespace.
+
+Canonical local evidence after remediation:
+
+- capture `build/eex-forward-local-captures/eex-ch-20260729-v2`;
+- workbook SHA-256
+  `b3e213f1512890ea72af1cee03015fcc942ba9946ec89c7a5d4745603eb5eb0f`,
+  61,813 bytes;
+- attempt SHA-256
+  `2ffe46c4de791bc202a3f3cd77c88b269747bded0e899b31ef8f88f0dcc648a0`;
+- manifest SHA-256
+  `3691df3ad92a18692cd49aa920705f135acf672415d4e9d9faf427464752db4e`;
+- capture receipt `eexcap03` SHA-256
+  `18ef170eb2ed5982946a34a9a4185da1243c99df0bbf07c1060e1a52d11051d9`;
+- source tree
+  `45849de4ec032c78831ac1ac1bb3c847d4f70513436bf07a9425d556a335cb4d`,
+  490 files / 8,838,775 bytes;
+- matrices: `316 passed, 2 deselected`, `239 passed, 12 skipped,
+  2 deselected`, `200 passed`, `181 passed, 2 skipped`, and Ruff pass;
+- matrix/ruff receipts: `433baa4278e979029f224dcc08d475c0f959d7e2adbde9a86bf97bf0c67f52db`,
+  `c9ef70aab360aa330502b4e374bcab324845153d9092b5fb1be9e948d5fb6de7`,
+  `a7a25ffdaf665a24573e83a285e4be13f5ea55d46813ea322bdef132b2c51127`,
+  `8faacfa4e6b21334590f363f1d7df61f6975d23d548fb9861a84f4626ee43d7d`
+  and `88aa97e9c5c088f4fef04da55b61f7726f0b5a161c98cb841201bf224feb92d5`.
+- terminal Security, IT/Operations and Quant/Data local-scope re-roasts each
+  report P0/P1/P2 `0/0/0` after the API and documentation corrections.
+
+Residual invariants and blockers:
+
+- The harness redirects declared/known mutable destinations under repo
+  `build/`; it is not a filesystem sandbox and cannot prove arbitrary target
+  code never writes elsewhere.
+- Independent trusted time, acquisition signature, builder-inaccessible
+  immutable copy, external CAS/WORM/fresh HEAD and official source semantics
+  remain mandatory before scientific use.
+- Global timeout, Job Object containment, crash reconciliation, CI/service
+  identity, observability and rollback remain production blockers.
+  Production remains strict `NO_GO`.
+
+## D-20260729-181 - Select workspace runner receipt v4 for completed local observations only
+
+Decision:
+
+- Supersede workspace-local receipt v3 for new laptop test/audit commands with
+  `pfc_lt_workspace_local_execution.v4`. Preserve every v2/v3 receipt as
+  historical evidence; never relabel or rewrite it.
+- Persist bounded, fsynced stdout and stderr under the single-use run root,
+  record retained and full-stream hashes/byte counts, and fail the runner if
+  either retained stream exceeds 64 MiB.
+- For pytest, forbid caller-selected basetemp, JUnit/native-result paths,
+  arbitrary explicit plugins and config/ini/root overrides. Require a JUnit
+  result plus an append-only native result, and cross-check exit, selected,
+  passed, failed, error, skipped, xfail, xpass and deselected counts.
+- Read evidence through path/descriptor identity checks, bind the runner and
+  interpreter bytes, the covered dirty Python/config source tree and Git
+  HEAD/branch before execution, and revalidate that identity after the child.
+- Bound post-child pipe draining to five seconds per stream. A descendant
+  retaining the inherited pipes makes the observation fail instead of hanging
+  forever.
+- Select v4 only for normally completed, same-user local observations. It is
+  not crash-safe process-tree supervision, independent attestation,
+  scientific evidence, release authority or production evidence.
+
+Reason:
+
+Runner v3 retained command and exit identity but left stdout/stderr and pytest
+counts in an operator transcript. IT/Operations therefore could not
+independently verify the exact terminal claims. The first v4 roasts then found
+three correctable local P2s: indirect pytest plugin injection, an unbounded
+post-child pipe join and path-only TOCTOU reads. V4 closes those completed-run
+observability defects without broadening workstation or production authority.
+A terminal Security re-roast then demonstrated that grouped short pytest
+options such as `-qc...` and `-qp...` could bypass the direct-option filter;
+v4 now rejects these grouped forms fail-closed and tests them adversarially.
+
+Rejected alternatives:
+
+- Continue copying pytest counts manually into handoffs.
+- Parse only the human terminal summary or trust only target-generated JUnit.
+- Allow `-c`, `-o`, alternate ini/root options or arbitrary explicit plugins.
+- Truncate silently, reuse an existing run namespace or treat missing evidence
+  as a green target exit.
+- Claim that a same-user Python harness replaces Job Objects, CI supervision,
+  WORM/CAS signing, incident reconciliation or production observability.
+- Request administrator, ACL or Defender rights, launch a project executable,
+  or move mutable logs/caches outside canonical repo `build/`.
+
+Canonical local evidence:
+
+- runner SHA-256
+  `cce8fdd620d4fc8e0f9f2c3c678a5c50de20292f089bff9601691a0aead2dcf8`;
+- runner tests SHA-256
+  `eeb3d8ee5b38f567d88ffd228d9880c00a4edcca911affb3a4f6a74be9edde4e`;
+- focused direct terminal test: `62 passed`;
+- prospective `obsv4pro6`: `278 passed, 2 deselected`, one known warning,
+  receipt SHA-256
+  `8fc9e19a420b21767f06ab4f6ca76166a092a34352b68160dbdb02ba42ba6f49`;
+- runtime/packaging `obsv4run6`: `225 passed, 12 skipped, 2 deselected`,
+  receipt SHA-256
+  `23d7cb0b542fa210da099e6306ae977d4287fedaf97b6a8005a373010f7f0b3e`;
+- external-CAS/publication `obsv4cas6`: `200 passed`, receipt SHA-256
+  `adfa157bcbef5ea9bb5425ae4d0fc6f4d1bb3609855aa96966f3a35e95be1374`;
+- candidate/atomic `obsv4cand6`: `181 passed, 2 skipped`, receipt SHA-256
+  `ae4953d700375881eaad4dd422d16f1a390c4af36836f217d450dc8c89cf4446`;
+- Ruff `obsv4ruff5`: pass, receipt SHA-256
+  `408d4b5720bda1cac876bedb2f4c3b815263efc8ef7a480e3547a7ffbc1ce049`;
+- every receipt records the covered source-tree SHA-256
+  `1f3656419f4c3953479c2274d04c792d0d44f7b2c1c2cdd431a43cc159986753`
+  (`487` files, `8,814,949` bytes), runner SHA above, target interpreter SHA-256
+  `50bfb90ee93bb0cb51175b546f133798dfe4b778677d95d81391e7bf6d85e5ac`,
+  HEAD `2f68125bff869ccb21c1e20df0201ad024ed27d3`, branch
+  `fix/lt-audit-remediation`, complete outputs and all five authorities false.
+
+Invariants and residual blockers:
+
+- `TARGET_EXIT_ZERO_NOT_AUTHORITY` proves only a completed local observation.
+  Counts are not scientific sample size, model quality, rolling-origin or
+  T057 evidence.
+- Ctrl+C/crash/power-loss recovery, Job Object/process-tree kill-on-close,
+  wall timeout, stale `EXECUTION_PENDING` reconciliation, partial-log incident
+  binding, directory fsync and governed retention/quota remain open IT work.
+- Same-user test/conftest code can attack its own evidence. Independent
+  service identity, signatures, external CAS/WORM/HEAD and governed CI remain
+  mandatory for release or production trust.
+- The source-tree field is an aggregate over selected Python/config bytes, not
+  a retained file inventory, dependency lock admission, data-tree hash or
+  scientific reproducibility claim. Non-Python fixtures and installed
+  dependencies remain outside this local identity aggregate.
+- No prospective observation, holdout, T057, candidate or promotion was
+  consumed. Monthly solver authority, LT/CT separation, OMPEX benchmark-only,
+  protected data and strict production `NO_GO` remain unchanged.
+
+## D-20260729-180 - Supersede provider audit v3 with receipt- and artifact-bound v4
+
+Decision:
+
+- Select `build/provider-verifier-20260729-v18.pyz` as the sole operator name
+  for local provider verification. Retain byte-identical v17 only as a
+  same-host reproducibility witness.
+- Make provider verifier v14-v16 and CH audits v2/v3 explicitly
+  non-selectable. Preserve them unchanged as historical/negative evidence.
+- Supersede `local_provider_acquisition_audit.v3` with v4. Require exact
+  negative authority gates separated into security, source scientific
+  admission and candidate readiness, plus an explicit evidence scope.
+- Require the local panel consumer to bind the audit, runtime receipt and the
+  actual verifier `.pyz` bytes; audit the embedded verifier manifest and
+  cross-check artifact SHA, source revision and dependency tree. Revalidate
+  all evidence after each output write.
+- Independently revalidate the acquisition manifest v2/build ID, negative
+  authority, artifact inventory, provider raw replay, bronze semantic hash
+  and resolution/evidence scope. Apply exact, type-strict validation to the
+  legacy branch and replay its current allow-listed transform.
+- Permit the panel CLI only through repo-local `build/` paths, both through
+  `scripts.run_workspace_local` and when invoked directly. Keep every output
+  and downstream completion manifest explicitly local diagnostic and NO-GO.
+
+Reason:
+
+Security demonstrated that v3's positive panel test could fabricate a
+hash-bound JSON, fake manifest, empty raw/config and arbitrary bronze without
+proving the isolated verifier execution. Quant also found that source
+admission and candidate readiness were mixed and that diagnostic rolling
+origin was not distinguished from confirmatory eligibility. V4 closes those
+local consumer failures without upgrading the underlying unsigned,
+same-user, one-episode capture to scientific or production authority.
+
+Rejected alternatives:
+
+- Document the v3 P1 without fixing its consumer, or treat a caller-supplied
+  JSON hash as authenticity.
+- Trust only a receipt's claimed verifier SHA/source revision without reading
+  and auditing the actual `.pyz`.
+- Count 2,880 stepwise rows as independent or native quarter-hour evidence.
+- Accept legacy parser/supersession claims without exact validation and
+  current-transform replay.
+- Continue invoking the local panel directly with `AppData` or other paths
+  outside the canonical repo, request admin/Defender rights, or repair older
+  verifier/audit namespaces in place.
+
+Canonical local evidence:
+
+- verifier v17/v18: byte-identical SHA-256
+  `7f17be8de8e78ba5a063903c7ea459baed0372b70a128ffab3fb8b17f69b19c5`,
+  64,877 bytes, 17 members, source revision
+  `99be2ce84325789aeacda69a41997766f1f365abe6747fa04b7d21bdad6b9a34`,
+  dependency tree
+  `0ecb7997997cc124375e92614ca08d9c5274c683c6738448b9bd3c5eafaf78f1`;
+- isolated v18 runtime-check: PASS, captured artifact/dependency roots `1/1`,
+  source roots `0/0`, authorities false and zero scratch residue;
+- CH audit v4 SHA-256
+  `638a6fc8887b867957fb8cb0ba2cafcf07c00c33fd2620c51e3bca366c2bfc02`,
+  runtime receipt SHA-256
+  `f28bd6d4e93235467ad4a8c4a2102d6aee5ef7231a96ae3f3a512ccbcb12d82e`;
+- evidence scope: one capture episode, 720 hourly source observations, 2,880
+  stepwise output rows, independent-information upper bound 720, no extra
+  information from proxy rows and no established seasonal coverage;
+- real CH-to-DE-panel rejection receipt SHA-256
+  `c60630815773dbc41048b6628aff7c1f740c2eba8137e8d45a45066b054ca094`,
+  target exit `1`, all authorities false and zero outputs;
+- terminal focused `125 passed, 1 skipped`, Ruff pass; final exact-tree
+  prospective `243 passed, 2 deselected`, runtime/packaging `221 passed, 12
+  skipped, 2 deselected`, publication/CAS `200 passed`, candidate `181 passed,
+  2 skipped`.
+
+Invariants and residual blockers:
+
+- The audit and runtime receipt remain unsigned local observations. Same-host
+  reproducibility is not independent release provenance.
+- Trusted available-at/revision lineage, authenticated product/session and
+  settlement semantics, capture-time TLS/CA attestation, independent
+  signature, Builder-inaccessible immutable freeze, external CAS/WORM/fresh
+  monotone HEAD, CI/ASR, SBOM/scans, read-only service identity, observability
+  and rollback remain production blockers.
+- One 30-day episode authorizes exact replay and exploratory hourly QA only.
+  It authorizes no training, model selection, confirmatory rolling-origin,
+  native quarter-hour truth, T057, candidate assembly, probabilistic
+  calibration, publication, promotion or production.
+- Fresh governed EEX PIT hard-level evidence remains absent. Monthly solver
+  authority, exact final EEX repricing, LT/CT separation, OMPEX benchmark-only
+  status, protected data and strict production `NO_GO` remain unchanged.
+
+## D-20260729-179 - Admit one fresh CH hourly capture as local quarantine replay only
+
+Decision:
+
+- Select the capture under
+  `build/prospective-captures/ch-da-hourly-20260729-v1` only as a fresh local
+  CH native-hourly parser/replay diagnostic. It is not an admitted scientific
+  dataset, rolling-origin fold, T057 outcome, candidate input or production
+  artifact.
+- Allow `scripts.capture_public_energy_charts_lt` through the standard-user
+  workspace runner only for `epex_ch`, exact raw cadence `60`, a required
+  explicit CA bundle on canonical `C:` and a new output below repo `build/`.
+  Scrub ambient `PFC_REQUESTS_CA_BUNDLE` before launch.
+- Preserve the network capture as non-resumable. Any partial namespace is
+  negative evidence; quarantine its acquisition/run/output identities and use
+  fresh names. Do not delete, overwrite or retry it in place.
+- Accept the installed v22 Builder replay and isolated verifier audit only as
+  `BUILDER_MUTABLE_UNTRUSTED_QUARANTINE` /
+  `VERIFIED_LOCAL_QUARANTINE_NOT_PRODUCTION`. Do not construct a CH candidate
+  until fresh EEX PIT level evidence and independent time, product identity,
+  signature and external CAS/WORM/HEAD controls exist.
+
+Reason:
+
+The previous attempt4 was deliberately a local curl diagnostic and emitted no
+Builder-compatible capture spec. The canonical requests-based capture route
+can retain exact provider bytes and a strict capture spec, while the installed
+networkless Builder and isolated verifier prove deterministic replay. This
+closes a real workstation execution gap without pretending that a local clock,
+same-user CA path, one ex-post summer window or unsigned mutable namespace is
+point-in-time scientific authority. The 15-minute frame is a fourfold stepwise
+transport proxy, not 2,880 independent observations or native quarter-hour
+truth.
+
+Rejected alternatives:
+
+- Feed attempt4, the new capture, its bronze Parquet or verifier JSON directly
+  into training, model selection, monthly levels, T057 or candidate assembly.
+- Count the 2,880 stepwise rows as quarter-hour observations or use them for
+  quarter-hour tails, ramps, volatility, dispatch or sample-size claims.
+- Permit neighboring zones, a 15-minute raw-cadence claim, an output outside
+  repo `build/`, an implicit ambient CA path, admin rights, Defender exception,
+  project executable or Playwright.
+- Retry a partial capture in place, retrofit a signature/CAS onto the local
+  path and claim capture-time authority, or open T057 to compensate for weak
+  historical evidence.
+
+Canonical local evidence:
+
+- capture window `2026-06-28T22:00:00Z` to
+  `2026-07-28T22:00:00Z`, received locally at
+  `2026-07-29T15:26:05.738774Z`;
+- exact provider body: 12,632 bytes, SHA-256
+  `1ce62eff13e6e596a3a7663349654a32814a63ac2c172d2d56160a6930426537`;
+- capture spec SHA-256
+  `5bc68818548692e24f1d8a6613d3c4bdad8604ea71c144f966855300b6895405`,
+  capture summary SHA-256
+  `a03c106c86509888e7bfc9b2ca168b7ba018d09a0cdc90589b5652f327356ae3`,
+  runner receipt SHA-256
+  `239beec0aff696e3612862698b4e18f27cb2a3b653e16f29a066ca471f9cd6d4`;
+- 720 native hourly observations; 2,880 output rows classified
+  `UPSAMPLED_STEPWISE_PROXY`, `native_quarter_hour_truth_eligible=false`,
+  exact product auction/session identity unverified;
+- v22 Builder manifest SHA-256
+  `d1bcddc7d56bfc1c6ad9a2936e6e3b77f1ee662af74df20f63cf22193227f8e0`,
+  bronze SHA-256
+  `4341865211cbb26f1eceb4fde0212e5504cf4401e71f22f81a20295cc56edc54`,
+  semantic frame SHA-256
+  `126cf2037f262a2edfa73ab674ea9b18c9746a691dbf2d4e86662ce25594723e`;
+- isolated verifier v14 SHA-256
+  `b9afe8358492658214d4bcf01ad1207084ec992df545611c9cb0f02cd0dfa3b5`;
+  runtime-check exit 0 in 245.5 seconds, audit exit 0 in 106.3 seconds,
+  dependency tree
+  `0ecb7997997cc124375e92614ca08d9c5274c683c6738448b9bd3c5eafaf78f1`,
+  no source root in `sys.path` and zero `vv-*` residue;
+- audit SHA-256
+  `a6a5ec800e1bd3993aa11ee8c9bf8ec2fa65c3ca384b2df7f6991f4c326fc3fa`,
+  runtime receipt SHA-256
+  `77b2ce485cf564fa878eddc9f5a46b92827e1053c8289028cf270effcf6fc603`;
+- Security's ambient-CA P1 was corrected. `captbnd3` is retained negative
+  after one stale expected-list assertion; terminal focused `captbnd4` is
+  `28 passed`, targeted Ruff passes, prospective `prospmat2` is
+  `212 passed, 2 deselected`, and runtime/packaging `runtime8` is
+  `188 passed, 12 skipped, 2 deselected`.
+
+Invariants not to break:
+
+- Local capture, Builder and verifier success grant no trusted time,
+  available-at/revision lineage, official product/session identity, signature,
+  builder-inaccessible freeze, external CAS/WORM/HEAD, scientific admission,
+  candidate or production authority.
+- The CA bytes/certificate chain are not hash-bound by this capture, and the
+  receipts do not embed stdout/stderr, terminal counts or runner/interpreter
+  hashes. Builder admission took 335 seconds without phase telemetry. Retain
+  these as P2 observability/transport gaps and external production blockers.
+- The audit's resolution provenance exposes the product and quarter-hour
+  blockers, but its top-level schema does not yet separate remaining security
+  authority from explicit scientific/model-selection blockers. No automated
+  scientific consumer may treat it as eligible until that P2 contract is
+  superseded.
+- Fresh governed EEX PIT forward bytes remain absent, so monthly solver input
+  and a new candidate remain blocked. Monthly solver authority, LT/CT
+  separation, OMPEX benchmark-only status and exact final EEX repricing remain
+  unchanged.
+- T057 and future holdout remain unconsumed. No training, selection, candidate,
+  publication, promotion or production transition occurred. Production is
+  strict `NO_GO`.
+
+## D-20260729-178 - Select repo-local archive runtime v22 for local quality only
+
+Decision:
+
+- Supersede v21 with v22 as the sole selectable launcherless workstation
+  runtime for local quality execution.
+- Require every Conda archive cache root, archive path and materialized
+  `file:///` explicit-spec URI to resolve under the canonical workspace,
+  specifically the retained payload root
+  `build/conda-pkgs-runtime-v6` for v22.
+- Retain v20 and v21 unchanged as negative evidence. V20 displaced 406
+  Conda-generated bytecode files outside its prefix by setting
+  `PYTHONPYCACHEPREFIX` during prefix creation. V21 built a coherent runtime
+  but reused lock/spec provenance pointing at the user `.conda` cache, which
+  violates the standard-user root contract.
+- Admit v22 only for unsigned, quarantined local execution. Keep
+  `production_authorization=false`; the independent pre-import supervisor or
+  read-only service identity remains a production P1 external to the
+  self-admitting Python process.
+
+Reason:
+
+The user does not have administrator rights and ordinary local operations must
+not trigger repeated permission prompts. Readability of an archive under
+`.conda`, `AppData` or `ProgramData` is not sufficient provenance: all mutable
+payloads must first be retained and hash-verified inside governed repo
+`build/`. V22 proves the exact wheel can be installed and admitted from that
+boundary without admin, network, Defender exception, project executable or
+Playwright. Runtime self-admission still cannot prove bytes before they are
+imported under the same writable user identity, so the local closure cannot be
+misrepresented as production trust.
+
+Rejected alternatives:
+
+- Ask the workstation user for elevation, ACL takeover, ASR/Defender exclusion
+  or repeated approval for ordinary workspace operations.
+- Reuse v21 because its external cache was readable, rewrite v21 evidence in
+  place, or relabel v20/v21 as successful.
+- Create or mutate another Conda environment outside the workspace, use the
+  legacy `H:` checkout, launch a generated project `.exe`, or use Playwright.
+- Treat the installed `--version` result or green pytest matrix as scientific,
+  promotion or production authority.
+
+Canonical local evidence:
+
+- archive lock SHA-256
+  `020735fa21744772aedd71a7c99b33775ee27042c9a6c2dd953b15b6b9b720d8`,
+  archive set
+  `f3cd775e79648df9a9926a01eb97eadc8e951c5055c778ca9ca92b60bc8068e7`,
+  19 packages / 38,648,096 bytes and zero external cache/archive path;
+- explicit spec SHA-256
+  `88266ae90c163470a9bcca09d4ef043bde2c33d5b8446f6536ff2df8cedabd46`;
+- pre-first-execution Python manifest SHA-256
+  `a3b12fe143a5af1f2e6d0db5a57308ea9596a568b187e15d5fd08fc241e1bfc7`,
+  6,285 files;
+- prefix receipt SHA-256
+  `8155d0878a669437a91072ce71f4083b14bd33be31846e0df0c7c832776db571`,
+  5,859 archive-verified plus 406 generated non-runtime files;
+- byte-identical wheels W/X SHA-256
+  `07b8228426c2857b30682228181245a7d2367cb31add87a1580f54388ce3b136`,
+  source revision
+  `691139df0d2b941823d9c80c3825440a28d1af1d3095ae50f6330a23c130f15e`;
+- runtime receipt SHA-256
+  `2e45ce409c027395b38096ab5718425d459917c83b66910eb7ddbf13e1d766bf`,
+  8,490-file closure tree
+  `6fec62264ce247e249acd1c63cf9119048decf6cfb29d0c5bb05860ae25093e8`,
+  with exact `Lib`, `DLLs`, one `governed-site-packages` `sys.path`;
+- installed admission exit 0; EEX explicit-receipt probe exit 50 on absent
+  trusted-time key with no output artifact;
+- runtime6 receipt SHA-256
+  `c05f80b7569413b60d6a1cf88f9d40daf06ada7a869fb81a6b2f5850f4339198`:
+  `180 passed, 12 skipped, 2 deselected`, status
+  `TARGET_EXIT_ZERO_NOT_AUTHORITY`;
+- final read-only Security, IT/Operations and Quant/Data roasts: P0/P1/P2
+  local `0/0/0`, `0/0/residual`, and `0/0/0` respectively; all accept a
+  local-quality GO only and retain production `NO_GO`.
+
+Invariants not to break:
+
+- The read-only preinstalled Conda executable under `ProgramData` may be used
+  only as a build tool; no package payload, cache, environment, temp file or
+  output may be created there.
+- Receipt stdout/stderr, counts and runner/interpreter hashes remain terminal
+  evidence; explicit EEX module origin is not separately enumerated. These are
+  retained IT P2s, not hidden by the transitive wheel/closure binding.
+- Import-before-self-admission, same-user mutation, independent signature and
+  CAS/WORM/HEAD, atomic prefix/rollback, Windows CI/ASR, SBOM/scans,
+  supervision, structured logs and SLOs remain production blockers.
+- Monthly solver authority, LT/CT separation, OMPEX benchmark-only status,
+  protected data, T057 supersession and strict production `NO_GO` remain
+  unchanged. No data, candidate, holdout or production promotion occurred.
+
+## D-20260729-177 - Emit only a durable unsigned EEX signing request with explicit runtime and trust inputs
+
+Decision:
+
+- Add a deterministic, resumable EEX forward-vintage builder that emits an
+  immutable local bundle ending in
+  `COMPLETED_UNSIGNED_EXTERNAL_AUTHORITY_HANDOFF`.
+- Require the runtime receipt path and caller-held SHA-256 explicitly, and run
+  the CLI through Python `-I -B` under the standard-user workspace runner.
+- Pass trusted-time and prior-acquisition public keys plus journal identity as
+  explicit verifier inputs. Do not inject trust with process-global
+  environment mutation; bind exact public-key bytes and reject in-process key
+  replacement.
+- Reject partial explicit trust parameter sets instead of falling back to
+  ambient trust. Prove concurrent ABA/rebind behavior fails closed.
+- Keep every mutable runtime, wheelhouse, cache, temporary, pytest and intake
+  namespace below `C:\Users\jbattaglia\PFC_LT\build`. Retire every active
+  command using mutable `AppData`, project `.exe` files or Playwright.
+- Keep signing, external CAS admission, calibration, candidate construction,
+  promotion and production authority false in every local builder artifact.
+
+Reason:
+
+The workstation has no administrator entitlement and Defender ASR has already
+blocked generated executables. Neither `AppData` staging nor elevation is
+needed for this workflow. Explicit receipt and trust inputs also remove two
+demonstrated local P1 defects: the scrubbed ambient runtime receipt made the
+CLI unusable, and temporary process-global trust environment could race other
+verifier threads. The final Security P2 corrections remove partial-explicit
+fallback ambiguity, prove the immutable trust binding under concurrent ABA and
+make failure telemetry show the actually required isolated command.
+
+Rejected alternatives:
+
+- Ask the user repeatedly for admin, ACL, Defender or sandbox permission.
+- Reuse the obsolete v9 command or an `AppData` publisher wheelhouse.
+- Build or launch a project `.exe`, Playwright runtime or browser automation.
+- Let the local builder own a private signing key, write the external CAS/HEAD
+  or relabel its unsigned output as calibration/production evidence.
+- Hide the earlier parallel publication failures; they remain negative
+  execution evidence and were replayed sequentially in fresh namespaces.
+
+Canonical local evidence:
+
+- final focused matrix: `109 passed`;
+- final integrated EEX/workflow matrix: `286 passed, 1 deselected`;
+- runtime/packaging matrix before the final narrow trust-API P2 delta:
+  `180 passed, 12 skipped, 2 deselected`;
+- candidate publication matrix: `181 passed, 2 skipped`;
+- external-CAS/publication matrix: `200 passed`;
+- final wheels W/X: 86 members, 483,369 bytes, byte-identical SHA-256
+  `07b8228426c2857b30682228181245a7d2367cb31add87a1580f54388ce3b136`,
+  embedded source revision
+  `691139df0d2b941823d9c80c3825440a28d1af1d3095ae50f6330a23c130f15e`;
+- both final wheel contract audits pass with `promotion_eligible=false`;
+- targeted Ruff pass, `git diff --check` exit 0, staged count 0, LT/CT and
+  Power BI scope violations 0;
+- protected `data/eex_forwards_history.parquet` SHA-256 remains
+  `21ba73e70b6a16e88ba4c7d21985eafbdbc8efa2641ebe5d97c74b33f64e4013`.
+
+Independent roast and residual blockers:
+
+- Security final delta reports P0=0, P1=0 and P2=0. Local GO is limited to a
+  sealed, isolated, unsigned and quarantined EEX handoff.
+- IT/Operations reports no local P0/P1. Quant/Data reports no local P0/P1.
+- Production P1 remain: import-before-self-admission, no freshly assembled and
+  admitted installed runtime for these exact wheel bytes, process supervision
+  and complete logs, independent signer and builder-inaccessible CAS/WORM/HEAD,
+  Windows CI/ASR, SBOM/provenance, observability and active-runtime rollback.
+- Quant/Data retains external P1 for official EEX product semantics, external
+  signature/CAS authority, multi-origin rolling-origin evidence and future
+  sealed T057.
+- No data, holdout, candidate or production promotion occurred. Monthly solver
+  authority, LT/CT separation and OMPEX benchmark-only status are unchanged.
+  Production remains strict `NO_GO`.
+
+## D-20260729-176 - Bind CH hard levels to verified EEX PIT vintages and enforce repo-local standard-user runtime paths
+
+Decision:
+
+- In monthly-solver mode, derive the CH `ForwardSnapshot` directly from the
+  exact signed-catalog-verified PIT vintage selection. Do not read the parallel
+  `inputs.eex_report_path` as a second hard-level authority.
+- Preserve authenticated vintage `quote_id`, revision, acquisition, snapshot
+  and source-document identities through solver constraints.
+- Admit `EEX_VINTAGE` for hard constraints only after exact archived-workbook
+  hash/reparse/date/price/physical-lineage checks. Keep its local
+  `promotion_eligible=false` until independent external-CAS admission exists.
+- Freeze prospective workbook market/date/product/quote-convention inventory
+  in a canonical caller-hash-bound spec. Require a signed trusted-time receipt,
+  strict journal genesis/extension and a fully verified cumulative prior
+  catalog for revisions.
+- Reject same-date product-set change until explicit governed tombstones or a
+  schema migration exist.
+- Require exact prospective settlement parser config and physical quote
+  inventory replay before a catalog source can become CH hard-level authority;
+  legacy catalog configs remain non-hard-level.
+- Use stable bounded + ZIP-preflight reads for historical replay, forward
+  validation, manifest verification and XLSX/UNC/exact forward loading.
+- Make `scripts.run_workspace_local` reject launcherless runtime prefixes,
+  wheelhouses, wheels, manifests, dependency roots and receipts outside repo
+  `build/`. Permit only canonical root `uv.lock` as the path exception.
+
+Reason:
+
+The independent Quant roast demonstrated a P0 authority split: a signed PIT
+history could be validated while CH hard constraints still came from a
+separate workbook. Security and IT/Operations also demonstrated that
+caller-readable `AppData` build paths were inconsistent with the managed
+standard-user contract and repeatedly surfaced as workstation permission
+prompts. Both defects were locally correctable without admin rights.
+
+Rejected alternatives:
+
+- Validate the PIT history but continue sourcing hard CH levels from a second
+  workbook.
+- Recompute vintage quote IDs inside `ForwardSnapshot`.
+- Treat a local signed catalog as external-CAS or promotion authority.
+- Preserve an omitted same-date quote silently as the selected previous value.
+- Ask the user for admin rights, elevation, Defender/ASR exclusions, ACL
+  takeover or mutable `AppData` staging.
+- Repair or reuse negative pytest namespaces, or count a parent-timeout run as
+  green.
+
+Canonical local evidence:
+
+- standard-user runner regression: `17 passed`;
+- EEX/PIT/solver end-to-end: `74 passed` plus the focused vintage-to-constraint
+  proof `1 passed`;
+- intake adversarial suite after final Quant/Security corrections: `14 passed`;
+- expanded EEX/solver/package matrix on terminal bytes: `189 passed`;
+- runtime/packaging: `175 passed, 12 skipped, 2 deselected`;
+- split publication/CAS/candidate: `181 passed, 2 skipped` and `200 passed`;
+- Ruff: pass;
+- protected parquet SHA-256 unchanged at
+  `21ba73e70b6a16e88ba4c7d21985eafbdbc8efa2641ebe5d97c74b33f64e4013`.
+
+Invariants and blockers:
+
+- This slice normalized fixtures; it did not capture a fresh provider EEX
+  workbook or create independent trusted time/external CAS authority.
+- Provider contract/ISIN/session/calendar semantics, absent explicit quote
+  status/tombstones, excluded weeks and transitive parser/runtime provenance
+  remain explicit model/data risks. This adapter is settlement-only and rejects
+  ambiguous zero.
+- Rolling-origin/T057, probabilistic/scenario evidence and a fresh CH candidate
+  remain unexecuted.
+- Monthly solver authority, LT/CT separation and OMPEX benchmark-only status
+  remain unchanged. No commit or promotion occurred. Production is strict
+  `NO_GO`.
+
+## D-20260729-175 - Select attempt4 as local-only CH hourly diagnostic
+
+Decision:
+
+- Use a caller-hash-bound reusable CH hourly capture contract v2 for local
+  diagnostics while retaining the historical v1 route unchanged.
+- Select only attempt4 in the local supersession registry. Attempts 1-3 are
+  non-selectable negative evidence and must not be repaired or relabelled.
+- Enforce exact PREPARE/FINALIZE keys and false claims. V2 emits
+  `ch_lt_hourly_local_transform_record.v2`, never builder-compatible
+  `capture-spec.json`.
+- Explicitly forbid `EXTERNAL_ADMISSION_INPUT_CANDIDATE`; record unattested
+  curl transport and disabled certificate revocation checking.
+- Report 720 native hourly values and 2,880 validated in-memory stepwise proxy
+  rows. Never describe the proxy as materialized or native quarter-hour truth.
+- Supersede laptop runner receipt v2 with v3: run IDs are at most 16
+  characters and pytest uses fresh `build/wpt-<id>` while receipts/caches stay
+  under `build/workspace-local-runs/<id>`.
+- Keep production strict `NO_GO` and every scientific/publication/promotion
+  authority false.
+
+Reason:
+
+Attempt1 demonstrated the date-hardcoded v1 window. Attempt2 demonstrated
+misleading inherited receipt identity. The first Security roast of attempt3
+then demonstrated prepared-claim injection, a non-transitive builder boundary
+and unattested curl/CA execution. Quant/Data also showed that one ex-post
+30-day summer pull is not PIT, product-identified, multi-season or prospective
+truth. Separately, long pytest roots caused Windows false failures that short
+repo-local v3 roots close without elevation or ACL changes.
+
+Rejected alternatives:
+
+- Overwrite attempts 1-3, reuse failed receipts or count nonterminal matrices.
+- Ask for admin, ACL takeover or Defender/ASR exceptions.
+- Sign/copy local bytes and call the missing PIT/product/transport evidence
+  cured.
+- Feed the local transform record to the acquisition builder.
+- Treat 2,880 proxy rows as independent quarter-hour observations.
+- Use this capture for model selection, T057, future holdout or promotion.
+
+Canonical local evidence:
+
+- attempt4 contract ID
+  `df2b6edfbd3d75c58813345361a9b405ff8de5e5c7718d59f33ae8ee78978e09`,
+  document SHA-256
+  `6542043c198804b46d449051d915eb0f739c969772494adfcd600f649ff1a061`;
+- provider body SHA-256
+  `1ce62eff13e6e596a3a7663349654a32814a63ac2c172d2d56160a6930426537`;
+- attempt4 receipt SHA-256
+  `aa4d5a1d37b448a1dc268e271d422082c0260cd2e6a00c612e5420c68461a55c`;
+- supersession registry ID
+  `3d66ca81cd535f6b6c94beafbd418b1007502e7ade309ae002f8fd20be5d7a5e`,
+  document SHA-256
+  `ce283678e195a22e50def7d8526f74997669906268c338c836b162daa1d644bf`;
+- affected tests: `18 passed`; expanded acquisition/package matrix `126
+  passed, 1 deselected, 1 known warning`; Ruff pass;
+- runner-v3 baselines: `30 passed`, publication/CAS/candidate `498 passed, 2
+  skipped`, runtime/packaging `104 passed, 12 skipped, 2 deselected`.
+
+Residual invariants and blockers:
+
+- Local curl executable/version/hash, CA bytes during the full process,
+  trusted time, original `available_at`, revision history, product auction and
+  session identity, independent signature, immutable namespace and external
+  CAS/fresh head are not attested. External admission requires a separately
+  qualified recapture and chain.
+- Coverage is 30 summer days only. It is not annual shaping, rolling-origin,
+  sealed future holdout or uncertainty evidence.
+- The runner remains same-user and non-authoritative; stdout/stderr/test counts,
+  interpreter/runner identity and descendant supervision are outside receipts.
+  Windows CI/ASR, SBOM, observability/SLO and rollback remain production gates.
+- Fresh governed CH EEX forward PIT bytes remain absent. Monthly solver
+  authority, LT/CT separation, OMPEX benchmark-only and T057 supersession are
+  unchanged. No candidate or production transition occurred.
+
+## D-20260729-174 - Admit workspace runner v2 for local non-authoritative commands
+
+Supersession note: D175 retains this historical evidence but supersedes v2 for
+new local test commands with receipt schema v3 and the short
+`build/wpt-<id>` pytest root.
+
+Decision:
+
+- Retain D173 as the root standard-user policy and implement its allowlisted
+  Python build/audit/test path through `scripts.run_workspace_local`.
+- Require the literal canonical source/cwd/Git root, single-use repo-local
+  namespaces, preflight receipts, offline mutable caches and terminal failure
+  receipts.
+- Accept only a closed CPython grammar and current/repo-runtime interpreter;
+  reject shells, direct project executables, `-c`/script bypasses and
+  Playwright.
+- Scrub ambient Python/pytest injection, every known FMV/PFC data-root alias,
+  credentials, mTLS and production/promotion/runtime authority variables.
+- Use receipt schema `pfc_lt_workspace_local_execution.v2`; exit zero means
+  `TARGET_EXIT_ZERO_NOT_AUTHORITY`, with five authority flags false.
+- Keep Conda exact-prefix creation, wheel construction, installed v19
+  admission and independent CI as separate governed workflows.
+
+Reason:
+
+The user must not be asked for administrator or sandbox permission for normal
+work inside the canonical repo. Documentation alone did not prevent implicit
+AppData/cache writes or stale pytest ACL deadlocks. Independent roasts then
+demonstrated bypasses, ambient-authority leakage and incomplete data-root
+scrubbing; the v2 runner closes those findings without claiming a production
+security boundary.
+
+Rejected alternatives:
+
+- Rebuild obsolete v9 or reuse its `AppData` publisher wheelhouse.
+- Request admin, ACL takeover, Defender/ASR exclusions or repeated approvals.
+- Redirect `HOME` wholesale, reuse stale basetemps, or repair failed ACL
+  namespaces in place.
+- Treat target exit zero as scientific/production PASS.
+- Persist raw argv/secrets, inherit mTLS/publisher authority or accept generic
+  shells/Playwright.
+- Make a laptop literal-root helper the CI runner or installed v19 admission
+  boundary.
+
+Canonical evidence:
+
+- runner SHA-256
+  `9b2ceecfc6d903650ffd90871e3ec93cbd616329fb41fd5c0ae281e79bee7878`;
+- tests SHA-256
+  `d1d525ed50192b32c677d6feb4709221b833ba08b5847618dd0d7abe5c0cfc87`;
+- final pytest aa: `14 passed`, receipt SHA-256
+  `27f93feb9c420210f84ed0ee9ba1bae4f4ac50b3d676f5e0bbf5a36a35782299`;
+- final Ruff ab: pass, receipt SHA-256
+  `9f113f7b69ef6f8895fcb4e91ba1fda79c3743de0eade631b2e8b0e2e532fd07`;
+- `-c` bypass w rejected, receipt SHA-256
+  `357b59d3f8a3e2a4d190d58aca2e55ae922da0f5b1691513f20dd8f9832310e0`;
+- Playwright x rejected, receipt SHA-256
+  `4d9544dd3902188f4e44bebe6f700c8e8b3ad17d69c1b58362957e01775e4076`;
+- final independent roasts: Security, IT/Operations and Quant/Data report no
+  P0/P1 for the local non-authoritative slice.
+
+Residual invariants and blockers:
+
+- A malicious same-user junction swap during child execution is outside this
+  harness trust model; it cannot be production evidence.
+- Stdout/stderr remain terminal evidence and are not independently embedded in
+  the receipt. Exact commands/results are retained in the session handoff.
+- V19 remains the current local-quality runtime. All external signed CAS/WORM,
+  import-before-admission, atomic recovery, Windows CI/ASR, SBOM,
+  observability/SLO and rollback blockers remain.
+- Monthly solver authority, LT/CT separation, OMPEX benchmark-only status,
+  T057 supersession and strict production `NO_GO` are unchanged. No data,
+  candidate, holdout or production promotion occurred.
+
+## D-20260728-173 - Make repo-local standard-user execution a root invariant
+
+Decision:
+
+- Add a standard-user workstation execution contract to the root `AGENTS.md`.
+- Require the cwd and Git top-level to equal
+  `C:\Users\jbattaglia\PFC_LT` before every shell action.
+- Keep all mutable Conda prefixes, wheelhouses, caches, `TEMP`/`TMP`, pytest
+  basetemps and runtime staging below the canonical workspace, normally under
+  `build/`.
+- Permit existing user-level interpreters only as read-only executors; do not
+  create or mutate environments outside the workspace.
+- Treat any essential external writable authority, network entitlement,
+  administrator right or security-policy exception as a documented blocker.
+  Do not repeatedly ask the workstation user for elevation.
+- Retire the old v9 assembly invocation that referenced an `AppData`
+  wheelhouse. V19 remains the current local-quality runtime.
+
+Reason:
+
+The permission prompt was caused by a mutable path outside the governed
+workspace, not by a scientific or runtime need for administrator rights. The
+FMV laptop is deliberately operated without admin entitlement, and Defender
+ASR has already blocked generated project executables. A repo-local build
+boundary is both compatible with the workstation policy and easier to audit.
+
+Rejected alternatives:
+
+- Write publisher inputs, caches or temporary bytes under `AppData` or
+  `ProgramData`.
+- Create a new external user Conda environment merely to avoid a repo-local
+  cache or prefix.
+- Request admin elevation, ACL takeover, Defender/ASR exclusion or repeated
+  sandbox approval for ordinary workspace operations.
+- Build or launch project `.exe` files, Playwright, or reuse the old `H:` repo.
+- Rebuild obsolete v9 when the admitted local-quality successor is v19.
+
+Invariants and residual blockers:
+
+- This execution rule does not grant production authority and does not weaken
+  the v19 import-before-admission, signed external CAS/WORM, atomic recovery,
+  Windows CI/ASR, SBOM, observability or rollback blockers.
+- Monthly solver authority, LT/CT separation, OMPEX benchmark-only status,
+  T057 supersession and strict production `NO_GO` remain unchanged.
+- No data, candidate, holdout or production promotion was consumed.
+
+## D-20260728-172 - Bind the top-level caller-held receipt in runtime v19
+
+Decision:
+
+- Supersede v18 for current local selection with v19.
+- After canonical receipt policy validation and runtime-prefix derivation,
+  reject the top-level runtime receipt itself when
+  `paths_overlap_by_identity(receipt_path, prefix)` is true.
+- Retain v18 unchanged as the independently roasted artifact that demonstrated
+  the lifecycle, stable-read, nested-alias and exact-three-root closures.
+- Accept the isolated v19 regression and installed admission as targeted
+  closure evidence. Do not misstate the ACL-affected full focused v19 attempts
+  as either a passing matrix or a functional failure.
+
+Reason:
+
+The v18 Security re-roast found that nested caller-held evidence was physically
+separated from the prefix but the root receipt was only described as
+caller-held. The v19 check closes that omission before executable and nested
+receipt validation. Corporate Windows pytest temporary-directory ACL failures
+then made the full focused reruns non-conclusive; the pure regression avoids
+that unrelated filesystem harness dependency.
+
+Rejected alternatives:
+
+- Treat the real v18 receipt's currently external path as a permanent policy.
+- Use lexical ancestry instead of physical path identity.
+- Change ACLs, request elevation, delete inaccessible evidence namespaces or
+  report the non-conclusive runs as green.
+- Patch v18 in place or reuse its receipt for changed wheel bytes.
+
+Canonical local evidence:
+
+- wheels S/T: 84 members / 464,412 bytes, byte-identical SHA-256
+  `875c75a229cc8d97ecaa2948d831453549542502adba103b84eb176158f0f92f`,
+  source revision
+  `05fb283040fea0a44de9be2565f1b6128b5c21614a8a994e4936e76a88825553`;
+- Python manifest SHA-256
+  `037a73b61e45a3a6d2cc87addd6b2e786404d5a0a74c658b26fae24f50ad01fb`;
+- prefix receipt SHA-256
+  `ac8461b1d67aab3249e163f40910f2e0c15895dd6fa7c6f49135bebc80f5cd39`,
+  prefix ID
+  `35ba7064504f3098be553e9f4b802bd29f50d0118bb41f911b7d8d95ced77f01`;
+- runtime receipt SHA-256
+  `c55ebc97dc006aa93d7043f8b5944f8c336187e22db649c6fdda612c4ca4772e`,
+  closure tree
+  `0cf67c43b3246c0d4d048387fc8d55580a25ecda3407e2e11e6abe534c689af9`;
+- exact three-entry `sys.path`; installed admission exit 0 in 138.1 seconds;
+- root-receipt physical-alias regression `1 passed`; Ruff passes;
+- last terminal complete matrices are v18: `53`, `157/12/2`, `267`,
+  `116/2`, `65`, and `66 + 59`.
+
+Residual invariants and blockers:
+
+- Security reports no new P0/P2 in the v19 code delta; P1
+  import-before-self-admission remains open. Generated non-runtime files and
+  independently signed provenance remain external production concerns.
+- No data, candidate or production transition occurred. Monthly solver
+  authority, LT/CT separation and OMPEX benchmark-only status are unchanged.
+  Production remains strict `NO_GO`.
+
+## D-20260803-206 - Admit AFRY 2026 Q2 as a restricted local benchmark catalog only
+
+Decision:
+
+- Register the annual and hourly AFRY Switzerland 2026 Q2 workbooks plus the
+  matching Quarterly Update Note and Commodity and Modelling Annex as one
+  restricted, hash-bound local evidence release.
+- Use the content-addressed PyArrow catalog v3 as the sole agent interface.
+  Raw documents and derived numeric values remain outside Git and outside RAG.
+- Admit the catalog only as `PASS_LOCAL_INTEGRITY_ONLY` with decision state
+  `NO_GO_MODEL_AND_PRODUCTION`. It may support structural and hour-slot
+  diagnostics, benchmark comparisons and future teacher-candidate research.
+- Keep the CH monthly solver as sole level authority. Do not map AFRY scenario
+  labels to FMV scenarios or probabilities, construct timestamps, infer
+  quarter-hours, train a model, or promote production from this evidence.
+- Select the byte-identical v6-A/v6-B bundles with content ID
+  `a7ca9238ad715e67269c73a862607c3a3301358821818bc5d2fa4f1581c54454`
+  as current local evidence. Earlier catalog attempts are superseded.
+
+Reason:
+
+The reports materially resolve scenario and model semantics. In particular,
+`High` shares Central structural demand/capacity assumptions and is not an
+FMV fast-transition or Swiss policy-compliance proxy. The modelling annex
+supports use of BID3 hourly outputs as an external benchmark, not observed CH
+truth. The workbooks reconcile internally and expose useful term-dependent,
+weather-conditional and negative-price diagnostics, but lack an admitted
+delivery-calendar mapping, probability calibration and independent future
+validation.
+
+The implementation now captures each workbook once into immutable process
+memory, hashes those exact bytes, validates the captured OOXML container,
+parses only the capture and rehashes it after materialization. It rejects formulas, macros,
+active content, path traversal, encryption, per-member and aggregate ZIP-bomb
+conditions. The annual contract is release-anchored, contiguous and reconciled
+against the exact future-year domain observed globally and per scenario.
+Published reuse verifies the exact member set, catalog content
+identity, LF checksum sidecar, artifact sizes/hashes, authority invariants and
+producer provenance. The consumer verifier single-reads artifact bytes and
+recalculates annual and structural audits from the Parquet payloads instead of
+trusting their JSON assertions. Consumer access re-hashes the exact captured
+bytes handed to PyArrow. Producer source hashes are checked before and after the
+run and incorporated with the exact interpreter plus a double-scanned full
+runtime-tree receipt into the content ID.
+
+Rejected alternatives:
+
+- Copy the PDFs or spreadsheet values into `docs/`, a wiki, embeddings or an
+  external vector database.
+- Treat vendor scenarios as probabilities, map `High` to accelerated Swiss
+  renewables, or call the policy gap purely political without scope
+  reconciliation.
+- Feed AFRY price levels into the monthly solver, infer local/UTC timestamps
+  from representative hours, or derive 15-minute shapes from hourly data.
+- Accept a plain `PASS` that conflates local integrity with model/production
+  admission, reuse a catalog after checking only its manifest, or omit the
+  exact producer code from provenance.
+- Accept build pairs created while source code changed concurrently. Catalogs
+  `21d426f9...`, `ee5d29f1...`, `e9398a2e...`, `0bfc1f7a...` and
+  `58cab90c...` and `d193d59a...`, plus one refused v2 attempt,
+  remain superseded local diagnostic evidence only.
+
+Canonical local evidence:
+
+- AFRY source SHA-256 values are recorded in
+  `AFRY-CH-2026-Q2-SOURCE-REGISTRATION.json`; supporting semantic evidence and
+  immutable non-authority rules are in
+  `AFRY-CH-2026-Q2-SEMANTIC-CONTRACT.json`.
+- v6-A/v6-B each contain 11 byte-identical closed members. Catalog SHA-256 is
+  `f7aa9bd4d3cc0f13851225809b0271a138bb733c51fd563d9594508b32f65c9a`;
+  `catalog.sha256` is a canonical 65-byte LF sidecar.
+- Independent bundle verification passed twice; producer binding, schemas,
+  exact group continuity and annual additive zero-mean checks pass.
+- Targeted AFRY matrix: `72 passed`; adjacent AFRY/scenario/LT-package/import
+  matrix: `149 passed, 4 skipped`; Ruff passes.
+- Security roast fixed incomplete existing-CAS verification, ambiguous
+  authority semantics, cross-platform checksum newlines, OOXML path
+  normalization and diluted per-member ZIP-bomb exposure.
+- IT/Operations roast fixed hard-coded 2026 provenance, unbound/mutable
+  producer code, an affaiblissable annual horizon and incomplete runtime-byte
+  closure. A real concurrent edit was detected and failed closed.
+- Quant/Data roast fixed the risk of treating vendor model documentation as
+  observed truth, duplicate structural keys, implicit scenario weights and
+  over-broad status lineage. Calendar, probability, mapping, monthly
+  neutrality, rolling-origin and future-holdout limitations remain explicit
+  `NO_GO` gates.
+- Final v6 re-roasts report Security `0/0/0` and Quant/Data `0/0/0` local
+  P0/P1/P2. IT/Operations reports `0/0/3`: missing direct concurrent-rename
+  fault injection, orphan-staging startup reconciliation/quarantine and a
+  durable structured failure receipt. These are accepted only as next-batch
+  local operations hardening under model/production `NO_GO`, never as
+  production admission.
+
+Invariants not to break:
+
+- Restricted AFRY raw or derived numeric values never enter Git, docs, logs,
+  prompts intended for external services, or RAG.
+- AFRY is benchmark/teacher-candidate evidence only until a distinct approved
+  mapping, rolling-origin comparison and new externally frozen future holdout
+  exist. T057 remains sealed and cannot be reused.
+- Monthly solver authority, LT/CT separation, OMPEX benchmark-only status and
+  production `NO_GO` remain unchanged.
+- Annual July refreshes create new immutable release registrations and two
+  independently materialized bundles; they never overwrite prior releases.
+
+## D-20260803-207 - Admit AFRY calendar-free shape diagnostics as local descriptive evidence only
+
+Decision:
+
+- Admit the AFRY shape diagnostic bundle only as
+  `PASS_LOCAL_DIAGNOSTIC_ONLY` with decision state
+  `NO_GO_MODEL_AND_PRODUCTION`.
+- Use ordered representative-slot blocks S10-S14 and S18-S21 only as abstract
+  vendor slots. Do not label them Swiss clock hours or infer UTC,
+  Europe/Zurich, month, DST, leap-year or 15-minute semantics.
+- Permit additive block means, late-minus-central spread, amplitude,
+  roughness, negative-price shares, adjacent available-year changes and
+  unweighted weather min/median/max as descriptive diagnostics only.
+- Keep EEX and ENTSO-E Databricks evidence as explicit external prerequisites
+  for empirical validation. Legacy local or synthetic substitutes remain
+  forbidden. T057 remains sealed.
+- Select the byte-identical v3-A/v3-B diagnostic bundles with content ID
+  `8ef0290502359b6e1e16093bcf34e6400d8e74dad23f9b1baa091e0a81a372f6`
+  and source catalog ID
+  `a7ca9238ad715e67269c73a862607c3a3301358821818bc5d2fa4f1581c54454`
+  as current local diagnostic evidence. Earlier diagnostic bundles are
+  superseded.
+
+Reason:
+
+The AFRY hourly output contains material term and weather structure that can
+improve hypothesis design for Swiss LT shaping. Across all four vendor
+scenarios, the descriptive diagnostics show deepening followed by
+recompression and non-monotone negative-price shares for every weather
+pattern, with non-zero weather dispersion. These patterns challenge a static
+shape assumption but do not prove observed Swiss dynamics, causal storage or
+solar effects, scenario likelihoods, or predictive skill.
+
+The verifier now requires the caller's independent source-catalog anchor,
+replays all derived outputs from the two exact source artifacts in memory,
+and compares the three Parquet frames plus audit exactly. It binds the current
+contract, the diagnostic module, CLI, source-catalog module, repo-local Python
+executable and full runtime dependency tree. Cwd and Git root must be the
+canonical C: workspace; source and output must be disjoint; reparse ancestry
+is rejected; concurrent identical publication is adopted only after
+verification; invalid final slots are quarantined rather than deleted.
+
+Rejected alternatives:
+
+- Interpret vendor representative slots as Swiss delivery timestamps.
+- Treat scenarios or weather years as probabilities, interpolate missing
+  years, or turn descriptive patterns into causal claims.
+- Feed AFRY levels into the monthly solver or let hourly diagnostics rewrite
+  monthly means.
+- Accept self-consistent manifest hashes without deterministic replay, bind
+  only Python version strings, use a mutable non-canonical checkout, or delete
+  an invalid content-addressed slot without preserving forensic evidence.
+- Start rolling-origin selection before governed EEX and ENTSO-E Databricks
+  inputs and a new independently frozen future holdout exist.
+
+Canonical local evidence:
+
+- Source catalogs v6-A/v6-B: 11 byte-identical members, ID
+  `a7ca9238ad715e67269c73a862607c3a3301358821818bc5d2fa4f1581c54454`.
+- Diagnostic v3-A/v3-B: six byte-identical members, ID
+  `8ef0290502359b6e1e16093bcf34e6400d8e74dad23f9b1baa091e0a81a372f6`;
+  440 group rows, 88 weather summaries and 420 adjacent-term changes.
+- Final integrated matrix: `173 passed, 4 skipped`; dedicated diagnostic
+  matrix: `24 passed`; Ruff and JSON validation pass. The dedicated matrix
+  also enforces future-agent routing from `AGENTS.md` to the current AFRY
+  context, blocker and no-substitution invariants.
+- Independent final re-roasts report Security P0/P1 `0/0` and IT/Operations
+  P0/P1 `0/0` for the local diagnostic boundary. External signed CAS/WORM,
+  CI, retention, observability and production rollback remain outside this
+  local admission.
+
+Invariants not to break:
+
+- The CH monthly solver remains sole level authority; AFRY and OMPEX remain
+  benchmark-only.
+- Restricted numeric values remain outside Git, docs, RAG and external
+  prompts. Documentation may retain only provenance and qualitative results.
+- No model training, selection, candidate assembly or production promotion
+  may cite this local diagnostic as admission evidence.
+- Batch 4 remains blocked until governed EEX and ENTSO-E Databricks access,
+  Swiss calendar semantics, rolling-origin evidence and a new future holdout
+  are available.
+
+## D-20260728-171 - Supersede v17 with roast-hardened local runtime v18
+
+Decision:
+
+- Retain v17 as the first locally admitted archive-payload-derived runtime, but
+  supersede it for current local execution with v18.
+- Reject every Conda package payload whose basename indicates any pre/post
+  link or unlink lifecycle script, with hyphen or underscore spelling.
+- Use the shared exact double-read, mono-link file primitive for archive-lock
+  and runtime-builder reads, and use physical path identity for every
+  caller-held artifact required outside the runtime prefix.
+- Remove nonexistent `python311.zip` from `python311._pth`, receipt `sys_path`
+  and installed admission. The exact local runtime path is now `Lib`, `DLLs`
+  and one governed application root only.
+- Make v18 the current local-quality runtime only. Preserve the unconditional
+  `production_authorization=false` and do not interpret local hardening as a
+  production trust boundary.
+
+Reason:
+
+The v17 Security and IT/Operations re-roasts confirmed the archive-to-prefix
+byte-provenance closure but demonstrated future lifecycle-script execution,
+build-time stable-read, physical-alias and phantom ZIP shadowing risks. These
+were all correctable within the standard-user workspace. Fresh wheels, a fresh
+offline Conda prefix and a fresh runtime were required because the packaged
+contract and `python311._pth` bytes changed.
+
+Rejected alternatives:
+
+- Leave the v17 P2 findings as documentation-only debt.
+- Permit lifecycle scripts because none exists in the current 19-package set.
+- Treat lexical ancestry as equivalent to physical identity on Windows.
+- Keep an absent ZIP path for CPython convention despite the pre-import
+  shadowing surface.
+- Repair v17 in place, reuse its receipt for changed bytes, fetch packages,
+  request admin rights or weaken Defender/ASR.
+
+Canonical local evidence:
+
+- reused archive-lock v2 SHA-256
+  `346c6edcce71dea86816ec6938a1d6a87872a3cd30a01984c8577e7800c33fdb`
+  over 19 archives / 38,648,096 bytes;
+- wheels Q/R: 84 members / 464,396 bytes, byte-identical SHA-256
+  `5b2f993ef7d9408458ec6cb445a6daef4deace50666b8f12b695bc8b1ed26ed2`,
+  source revision
+  `756d0a594f868994bb532c25cf3f45060551f5c596a88e8ef3c479496425cf34`;
+- v18 Python manifest SHA-256
+  `05c36bc0947cf737e76276eab311a946089ef26f69d968799666ee48ab636a2a`,
+  6,285 files;
+- v18 prefix receipt SHA-256
+  `08e1d492917fd6a99d479f789ceb5f011a91bd53a779f74df5574927ff901bcc`,
+  prefix ID
+  `1d54ae5e598e0b8081ed3ee8e2932c5dcfab5398fa58a9d39cfdae8f66fa10e4`;
+- v18 runtime receipt SHA-256
+  `1124ba70f8e2903fe801a1ff5e39dd5df2afa362a38996a8dc7105895f29334d`,
+  8,488-file closure tree
+  `881abd1ebc68d38961dbb7bcf384d3aa042184bdc3c8efb7c00fde19a8ebf900`;
+- installed admission exit 0 in 224.2 seconds, with exact three-entry
+  `sys.path` and one governed application root;
+- matrices: focused `53 passed`, runtime/packaging `157 passed, 12 skipped,
+  2 deselected`, governed release `267 passed`, atomic `116 passed, 2 skipped`,
+  candidate `65 passed`, publication `66 + 59 passed`; Ruff passes.
+
+Residual invariants and blockers:
+
+- Import-before-self-admission remains a P1. External bootstrap/read-only
+  execution identity, signed CAS/WORM, atomic prefix construction, execution
+  sidecars, Windows CI/ASR, SBOM/provenance, observability and rollback remain
+  production blockers.
+- The 406 generated `pip` files are declared non-runtime and outside the exact
+  `sys.path`; production must still remove or reproducibly attest them.
+- No prospective data, T057 outcome, candidate or production promotion was
+  consumed. Monthly solver authority, LT/CT separation and OMPEX
+  benchmark-only status remain unchanged. Production is strict `NO_GO`.

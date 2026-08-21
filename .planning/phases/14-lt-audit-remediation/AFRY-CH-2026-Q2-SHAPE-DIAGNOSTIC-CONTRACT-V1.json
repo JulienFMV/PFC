@@ -1,0 +1,62 @@
+{
+  "schema_version": "fmv-afry-shape-diagnostic-contract-v1",
+  "release_id": "AFRY_CH_2026_Q2_V100",
+  "purpose": "calendar-free restricted vendor shape diagnostics and stress-hypothesis design",
+  "slot_blocks": {
+    "central_block": [10, 11, 12, 13, 14],
+    "late_block": [18, 19, 20, 21],
+    "clock_hour_interpretation_authorized": false
+  },
+  "permitted_metrics": [
+    "additive block means after annual zero-mean normalization",
+    "late-minus-central block spread",
+    "shape amplitude",
+    "cyclic adjacent-slot roughness",
+    "negative-price shares from the registered hourly profile",
+    "adjacent-available-delivery-year changes without interpolation",
+    "unweighted weather-pattern min/median/max sensitivity"
+  ],
+  "forbidden_interpretations": [
+    "UTC or Europe/Zurich timestamps",
+    "Swiss clock-hour labels",
+    "month, quarter, weekday, holiday, DST or leap-day mapping",
+    "15-minute or settlement-period inference",
+    "probabilities or likelihood ordering for vendor scenarios or weather patterns",
+    "causal effects of storage, solar, interconnection, policy or bidder behaviour",
+    "replacement of EEX monthly solver levels",
+    "model training, selection, candidate assembly or production promotion"
+  ],
+  "authorities": {
+    "calendar_mapping_authorized": false,
+    "probability_weighting_authorized": false,
+    "monthly_level_authority": false,
+    "model_input_authorized": false,
+    "production_authorized": false
+  },
+  "external_dependencies": {
+    "eex_databricks": "PENDING_GOVERNED_ACCESS_REQUIRED_FOR_LEVEL_AND_EMPIRICAL_VALIDATION",
+    "entsoe_databricks": "PENDING_GOVERNED_ACCESS_REQUIRED_FOR_FUNDAMENTAL_AND_CROSS_MARKET_VALIDATION",
+    "legacy_local_eex_or_entsoe_substitution_authorized": false,
+    "synthetic_substitution_authorized": false
+  },
+  "local_integrity_boundary": {
+    "canonical_workspace": "C:/Users/jbattaglia/PFC_LT",
+    "exact_cwd_and_git_root_required": true,
+    "source_catalog_caller_anchor_required": true,
+    "source_catalog_and_output_must_be_disjoint": true,
+    "current_contract_and_producer_bytes_reverified": true,
+    "repo_local_runtime_executable_hash_bound": true,
+    "repo_local_runtime_dependency_tree_bound": true,
+    "symlink_or_windows_reparse_authorized": false,
+    "stable_identity_before_and_after_semantic_reads_required": true,
+    "exact_member_hash_schema_row_and_authority_closure_required": true,
+    "numeric_and_relational_invariants_replayed": true,
+    "all_outputs_recomputed_from_source_inputs_in_memory": true,
+    "verification_writes_files": false,
+    "bounded_input_sizes_and_rows_required": true,
+    "concurrent_identical_publication_may_be_adopted_after_verification": true,
+    "invalid_existing_content_addressed_slot_is_quarantined_not_deleted": true,
+    "external_signed_cas_or_worm_authenticity_proven": false
+  },
+  "admission_after_this_contract": "LOCAL_DIAGNOSTIC_ONLY_NO_GO_MODEL_AND_PRODUCTION"
+}

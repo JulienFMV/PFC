@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<GL_MarketDocument xmlns="urn:iec62325.351:tc57wg16:451-6:load-document:3:0">
+  <mRID>fixture-load-ch</mRID>
+  <type>A65</type>
+  <process.processType>A16</process.processType>
+  <outBiddingZone_Domain.mRID>10YCH-SWISSGRIDZ</outBiddingZone_Domain.mRID>
+  <TimeSeries>
+    <mRID>load-series</mRID>
+    <businessType>A04</businessType>
+    <objectAggregation>A01</objectAggregation>
+    <curveType>A01</curveType>
+    <quantity_Measure_Unit.name>MAW</quantity_Measure_Unit.name>
+    <Period>
+      <timeInterval><start>2026-07-01T00:00Z</start><end>2026-07-01T04:00Z</end></timeInterval>
+      <resolution>PT60M</resolution>
+      <Point><position>1</position><quantity>7000</quantity></Point>
+      <Point><position>2</position><quantity>7100</quantity></Point>
+      <Point><position>3</position><quantity>7200</quantity></Point>
+      <Point><position>4</position><quantity>7300</quantity></Point>
+    </Period>
+  </TimeSeries>
+</GL_MarketDocument>

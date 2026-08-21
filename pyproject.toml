@@ -33,9 +33,6 @@ validation = [
   "statsmodels==0.14.6",
 ]
 
-[project.scripts]
-pfc-lt = "pfc_shaping.cli.governed_release:main"
-
 [dependency-groups]
 dev = [
   "pytest==8.4.2",

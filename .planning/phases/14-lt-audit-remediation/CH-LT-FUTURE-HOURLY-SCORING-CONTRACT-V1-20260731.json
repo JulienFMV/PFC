@@ -1,0 +1,133 @@
+{
+  "schema_version": "ch_lt_future_hourly_scoring_contract.v1",
+  "contract_id": "698af6ba9989db27d20f404d8c4c23bf2f19cacb63c41d5d80a74a81e37d45a8",
+  "status": "OUTCOME_BLIND_LOCAL_SCORING_SPECIFICATION_NO_GO",
+  "market": "CH",
+  "bindings": {
+    "prediction_functional_contract": {
+      "prediction_commitment_path": "build/ch-lt-structural-prediction-commitments/structural-dry-run-20260731T072027Z-v6-quant-contract/commitment.json",
+      "prediction_commitment_sha256": "b3b504a7820a1c781b0d0383d1279c071b41743954e80f7115a4257d8269f1c4",
+      "hourly_shape_functional_contract_sha256": "2899143a8a6bdeb8605a46c02bdb055cf9c8b29e9a7b2fc4d9f581a65085d468"
+    },
+    "estimand_contract": {
+      "path": ".planning/phases/14-lt-audit-remediation/CH-LT-ESTIMAND-AND-ECONOMIC-DESIGN-DRAFT-20260724.json",
+      "sha256": "4209931e28a7c1cf2a4224d779f73648c4c9c5eac55df0a7ba1ad872226e2931",
+      "contract_id": "da4090073a4566f662e47fa59e206e1485d683305a1134f2089ebb13a4daa344"
+    },
+    "dependence_and_power_design": {
+      "path": ".planning/phases/14-lt-audit-remediation/CH-LT-DEPENDENCE-POWER-DESIGN-DRAFT-V1-20260730.json",
+      "sha256": "005b8655b817db10e7f3c227b1c5912d545305b68e262ab82d9aa0b5817a6a91",
+      "design_id": "2147af9d2fd277a43df6f88f10dfa6c4061a7184c7b84ca0b09af5e66fa120c9"
+    }
+  },
+  "evaluation_unit": {
+    "origin_unit": "UNIQUE_ORIGIN_AS_OF_UTC",
+    "target_unit": "FULL_EUROPE_ZURICH_LOCAL_DELIVERY_MONTH",
+    "truth_grid": "NATIVE_CH_DAY_AHEAD_HOURLY_UTC_INDEX_WITH_LOCAL_CLASSIFICATION",
+    "prediction_grid_conversion": "ARITHMETIC_MEAN_OF_EXACTLY_FOUR_CONTIGUOUS_UTC_QUARTER_HOURS",
+    "primary_scenario": "central",
+    "sensitivity_scenarios": [
+      "slow",
+      "fast"
+    ],
+    "scenario_pooling": "FORBIDDEN",
+    "same_origin_same_mask_baseline_required": true
+  },
+  "point_scores": {
+    "residual_sign": "PREDICTION_MINUS_TRUTH",
+    "monthly_level": {
+      "signed_error": "MEAN_PREDICTION_MINUS_MEAN_TRUTH",
+      "absolute_error": "ABS_SIGNED_ERROR",
+      "direction": "LOWER_ABSOLUTE_ERROR_IS_BETTER",
+      "role": "LEVEL_DIAGNOSTIC_MONTHLY_SOLVER_AUTHORITY"
+    },
+    "zero_mean_hourly_shape": {
+      "prediction_centering": "PREDICTION_HOUR_MINUS_TARGET_PREDICTION_HOURLY_MEAN",
+      "truth_centering": "TRUTH_HOUR_MINUS_TARGET_TRUTH_HOURLY_MEAN",
+      "hourly_residual": "CENTERED_PREDICTION_MINUS_CENTERED_TRUTH",
+      "mae": "ARITHMETIC_MEAN_ABS_HOURLY_RESIDUAL",
+      "rmse": "SQRT_ARITHMETIC_MEAN_SQUARED_HOURLY_RESIDUAL",
+      "pearson": "SUM_CENTERED_CROSS_PRODUCT_DIVIDED_BY_SQRT_SUM_SQUARE_PRODUCTS",
+      "pearson_zero_variance": "UNSUPPORTED_NOT_ZERO_NOT_WIN",
+      "primary_metric": "MAE_EUR_MWH",
+      "directions": {
+        "mae": "LOWER_IS_BETTER",
+        "rmse": "LOWER_IS_BETTER",
+        "pearson": "HIGHER_IS_BETTER"
+      }
+    },
+    "shape_functionals": {
+      "premium_definition": "LOCAL_WINDOW_MEAN_MINUS_TARGET_MONTHLY_HOURLY_MEAN",
+      "functional_residual_sign": "PREDICTION_FUNCTIONAL_MINUS_TRUTH_FUNCTIONAL",
+      "aggregation_input": "ABS_FUNCTIONAL_RESIDUAL_ONLY",
+      "signed_errors": "DIAGNOSTIC_ONLY_NEVER_AGGREGATED_FOR_WIN",
+      "required": [
+        "midday_premium_error_eur_mwh",
+        "evening_premium_error_eur_mwh",
+        "evening_minus_midday_error_eur_mwh",
+        "absolute_negative_hour_count_error",
+        "absolute_negative_hour_fraction_error",
+        "absolute_negative_price_deficit_mean_error_eur_mwh",
+        "absolute_minimum_price_error_eur_mwh"
+      ]
+    }
+  },
+  "aggregation": {
+    "within_target_hour_weight": "EQUAL_NATIVE_HOUR_WEIGHT",
+    "within_origin_target_reporting": "SEPARATE_BY_LEAD_MONTH_AND_PREDECLARED_BUCKET",
+    "cross_origin_weight": "EQUAL_WEIGHT_PER_UNIQUE_ORIGIN_AS_OF_UTC",
+    "lead_buckets": {
+      "M01_M06": [
+        1,
+        6
+      ],
+      "M07_M12": [
+        7,
+        12
+      ],
+      "M13_M24": [
+        13,
+        24
+      ],
+      "M25_M36": [
+        25,
+        36
+      ]
+    },
+    "missing_or_nonfinite": "UNSUPPORTED_NEVER_IMPUTED_NEVER_ZERO_NEVER_WIN",
+    "anti_cancellation": "ABSOLUTE_ERRORS_REQUIRED_BEFORE_ANY_AGGREGATION",
+    "single_local_origin_claim": "DIAGNOSTIC_ONLY_NO_INFERENCE_NO_MODEL_SELECTION"
+  },
+  "dependence_multiplicity_and_claims": {
+    "procedure_source": "BOUND_DEPENDENCE_AND_POWER_DESIGN_ONLY",
+    "same_origin_pairing_required": true,
+    "overlapping_targets_clustered_by_origin": true,
+    "candidate_noninferiority_claim_allowed": false,
+    "reason": "ZERO_INDEPENDENT_COUNTABLE_ORIGINS_AND_NO_EXTERNAL_REGISTRY_AUTHORITY"
+  },
+  "negative_price_boundary": {
+    "negative_hour_count_is_proper_score": false,
+    "structural_scenarios_are_probabilistic_forecasts": false,
+    "tail_probability_or_coverage_claim_allowed": false,
+    "current_prediction_support_observation": "ZERO_NEGATIVE_HOURS_IN_ALL_108_STRUCTURAL_SCENARIO_TARGETS",
+    "required_future_evidence": "EVENT_FREQUENCY_AND_SEVERITY_SKILL_ON_DIRECT_CH_TRUTH_WITH_A_PROBABILISTICALLY_ADMITTED_MODEL"
+  },
+  "truth_open_boundary": {
+    "all_expected_native_hours_delivered": true,
+    "all_governed_available_at_timestamps_bound": true,
+    "truth_manifest_sha256_required": true,
+    "truth_open_receipt_sha256_required": true,
+    "provider_lag_assumption": "UNSET_REQUIRES_MEASURED_PROVIDER_SLA",
+    "partial_month_scoring": "FORBIDDEN",
+    "post_truth_retuning": "FORBIDDEN_FOR_THIS_ORIGIN"
+  },
+  "authority_boundary": {
+    "outcomes_opened": false,
+    "future_holdout_consumed": false,
+    "t057_consumed": false,
+    "scientific_admission": false,
+    "model_selection_authorized": false,
+    "production_authorization": false,
+    "promotion_gate": false
+  }
+}

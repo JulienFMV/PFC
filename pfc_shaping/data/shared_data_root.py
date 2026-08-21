@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
 import os
-from pathlib import Path
 import re
+from collections.abc import Mapping, Sequence
+from pathlib import Path
 
 from pfc_shaping.path_safety import path_is_link
 

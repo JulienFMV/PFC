@@ -1,0 +1,133 @@
+{
+  "schema_version": "fmv_entsoe_lt_feature_availability_contract.v1",
+  "decision": "D-20260806-273",
+  "status": "VALUE_FREE_PIT_FEATURE_ROLE_ALGORITHM_NO_MODEL_AUTHORITY",
+  "purpose": "prevent ENTSO-E actuals, forecasts, forecast errors, backfills and unsupported neutral defaults from entering an LT fold before their information is available at its origin",
+  "scope": {
+    "model_scope": "LT_ONLY",
+    "target_product": "CH_PFC_N_PLUS_3_YEARS",
+    "monthly_level_authority": "SOLVER",
+    "hourly_or_quarter_hourly_layers_are_shape_only": true,
+    "ct_module_import_authorized": false,
+    "target_15_minute_grid_is_source_cadence_authority": false
+  },
+  "information_roles": [
+    {
+      "role": "REALIZED_ACTUAL",
+      "future_target_use": "FORBIDDEN",
+      "historical_training_use": "ONLY_AFTER_TARGET_END_AND_AVAILABILITY",
+      "required_dependency_count": 0
+    },
+    {
+      "role": "OPERATIONAL_FORECAST",
+      "future_target_use": "ONLY_WITHIN_ISSUED_HORIZON_AND_AVAILABLE_AT_ORIGIN",
+      "historical_training_use": "ONLY_FROM_THE_FOLD_VINTAGE",
+      "required_dependency_count": 0
+    },
+    {
+      "role": "FORECAST_ERROR",
+      "future_target_use": "FORBIDDEN",
+      "historical_training_use": "LAGGED_ONLY_AFTER_FORECAST_AND_TRUTH_AVAILABILITY",
+      "required_dependency_count": 2
+    },
+    {
+      "role": "LAGGED_REALIZED",
+      "future_target_use": "ALLOWED_ONLY_WHEN_LAGGED_TARGET_ENDED_AND_AVAILABLE",
+      "historical_training_use": "ALLOWED_WITH_EXACT_ORIGIN_CUTOFF",
+      "required_dependency_count": 1
+    },
+    {
+      "role": "CALENDAR_KNOWN",
+      "future_target_use": "ALLOWED_IF_AVAILABLE_AT_ORIGIN",
+      "historical_training_use": "ALLOWED",
+      "required_dependency_count": 0
+    },
+    {
+      "role": "ORIGIN_FROZEN_CLIMATOLOGY",
+      "future_target_use": "ALLOWED_IF_FIT_CUTOFF_PRECEDES_ORIGIN",
+      "historical_training_use": "ALLOWED_WITH_FOLD_SPECIFIC_REFIT",
+      "required_dependency_count": 0
+    },
+    {
+      "role": "GOVERNED_SCENARIO_SHAPE",
+      "future_target_use": "CANDIDATE_ONLY_IF_PUBLISHED_BY_ORIGIN",
+      "historical_training_use": "NO_EMPIRICAL_AUTHORITY_FROM_THIS_CONTRACT",
+      "required_dependency_count": 0
+    }
+  ],
+  "record_schema": {
+    "required_fields": [
+      "feature_id",
+      "source_family",
+      "information_role",
+      "requested_use",
+      "target_start_utc",
+      "target_end_utc",
+      "origin_utc",
+      "available_at_utc",
+      "source_issue_utc",
+      "operational_horizon_end_utc",
+      "training_cutoff_utc",
+      "dependency_roles",
+      "dependency_available_at_utc",
+      "support_state",
+      "missing_value_policy",
+      "monthly_effect_policy"
+    ],
+    "timestamp_semantics": "CANONICAL_UTC_Z_LEFT_CLOSED_RIGHT_OPEN_TARGET",
+    "maximum_records_per_assessment": 100000,
+    "raw_values_allowed": false
+  },
+  "eligibility_rules": {
+    "available_at_not_after_origin": true,
+    "training_target_end_not_after_origin": true,
+    "lagged_target_end_not_after_origin": true,
+    "contemporaneous_prediction_target_start_not_before_origin": true,
+    "derived_available_at_equals_max_dependency_availability": true,
+    "actual_target_end_not_after_origin": true,
+    "realized_availability_not_before_target_end": true,
+    "forecast_issue_not_after_origin": true,
+    "forecast_issue_not_after_target_start": true,
+    "forecast_availability_not_before_issue": true,
+    "forecast_target_within_operational_horizon": true,
+    "forecast_error_requires_actual_and_forecast_dependencies": true,
+    "forecast_error_target_end_not_after_origin": true,
+    "lagged_realized_target_end_not_after_origin": true,
+    "climatology_training_cutoff_strictly_before_origin": true,
+    "scenario_issue_not_after_origin": true,
+    "scenario_availability_not_before_issue": true,
+    "same_target_actual_or_error_prediction_authorized": false,
+    "latest_snapshot_may_reconstruct_historical_origin": false,
+    "backfill_gains_retroactive_availability": false
+  },
+  "missingness_and_shape_policy": {
+    "supported_state_required_for_model_use": true,
+    "preserve_null_required": true,
+    "zero_fill_authorized": false,
+    "neutral_fill_authorized": false,
+    "unknown_support_treated_as_supported": false,
+    "calendar_effect_may_be_not_applicable": true,
+    "non_calendar_lt_effect_must_be_zero_mean_within_solver_month": true,
+    "feature_may_rewrite_solver_monthly_mean": false
+  },
+  "execution": {
+    "databricks_connection_count": 0,
+    "databricks_statement_count": 0,
+    "warehouse_start_count": 0,
+    "databricks_write_count": 0,
+    "network_call_count": 0,
+    "h_drive_access_count": 0,
+    "opened_real_value_row_count": 0
+  },
+  "authorities": {
+    "real_feature_availability": false,
+    "owner_semantics": false,
+    "point_in_time": false,
+    "predictive_value": false,
+    "model_input": false,
+    "model_selection": false,
+    "candidate": false,
+    "promotion": false,
+    "production": false
+  }
+}

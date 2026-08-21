@@ -127,6 +127,29 @@ class MonthlyCurveResult:
     kkt: dict[str, float | int | bool]
 
 
+@dataclass(frozen=True)
+class MonthlyObjectiveTerm:
+    """One exact weighted least-squares term used by the monthly solver."""
+
+    name: str
+    weight: float
+    operator: np.ndarray
+    target: np.ndarray
+
+
+@dataclass(frozen=True)
+class MonthlyObjectiveSystem:
+    """The exact quadratic objective consumed by the monthly KKT solve."""
+
+    q_matrix: np.ndarray
+    c_vector: np.ndarray
+    terms: tuple[MonthlyObjectiveTerm, ...]
+    parent_flat: np.ndarray
+    shape_target: np.ndarray
+    ridge_used: bool
+    dropped_yoy_rows: int
+
+
 def build_delivery_grid(
     delivery_months: Sequence[str | pd.Period] | pd.PeriodIndex,
     *,
@@ -423,47 +446,19 @@ def solve_monthly_forward_curve_from_constraints(
     """Solve a small equality-constrained quadratic monthly curve problem."""
 
     cfg = config or MonthlyCurveConfig()
-    _validate_solver_objective_weights(cfg)
     n = len(monthly_constraints.delivery_grid.months)
     _validate_delivery_year_level_anchors(monthly_constraints)
     a = monthly_constraints.matrix
     q = monthly_constraints.targets
-    parent_flat = _parent_flat_baseline(monthly_constraints)
-    parent_operator = _parent_mean_operator(monthly_constraints)
-    shape_operator = np.eye(n) - parent_operator
-    shape_target = _shape_prior_vector(shape_prior, monthly_constraints)
-    shape_target = _recenter_vector_by_parent(shape_target, monthly_constraints)
     if not np.isfinite(a).all() or not np.isfinite(q).all():
         raise ValueError("monthly solver constraints contain non-finite values")
-    if not np.isfinite(shape_target).all():
-        raise ValueError("monthly solver shape prior contains non-finite values")
-
-    terms: list[tuple[str, float, np.ndarray, np.ndarray]] = []
-    ridge_used = False
-    if cfg.lambda_prior > 0.0:
-        terms.append(("parent_flat_prior", float(cfg.lambda_prior), np.eye(n), parent_flat))
-    else:
-        ridge_used = True
-        terms.append(("numerical_parent_flat_ridge", 1e-10, np.eye(n), parent_flat))
-
-    d2 = _second_difference_operator(monthly_constraints)
-    if cfg.lambda_smooth_month > 0.0 and d2.size:
-        terms.append(("smooth_month", float(cfg.lambda_smooth_month), d2, np.zeros(d2.shape[0])))
-
-    dyoy, dropped_yoy = _yoy_shape_operator(monthly_constraints, shape_operator)
-    if cfg.lambda_smooth_yoy > 0.0 and dyoy.size:
-        terms.append(("smooth_yoy_shape", float(cfg.lambda_smooth_yoy), dyoy, np.zeros(dyoy.shape[0])))
-
-    if cfg.lambda_shape > 0.0 and shape_prior is not None:
-        terms.append(("shape_prior", float(cfg.lambda_shape), shape_operator, shape_target))
-
-    q_matrix = np.zeros((n, n), dtype=float)
-    c_vector = np.zeros(n, dtype=float)
-    for _, weight, operator, target in terms:
-        q_matrix += weight * (operator.T @ operator)
-        c_vector -= weight * (operator.T @ target)
-    if not np.isfinite(q_matrix).all() or not np.isfinite(c_vector).all():
-        raise ValueError("monthly solver objective contains non-finite values")
+    objective = build_monthly_objective_system(
+        monthly_constraints,
+        config=cfg,
+        shape_prior=shape_prior,
+    )
+    q_matrix = objective.q_matrix
+    c_vector = objective.c_vector
 
     kkt = np.block(
         [
@@ -494,16 +489,20 @@ def solve_monthly_forward_curve_from_constraints(
     ):
         raise ValueError("monthly solver produced non-finite numerical diagnostics")
     objective_terms = {
-        name: float(0.5 * weight * np.sum((operator @ x - target) ** 2))
-        for name, weight, operator, target in terms
+        term.name: float(
+            0.5
+            * term.weight
+            * np.sum((term.operator @ x - term.target) ** 2)
+        )
+        for term in objective.terms
     }
     residuals = monthly_constraints.residuals(x)
     priors = pd.DataFrame(
         {
             "month": [str(month) for month in monthly_constraints.delivery_grid.months],
             "parent_bucket": monthly_constraints.month_buckets.astype(str).to_list(),
-            "parent_flat_eur_mwh": parent_flat,
-            "shape_prior_eur_mwh": shape_target,
+            "parent_flat_eur_mwh": objective.parent_flat,
+            "shape_prior_eur_mwh": objective.shape_target,
             "monthly_curve_eur_mwh": x,
         }
     )
@@ -514,7 +513,10 @@ def solve_monthly_forward_curve_from_constraints(
             {"metric": "condition_number", "value": condition_number},
             {"metric": "active_constraint_rank", "value": float(np.linalg.matrix_rank(a)) if a.size else 0.0},
             {"metric": "nullspace_dimension", "value": float(n - (np.linalg.matrix_rank(a) if a.size else 0))},
-            {"metric": "dropped_yoy_rows", "value": float(dropped_yoy)},
+            {
+                "metric": "dropped_yoy_rows",
+                "value": float(objective.dropped_yoy_rows),
+            },
         ]
         + [{"metric": f"objective_{name}", "value": value} for name, value in objective_terms.items()]
     )
@@ -531,10 +533,101 @@ def solve_monthly_forward_curve_from_constraints(
             "condition_number": condition_number,
             "active_constraint_rank": int(np.linalg.matrix_rank(a)) if a.size else 0,
             "nullspace_dimension": int(n - (np.linalg.matrix_rank(a) if a.size else 0)),
-            "ridge_used": bool(ridge_used),
+            "ridge_used": bool(objective.ridge_used),
             "solved_by_lstsq": bool(solved_by_lstsq),
-            "dropped_yoy_rows": int(dropped_yoy),
+            "dropped_yoy_rows": int(objective.dropped_yoy_rows),
         },
+    )
+
+
+def build_monthly_objective_system(
+    monthly_constraints: MonthlyConstraintSystem,
+    *,
+    config: MonthlyCurveConfig | None = None,
+    shape_prior: pd.Series | object | None = None,
+) -> MonthlyObjectiveSystem:
+    """Build the exact objective matrices shared by solve and governance audits."""
+
+    cfg = config or MonthlyCurveConfig()
+    _validate_solver_objective_weights(cfg)
+    n = len(monthly_constraints.delivery_grid.months)
+    parent_flat = _parent_flat_baseline(monthly_constraints)
+    parent_operator = _parent_mean_operator(monthly_constraints)
+    shape_operator = np.eye(n) - parent_operator
+    shape_target = _shape_prior_vector(shape_prior, monthly_constraints)
+    shape_target = _recenter_vector_by_parent(shape_target, monthly_constraints)
+    if not np.isfinite(shape_target).all():
+        raise ValueError("monthly solver shape prior contains non-finite values")
+
+    terms: list[MonthlyObjectiveTerm] = []
+    ridge_used = False
+    if cfg.lambda_prior > 0.0:
+        terms.append(
+            MonthlyObjectiveTerm(
+                "parent_flat_prior",
+                float(cfg.lambda_prior),
+                np.eye(n),
+                parent_flat,
+            )
+        )
+    else:
+        ridge_used = True
+        terms.append(
+            MonthlyObjectiveTerm(
+                "numerical_parent_flat_ridge",
+                1e-10,
+                np.eye(n),
+                parent_flat,
+            )
+        )
+
+    d2 = _second_difference_operator(monthly_constraints)
+    if cfg.lambda_smooth_month > 0.0 and d2.size:
+        terms.append(
+            MonthlyObjectiveTerm(
+                "smooth_month",
+                float(cfg.lambda_smooth_month),
+                d2,
+                np.zeros(d2.shape[0]),
+            )
+        )
+
+    dyoy, dropped_yoy = _yoy_shape_operator(monthly_constraints, shape_operator)
+    if cfg.lambda_smooth_yoy > 0.0 and dyoy.size:
+        terms.append(
+            MonthlyObjectiveTerm(
+                "smooth_yoy_shape",
+                float(cfg.lambda_smooth_yoy),
+                dyoy,
+                np.zeros(dyoy.shape[0]),
+            )
+        )
+
+    if cfg.lambda_shape > 0.0 and shape_prior is not None:
+        terms.append(
+            MonthlyObjectiveTerm(
+                "shape_prior",
+                float(cfg.lambda_shape),
+                shape_operator,
+                shape_target,
+            )
+        )
+
+    q_matrix = np.zeros((n, n), dtype=float)
+    c_vector = np.zeros(n, dtype=float)
+    for term in terms:
+        q_matrix += term.weight * (term.operator.T @ term.operator)
+        c_vector -= term.weight * (term.operator.T @ term.target)
+    if not np.isfinite(q_matrix).all() or not np.isfinite(c_vector).all():
+        raise ValueError("monthly solver objective contains non-finite values")
+    return MonthlyObjectiveSystem(
+        q_matrix=q_matrix,
+        c_vector=c_vector,
+        terms=tuple(terms),
+        parent_flat=parent_flat,
+        shape_target=shape_target,
+        ridge_used=ridge_used,
+        dropped_yoy_rows=int(dropped_yoy),
     )
 
 

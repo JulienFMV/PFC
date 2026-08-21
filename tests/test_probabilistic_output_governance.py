@@ -113,26 +113,25 @@ def test_legacy_interval_quarantine_drops_all_known_aliases(
 
 
 @pytest.mark.parametrize(
-    ("p10", "p90", "expected"),
+    ("p10", "p90"),
     [
-        (70.0, 90.0, True),
-        (float("nan"), 90.0, False),
-        (float("inf"), 90.0, False),
-        (70.0, float("-inf"), False),
-        ("not-numeric", 90.0, False),
-        (True, 90.0, False),
-        (90.0, 70.0, False),
+        (70.0, 90.0),
+        (float("nan"), 90.0),
+        (float("inf"), 90.0),
+        (70.0, float("-inf")),
+        ("not-numeric", 90.0),
+        (True, 90.0),
+        (90.0, 70.0),
     ],
 )
-def test_governed_interval_availability_requires_finite_numeric_bounds(
+def test_self_declared_interval_status_never_bootstraps_availability(
     p10: object,
     p90: object,
-    expected: bool,
 ) -> None:
     frame = pd.DataFrame({"price_shape": [80.0], "p10": [p10], "p90": [p90]})
     frame.attrs["probabilistic_status"] = "CALIBRATED_ROLLING_ORIGIN"
 
-    assert governed_intervals_available(frame) is expected
+    assert governed_intervals_available(frame) is False
     frame.attrs["probabilistic_status"] = "QUARANTINED_UNCALIBRATED"
     assert governed_intervals_available(frame) is False
 

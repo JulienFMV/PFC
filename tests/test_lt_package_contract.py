@@ -10,6 +10,7 @@ import os
 import subprocess
 import sys
 import tomllib
+import uuid
 import zipfile
 from pathlib import Path
 
@@ -26,11 +27,22 @@ from pfc_shaping.version import __version__
 from scripts.check_lt_wheel_contract import (
     EXPECTED_DIST_INFO,
     EXPECTED_ZIP_DATETIME,
+    MAX_WHEEL_BYTES,
+    MAX_WHEEL_MEMBERS,
     REQUIRED_FILES,
     audit_wheel,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.fixture
+def tmp_path() -> Path:
+    """Keep package-contract scratch space under the governed workspace."""
+
+    selected = ROOT / "build" / "test-workspaces" / "lt-package-contract" / uuid.uuid4().hex
+    selected.mkdir(parents=True, exist_ok=False)
+    return selected
 
 
 def test_runtime_data_import_does_not_load_excluded_acquisition_modules() -> None:
@@ -67,12 +79,12 @@ def test_runtime_forward_parser_has_no_databricks_execution_path() -> None:
     assert "def load_base_prices(" not in source
 
 
-def test_pyproject_exposes_one_governed_lt_entrypoint() -> None:
+def test_pyproject_forbids_generated_console_script_launchers() -> None:
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
 
-    assert project["project"]["scripts"] == {
-        "pfc-lt": "pfc_shaping.cli.governed_release:main"
-    }
+    assert "scripts" not in project["project"]
+    assert "gui-scripts" not in project["project"]
+    assert "entry-points" not in project["project"]
     assert project["tool"]["setuptools"]["include-package-data"] is False
     excluded = set(project["tool"]["setuptools"]["packages"]["find"]["exclude"])
     assert {"pfc_shaping.ct", "pfc_shaping.ct.*"}.issubset(excluded)
@@ -81,6 +93,119 @@ def test_pyproject_exposes_one_governed_lt_entrypoint() -> None:
         in ALLOWED_RUNTIME_PYTHON_FILES
     )
     assert "pfc_shaping/pipeline/release_request_contract.py" in ALLOWED_RUNTIME_PYTHON_FILES
+    assert "pfc_shaping/cli/audit_ch_lt_estimand_contract.py" in ALLOWED_RUNTIME_PYTHON_FILES
+    assert (
+        "pfc_shaping/cli/audit_ch_lt_origin_registry_protocol.py"
+        in ALLOWED_RUNTIME_PYTHON_FILES
+    )
+    assert (
+        "pfc_shaping/cli/audit_ch_lt_origin_target_mask_inventory.py"
+        in ALLOWED_RUNTIME_PYTHON_FILES
+    )
+    assert (
+        "pfc_shaping/cli/audit_ch_lt_successor_candidate_core.py"
+        in ALLOWED_RUNTIME_PYTHON_FILES
+    )
+    assert (
+        "pfc_shaping/cli/audit_ch_lt_dependence_power_design.py"
+        in ALLOWED_RUNTIME_PYTHON_FILES
+    )
+    assert "pfc_shaping/cli/audit_ch_market_time_regime.py" in ALLOWED_RUNTIME_PYTHON_FILES
+    assert "pfc_shaping/cli/audit_ch_lt_compute_runtime.py" in ALLOWED_RUNTIME_PYTHON_FILES
+    assert (
+        "pfc_shaping/cli/audit_ch_lt_compute_runtime_manifest.py"
+        in ALLOWED_RUNTIME_PYTHON_FILES
+    )
+    assert (
+        "pfc_shaping/cli/verify_ch_lt_preregistration_supersession.py"
+        in ALLOWED_RUNTIME_PYTHON_FILES
+    )
+    assert (
+        "pfc_shaping/cli/audit_legacy_provider_resolution.py"
+        not in ALLOWED_RUNTIME_PYTHON_FILES
+    )
+    assert (
+        "pfc_shaping/cli/audit_provider_acquisition_quarantine.py"
+        not in ALLOWED_RUNTIME_PYTHON_FILES
+    )
+    assert "pfc_shaping/validation/ch_lt_estimand_contract.py" in ALLOWED_RUNTIME_PYTHON_FILES
+    assert (
+        "pfc_shaping/validation/ch_lt_origin_registry_protocol.py"
+        in ALLOWED_RUNTIME_PYTHON_FILES
+    )
+    assert "pfc_shaping/validation/ch_market_time_regime.py" in ALLOWED_RUNTIME_PYTHON_FILES
+    assert "pfc_shaping/validation/ch_lt_compute_runtime.py" in ALLOWED_RUNTIME_PYTHON_FILES
+    assert (
+        "pfc_shaping/validation/ch_lt_dependence_power_design.py"
+        in ALLOWED_RUNTIME_PYTHON_FILES
+    )
+    assert (
+        "pfc_shaping/validation/ch_lt_origin_target_mask_inventory.py"
+        in ALLOWED_RUNTIME_PYTHON_FILES
+    )
+    assert (
+        "pfc_shaping/validation/ch_lt_preregistration_supersession.py"
+        in ALLOWED_RUNTIME_PYTHON_FILES
+    )
+    assert (
+        "pfc_shaping/validation/ch_lt_successor_candidate_core.py"
+        in ALLOWED_RUNTIME_PYTHON_FILES
+    )
+    assert (
+        "pfc_shaping/validation/ch_lt_successor_candidate_core_v2.py"
+        in ALLOWED_RUNTIME_PYTHON_FILES
+    )
+    assert (
+        "pfc_shaping/validation/ch_lt_successor_candidate_core_v3.py"
+        in ALLOWED_RUNTIME_PYTHON_FILES
+    )
+    assert (
+        "pfc_shaping/validation/ch_lt_successor_readiness.py"
+        in ALLOWED_RUNTIME_PYTHON_FILES
+    )
+    assert "pfc_shaping/data/eex_forward_vintage_intake.py" in ALLOWED_RUNTIME_PYTHON_FILES
+    assert "pfc_shaping/data/eex_datasource_v2_capture.py" in ALLOWED_RUNTIME_PYTHON_FILES
+    assert (
+        "pfc_shaping/data/ch_lt_origin_registry_reference.py"
+        not in ALLOWED_RUNTIME_PYTHON_FILES
+    )
+    assert (
+        "pfc_shaping/cli/eex_forward_vintage_builder.py"
+        in ALLOWED_RUNTIME_PYTHON_FILES
+    )
+    assert (
+        "pfc_shaping/validation/ch_lt_compute_runtime_manifest.py"
+        in ALLOWED_RUNTIME_PYTHON_FILES
+    )
+    assert "pfc_shaping/verifier_package_contract.py" not in ALLOWED_RUNTIME_PYTHON_FILES
+    assert "pfc_shaping/verifier_runtime_admission.py" not in ALLOWED_RUNTIME_PYTHON_FILES
+    prospective_runtime = {
+        "pfc_shaping/cli/score_ch_lt_structural_prediction_commitment.py",
+        "pfc_shaping/validation/ch_lt_local_future_origin_selection.py",
+        "pfc_shaping/validation/ch_lt_native_hourly_truth_bundle.py",
+        "pfc_shaping/validation/ch_lt_prospective_hourly_scoring.py",
+        "pfc_shaping/validation/ch_lt_structural_prediction_commitment.py",
+    }
+    assert prospective_runtime.issubset(ALLOWED_RUNTIME_PYTHON_FILES)
+    assert prospective_runtime.issubset(REQUIRED_FILES)
+
+
+def test_sealed_runtime_contains_d147_transitive_dependencies() -> None:
+    required = {
+        "pfc_shaping/data/lt_input_replay.py",
+        "pfc_shaping/data/lt_replay_transforms.py",
+        "pfc_shaping/data/snapshot_anchor_client.py",
+        "pfc_shaping/data/snapshot_publication_contract.py",
+        "pfc_shaping/data/snapshot_publication_state.py",
+    }
+
+    assert required.issubset(ALLOWED_RUNTIME_PYTHON_FILES)
+    assert "pfc_shaping/data/snapshot_publisher.py" not in ALLOWED_RUNTIME_PYTHON_FILES
+    assert (
+        "pfc_shaping/data/snapshot_bootstrap_authority.py"
+        not in ALLOWED_RUNTIME_PYTHON_FILES
+    )
+    assert "pfc_shaping/publisher_package_contract.py" not in ALLOWED_RUNTIME_PYTHON_FILES
 
 
 def test_governed_cli_import_is_checkout_and_ct_independent(tmp_path: Path) -> None:
@@ -90,6 +215,23 @@ def test_governed_cli_import_is_checkout_and_ct_independent(tmp_path: Path) -> N
             "before_path = list(sys.path)",
             "before_cwd = os.getcwd()",
             "import pfc_shaping.cli.governed_release",
+            "import pfc_shaping.cli.audit_ch_lt_compute_runtime",
+            "import pfc_shaping.cli.audit_ch_lt_compute_runtime_manifest",
+            "import pfc_shaping.cli.audit_ch_lt_dependence_power_design",
+            "import pfc_shaping.cli.audit_ch_lt_estimand_contract",
+            "import pfc_shaping.cli.audit_ch_lt_origin_registry_protocol",
+            "import pfc_shaping.cli.audit_ch_lt_origin_target_mask_inventory",
+            "import pfc_shaping.cli.audit_ch_lt_successor_candidate_core",
+            "import pfc_shaping.cli.audit_ch_market_time_regime",
+            "import pfc_shaping.cli.eex_forward_vintage_builder",
+            "import pfc_shaping.cli.verify_ch_lt_preregistration_supersession",
+            "import pfc_shaping.cli.audit_legacy_provider_resolution",
+            "import pfc_shaping.cli.audit_provider_acquisition_quarantine",
+            "import pfc_shaping.cli.score_ch_lt_structural_prediction_commitment",
+            "import pfc_shaping.validation.ch_lt_local_future_origin_selection",
+            "import pfc_shaping.validation.ch_lt_native_hourly_truth_bundle",
+            "import pfc_shaping.validation.ch_lt_prospective_hourly_scoring",
+            "import pfc_shaping.validation.ch_lt_structural_prediction_commitment",
             "assert sys.path == before_path",
             "assert os.getcwd() == before_cwd",
             "assert not any(name == 'scripts' or name.startswith('scripts.') for name in sys.modules)",
@@ -156,16 +298,46 @@ def test_wheel_auditor_rejects_non_wheel(tmp_path: Path) -> None:
         audit_wheel(not_wheel)
 
 
+def test_wheel_auditor_rejects_file_size_before_zip_parsing(tmp_path: Path) -> None:
+    wheel = tmp_path / "oversized.whl"
+    wheel.write_bytes(b"x" * (MAX_WHEEL_BYTES + 1))
+
+    result = audit_wheel(wheel)
+
+    assert result["status"] == "FAIL"
+    assert result["wheel_sha256"] is None
+    assert any("wheel size exceeds resource budget" in error for error in result["errors"])
+
+
+def test_wheel_auditor_rejects_member_count_before_member_reads(tmp_path: Path) -> None:
+    wheel = tmp_path / "too-many-members.whl"
+    with zipfile.ZipFile(wheel, "w") as archive:
+        for index in range(MAX_WHEEL_MEMBERS + 1):
+            archive.writestr(f"member-{index}.txt", b"x")
+
+    result = audit_wheel(wheel)
+
+    assert result["status"] == "FAIL"
+    assert any("member count exceeds resource budget" in error for error in result["errors"])
+
+
+def test_wheel_auditor_rejects_zip_bomb_ratio_before_member_reads(tmp_path: Path) -> None:
+    wheel = tmp_path / "zip-bomb.whl"
+    with zipfile.ZipFile(wheel, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("pfc_shaping/version.py", b"0" * (1024 * 1024))
+
+    result = audit_wheel(wheel)
+
+    assert result["status"] == "FAIL"
+    assert any("compression-ratio budget" in error for error in result["errors"])
+
+
 def test_wheel_auditor_rejects_embedded_workstation_paths(tmp_path: Path) -> None:
     wheel = tmp_path / "fmv_pfc_lt-0.14.0-py3-none-any.whl"
     with zipfile.ZipFile(wheel, "w") as archive:
         for name in REQUIRED_FILES:
             payload = b'LOCAL = "H:\\\\desk\\\\input.xlsx"\n' if name.endswith("version.py") else b""
             archive.writestr(name, payload)
-        archive.writestr(
-            "fmv_pfc_lt-0.14.0.dist-info/entry_points.txt",
-            "[console_scripts]\npfc-lt = pfc_shaping.cli.governed_release:main\n",
-        )
 
     result = audit_wheel(wheel)
 
@@ -268,6 +440,25 @@ def test_wheel_auditor_rejects_pth_even_with_valid_record(tmp_path: Path) -> Non
     assert any("unexpected wheel members" in error for error in result["errors"])
 
 
+def test_wheel_auditor_rejects_console_script_metadata_even_with_valid_record(
+    tmp_path: Path,
+) -> None:
+    wheel = _write_test_wheel(
+        tmp_path / "fmv_pfc_lt-0.14.0-py3-none-any.whl",
+        extra_members={
+            f"{EXPECTED_DIST_INFO}/entry_points.txt": (
+                b"[console_scripts]\npfc-lt = "
+                b"pfc_shaping.cli.governed_release:main\n"
+            )
+        },
+    )
+
+    result = audit_wheel(wheel)
+
+    assert result["status"] == "FAIL"
+    assert any("entry point metadata is forbidden" in error for error in result["errors"])
+
+
 def _write_test_wheel(
     path: Path,
     *,
@@ -301,9 +492,6 @@ def _write_test_wheel(
         "Root-Is-Purelib: true\n"
         "Tag: py3-none-any\n\n"
     ).encode("ascii")
-    members[f"{EXPECTED_DIST_INFO}/entry_points.txt"] = (
-        b"[console_scripts]\npfc-lt = pfc_shaping.cli.governed_release:main\n"
-    )
     members[f"{EXPECTED_DIST_INFO}/top_level.txt"] = b"pfc_shaping\n"
     members.update(extra_members or {})
     record_name = f"{EXPECTED_DIST_INFO}/RECORD"

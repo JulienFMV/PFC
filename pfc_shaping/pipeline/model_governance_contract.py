@@ -15,6 +15,8 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PublicKey,
 )
 
+from pfc_shaping.path_safety import read_stable_single_link_file
+
 MODEL_GOVERNANCE_RECEIPT_SCHEMA = "model_governance_artifact_receipt.v1"
 MODEL_GOVERNANCE_TRUSTED_PUBLIC_KEY_ENV = (
     "PFC_MODEL_GOVERNANCE_TRUSTED_PUBLIC_KEY_PATH"
@@ -339,7 +341,10 @@ def _required_text(value: object, *, label: str) -> str:
 
 def _load_private_key(path: str | Path) -> Ed25519PrivateKey:
     try:
-        key = serialization.load_pem_private_key(Path(path).read_bytes(), password=None)
+        key = serialization.load_pem_private_key(
+            read_stable_single_link_file(Path(path), label="model governance private key"),
+            password=None,
+        )
     except (OSError, TypeError, ValueError) as exc:
         raise ModelGovernanceAuthenticationError(
             "cannot load model governance private key"
@@ -353,7 +358,11 @@ def _load_private_key(path: str | Path) -> Ed25519PrivateKey:
 
 def _load_public_key(path: str | Path) -> Ed25519PublicKey:
     try:
-        key = serialization.load_pem_public_key(Path(path).read_bytes())
+        key = serialization.load_pem_public_key(
+            read_stable_single_link_file(
+                Path(path), label="trusted model governance public key"
+            )
+        )
     except (OSError, TypeError, ValueError) as exc:
         raise ModelGovernanceAuthenticationError(
             "cannot load trusted model governance public key"

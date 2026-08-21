@@ -19,6 +19,8 @@ from typing import Callable, Iterator, Mapping
 from pfc_shaping.path_safety import (
     assert_absolute_path_has_no_links,
     paths_overlap_by_identity,
+    process_immutable_directory_entries,
+    process_immutable_file_bytes,
 )
 from pfc_shaping.path_safety import (
     path_is_link as _path_is_link,
@@ -29,7 +31,7 @@ from pfc_shaping.pipeline.candidate_evidence import (
 )
 from pfc_shaping.pipeline.governed_release_cli_contract import (
     ReleaseCliIdentityError,
-    assert_installed_runtime_sealed,
+    assert_production_transition_runtime_authorized,
 )
 from pfc_shaping.pipeline.process_identity import process_start_token
 from pfc_shaping.pipeline.promotion_contract import (
@@ -233,11 +235,12 @@ def _finalize_candidate_staging(
     files = _hash_bundle_files(staging)
     if not files:
         raise PromotionError("candidate bundle is empty")
-    run_manifest = _load_json(staging / CANDIDATE_RUN_MANIFEST)
+    candidate_finalized_at_utc = datetime.now(timezone.utc).isoformat()
     manifest: dict[str, object] = {
         "schema_version": "candidate_bundle.v1",
         "run_id": run_id,
-        "created_at_utc": run_manifest["candidate_serialized_at_utc"],
+        "created_at_utc": candidate_finalized_at_utc,
+        "candidate_finalized_at_utc": candidate_finalized_at_utc,
         "files": files,
         "metadata": dict(metadata),
     }
@@ -380,7 +383,7 @@ def verify_candidate_bundle_manifest(manifest_path: str | Path) -> CandidateBund
 
 def _assert_sealed_transition_runtime() -> None:
     try:
-        assert_installed_runtime_sealed()
+        assert_production_transition_runtime_authorized()
     except ReleaseCliIdentityError as exc:
         raise PromotionError(str(exc)) from exc
 
@@ -2100,16 +2103,26 @@ def _trusted_public_key_identities(
     configured_directory = str(os.environ.get(keyring_directory_env, "")).strip()
     if configured_directory:
         directory = _absolute_lexical_path(configured_directory)
-        _assert_path_has_no_links(directory, label=f"{keyring_directory_env} directory")
-        if not directory.is_absolute() or not directory.is_dir():
-            raise PromotionError(f"{keyring_directory_env} is unavailable")
-        candidates.extend(sorted(directory.glob("*.pem")))
+        immutable_entries = process_immutable_directory_entries(directory)
+        if immutable_entries is None:
+            _assert_path_has_no_links(
+                directory, label=f"{keyring_directory_env} directory"
+            )
+            if not directory.is_absolute() or not directory.is_dir():
+                raise PromotionError(f"{keyring_directory_env} is unavailable")
+            candidates.extend(sorted(directory.glob("*.pem")))
+        else:
+            candidates.extend(immutable_entries)
     trusted: dict[str, Path] = {}
     for candidate in candidates:
-        _assert_path_has_no_links(candidate, label=f"{label} keyring entry")
-        resolved = candidate.resolve()
-        if not resolved.is_file():
-            raise PromotionError(f"{label} keyring entry is not a regular file")
+        frozen = process_immutable_file_bytes(candidate)
+        if frozen is None:
+            _assert_path_has_no_links(candidate, label=f"{label} keyring entry")
+            resolved = candidate.resolve()
+            if not resolved.is_file():
+                raise PromotionError(f"{label} keyring entry is not a regular file")
+        else:
+            resolved = candidate
         candidate_id = public_key_id_from_public_key_path(resolved)
         trusted.setdefault(candidate_id, resolved)
     return trusted
@@ -2483,7 +2496,11 @@ def _validate_candidate_run_manifest(bundle: Path, *, expected_run_id: str) -> d
         errors.append("candidate_must_not_self_approve")
     if manifest.get("reference_timestamp_is_explicit") is not True:
         errors.append("reference_timestamp_is_explicit")
-    for key in ("reference_timestamp", "candidate_serialized_at_utc"):
+    for key in (
+        "reference_timestamp",
+        "run_started_at_utc",
+        "candidate_serialized_at_utc",
+    ):
         value = manifest.get(key)
         if type(value) is not str:
             errors.append(key)

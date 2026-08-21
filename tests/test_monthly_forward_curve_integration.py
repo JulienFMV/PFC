@@ -4,6 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -531,6 +532,44 @@ def test_solver_monthly_level_accepts_hourly_model_without_seasonal_flag() -> No
     for month_key, group in df.groupby(idx_local.strftime("%Y-%m")):
         if month_key in base_prices:
             assert group["price_shape"].mean() == pytest.approx(group["B"].mean(), abs=1e-9)
+
+
+def test_near_term_bridge_preserves_parent_hour_intraday_price_neutrality() -> None:
+    assembler = PFCAssembler(
+        shape_hourly=_NonNeutralShapeHourly(),
+        shape_intraday=_NonNeutralShapeIntraday(),
+        monthly_level_authority="solver",
+        skip_legacy_level_cascade=True,
+        skip_legacy_base_smoothing=True,
+        calibrator=None,
+        water_value=None,
+    )
+    df = assembler.build(
+        base_prices={"2026-07": 100.0, "2026-08": 65.0},
+        start_date="2026-07-01",
+        horizon_days=62,
+        reference_date=pd.Timestamp("2026-06-01", tz="Europe/Zurich"),
+    )
+
+    multiplicative_without_q = (
+        df["B"]
+        * df["f_S"]
+        * df["f_W"]
+        * df["f_H"]
+        * df["f_WV"]
+        * df["f_bridge"]
+    )
+    counterfactual_without_q = multiplicative_without_q + df["delta_wv"]
+    counterfactual_with_q = multiplicative_without_q * df["f_Q"] + df["delta_wv"]
+    parent_hour = df.index.floor("h")
+    residual = (
+        counterfactual_with_q.groupby(parent_hour).mean()
+        - counterfactual_without_q.groupby(parent_hour).mean()
+    ).abs()
+
+    assert np.isfinite(residual.to_numpy()).all()
+    assert float(residual.max()) <= 1e-12
+    assert float(df["f_bridge"].groupby(parent_hour).nunique().max()) == 1.0
 
 
 def test_solver_monthly_level_requires_legacy_cascade_and_smoothing_skips() -> None:

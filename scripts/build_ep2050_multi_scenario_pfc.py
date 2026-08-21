@@ -9,9 +9,9 @@ fail-fast scenario coverage, then writes a weighted structural fan chart.
 from __future__ import annotations
 
 import argparse
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from types import SimpleNamespace
-from collections.abc import Mapping, Sequence
 
 import numpy as np
 import pandas as pd
@@ -30,9 +30,7 @@ from pfc_shaping.lt.model.electrification_shape import structural_fan_chart
 from pfc_shaping.lt.model.shape_hourly import ShapeHourly
 from pfc_shaping.lt.model.shape_intraday import ShapeIntraday
 from pfc_shaping.pipeline.monthly_curve_authority import MonthlyLevelAuthority
-
 from scripts.build_first_ep2050_pfc import _latest_forwards, _load_epex_hourly, _validate_pfc
-
 
 PROFILE_NAME = "ep2050_slow_central_fast_mapping_v0"
 DEFAULT_WEIGHTS = {"slow": 0.25, "central": 0.50, "fast": 0.25}
@@ -217,12 +215,41 @@ def _fit_components(
     epex: pd.DataFrame,
     market: str,
     *,
+    intraday_epex: pd.DataFrame | None = None,
+    intraday_market: str | None = None,
+    intraday_cutoff: str | pd.Timestamp | None = None,
     disable_cascade_trend_for_annual_only: bool = False,
+    enable_sparse_intraday_regularization: bool = False,
 ):
+    intraday = epex if intraday_epex is None else intraday_epex
+    intraday_country = market if intraday_market is None else intraday_market
+    if intraday_cutoff is not None:
+        cutoff = pd.Timestamp(intraday_cutoff)
+        cutoff = cutoff.tz_localize("UTC") if cutoff.tzinfo is None else cutoff.tz_convert("UTC")
+        intraday = intraday.loc[intraday.index >= cutoff]
+    if intraday.empty:
+        raise ValueError("intraday EPEX calibration frame is empty")
+    if intraday_epex is not None:
+        if not isinstance(intraday.index, pd.DatetimeIndex):
+            raise TypeError("intraday EPEX calibration index must be a DatetimeIndex")
+        if not intraday.index.is_monotonic_increasing or intraday.index.has_duplicates:
+            raise ValueError("intraday EPEX calibration index must be ordered and unique")
+        deltas = intraday.index.to_series().diff().dropna()
+        if not deltas.eq(pd.Timedelta(minutes=15)).all():
+            raise ValueError("intraday EPEX calibration grid must be contiguous 15-minute UTC")
+        if set(intraday.index.minute.unique()) != {0, 15, 30, 45}:
+            raise ValueError("intraday EPEX calibration grid must contain all four quarter-hours")
+
     cal = enrich_15min_index(epex.index, country=market)
     sh = ShapeHourly(use_seasonal_hourly=True).fit(epex, cal)
     sh._solar_epex_hist = epex
-    si = ShapeIntraday().fit(epex, None, cal)
+    intraday_cal = enrich_15min_index(intraday.index, country=intraday_country)
+    intraday_options = (
+        {"enable_sparse_support_regularization": True}
+        if enable_sparse_intraday_regularization
+        else {}
+    )
+    si = ShapeIntraday(**intraday_options).fit(intraday, None, intraday_cal)
     cascader = ContractCascader(
         disable_trend_for_annual_only=disable_cascade_trend_for_annual_only
     )
@@ -246,11 +273,21 @@ def _build_one_curve(
     cascader,
     calibrator,
     monthly_authority: MonthlyLevelAuthority | None = None,
+    delivery_index: pd.DatetimeIndex | None = None,
+    peak_prices: dict[str, float] | None = None,
 ) -> pd.DataFrame:
-    assembler_base_prices = (
-        monthly_authority.assembler_base_prices if monthly_authority is not None else base_prices
+    assembler_base_prices = dict(
+        monthly_authority.assembler_base_prices
+        if monthly_authority is not None
+        else base_prices
     )
-    quoted_keys = monthly_authority.quoted_keys if monthly_authority is not None else set(base_prices)
+    assembler_base_prices.update(peak_prices or {})
+    quoted_keys = set(
+        monthly_authority.quoted_keys
+        if monthly_authority is not None
+        else base_prices
+    )
+    quoted_keys.update(peak_prices or {})
     monthly_constraint_tolerance = 1e-9
     if monthly_authority is not None:
         solver_config = dict(monthly_authority.manifest.get("solver_config", {}) or {})
@@ -277,10 +314,12 @@ def _build_one_curve(
         horizon_days=horizon_days,
         reference_date=reference_date,
         country=market,
+        delivery_index=delivery_index,
     )
     _validate_pfc(
         pfc,
         args=SimpleNamespace(start_date=start_date, horizon_days=horizon_days),
+        expected_index=delivery_index,
     )
     return pfc
 
@@ -447,7 +486,7 @@ def _write_summary(
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
-def main(argv: list[str] | None = None) -> int:
+def _legacy_main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--scenario-input", default="data/electrification_scenarios_ep2050_enriched.parquet")
     parser.add_argument("--scenario-output", default="data/electrification_scenarios_ep2050_enriched_slow_central_fast.parquet")
@@ -550,6 +589,14 @@ def main(argv: list[str] | None = None) -> int:
         f"scenario_spread_mean={fan['structural_scenario_spread'].mean():.2f}"
     )
     return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    del argv
+    raise RuntimeError(
+        "direct multi-scenario publication is disabled: use "
+        "python -m scripts.build_local_test_ch_pfc for an explicit local/test NO-GO run"
+    )
 
 
 if __name__ == "__main__":

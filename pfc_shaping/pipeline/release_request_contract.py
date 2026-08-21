@@ -18,7 +18,12 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PublicKey,
 )
 
-from pfc_shaping.path_safety import path_is_link
+from pfc_shaping.path_safety import (
+    path_is_link,
+    process_immutable_directory_entries,
+    process_immutable_file_bytes,
+    read_stable_single_link_file,
+)
 from pfc_shaping.pipeline.strict_structured_data import (
     StrictStructuredDataError,
     load_strict_json,
@@ -257,11 +262,19 @@ def _matching_trusted_public_key(
         keyring = str(os.environ.get(REGISTER_TRUSTED_PUBLIC_KEY_DIR_ENV, "")).strip()
         if keyring:
             directory = _absolute_unlinked_path(keyring, label="REGISTER public keyring")
-            if not directory.is_dir():
-                raise ReleaseRequestAuthenticationError("REGISTER public keyring is unavailable")
-            candidates.extend(sorted(directory.glob("*.pem")))
+            immutable_entries = process_immutable_directory_entries(directory)
+            if immutable_entries is None:
+                if not directory.is_dir():
+                    raise ReleaseRequestAuthenticationError(
+                        "REGISTER public keyring is unavailable"
+                    )
+                candidates.extend(sorted(directory.glob("*.pem")))
+            else:
+                candidates.extend(immutable_entries)
     for candidate in candidates:
-        if candidate.is_file() and not path_is_link(candidate):
+        if process_immutable_file_bytes(candidate) is not None or (
+            candidate.is_file() and not path_is_link(candidate)
+        ):
             try:
                 if _public_key_id(_load_public_key(candidate)) == key_id:
                     return candidate
@@ -307,7 +320,10 @@ def _load_private_key(path: str | Path) -> Ed25519PrivateKey:
     selected = _absolute_unlinked_path(path, label="REGISTER private key")
     _assert_single_link_file(selected, label="REGISTER private key")
     try:
-        key = serialization.load_pem_private_key(selected.read_bytes(), password=None)
+        key = serialization.load_pem_private_key(
+            read_stable_single_link_file(selected, label="REGISTER private key"),
+            password=None,
+        )
     except (OSError, ValueError, TypeError) as exc:
         raise ReleaseRequestAuthenticationError("cannot load REGISTER private key") from exc
     if not isinstance(key, Ed25519PrivateKey):
@@ -319,7 +335,9 @@ def _load_public_key(path: str | Path) -> Ed25519PublicKey:
     selected = _absolute_unlinked_path(path, label="REGISTER public key")
     _assert_single_link_file(selected, label="REGISTER public key")
     try:
-        key = serialization.load_pem_public_key(selected.read_bytes())
+        key = serialization.load_pem_public_key(
+            read_stable_single_link_file(selected, label="REGISTER public key")
+        )
     except (OSError, ValueError, TypeError) as exc:
         raise ReleaseRequestAuthenticationError("cannot load REGISTER public key") from exc
     if not isinstance(key, Ed25519PublicKey):

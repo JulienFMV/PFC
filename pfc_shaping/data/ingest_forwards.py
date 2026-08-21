@@ -161,6 +161,17 @@ def _normalize_product(eex_code: str) -> tuple[str, str, str] | None:
     return None
 
 
+def normalize_eex_product_code(eex_code: str) -> tuple[str, str, str] | None:
+    """Return the canonical delivery, load and product type for a desk code.
+
+    This public wrapper is the single product-identity parser used by governed
+    prospective EEX intake. Week products remain recognizable but ineligible
+    for the LT monthly solver.
+    """
+
+    return _normalize_product(eex_code)
+
+
 def load_forwards_timeseries(
     report_path: str | Path,
     market: str = "CH",
@@ -471,7 +482,7 @@ def load_base_prices_from_eex_report_bytes(
             key = delivery_keys.get(product_idx)
             if key is None:
                 continue
-            if key in row_prices and row_prices[key] != price:
+            if key in row_prices:
                 raise ValueError(
                     f"QUOTE_CONFLICT duplicate product {key} in {report_path} "
                     f"(sheet={market}, date={selected_date.date()})"

@@ -1,0 +1,225 @@
+{
+  "schema_version": "ch_market_time_regime_contract.v1",
+  "contract_name": "ch_market_time_regime_20260730_v1",
+  "as_of": {
+    "local_workstation_clock": "2026-07-30",
+    "timezone": "Europe/Zurich",
+    "time_authority": "UNTRUSTED_LOCAL_CLOCK_NOT_PRODUCTION_EVIDENCE"
+  },
+  "scope": {
+    "market": "CH",
+    "products": [
+      "DAY_AHEAD_AUCTION",
+      "INTRADAY_AUCTIONS"
+    ],
+    "delivery_curve_grid_minutes": 15,
+    "delivery_curve_grid_role": "MODELLED_VALUATION_GRID_NEVER_NATIVE_MARKET_TRUTH_CLAIM",
+    "monthly_level_authority": "SOLVER_WITH_HARD_GOVERNED_CH_EEX_FORWARD_CONSTRAINTS",
+    "ompex_role": "BENCHMARK_ONLY_NEVER_MODEL_INPUT_TRUTH_OR_LEVEL_AUTHORITY"
+  },
+  "regimes": {
+    "pre_transition": {
+      "state": "ACTIVE_FAIL_CLOSED_DEFAULT_UNTIL_POST_TRANSITION_ADMISSION",
+      "native_day_ahead_market_time_unit_minutes": 60,
+      "native_intraday_auction_market_time_unit_minutes": 60,
+      "native_day_ahead_hourly_truth_claim_possible_after_external_admission": true,
+      "native_intraday_auction_hourly_truth_claim_possible_after_external_admission": true,
+      "native_quarter_hour_truth_claim_possible": false,
+      "hourly_to_quarter_hour_stepwise_values_role": "TECHNICAL_PROXY_ONLY",
+      "hourly_duplication_interpolation_or_smoothing_as_native_quarter_hour_truth": "FORBIDDEN"
+    },
+    "planned_transition": {
+      "state": "PLANNED_NOT_CONFIRMED_NOT_ADMITTED",
+      "latest_locally_observed_official_plan": {
+        "operator": "EPEX_SPOT",
+        "planned_first_trading_date": "2026-11-03",
+        "planned_first_delivery_start_utc": null,
+        "wording_status": "PLANNED_NOT_ACTUAL_GO_LIVE"
+      },
+      "earlier_official_plans": [
+        {
+          "operator": "SWISSGRID",
+          "publication": "BALANCING_ROADMAP_2026_2030",
+          "planned_window": "Q3_2026"
+        },
+        {
+          "operator": "EPEX_SPOT_AND_SWISSGRID",
+          "publication": "BGM_PARTNER_MEETING_2025",
+          "planned_window": "END_Q2_2026_SUBJECT_TO_TESTING_AND_MEMBER_READINESS"
+        }
+      ],
+      "planning_change_interpretation": "SCHEDULE_EVOLUTION_NOT_GO_LIVE_EVIDENCE",
+      "confirmed_go_live": false,
+      "effective_first_delivery_start_utc": null
+    },
+    "post_transition": {
+      "state": "NOT_ADMITTED",
+      "native_day_ahead_market_time_unit_minutes_after_admission": 15,
+      "native_intraday_auction_market_time_unit_minutes_after_admission": 15,
+      "published_hourly_index_rule_after_admission": "STRICT_ARITHMETIC_AVERAGE_OF_FOUR_CORRESPONDING_15_MIN_CLEARING_PRICES",
+      "day_ahead_cross_product_matching_order_durations_minutes": [
+        15,
+        30,
+        60
+      ],
+      "intraday_auction_cross_product_matching": "NONE",
+      "cross_border_capacity_product_granularity_is_energy_price_truth": false
+    }
+  },
+  "transition_admission_gate": {
+    "all_required": true,
+    "requirements": [
+      {
+        "requirement": "EPEX_SPOT_ACTUAL_GO_LIVE_NOTICE_CAPTURED_WITH_EXACT_BYTES_AND_TRUSTED_PUBLICATION_TIME",
+        "status": "MISSING"
+      },
+      {
+        "requirement": "SWISSGRID_ACTUAL_GO_LIVE_NOTICE_CAPTURED_WITH_EXACT_BYTES_AND_TRUSTED_PUBLICATION_TIME",
+        "status": "MISSING"
+      },
+      {
+        "requirement": "EXACT_FIRST_TRADING_DATE_AND_FIRST_DELIVERY_INTERVAL_UTC_AGREE_ACROSS_OFFICIAL_SOURCES",
+        "status": "MISSING"
+      },
+      {
+        "requirement": "LICENSED_NATIVE_CH_15_MIN_CLEARING_PRICE_BYTES_WITH_AUCTION_SESSION_AND_PRODUCT_IDENTITIES",
+        "status": "MISSING"
+      },
+      {
+        "requirement": "PROVIDER_PRODUCT_SEMANTICS_SCHEMA_REVISION_AND_AVAILABILITY_LAG_MANIFESTS",
+        "status": "MISSING"
+      },
+      {
+        "requirement": "INDEPENDENT_SIGNATURE_TRUSTED_TIME_AND_EXTERNAL_CAS_RECEIPTS",
+        "status": "MISSING"
+      },
+      {
+        "requirement": "DST_92_96_100_QUARTER_HOUR_INTERVAL_TESTS_AND_OPERATIONAL_REPLAY",
+        "status": "MISSING"
+      },
+      {
+        "requirement": "NOTICE_PUBLICATION_AND_REVISION_VINTAGE_MANIFESTS_AVAILABLE_AT_EACH_FORECAST_ORIGIN",
+        "status": "MISSING"
+      }
+    ],
+    "transition_admitted": false,
+    "missing_or_conflicting_evidence_policy": "KEEP_PRE_TRANSITION_HOURLY_REGIME_AND_MARK_15_MIN_TRUTH_UNSUPPORTED"
+  },
+  "data_and_validation_policy": {
+    "timestamp_axis": "UTC_WITH_EUROPE_ZURICH_LOCAL_DELIVERY_CALENDAR",
+    "negative_and_zero_prices_retained": true,
+    "pre_and_post_transition_training_scoring_and_diagnostics_stratified": true,
+    "resampling_across_transition_boundary": "FORBIDDEN",
+    "native_resolution_provenance_required_per_observation": true,
+    "proxy_rows_may_train_or_score_native_quarter_hour_layer": false,
+    "sixty_minute_index_reconstruction_before_transition": "NOT_APPLICABLE_NATIVE_HOURLY_PRODUCT",
+    "sixty_minute_index_reconstruction_after_transition": "FOUR_NATIVE_QUARTER_HOUR_CLEARING_PRICES_ONLY",
+    "dst_local_day_expected_quarter_hour_counts": [
+      92,
+      96,
+      100
+    ],
+    "market_regime_boundary_must_be_frozen_before_model_selection": true,
+    "post_boundary_change_requires_new_candidate_and_backtest_design": true,
+    "regime_metadata_vintage_manifest_required_per_origin": true,
+    "notice_publication_and_revision_inventory_required": true,
+    "regime_metadata_available_at_utc_must_be_le_forecast_origin_utc": true,
+    "delivery_interval_regime_assignment_uses_frozen_effective_boundary_utc": true,
+    "post_origin_boundary_revision_role": "SCORING_METADATA_ONLY_NEVER_MODEL_INPUT",
+    "boundary_unknown_at_origin_policy": "PRE_TRANSITION_INFORMATION_SET_AND_UNSUPPORTED_POST_TRANSITION_NATIVE_TRUTH_CLAIM"
+  },
+  "evidence": {
+    "official_source_captures": [
+      {
+        "source_id": "EPEX_SPOT_15_MINUTE_PRODUCTS_IN_MARKET_COUPLING",
+        "url": "https://www.epexspot.com/en/new-15-minute-products-market-coupling",
+        "path": "build/market-time-regime-evidence-20260730-v3/epex-15-minute-market-coupling.html",
+        "size_bytes": 68453,
+        "sha256": "73c0c7b6010d3b8d14ade3936233f940abe4fb956fd7a9623fc32a5f5f42edec",
+        "supports": [
+          "PLANNED_FIRST_TRADING_DATE_2026_11_03",
+          "CURRENT_CH_DA_AND_IDA_SWITCH_FROM_60_MIN_TO_15_MIN",
+          "POST_SWITCH_60_MIN_INDEX_STRICT_ARITHMETIC_AVERAGE"
+        ]
+      },
+      {
+        "source_id": "SWISSGRID_BALANCING_ROADMAP_2026_2030",
+        "url": "https://www.swissgrid.ch/content/dam/swissgrid/about-us/newsroom/publications/balancing-roadmap-en.pdf",
+        "path": "build/market-time-regime-evidence-20260730-v3/swissgrid-balancing-roadmap-2026-2030.pdf",
+        "size_bytes": 9006825,
+        "sha256": "879b287916d5be571b3cbffc1a50b7af891c6b63685d8ba59dd2732ff25faef7",
+        "supports": [
+          "SWITZERLAND_EXCLUDED_FROM_SDAC_AND_SIDC_AT_PUBLICATION",
+          "EARLIER_Q3_2026_PLANNED_GO_LIVE",
+          "CH_DE_AND_CH_AT_15_MIN_CAPACITY_PRODUCTS_NOT_ENERGY_PRICE_TRUTH"
+        ]
+      },
+      {
+        "source_id": "SWISSGRID_BGM_PARTNER_MEETING_2025",
+        "url": "https://www.swissgrid.ch/content/dam/swissgrid/customers/topics/bgm/1/251111-BGM-Partner-Meeting.pdf",
+        "path": "build/market-time-regime-evidence-20260730-v3/swissgrid-bgm-partner-meeting-20251112.pdf",
+        "size_bytes": 6129398,
+        "sha256": "60d321d39b5544bba91e4fe521552c01d322fdfea104cfd625bc26bdf15482c0",
+        "supports": [
+          "EARLIER_END_Q2_2026_TARGET_SUBJECT_TO_TESTS_AND_MEMBER_READINESS",
+          "CROSS_PRODUCT_MATCHING_15_30_60_MIN_ORDER_DESIGN",
+          "SWISS_INTRADAY_CONTINUOUS_15_MIN_ALREADY_TRADED_IS_SEPARATE_FROM_AUCTION_TRANSITION"
+        ]
+      }
+    ],
+    "local_hourly_observation": {
+      "selection_manifest_path": ".planning/phases/14-lt-audit-remediation/CH-LT-PROSPECTIVE-CAPTURE-LEDGER-SELECTION-20260730.json",
+      "selection_manifest_size_bytes": 3012,
+      "selection_manifest_sha256": "7accb35de831693dec5de039a2400c874dce5151e3421d56181dabede09845fa",
+      "selected_ledger_path": "build/prospective-ledgers/ch-hourly-local-ledger-20260730-v5.json",
+      "selected_ledger_size_bytes": 8046,
+      "selected_ledger_sha256": "089aaa82d1025fd550cd9cdceba6a20cfb1aef1871a57f4cdca2c2e23470bdb6",
+      "selected_execution_receipt_path": "build/prospective-ledgers/ch-hourly-local-ledger-execution-receipt-20260730-v5.json",
+      "selected_execution_receipt_size_bytes": 1530,
+      "selected_execution_receipt_sha256": "439b3a155c8912f8b96a088aa720e1eb0180d84695f65b25b7de06d2ec6cfd37",
+      "observed_native_cadence_minutes": 60,
+      "observed_through_local_date": "2026-07-29",
+      "quarter_hour_rows_are_stepwise_proxies": true,
+      "scientific_or_production_authority": false
+    },
+    "capture_limitations": {
+      "capture_time_authority": "UNTRUSTED_LOCAL_WORKSTATION_CLOCK",
+      "tls_revocation_check": "BEST_EFFORT_UNAVAILABLE",
+      "independent_signature": false,
+      "external_cas_receipt": false,
+      "production_authority": false
+    }
+  },
+  "supersession": {
+    "supersession_scope": "MARKET_TIME_REGIME_STATUS_PLANNING_DATE_AND_CAPTURE_BINDINGS_ONLY",
+    "superseded_document": {
+      "path": ".planning/phases/14-lt-audit-remediation/CH-LT-PROSPECTIVE-DATA-ACQUISITION-PLAN-20260727.json",
+      "sha256": "99361b488e5a031f66c64866c7d69f21a7d8d031e30cf37b097a452bb5627c5a",
+      "size_bytes": 9953,
+      "plan_id": "a0faf97bc10b4d51e23b21c200a73cdd95f92ffa9f8ea7976bc4a10859a8688f"
+    },
+    "superseded_assertions": [
+      "CH_EXPLICIT_AUCTION_15MIN_GO_LIVE_MONITOR.PLANNED_GO_LIVE_WINDOW_Q3_2026",
+      "PRIMARY_SOURCE_OBSERVATIONS.CONTENT_BYTES_CAPTURED_FALSE"
+    ],
+    "preserved_invariants": [
+      "PRE_TRANSITION_NATIVE_CH_DAY_AHEAD_TRUTH_IS_HOURLY",
+      "NATIVE_CH_QUARTER_HOUR_TRUTH_UNSUPPORTED_UNTIL_EXTERNAL_ADMISSION",
+      "HOURLY_DUPLICATION_AS_NATIVE_QUARTER_HOUR_TRUTH_FORBIDDEN",
+      "MONTHLY_SOLVER_REMAINS_LEVEL_AUTHORITY",
+      "OMPEX_REMAINS_BENCHMARK_ONLY",
+      "NO_EXECUTION_SCIENTIFIC_PRODUCTION_OR_PROMOTION_AUTHORITY"
+    ],
+    "superseded_document_may_override_this_contract": false
+  },
+  "execution_controls": {
+    "contract_authorizes_data_acquisition": false,
+    "contract_authorizes_model_selection": false,
+    "contract_authorizes_holdout_consumption": false,
+    "contract_authorizes_production": false,
+    "promotion_gate": false,
+    "t057_consumed": false,
+    "future_holdout_consumed": false
+  },
+  "contract_id": "898d35e37a2df9dc9814039698eb605fdf220ece33d2035c7c7a2ea1b7bc9dba"
+}

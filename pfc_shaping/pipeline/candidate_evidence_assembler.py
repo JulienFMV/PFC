@@ -24,6 +24,7 @@ from pfc_shaping.calibration.monthly_forward_curve import (
     build_monthly_constraint_system,
 )
 from pfc_shaping.data.acquisition_contract import (
+    GOVERNED_LT_INPUT_SNAPSHOT_SCHEMAS,
     AcquisitionAuthenticationError,
     verify_acquisition_contract,
 )
@@ -35,7 +36,12 @@ from pfc_shaping.data.lt_input_sources import (
     validate_lt_input_consumption,
     validate_lt_input_contract_semantics,
 )
-from pfc_shaping.path_safety import path_is_link
+from pfc_shaping.data.snapshot_publication_state import (
+    SnapshotPublicationStateError,
+    verify_external_publication_evidence,
+    verify_publication_authority_separation,
+)
+from pfc_shaping.path_safety import path_is_link, read_stable_single_link_file
 from pfc_shaping.pipeline.candidate_evidence import (
     CandidateEvidenceError,
     verify_pre_run_governance_evidence,
@@ -145,9 +151,7 @@ def assemble_candidate_derived_evidence(
         parity_path = staging / SELECTED_CONFIG_PARITY
         _write_json_exclusive(parity_path, parity)
         parity_ref = _artifact_ref(staging, parity_path, role="selected_config_run_parity")
-        historical_thresholds = pd.read_csv(
-            staging / str(sources["historical_thresholds"]["path"])
-        )
+        historical_thresholds = pd.read_csv(staging / str(sources["historical_thresholds"]["path"]))
         monthly_gates = audit_monthly_curve_shape(
             monthly_curve,
             constraints,
@@ -355,9 +359,7 @@ def _source_artifacts(
         raise CandidateEvidenceAssemblyError("pre-run governance manifest is missing")
     if str(pre_run_path_value) != "manifests/pre_run_governance_manifest.json":
         raise CandidateEvidenceAssemblyError("pre-run governance path is not canonical")
-    declared_pre_run_hash = str(
-        run_manifest.get("pre_run_governance_manifest_sha256", "")
-    )
+    declared_pre_run_hash = str(run_manifest.get("pre_run_governance_manifest_sha256", ""))
     pre_run_path = _regular_file_within(
         staging,
         str(pre_run_path_value),
@@ -372,9 +374,7 @@ def _source_artifacts(
             expected_valuation_timestamp=str(run_manifest.get("reference_timestamp", "")),
         )
     except CandidateEvidenceError as exc:
-        raise CandidateEvidenceAssemblyError(
-            "pre-run governance authentication failed"
-        ) from exc
+        raise CandidateEvidenceAssemblyError("pre-run governance authentication failed") from exc
     independent = pre_run.get("artifacts")
     if not isinstance(independent, Mapping) or not isinstance(
         independent.get("selected_lambda_decision"), Mapping
@@ -384,9 +384,7 @@ def _source_artifacts(
     if not isinstance(eex_pre_run, Mapping) or not isinstance(
         eex_pre_run.get("acquisition_contract"), Mapping
     ):
-        raise CandidateEvidenceAssemblyError(
-            "authenticated pre-run EEX source binding is missing"
-        )
+        raise CandidateEvidenceAssemblyError("authenticated pre-run EEX source binding is missing")
     selected_path = independent["selected_lambda_decision"].get("path")
     thresholds_path = independent["historical_thresholds"].get("path")
     ch = markets["CH"]
@@ -425,9 +423,7 @@ def _source_artifacts(
             "candidate EEX source differs from authenticated pre-run source"
         )
     try:
-        input_contract = _load_json(
-            staging / str(sources["input_snapshot_manifest"]["path"])
-        )
+        input_contract = _load_json(staging / str(sources["input_snapshot_manifest"]["path"]))
         verified_contract = verify_acquisition_contract(input_contract)
         validate_lt_input_contract_semantics(input_contract)
     except (
@@ -439,8 +435,97 @@ def _source_artifacts(
             "governed LT input snapshot authentication failed"
         ) from exc
     pointer = _load_json(staging / str(sources["input_snapshot_pointer"]["path"]))
-    if pointer.get("schema_version") != "lt_data_pointer.v1":
-        raise CandidateEvidenceAssemblyError("LT input pointer schema mismatch")
+    pointer_schema = pointer.get("schema_version")
+    if pointer_schema != "lt_data_pointer.v2":
+        raise CandidateEvidenceAssemblyError(
+            "promotion-grade LT candidate requires an external CAS v2 pointer"
+        )
+    if pointer_schema == "lt_data_pointer.v2":
+        publication_entries = {
+            "publication_intent": run_manifest.get("data_publication_intent"),
+            "publication_anchor_receipt": run_manifest.get("data_publication_anchor_receipt"),
+            "publication_head_observation": run_manifest.get("data_publication_head_observation"),
+        }
+        publication_payloads: dict[str, bytes] = {}
+        for role, entry in publication_entries.items():
+            if not isinstance(entry, Mapping):
+                raise CandidateEvidenceAssemblyError(
+                    f"candidate external publication evidence is missing: {role}"
+                )
+            path = _regular_file_within(
+                staging,
+                str(entry.get("archive_path", "")),
+                role=role,
+            )
+            payload = read_stable_single_link_file(
+                path,
+                label=f"candidate {role}",
+            )
+            publication_payloads[role] = payload
+            sources[role] = {
+                "role": role,
+                "path": path.relative_to(staging).as_posix(),
+                "sha256": hashlib.sha256(payload).hexdigest(),
+                "size_bytes": len(payload),
+            }
+            if str(entry.get("sha256", "")) != str(sources[role]["sha256"]):
+                raise CandidateEvidenceAssemblyError(
+                    f"candidate declared source hash mismatch: {role}"
+                )
+        try:
+            run_spec = pre_run.get("governed_run_spec")
+            snapshot_binding = (
+                run_spec.get("input_snapshot") if isinstance(run_spec, Mapping) else None
+            )
+            expected_nonce = (
+                snapshot_binding.get("publication_head_challenge_nonce")
+                if isinstance(snapshot_binding, Mapping)
+                else None
+            )
+            intent_document = _load_json_bytes(
+                publication_payloads["publication_intent"],
+                label="publication intent",
+            )
+            receipt_document = _load_json_bytes(
+                publication_payloads["publication_anchor_receipt"],
+                label="publication anchor receipt",
+            )
+            if intent_document.get("transition_type") != "PUBLISH":
+                raise CandidateEvidenceAssemblyError(
+                    "promotion-grade candidate cannot consume a BOOTSTRAP publication"
+                )
+            observation = _load_json_bytes(
+                publication_payloads["publication_head_observation"],
+                label="publication HEAD observation",
+            )
+            if observation.get("challenge_nonce") != expected_nonce:
+                raise CandidateEvidenceAssemblyError(
+                    "candidate HEAD observation nonce differs from run spec"
+                )
+            verify_external_publication_evidence(
+                intent_payload=publication_payloads["publication_intent"],
+                receipt_payload=publication_payloads["publication_anchor_receipt"],
+                observation_payload=publication_payloads["publication_head_observation"],
+                pointer=pointer,
+                require_current=False,
+            )
+            verify_publication_authority_separation(
+                input_contract,
+                intent=intent_document,
+                receipt=receipt_document,
+                observation=observation,
+            )
+            run_started_at = pd.Timestamp(run_manifest.get("run_started_at_utc"))
+            observed_time = pd.Timestamp(observation.get("observed_at_utc"))
+            expires_time = pd.Timestamp(observation.get("expires_at_utc"))
+            if not observed_time <= run_started_at < expires_time:
+                raise CandidateEvidenceAssemblyError(
+                    "candidate HEAD observation was not fresh at run start"
+                )
+        except SnapshotPublicationStateError as exc:
+            raise CandidateEvidenceAssemblyError(
+                "candidate external publication evidence is invalid"
+            ) from exc
     generation_id = str(run_manifest.get("data_generation_id", "")).strip()
     if not generation_id:
         raise CandidateEvidenceAssemblyError("candidate data generation_id is missing")
@@ -449,9 +534,7 @@ def _source_artifacts(
         or str(verified_contract.get("generation_id", "")) != generation_id
     ):
         raise CandidateEvidenceAssemblyError("LT pointer/contract generation mismatch")
-    if str(pointer.get("contract_sha256", "")) != str(
-        sources["input_snapshot_manifest"]["sha256"]
-    ):
+    if str(pointer.get("contract_sha256", "")) != str(sources["input_snapshot_manifest"]["sha256"]):
         raise CandidateEvidenceAssemblyError("LT pointer contract hash mismatch")
     if (
         verified_contract.get("calibration_eligible") is not True
@@ -495,6 +578,7 @@ def _validate_input_consumption(
             available_at_utc=str(contract.get("available_at_utc", "")),
             files={str(role): Path(str(entry.get("path", ""))) for role, entry in files.items()},
             expected_files={str(role): entry for role, entry in files.items()},
+            schema_version=str(contract.get("schema_version", "")),
         )
         validate_lt_input_consumption(
             paths,
@@ -600,7 +684,11 @@ def _load_pfc(path: Path) -> pd.DataFrame:
         frame = deterministic_only_frame(frame, context="staged CH PFC")
     except ValueError as exc:
         raise CandidateEvidenceAssemblyError(str(exc)) from exc
-    if frame.index.tz is None or not frame.index.is_monotonic_increasing or not frame.index.is_unique:
+    if (
+        frame.index.tz is None
+        or not frame.index.is_monotonic_increasing
+        or not frame.index.is_unique
+    ):
         raise CandidateEvidenceAssemblyError("staged CH PFC index contract failed")
     utc_index = frame.index.tz_convert("UTC")
     if len(utc_index) < 2 or not bool(
@@ -731,7 +819,15 @@ def _ompex_exclusion_evidence(
     eex_contract = verify_acquisition_contract(
         _load_json(staging / str(sources["eex_acquisition_contract"]["path"]))
     )
+    if eex_contract.get("schema_version") not in GOVERNED_LT_INPUT_SNAPSHOT_SCHEMAS:
+        raise CandidateEvidenceAssemblyError(
+            "EEX source lineage requires a governed v2/v3 contract"
+        )
     eex_files = eex_contract.get("files")
+    if not isinstance(eex_files, Mapping) or set(eex_files) != {"eex_forward_source"}:
+        raise CandidateEvidenceAssemblyError(
+            "authenticated EEX source lineage must contain only the forward source"
+        )
     eex_entry = eex_files.get("eex_forward_source") if isinstance(eex_files, Mapping) else None
     if not isinstance(eex_entry, Mapping):
         raise CandidateEvidenceAssemblyError("authenticated EEX source lineage is missing")
@@ -786,13 +882,13 @@ def _ompex_exclusion_evidence(
         "status": "PASS",
         "prohibited_uses": ["MODEL_INPUT", "TARGET", "LOSS", "SELECTION", "PROMOTION_GATE"],
         "inspected_input_sources": inspected,
-        "authenticated_source_systems": sorted(
-            {entry["source_system"] for entry in inspected}
-        ),
+        "authenticated_source_systems": sorted({entry["source_system"] for entry in inspected}),
         "benchmark_config": {
             "path_configured": benchmark_path is not None,
             "policy": quality.get("benchmark_policy") if isinstance(quality, Mapping) else None,
-            "fail_on_benchmark": quality.get("fail_on_benchmark") if isinstance(quality, Mapping) else None,
+            "fail_on_benchmark": quality.get("fail_on_benchmark")
+            if isinstance(quality, Mapping)
+            else None,
             "usage": "ADVISORY_ONLY",
         },
         "inspected_selected_config_sha256": str(selected.get("config_hash", "")),
@@ -866,9 +962,7 @@ def _validate_production_manifest(
         dict(expected_solver_settings)
     ):
         raise CandidateEvidenceAssemblyError("production solver config hash mismatch")
-    if not production.get("monthly_solution_hash") or not production.get(
-        "active_constraints_hash"
-    ):
+    if not production.get("monthly_solution_hash") or not production.get("active_constraints_hash"):
         raise CandidateEvidenceAssemblyError("production monthly solution evidence is incomplete")
     if production.get("promotion_eligible") is not True:
         raise CandidateEvidenceAssemblyError("production monthly manifest is not eligible")
@@ -885,14 +979,10 @@ def _validate_production_manifest(
     if not isinstance(source_evidence, Mapping):
         raise CandidateEvidenceAssemblyError("candidate source evidence is missing")
     for key in ("snapshot_id", "observation_id"):
-        if str(forward.get(key, "")) != str(
-            source_evidence.get(f"forward_{key}", "")
-        ):
+        if str(forward.get(key, "")) != str(source_evidence.get(f"forward_{key}", "")):
             raise CandidateEvidenceAssemblyError(f"production forward {key} mismatch")
     portable_forward = dict(forward)
-    portable_forward["source_path"] = str(
-        staging / str(sources["forward_source"]["path"])
-    )
+    portable_forward["source_path"] = str(staging / str(sources["forward_source"]["path"]))
     try:
         verify_forward_manifest_binding(
             portable_forward,
@@ -991,19 +1081,13 @@ def _validate_hard_base_constraints(
         "quote_conflict_tolerance_eur_mwh": float(
             solver_config.get("quote_conflict_tolerance", 0.01)
         ),
-        "hard_repricing_tolerance_eur_mwh": float(
-            solver_config.get("constraint_tolerance", 1e-9)
-        ),
-        "stationarity_tolerance": float(
-            solver_config.get("stationarity_tolerance", 1e-7)
-        ),
+        "hard_repricing_tolerance_eur_mwh": float(solver_config.get("constraint_tolerance", 1e-9)),
+        "stationarity_tolerance": float(solver_config.get("stationarity_tolerance", 1e-7)),
         "residual_lineage_required": True,
     }
     if dict(policy) != expected_policy:
         raise CandidateEvidenceAssemblyError("production quote hierarchy policy mismatch")
-    if str(production.get("product_hierarchy_policy_sha256", "")) != _sha256_json(
-        expected_policy
-    ):
+    if str(production.get("product_hierarchy_policy_sha256", "")) != _sha256_json(expected_policy):
         raise CandidateEvidenceAssemblyError("production quote hierarchy policy hash mismatch")
     try:
         constraints = build_monthly_constraint_system(
@@ -1012,12 +1096,8 @@ def _validate_hard_base_constraints(
             timezone=LOCAL_TZ,
             market="CH",
             load_type="BASE",
-            constraint_tolerance=float(
-                policy.get("hard_repricing_tolerance_eur_mwh", 1e-9)
-            ),
-            quote_conflict_tolerance=float(
-                policy.get("quote_conflict_tolerance_eur_mwh", 0.01)
-            ),
+            constraint_tolerance=float(policy.get("hard_repricing_tolerance_eur_mwh", 1e-9)),
+            quote_conflict_tolerance=float(policy.get("quote_conflict_tolerance_eur_mwh", 0.01)),
         )
     except (TypeError, ValueError) as exc:
         raise CandidateEvidenceAssemblyError(
@@ -1027,9 +1107,7 @@ def _validate_hard_base_constraints(
         raise CandidateEvidenceAssemblyError(
             "no hard CH BASE constraint overlaps the delivered monthly curve"
         )
-    if str(production.get("active_constraints_hash", "")) != _hash_frame(
-        constraints.rows
-    ):
+    if str(production.get("active_constraints_hash", "")) != _hash_frame(constraints.rows):
         raise CandidateEvidenceAssemblyError("production active constraints hash mismatch")
     if str(production.get("quote_diagnostics_hash", "")) != _hash_frame(
         constraints.quote_diagnostics
@@ -1052,9 +1130,7 @@ def _validate_hard_base_constraints(
     expected_provenance = _canonical_frame_records(constraints.rows[provenance_columns])
     if production.get("constraint_provenance_rows") != expected_provenance:
         raise CandidateEvidenceAssemblyError("production constraint provenance mismatch")
-    if str(production.get("constraint_provenance_hash", "")) != _sha256_json(
-        expected_provenance
-    ):
+    if str(production.get("constraint_provenance_hash", "")) != _sha256_json(expected_provenance):
         raise CandidateEvidenceAssemblyError("production constraint provenance hash mismatch")
     expected_hard_quotes = [
         dict(item)
@@ -1063,9 +1139,7 @@ def _validate_hard_base_constraints(
     ]
     if production.get("hard_quotes") != expected_hard_quotes:
         raise CandidateEvidenceAssemblyError("production hard quote set mismatch")
-    if str(production.get("hard_quote_set_hash", "")) != _sha256_json(
-        expected_hard_quotes
-    ):
+    if str(production.get("hard_quote_set_hash", "")) != _sha256_json(expected_hard_quotes):
         raise CandidateEvidenceAssemblyError("production hard quote set hash mismatch")
     residuals = constraints.residuals(monthly.to_numpy(dtype=float))
     tolerance = float(policy.get("hard_repricing_tolerance_eur_mwh", 1e-9))
@@ -1238,12 +1312,23 @@ def _assembly_lock(staging: Path, *, run_id: str) -> Iterator[None]:
 
 def _load_json(path: Path) -> dict[str, object]:
     try:
-        payload = load_strict_json(path.read_text(encoding="utf-8"))
+        raw = read_stable_single_link_file(path, label="candidate JSON artifact")
+        payload = load_strict_json(raw.decode("utf-8"))
     except (OSError, UnicodeDecodeError, ValueError) as exc:
         raise CandidateEvidenceAssemblyError(f"invalid JSON artifact: {path}") from exc
     if not isinstance(payload, dict):
         raise CandidateEvidenceAssemblyError(f"JSON artifact must contain an object: {path}")
     return payload
+
+
+def _load_json_bytes(payload: bytes, *, label: str) -> dict[str, object]:
+    try:
+        value = load_strict_json(payload.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise CandidateEvidenceAssemblyError(f"invalid JSON artifact: {label}") from exc
+    if not isinstance(value, dict):
+        raise CandidateEvidenceAssemblyError(f"JSON artifact must contain an object: {label}")
+    return value
 
 
 def _write_json_exclusive(path: Path, payload: Mapping[str, object]) -> None:

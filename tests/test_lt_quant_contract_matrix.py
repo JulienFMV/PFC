@@ -119,6 +119,41 @@ def test_fully_covered_redundant_peak_parent_is_accepted_by_source_hierarchy():
     assert "PEAK:2030-Q1" not in system.names
 
 
+def test_nested_peak_hierarchy_reprices_raw_quotes_across_spring_dst():
+    start = pd.Timestamp("2030-01-01", tz="Europe/Zurich").tz_convert("UTC")
+    end = pd.Timestamp("2030-04-01", tz="Europe/Zurich").tz_convert("UTC")
+    idx = pd.date_range(start, end, freq="h", inclusive="left")
+    base_prices = {"2030-Q1": 80.0, "2030-01": 90.0}
+    peak_prices = {"2030-Q1": 100.0, "2030-01": 110.0}
+
+    system = build_base_peak_offpeak_constraint_system(
+        idx,
+        base_prices,
+        peak_prices,
+        country="CH",
+    )
+    curve, *_ = np.linalg.lstsq(system.matrix, system.targets, rcond=None)
+    local = idx.tz_convert("Europe/Zurich")
+    peak = eex_peak_mask(idx, country="CH")
+    q1 = local.quarter == 1
+    january = local.month == 1
+
+    assert len(idx) == 2159  # Q1 includes the 23-hour Swiss DST transition day.
+    assert float(curve[q1].mean()) == pytest.approx(80.0, abs=1e-10)
+    assert float(curve[january].mean()) == pytest.approx(90.0, abs=1e-10)
+    assert float(curve[q1 & peak].mean()) == pytest.approx(100.0, abs=1e-10)
+    assert float(curve[january & peak].mean()) == pytest.approx(110.0, abs=1e-10)
+
+    january_offpeak = curve[january & ~peak]
+    january_expected_offpeak = (
+        90.0 * int(january.sum()) - 110.0 * int((january & peak).sum())
+    ) / int((january & ~peak).sum())
+    assert float(january_offpeak.mean()) == pytest.approx(
+        january_expected_offpeak,
+        abs=1e-10,
+    )
+
+
 def test_ch_august_1_weekday_holiday_is_eex_peak():
     idx = pd.date_range("2030-08-01 00:00", "2030-08-01 23:00", freq="h", tz="Europe/Zurich").tz_convert("UTC")
     peak = eex_peak_mask(idx, country="CH")

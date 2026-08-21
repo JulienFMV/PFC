@@ -552,6 +552,18 @@ def test_granularity_ladder_uses_requested_estimator(
 # ---------------------------------------------------------------------------
 # Slow integration test — real run_perfect_foresight with a single vintage
 # ---------------------------------------------------------------------------
+@pytest.mark.skipif(
+    not all(
+        path.exists()
+        for path in (
+            Path(__file__).resolve().parents[1] / "data" / "epex_hourly.parquet",
+            Path(__file__).resolve().parents[1]
+            / "data"
+            / "forwards_history_phase10.parquet",
+        )
+    ),
+    reason="requires governed local Phase 10 EPEX/forward inputs outside Git",
+)
 @pytest.mark.slow
 def test_run_perfect_foresight_single_vintage_wellformed():
     """End-to-end run on real data with one vintage -> well-formed result dataclass."""

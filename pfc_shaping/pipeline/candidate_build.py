@@ -57,6 +57,7 @@ def build_candidate(args: argparse.Namespace) -> dict[str, object]:
             "config",
             "input_snapshot_contract",
             "input_pointer_contract",
+            "publication_head_observation",
             "data_root",
             "historical_thresholds",
             "historical_thresholds_receipt",
@@ -89,6 +90,10 @@ def build_candidate(args: argparse.Namespace) -> dict[str, object]:
         input_snapshot_sha256=args.input_snapshot_sha256,
         input_pointer_sha256=args.input_pointer_sha256,
         input_generation_id=args.input_generation_id,
+        publication_head_observation_sha256=(
+            args.publication_head_observation_sha256
+        ),
+        publication_head_challenge_nonce=args.publication_head_challenge_nonce,
         peak_source_policy=args.peak_source_policy,
         use_seasonal_hourly_shape=args.use_seasonal_hourly_shape,
     )
@@ -112,6 +117,11 @@ def build_candidate(args: argparse.Namespace) -> dict[str, object]:
         expected_input_snapshot_sha256=args.input_snapshot_sha256,
         expected_input_pointer_sha256=args.input_pointer_sha256,
         expected_input_generation_id=args.input_generation_id,
+        publication_head_observation=args.publication_head_observation,
+        expected_publication_head_observation_sha256=(
+            args.publication_head_observation_sha256
+        ),
+        publication_head_challenge_nonce=args.publication_head_challenge_nonce,
     )
     selected_entry = pre_run_governance["artifacts"]["selected_lambda_decision"]
     selected_path = staging / str(selected_entry["path"])

@@ -17,6 +17,8 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PublicKey,
 )
 
+from pfc_shaping.path_safety import read_stable_single_link_file
+
 REQUIRED_PROMOTION_GATE_IDS = frozenset(
     {
         "candidate_run_freshness",
@@ -496,7 +498,10 @@ def _load_rollback_public_key(path: str | Path) -> Ed25519PublicKey:
 
 def _load_private_key(path: str | Path) -> Ed25519PrivateKey:
     try:
-        key = serialization.load_pem_private_key(Path(path).read_bytes(), password=None)
+        key = serialization.load_pem_private_key(
+            read_stable_single_link_file(Path(path), label="promotion private key"),
+            password=None,
+        )
     except (OSError, ValueError, TypeError) as exc:
         raise ReceiptAuthenticationError("cannot load Ed25519 promotion private key") from exc
     if not isinstance(key, Ed25519PrivateKey):
@@ -506,7 +511,11 @@ def _load_private_key(path: str | Path) -> Ed25519PrivateKey:
 
 def _load_public_key(path: str | Path) -> Ed25519PublicKey:
     try:
-        key = serialization.load_pem_public_key(Path(path).read_bytes())
+        key = serialization.load_pem_public_key(
+            read_stable_single_link_file(
+                Path(path), label="trusted promotion public key"
+            )
+        )
     except (OSError, ValueError, TypeError) as exc:
         raise ReceiptAuthenticationError("cannot load trusted Ed25519 promotion public key") from exc
     if not isinstance(key, Ed25519PublicKey):

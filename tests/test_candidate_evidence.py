@@ -207,6 +207,7 @@ def _bind_pre_run_fixture(
         "run_id": run["run_id"],
         "as_of_utc": run["reference_timestamp"],
         "build_timestamp_utc": "2026-07-13T00:01:00+00:00",
+        "run_started_at_utc": "2026-07-13T00:01:00+00:00",
         "runtime": {
             "distribution": "fmv-pfc-lt",
             "version": __version__,

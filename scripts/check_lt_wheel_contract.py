@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import base64
-import configparser
 import csv
 import hashlib
 import io
@@ -23,6 +22,10 @@ from pfc_shaping.package_contract import (
     BUILD_IDENTITY_PLACEHOLDER,
     BUILD_IDENTITY_TEMPLATE,
     REPRODUCIBLE_BUILD_EPOCH,
+)
+from pfc_shaping.path_safety import (
+    assert_absolute_path_has_no_links,
+    read_stable_single_link_file,
 )
 from pfc_shaping.version import __version__
 
@@ -70,12 +73,25 @@ REQUIRED_FILES = frozenset(
     {
         "pfc_shaping/version.py",
         "pfc_shaping/build_identity.py",
+        "pfc_shaping/cli/audit_ch_lt_compute_runtime.py",
+        "pfc_shaping/cli/audit_ch_lt_compute_runtime_manifest.py",
+        "pfc_shaping/cli/audit_ch_lt_estimand_contract.py",
+        "pfc_shaping/cli/audit_ch_market_time_regime.py",
         "pfc_shaping/cli/governed_release.py",
+        "pfc_shaping/cli/score_ch_lt_structural_prediction_commitment.py",
         "pfc_shaping/pipeline/candidate_build.py",
         "pfc_shaping/pipeline/candidate_finalize.py",
         "pfc_shaping/pipeline/probabilistic_output_governance.py",
         "pfc_shaping/pipeline/release_request_contract.py",
         "pfc_shaping/validation/product_normalization.py",
+        "pfc_shaping/validation/ch_lt_compute_runtime.py",
+        "pfc_shaping/validation/ch_lt_compute_runtime_manifest.py",
+        "pfc_shaping/validation/ch_lt_estimand_contract.py",
+        "pfc_shaping/validation/ch_lt_local_future_origin_selection.py",
+        "pfc_shaping/validation/ch_lt_native_hourly_truth_bundle.py",
+        "pfc_shaping/validation/ch_lt_prospective_hourly_scoring.py",
+        "pfc_shaping/validation/ch_lt_structural_prediction_commitment.py",
+        "pfc_shaping/validation/ch_market_time_regime.py",
         "pfc_shaping/calibration/monthly_curve_capstone.py",
     }
 )
@@ -116,16 +132,66 @@ EXPECTED_REQUIRES_DIST = frozenset(
         'statsmodels==0.14.6; extra == "validation"',
     }
 )
+MAX_WHEEL_BYTES = 16 * 1024 * 1024
+MAX_WHEEL_MEMBERS = 128
+MAX_WHEEL_MEMBER_UNCOMPRESSED_BYTES = 4 * 1024 * 1024
+MAX_WHEEL_TOTAL_UNCOMPRESSED_BYTES = 32 * 1024 * 1024
+MAX_WHEEL_MEMBER_COMPRESSION_RATIO = 200.0
 
 
 def audit_wheel(path: str | Path) -> dict[str, object]:
-    wheel = Path(path).resolve(strict=True)
+    wheel = Path(path)
+    if not wheel.is_absolute():
+        wheel = Path.cwd() / wheel
+    wheel = assert_absolute_path_has_no_links(wheel)
     if not wheel.is_file() or wheel.suffix != ".whl":
         raise ValueError("wheel path must identify one .whl file")
-    wheel_bytes = wheel.read_bytes()
+    wheel_size = wheel.stat().st_size
+    if wheel_size > MAX_WHEEL_BYTES:
+        return {
+            "schema_version": "fmv_pfc_lt_wheel_contract.v2",
+            "wheel": str(wheel),
+            "wheel_sha256": None,
+            "member_count": None,
+            "source_revision": None,
+            "status": "FAIL",
+            "errors": [
+                f"wheel size exceeds resource budget: {wheel_size}>{MAX_WHEEL_BYTES}"
+            ],
+            "promotion_eligible": False,
+        }
+    try:
+        wheel_bytes = read_stable_single_link_file(
+            wheel,
+            label="governed LT wheel",
+            max_bytes=MAX_WHEEL_BYTES,
+        )
+    except ValueError as exc:
+        return {
+            "schema_version": "fmv_pfc_lt_wheel_contract.v2",
+            "wheel": str(wheel),
+            "wheel_sha256": None,
+            "member_count": None,
+            "source_revision": None,
+            "status": "FAIL",
+            "errors": [f"wheel stable-read resource or identity failure: {exc}"],
+            "promotion_eligible": False,
+        }
     wheel_sha256 = hashlib.sha256(wheel_bytes).hexdigest()
     with zipfile.ZipFile(io.BytesIO(wheel_bytes)) as archive:
         infos = archive.infolist()
+        resource_errors = _wheel_resource_errors(infos)
+        if resource_errors:
+            return {
+                "schema_version": "fmv_pfc_lt_wheel_contract.v2",
+                "wheel": str(wheel),
+                "wheel_sha256": wheel_sha256,
+                "member_count": len(infos),
+                "source_revision": None,
+                "status": "FAIL",
+                "errors": resource_errors,
+                "promotion_eligible": False,
+            }
         names = [item.filename for item in infos]
         duplicate_names = sorted({name for name in names if names.count(name) > 1})
         case_collisions = sorted(
@@ -185,7 +251,7 @@ def audit_wheel(path: str | Path) -> dict[str, object]:
         computed_revision = _runtime_source_revision(archive, files)
         metadata_errors = _metadata_errors(archive, files)
         wheel_metadata_errors = _wheel_metadata_errors(archive, files)
-        entry_point_errors = _entry_point_errors(archive, files)
+        command_surface_errors = _command_surface_errors(archive, files)
         record_errors = _record_errors(archive, files)
     errors: list[str] = []
     if duplicate_names:
@@ -214,7 +280,7 @@ def audit_wheel(path: str | Path) -> dict[str, object]:
         errors.append("embedded source revision does not match wheel runtime sources")
     errors.extend(metadata_errors)
     errors.extend(wheel_metadata_errors)
-    errors.extend(entry_point_errors)
+    errors.extend(command_surface_errors)
     errors.extend(record_errors)
     return {
         "schema_version": "fmv_pfc_lt_wheel_contract.v2",
@@ -226,6 +292,36 @@ def audit_wheel(path: str | Path) -> dict[str, object]:
         "errors": errors,
         "promotion_eligible": False,
     }
+
+
+def _wheel_resource_errors(infos: list[zipfile.ZipInfo]) -> list[str]:
+    errors: list[str] = []
+    if len(infos) > MAX_WHEEL_MEMBERS:
+        errors.append(
+            f"wheel member count exceeds resource budget: {len(infos)}>{MAX_WHEEL_MEMBERS}"
+        )
+    total_uncompressed = sum(item.file_size for item in infos)
+    if total_uncompressed > MAX_WHEEL_TOTAL_UNCOMPRESSED_BYTES:
+        errors.append(
+            "wheel uncompressed total exceeds resource budget: "
+            f"{total_uncompressed}>{MAX_WHEEL_TOTAL_UNCOMPRESSED_BYTES}"
+        )
+    oversized = sorted(
+        item.filename
+        for item in infos
+        if item.file_size > MAX_WHEEL_MEMBER_UNCOMPRESSED_BYTES
+    )
+    if oversized:
+        errors.append(f"wheel members exceed uncompressed resource budget: {oversized}")
+    excessive_ratio = sorted(
+        item.filename
+        for item in infos
+        if item.file_size > 0
+        and item.file_size / max(item.compress_size, 1) > MAX_WHEEL_MEMBER_COMPRESSION_RATIO
+    )
+    if excessive_ratio:
+        errors.append(f"wheel members exceed compression-ratio budget: {excessive_ratio}")
+    return errors
 
 
 def _embedded_source_revision(
@@ -340,23 +436,20 @@ def _wheel_metadata_errors(archive: zipfile.ZipFile, files: set[str]) -> list[st
     ]
 
 
-def _entry_point_errors(archive: zipfile.ZipFile, files: set[str]) -> list[str]:
+def _command_surface_errors(archive: zipfile.ZipFile, files: set[str]) -> list[str]:
     entry_name = f"{EXPECTED_DIST_INFO}/entry_points.txt"
     top_level_name = f"{EXPECTED_DIST_INFO}/top_level.txt"
-    if entry_name not in files or top_level_name not in files:
-        return ["canonical pfc-lt entry point metadata is missing"]
-    parser = configparser.ConfigParser(interpolation=None)
-    try:
-        parser.read_string(archive.read(entry_name).decode("utf-8"))
-    except (UnicodeDecodeError, configparser.Error):
-        return ["canonical pfc-lt entry point metadata is invalid"]
-    if parser.sections() != ["console_scripts"] or dict(parser["console_scripts"]) != {
-        "pfc-lt": "pfc_shaping.cli.governed_release:main"
-    }:
-        return ["canonical pfc-lt entry point is missing or ambiguous"]
+    errors: list[str] = []
+    if entry_name in files:
+        errors.append(
+            "console-script entry point metadata is forbidden; use python -I -B -m"
+        )
+    if top_level_name not in files:
+        errors.append("wheel top-level package metadata is missing")
+        return errors
     if archive.read(top_level_name) != b"pfc_shaping\n":
-        return ["wheel top-level package metadata is invalid"]
-    return []
+        errors.append("wheel top-level package metadata is invalid")
+    return errors
 
 
 def _record_errors(archive: zipfile.ZipFile, files: set[str]) -> list[str]:

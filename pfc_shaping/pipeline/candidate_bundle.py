@@ -90,8 +90,12 @@ def write_long_term_candidate(
         if manifest:
             if code == "CH" and isinstance(manifest.get("forward_snapshot"), Mapping):
                 portable_snapshot = dict(manifest["forward_snapshot"])
-                portable_snapshot["source_path"] = Path("..", str(source_evidence["forward_source_archive"])).as_posix()
-                portable_snapshot["source_description"] = "archived EEX source in LT candidate bundle"
+                portable_snapshot["source_path"] = Path(
+                    "..", str(source_evidence["forward_source_archive"])
+                ).as_posix()
+                portable_snapshot["source_description"] = (
+                    "archived EEX source in LT candidate bundle"
+                )
                 manifest["forward_snapshot"] = portable_snapshot
             manifest_path = manifests_dir / f"production_monthly_curve_manifest_{code.lower()}.json"
             _write_json(manifest_path, manifest)
@@ -116,9 +120,7 @@ def write_long_term_candidate(
 
     _save_shared_models(long_term, models_dir / "shared")
     deterministic_artifacts = _deterministic_artifact_inventory(staging)
-    deterministic_artifacts_sha256 = _semantic_json_sha256(
-        deterministic_artifacts
-    )
+    deterministic_artifacts_sha256 = _semantic_json_sha256(deterministic_artifacts)
     input_sources = _verified_input_sources(inputs)
     if inputs.config_source_receipt is None:
         raise CandidateSerializationError("candidate is missing the consumed config receipt")
@@ -141,9 +143,7 @@ def write_long_term_candidate(
     governed_run_spec_sha256: str | None = None
     if verified_pre_run is not None:
         raw_run_spec = verified_pre_run.get("governed_run_spec")
-        governed_run_spec_sha256 = str(
-            verified_pre_run.get("governed_run_spec_sha256", "")
-        )
+        governed_run_spec_sha256 = str(verified_pre_run.get("governed_run_spec_sha256", ""))
         if not isinstance(raw_run_spec, Mapping):
             raise CandidateSerializationError("candidate is missing the governed run spec")
         governed_run_spec = dict(raw_run_spec)
@@ -151,9 +151,7 @@ def write_long_term_candidate(
         if not isinstance(snapshot_binding, Mapping):
             raise CandidateSerializationError("governed run spec input binding is missing")
         actual_pointer_sha256 = (
-            inputs.data_pointer_receipt.sha256
-            if inputs.data_pointer_receipt is not None
-            else None
+            inputs.data_pointer_receipt.sha256 if inputs.data_pointer_receipt is not None else None
         )
         actual_contract_sha256 = (
             inputs.data_contract_receipt.sha256
@@ -165,6 +163,12 @@ def write_long_term_candidate(
             or snapshot_binding.get("generation_id") != inputs.data_generation_id
             or snapshot_binding.get("contract_sha256") != actual_contract_sha256
             or snapshot_binding.get("pointer_sha256") != actual_pointer_sha256
+            or snapshot_binding.get("publication_head_observation_sha256")
+            != (
+                inputs.data_publication_head_observation_receipt.sha256
+                if inputs.data_publication_head_observation_receipt is not None
+                else None
+            )
         ):
             raise CandidateSerializationError(
                 "consumed config or input snapshot differs from governed run spec"
@@ -177,6 +181,7 @@ def write_long_term_candidate(
     reference = pd.Timestamp(inputs.reference_timestamp)
     if reference.tzinfo is None:
         raise CandidateSerializationError("candidate reference timestamp must be timezone-aware")
+    candidate_serialized_at_utc = datetime.now(timezone.utc).isoformat()
     run_manifest: dict[str, object] = {
         "schema_version": "lt_candidate_run.v1",
         "run_id": str(run_id),
@@ -185,7 +190,8 @@ def write_long_term_candidate(
         "probabilistic_status": "DETERMINISTIC_ONLY",
         "interval_columns": [],
         "intervals_permitted_for_pricing_or_risk": False,
-        "candidate_serialized_at_utc": datetime.now(timezone.utc).isoformat(),
+        "run_started_at_utc": candidate_serialized_at_utc,
+        "candidate_serialized_at_utc": candidate_serialized_at_utc,
         "reference_timestamp": reference.tz_convert("UTC").isoformat(),
         "reference_timestamp_is_explicit": bool(inputs.reference_timestamp_is_explicit),
         "config_path": config_archive.relative_to(staging).as_posix(),
@@ -206,6 +212,9 @@ def write_long_term_candidate(
         "data_generation_id": inputs.data_generation_id,
         "data_contract": data_metadata.get("contract"),
         "data_pointer": data_metadata.get("pointer"),
+        "data_publication_intent": data_metadata.get("publication_intent"),
+        "data_publication_anchor_receipt": data_metadata.get("publication_anchor_receipt"),
+        "data_publication_head_observation": data_metadata.get("publication_head_observation"),
         "freshness_reports": {
             key: {
                 "dataset": report.dataset,
@@ -220,13 +229,15 @@ def write_long_term_candidate(
     if governed_run_spec is not None:
         run_manifest["governed_run_spec"] = governed_run_spec
         run_manifest["governed_run_spec_sha256"] = governed_run_spec_sha256
-        run_manifest["candidate_serialized_at_utc"] = governed_run_spec[
-            "build_timestamp_utc"
-        ]
+        run_manifest["run_started_at_utc"] = governed_run_spec.get(
+            "run_started_at_utc",
+            governed_run_spec["build_timestamp_utc"],
+        )
     if verified_pre_run is not None:
         from pfc_shaping.pipeline.candidate_evidence import (
             PRE_RUN_EVIDENCE_MANIFEST,
         )
+
         pre_run_path = staging / PRE_RUN_EVIDENCE_MANIFEST
         run_manifest["pre_run_governance_manifest"] = PRE_RUN_EVIDENCE_MANIFEST.as_posix()
         run_manifest["pre_run_governance_manifest_sha256"] = _sha256_file(pre_run_path)
@@ -392,6 +403,24 @@ def _archive_data_metadata(
             "lt_input_snapshot.json",
         ),
         ("pointer", inputs.data_pointer_receipt, inputs.data_pointer_bytes, "current.json"),
+        (
+            "publication_intent",
+            inputs.data_publication_intent_receipt,
+            inputs.data_publication_intent_bytes,
+            "publication_intent.json",
+        ),
+        (
+            "publication_anchor_receipt",
+            inputs.data_publication_anchor_receipt,
+            inputs.data_publication_anchor_bytes,
+            "publication_anchor_receipt.json",
+        ),
+        (
+            "publication_head_observation",
+            inputs.data_publication_head_observation_receipt,
+            inputs.data_publication_head_observation_bytes,
+            "publication_head_observation.json",
+        ),
     ):
         if receipt is None and payload is None:
             continue
@@ -412,6 +441,39 @@ def _archive_data_metadata(
         item = receipt.to_manifest()
         item["archive_path"] = destination.relative_to(staging).as_posix()
         out[name] = item
+    if inputs.data_layout == "external_v2" and "pointer" not in out:
+        raise CandidateSerializationError(
+            "external_v2 candidate is missing the governed data pointer"
+        )
+    if inputs.data_pointer_bytes is not None:
+        try:
+            pointer = json.loads(inputs.data_pointer_bytes)
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise CandidateSerializationError("candidate data pointer is invalid") from exc
+        if pointer.get("schema_version") != "lt_data_pointer.v2":
+            raise CandidateSerializationError(
+                "promotion-grade LT candidate requires an external CAS v2 pointer"
+            )
+        required = {
+            "publication_intent",
+            "publication_anchor_receipt",
+            "publication_head_observation",
+        }
+        missing = required.difference(out)
+        if missing:
+            raise CandidateSerializationError(
+                f"candidate is missing external publication evidence: {sorted(missing)}"
+            )
+        try:
+            publication_intent = json.loads(inputs.data_publication_intent_bytes)
+        except (TypeError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise CandidateSerializationError(
+                "candidate publication intent is invalid"
+            ) from exc
+        if publication_intent.get("transition_type") != "PUBLISH":
+            raise CandidateSerializationError(
+                "promotion-grade candidate cannot consume a BOOTSTRAP publication"
+            )
     return out
 
 
@@ -447,9 +509,7 @@ def verify_deterministic_artifact_inventory(
     expected = run_manifest.get("deterministic_artifacts")
     expected_sha256 = str(run_manifest.get("deterministic_artifacts_sha256", ""))
     if not isinstance(expected, Mapping):
-        raise CandidateSerializationError(
-            "candidate deterministic artifact inventory is missing"
-        )
+        raise CandidateSerializationError("candidate deterministic artifact inventory is missing")
     normalized = {str(path): str(digest) for path, digest in expected.items()}
     actual = _deterministic_artifact_inventory(staging)
     actual_sha256 = _semantic_json_sha256(actual)

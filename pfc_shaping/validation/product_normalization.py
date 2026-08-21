@@ -26,6 +26,7 @@ from pfc_shaping.data.forward_proxy import (
     PRODUCTION_EEX_MAX_AGE_BUSINESS_DAYS,
     verify_forward_manifest_binding,
 )
+from pfc_shaping.path_safety import read_stable_single_link_file
 from pfc_shaping.pipeline.quote_conflict_policy_contract import (
     QuoteConflictPolicyAuthenticationError,
     verify_quote_conflict_policy,
@@ -80,19 +81,28 @@ def quote_conflict_identity_hash(gates: pd.DataFrame) -> str:
     return _sha256_json(quote_conflict_identities(gates))
 
 
-def load_source_hierarchy_policy(path: Path | None) -> dict[str, Any] | None:
+def load_source_hierarchy_policy(
+    path: Path | None,
+    *,
+    payload: bytes | None = None,
+) -> dict[str, Any] | None:
     if path is None:
         return None
+    if payload is None:
+        payload = read_stable_single_link_file(
+            path,
+            label="source hierarchy policy",
+        )
     suffix = path.suffix.lower()
     if suffix == ".json":
-        payload = load_strict_json(path.read_text(encoding="utf-8"))
+        parsed = load_strict_json(payload.decode("utf-8"))
     elif suffix in {".yaml", ".yml"}:
-        payload = load_strict_yaml(path.read_text(encoding="utf-8")) or {}
+        parsed = load_strict_yaml(payload.decode("utf-8")) or {}
     else:
         raise ValueError(f"unsupported source hierarchy policy type: {path}")
-    if not isinstance(payload, dict):
+    if not isinstance(parsed, dict):
         raise ValueError(f"source hierarchy policy must be a mapping: {path}")
-    return payload
+    return parsed
 
 
 def evaluate_source_hierarchy_policy(

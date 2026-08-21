@@ -1,0 +1,37 @@
+{
+  "schema_version": "ch_lt_future_scoring_implementation_closure_correction.v1",
+  "closure_id": "a24dcb3b89c5804199df5c744bcdc24be39c0d70f6ccbbd74b3b5e1f30f3a0a2",
+  "status": "LOCAL_DIRECT_SOURCE_BINDING_NO_TRANSITIVE_IMPORT_CLOSURE_NO_EXTERNAL_ANCHOR_NO_GO",
+  "supersedes": {
+    "path": ".planning/phases/14-lt-audit-remediation/CH-LT-FUTURE-SCORING-IMPLEMENTATION-CLOSURE-V1-20260731.json",
+    "sha256": "4af806154a28f98e0f92f6185d6cd5c80d568150b2c68640d28a95c003ae03b1",
+    "closure_id": "025523e39b36436550fefc0ade910e5f5982ead24a84cfe0096da890d05aa6e3",
+    "reason": "WITHDRAW_OVERSTATED_TRANSITIVE_CLOSURE_WORDING"
+  },
+  "direct_binding_assessment": {
+    "all_v1_declared_hashes_match_current_bytes": true,
+    "direct_binding_count": 6,
+    "v5_and_canonical_auditor_both_directly_bound": true,
+    "transitive_import_closure_complete": false,
+    "closure_consumed_by_runtime": false,
+    "installed_wheel_and_runtime_bound": false
+  },
+  "known_unbound_runtime_dependencies": [
+    "pfc_shaping.path_safety",
+    "pfc_shaping.durable_artifact",
+    "pfc_shaping.pipeline.strict_structured_data",
+    "pfc_shaping.validation.ch_lt_prospective_capture_ledger",
+    "scripts.build_ch_lt_structural_prediction_commitment",
+    "python_runtime",
+    "numpy",
+    "pandas",
+    "parquet_engine_and_native_dependencies"
+  ],
+  "required_closure": "GENERATED_VERIFIED_IMPORT_CLOSURE_PLUS_EXACT_WHEEL_RUNTIME_LOADED_CODE_HASHES_AND_SUPERVISED_RECEIPT",
+  "independent_external_anchor_present": false,
+  "future_holdout_consumed": false,
+  "t057_consumed": false,
+  "scientific_admission": false,
+  "production_authorization": false,
+  "promotion_gate": false
+}

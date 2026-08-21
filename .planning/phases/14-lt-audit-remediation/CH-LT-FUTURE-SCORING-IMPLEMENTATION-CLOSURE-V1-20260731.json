@@ -1,0 +1,57 @@
+{
+  "schema_version": "ch_lt_future_scoring_implementation_closure.v1",
+  "closure_id": "025523e39b36436550fefc0ade910e5f5982ead24a84cfe0096da890d05aa6e3",
+  "status": "LOCAL_TRANSITIVE_SOURCE_CLOSURE_NO_EXTERNAL_ANCHOR_NO_GO",
+  "market": "CH",
+  "bindings": {
+    "future_origin_selection_v5": {
+      "path": ".planning/phases/14-lt-audit-remediation/CH-LT-LOCAL-FUTURE-ORIGIN-SELECTION-V5-20260731.json",
+      "sha256": "77e8480a563cf64d095ade55282af64e9b569fa9e77c003084d639adf94d35f5",
+      "selection_id": "4f13d9fe274087449cca92a5ed234f997aefb9fb3bc8ac0e799cf42fc0fbf5e7"
+    },
+    "canonical_future_origin_auditor": {
+      "path": "scripts/audit_ch_lt_local_future_origin_selection.py",
+      "sha256": "a935aa637f188fca56ffa47d811bd38bf681647526718488188764a45845a1c3"
+    },
+    "prospective_hourly_scoring_core": {
+      "path": "pfc_shaping/validation/ch_lt_prospective_hourly_scoring.py",
+      "sha256": "40e3995dabe9e35271ab8a728bd9d062eb165314ce03516491b6fa7c14dd3710"
+    },
+    "prospective_hourly_scoring_cli": {
+      "path": "scripts/score_ch_lt_structural_prediction_commitment.py",
+      "sha256": "8cac8a0eb013058226672e14c86f1291f695d0a138866fb07dc10a2d246d3f49"
+    },
+    "native_hourly_truth_bundle_builder": {
+      "path": "scripts/build_ch_lt_native_hourly_truth_bundle.py",
+      "sha256": "8738e4463ea141d6e8941e4b1be6ce073352be47544540281e42e6e05b98c5a2"
+    },
+    "hourly_scoring_contract_v2": {
+      "path": ".planning/phases/14-lt-audit-remediation/CH-LT-FUTURE-HOURLY-SCORING-CONTRACT-V2-20260731.json",
+      "sha256": "d84d7ebc2f3c6aa4b820fab26f0a5de18940a6d35af8e796323025eab694ea4d",
+      "contract_id": "ae85de71a3745b4ea8b9704090f9bd742e26a41161c2d0b804f4888fb372653e"
+    }
+  },
+  "closure_properties": {
+    "selection_binds_consumer_source_bytes": true,
+    "closure_binds_selection_and_canonical_auditor_bytes": true,
+    "canonical_auditor_points_to_bound_v5_hash": true,
+    "consumers_resolve_selection_only_through_bound_auditor_constants": true,
+    "closure_consumed_by_runtime": false,
+    "independent_external_anchor_present": false,
+    "linearizable_registry_receipt_present": false,
+    "trusted_time_receipt_present": false,
+    "independent_signature_present": false,
+    "builder_inaccessible_external_cas_receipt_present": false
+  },
+  "known_limitations": [
+    "LOCAL_CHECKOUT_CAN_MUTATE_SELECTION_AUDITOR_AND_CLOSURE_TOGETHER",
+    "RUNTIME_DOES_NOT_YET_BIND_THIS_CLOSURE_MANIFEST_IN_A_SUPERVISED_RECEIPT",
+    "NO_TRUSTED_TIME_OR_INDEPENDENT_REGISTRY_PROVES_PRE_DELIVERY_EXISTENCE",
+    "V4_SEALED_BYTE_IDENTITY_WAS_MUTATED_AND_IS_RETAINED_AS_A_GOVERNANCE_INCIDENT"
+  ],
+  "future_holdout_consumed": false,
+  "t057_consumed": false,
+  "scientific_admission": false,
+  "production_authorization": false,
+  "promotion_gate": false
+}

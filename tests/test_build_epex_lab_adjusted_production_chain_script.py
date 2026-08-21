@@ -196,7 +196,7 @@ def _write_locked_holdout(tmp_path: Path, *, passed: bool = True) -> Path:
     _write_json(
         locked_holdout,
         {
-            "schema_version": "epex_lab_locked_holdout_run.v1",
+            "schema_version": "epex_lab_locked_holdout_run.v2",
             "status": "LOCKED_HOLDOUT_PASS" if passed else "WAITING_FOR_FULL_SPOT_COVERAGE",
             "benchmark_policy": "locked_future_no_ompex_holdout",
             "expected_plan_json_sha256": identity["plan_json_sha256"],
@@ -301,7 +301,7 @@ def _ready_coverage(*, passed: bool = True, identity: dict) -> dict:
 
 def _passing_backtest(*, passed: bool = True) -> dict:
     return {
-        "schema_version": "epex_shape_lab_spot_backtest.v1",
+        "schema_version": "epex_shape_lab_spot_backtest.v3",
         "status": "DIAGNOSTIC_PASS" if passed else "DIAGNOSTIC_FAIL",
         "read_only": True,
         "promotion_gate": False,
@@ -312,14 +312,24 @@ def _passing_backtest(*, passed: bool = True) -> dict:
         "ompex_used_in_selection": False,
         "ompex_used_in_backtest": False,
         "strict_lab_gate_pass": passed,
+        "strict_lab_checks": {
+            "rolling_folds_unique_ordered_cutoffs": passed,
+            "rolling_folds_non_overlapping_evaluations": passed,
+        },
     }
 
 
 def _passing_audit(*, identity: dict, backtest: Path, passed: bool = True) -> dict:
     return {
-        "schema_version": "epex_lab_locked_holdout_audit.v1",
+        "schema_version": "epex_lab_locked_holdout_audit.v2",
         "status": "LOCKED_HOLDOUT_PASS" if passed else "NO_GO_LOCKED_HOLDOUT_FAIL",
         "holdout_pass": passed,
+        "checks": {
+            "rolling_folds_unique_ordered_cutoffs_independently_replayed": passed,
+            "rolling_folds_non_overlapping_evaluations_independently_replayed": passed,
+            "rolling_metrics_independently_recomputed": passed,
+            "rolling_bucket_metrics_independently_recomputed": passed,
+        },
         "promotion_gate": False,
         "production_approved": False,
         "ompex_used_in_model": False,

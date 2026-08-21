@@ -1,0 +1,113 @@
+{
+  "schema_version": "ch_lt_local_future_origin_selection.v1",
+  "selection_id": "2513ce6162ea20c46342df8fd27db754fdad97ceba664fd7d4f214030f7338bc",
+  "status": "SEALED_LOCAL_FUTURE_ORIGIN_REHEARSAL_NONCOUNTABLE_NO_GO",
+  "market": "CH",
+  "selected_origin": {
+    "origin_as_of_utc": "2026-07-31T07:20:27Z",
+    "origin_id": "6bb3c7cf163a62ed4be5bcffe6739a97da249789d8ae18bfcb89c276e15e2c2a",
+    "first_target_delivery_start_utc": "2026-07-31T22:00:00Z",
+    "last_target_delivery_end_utc": "2029-07-31T22:00:00Z",
+    "origin_precedes_first_target": true,
+    "local_clock_trusted": false,
+    "duplicate_origin_as_of_utc": "FORBIDDEN"
+  },
+  "bindings": {
+    "origin_target_mask_inventory": {
+      "path": "build/ch-lt-origin-target-mask-inventories/structural-dry-run-20260731T072027Z-schema-v2.json",
+      "sha256": "a4d5722841df549ba24ca2dd190fa0f5b1d79738fc63680acf93034e148419b7",
+      "inventory_id": "9fabce9f35249cb82024f5ad9c52e82e2b55a0f6a027d2f09dac3a64c3ecff66"
+    },
+    "prediction_commitment": {
+      "path": "build/ch-lt-structural-prediction-commitments/structural-dry-run-20260731T072027Z-v5-hourly-shape/commitment.json",
+      "sha256": "5364be2e44f28a1b5b6f3b677ece134c8f9c77df9237fb0a56511bb0cc88526c",
+      "commitment_id": "3f1a788f8a93421c67d75fae10fdb4dd4ea9c815e194a30d748ae71857b2bfa2"
+    },
+    "sealed_predictions": {
+      "path": "build/ch-lt-structural-prediction-commitments/structural-dry-run-20260731T072027Z-v5-hourly-shape/predictions.json",
+      "sha256": "c01a4450a84644de41be96a4fa90ecb77497fa9aa9b7304c9330910ebf7d09d7",
+      "prediction_set_id": "6e6cb39c25e01ced4f6a05e262253aefe0104c70e84e3c613f11df501e4aefc3"
+    },
+    "current_evidence_selection": {
+      "path": ".planning/phases/14-lt-audit-remediation/CH-LT-CURRENT-EVIDENCE-SELECTION-V3-20260731.json",
+      "sha256": "6518f7e876ce1c233fc055d3d20ad213088d361d784afbe5aa16d4f165e744f7",
+      "registry_id": "748aba2e2f85711d0a5dcdb07e0acacbf8dbce7a76ab4a4b07ef48371ec25488",
+      "independent_rolling_origin_count": 0
+    },
+    "inventory_execution_receipt": {
+      "path": "build/workspace-local-runs/org31fresh/execution-receipt.json",
+      "sha256": "5553023b0605f7cee0de3981dbe4f025a2ea6c26be645a8852ee427facb13ce0"
+    },
+    "inventory_supervisor_receipt": {
+      "path": "build/workspace-local-supervisors/org31fresh/supervisor-receipt.json",
+      "sha256": "62c3efeb9cc142d6c4071798d738d7b7bf12c4d01b060822f909541d9baccac8"
+    },
+    "prediction_execution_receipt": {
+      "path": "build/workspace-local-runs/pred31v5/execution-receipt.json",
+      "sha256": "c86d8bd4bc71845a61ab4b7c625dd49e81b57e368beaaecb066a576d2e16cbfc"
+    },
+    "prediction_supervisor_receipt": {
+      "path": "build/workspace-local-supervisors/pred31v5/supervisor-receipt.json",
+      "sha256": "874045e9f64a4975eb9bc5206c4a6001d4e580aa27e7ca5d94338229639a1b99"
+    }
+  },
+  "sealed_evaluation_plan": {
+    "target_unit": "FULL_EUROPE_ZURICH_LOCAL_DELIVERY_MONTH",
+    "target_count": 36,
+    "scenario_count_per_target": 3,
+    "monthly_level_authority": "solver",
+    "truth_requirement": "GOVERNED_NATIVE_CH_DAY_AHEAD_HOURLY_PRICES_WITH_AVAILABLE_AT",
+    "truth_open_rule": "ONLY_AFTER_ALL_EXPECTED_NATIVE_HOURS_FOR_THE_TARGET_HAVE_DELIVERED_AND_THEIR_GOVERNED_AVAILABLE_AT_TIMESTAMPS_ARE_BOUND",
+    "truth_open_wall_clock_deadline": "UNSET_NO_UNVERIFIED_PROVIDER_LAG_ASSUMPTION",
+    "quarter_hour_truth_required": false,
+    "quarter_hour_scoring": "FORBIDDEN_UNTIL_MARKET_TRANSITION_IS_INDEPENDENTLY_ADMITTED",
+    "level_scores": [
+      "monthly_mean_error_eur_mwh"
+    ],
+    "zero_mean_hourly_shape_scores": [
+      "mae_eur_mwh",
+      "rmse_eur_mwh",
+      "pearson_correlation"
+    ],
+    "shape_functional_scores": [
+      "midday_mean_error_eur_mwh",
+      "evening_mean_error_eur_mwh",
+      "evening_minus_midday_error_eur_mwh",
+      "negative_hour_count_error"
+    ],
+    "dst_rule": "AGGREGATE_PREDICTIONS_IN_UTC_THEN_CLASSIFY_HOURS_IN_EUROPE_ZURICH",
+    "missing_truth_rule": "UNSUPPORTED_NEVER_ZERO_OR_WIN",
+    "scenario_interpretation": "STRUCTURAL_SENSITIVITY_NOT_PROBABILISTIC_COVERAGE",
+    "model_selection_use": false,
+    "training_use": false
+  },
+  "authority_boundary": {
+    "independent_registry_receipt_present": false,
+    "independent_trusted_time_receipt_present": false,
+    "independent_signature_present": false,
+    "builder_inaccessible_external_cas_receipt_present": false,
+    "fresh_governed_ch_eex_level_present": false,
+    "direct_ch_shape_authority_present": false,
+    "countable_prospective_origin": false,
+    "outcomes_opened": false,
+    "future_holdout_consumed": false,
+    "t057_consumed": false,
+    "scientific_admission": false,
+    "candidate_assembly_eligible": false,
+    "publication_authorized": false,
+    "promotion_gate": false,
+    "production_authorization": false
+  },
+  "next_external_requirements": [
+    "REGISTER_A_FUTURE_ORIGIN_THROUGH_AN_INDEPENDENT_LINEARIZABLE_AUTHORITY_BEFORE_ITS_FIRST_TARGET",
+    "BIND_INDEPENDENT_TRUSTED_TIME_SIGNATURE_AND_BUILDER_INACCESSIBLE_EXTERNAL_CAS_RECEIPT",
+    "BIND_FRESH_POINT_IN_TIME_CH_EEX_LEVEL_AND_ORIGIN_AVAILABLE_PRODUCT_INVENTORY",
+    "CAPTURE_COMPLETE_NATIVE_CH_HOURLY_TRUTH_AFTER_DELIVERY_WITH_GOVERNED_AVAILABLE_AT",
+    "SCORE_ONLY_THE_PRECOMMITTED_TARGETS_MASKS_AND_FUNCTIONALS_WITHOUT_RETUNING"
+  ],
+  "future_holdout_consumed": false,
+  "t057_consumed": false,
+  "scientific_admission": false,
+  "production_authorization": false,
+  "promotion_gate": false
+}
