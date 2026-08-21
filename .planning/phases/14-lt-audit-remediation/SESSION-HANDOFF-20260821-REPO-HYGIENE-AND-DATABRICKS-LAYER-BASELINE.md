@@ -2,6 +2,9 @@
 
 Date: 2026-08-21
 
+Baseline commit:
+`9b73e6cfcf242c70f095441945dcb2f84e6be6f6`
+
 ## Outcome
 
 The accumulated Phase 14 code, tests, contracts and decision evidence are
@@ -89,6 +92,8 @@ No Databricks SQL, Warehouse start or remote write occurred.
 - full Python compile of `pfc_shaping`, `scripts` and `tests`: pass;
 - assigned-secret scan: no finding; the only private-key marker is an
   intentional negative security fixture;
+- focused post-cleanup smoke: `8 passed`;
+- post-cleanup Ruff on the adjusted data-boundary files: pass;
 - full pytest collection exceeded the 60-second foreground bound and was
   stopped before a test run; run the complete suite as a durable job.
 
