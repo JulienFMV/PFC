@@ -14101,6 +14101,89 @@ Invariants not to break:
 - Model admission remains
   `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS`; T057 remains sealed.
 
+## D-20260821-253 - Roast-harden the Databricks adapter and add exact local export replay
+
+Decision:
+
+- Require every `EntsoeFeatureMapping`, including direct programmatic use, to
+  carry and match the complete Gold dimension semantic SHA-256. The contract
+  parser is no longer the only path enforcing the dimension binding.
+- Include `GenerationDirection` in the dimension signature and require
+  `GENERATION` together with `BusinessType=A01` for solar and wind.
+- Fix `cross_border_mw` to the declared `NET_EXPORT_FROM_CH` convention:
+  CH-to-neighbor weight `+1`, neighbor-to-CH weight `-1`. Reject arbitrary or
+  reversed mapping weights.
+- Require real non-null boolean types for availability and DQ flags. Accept a
+  missing publication timestamp for `UNKNOWN_BACKFILL`, but never allow that
+  row to satisfy PIT coverage.
+- Compare interval durations exactly. Reject fractional cadence declarations
+  and sub-minute drift instead of truncating them to integer seconds/minutes.
+- Canonically order dimension, Silver and Gold projections before semantic
+  hashing; include `AvailabilityKnown` in the Gold source hash and add an exact
+  source-projection hash for spot.
+- Vectorize 15-minute expansion to avoid one Python `date_range` allocation per
+  source row.
+- Add `fmv_databricks_lt_replay_config.v1` and
+  `fmv_databricks_lt_replay_build.v1`. A self-contained local package binds
+  exact bounded source Parquet bytes, source table identities, selection,
+  runtime, materializer code, raw/derived frames and the materialization audit.
+  Verification replays the complete source-to-frame path and is tamper-evident.
+- Add the materializer and replay modules to the governed LT wheel positive
+  inventory. Do not yet add them to the isolated snapshot publisher: the
+  API-specific `lt_input_snapshot.v3` contract still cannot truthfully express
+  a multi-table Databricks export.
+
+Reason:
+
+The first implementation passed its tests but a hostile review exposed real
+bypass and data-validity gaps. In particular, callers could construct an
+unbound mapping object, reverse physical-flow signs, omit the upstream
+generation direction and pass fractional intervals through integer
+truncation. The Gold source hash also excluded a causal availability field.
+
+The upstream comparison against ENTSO-E DEV commit
+`dadbad2c793ee133bd0ccd8d053a5e591b44cb7f` confirmed the three availability
+bases and the Gold `GenerationDirection` field. It also confirmed that a
+historical `UNKNOWN_BACKFILL` may legitimately have no source publication
+timestamp. The corrected local semantics now match that upstream contract.
+
+Rejected alternatives:
+
+- Trust callers to invoke the mapping-contract parser before direct
+  materialization.
+- Treat flow sign as a free numerical weight or infer it from row order.
+- Coerce strings such as `"False"` to booleans or silently treat missing DQ as
+  a usable row.
+- Keep the API-response provider envelope and relabel a Databricks manifest as
+  ENTSO-E XML/Energy-Charts JSON.
+- Wire an unsigned local replay package directly into the production snapshot
+  pointer.
+
+Verification:
+
+- pre-fix materializer/layer/replay/quality matrix: `53 passed`;
+- post-fix materializer/layer/replay/quality matrix: `61 passed`;
+- exact replay plus wheel positive-inventory matrix: `49 passed`;
+- final bounded data/PIT/package matrix: `178 passed, 2 skipped`;
+- exact source replay covers Gold spot and Silver ENTSO-E PIT; the Gold current
+  path remains covered by the materializer suite;
+- targeted Ruff: pass;
+- GitHub reads only; Databricks connections/statements/Warehouse starts and
+  remote writes: `0/0/0/0`.
+
+Invariants not to break:
+
+- A replay package is unsigned pre-publication evidence only. Every scientific
+  and production authority remains false.
+- DEV and PRD source tables cannot be mixed in one role package. DEV replay may
+  support engineering review but cannot become production evidence.
+- The next schema must bind export query/predicate, watermark, incremental
+  predecessor and independent source receipt before the isolated publisher can
+  admit the package.
+- Gold remains current-serving; Silver vintages remain PIT authority. The CH
+  monthly solver remains sole level authority, model admission remains
+  `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS`, and T057 remains sealed.
+
 ## D-20260821-248 - Separate the ENTSO-E Gold serving layer from the Silver PIT authority
 
 Decision:

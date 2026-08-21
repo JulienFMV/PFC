@@ -88,6 +88,7 @@ GOLD_REQUIRED_COLUMNS = {
             "BusinessType",
             "ProcessType",
             "PsrType",
+            "GenerationDirection",
             "FromZone",
             "ToZone",
             "Unit",
@@ -484,6 +485,28 @@ def _assess_dimension(
                         affected_rows=len(missing),
                     )
                 )
+    if {"GroupName", "BusinessType", "GenerationDirection"}.issubset(
+        frame.columns
+    ):
+        generation = frame.loc[frame["GroupName"].eq("generation_actual")]
+        expected_direction = generation["BusinessType"].map(
+            {"A01": "GENERATION", "A04": "CONSUMPTION"}
+        )
+        invalid = expected_direction.isna() | generation[
+            "GenerationDirection"
+        ].ne(expected_direction)
+        count = int(invalid.fillna(True).sum())
+        if count:
+            findings.append(
+                LayerFinding(
+                    "CRITICAL",
+                    "ENTSOE_GENERATION_DIRECTION_INVALID",
+                    role,
+                    "gold",
+                    "Generation actual rows require A01/GENERATION or A04/CONSUMPTION semantics.",
+                    affected_rows=count,
+                )
+            )
     if "installed_capacity_per_unit" in groups:
         rows = frame.loc[frame["GroupName"].eq("installed_capacity_per_unit")]
         if "RegisteredResourceMrid" not in rows or rows[

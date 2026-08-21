@@ -44,7 +44,11 @@ required:
 Stage 2 now has a local, pure building block for Gold spot and Gold/Silver
 ENTSO-E in `pfc_shaping/data/databricks_lt_materialization.py`; the existing EEX
 daily normalizer remains separate. The new code is not yet integrated into the
-governed snapshot publisher and grants no authority. In particular,
+governed snapshot publisher and grants no authority. Exact Databricks
+source-to-frame replay plus a self-contained unsigned package now exist in
+`pfc_shaping/data/databricks_lt_replay.py`; this closes the local replay gap but
+does not make the API-specific `lt_input_snapshot.v3` accept Databricks
+exports. In particular,
 `scripts/create_lt_input_snapshot.py` is still only a legacy bootstrap that
 copies already-curated files and declares `source_class` as
 `MIGRATED_UNVERIFIED` and `calibration_eligible` as false. It must not be

@@ -166,6 +166,11 @@ def test_pyproject_forbids_generated_console_script_launchers() -> None:
     assert "pfc_shaping/data/eex_forward_vintage_intake.py" in ALLOWED_RUNTIME_PYTHON_FILES
     assert "pfc_shaping/data/eex_datasource_v2_capture.py" in ALLOWED_RUNTIME_PYTHON_FILES
     assert (
+        "pfc_shaping/data/databricks_lt_materialization.py"
+        in ALLOWED_RUNTIME_PYTHON_FILES
+    )
+    assert "pfc_shaping/data/databricks_lt_replay.py" in ALLOWED_RUNTIME_PYTHON_FILES
+    assert (
         "pfc_shaping/data/ch_lt_origin_registry_reference.py"
         not in ALLOWED_RUNTIME_PYTHON_FILES
     )

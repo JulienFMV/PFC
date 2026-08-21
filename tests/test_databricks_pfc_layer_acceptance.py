@@ -44,9 +44,12 @@ def _fixtures() -> tuple[dict[str, pd.DataFrame], dict[str, pd.DataFrame]]:
                     "SourceTimeSeriesId": f"TS-{series_id}",
                     "GroupName": group,
                     "DocumentType": "A00",
-                    "BusinessType": None,
+                    "BusinessType": "A01" if group == "generation_actual" else None,
                     "ProcessType": None,
                     "PsrType": None,
+                    "GenerationDirection": (
+                        "GENERATION" if group == "generation_actual" else None
+                    ),
                     "FromZone": from_zone,
                     "ToZone": to_zone,
                     "Unit": _unit(group),
@@ -162,6 +165,19 @@ def test_price_units_and_spot_quotation_misuse_are_blocking() -> None:
     assert report.status == "BLOCKED_GOVERNED_LAYERS"
     assert "ENTSOE_UNIT_MISMATCH" in _codes(report)
     assert "SPOT_QUOTATION_EQUALS_DELIVERY_START" in _codes(report)
+
+
+def test_generation_direction_contradiction_is_blocking() -> None:
+    gold, silver = _fixtures()
+    dimension = gold["entsoe_series_dimension"]
+    dimension.loc[
+        dimension["GroupName"].eq("generation_actual"), "GenerationDirection"
+    ] = "CONSUMPTION"
+
+    report = assess_pfc_data_layers(gold=gold, silver=silver)
+
+    assert report.status == "BLOCKED_GOVERNED_LAYERS"
+    assert "ENTSOE_GENERATION_DIRECTION_INVALID" in _codes(report)
 
 
 def test_silver_interval_and_timestamp_failures_are_detected() -> None:

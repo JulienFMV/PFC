@@ -35,6 +35,7 @@ _DIMENSION_COLUMNS = frozenset(
         "BusinessType",
         "ProcessType",
         "PsrType",
+        "GenerationDirection",
         "FromZone",
         "ToZone",
         "Unit",
@@ -139,6 +140,7 @@ class EntsoeSeriesTerm:
 class EntsoeFeatureMapping:
     """Exact SeriesKey mapping for the canonical ENTSO-E feature frame."""
 
+    dimension_semantic_sha256: str
     load_mw: tuple[EntsoeSeriesTerm, ...]
     solar_mw: tuple[EntsoeSeriesTerm, ...]
     wind_mw: tuple[EntsoeSeriesTerm, ...]
@@ -167,12 +169,7 @@ class DatabricksMaterialization:
 def entsoe_dimension_semantic_sha256(dimension: pd.DataFrame) -> str:
     """Hash the exact dimension fields that give a SeriesKey its meaning."""
 
-    _require_columns(dimension, _DIMENSION_COLUMNS, label="Gold ENTSO-E dimension")
-    projection = (
-        dimension.loc[:, sorted(_DIMENSION_COLUMNS)]
-        .sort_values("SeriesKey", kind="mergesort")
-        .reset_index(drop=True)
-    )
+    projection = _canonical_entsoe_dimension(dimension)
     return dataframe_semantic_sha256(projection)
 
 
@@ -239,7 +236,10 @@ def entsoe_feature_mapping_from_contract(
                 ) from exc
             terms.append(term)
         parsed[feature] = tuple(terms)
-    mapping = EntsoeFeatureMapping(**parsed)
+    mapping = EntsoeFeatureMapping(
+        dimension_semantic_sha256=expected_dimension_hash,
+        **parsed,
+    )
     _validate_entsoe_mapping(dimension, mapping)
     return mapping
 
@@ -266,7 +266,10 @@ def materialize_entsoe_pit_features(
         )
     source_projection_hash = dataframe_semantic_sha256(source)
 
-    known = source["AvailabilityKnown"].astype("boolean")
+    known = _strict_boolean_series(
+        source["AvailabilityKnown"],
+        label="Silver AvailabilityKnown",
+    )
     availability = _utc_series(
         source["AvailabilityTimestampUtc"],
         label="Silver availability",
@@ -281,7 +284,10 @@ def materialize_entsoe_pit_features(
         last_observed=source["LastObservedAtUtc"],
         label="Silver vintages",
     )
-    dq_failed = source["dq_failed"].fillna(True).astype(bool)
+    dq_failed = _strict_boolean_series(
+        source["dq_failed"],
+        label="Silver dq_failed",
+    )
     eligible_mask = known.fillna(False) & availability.le(origin) & ~dq_failed
     eligible = source.loc[eligible_mask].copy()
     eligible["AvailabilityTimestampUtc"] = availability.loc[eligible_mask]
@@ -337,13 +343,20 @@ def materialize_entsoe_current_features(
         how="inner",
         validate="many_to_one",
     )
+    facts = facts.sort_values(
+        ["SeriesKey", "IntervalStartUtc", "DateTimeUtc", "SeriesID"],
+        kind="mergesort",
+    ).reset_index(drop=True)
     facts = facts.rename(
         columns={
             "FieldValue": "FieldValue",
             "DateTimeUtc": "DateTimeUtc",
         }
     )
-    known = facts["AvailabilityKnown"].astype("boolean")
+    known = _strict_boolean_series(
+        facts["AvailabilityKnown"],
+        label="Gold Latest AvailabilityKnown",
+    )
     availability = _utc_series(
         facts["AvailabilityTimestampUtc"],
         label="Gold Latest availability",
@@ -368,9 +381,7 @@ def materialize_entsoe_current_features(
         raise DatabricksLTMaterializationError(
             "Gold Latest repeats a selected series interval"
         )
-    source_hash = dataframe_semantic_sha256(
-        facts.drop(columns=["AvailabilityKnown"]).reset_index(drop=True)
-    )
+    source_hash = dataframe_semantic_sha256(facts.reset_index(drop=True))
     return _materialize_entsoe(
         dimension_projection=dimension_projection,
         facts=eligible,
@@ -431,6 +442,17 @@ def materialize_spot_price_history(
             "Gold spot repeats the selected product/interval grain"
         )
     raw, cadence_counts = _expand_spot_intervals(eligible)
+    source_projection_hash = dataframe_semantic_sha256(
+        source.sort_values(
+            [
+                "SpotProductID",
+                "DeliveryStartUtc",
+                "DeliveryEndUtc",
+                "ObservedAtUtc",
+            ],
+            kind="mergesort",
+        ).reset_index(drop=True)
+    )
     metadata = {
         "schema_version": MATERIALIZATION_SCHEMA_VERSION,
         "source_layer": "GOLD",
@@ -451,6 +473,7 @@ def materialize_spot_price_history(
     audit = {
         **metadata,
         "status": "PASS_LOCAL_MATERIALIZATION_NO_MODEL_AUTHORITY",
+        "source_projection_sha256": source_projection_hash,
         "source_rows": len(source),
         "eligible_rows": len(eligible),
         "excluded_not_known_or_delivered_rows": int((~eligible_mask).sum()),
@@ -493,7 +516,7 @@ def _canonical_silver_vintages(frame: pd.DataFrame) -> pd.DataFrame:
             raise DatabricksLTMaterializationError(
                 f"Silver {column} must be non-null and non-empty"
             )
-    return projection
+    return projection.sort_values("VintageID", kind="mergesort").reset_index(drop=True)
 
 
 def _select_latest_vintage_state(frame: pd.DataFrame) -> pd.DataFrame:
@@ -535,16 +558,12 @@ def _validate_entsoe_mapping(
     dimension: pd.DataFrame,
     mapping: EntsoeFeatureMapping,
 ) -> pd.DataFrame:
-    _require_columns(dimension, _DIMENSION_COLUMNS, label="Gold ENTSO-E dimension")
-    if dimension.columns.has_duplicates:
+    projection = _canonical_entsoe_dimension(dimension)
+    observed_dimension_hash = dataframe_semantic_sha256(projection)
+    if mapping.dimension_semantic_sha256 != observed_dimension_hash:
         raise DatabricksLTMaterializationError(
-            "Gold ENTSO-E dimension has duplicate columns"
+            "ENTSO-E mapping is not bound to the supplied Gold dimension"
         )
-    projection = dimension.loc[:, sorted(_DIMENSION_COLUMNS)].copy()
-    if projection["SeriesID"].isna().any() or projection["SeriesID"].duplicated().any():
-        raise DatabricksLTMaterializationError("Gold SeriesID must be non-null and unique")
-    if projection["SeriesKey"].isna().any() or projection["SeriesKey"].duplicated().any():
-        raise DatabricksLTMaterializationError("Gold SeriesKey must be non-null and unique")
 
     all_keys: set[str] = set()
     for feature in _CORE_FEATURES:
@@ -599,12 +618,39 @@ def _validate_entsoe_mapping(
                 raise DatabricksLTMaterializationError(
                     f"ENTSO-E mapped series has the wrong PsrType for {feature}: {key}"
                 )
+            if feature in {"solar_mw", "wind_mw"} and str(
+                row["GenerationDirection"]
+            ) != "GENERATION":
+                raise DatabricksLTMaterializationError(
+                    "ENTSO-E mapped series has the wrong GenerationDirection "
+                    f"for {feature}: {key}"
+                )
             zones = {str(row["FromZone"]), str(row["ToZone"])}
             if "CH" not in zones:
                 raise DatabricksLTMaterializationError(
                     f"ENTSO-E mapped series is not connected to CH: {key}"
                 )
-    return projection.loc[projection["SeriesKey"].isin(all_keys)].reset_index(drop=True)
+            if feature == "cross_border_mw":
+                from_zone = str(row["FromZone"])
+                to_zone = str(row["ToZone"])
+                if from_zone == "CH" and to_zone != "CH":
+                    expected_weight = 1.0
+                elif to_zone == "CH" and from_zone != "CH":
+                    expected_weight = -1.0
+                else:
+                    raise DatabricksLTMaterializationError(
+                        f"ENTSO-E physical-flow direction is invalid: {key}"
+                    )
+                if weight != expected_weight:
+                    raise DatabricksLTMaterializationError(
+                        "ENTSO-E cross_border_mw must use the NET_EXPORT_FROM_CH "
+                        f"sign convention: {key}"
+                    )
+    return (
+        projection.loc[projection["SeriesKey"].isin(all_keys)]
+        .sort_values("SeriesKey", kind="mergesort")
+        .reset_index(drop=True)
+    )
 
 
 def _materialize_entsoe(
@@ -668,6 +714,8 @@ def _materialize_entsoe(
         "mode": mode,
         "as_of_utc": as_of_utc.isoformat(),
         "mapping": mapping.as_dict(),
+        "mapping_dimension_semantic_sha256": mapping.dimension_semantic_sha256,
+        "cross_border_sign_convention": "NET_EXPORT_FROM_CH",
         "output_cadence_seconds": 900,
     }
     raw.attrs[MATERIALIZATION_METADATA_ATTR] = metadata
@@ -691,8 +739,6 @@ def _materialize_entsoe(
 
 
 def _expand_entsoe_intervals(frame: pd.DataFrame) -> pd.Series:
-    values: list[float] = []
-    timestamps: list[pd.Timestamp] = []
     working = frame.copy()
     start = _utc_series(working["IntervalStartUtc"], label="ENTSO-E interval start")
     end = _utc_series(working["IntervalEndUtc"], label="ENTSO-E interval end")
@@ -700,27 +746,22 @@ def _expand_entsoe_intervals(frame: pd.DataFrame) -> pd.Series:
     field_value = pd.to_numeric(working["FieldValue"], errors="coerce")
     if field_value.isna().any() or not np.isfinite(field_value.to_numpy(dtype=float)).all():
         raise DatabricksLTMaterializationError("ENTSO-E values must be finite")
-    for position in range(len(working)):
-        resolution_seconds = _resolution_seconds(working["Resolution"].iloc[position])
-        duration_seconds = int((end.iloc[position] - start.iloc[position]).total_seconds())
-        if (
-            end.iloc[position] != right_edge.iloc[position]
-            or duration_seconds != resolution_seconds
-            or duration_seconds % 900 != 0
-            or duration_seconds > 3600
-        ):
-            raise DatabricksLTMaterializationError(
-                "ENTSO-E interval/resolution is not an atomic 15/30/60-minute value"
-            )
-        interval_index = pd.date_range(
-            start.iloc[position],
-            end.iloc[position],
-            freq="15min",
-            inclusive="left",
+    resolution_seconds = working["Resolution"].map(_resolution_seconds).astype(int)
+    expected_duration = pd.to_timedelta(resolution_seconds, unit="s")
+    duration = end - start
+    invalid = (
+        end.ne(right_edge)
+        | duration.ne(expected_duration)
+        | ~resolution_seconds.isin((900, 1800, 3600))
+    )
+    if invalid.any():
+        raise DatabricksLTMaterializationError(
+            "ENTSO-E interval/resolution is not an atomic 15/30/60-minute value"
         )
-        timestamps.extend(interval_index)
-        values.extend([float(field_value.iloc[position])] * len(interval_index))
-    result = pd.Series(values, index=pd.DatetimeIndex(timestamps), dtype=float)
+    repeats = (resolution_seconds // 900).to_numpy(dtype=np.int64)
+    timestamps = _expanded_quarter_hour_timestamps(start, repeats)
+    values = np.repeat(field_value.to_numpy(dtype=float), repeats)
+    result = pd.Series(values, index=timestamps, dtype=float)
     result = result.sort_index(kind="mergesort")
     if result.index.has_duplicates:
         raise DatabricksLTMaterializationError(
@@ -730,9 +771,6 @@ def _expand_entsoe_intervals(frame: pd.DataFrame) -> pd.Series:
 
 
 def _expand_spot_intervals(frame: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, int]]:
-    timestamps: list[pd.Timestamp] = []
-    values: list[float] = []
-    cadence_counts: dict[str, int] = {}
     start = _utc_series(frame["DeliveryStartUtc"], label="spot delivery start")
     end = _utc_series(frame["DeliveryEndUtc"], label="spot delivery end")
     minutes = pd.to_numeric(frame["FrequencyMinutes"], errors="coerce")
@@ -741,22 +779,25 @@ def _expand_spot_intervals(frame: pd.DataFrame) -> tuple[pd.DataFrame, dict[str,
         raise DatabricksLTMaterializationError("Gold spot cadence/price is invalid")
     if not np.isfinite(prices.to_numpy(dtype=float)).all():
         raise DatabricksLTMaterializationError("Gold spot price is non-finite")
-    for position in range(len(frame)):
-        cadence = int(minutes.iloc[position])
-        duration = int((end.iloc[position] - start.iloc[position]).total_seconds() / 60)
-        if cadence not in {15, 30, 60} or duration != cadence:
-            raise DatabricksLTMaterializationError(
-                "Gold spot interval is not an atomic 15/30/60-minute value"
-            )
-        interval_index = pd.date_range(
-            start.iloc[position], end.iloc[position], freq="15min", inclusive="left"
+    integral_minutes = minutes.eq(np.floor(minutes))
+    cadence = minutes.where(integral_minutes, -1).astype(int)
+    duration = end - start
+    invalid = ~cadence.isin((15, 30, 60)) | duration.ne(
+        pd.to_timedelta(cadence, unit="m")
+    )
+    if invalid.any():
+        raise DatabricksLTMaterializationError(
+            "Gold spot interval is not an atomic 15/30/60-minute value"
         )
-        timestamps.extend(interval_index)
-        values.extend([float(prices.iloc[position])] * len(interval_index))
-        key = str(cadence)
-        cadence_counts[key] = cadence_counts.get(key, 0) + 1
+    repeats = (cadence // 15).to_numpy(dtype=np.int64)
+    timestamps = _expanded_quarter_hour_timestamps(start, repeats)
+    values = np.repeat(prices.to_numpy(dtype=float), repeats)
+    cadence_counts = {
+        str(int(key)): int(value)
+        for key, value in cadence.value_counts(sort=False).sort_index().items()
+    }
     result = pd.DataFrame(
-        {"price_eur_mwh": values}, index=pd.DatetimeIndex(timestamps)
+        {"price_eur_mwh": values}, index=timestamps
     ).sort_index(kind="mergesort")
     if result.index.has_duplicates:
         raise DatabricksLTMaterializationError(
@@ -764,6 +805,17 @@ def _expand_spot_intervals(frame: pd.DataFrame) -> tuple[pd.DataFrame, dict[str,
         )
     _require_complete_quarter_hour_grid(result.index, label="Gold spot materialization")
     return result, cadence_counts
+
+
+def _expanded_quarter_hour_timestamps(
+    start: pd.Series,
+    repeats: np.ndarray,
+) -> pd.DatetimeIndex:
+    total = int(repeats.sum())
+    group_starts = np.repeat(np.cumsum(repeats) - repeats, repeats)
+    offsets = np.arange(total, dtype=np.int64) - group_starts
+    start_ns = np.repeat(start.array.asi8, repeats)
+    return pd.to_datetime(start_ns + offsets * 900_000_000_000, utc=True)
 
 
 def _require_complete_quarter_hour_grid(
@@ -835,6 +887,15 @@ def _utc_series(
     return parsed
 
 
+def _strict_boolean_series(values: pd.Series, *, label: str) -> pd.Series:
+    valid = values.map(lambda value: isinstance(value, (bool, np.bool_)))
+    if values.isna().any() or not bool(valid.all()):
+        raise DatabricksLTMaterializationError(
+            f"{label} must contain only non-null booleans"
+        )
+    return values.astype("boolean")
+
+
 def _validate_availability_semantics(
     *,
     basis: pd.Series,
@@ -849,12 +910,18 @@ def _validate_availability_semantics(
     recognized = normalized_basis.isin(
         {"UNKNOWN_BACKFILL", "FMV_FIRST_SEEN", "SOURCE_DOCUMENT_CREATED"}
     )
-    publication_utc = _utc_series(publication, label=f"{label} publication")
+    publication_utc = _utc_series(
+        publication,
+        label=f"{label} publication",
+        allow_missing=True,
+    )
     unknown = normalized_basis.eq("UNKNOWN_BACKFILL")
     invalid = (~recognized) | (unknown & (known.fillna(False) | availability.notna()))
     invalid |= (~unknown) & (~known.fillna(False) | availability.isna())
     source_created = normalized_basis.eq("SOURCE_DOCUMENT_CREATED")
-    invalid |= source_created & availability.ne(publication_utc)
+    invalid |= source_created & (
+        publication_utc.isna() | availability.ne(publication_utc)
+    )
     if first_observed is not None:
         first_utc = _utc_series(first_observed, label=f"{label} first observed")
         fmv_first_seen = normalized_basis.eq("FMV_FIRST_SEEN")
@@ -866,6 +933,13 @@ def _validate_availability_semantics(
             )
         last_utc = _utc_series(last_observed, label=f"{label} last observed")
         invalid |= first_utc.gt(last_utc)
+    else:
+        fmv_first_seen = normalized_basis.eq("FMV_FIRST_SEEN")
+        invalid |= (
+            fmv_first_seen
+            & publication_utc.notna()
+            & publication_utc.gt(availability)
+        )
     if invalid.fillna(True).any():
         raise DatabricksLTMaterializationError(
             f"{label} availability semantics are inconsistent"
@@ -879,6 +953,30 @@ def _false_authorities() -> dict[str, bool]:
         "calibration_authorized": False,
         "production_authorized": False,
     }
+
+
+def _canonical_entsoe_dimension(dimension: pd.DataFrame) -> pd.DataFrame:
+    _require_columns(dimension, _DIMENSION_COLUMNS, label="Gold ENTSO-E dimension")
+    if dimension.columns.has_duplicates:
+        raise DatabricksLTMaterializationError(
+            "Gold ENTSO-E dimension has duplicate columns"
+        )
+    projection = dimension.loc[:, sorted(_DIMENSION_COLUMNS)].copy()
+    if projection["SeriesID"].isna().any() or projection["SeriesID"].duplicated().any():
+        raise DatabricksLTMaterializationError("Gold SeriesID must be non-null and unique")
+    raw_keys = projection["SeriesKey"]
+    keys = raw_keys.astype("string")
+    if (
+        keys.isna().any()
+        or keys.str.strip().eq("").any()
+        or keys.ne(keys.str.strip()).any()
+        or keys.duplicated().any()
+    ):
+        raise DatabricksLTMaterializationError(
+            "Gold SeriesKey must be canonical, non-null and unique"
+        )
+    projection["SeriesKey"] = keys
+    return projection.sort_values("SeriesKey", kind="mergesort").reset_index(drop=True)
 
 
 __all__ = [

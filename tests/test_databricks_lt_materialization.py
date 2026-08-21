@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import hashlib
+from io import BytesIO
+
 import pandas as pd
 import pytest
 
@@ -13,6 +16,17 @@ from pfc_shaping.data.databricks_lt_materialization import (
     materialize_entsoe_current_features,
     materialize_entsoe_pit_features,
     materialize_spot_price_history,
+)
+from pfc_shaping.data.databricks_lt_replay import (
+    GOLD_ENTSOE_CURRENT_MODE,
+    GOLD_SPOT_MODE,
+    SILVER_ENTSOE_PIT_MODE,
+    DatabricksLTReplayError,
+    approved_databricks_materializer_payload,
+    build_databricks_replay_package,
+    build_databricks_role_replay,
+    verify_databricks_replay_package,
+    verify_databricks_role_replay,
 )
 
 
@@ -65,14 +79,21 @@ def _dimension_row(
         "BusinessType": "A01" if group == "generation_actual" else None,
         "ProcessType": "A16",
         "PsrType": psr_type,
+        "GenerationDirection": (
+            "GENERATION" if group == "generation_actual" else None
+        ),
         "FromZone": from_zone,
         "ToZone": to_zone,
         "Unit": "MW",
     }
 
 
-def _mapping() -> EntsoeFeatureMapping:
+def _mapping(dimension: pd.DataFrame | None = None) -> EntsoeFeatureMapping:
+    selected_dimension = _dimension() if dimension is None else dimension
     return EntsoeFeatureMapping(
+        dimension_semantic_sha256=entsoe_dimension_semantic_sha256(
+            selected_dimension
+        ),
         load_mw=(EntsoeSeriesTerm("LOAD"),),
         solar_mw=(EntsoeSeriesTerm("SOLAR"),),
         wind_mw=(EntsoeSeriesTerm("WIND_ON"), EntsoeSeriesTerm("WIND_OFF")),
@@ -81,6 +102,33 @@ def _mapping() -> EntsoeFeatureMapping:
             EntsoeSeriesTerm("FLOW_IMPORT", -1.0),
         ),
     )
+
+
+def _mapping_contract(dimension: pd.DataFrame) -> dict[str, object]:
+    mapping = _mapping(dimension)
+    return {
+        "schema_version": ENTSOE_FEATURE_MAPPING_SCHEMA_VERSION,
+        "market": "CH",
+        "dimension_semantic_sha256": entsoe_dimension_semantic_sha256(dimension),
+        "features": {
+            feature: [
+                {"series_key": term.series_key, "weight": term.weight}
+                for term in getattr(mapping, feature)
+            ]
+            for feature in (
+                "load_mw",
+                "solar_mw",
+                "wind_mw",
+                "cross_border_mw",
+            )
+        },
+    }
+
+
+def _parquet_payload(frame: pd.DataFrame) -> bytes:
+    buffer = BytesIO()
+    frame.to_parquet(buffer, index=True)
+    return buffer.getvalue()
 
 
 def _silver_vintages() -> pd.DataFrame:
@@ -273,7 +321,7 @@ def test_entsoe_mapping_rejects_wrong_psr_type() -> None:
         materialize_entsoe_pit_features(
             dimension=dimension,
             silver_vintages=_silver_vintages(),
-            mapping=_mapping(),
+            mapping=_mapping(dimension),
             as_of_utc="2026-10-24T03:00:00Z",
         )
 
@@ -286,14 +334,14 @@ def test_entsoe_mapping_rejects_generation_consumption_series() -> None:
         materialize_entsoe_pit_features(
             dimension=dimension,
             silver_vintages=_silver_vintages(),
-            mapping=_mapping(),
+            mapping=_mapping(dimension),
             as_of_utc="2026-10-24T03:00:00Z",
         )
 
 
 def test_entsoe_mapping_contract_is_bound_to_dimension_semantics() -> None:
     dimension = _dimension()
-    expected = _mapping()
+    expected = _mapping(dimension)
     contract = {
         "schema_version": ENTSOE_FEATURE_MAPPING_SCHEMA_VERSION,
         "market": "CH",
@@ -340,6 +388,129 @@ def test_silver_inconsistent_availability_basis_fails_closed() -> None:
         )
 
 
+def test_silver_unknown_backfill_accepts_missing_publication_but_not_for_pit() -> None:
+    vintages = _silver_vintages()
+    row = vintages["SK_ge_power_entsoe_time_series_vintages"].eq("V-1")
+    vintages.loc[row, "publication_timestamp_utc"] = pd.NaT
+    vintages.loc[row, "availability_basis"] = "UNKNOWN_BACKFILL"
+    vintages.loc[row, "availability_known"] = False
+    vintages.loc[row, "availability_timestamp_utc"] = pd.NaT
+
+    with pytest.raises(DatabricksLTMaterializationError, match="coverage differs"):
+        materialize_entsoe_pit_features(
+            dimension=_dimension(),
+            silver_vintages=vintages,
+            mapping=_mapping(),
+            as_of_utc="2026-10-24T03:00:00Z",
+        )
+
+
+def test_entsoe_mapping_requires_dimension_binding_even_without_contract_parser() -> None:
+    dimension = _dimension()
+    mapping = _mapping(dimension)
+    changed = dimension.copy()
+    changed.loc[changed["SeriesKey"].eq("LOAD"), "SourceTimeSeriesId"] = "OTHER"
+
+    with pytest.raises(DatabricksLTMaterializationError, match="not bound"):
+        materialize_entsoe_pit_features(
+            dimension=changed,
+            silver_vintages=_silver_vintages(),
+            mapping=mapping,
+            as_of_utc="2026-10-24T03:00:00Z",
+        )
+
+
+def test_entsoe_mapping_rejects_wrong_generation_direction() -> None:
+    dimension = _dimension()
+    dimension.loc[
+        dimension["SeriesKey"].eq("SOLAR"), "GenerationDirection"
+    ] = "CONSUMPTION"
+
+    with pytest.raises(DatabricksLTMaterializationError, match="GenerationDirection"):
+        materialize_entsoe_pit_features(
+            dimension=dimension,
+            silver_vintages=_silver_vintages(),
+            mapping=_mapping(dimension),
+            as_of_utc="2026-10-24T03:00:00Z",
+        )
+
+
+def test_entsoe_mapping_rejects_wrong_cross_border_sign() -> None:
+    dimension = _dimension()
+    mapping = EntsoeFeatureMapping(
+        dimension_semantic_sha256=entsoe_dimension_semantic_sha256(dimension),
+        load_mw=(EntsoeSeriesTerm("LOAD"),),
+        solar_mw=(EntsoeSeriesTerm("SOLAR"),),
+        wind_mw=(EntsoeSeriesTerm("WIND_ON"), EntsoeSeriesTerm("WIND_OFF")),
+        cross_border_mw=(
+            EntsoeSeriesTerm("FLOW_EXPORT", -1.0),
+            EntsoeSeriesTerm("FLOW_IMPORT", 1.0),
+        ),
+    )
+
+    with pytest.raises(DatabricksLTMaterializationError, match="NET_EXPORT_FROM_CH"):
+        materialize_entsoe_pit_features(
+            dimension=dimension,
+            silver_vintages=_silver_vintages(),
+            mapping=mapping,
+            as_of_utc="2026-10-24T03:00:00Z",
+        )
+
+
+def test_silver_source_hash_is_stable_under_export_row_order() -> None:
+    vintages = _silver_vintages()
+    first = materialize_entsoe_pit_features(
+        dimension=_dimension(),
+        silver_vintages=vintages,
+        mapping=_mapping(),
+        as_of_utc="2026-10-24T03:00:00Z",
+    )
+    second = materialize_entsoe_pit_features(
+        dimension=_dimension().sample(frac=1.0, random_state=4),
+        silver_vintages=vintages.sample(frac=1.0, random_state=7),
+        mapping=_mapping(),
+        as_of_utc="2026-10-24T03:00:00Z",
+    )
+
+    assert first.audit["source_projection_sha256"] == second.audit[
+        "source_projection_sha256"
+    ]
+    assert first.audit["dimension_projection_sha256"] == second.audit[
+        "dimension_projection_sha256"
+    ]
+    pd.testing.assert_frame_equal(first.raw_frame, second.raw_frame)
+
+
+def test_silver_rejects_string_boolean_dq_flag() -> None:
+    vintages = _silver_vintages()
+    vintages["dq_failed"] = "False"
+
+    with pytest.raises(DatabricksLTMaterializationError, match="non-null booleans"):
+        materialize_entsoe_pit_features(
+            dimension=_dimension(),
+            silver_vintages=vintages,
+            mapping=_mapping(),
+            as_of_utc="2026-10-24T03:00:00Z",
+        )
+
+
+def test_silver_rejects_subsecond_interval_drift() -> None:
+    vintages = _silver_vintages()
+    row = vintages["SK_ge_power_entsoe_time_series_vintages"].eq("V-1")
+    vintages.loc[row, "IntervalEndUtc"] = (
+        vintages.loc[row, "IntervalEndUtc"] + pd.Timedelta(milliseconds=500)
+    )
+    vintages.loc[row, "Date_Time_UTC"] = vintages.loc[row, "IntervalEndUtc"]
+
+    with pytest.raises(DatabricksLTMaterializationError, match="atomic"):
+        materialize_entsoe_pit_features(
+            dimension=_dimension(),
+            silver_vintages=vintages,
+            mapping=_mapping(),
+            as_of_utc="2026-10-24T03:00:00Z",
+        )
+
+
 def test_gold_latest_current_materialization_is_explicitly_non_authoritative() -> None:
     result = materialize_entsoe_current_features(
         dimension=_dimension(),
@@ -356,6 +527,26 @@ def test_gold_latest_current_materialization_is_explicitly_non_authoritative() -
         "calibration_authorized": False,
         "production_authorized": False,
     }
+
+
+def test_gold_latest_source_hash_is_stable_under_export_row_order() -> None:
+    first = materialize_entsoe_current_features(
+        dimension=_dimension(),
+        gold_latest=_gold_latest(),
+        mapping=_mapping(),
+        as_of_utc="2026-10-24T03:00:00Z",
+    )
+    second = materialize_entsoe_current_features(
+        dimension=_dimension().sample(frac=1.0, random_state=8),
+        gold_latest=_gold_latest().sample(frac=1.0, random_state=9),
+        mapping=_mapping(),
+        as_of_utc="2026-10-24T03:00:00Z",
+    )
+
+    assert first.audit["source_projection_sha256"] == second.audit[
+        "source_projection_sha256"
+    ]
+    pd.testing.assert_frame_equal(first.raw_frame, second.raw_frame)
 
 
 def _spot_rows(*, omit_hour: int | None = None) -> pd.DataFrame:
@@ -404,4 +595,193 @@ def test_spot_materialization_rejects_a_grid_gap() -> None:
             market_zone="CH",
             source_product="CH_DAY_AHEAD",
             as_of_utc="2026-10-25T05:00:00Z",
+        )
+
+
+@pytest.mark.parametrize(
+    ("frequency_minutes", "extra_seconds"),
+    [(15.5, 0), (15.0, 30)],
+)
+def test_spot_materialization_rejects_fractional_interval_declarations(
+    frequency_minutes: float,
+    extra_seconds: int,
+) -> None:
+    rows = _spot_rows().iloc[[0]].copy()
+    rows["FrequencyMinutes"] = frequency_minutes
+    rows["DeliveryEndUtc"] = (
+        rows["DeliveryStartUtc"]
+        + pd.Timedelta(minutes=15)
+        + pd.Timedelta(seconds=extra_seconds)
+    )
+
+    with pytest.raises(DatabricksLTMaterializationError, match="atomic"):
+        materialize_spot_price_history(
+            rows,
+            market_zone="CH",
+            source_product="CH_DAY_AHEAD",
+            as_of_utc="2026-10-25T05:00:00Z",
+        )
+
+
+def test_databricks_spot_export_replays_exact_archived_frames() -> None:
+    source_payloads = {"spot_price_interval": _parquet_payload(_spot_rows())}
+    replay = build_databricks_role_replay(
+        role="epex_ch",
+        mode=GOLD_SPOT_MODE,
+        as_of_utc="2026-10-25T05:00:00Z",
+        source_payloads=source_payloads,
+        source_tables={"spot_price_interval": "dev.gold.factspotpriceinterval"},
+        selection={
+            "market_zone": "CH",
+            "source_product": "CH_DAY_AHEAD",
+        },
+    )
+    materializer = approved_databricks_materializer_payload()
+
+    result = verify_databricks_role_replay(
+        config=replay.config,
+        source_payloads=source_payloads,
+        raw_payload=_parquet_payload(replay.materialization.raw_frame),
+        derived_payload=_parquet_payload(replay.materialization.derived_frame),
+        materializer_payload=materializer,
+        materializer_code_sha256=hashlib.sha256(materializer).hexdigest(),
+    )
+
+    assert result["status"] == "VERIFIED_EXACT_DATABRICKS_EXPORT_REPLAY"
+    assert result["source_environment"] == "DEV"
+    assert result["authorities"]["model_input_authorized"] is False
+
+
+def test_databricks_silver_pit_export_replays_exact_archived_frames() -> None:
+    dimension = _dimension()
+    source_payloads = {
+        "entsoe_series_dimension": _parquet_payload(dimension),
+        "entsoe_vintages": _parquet_payload(_silver_vintages()),
+    }
+    replay = build_databricks_role_replay(
+        role="entso",
+        mode=SILVER_ENTSOE_PIT_MODE,
+        as_of_utc="2026-10-24T03:00:00Z",
+        source_payloads=source_payloads,
+        source_tables={
+            "entsoe_series_dimension": "prd.gold.dimentsoeseries",
+            "entsoe_vintages": (
+                "prd.silver.ge_power_entsoe_time_series_vintages"
+            ),
+        },
+        selection={"mapping_contract": _mapping_contract(dimension)},
+    )
+    materializer = approved_databricks_materializer_payload()
+
+    result = verify_databricks_role_replay(
+        config=replay.config,
+        source_payloads=source_payloads,
+        raw_payload=_parquet_payload(replay.materialization.raw_frame),
+        derived_payload=_parquet_payload(replay.materialization.derived_frame),
+        materializer_payload=materializer,
+        materializer_code_sha256=hashlib.sha256(materializer).hexdigest(),
+    )
+
+    assert result["source_environment"] == "PRD"
+    assert result["source_artifact_count"] == 2
+
+
+def test_databricks_gold_current_export_builds_replay_config() -> None:
+    dimension = _dimension()
+    replay = build_databricks_role_replay(
+        role="entso",
+        mode=GOLD_ENTSOE_CURRENT_MODE,
+        as_of_utc="2026-10-24T03:00:00Z",
+        source_payloads={
+            "entsoe_series_dimension": _parquet_payload(dimension),
+            "entsoe_latest": _parquet_payload(_gold_latest()),
+        },
+        source_tables={
+            "entsoe_series_dimension": "dev.gold.dimentsoeseries",
+            "entsoe_latest": "dev.gold.factentsoetimeserieslatest",
+        },
+        selection={"mapping_contract": _mapping_contract(dimension)},
+    )
+
+    assert replay.config["mode"] == GOLD_ENTSOE_CURRENT_MODE
+    assert replay.materialization.audit["mode"] == "GOLD_CURRENT_SERVING"
+
+
+def test_databricks_replay_rejects_changed_source_export() -> None:
+    source_payloads = {"spot_price_interval": _parquet_payload(_spot_rows())}
+    replay = build_databricks_role_replay(
+        role="epex_ch",
+        mode=GOLD_SPOT_MODE,
+        as_of_utc="2026-10-25T05:00:00Z",
+        source_payloads=source_payloads,
+        source_tables={"spot_price_interval": "dev.gold.factspotpriceinterval"},
+        selection={
+            "market_zone": "CH",
+            "source_product": "CH_DAY_AHEAD",
+        },
+    )
+    changed = _spot_rows()
+    changed.loc[0, "Price"] = 999.0
+    materializer = approved_databricks_materializer_payload()
+
+    with pytest.raises(DatabricksLTReplayError, match="source artifact changed"):
+        verify_databricks_role_replay(
+            config=replay.config,
+            source_payloads={"spot_price_interval": _parquet_payload(changed)},
+            raw_payload=_parquet_payload(replay.materialization.raw_frame),
+            derived_payload=_parquet_payload(replay.materialization.derived_frame),
+            materializer_payload=materializer,
+            materializer_code_sha256=hashlib.sha256(materializer).hexdigest(),
+        )
+
+
+def test_databricks_replay_rejects_mixed_dev_prd_sources() -> None:
+    dimension = _dimension()
+    with pytest.raises(DatabricksLTReplayError, match="mix DEV and PRD"):
+        build_databricks_role_replay(
+            role="entso",
+            mode=SILVER_ENTSOE_PIT_MODE,
+            as_of_utc="2026-10-24T03:00:00Z",
+            source_payloads={
+                "entsoe_series_dimension": _parquet_payload(dimension),
+                "entsoe_vintages": _parquet_payload(_silver_vintages()),
+            },
+            source_tables={
+                "entsoe_series_dimension": "prd.gold.dimentsoeseries",
+                "entsoe_vintages": (
+                    "dev.silver.ge_power_entsoe_time_series_vintages"
+                ),
+            },
+            selection={"mapping_contract": _mapping_contract(dimension)},
+        )
+
+
+def test_databricks_replay_package_is_self_contained_and_tamper_evident() -> None:
+    package = build_databricks_replay_package(
+        role="epex_ch",
+        mode=GOLD_SPOT_MODE,
+        as_of_utc="2026-10-25T05:00:00Z",
+        source_payloads={"spot_price_interval": _parquet_payload(_spot_rows())},
+        source_tables={"spot_price_interval": "dev.gold.factspotpriceinterval"},
+        selection={
+            "market_zone": "CH",
+            "source_product": "CH_DAY_AHEAD",
+        },
+    )
+
+    verified = verify_databricks_replay_package(
+        artifacts=package.artifacts,
+        manifest_payload=package.manifest_payload,
+    )
+
+    assert verified["status"] == (
+        "VERIFIED_SELF_CONTAINED_DATABRICKS_REPLAY_PACKAGE"
+    )
+    assert verified["artifact_count"] == 6
+    changed = dict(package.artifacts)
+    changed["model/raw.parquet"] = changed["model/raw.parquet"] + b"tampered"
+    with pytest.raises(DatabricksLTReplayError, match="artifact changed"):
+        verify_databricks_replay_package(
+            artifacts=changed,
+            manifest_payload=package.manifest_payload,
         )

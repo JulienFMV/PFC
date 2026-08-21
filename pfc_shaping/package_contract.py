@@ -88,6 +88,8 @@ pfc_shaping/cli/score_ch_lt_structural_prediction_commitment.py
 pfc_shaping/cli/verify_ch_lt_preregistration_supersession.py
 pfc_shaping/data/__init__.py
 pfc_shaping/data/acquisition_contract.py
+pfc_shaping/data/databricks_lt_materialization.py
+pfc_shaping/data/databricks_lt_replay.py
 pfc_shaping/data/calendar_ch.py
 pfc_shaping/data/eex_datasource_v2_capture.py
 pfc_shaping/data/eex_forward_vintage_intake.py
