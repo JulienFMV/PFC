@@ -5,7 +5,7 @@ Read in this order:
 1. `AGENTS.md`
 2. `.planning/HANDOFF.md`
 3. `.planning/phases/14-lt-audit-remediation/DECISION-LOG.md`
-4. `.planning/phases/14-lt-audit-remediation/SESSION-HANDOFF-20260901-ENTSOE-PRD-RUN-RECONSTRUCTION.md`
+4. `.planning/phases/14-lt-audit-remediation/SESSION-HANDOFF-20260902-LT-SCENARIO-CURVE-AUTHORITY-CONTRACT.md`
 
 ## Current state
 
@@ -131,6 +131,13 @@ Read in this order:
   remain observation/risk markets until their independent execution gates.
   Shape-only scenarios preserve solver buckets; level-changing scenarios are
   separate fundamental curves and may not overwrite the central EEX curve.
+- The existing LT interfaces now have a durable compatibility/gap map. A new
+  standalone metadata-only contract types scenario definitions and the three
+  CH curve products without changing `production_phases.py`. It forces all
+  operational authorities false, keeps shape-only scenarios solver-month
+  neutral, isolates level-changing scenarios behind a separate upstream solve
+  requirement and binds stochastic paths to a typed fundamental parent. Its
+  qualification is synthetic only.
 
 ## Invariants
 
@@ -143,9 +150,8 @@ Read in this order:
   `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS` until independently
   governed local exports and a new future holdout exist.
 
-See durable decisions D-20260821-248 through D-20260902-269,
-`SESSION-HANDOFF-20260902-PFC-FMV-TARGET-AND-NEXT-SESSION.md` for the restart
-contract, and `SESSION-HANDOFF-20260902-ENTSOE-EXPORT-HEDGING-SCOPE.md` for the
-latest exact implementation files, hashes, tests and residual risks. The
-normalized-interval and preceding repo-hygiene handoffs retain their exact
-historical evidence and cleanup counts.
+See durable decisions D-20260821-248 through D-20260902-270 and
+`SESSION-HANDOFF-20260902-LT-SCENARIO-CURVE-AUTHORITY-CONTRACT.md` for the
+latest exact implementation files, hashes, tests and residual risks. The PFC
+target, ENTSO-E export, normalized-interval and preceding repo-hygiene handoffs
+retain their exact historical evidence and cleanup counts.

@@ -21583,6 +21583,88 @@ Invariants not to break:
   model admission remains
   `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS`.
 
+## D-20260902-270 - Add authority-negative scenario and CH curve-product definitions
+
+Decision:
+
+- Record the existing LT interface compatibility and gap map in
+  `docs/model/LT-INTERFACE-COMPATIBILITY-AND-GAP-MAP.md`, covering the monthly
+  solver, production orchestration, assembler, hourly/intraday shaping, market
+  hydro proxy, MSFC, uncertainty and legacy PFC flavors against all six target
+  products.
+- Add `pfc_shaping.lt.curve_products` as a standalone metadata-only contract.
+  Type `market_central_ch`, `fundamental_scenario_ch` and
+  `stochastic_spot_paths_ch` without importing the module from
+  `production_phases.py` or carrying any price values.
+- Require every scenario to have a stable identity, UTC information timestamp,
+  qualitative axis, explicit level effect, normalization bucket and
+  content-addressed point-in-time provenance. Forbid probability weights.
+- Require a shape-only scenario curve to descend from a typed central curve,
+  retain the CH monthly BASE solver as its required level source and normalize
+  within `solver_month`.
+- Require a level-changing scenario to identify a separate upstream
+  fundamental solve, use a separate level-solve bucket and have no central
+  parent. This records a missing prerequisite; it does not authorize or run
+  that solve.
+- Require stochastic paths to descend from a typed fundamental scenario and
+  inherit its scenario identity, level source and normalization bucket.
+- Attach a frozen, non-overridable authority state to all definitions. Model
+  input, model selection, candidate assembly, calendar mapping, scenario
+  probability, monthly-level grant, publication, production and trade
+  authority are all false.
+
+Reason:
+
+The existing numerical interfaces pass untyped DataFrames and dictionaries.
+They do not carry the product/scenario identity, information boundary,
+normalization bucket or provenance needed to prevent a later scenario label
+from silently becoming level or production authority. A dormant metadata
+contract closes that semantic gap without perturbing the governed central
+baseline or claiming that any real scenario engine, stochastic model or
+downstream decision layer exists.
+
+Rejected alternatives:
+
+- Add scenario switches or new output branches to `production_phases.py`.
+- Treat assembler electrification, hydro, outage or neighbouring-market
+  features as admitted scenario products.
+- Let a shape-only scenario use quarterly/annual neutrality or rewrite a
+  solver-owned monthly mean.
+- Derive a level-changing scenario from the central curve through a post-solver
+  additive patch.
+- Treat pointwise P10/P90 bands as coherent stochastic spot paths.
+- Extend `PFCFlavors` and call its fixed premiums portfolio valuation, FMV
+  hydro optimisation or hedge recommendations.
+- Assign probabilities, calendar meaning, model authority or production status
+  from labels or provenance alone.
+
+Verification and cost:
+
+- targeted synthetic contract tests: `8 passed`;
+- contract plus LT/CT import-boundary matrix: `25 passed, 1 skipped`; the skip
+  is the pre-existing optional TensorFlow boundary;
+- targeted Ruff lint and format checks: pass;
+- checkpoint before implementation: commit `1fd5595a65`, with an exact
+  38-file allowlist and no `git add -A`;
+- model fits/retraining, Databricks connections/statements/business rows,
+  Warehouse starts, T057 access, remote writes and incremental cost:
+  `0/0/0/0/0/0/zero`.
+
+Invariants not to break:
+
+- A `required_level_source` is a lineage requirement, never an authority
+  grant. The CH monthly BASE solver remains the sole current level authority.
+- No scenario or curve-product definition contains price values or authorizes
+  model input, selection, assembly, publication, production or trading.
+- Shape-only scenarios remain neutral within each solver month. Level-changing
+  scenarios require a separate upstream solve and cannot overwrite or descend
+  from `market_central_ch`.
+- The contract remains dormant until a separate governed integration decision;
+  `production_phases.py` stays unchanged.
+- LT remains independent from `pfc_shaping.ct.*`; T057 remains sealed and
+  model admission remains
+  `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS`.
+
 ## D-20260902-269 - Define the FMV Swiss future-spot, scenario and hedge product architecture
 
 Decision:
