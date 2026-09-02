@@ -1,4 +1,4 @@
-# LT rolling-origin evaluation protocol v3
+# LT rolling-origin evaluation protocol v4
 
 ## Scope
 
@@ -14,7 +14,7 @@ visible, but they do not replace the required external registry, trusted time,
 FMV risk margins, power calibration or source admission.
 
 Canonical semantic SHA-256:
-`e73d0b63160835f7c10b582152435361e51ac9568d433a721ded92327fac7137`.
+`3fb4f3d2d1ba178d4217f96fc641727abda585d7bb5fe22768fa4cdc59668fbb`.
 
 ## Candidate family
 
@@ -29,12 +29,14 @@ The comparison contains exactly one incumbent and four challengers:
 
 The incumbent has no tuning grid. Challenger tuning may occur only inside
 nested, externally registered development origins. Future-holdout tuning is
-forbidden. Version 3 binds every challenger to the normalized source hash
+forbidden. Version 4 binds every challenger to the normalized source hash
 `887f3b00d33231b52c58395ef43b5310624222922e955a6425d723e885cb5e19`.
 The scoring engine is independently bound to
 `034a06c14ec5aff337ab58cf4ab2e79a63c49f2f1d656dbc5fb3bd950c310ffc`.
 The origin-envelope boundary is bound to
 `0c74cff02e886075b25d1f0893ec5b756a4e6661c88ee6cfd57aa8f07caaff8d`.
+The request-preparation boundary is bound to
+`72323a7ca673cc53c09e6f6f8159771a3da845c055790acd2e5ff24292d33755`.
 
 The weighted MLP uses an exact observation-level exponential loss, a frozen
 180-day half-life, a deterministic 64x64 ReLU network and analytic gradients.
@@ -126,3 +128,28 @@ receipt and fresh remote HEAD observation as missing. Every operational,
 scientific, truth-opening and production authority remains false. Synthetic
 signatures in tests qualify only the verifier and are not written as project
 evidence.
+
+## Registration-request construction boundary
+
+`pfc_shaping.lt.origin_registration_request` translates one reverified
+information-set envelope into the exact field inventory of
+`ch_lt_origin_registration_request.v2`. It derives the origin ID and request ID
+with the protocol domains, binds the expected compare-and-append predecessor,
+the selected signed schedule entry, every information-set commitment and the
+SHA-256 of exact opaque trusted-time receipt bytes.
+
+The production module accepts only public keys and caller-supplied signature
+bytes. It rejects noncanonical UUIDs, invalid sequence/predecessor pairs,
+request/schedule signer-role collapse, chronology violations, malformed
+base64, changed hashes and requests re-signed after information-set mutation.
+
+Successful verification proves only cryptographic integrity under the supplied
+keys. Trusted-time semantics and the external request-signer role remain
+unadmitted; no origin becomes registered or countable.
+
+The frozen registry protocol enumerates the external receipt fields but does
+not yet specify the receipt-ID derivation, signature domain/canonical payload,
+registry trust-key contract or fresh-HEAD wire schema. Production receipt
+verification therefore remains explicitly
+`UNSUPPORTED_EXTERNAL_RECEIPT_WIRE_CONTRACT_INCOMPLETE_NO_GO`. The existing
+SQLite reference receipt is deliberately not promoted into this interface.

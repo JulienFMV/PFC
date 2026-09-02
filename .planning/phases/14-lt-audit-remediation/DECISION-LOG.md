@@ -21583,6 +21583,83 @@ Invariants not to break:
   model admission remains
   `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS`.
 
+## D-20260902-275 - Build the request-v2 surface while receipt wire remains unsupported
+
+Decision:
+
+- Continue local construction without waiting for FMV approval or real
+  independent signatures. Treat those as live-origin countability gates, not
+  prerequisites for offline contract implementation and synthetic tests.
+- Supersede evaluation protocol v3 with v4 only to bind the request module and
+  updated governed-wheel inventory. Preserve candidates, metrics, cohort,
+  solver boundary and negative authority. The v4 semantic SHA-256 is
+  `3fb4f3d2d1ba178d4217f96fc641727abda585d7bb5fe22768fa4cdc59668fbb`.
+- Implement the exact `ch_lt_origin_registration_request.v2` field inventory
+  and domain-separated request/origin identities. Build request-signing bytes
+  only after reverifying the information-set envelope, exact signed schedule,
+  caller-held HEAD expectation and exact opaque trusted-time receipt bytes.
+- Require a canonical UUID, contiguous positive sequence semantics, a null
+  genesis predecessor or exact SHA-256 non-genesis predecessor, complete
+  chronology, exact hashes and disjoint request/schedule signer identities.
+- Attach only caller-supplied Ed25519 request signatures and verify them with a
+  caller-held public key. Cryptographic validity proves integrity only; trusted
+  time semantics and request-signer external role admission remain missing.
+- Do not implement an external production receipt verifier yet. Record
+  `UNSUPPORTED_EXTERNAL_RECEIPT_WIRE_CONTRACT_INCOMPLETE_NO_GO` because the
+  frozen protocol does not define receipt-ID derivation, receipt signature
+  domain/canonical bytes, registry trust-key identity or fresh-HEAD wire
+  schema. Keep the existing SQLite receipt deliberately non-production.
+- Bind normalized-LF request source SHA-256
+  `72323a7ca673cc53c09e6f6f8159771a3da845c055790acd2e5ff24292d33755`
+  and package-contract SHA-256
+  `7035638f9ae4fafab6c29798542ecba94ec525a480160f7d378415973392901e`.
+
+Reason:
+
+Local construction can close every request clause already defined by the
+protocol without waiting for external governance. Receipt verification is a
+different boundary: borrowing the test-only reference schema or guessing its
+cryptographic identity rules would create apparent authority that the frozen
+contract does not support.
+
+Rejected alternatives:
+
+- Pause all construction until FMV approval, real schedule signing or
+  ENTSO-E recovery.
+- Treat arbitrary trusted-time bytes as semantically admitted merely because
+  their exact SHA-256 is bound into a signed request.
+- Allow the schedule authority and request authority to share one signing key.
+- Re-sign a modified request and accept it despite divergence from the frozen
+  information-set envelope.
+- Promote the local SQLite reference receipt schema, signer or database as an
+  external registry implementation.
+- Invent receipt/HEAD signature domains or countability from incomplete prose.
+- Open local August data, query Databricks, start a Warehouse, retrain a model,
+  touch CT or change the CH monthly solver authority.
+
+Verification and cost:
+
+- dedicated request-v2 synthetic/adversarial matrix: `14 passed`;
+- focused request/envelope/protocol/package matrix: `69 passed`;
+- expanded evaluation/registry/estimand/curve/import/shape/solver matrix:
+  `314 passed, 1 skipped`;
+- targeted Ruff checks: pass;
+- real rows, real signatures, production private keys, model retraining, truth
+  opening, Databricks statements, Warehouse starts, model artifacts, CT
+  changes and solver-level changes: `0/0/0/0/0/0/0/0/0/0`.
+
+Invariants not to break:
+
+- A cryptographically valid locally verified request is not externally
+  registered, countable, trusted-time admitted or scientifically admissible.
+- Production receipt verification stays unsupported until all missing wire and
+  trust clauses are independently frozen.
+- The cohort remains 12 scheduled and zero countable origins; future truth
+  remains closed.
+- LT production code owns no private request, schedule or registry key.
+- The CH monthly BASE solver remains sole monthly-level authority; T057 stays
+  sealed and LT remains independent from `pfc_shaping.ct.*`.
+
 ## D-20260902-274 - Prepare origin registration without manufacturing authority
 
 Decision:

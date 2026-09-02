@@ -16,10 +16,10 @@ from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any
 
-EVALUATION_PROTOCOL_VERSION = "fmv-lt-hourly-evaluation-protocol-v3"
+EVALUATION_PROTOCOL_VERSION = "fmv-lt-hourly-evaluation-protocol-v4"
 EVALUATION_STATUS = "LOCAL_HASH_FROZEN_NOT_EXTERNALLY_REGISTERED_NO_GO"
 CANONICAL_PROTOCOL_SEMANTIC_SHA256 = (
-    "e73d0b63160835f7c10b582152435361e51ac9568d433a721ded92327fac7137"
+    "3fb4f3d2d1ba178d4217f96fc641727abda585d7bb5fe22768fa4cdc59668fbb"
 )
 PRIMARY_METRIC = "MONTHLY_LEVEL_NEUTRALIZED_MAE_EUR_MWH"
 SECONDARY_METRICS = (
@@ -217,6 +217,7 @@ class ProtocolBindings:
     challenger_source_normalized_lf_sha256: str
     evaluation_engine_normalized_lf_sha256: str
     origin_registration_envelope_normalized_lf_sha256: str
+    origin_registration_request_normalized_lf_sha256: str
     package_contract_normalized_lf_sha256: str
     runtime_spec_normalized_lf_sha256: str
 
@@ -235,6 +236,9 @@ class ProtocolBindings:
             "evaluation_engine_normalized_lf_sha256": (self.evaluation_engine_normalized_lf_sha256),
             "origin_registration_envelope_normalized_lf_sha256": (
                 self.origin_registration_envelope_normalized_lf_sha256
+            ),
+            "origin_registration_request_normalized_lf_sha256": (
+                self.origin_registration_request_normalized_lf_sha256
             ),
             "package_contract_normalized_lf_sha256": (self.package_contract_normalized_lf_sha256),
             "runtime_spec_normalized_lf_sha256": self.runtime_spec_normalized_lf_sha256,
@@ -451,7 +455,7 @@ def default_evaluation_protocol() -> EvaluationProtocol:
     )
     slots = tuple(_origin_slot(*parts) for parts in origin_dates)
     protocol = EvaluationProtocol(
-        protocol_id="ch-lt-hourly-challengers-2026-v3",
+        protocol_id="ch-lt-hourly-challengers-2026-v4",
         locally_frozen_at_utc=frozen_at,
         candidates=candidates,
         holdout=FutureHoldout(
@@ -482,8 +486,11 @@ def default_evaluation_protocol() -> EvaluationProtocol:
             origin_registration_envelope_normalized_lf_sha256=(
                 "0c74cff02e886075b25d1f0893ec5b756a4e6661c88ee6cfd57aa8f07caaff8d"
             ),
+            origin_registration_request_normalized_lf_sha256=(
+                "72323a7ca673cc53c09e6f6f8159771a3da845c055790acd2e5ff24292d33755"
+            ),
             package_contract_normalized_lf_sha256=(
-                "43608e2a1f07743bb9a6a3ef247847086505bc617ceb6af18ae154ff46bc7efc"
+                "7035638f9ae4fafab6c29798542ecba94ec525a480160f7d378415973392901e"
             ),
             runtime_spec_normalized_lf_sha256=(
                 "c61b2261c4ee0048d72a70ddb183b99b6a50cb52bf677bfbc663441db232987f"
