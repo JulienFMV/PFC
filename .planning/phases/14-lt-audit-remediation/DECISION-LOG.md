@@ -21583,6 +21583,82 @@ Invariants not to break:
   model admission remains
   `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS`.
 
+## D-20260902-272 - Locally freeze the next LT hourly evaluation protocol
+
+Decision:
+
+- Add a standalone immutable LT metadata contract that freezes the candidate
+  family, metric policy and first prospective cohort without importing or
+  executing any model implementation.
+- Bind the contract to the existing CH LT estimand, origin-registry v2 and
+  contrast-aware dependence/power design. Reuse their monthly cadence,
+  horizon buckets, truth firewall, same-row policy, equal-origin weighting and
+  `UNSUPPORTED_NEVER_PASS` handling rather than creating parallel rules.
+- Freeze exactly one incumbent and four challengers: the current unweighted
+  MLP, a true observation-level recency-weighted MLP, standardized Ridge, an
+  additive cubic-spline Ridge GAM and deterministic CPU LightGBM. The
+  incumbent is bound to cross-platform UTF-8/LF-normalized source and config
+  hashes; challenger implementation hashes remain absent.
+- Permit challenger hyperparameter choice only inside nested externally
+  registered development origins. The incumbent has no tuning grid and future
+  holdout tuning is forbidden.
+- Reuse the exact estimand primary metric
+  `MONTHLY_LEVEL_NEUTRALIZED_MAE_EUR_MWH` and all seven secondary metrics.
+  Market-consistency gates remain absolute and uncompensated; FMV-risk MDE
+  margins and required power remain pending.
+- Locally schedule 12 consecutive monthly origins from 6 October 2026 through
+  7 September 2027 at 12:00 UTC, each covering lead months 1 through 36. The
+  schedule is locally frozen before its first slot, but it is not an external
+  registration: the countable origin count stays zero and missed slots cannot
+  be shifted, backfilled or reweighted.
+- Bind the canonical manifest to semantic SHA-256
+  `c2705a8d175bfe7421e2722d316bee4a5eb5631506f284dde03363ab561cb26b`.
+
+Reason:
+
+The existing estimand and power documents already define the correct scoring
+and dependence boundaries, while the existing origin protocol explicitly
+withholds authority until external registration. A small typed composition
+closes the previously missing candidate/schedule surface without duplicating
+those large validators or pretending that Git is the external authority.
+
+Rejected alternatives:
+
+- Reuse T057 or T061, read their outcomes or bind the new candidate family to
+  a historical selected challenger.
+- Implement or fit the four challengers before governed EEX/ENTSO-E inputs,
+  exact origins and a registered information set exist.
+- Tune on future holdout rows, allow candidate-specific rows or weight dense
+  delivery intervals as independent origins.
+- Use full-price MAE as the shape gate and thereby reward changes to
+  solver-owned monthly means.
+- Treat twelve scheduled slots as sufficient power or scientific evidence.
+- Hash raw mixed-line-ending Python/config bytes and create platform-dependent
+  incumbent identities.
+
+Verification and cost:
+
+- focused protocol tests: `10 passed`;
+- protocol plus estimand/power/origin/product/acquisition/LT-import matrix:
+  `96 passed, 1 skipped`;
+- targeted Ruff check and format check: pass;
+- data acquisition, model fit/retraining, truth opening, Databricks statements,
+  Warehouse starts and CT changes: `0/0/0/0/0/0`.
+
+Invariants not to break:
+
+- Local hash closure never substitutes for external origin registration,
+  trusted time, source admission, FMV-risk margins or power calibration.
+- The CH monthly BASE solver remains the sole monthly-level authority and
+  every shape comparison remains monthly-level-neutralized.
+- T057 remains sealed. The new cohort is separate, outcome-blind and
+  unconsumed.
+- Challenger implementations require a new bound protocol version before any
+  training; this contract grants no execution, selection, scientific,
+  publication or production authority.
+- LT remains independent from `pfc_shaping.ct.*`; global admission remains
+  `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS`.
+
 ## D-20260902-271 - Split outage handling from governed source admission
 
 Decision:

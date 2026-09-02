@@ -5,7 +5,7 @@ Read in this order:
 1. `AGENTS.md`
 2. `.planning/HANDOFF.md`
 3. `.planning/phases/14-lt-audit-remediation/DECISION-LOG.md`
-4. `.planning/phases/14-lt-audit-remediation/SESSION-HANDOFF-20260902-LT-SOURCE-ACQUISITION-OUTAGE-START.md`
+4. `.planning/phases/14-lt-audit-remediation/SESSION-HANDOFF-20260902-LT-EVALUATION-PROTOCOL-V1.md`
 
 ## Current state
 
@@ -147,6 +147,14 @@ Read in this order:
   platform-owned July `realized_final` smoke export from already-materialized
   Silver rows; the laptop preflight remains `STOP_NO_ACTIVE_WAREHOUSE`, and
   historical backfill remains forbidden as causal truth.
+- Point 2 now has a compact immutable LT evaluation contract. It binds the
+  existing estimand, origin-registry v2 and dependence/power design; freezes
+  the current unweighted MLP plus weighted-MLP, Ridge, spline-Ridge GAM and
+  deterministic CPU LightGBM families; and schedules a separate 12-origin
+  prospective cohort from October 2026 through September 2027. The semantic
+  manifest is hash-closed, but external registration is pending, countable
+  origins remain zero, truth opening/training/selection are unauthorized and
+  T057 is neither referenced nor consumed.
 
 ## Invariants
 
@@ -159,9 +167,9 @@ Read in this order:
   `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS` until independently
   governed local exports and a new future holdout exist.
 
-See durable decisions D-20260821-248 through D-20260902-271 and
-`SESSION-HANDOFF-20260902-LT-SOURCE-ACQUISITION-OUTAGE-START.md` for the
+See durable decisions D-20260821-248 through D-20260902-272 and
+`SESSION-HANDOFF-20260902-LT-EVALUATION-PROTOCOL-V1.md` for the
 latest exact implementation files, hashes, tests and residual risks. The PFC
-target, scenario-product contract, ENTSO-E export, normalized-interval and
-preceding repo-hygiene handoffs retain their exact historical evidence and
-cleanup counts.
+target, source-acquisition, scenario-product, ENTSO-E export,
+normalized-interval and preceding repo-hygiene handoffs retain their exact
+historical evidence and cleanup counts.
