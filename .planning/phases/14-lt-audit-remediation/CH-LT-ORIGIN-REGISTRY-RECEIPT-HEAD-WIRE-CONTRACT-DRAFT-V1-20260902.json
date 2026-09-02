@@ -1,0 +1,173 @@
+{
+  "schema_version": "ch_lt_origin_registry_receipt_head_wire_contract.v1",
+  "wire_contract_name": "ch_lt_origin_registry_receipt_head_wire_contract_20260902_v1",
+  "wire_contract_id": "290b108770dc799eeb83ca9f0a046aa8436878858224b68f757a5d9bfacbcc33",
+  "lifecycle": {
+    "state": "LOCAL_HASH_FROZEN_CONSTRUCTION_DRAFT_NOT_EXTERNALLY_ADMITTED",
+    "externally_frozen": false,
+    "fmv_approved": false,
+    "registry_trust_key_admitted": false,
+    "external_service_implemented": false,
+    "countable_origin_authority": false
+  },
+  "parent_protocol": {
+    "schema_version": "ch_lt_origin_registry_protocol.v2",
+    "protocol_sha256": "6ea896ccdb35414b52237f2bcf1065755c3c10444b308ce905b60f472e68c697",
+    "protocol_id": "0fcf13246c50f6bc79d203437f7c5294495dc233f93873abbe2aeaf3dc282204",
+    "registry_logical_domain": "FMV_CH_LT_CONFIRMATORY_ORIGINS_V2",
+    "registry_domain_sha256": "3a991bd25fdc5c86a875cc755847446791f8946aa2fc4a396d4bb1b2319a26ce"
+  },
+  "canonicalization": {
+    "encoding": "ASCII",
+    "json": "RFC8785_EQUIVALENT_SORTED_KEYS_COMPACT_SEPARATORS_NO_FLOATS_NO_DUPLICATE_KEYS",
+    "payload_must_equal_canonical_reencoding": true,
+    "maximum_document_bytes": 4194304,
+    "sha256_text": "LOWERCASE_HEX_64",
+    "utc_text": "YYYY-MM-DDTHH:MM:SSZ",
+    "signature_value": "STANDARD_BASE64_CANONICAL_ED25519_64_BYTES"
+  },
+  "receipt": {
+    "schema_version": "ch_lt_origin_registration_receipt.v2",
+    "required_fields": [
+      "schema_version",
+      "protocol_sha256",
+      "protocol_id",
+      "registry_domain_sha256",
+      "receipt_id",
+      "sequence",
+      "previous_receipt_id",
+      "registration_operation_id",
+      "request_id",
+      "request_sha256",
+      "cadence_slot_id",
+      "exact_schedule_entry_id",
+      "exact_schedule_entry_sha256",
+      "capture_window_open_utc",
+      "capture_window_close_utc",
+      "latest_external_registry_commit_utc",
+      "origin_id",
+      "origin_as_of_utc",
+      "committed_at_utc",
+      "countable_prospective_origin",
+      "registry_signature"
+    ],
+    "identity_core": "ALL_REQUIRED_FIELDS_EXCEPT_RECEIPT_ID_AND_REGISTRY_SIGNATURE",
+    "receipt_id_derivation": {
+      "algorithm": "SHA256",
+      "domain_ascii": "FMV_CH_LT_ORIGIN_REGISTRATION_RECEIPT_V2",
+      "preimage": "DOMAIN_ASCII || 0x00 || CANONICAL_JSON_IDENTITY_CORE"
+    },
+    "signature_document": "ALL_REQUIRED_FIELDS_EXCEPT_REGISTRY_SIGNATURE_INCLUDING_RECEIPT_ID",
+    "signature_payload": {
+      "domain_ascii": "FMV_CH_LT_ORIGIN_REGISTRATION_RECEIPT_SIGNATURE_V1",
+      "preimage": "DOMAIN_ASCII || 0x00 || CANONICAL_JSON_SIGNATURE_DOCUMENT"
+    },
+    "signature_block": {
+      "required_fields": [
+        "algorithm",
+        "key_id",
+        "value_base64"
+      ],
+      "algorithm": "ED25519",
+      "key_id_derivation": "SHA256_RAW_32_BYTE_ED25519_PUBLIC_KEY"
+    },
+    "required_cross_bindings": [
+      "REVERIFY_EXACT_SIGNED_REQUEST_AND_ALL_ITS_INFORMATION_SET_SCHEDULE_AND_OPAQUE_TIME_BINDINGS",
+      "PROTOCOL_DOMAIN_OPERATION_SEQUENCE_PREDECESSOR_SLOT_SCHEDULE_AND_ORIGIN_FIELDS_EQUAL_VERIFIED_REQUEST",
+      "REQUEST_SHA256_EQUALS_SHA256_EXACT_SIGNED_REQUEST_BYTES",
+      "CAPTURE_WINDOW_OPEN_UTC_LE_ORIGIN_AS_OF_UTC_LE_CAPTURE_WINDOW_CLOSE_UTC",
+      "ORIGIN_AS_OF_UTC_LE_COMMITTED_AT_UTC_LE_LATEST_EXTERNAL_REGISTRY_COMMIT_UTC_LT_FIRST_TARGET_DELIVERY_START_UTC",
+      "COUNTABLE_PROSPECTIVE_ORIGIN_CLAIM_IS_EXACT_BOOLEAN_TRUE",
+      "REGISTRY_SIGNER_KEY_IS_DISTINCT_FROM_REQUEST_AND_SCHEDULE_SIGNER_KEYS"
+    ]
+  },
+  "head_observation": {
+    "schema_version": "ch_lt_origin_registry_head_observation.v1",
+    "required_fields": [
+      "schema_version",
+      "protocol_sha256",
+      "protocol_id",
+      "registry_domain_sha256",
+      "sequence",
+      "receipt_id",
+      "receipt_sha256",
+      "challenge_nonce",
+      "observed_at_utc",
+      "expires_at_utc",
+      "observation_id",
+      "registry_signature"
+    ],
+    "challenge_nonce": "CALLER_SUPPLIED_LOWERCASE_SHA256_NOT_DERIVED_OR_GENERATED_BY_LIBRARY",
+    "identity_core": "ALL_REQUIRED_FIELDS_EXCEPT_OBSERVATION_ID_AND_REGISTRY_SIGNATURE",
+    "observation_id_derivation": {
+      "algorithm": "SHA256",
+      "domain_ascii": "FMV_CH_LT_ORIGIN_REGISTRY_HEAD_OBSERVATION_V1",
+      "preimage": "DOMAIN_ASCII || 0x00 || CANONICAL_JSON_IDENTITY_CORE"
+    },
+    "signature_document": "ALL_REQUIRED_FIELDS_EXCEPT_REGISTRY_SIGNATURE_INCLUDING_OBSERVATION_ID",
+    "signature_payload": {
+      "domain_ascii": "FMV_CH_LT_ORIGIN_REGISTRY_HEAD_OBSERVATION_SIGNATURE_V1",
+      "preimage": "DOMAIN_ASCII || 0x00 || CANONICAL_JSON_SIGNATURE_DOCUMENT"
+    },
+    "signature_block": {
+      "required_fields": [
+        "algorithm",
+        "key_id",
+        "value_base64"
+      ],
+      "algorithm": "ED25519",
+      "key_id_derivation": "SHA256_RAW_32_BYTE_ED25519_PUBLIC_KEY"
+    },
+    "required_cross_bindings": [
+      "REVERIFY_EXACT_SIGNED_RECEIPT_AND_ITS_REQUEST_CHAIN",
+      "PROTOCOL_DOMAIN_SEQUENCE_RECEIPT_ID_AND_RECEIPT_SHA256_EQUAL_VERIFIED_RECEIPT",
+      "CHALLENGE_NONCE_EQUALS_CALLER_HELD_EXPECTATION",
+      "RECEIPT_COMMITTED_AT_UTC_LE_OBSERVED_AT_UTC_LE_CALLER_VERIFICATION_TIME_UTC_LE_EXPIRES_AT_UTC",
+      "ZERO_LT_EXPIRES_AT_UTC_MINUS_OBSERVED_AT_UTC_LE_300_SECONDS",
+      "HEAD_AND_RECEIPT_USE_THE_SAME_REGISTRY_PUBLIC_KEY"
+    ],
+    "maximum_ttl_seconds": 300
+  },
+  "local_verification_semantics": {
+    "cryptographic_receipt_verification_can_succeed": true,
+    "fresh_head_cryptographic_verification_can_succeed": true,
+    "receipt_countable_true_is_an_untrusted_wire_claim_until_external_key_admission": true,
+    "local_projection_or_cached_head_is_authority": false,
+    "externally_registered": false,
+    "countable_origin": false,
+    "truth_open_authorized": false,
+    "model_training_authorized": false,
+    "model_selection_authorized": false,
+    "scientific_admission": false,
+    "production_authorization": false,
+    "promotion_gate": false
+  },
+  "missing_external_evidence": [
+    "FMV_EXTERNAL_WIRE_CONTRACT_APPROVAL",
+    "EXTERNAL_REGISTRY_PUBLIC_KEY_TRUST_ADMISSION",
+    "INDEPENDENT_REGISTRY_SERVICE_IDENTITY_ACLS_AND_KEYRING",
+    "BUILDER_INACCESSIBLE_REMOTE_COMPARE_AND_APPEND_WORM",
+    "TRUSTED_EXTERNAL_COMMIT_TIME_AUTHORITY",
+    "INDEPENDENT_SERVICE_CONFORMANCE_AND_SECURITY_EVIDENCE"
+  ],
+  "prohibited_capabilities": [
+    "PRIVATE_KEY_OWNERSHIP",
+    "SIGNATURE_GENERATION",
+    "NONCE_GENERATION",
+    "FILESYSTEM_OR_NETWORK_IO",
+    "REGISTRY_WRITE_OR_COMPARE_AND_APPEND",
+    "TRUST_KEY_ADMISSION",
+    "ORIGIN_COUNTING",
+    "TRUTH_OPEN",
+    "MODEL_TRAINING_OR_SELECTION",
+    "MONTHLY_SOLVER_LEVEL_CHANGE",
+    "CT_ACCESS",
+    "T057_ACCESS",
+    "PRODUCTION_OR_PROMOTION"
+  ],
+  "execution_authorized": false,
+  "production_authorization": false,
+  "promotion_gate": false,
+  "future_holdout_consumed": false,
+  "t057_consumed": false
+}

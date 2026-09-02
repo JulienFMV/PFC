@@ -21583,6 +21583,116 @@ Invariants not to break:
   model admission remains
   `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS`.
 
+## D-20260902-276 - Freeze and verify a local receipt/HEAD wire without creating authority
+
+Decision:
+
+- Supersede evaluation protocol v4 with v5 only to bind the locally frozen
+  receipt/HEAD wire contract, public-key verifier, updated request status and
+  governed-wheel inventory. Preserve the five candidates, metrics, 12-slot
+  cohort, solver boundary and all negative authorities. The v5 semantic
+  SHA-256 is
+  `800c1db06f3a760998d318553fcece605d86581991b2548132fb18e61e5ff9d7`.
+- Freeze
+  `CH-LT-ORIGIN-REGISTRY-RECEIPT-HEAD-WIRE-CONTRACT-DRAFT-V1-20260902.json`
+  as a local construction draft, not an externally approved registry
+  protocol. Its semantic contract ID is
+  `290b108770dc799eeb83ca9f0a046aa8436878858224b68f757a5d9bfacbcc33`
+  and its exact file SHA-256 is
+  `1f9d1f6495f716b7afb3497195626b24fe427b7dedf3f6f001c00051d6688047`.
+  Pin this exact-byte JSON to LF through a path-specific `.gitattributes`
+  rule because the Windows checkout uses `core.autocrlf=true`.
+- Use distinct domain-separated preimages for receipt IDs, receipt signatures,
+  HEAD observation IDs and HEAD signatures. Require strict canonical ASCII
+  JSON, exact field inventories, canonical base64 Ed25519 signatures and
+  lowercase SHA-256 identities.
+- Reverify the complete signed request, envelope, schedule and opaque
+  trusted-time-byte binding before accepting a receipt. Require receipt
+  protocol/domain/operation/sequence/predecessor/request/slot/schedule/origin
+  equality and exact signed-request SHA-256.
+- Require the registry public key to differ from both request and schedule
+  public keys. The runtime accepts only public keys and caller-supplied
+  signatures; it owns no private key or signing function.
+- Require every accepted receipt to carry the parent protocol's exact
+  `countable_prospective_origin=true` wire claim, but report that claim
+  separately from local authority. A valid claim does not make an origin
+  externally registered or countable.
+- Bind each HEAD observation to the exact signed receipt SHA-256, sequence and
+  caller-supplied lowercase SHA-256 nonce. Require
+  `committed <= observed <= caller verification time <= expires` and a
+  strictly positive TTL no longer than 300 seconds. Do not read a local clock
+  or generate a nonce inside the module.
+- Keep external wire approval, registry-key trust admission, independently
+  operated remote compare-and-append/WORM, trusted commit time and independent
+  service conformance/security evidence missing. Even after synthetic receipt
+  and fresh-HEAD verification, registration, countability, truth opening,
+  training, selection, scientific admission, production and promotion remain
+  false.
+- Keep the incompatible SQLite reference schema test-only and outside the
+  governed wheel. Add only the new pure LT verifier to the positive wheel
+  inventory.
+- Bind normalized-LF source SHA-256 values
+  `e4dc1366ac1e13c1f2b4083ac6c8d5f24036cd743cae678359bae8f1435ed748`
+  for the request module,
+  `d3224f53aa1912301ac87f5db0c4721547978c1da17358411d37adc558299eb7`
+  for the receipt/HEAD verifier and
+  `cfb123ad7a0549dabfceec933fa8056aa81dad0328872fc097156ba68f1901b8`
+  for the package contract. The evaluation-protocol normalized-LF source
+  SHA-256 is
+  `ddc0d165b34689dc0ddc73863715a48e41f9fd5c317a08902bef678e13660d65`.
+
+Reason:
+
+The parent protocol already fixes the receipt-v2 fields and countability
+claim, but leaves the cryptographic byte surfaces and fresh-HEAD schema
+implicit. Local construction can close those ambiguities and qualify a
+fail-closed verifier without waiting for operational governance. Keeping the
+signed wire claim separate from trust admission prevents a caller-supplied
+test key or local file from manufacturing an externally countable origin.
+
+Rejected alternatives:
+
+- Wait for FMV approval or a live registry before writing locally testable
+  canonicalization and verification code.
+- Interpret a valid Ed25519 signature under any caller-provided key as proof
+  that the registry identity or service is externally trusted.
+- Treat `countable_prospective_origin=true` in a valid receipt as the local
+  result's `countable_origin=true`.
+- Reuse the SQLite reference ID/signature domains or database as the external
+  wire and CAS/WORM authority.
+- Sign plain JSON without a separate signature domain, accept noncanonical
+  encodings, omit exact request-byte hashing, or skip chain reverification.
+- Generate freshness nonces or read the workstation clock inside the verifier.
+- Modify the hash-bound parent protocol in place, open local August data,
+  query Databricks, start a Warehouse, retrain a model, touch CT, open T057 or
+  change CH monthly solver authority.
+
+Verification and cost:
+
+- dedicated receipt/HEAD synthetic and adversarial matrix: `17 passed`;
+- focused request/envelope/receipt/protocol/package matrix: `107 passed`;
+- expanded evaluation/registry/estimand/curve/import/shape/solver matrix:
+  `348 passed, 1 skipped`;
+- required LT minimum: `58 passed, 1 skipped`;
+- targeted Ruff checks and format checks: pass;
+- real rows, real signatures, production private keys, model retraining, truth
+  opening, Databricks statements, Warehouse starts, model artifacts, CT
+  changes and solver-level changes: `0/0/0/0/0/0/0/0/0/0`.
+
+Invariants not to break:
+
+- Cryptographic verification under caller-held public keys proves only exact
+  byte integrity and local contract conformance; it does not admit the key,
+  service, trusted time, external append or countability.
+- A fresh HEAD without a trusted external CAS/WORM service remains
+  non-authoritative. A receipt without a fresh HEAD remains non-current.
+- The cohort remains 12 scheduled and zero countable origins; future truth
+  remains closed and no real registration artifact was created.
+- LT production code owns no private request, schedule or registry key and
+  performs no registry I/O through this verifier.
+- The CH monthly BASE solver remains sole monthly-level authority; T057 stays
+  sealed and LT remains independent from `pfc_shaping.ct.*`.
+
 ## D-20260902-275 - Build the request-v2 surface while receipt wire remains unsupported
 
 Decision:

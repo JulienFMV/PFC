@@ -155,7 +155,7 @@ Read in this order:
   manifest is hash-closed, but external registration is pending, countable
   origins remain zero, truth opening/training/selection are unauthorized and
   T057 is neither referenced nor consumed.
-- The evaluation protocol is now source-bound v4. Four challenger
+- The evaluation protocol is now source-bound v5. Four challenger
   implementations and a scoring engine operate only on immutable synthetic
   fixtures: the weighted MLP uses a verified observation-level loss, the
   linear/GAM/tree challengers are deterministic, and all outputs retain
@@ -177,9 +177,15 @@ Read in this order:
   complete commitments and exact opaque trusted-time receipt bytes, derives
   the protocol origin/request IDs and requires disjoint request/schedule
   signer keys. A valid synthetic signature grants no external authority.
-  Production receipt verification remains explicitly unsupported because the
-  protocol has not frozen its ID/signature/trust/HEAD wire rules; the local
-  SQLite reference is not promoted.
+  A new local hash-frozen receipt/HEAD wire draft now closes ID derivation,
+  domain-separated signature bytes, strict receipt/request binding, exact
+  nonce binding and a five-minute maximum HEAD TTL. Its public-key-only
+  verifier reverifies the complete request/envelope/schedule chain and has no
+  private-key, I/O, registry-write or clock capability. Cryptographic receipt
+  and fresh-HEAD success remain separate from authority: registry-key trust,
+  external CAS/WORM operation, trusted commit time and independent conformance
+  evidence are missing, so externally registered/countable origins remain
+  zero. The incompatible SQLite reference is not promoted.
 
 ## Invariants
 
@@ -192,8 +198,8 @@ Read in this order:
   `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS` until independently
   governed local exports and a new future holdout exist.
 
-See durable decisions D-20260821-248 through D-20260902-275 and
-`SESSION-HANDOFF-20260902-LT-ORIGIN-REGISTRATION-REQUEST-V1.md` for the
+See durable decisions D-20260821-248 through D-20260902-276 and
+`SESSION-HANDOFF-20260902-LT-ORIGIN-RECEIPT-HEAD-WIRE-V1.md` for the
 latest exact implementation files, hashes, tests and residual risks. The PFC
 target, source-acquisition, scenario-product, ENTSO-E export,
 normalized-interval and preceding repo-hygiene handoffs retain their exact

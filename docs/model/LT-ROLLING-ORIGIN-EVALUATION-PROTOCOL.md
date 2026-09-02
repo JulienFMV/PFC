@@ -1,4 +1,4 @@
-# LT rolling-origin evaluation protocol v4
+# LT rolling-origin evaluation protocol v5
 
 ## Scope
 
@@ -14,7 +14,7 @@ visible, but they do not replace the required external registry, trusted time,
 FMV risk margins, power calibration or source admission.
 
 Canonical semantic SHA-256:
-`3fb4f3d2d1ba178d4217f96fc641727abda585d7bb5fe22768fa4cdc59668fbb`.
+`800c1db06f3a760998d318553fcece605d86581991b2548132fb18e61e5ff9d7`.
 
 ## Candidate family
 
@@ -29,14 +29,18 @@ The comparison contains exactly one incumbent and four challengers:
 
 The incumbent has no tuning grid. Challenger tuning may occur only inside
 nested, externally registered development origins. Future-holdout tuning is
-forbidden. Version 4 binds every challenger to the normalized source hash
+forbidden. Version 5 binds every challenger to the normalized source hash
 `887f3b00d33231b52c58395ef43b5310624222922e955a6425d723e885cb5e19`.
 The scoring engine is independently bound to
 `034a06c14ec5aff337ab58cf4ab2e79a63c49f2f1d656dbc5fb3bd950c310ffc`.
 The origin-envelope boundary is bound to
 `0c74cff02e886075b25d1f0893ec5b756a4e6661c88ee6cfd57aa8f07caaff8d`.
 The request-preparation boundary is bound to
-`72323a7ca673cc53c09e6f6f8159771a3da845c055790acd2e5ff24292d33755`.
+`e4dc1366ac1e13c1f2b4083ac6c8d5f24036cd743cae678359bae8f1435ed748`.
+The receipt/HEAD verifier is bound to normalized source hash
+`d3224f53aa1912301ac87f5db0c4721547978c1da17358411d37adc558299eb7`
+and its exact wire-contract file to
+`1f9d1f6495f716b7afb3497195626b24fe427b7dedf3f6f001c00051d6688047`.
 
 The weighted MLP uses an exact observation-level exponential loss, a frozen
 180-day half-life, a deterministic 64x64 ReLU network and analytic gradients.
@@ -147,9 +151,33 @@ Successful verification proves only cryptographic integrity under the supplied
 keys. Trusted-time semantics and the external request-signer role remain
 unadmitted; no origin becomes registered or countable.
 
-The frozen registry protocol enumerates the external receipt fields but does
-not yet specify the receipt-ID derivation, signature domain/canonical payload,
-registry trust-key contract or fresh-HEAD wire schema. Production receipt
-verification therefore remains explicitly
-`UNSUPPORTED_EXTERNAL_RECEIPT_WIRE_CONTRACT_INCOMPLETE_NO_GO`. The existing
-SQLite reference receipt is deliberately not promoted into this interface.
+## Receipt and fresh-HEAD construction boundary
+
+`pfc_shaping.lt.origin_registration_receipt` implements a local, hash-frozen
+wire draft for `ch_lt_origin_registration_receipt.v2` and
+`ch_lt_origin_registry_head_observation.v1`. Receipt and observation IDs use
+separate domain-separated SHA-256 derivations; Ed25519 signatures use distinct
+signature domains and exact canonical bytes. The verifier requires a registry
+public key distinct from the request and schedule keys and reverifies the
+complete request/envelope/schedule chain.
+
+The HEAD binds the exact receipt bytes, sequence and caller-supplied SHA-256
+nonce. Freshness requires
+`committed <= observed <= caller_verification_time <= expires`, with a strictly
+positive TTL no longer than 300 seconds. The library does not generate a
+nonce, own a private key, read a clock, perform I/O or execute registry CAS.
+
+A cryptographically valid receipt must carry the protocol's exact
+`countable_prospective_origin=true` wire claim. This claim is reported
+separately from local authority: even with a valid fresh HEAD,
+`externally_registered`, `countable_origin`, truth opening, training,
+selection, scientific admission, production and promotion all remain false.
+They require external approval of the wire contract, registry-key trust
+admission, an independently operated remote CAS/WORM service, trusted commit
+time and conformance/security evidence.
+
+The wire contract ID is
+`290b108770dc799eeb83ca9f0a046aa8436878858224b68f757a5d9bfacbcc33`;
+its exact file SHA-256 is
+`1f9d1f6495f716b7afb3497195626b24fe427b7dedf3f6f001c00051d6688047`.
+The incompatible SQLite reference remains test-only and is not promoted.

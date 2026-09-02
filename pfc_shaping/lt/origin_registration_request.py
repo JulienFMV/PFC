@@ -6,10 +6,9 @@ It accepts opaque trusted-time receipt bytes only to bind their hash; semantic
 trusted-time admission remains external.  The module owns no private key,
 performs no I/O, and cannot register or count an origin.
 
-The external receipt identity/signature wire rules are not fully specified by
-the current protocol.  Receipt verification therefore remains explicitly
-unsupported instead of being approximated by the non-production SQLite
-reference authority.
+Receipt and HEAD wire verification is implemented separately against a local,
+hash-frozen construction draft.  External trust-key admission, CAS/WORM
+operation and governance approval remain outside this request builder.
 """
 
 from __future__ import annotations
@@ -39,7 +38,7 @@ from pfc_shaping.lt.origin_registration_envelope import (
 
 REQUEST_SCHEMA_VERSION = "ch_lt_origin_registration_request.v2"
 REQUEST_STATUS = "CRYPTOGRAPHICALLY_VERIFIED_LOCAL_PREPARATION_ONLY_NO_GO"
-RECEIPT_STATUS = "UNSUPPORTED_EXTERNAL_RECEIPT_WIRE_CONTRACT_INCOMPLETE_NO_GO"
+RECEIPT_STATUS = "LOCAL_RECEIPT_HEAD_WIRE_VERIFIER_IMPLEMENTED_EXTERNAL_ADMISSION_MISSING_NO_GO"
 REGISTRY_LOGICAL_DOMAIN = "FMV_CH_LT_CONFIRMATORY_ORIGINS_V2"
 REGISTRY_DOMAIN_SHA256 = hashlib.sha256(REGISTRY_LOGICAL_DOMAIN.encode("ascii")).hexdigest()
 CADENCE_CONTRACT_SHA256 = "037619f50cd882a7c65227876c95af3d2433f6536c118ce1e43e86fe359779d6"
@@ -124,10 +123,10 @@ _MISSING_EXTERNAL_EVIDENCE = (
     "FRESH_EXTERNAL_REGISTRY_HEAD_OBSERVATION",
 )
 _RECEIPT_CONTRACT_GAPS = (
-    "EXTERNAL_RECEIPT_ID_DERIVATION",
-    "EXTERNAL_RECEIPT_SIGNATURE_DOMAIN_AND_CANONICAL_PAYLOAD",
-    "EXTERNAL_REGISTRY_KEY_IDENTITY_AND_TRUST_REGISTRY",
-    "EXTERNAL_HEAD_OBSERVATION_SCHEMA_ID_AND_SIGNATURE_DOMAIN",
+    "FMV_EXTERNAL_WIRE_CONTRACT_APPROVAL",
+    "EXTERNAL_REGISTRY_KEY_IDENTITY_AND_TRUST_REGISTRY_ADMISSION",
+    "BUILDER_INACCESSIBLE_REMOTE_COMPARE_AND_APPEND_WORM",
+    "INDEPENDENT_SERVICE_CONFORMANCE_AND_SECURITY_EVIDENCE",
 )
 
 
@@ -228,10 +227,12 @@ class VerifiedRegistrationRequest:
 
 @dataclass(frozen=True, slots=True)
 class ReceiptContractReadiness:
-    """Explicit non-readiness result for the unspecified external receipt wire."""
+    """Local implementation readiness without external registry authority."""
 
     status: str = field(default=RECEIPT_STATUS, init=False)
-    verification_implemented: bool = field(default=False, init=False)
+    verification_implemented: bool = field(default=True, init=False)
+    local_wire_contract_hash_frozen: bool = field(default=True, init=False)
+    external_trust_admitted: bool = field(default=False, init=False)
     countable_origin: bool = field(default=False, init=False)
     scientific_admission: bool = field(default=False, init=False)
     production_authorization: bool = field(default=False, init=False)
@@ -242,6 +243,8 @@ class ReceiptContractReadiness:
         return {
             "status": self.status,
             "verification_implemented": self.verification_implemented,
+            "local_wire_contract_hash_frozen": self.local_wire_contract_hash_frozen,
+            "external_trust_admitted": self.external_trust_admitted,
             "countable_origin": self.countable_origin,
             "scientific_admission": self.scientific_admission,
             "production_authorization": self.production_authorization,

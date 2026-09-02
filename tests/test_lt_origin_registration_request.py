@@ -379,7 +379,9 @@ def test_receipt_verification_stays_explicitly_unsupported_and_negative() -> Non
 
     assert readiness == ReceiptContractReadiness()
     assert readiness.status == RECEIPT_STATUS
-    assert manifest["verification_implemented"] is False
+    assert manifest["verification_implemented"] is True
+    assert manifest["local_wire_contract_hash_frozen"] is True
+    assert manifest["external_trust_admitted"] is False
     assert manifest["countable_origin"] is False
     assert len(manifest["missing_contract_clauses"]) == 4
     assert all(
