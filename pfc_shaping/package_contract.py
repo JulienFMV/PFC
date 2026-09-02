@@ -107,6 +107,9 @@ pfc_shaping/data/snapshot_anchor_client.py
 pfc_shaping/data/snapshot_publication_contract.py
 pfc_shaping/data/snapshot_publication_state.py
 pfc_shaping/lt/__init__.py
+pfc_shaping/lt/evaluation_challengers.py
+pfc_shaping/lt/evaluation_engine.py
+pfc_shaping/lt/evaluation_protocol.py
 pfc_shaping/lt/model/__init__.py
 pfc_shaping/lt/model/assembler.py
 pfc_shaping/lt/model/electrification_shape.py

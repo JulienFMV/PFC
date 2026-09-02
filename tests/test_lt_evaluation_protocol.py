@@ -83,6 +83,20 @@ def test_protocol_bindings_match_exact_local_bytes() -> None:
     assert bindings.incumbent_config_normalized_lf_sha256 == _normalized_lf_sha256(
         "pfc_shaping/config.yaml"
     )
+    assert bindings.challenger_source_normalized_lf_sha256 == _normalized_lf_sha256(
+        "pfc_shaping/lt/evaluation_challengers.py"
+    )
+    assert bindings.evaluation_engine_normalized_lf_sha256 == _normalized_lf_sha256(
+        "pfc_shaping/lt/evaluation_engine.py"
+    )
+    assert bindings.package_contract_normalized_lf_sha256 == _normalized_lf_sha256(
+        "pfc_shaping/package_contract.py"
+    )
+    assert bindings.runtime_spec_normalized_lf_sha256 == _normalized_lf_sha256("pyproject.toml")
+    assert all(
+        item.implementation_normalized_lf_sha256
+        for item in default_evaluation_protocol().candidates
+    )
 
 
 def test_future_cohort_is_explicit_but_has_zero_countable_origins() -> None:
@@ -113,8 +127,8 @@ def test_candidate_contract_rejects_role_and_selection_leakage() -> None:
     challenger = default_evaluation_protocol().candidates[1]
     with pytest.raises(ValueError, match="nested-origin"):
         replace(challenger, fit_policy=FitPolicy.FROZEN_IMPLEMENTATION_PER_ORIGIN)
-    with pytest.raises(ValueError, match="implementation hash"):
-        replace(challenger, implementation_normalized_lf_sha256="a" * 64)
+    with pytest.raises(ValueError, match="lowercase SHA-256"):
+        replace(challenger, implementation_normalized_lf_sha256="invalid")
 
 
 def test_parameter_and_tuning_tables_must_be_canonical() -> None:
@@ -162,3 +176,21 @@ def test_lt_protocol_has_no_ct_import_or_runtime_model_dependency() -> None:
     assert "pfc_shaping.ct" not in source
     assert "shape_hourly_mlp import" not in source
     assert "lightgbm import" not in source
+
+
+def test_synthetic_evaluation_modules_have_no_data_access_path() -> None:
+    forbidden = (
+        "pfc_shaping.ct",
+        "databricks",
+        "read_parquet",
+        "read_csv",
+        "to_parquet",
+        "to_csv",
+        "requests.",
+    )
+    for relative_path in (
+        "pfc_shaping/lt/evaluation_challengers.py",
+        "pfc_shaping/lt/evaluation_engine.py",
+    ):
+        source = (ROOT / relative_path).read_text(encoding="utf-8").lower()
+        assert not any(fragment in source for fragment in forbidden)

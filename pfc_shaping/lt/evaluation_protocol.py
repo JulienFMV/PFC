@@ -16,10 +16,10 @@ from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any
 
-EVALUATION_PROTOCOL_VERSION = "fmv-lt-hourly-evaluation-protocol-v1"
+EVALUATION_PROTOCOL_VERSION = "fmv-lt-hourly-evaluation-protocol-v2"
 EVALUATION_STATUS = "LOCAL_HASH_FROZEN_NOT_EXTERNALLY_REGISTERED_NO_GO"
 CANONICAL_PROTOCOL_SEMANTIC_SHA256 = (
-    "c2705a8d175bfe7421e2722d316bee4a5eb5631506f284dde03363ab561cb26b"
+    "1134a5e24cfabc797d8931a986bce87ac983dcaaec5dd39680929463c62bdf3e"
 )
 PRIMARY_METRIC = "MONTHLY_LEVEL_NEUTRALIZED_MAE_EUR_MWH"
 SECONDARY_METRICS = (
@@ -95,7 +95,10 @@ class CandidateSpec:
             if self.fit_policy is not FitPolicy.NESTED_ORIGIN_SELECTION:
                 raise ValueError("challengers require nested-origin selection")
             if self.implementation_normalized_lf_sha256 is not None:
-                raise ValueError("unimplemented challengers cannot carry an implementation hash")
+                _require_sha256(
+                    self.implementation_normalized_lf_sha256,
+                    "challenger implementation",
+                )
 
     def to_manifest(self) -> dict[str, object]:
         return {
@@ -110,9 +113,13 @@ class CandidateSpec:
             "implementation_normalized_lf_sha256": (self.implementation_normalized_lf_sha256),
             "implementation_hash_basis": "UTF8_NORMALIZED_LF_SHA256",
             "implementation_status": (
-                "SOURCE_BOUND_BASELINE"
-                if self.implementation_normalized_lf_sha256 is not None
-                else "SPECIFICATION_ONLY_IMPLEMENTATION_PENDING"
+                "SPECIFICATION_ONLY_IMPLEMENTATION_PENDING"
+                if self.implementation_normalized_lf_sha256 is None
+                else (
+                    "SOURCE_BOUND_INCUMBENT"
+                    if self.role is CandidateRole.INCUMBENT
+                    else "SOURCE_BOUND_SYNTHETIC_ONLY_CHALLENGER"
+                )
             ),
             "training_authorized": False,
         }
@@ -207,6 +214,10 @@ class ProtocolBindings:
     dependence_power_design_sha256: str
     incumbent_source_normalized_lf_sha256: str
     incumbent_config_normalized_lf_sha256: str
+    challenger_source_normalized_lf_sha256: str
+    evaluation_engine_normalized_lf_sha256: str
+    package_contract_normalized_lf_sha256: str
+    runtime_spec_normalized_lf_sha256: str
 
     def __post_init__(self) -> None:
         for name, value in self.to_manifest().items():
@@ -219,6 +230,10 @@ class ProtocolBindings:
             "dependence_power_design_sha256": self.dependence_power_design_sha256,
             "incumbent_source_normalized_lf_sha256": (self.incumbent_source_normalized_lf_sha256),
             "incumbent_config_normalized_lf_sha256": (self.incumbent_config_normalized_lf_sha256),
+            "challenger_source_normalized_lf_sha256": (self.challenger_source_normalized_lf_sha256),
+            "evaluation_engine_normalized_lf_sha256": (self.evaluation_engine_normalized_lf_sha256),
+            "package_contract_normalized_lf_sha256": (self.package_contract_normalized_lf_sha256),
+            "runtime_spec_normalized_lf_sha256": self.runtime_spec_normalized_lf_sha256,
         }
 
 
@@ -284,6 +299,8 @@ class EvaluationProtocol:
             raise ValueError("the protocol requires exactly one incumbent")
         if set(families) != set(ModelFamily):
             raise ValueError("the candidate-family inventory is not exact")
+        if any(item.implementation_normalized_lf_sha256 is None for item in self.candidates):
+            raise ValueError("every v2 candidate implementation must be source-bound")
         if "t057" in json.dumps(self.to_manifest(), sort_keys=True).lower():
             raise ValueError("T057 must not enter the new evaluation protocol")
 
@@ -345,10 +362,17 @@ def default_evaluation_protocol() -> EvaluationProtocol:
             family=ModelFamily.RECENCY_WEIGHTED_MLP,
             fit_policy=FitPolicy.NESTED_ORIGIN_SELECTION,
             fixed_parameters=(
+                ("alpha", "1e-5"),
                 ("architecture", "64,64-relu"),
                 ("half_life_days", "180"),
+                ("max_iter", "500"),
+                ("optimizer", "deterministic_full_batch_lbfgsb"),
                 ("random_state", "42"),
                 ("sample_weight", "observation_level_exponential_decay"),
+                ("tolerance", "1e-8"),
+            ),
+            implementation_normalized_lf_sha256=(
+                "887f3b00d33231b52c58395ef43b5310624222922e955a6425d723e885cb5e19"
             ),
         ),
         CandidateSpec(
@@ -362,6 +386,9 @@ def default_evaluation_protocol() -> EvaluationProtocol:
                 ("scaling", "standardize_on_training_origins_only"),
             ),
             tuning_grid=(("alpha", ("0.01", "0.1", "1", "10", "100")),),
+            implementation_normalized_lf_sha256=(
+                "887f3b00d33231b52c58395ef43b5310624222922e955a6425d723e885cb5e19"
+            ),
         ),
         CandidateSpec(
             candidate_id="spline-ridge-gam",
@@ -376,6 +403,9 @@ def default_evaluation_protocol() -> EvaluationProtocol:
             tuning_grid=(
                 ("alpha", ("0.01", "0.1", "1", "10", "100")),
                 ("n_knots", ("5", "8", "12")),
+            ),
+            implementation_normalized_lf_sha256=(
+                "887f3b00d33231b52c58395ef43b5310624222922e955a6425d723e885cb5e19"
             ),
         ),
         CandidateSpec(
@@ -396,6 +426,9 @@ def default_evaluation_protocol() -> EvaluationProtocol:
                 ("n_estimators", ("300", "600")),
                 ("num_leaves", ("15", "31")),
             ),
+            implementation_normalized_lf_sha256=(
+                "887f3b00d33231b52c58395ef43b5310624222922e955a6425d723e885cb5e19"
+            ),
         ),
     )
     origin_dates = (
@@ -414,7 +447,7 @@ def default_evaluation_protocol() -> EvaluationProtocol:
     )
     slots = tuple(_origin_slot(*parts) for parts in origin_dates)
     protocol = EvaluationProtocol(
-        protocol_id="ch-lt-hourly-challengers-2026-v1",
+        protocol_id="ch-lt-hourly-challengers-2026-v2",
         locally_frozen_at_utc=frozen_at,
         candidates=candidates,
         holdout=FutureHoldout(
@@ -435,6 +468,18 @@ def default_evaluation_protocol() -> EvaluationProtocol:
             ),
             incumbent_config_normalized_lf_sha256=(
                 "f06bb9d101289e2750f72eae10cd8726aed525645455bf23b4ae524b1f1e972d"
+            ),
+            challenger_source_normalized_lf_sha256=(
+                "887f3b00d33231b52c58395ef43b5310624222922e955a6425d723e885cb5e19"
+            ),
+            evaluation_engine_normalized_lf_sha256=(
+                "034a06c14ec5aff337ab58cf4ab2e79a63c49f2f1d656dbc5fb3bd950c310ffc"
+            ),
+            package_contract_normalized_lf_sha256=(
+                "c16379bcb37d7da5af50715e11d522dd36161f3dfb3aa828047f71b59a0159d3"
+            ),
+            runtime_spec_normalized_lf_sha256=(
+                "c61b2261c4ee0048d72a70ddb183b99b6a50cb52bf677bfbc663441db232987f"
             ),
         ),
     )

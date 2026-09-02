@@ -21583,6 +21583,93 @@ Invariants not to break:
   model admission remains
   `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS`.
 
+## D-20260902-273 - Implement only the synthetic, authority-negative evaluation path
+
+Decision:
+
+- Supersede evaluation protocol v1 with source-bound v2 while preserving the
+  same candidate family, estimand, future cohort and entirely negative
+  operational authority. The v2 semantic SHA-256 is
+  `1134a5e24cfabc797d8931a986bce87ac983dcaaec5dd39680929463c62bdf3e`.
+- Implement four challenger families behind immutable synthetic-only fixtures:
+  an exact observation-level 180-day recency-weighted 64x64 MLP, standardized
+  Ridge, additive cubic-spline Ridge and deterministic single-worker CPU
+  LightGBM. Reject the incumbent at this interface, future training rows,
+  feature-schema drift, unfrozen tuning values and a missing or non-4.6.0
+  LightGBM runtime.
+- Implement analytic gradients and deterministic full-batch L-BFGS-B for the
+  weighted MLP because the pinned sklearn MLP baseline does not apply its
+  computed weights to the final fit. Verify the gradient numerically rather
+  than silently approximating observation weights through resampling.
+- Score only synthetic predictions for the exact five-candidate inventory on
+  one common complete-case intersection. Neutralize prediction and truth
+  separately by energy-weighted Europe/Zurich delivery month, preserve all
+  four lead buckets and make absent buckets `UNSUPPORTED_NEVER_PASS`.
+- Compute only the four closed shape diagnostics: neutralized MAE, RMSE, bias
+  and weighted P95 absolute error. Keep BASE/PEAK/OFFPEAK and all three
+  economic metrics unsupported until their governed product/profile,
+  contract, dispatch and FX inputs exist.
+- Include the three evaluation modules in the governed wheel positive
+  inventory without adding LightGBM to the sealed production runtime. The
+  optional LightGBM implementation imports lazily and fails closed on runtime
+  mismatch.
+- Bind normalized source identities for the challenger module
+  (`887f3b00d33231b52c58395ef43b5310624222922e955a6425d723e885cb5e19`),
+  scoring engine
+  (`034a06c14ec5aff337ab58cf4ab2e79a63c49f2f1d656dbc5fb3bd950c310ffc`),
+  package contract
+  (`c16379bcb37d7da5af50715e11d522dd36161f3dfb3aa828047f71b59a0159d3`)
+  and runtime specification
+  (`c61b2261c4ee0048d72a70ddb183b99b6a50cb52bf677bfbc663441db232987f`).
+
+Reason:
+
+Data freshness and ENTSO-E availability do not block pure implementation and
+synthetic qualification. They do block empirical training, scoring and model
+selection. A deliberately separate synthetic surface permits rigorous code
+review now without allowing local data or a mislabeled historical extract to
+become future-holdout evidence.
+
+Rejected alternatives:
+
+- Open or fit the locally available data through 31 August, treat it as a
+  current holdout or infer source admission from its presence.
+- Patch the incumbent MLP in place, approximate weights by row repetition or
+  let sklearn silently ignore them.
+- Rank synthetic scores, name a winner or turn synthetic reproducibility into
+  scientific evidence.
+- Drop empty lead buckets or aggregate them away.
+- Invent product/economic metric formulas before their governed input
+  manifests exist.
+- Add a real-data runner, Databricks adapter, Warehouse call, model artifact
+  writer or CT dependency.
+
+Verification and cost:
+
+- protocol/challenger/scoring/package matrix: `58 passed`;
+- expanded estimand/origin/power/curve/import/solver matrix:
+  `168 passed, 1 skipped`;
+- deterministic Ridge, spline-Ridge, weighted MLP and installed LightGBM
+  synthetic fits: pass;
+- analytic weighted-MLP gradient versus central differences: pass;
+- targeted Ruff and format checks: pass;
+- real rows read, production model retraining, real truth opening, Databricks
+  statements, Warehouse starts, model artifacts, CT changes and solver-level
+  changes: `0/0/0/0/0/0/0/0`.
+
+Invariants not to break:
+
+- Synthetic fixture labels and local hashes grant no data, training,
+  selection, scientific, publication or production authority.
+- The scheduled future-origin count remains 12 and the countable-origin count
+  remains zero until external registration and maturity.
+- The CH monthly BASE solver remains the sole monthly-level authority; every
+  computed score is monthly-level-neutralized.
+- Unsupported metrics or buckets can never be converted into a pass or hidden
+  by an aggregate diagnostic.
+- T057 remains sealed; LT remains independent from `pfc_shaping.ct.*`; global
+  admission remains `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS`.
+
 ## D-20260902-272 - Locally freeze the next LT hourly evaluation protocol
 
 Decision:

@@ -184,6 +184,12 @@ def test_pyproject_forbids_generated_console_script_launchers() -> None:
     )
     assert "pfc_shaping/verifier_package_contract.py" not in ALLOWED_RUNTIME_PYTHON_FILES
     assert "pfc_shaping/verifier_runtime_admission.py" not in ALLOWED_RUNTIME_PYTHON_FILES
+    evaluation_runtime = {
+        "pfc_shaping/lt/evaluation_challengers.py",
+        "pfc_shaping/lt/evaluation_engine.py",
+        "pfc_shaping/lt/evaluation_protocol.py",
+    }
+    assert evaluation_runtime.issubset(ALLOWED_RUNTIME_PYTHON_FILES)
     prospective_runtime = {
         "pfc_shaping/cli/score_ch_lt_structural_prediction_commitment.py",
         "pfc_shaping/validation/ch_lt_local_future_origin_selection.py",

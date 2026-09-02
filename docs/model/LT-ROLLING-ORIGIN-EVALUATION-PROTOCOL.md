@@ -1,18 +1,20 @@
-# LT rolling-origin evaluation protocol v1
+# LT rolling-origin evaluation protocol v2
 
 ## Scope
 
 `pfc_shaping.lt.evaluation_protocol` locally freezes the next CH hourly-shape
-comparison without fitting a model or opening truth. It reuses the existing LT
-estimand, origin-registry v2 and dependence/power design rather than creating a
-second statistical authority.
+comparison without opening real truth. `evaluation_challengers` implements the
+four challengers only behind immutable synthetic fixtures, and
+`evaluation_engine` scores synthetic predictions without ranking them. The
+three modules reuse the existing LT estimand, origin-registry v2 and
+dependence/power design rather than creating a second statistical authority.
 
 The protocol is metadata only. Local Git and semantic hashes make changes
 visible, but they do not replace the required external registry, trusted time,
 FMV risk margins, power calibration or source admission.
 
 Canonical semantic SHA-256:
-`c2705a8d175bfe7421e2722d316bee4a5eb5631506f284dde03363ab561cb26b`.
+`1134a5e24cfabc797d8931a986bce87ac983dcaaec5dd39680929463c62bdf3e`.
 
 ## Candidate family
 
@@ -27,8 +29,16 @@ The comparison contains exactly one incumbent and four challengers:
 
 The incumbent has no tuning grid. Challenger tuning may occur only inside
 nested, externally registered development origins. Future-holdout tuning is
-forbidden. Challenger implementation hashes remain absent until the code and
-runtime exist; consequently this contract cannot authorize training.
+forbidden. Version 2 binds every challenger to the normalized source hash
+`887f3b00d33231b52c58395ef43b5310624222922e955a6425d723e885cb5e19`.
+The scoring engine is independently bound to
+`034a06c14ec5aff337ab58cf4ab2e79a63c49f2f1d656dbc5fb3bd950c310ffc`.
+
+The weighted MLP uses an exact observation-level exponential loss, a frozen
+180-day half-life, a deterministic 64x64 ReLU network and analytic gradients.
+Ridge and additive spline-Ridge use training-only scaling. LightGBM requires
+exactly version 4.6.0, deterministic CPU mode and one worker; a missing or
+mismatched optional runtime fails explicitly.
 
 ## Metrics and authority
 
@@ -37,6 +47,12 @@ metrics are inherited exactly from the existing estimand, including RMSE,
 bias, tail error, BASE/PEAK/OFFPEAK error and the separately gated economic
 metrics. All candidates use the same complete-case rows and equal origin
 weighting after within-origin energy weighting.
+
+Only neutralized MAE, RMSE, bias and weighted P95 have a sufficiently closed
+formula for the synthetic engine. Product and economic metrics remain
+`UNSUPPORTED_NEVER_PASS` with an explicit missing-input reason. Results are
+reported for all four lead buckets. A bucket without common rows is retained
+as unsupported, so an aggregate diagnostic cannot hide missing coverage.
 
 Market consistency remains an uncompensated hard gate. Statistical margins
 remain pending the existing FMV-risk MDE and power design. Insufficient power
@@ -66,3 +82,17 @@ number of unique origins; twelve is not a promotion claim.
 T057 is neither read, referenced nor reused. ENTSO-E recovery and admitted
 prospective availability remain acquisition prerequisites, not reasons to
 alter the schedule after observing outcomes.
+
+## Synthetic execution boundary
+
+Synthetic fixtures must use unique ordered UTC timestamps, a strict
+pre-origin training information set, finite numeric features and an exact
+feature schema. Inputs are copied read-only. The scorer accepts only the exact
+five-candidate inventory and the same complete-case intersection for every
+candidate.
+
+Synthetic fits and reports carry the source fixture identifier and an
+immutable negative authority object. Their manifests state
+`real_data_training_performed=false`, `real_truth_opened=false`,
+`countable_origin=false` and `ranking_or_selection_performed=false`. The code
+has no file, network, Databricks or CT access path.
