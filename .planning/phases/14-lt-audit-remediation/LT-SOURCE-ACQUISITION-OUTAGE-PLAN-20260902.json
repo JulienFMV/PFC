@@ -1,0 +1,124 @@
+{
+  "schema_version": "fmv_lt_source_acquisition_outage_plan.v1",
+  "status": "BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS",
+  "created_on": "2026-09-02",
+  "public_service_observation": {
+    "observed_on": "2026-09-02",
+    "reporter": "SMARD_BUNDESNETZAGENTUR",
+    "source_url": "https://www.smard.de/home/aktuelle-datenluecken-auf-smard-221352",
+    "reported_condition": "PARTIAL_DATA_GAPS_AND_STRONG_DELAYS_FROM_ENTSOE_TRANSPARENCY_PLATFORM_TECHNICAL_FAILURE",
+    "status": "EXTERNAL_CORROBORATION_NOT_GOVERNANCE_EVIDENCE",
+    "proves_internal_silver_unavailability": false,
+    "proves_source_freshness": false,
+    "proves_original_publication": false,
+    "proves_finality": false,
+    "authorizes_execution": false
+  },
+  "execution": {
+    "databricks_connections": 0,
+    "databricks_statements": 0,
+    "warehouse_starts": 0,
+    "warehouse_resizes": 0,
+    "warehouse_creates": 0,
+    "business_rows_opened": 0,
+    "remote_writes": 0
+  },
+  "authorities": {
+    "model_input_authorized": false,
+    "model_selection_authorized": false,
+    "monthly_level_authorized": false,
+    "publication_authorized": false,
+    "production_authorized": false,
+    "trading_authorized": false
+  },
+  "lanes": {
+    "eex": {
+      "status": "LOCAL_BYTES_HASH_VALID_ADMISSION_EVIDENCE_PENDING",
+      "reuse_only": true,
+      "new_databricks_statement_authorized": false,
+      "direct_eex_api_route": "NO_GO_UNTIL_SEPARATELY_ATTESTED",
+      "snapshot": {
+        "path": "build/databricks-eex-daily/2026-08-05/eex_ch_power.ndjson",
+        "size_bytes": 29763661,
+        "sha256": "593e916b6aa18ad83f7bd7941ff68184cd71da8882ef4eb381de46d09ce64812"
+      },
+      "manifest": {
+        "path": "build/databricks-eex-daily/2026-08-05/manifest.json",
+        "size_bytes": 3810,
+        "sha256": "f8ec096be43851d85b16ec2b678d4a695fb0521c2c651e8bcf7c2491a29b50c1",
+        "declared_source_tables": [
+          "prd.gold.facteexpricedaily",
+          "prd.gold.dimeexproduct",
+          "prd.gold.dimeexdeliveryperiod"
+        ],
+        "declared_row_count": 82552
+      },
+      "remaining_evidence": [
+        "EXACT_THREE_TABLE_QUERY_AND_PREDICATE_PROVENANCE",
+        "INDEPENDENT_SOURCE_TIME_EVIDENCE",
+        "SIGNED_ENVELOPES_AND_EXTERNAL_TIME",
+        "CONVERSION_TO_EXISTING_SIGNED_EEX_VINTAGE_CATALOG"
+      ]
+    },
+    "entsoe": {
+      "status": "WAITING_FOR_PLATFORM_OWNED_EXISTING_SNAPSHOT_DELIVERY",
+      "public_source_refresh_condition": "DEGRADED_REPORTED_2026-09-01",
+      "internal_silver_snapshot_condition": "UNVERIFIED_FROM_THIS_WORKSTATION",
+      "local_cost_preflight": "STOP_NO_ACTIVE_WAREHOUSE",
+      "warehouse_start_authorized": false,
+      "source_refresh_required_for_smoke_export": false,
+      "delivery_mode": "PLATFORM_OWNED_EXISTING_MATERIALIZED_SNAPSHOT_ONLY",
+      "sql_bindings": {
+        "causal_asof_sha256": "f86cfeeec6bb2dc6d9c579426df091d7d45b01f0bca848b47aba62500cedbc6d",
+        "realized_final_sha256": "9f4104e4db8b16bfa21e0fce26afb47d364f983b95209424293356489fe6d81a"
+      },
+      "first_delivery_request": {
+        "purpose": "REALIZED_FINAL_ADAPTER_AND_LSEG_RECONCILIATION_SMOKE_ONLY",
+        "usage": "realized_final",
+        "market_month": "2026-07",
+        "market_timezone": "Europe/Zurich",
+        "window_start_utc": "2026-06-30T22:00:00Z",
+        "window_end_utc": "2026-07-31T22:00:00Z",
+        "utc_partitions": [
+          "2026-06",
+          "2026-07"
+        ],
+        "markets": [
+          "CH",
+          "DE_LU",
+          "AT",
+          "FR",
+          "IT_NORTH"
+        ],
+        "series_selection_status": "PENDING_EFFECTIVE_DATED_AT_AND_DE_LU_SELECTION_EVIDENCE",
+        "requires_existing_materialized_rows": true,
+        "requires_source_refresh": false,
+        "requires_value_bound_finality_evidence": true,
+        "holdout_authorized": false,
+        "model_input_authorized": false,
+        "execution_authorized_by_this_plan": false
+      },
+      "causal_history": {
+        "status": "BLOCKED_NO_RETROACTIVE_CAUSALITY",
+        "july_2026_backfill_may_be_used_as_causal_truth": false,
+        "future_causal_capture_requires_producer_recovery": true,
+        "future_causal_capture_requires_frozen_origin_protocol": true,
+        "original_publication_evidence_required_when_source_document_created": true
+      }
+    },
+    "lseg": {
+      "status": "WAIT_FOR_EXACT_ENTSOE_REALIZED_FRAME",
+      "new_query_authorized": false,
+      "silent_source_substitution_authorized": false,
+      "it_north_covered_by_lseg": false
+    }
+  },
+  "execution_order": [
+    "REUSE_AND_BIND_EXISTING_EEX_CAPTURE_WITHOUT_NEW_QUERY",
+    "REQUEST_ENTSOE_EFFECTIVE_DATED_SERIES_SELECTION_EVIDENCE",
+    "REQUEST_PLATFORM_OWNED_JULY_REALIZED_EXPORT_FROM_EXISTING_MATERIALIZED_SILVER",
+    "VALIDATE_UNSIGNED_ENTSOE_V2_REPLAY_LOCALLY",
+    "REQUEST_MATCHED_LSEG_RECONCILIATION_AND_FINALITY_EVIDENCE",
+    "FREEZE_FUTURE_CAUSAL_ORIGIN_AND_HOLDOUT_PROTOCOL_BEFORE_ANY_RETRAINING"
+  ]
+}

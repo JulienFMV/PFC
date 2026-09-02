@@ -5,7 +5,7 @@ Read in this order:
 1. `AGENTS.md`
 2. `.planning/HANDOFF.md`
 3. `.planning/phases/14-lt-audit-remediation/DECISION-LOG.md`
-4. `.planning/phases/14-lt-audit-remediation/SESSION-HANDOFF-20260902-LT-SCENARIO-CURVE-AUTHORITY-CONTRACT.md`
+4. `.planning/phases/14-lt-audit-remediation/SESSION-HANDOFF-20260902-LT-SOURCE-ACQUISITION-OUTAGE-START.md`
 
 ## Current state
 
@@ -138,6 +138,15 @@ Read in this order:
   neutral, isolates level-changing scenarios behind a separate upstream solve
   requirement and binds stochastic paths to a typed fundamental parent. Its
   qualification is synthetic only.
+- Point 1 of the next-session sequence has started with an outage-aware,
+  zero-execution acquisition plan. SMARD reported partial gaps and strong
+  delays from an ENTSO-E Transparency Platform incident on 2026-09-01; that
+  public report grants no internal availability, freshness, publication or
+  finality authority. The existing EEX capture rehashes exactly and can advance
+  only through provenance/signature completion. ENTSO-E is restricted to a
+  platform-owned July `realized_final` smoke export from already-materialized
+  Silver rows; the laptop preflight remains `STOP_NO_ACTIVE_WAREHOUSE`, and
+  historical backfill remains forbidden as causal truth.
 
 ## Invariants
 
@@ -150,8 +159,9 @@ Read in this order:
   `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS` until independently
   governed local exports and a new future holdout exist.
 
-See durable decisions D-20260821-248 through D-20260902-270 and
-`SESSION-HANDOFF-20260902-LT-SCENARIO-CURVE-AUTHORITY-CONTRACT.md` for the
+See durable decisions D-20260821-248 through D-20260902-271 and
+`SESSION-HANDOFF-20260902-LT-SOURCE-ACQUISITION-OUTAGE-START.md` for the
 latest exact implementation files, hashes, tests and residual risks. The PFC
-target, ENTSO-E export, normalized-interval and preceding repo-hygiene handoffs
-retain their exact historical evidence and cleanup counts.
+target, scenario-product contract, ENTSO-E export, normalized-interval and
+preceding repo-hygiene handoffs retain their exact historical evidence and
+cleanup counts.

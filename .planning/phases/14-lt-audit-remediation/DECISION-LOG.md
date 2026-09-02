@@ -21583,6 +21583,74 @@ Invariants not to break:
   model admission remains
   `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS`.
 
+## D-20260902-271 - Split outage handling from governed source admission
+
+Decision:
+
+- Treat the 1 September 2026 public ENTSO-E incident as external operational
+  corroboration only. It proves neither the availability of FMV Silver rows
+  nor source freshness, original publication, finality or execution authority.
+- Continue the EEX lane around the exact existing 5 August capture. Its local
+  artifact and manifest hashes match; no replacement Databricks statement or
+  unqualified direct EEX API call is authorized. Exact three-table query
+  provenance, independent source time, signed envelopes/external time and
+  conversion into the existing signed vintage catalogue remain required.
+- Keep the laptop ENTSO-E preflight at `STOP_NO_ACTIVE_WAREHOUSE`. Request only
+  a platform-owned delivery from an already-materialized Silver snapshot; do
+  not start, resize or create compute and do not require a fresh provider pull
+  for the first smoke export.
+- Make the first requested value-bearing delivery a July 2026
+  `realized_final` candidate for v2 adapter and LSEG reconciliation smoke only.
+  Require effective-dated AT/DE-LU selection and value-bound finality evidence.
+  It is neither causal history, a holdout nor model input.
+- Keep prospective `causal_asof` blocked until the provider has recovered, the
+  origin schedule is frozen and availability is captured prospectively. The
+  August rebuild cannot retroactively make July data causal.
+- Delay a matched LSEG request until the exact ENTSO-E realized frame is
+  validated. Preserve IT-North as ENTSO-E-only and forbid silent source
+  substitution.
+
+Reason:
+
+SMARD, operated by the Bundesnetzagentur, reports partial time-series gaps and
+strong delays caused by an ENTSO-E Transparency Platform technical failure.
+That confirms the user's outage warning but says nothing about the state of
+the independent FMV materialized snapshot. Separating public refresh state
+from internal snapshot state preserves useful offline progress without
+manufacturing availability or causal evidence.
+
+Rejected alternatives:
+
+- Treat a public outage banner, HTTP timeout or later recovery as data
+  completeness, publication-time or finality evidence.
+- Query Databricks from this workstation, start the stopped Warehouse or ask
+  for a source refresh merely to exercise the v2 consumer.
+- Replace unavailable ENTSO-E rows with legacy local, synthetic or LSEG values.
+- Relabel the July/August backfill as prospective causal history.
+- Open T057, retrain a model, alter CT or change the CH solver's monthly-level
+  authority while source admission is blocked.
+
+Verification and cost:
+
+- EEX snapshot: `29,763,661` bytes, SHA-256
+  `593e916b6aa18ad83f7bd7941ff68184cd71da8882ef4eb381de46d09ce64812`;
+- EEX manifest: `3,810` bytes, SHA-256
+  `f8ec096be43851d85b16ec2b678d4a695fb0521c2c651e8bcf7c2491a29b50c1`;
+- outage-plan/acquisition/export/reconciliation matrix: `91 passed`;
+- Databricks connections/statements, Warehouse starts/resizes/creates,
+  business rows and remote writes: `0/0/0/0/0/0/0`.
+
+Invariants not to break:
+
+- The public-service observation remains non-authoritative and must be
+  reassessed separately from internal snapshot delivery.
+- `realized_final` and `causal_asof` remain distinct and value-bound.
+- The CH monthly BASE solver remains the sole monthly-level authority;
+  ENTSO-E/LSEG may provide only realized truth, controls or zero-mean shape.
+- Model admission remains
+  `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS`; T057 remains sealed and LT
+  remains independent from `pfc_shaping.ct.*`.
+
 ## D-20260902-270 - Add authority-negative scenario and CH curve-product definitions
 
 Decision:
