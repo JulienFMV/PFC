@@ -14317,6 +14317,683 @@ Invariants not to break:
 - Model admission remains
   `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS`; T057 remains sealed.
 
+## D-20260901-265 - Reconstruct the ENTSO-E PROD rebuild and retain Euler as DEV-only
+
+Decision:
+
+- Accept the GitHub PROD deploy, PROD audit-table runs and July value-blind
+  profile together as sufficient reconstructed evidence for the bounded LT
+  day-ahead scope.
+- Bind the deployment to successful GitHub Actions run `32699692915`, deployed
+  SHA `a7e920d95b94b2db59180412f31213f917e8d8a3`, and verified ancestry of
+  required commit `db3a93316cd431a95b4e096d8482e482fda3491e`.
+- Bind the rebuild to the three successful 24 August PROD full-mode run IDs:
+  Bronze `a849d312-9909-4ef6-8720-9778d2178d16`, Silver
+  `e778fc04-79eb-4e98-8b47-fbd7863253e2`, and Gold
+  `d591c620-4209-4d4c-b666-0c09eb89b5d5`. Silver and Gold report DQ passed and
+  zero failed checks.
+- Treat the July profile's zero canonical mismatch, legacy/new overlap,
+  duplicate and orphan counts as current row-state proof for the seven exact
+  day-ahead series. Do not generalize it to unrelated ENTSO-E families.
+- Keep direct Euler spot DEV-only. Current exact lookups and paginated PROD
+  Bronze/Silver/Gold inventories expose no Euler- or spot-named PROD table,
+  while both DEV Euler Bronze and Silver tables remain visible.
+- Do not ask the data engineer for another receipt before continuing bounded
+  LT day-ahead work. Retain a platform-signed top-level job and separate
+  post-backfill-validation receipt only as producer-wide formal-promotion
+  evidence.
+
+Reason:
+
+The previously claimed evidence gap arose because the token cannot enumerate
+jobs owned by the PROD service principal. The producer persists independent
+run lifecycle evidence in `prd.data_quality.dq_ops_pipeline_runs`, and GitHub
+records the exact successful PROD deployment. Their timestamps and commit
+ancestry reconstruct the relevant deployment/rebuild chain without relying on
+an engineer recollection. The existing profile independently proves the row
+state actually consumed by the LT day-ahead gate.
+
+Rejected alternatives:
+
+- Ask Jerome for facts now independently observable from GitHub, PROD audit
+  tables and Unity Catalog.
+- Treat classification sequences 1 and 2 as old/new duplicates; producer
+  fixtures and the seven-key inventory establish them as distinct A44 auction
+  identities.
+- Claim a producer-wide signed validation receipt from internal notebook run
+  IDs alone.
+- Promote DEV Euler tables by inference or substitute them for governed PROD
+  ENTSO-E vintages.
+
+Verification and cost:
+
+- Git ancestry check: required commit is an ancestor of deployed SHA;
+- GitHub PROD workflow and bundle-deploy step: success;
+- PROD audit query: 63 ENTSO-E rows, 586 ms, 4,142,455 cache bytes, zero remote
+  reads and writes;
+- preceding broad audit query: 200 rows, 1,688 ms, 4,142,455 remote bytes and
+  zero writes;
+- Warehouse starts: zero; current catalog verification: 13 control-plane GETs;
+- exact DEV Euler tables visible; exact PROD candidates absent and zero
+  Euler/spot name matches across paginated PROD Bronze/Silver/Gold inventory.
+
+Invariants not to break:
+
+- Historical ENTSO-E `createdDateTime` is not original day-ahead publication
+  evidence and cannot authorize PIT extraction.
+- A03 wide intervals retain source block semantics and require deterministic
+  native-cadence interpretation or expansion downstream.
+- The CH monthly solver remains sole monthly-level authority; LT stays
+  independent from `pfc_shaping.ct.*`; T057 remains sealed.
+
+## D-20260901-264 - Attribute the live failures to rebuilt publication semantics and bridged gaps
+
+Decision:
+
+- Accept one second and final value-blind July diagnostic as reconciled
+  root-cause evidence. Bind it to the exact prior profile capture, seven
+  SeriesKeys, monthly partition parameters and SQL SHA-256
+  `f20b0ac5681404834132897d48b491532ae226a7cec81a76abae7043721e5f04`.
+- Attribute all 17,925 availability-order failures to
+  `publication_timestamp_utc > first_seen_pull_ts_utc`; all five other null or
+  ordering contributors are zero. Every publication timestamp is also after
+  delivery start by 6.388 to 37.296 days. Treat this as strong evidence that
+  the stored publication field has rebuild/transformation-time semantics, not
+  original ENTSO-E source-document publication semantics.
+- Attribute all 404 interval failures to duration mismatch only. Null bounds,
+  `Date_Time_UTC` mismatch, non-positive intervals and unsupported resolution
+  counts are zero. The valid cadence is the minimum and median for every
+  series, while malformed rows extend to 2 hours for CH and up to 5 hours
+  45 minutes for FR. Treat gap-bridging interval construction as the leading
+  hypothesis, pending producer-code or data-engineer confirmation.
+- Reject the 31 August ENTSO-E publication-delay notice as an explanation for
+  these July defects. The observed lag pattern implies a common publication
+  timestamp around 7 August, before the incident notice, and publication delay
+  cannot alter interval durations.
+- Keep the source-quality and PIT gates blocked. Send Jerome only the two
+  irreducible semantic questions derived from this evidence; do not ask again
+  whether the tables or seven series exist.
+
+Reason:
+
+The diagnostic exactly reconciles the prior profile unions rather than
+sampling new business values. The 17,925/17,925 all-row pattern, typical
+publication-after-first-seen lags of 29 to 193 seconds and delivery-relative
+lags spanning the same inferred early-August load event across all markets are
+not compatible with genuine day-ahead document publication time. Likewise,
+the 404/17,925 duration failures are isolated to cadence multiples, with no
+other structural predicate firing. This sharply separates a timestamp
+lineage defect from a missing-position/interval-materialization defect.
+
+Rejected alternatives:
+
+- Excuse the defects with the 31 August Transparency Platform incident.
+- Change the validator to accept publication after delivery or first seen.
+- Treat enlarged intervals as valid carry-forward prices without an explicit
+  source contract and missing-position policy.
+- Open raw prices, sample bad rows or run another exploratory statement before
+  the producer answers the exact semantic questions.
+- Promote Gold latest or LSEG as a silent substitute for invalid Silver PIT
+  lineage.
+
+Verification:
+
+- live diagnostic API state `SUCCEEDED`; query history `FINISHED`, seven rows,
+  1,619 ms, 2,781,806 bytes read from one file, 1,515,748,324 bytes and 136
+  files pruned, zero remote-write bytes;
+- deterministic receipt replay `PASS_DIAGNOSTIC_CAPTURE_REPLAY`, content ID
+  `a5f5f3b948212d65112cd2243633744cb1ef1872d827f7ff28312b2dfa80e3d4`;
+- exact reconciliation: availability union `17,925`, interval union `404`;
+- dedicated diagnostic/profile matrix: `49 passed`;
+- complete non-slow ENTSO-E matrix: `784 passed`;
+- LT/CT boundary and package contracts: `43 passed, 1 skipped`;
+- Ruff check and format check: pass.
+
+Invariants not to break:
+
+- `publication_timestamp_utc` cannot be a PIT authority until original source
+  publication lineage is restored and a real PRD rebuild is independently
+  evidenced.
+- Interval gaps must remain explicit. Do not carry values across absent
+  positions or redefine `IntervalEndUtc` to the next observed point unless a
+  governed market-data contract explicitly proves that meaning.
+- The diagnostic contains no price and grants no extraction, model-input,
+  model-selection, monthly-level or production authority.
+- The CH EEX-constrained monthly solver remains sole monthly-level authority;
+  model admission remains
+  `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS`, T057 remains sealed and LT
+  remains independent from `pfc_shaping.ct.*`.
+
+## D-20260901-263 - Admit the live July profile as blocking quality evidence, not PIT authority
+
+Decision:
+
+- Execute one value-blind July 2026 profile only after observing the existing
+  PBI SQL Warehouse already `RUNNING`. Do not start, resize or create compute.
+- Strengthen the Silver cost fence from annual partition pruning to the exact
+  UTC delivery year and month. Require every profile window to stay within one
+  UTC calendar month, last at most 31 days and use 15-minute-aligned bounds.
+- Bind live execution to profile SQL SHA-256
+  `e48bc8b09d6f3676616ed42966d50a3f44d9eaf3649f9ce9c9543a0bc024259e`,
+  one native-parameter statement, a 50-second cancel-on-wait policy, 101-row
+  rejection sentinel, zero retries and zero price columns.
+- Accept the resulting seven-row capture as real PRD data-quality evidence but
+  keep bounded PIT extraction blocked. All seven series fail the combined
+  availability-order check; 404 rows fail interval consistency; the formal
+  rebuild manifest remains missing.
+- Preserve the live receipt below repo-local `build/` and require deterministic
+  offline replay of its content ID, SQL/partition binding, rows, assessment and
+  authority flags before using its findings.
+
+Reason:
+
+The real query confirms that the seven exact SeriesKeys exist in PRD Gold and
+have non-null, non-`dq_failed`, availability-known Silver observations for the
+window. It also disproves readiness for price extraction: every observed row
+triggers at least one publication/first-seen/last-seen ordering condition, and
+the seven series have interval defects and incomplete month-edge coverage.
+These are actionable source-contract findings, not reasons to bypass Silver,
+fall back silently to LSEG, or choose an AT/DE-LU auction.
+
+The exact monthly pruning was effective. Query history records 47,915,292 read
+bytes across 17 files, 5,052,298 rows read, 7,776,297,639 bytes and 687 files
+pruned, seven result rows, 10,196 ms duration, zero remote-write bytes and a
+final `FINISHED` state.
+
+Rejected alternatives:
+
+- Run the earlier annually pruned profile or open raw price values before the
+  metadata gate passes.
+- Start a stopped Warehouse, create a second Warehouse, retry automatically or
+  issue a second diagnostic statement in the same admission step.
+- Treat the seven all-row availability-order failures as harmless without
+  separating their constituent timestamp predicates.
+- Ask Jerome a broad or ambiguous question before deriving the smallest next
+  diagnostic from the evidence already available.
+- Authorize PIT extraction because the query itself succeeded.
+
+Verification:
+
+- real statement: `SUCCEEDED`; query history: `FINISHED`, seven rows, no
+  truncation and zero remote writes;
+- persisted capture replay: `PASS_CAPTURE_REPLAY`, content ID
+  `abef7f875e43358cdd663f1f17fd45a862907a79ddedb6aef9dd42da121bad2c`;
+- dedicated gate/capture matrix: `43 passed`;
+- complete non-slow ENTSO-E matrix: `778 passed`;
+- Databricks/reconciliation matrix: `258 passed`;
+- LT/CT boundary and package contracts: `43 passed, 1 skipped`;
+- Ruff check and Ruff format check: pass.
+
+Invariants not to break:
+
+- The live capture contains no price values and grants no PIT, model-input,
+  model-selection, monthly-level or production authority.
+- The next diagnostic, if separately accepted, must remain value-blind and
+  aggregate-only, split the five availability-order predicates, and identify
+  the interval-failure predicates without opening business values.
+- The independently supplied rebuild receipt remains required; the profile
+  cannot manufacture or infer it.
+- The CH EEX-constrained monthly solver remains sole monthly-level authority;
+  model admission remains
+  `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS`, T057 remains sealed and LT
+  remains independent from `pfc_shaping.ct.*`.
+
+## D-20260901-262 - Separate the seven-series day-ahead inventory from five-series PIT selection
+
+Decision:
+
+- Replace the incorrect one-SeriesKey-per-zone inventory assumption with the
+  exact seven-series PRD Gold inventory evidenced by the current dimension:
+  base keys for CH, FR and IT-North; `classification_sequence` 1 and 2 for AT
+  and DE-LU.
+- Treat A44 classification sequences 1 and 2 as distinct legitimate source
+  identities, not as duplicate revisions and not as old/new key coexistence.
+  Require both identities in the value-blind inventory profile.
+- Separate inventory admission from extraction selection. The profile binds
+  seven exact source slots; the monthly PIT query still extracts one explicit
+  SeriesKey per market field. AT and DE-LU accept either admitted sequence 1
+  or 2 only when the caller supplies that choice. No default sequence exists.
+- Preserve effective-dated resolution discovery. A source series may expose
+  several resolution rows or begin/end inside the profile window. Publish its
+  value-blind resolutions, row counts and temporal bounds in report metrics;
+  do not mislabel boundary coverage as cadence completeness.
+- Keep cadence completeness, semantic selection of AT/DE-LU, model input,
+  monthly level, model selection and production unauthorized. The next
+  Databricks action remains a bounded profile, not a price extraction.
+
+Reason:
+
+The supplied PRD dimension evidence shows seven SeriesKeys. The producer repo
+parses `classificationSequence_AttributeInstanceComponent.position` for A44
+multi-auction disambiguation and contains a real AT/DE-LU regression fixture
+where sequences 1 and 2 have different prices at the same timestamp. A gate
+that expects five source keys would reject valid production structure; a gate
+that silently chooses one sequence would introduce an unreviewed market-data
+definition. Separating the dimension inventory from PIT selection preserves
+both facts without delaying the low-cost profile.
+
+Rejected alternatives:
+
+- Ask the data engineer again whether spot or the seven keys exist.
+- Treat `||1` and `||2` as pipeline vintages, duplicates or failed rebuild
+  residue.
+- Average both sequences or select sequence 1/2 by convention.
+- Require every source series and resolution to cover the full profiling
+  window before its actual effective dates are known.
+- Start the PBI SQL Warehouse before the corrected offline gate and tests pass.
+
+Verification:
+
+- dedicated ENTSO-E/spot gate matrix: `59 passed`;
+- complete non-slow ENTSO-E test set: `769 passed`;
+- Databricks, cost, materialization and reconciliation matrix: `191 passed`;
+- LT/CT boundary and package contracts: `43 passed, 1 skipped`;
+- Ruff check, Ruff format check and `git diff --check`: pass;
+- Databricks SQL statements, Warehouse starts and writes for D262: `0/0/0`.
+
+Invariants not to break:
+
+- The exact seven-key inventory is structural evidence, not a choice of
+  reference auction. AT/DE-LU selection remains explicit, inspectable and
+  authority-negative until resolution, temporal coverage and LSEG comparison
+  evidence freeze an effective-dated rule.
+- Multi-resolution source history remains native; no upsampling, averaging or
+  silent source substitution is permitted.
+- ENTSO-E and LSEG remain shaping/truth/validation evidence only. The CH
+  EEX-constrained monthly solver remains the sole monthly-level authority.
+- The rebuild receipt is deferred to formal promotion; no additional question
+  to Jérôme is required for profiling.
+- Model admission remains
+  `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS`; T057 remains sealed and LT
+  remains independent from `pfc_shaping.ct.*`.
+
+## D-20260901-261 - Reconcile ENTSO-E spot with LSEG EPEX actuals without source substitution
+
+Decision:
+
+- Keep PRD ENTSO-E Silver vintages as the homogeneous five-zone day-ahead
+  candidate panel for CH, AT, DE-LU, FR and IT-North. Use LSEG EPEX actuals
+  as an independently captured realized-price cross-check for CH, AT, DE-LU
+  and FR; IT-North remains explicitly ENTSO-E-only because no active matching
+  LSEG EPEX actual-price curve is configured.
+- Bind the LSEG comparison to price curves `115688058` (CH), `165444048`
+  (AT), `165349556` (DE-LU) and `165442712` (FR). Explicitly exclude their
+  volume companions and continuous-forward HPFC curve `110181967`.
+- Read `prd.silver.ge_market_lseg_curve_value_vintages`, not the latest-value
+  projection. Filter revisions by `pipeline_first_seen_at_utc <= as_of_utc`,
+  exact source semantics, exact curve/frequency binding, value-date partition,
+  a delivery window of at most one UTC month and a 20,001-row rejection
+  sentinel. Bind the SQL to SHA-256
+  `a4cc587d9f8116dd3f20c295ce8edbf291bfcf06a3f70f859d6fc9816c336bed`.
+- Reconcile only complete UTC hours. Down-aggregate native 15-minute or hourly
+  intervals with duration weights; reject gaps, overlaps, off-grid or
+  cross-hour intervals. Never upsample CH hourly actuals into invented
+  quarter-hours and never assume 24 observations in a local DST day.
+- Require an explicit, content-hashed threshold policy for minimum matched
+  hours, overlap ratio, p95 absolute difference, absolute bias and maximum
+  single-hour difference. A discrepancy blocks the reconciliation and cannot
+  silently switch the model from ENTSO-E to LSEG or vice versa.
+- Keep the complete result authority-negative for cadence completeness, model
+  input, monthly level, model selection and production until independently
+  admitted real PRD extracts and the remaining governed evidence exist.
+
+Reason:
+
+The LSEG producer contract confirms four active EPEX price curves with durable
+vintages and FMV `pipeline_first_seen_at_utc` semantics, but no IT-North curve.
+Using ENTSO-E for the complete coupled panel therefore avoids mixed-source
+feature construction, while LSEG supplies a genuinely independent check of
+realized prices in the four overlapping markets. The native cadence differs
+for CH versus the other markets; complete UTC-hour aggregation is the smallest
+common grain that compares sources without fabricating observations and is
+unambiguous across daylight-saving transitions.
+
+Rejected alternatives:
+
+- Replace the five-zone ENTSO-E panel with an incomplete four-zone LSEG panel.
+- Use LSEG curve `110181967` as historical spot truth; it is a continuous
+  forward/HPFC benchmark, not an EPEX auction actual.
+- Upsample the hourly CH LSEG series to 15 minutes by repetition or forward
+  fill.
+- Average incomplete hours, ignore native overlaps or silently fill one
+  source from the other.
+- Hard-code unexplained price tolerances or let a clean synthetic test choose
+  production thresholds.
+- Promote the DEV-only Euler chain or run a Warehouse before the cost and PRD
+  evidence gates are satisfied.
+
+Verification:
+
+- dedicated reconciliation and PIT matrix: `25 passed`;
+- combined reconciliation/ENTSO-E gate: `53 passed`;
+- data/Databricks compatibility matrix: `185 passed`;
+- LT/CT boundary and package contracts: `43 passed, 1 skipped`;
+- Ruff check, Ruff format check and `git diff --check`: pass;
+- Databricks SQL statements, Warehouse starts, business rows and writes:
+  `0/0/0/0`.
+
+Invariants not to break:
+
+- ENTSO-E and LSEG actuals are shape/truth/validation evidence only. The CH
+  EEX-constrained monthly solver remains the sole monthly-level authority.
+- PIT selection uses governed availability or pipeline-first-seen evidence;
+  vendor curve-summary update time is diagnostic only.
+- IT-North's lack of a LSEG cross-check remains visible and cannot be hidden by
+  geographic substitution.
+- Thresholds are explicit and hash-bound; raw aligned prices do not appear in
+  the aggregate reconciliation report.
+- Real PRD extracts, Jérôme's ENTSO-E rebuild receipt, exact PRD SeriesKeys,
+  cadence completeness and the independently frozen future holdout remain
+  separate gates. Model admission stays
+  `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS`; T057 remains sealed.
+- LT remains independent from `pfc_shaping.ct.*`.
+
+## D-20260901-260 - Admit a hash-bound ENTSO-E PRD day-ahead profile and monthly PIT extraction gate
+
+Decision:
+
+- Add one focused offline validator for the five coupled day-ahead price
+  fields: CH, AT, DE-LU, FR and IT-North. Keep its public surface to SQL
+  binding verification, value-blind profile assessment, bounded PIT parameter
+  construction and local extract validation.
+- Bind the value-blind PRD profile SQL to SHA-256
+  `d89bc5f42b1ec6cefcfb1cfb5ef044f22a647941c598f9f4530c86c5d1295603`.
+  It returns at most 101 metadata/aggregate rows and rejects null values, DQ
+  failures, unknown availability, invalid intervals, noncanonical keys,
+  duplicate Silver/Gold grain, orphan keys and simultaneous legacy/new keys.
+- Bind the monthly point-in-time export SQL to SHA-256
+  `7b444430db6b62a7bcd9f0bc6e5f05858a56b9756be68f70016c107a4b271ebf`.
+  Require exact five-SeriesKey parameters, explicit `_year`/`_month` pruning,
+  known availability not after `as_of_utc`, zero `dq_failed`, deterministic
+  vintage selection and a 20,001-row rejection sentinel.
+- Require an independently supplied successful PRD full-rebuild manifest that
+  proves commit `db3a93316cd431a95b4e096d8482e482fda3491e` is an ancestor of the
+  deployed commit, includes every affected identity group, reports a passing
+  post-backfill validation and reports zero old/new key coexistence.
+- A clean profile authorizes only the bounded PIT extraction. Cadence
+  completeness, model input, model selection and production remain explicitly
+  unauthorized.
+
+Reason:
+
+The existing general Silver/Gold acceptance layer spans unrelated ENTSO-E and
+spot roles and cannot close the exact five-price binding question by itself.
+A narrow gate makes the pending production evidence executable without
+duplicating the model pipeline or opening raw price values during preflight.
+Monthly partition pruning and fixed result sentinels keep the first real pass
+small and observable. Separating semantic/profile acceptance from the
+effective-dated resolution-regime gate avoids inventing a universal Swiss or
+European cadence transition.
+
+Rejected alternatives:
+
+- Start the stopped Warehouse while exact PRD run evidence is still pending.
+- Infer the five production keys from base-key formulas or silently choose one
+  classification sequence when several exist.
+- Use the DEV Euler spot chain, a wide DEV projection, legacy local data or
+  synthetic values as production evidence.
+- Treat one country-wide 15-minute transition date as a substitute for
+  per-series cadence evidence.
+- Let a successful source profile directly authorize training or production.
+
+Verification:
+
+- dedicated gate: `28 passed`;
+- ENTSO-E/Databricks compatibility matrix: `160 passed`;
+- LT/CT boundary and package contract: `43 passed, 1 skipped`;
+- Ruff check and Ruff format check: pass;
+- broad non-slow suite: no verdict, supervisor wall timeout at exactly 1,800
+  seconds; process tree terminated and receipt preserved under
+  `build/workspace-local-supervisors/dapfull1/`;
+- Databricks SQL statements, Warehouse starts and writes: `0/0/0`.
+
+Invariants not to break:
+
+- Silver vintages remain the ENTSO-E point-in-time value authority; Gold
+  dimension remains the current semantic binding authority.
+- The CH monthly solver remains the sole monthly-level authority. Day-ahead
+  prices may shape or validate only and cannot rewrite monthly means.
+- A synthetic unit test is never production evidence. The rebuild manifest,
+  real bounded profile, effective-dated cadence proof and independently frozen
+  future holdout remain separate gates.
+- LT remains independent from `pfc_shaping.ct.*`; T057 remains sealed.
+
+## D-20260901-259 - Use self-service metadata for day-ahead readiness but retain exact PRD and run-proof gates
+
+Decision:
+
+- Answer source contract, key formula, broad availability, DEV coverage and
+  scan-proxy questions from repository, Unity Catalog, lineage and historical
+  query metadata without starting compute.
+- Treat the 2026-08-24 creation of both PRD Silver vintages and Gold dimension,
+  together with the 16.9 million-row Silver population, as high-confidence
+  fresh-rebuild evidence only. Do not relabel it as an independently observed
+  full-rebuild run receipt.
+- Keep exact PRD classification suffixes, price-family coverage/resolution and
+  file count as open until one bounded query/export or a platform-signed run
+  artifact supplies them.
+- Use 1,538,686,371 bytes as the conservative storage upper bound for the PRD
+  Silver vintage source. Use historical DEV query bytes only as cost proxies,
+  not as a PRD bill or DBU authorization.
+
+Reason:
+
+The token can inspect tables, lineage and recent SQL history but sees only one
+unrelated job and one unrelated Lakeflow pipeline. It therefore cannot prove
+which production run created the tables. Actual `SeriesKey` suffixes and
+family-specific temporal profiles are row values rather than Unity Catalog
+metadata. Starting the stopped Warehouse merely to close those fields would
+violate the existing cost fence.
+
+Rejected alternatives:
+
+- Ask the data engineer again for information already available through the
+  token and repository contracts.
+- Treat same-day table creation and large row population as a signed job-run
+  receipt.
+- Guess classification sequences or assume the eight global ENTSO-E
+  resolutions apply identically to day-ahead prices.
+- Convert DEV scan metrics into a claimed PRD DBU or Azure VM cost.
+
+Evidence:
+
+- key pattern: `day_ahead_prices||<field_name>` with optional
+  `||<classification_sequence>`;
+- required fields/zones: CH, AT, DE-LU, FR and IT-North;
+- DEV projection: 14,351 rows, 2025-01-01 through 2026-08-21, zero catalog-
+  statistics nulls in all five price columns;
+- historical DEV scans: 9,433 bytes for dimension, 17,469,891 bytes typical
+  latest profile and 656,297,497 bytes / 3.87 seconds for vintage profile;
+- control-plane GETs: `144`; SQL, starts, business rows and writes:
+  `0/0/0/0`.
+
+Invariants not to break:
+
+- Metadata evidence is not a substitute for exact PRD row-level binding or a
+  production run receipt.
+- Coupled day-ahead prices remain shape/truth evidence and cannot rewrite
+  solver-authoritative monthly means.
+- Model admission remains
+  `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS`; T057 remains sealed.
+
+## D-20260901-258 - Source coupled day-ahead spot from ENTSO-E PRD vintages pending exact binding
+
+Decision:
+
+- Do not treat the missing PRD Gold EPEX interval fact as an absolute blocker
+  for the first LT export. Permit `prd.silver.ge_power_entsoe_time_series_vintages`
+  as the candidate coupled day-ahead spot source for the contracted
+  `day_ahead_prices` family.
+- Require exact SeriesKey binding through the admitted Gold dimension for CH,
+  AT, DE-LU, FR and IT-North, EUR/MWh units, classification sequence, native
+  resolution, availability time and complete origin-aware coverage.
+- Keep the direct Euler spot chain DEV-only. Its Silver interval table is a
+  useful candidate cross-check, while the DEV Gold monthly aggregate cannot
+  replace interval truth.
+- Treat PRD Likron prices and VWAPs as FMV execution diagnostics, not as an
+  independent market fixing.
+
+Reason:
+
+The expanded metadata search covered 1,222 visible objects across DEV, PRD and
+staging. Direct Euler spot exists only in DEV. Databricks lineage independently
+shows that the managed DEV five-zone hourly spot table is derived from ENTSO-E
+Silver vintages, and the data-engineer contract explicitly requests A44
+`day_ahead_prices` for the same five zones. The local PFC layer validator
+already requires that family and EUR/MWh units. This provides a governed PRD
+route without inventing a new source, while still requiring real SeriesKey and
+PIT evidence before admission.
+
+Rejected alternatives:
+
+- Keep the first export blocked solely because `prd.gold.factspotpriceinterval`
+  is absent.
+- Promote or consume DEV Euler tables as PRD evidence.
+- Use the Euler monthly Gold aggregate, EEX forward settlement prices or
+  Likron execution VWAPs as realized interval spot truth.
+- Infer PRD coverage from the DEV lineage without a bounded real export.
+
+Evidence:
+
+- direct DEV Euler spot: 31,608 catalog-statistics rows, 2,252,675 bytes,
+  partitioned by `quotation_date`, with interval price columns;
+- DEV ENTSO-E spot projection: 14,351 catalog-statistics rows and five price
+  zones, upstream `dev.silver.ge_power_entsoe_time_series_vintages`;
+- data-engineer contract: A44, `value_kind=price`, `unit=EUR_MWh`, zones CH,
+  AT, DE-LU, FR and IT-North;
+- extended control-plane GETs: `137`; SQL, starts, business rows and writes:
+  `0/0/0/0`.
+
+Invariants not to break:
+
+- ENTSO-E day-ahead prices are spot shape/truth evidence only and cannot
+  rewrite EEX-constrained monthly solver means.
+- Exact PRD SeriesKeys, point-in-time availability and coverage remain required
+  before model input or selection.
+- Model admission remains
+  `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS`; T057 remains sealed.
+
+## D-20260901-257 - Stop the PRD preflight before paid SQL and exclude unbounded Silver weather
+
+Decision:
+
+- Accept Unity Catalog storage and row-count statistics as value-blind cost
+  preflight metadata only. They do not prove bytes scanned, file count, runtime
+  or billed DBUs.
+- Stop before SQL because the Classic `2X-Small` Warehouse is stopped, the two
+  expected Gold spot tables return HTTP 404 under their contracted FQNs, and
+  no file-count/query-plan scan bound or account cost ceiling exists.
+- Limit the next candidate export to the small EEX Gold fact/dimensions and
+  ENTSO-E Gold dimension/latest plus `_year`/`_month`-pruned Silver vintages.
+- Exclude the unpartitioned Silver weather forecast tables from the first
+  export. Keep Gold weather descriptive-only until a governed forecast issue
+  timestamp and vintage identity are explicit.
+- Keep Swissgrid in a separate optional candidate/reconciliation batch.
+
+Reason:
+
+The preflight inspected 17 accessible PRD Gold/Silver tables representing
+about 38.58 GB of catalog statistics. About 33.41 GB is one unpartitioned
+Silver Open-Meteo forecast table, so a broad Silver query would be an uncapped
+scan risk. The EEX and ENTSO-E core is materially smaller, and the ENTSO-E
+Silver vintage fact supports year/month pruning. Starting the stopped
+Warehouse merely to obtain file counts or a query plan would create the cost
+that the preflight is intended to bound.
+
+Rejected alternatives:
+
+- Start the Warehouse and use `DESCRIBE DETAIL` or business profiles before a
+  cost ceiling is approved.
+- Export all Silver weather because the table is available.
+- Infer forecast issue time from target time, lead time or load time without an
+  explicit source contract.
+- Proceed without proving the PRD Gold spot dimension and interval fact under
+  their exact FQNs and current identity.
+
+Evidence:
+
+- receipt:
+  `build/databricks-cost-preflight/2026-09-01/prd-metadata-preflight.json`;
+- Warehouse: stopped Classic `2X-Small`, fixed `1/1`, 45-minute auto-stop;
+- control-plane GETs: `52`; SQL statements, starts, business rows and writes:
+  `0/0/0/0`;
+- inspected tables with detailed statistics: `17`; complete visible PRD
+  Gold/Silver inventory: `212`; expected spot tables returning HTTP 404 and no
+  spot-named table in that inventory: `2`;
+- catalog totals: `925,686,040` rows and `38,583,179,923` bytes;
+- EEX Gold: `49,669,188` bytes; ENTSO-E Gold/Silver:
+  `1,785,963,000` bytes; Gold weather: `103,441,751` bytes; Silver weather:
+  `35,870,040,526` bytes.
+
+Invariants not to break:
+
+- No SQL runs until a platform-authenticated file-count/scan bound, Warehouse
+  authority and DBU plus Azure VM ceiling are recorded.
+- Weather forecast rows without explicit governed issue time are not PIT
+  evidence.
+- The CH monthly BASE solver remains the sole monthly-level authority. Model
+  admission remains `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS`; T057
+  remains sealed.
+
+## D-20260831-256 - Confirm the role-specific Silver/Gold intake and stop before paid SQL
+
+Decision:
+
+- Retain Gold EEX/spot/ENTSO-E serving facts and dimensions as the governed
+  consumption surfaces, while retaining Silver ENTSO-E vintages as the
+  canonical PIT and revision-history source. A layer label alone grants no
+  model, calibration or production authority.
+- Accept the local offline Silver/Gold adapter, replay and snapshot v4 chain as
+  ready for a bounded real-data export; do not treat synthetic/local contract
+  tests as data admission.
+- Stop before SQL because the configured Warehouse is `STOPPED`, no fresh
+  value-blind cost receipt exists and no immutable PRD v4 export is present.
+  Do not start the Warehouse from the LT workstation for this audit.
+- Require the next extraction to use exact PRD table identities, selected
+  columns, a PIT upper watermark, scan/cost bounds, query-history evidence and
+  the existing immutable export manifest. A stale `dev.gold` environment
+  declaration is not evidence of PRD promotion.
+
+Reason:
+
+The data engineer has reported that the production sources are ready and the
+user has selected Silver plus Gold. The repository has already implemented
+the role-specific causal transformations and publication proofs, so the
+remaining uncertainty is external data identity, quality and cost rather than
+local transformation code. The only live control-plane observation reported a
+stopped Classic Warehouse. Starting it would violate the existing preflight
+contract and create cost before the scan is bounded.
+
+Rejected alternatives:
+
+- Query business rows merely to confirm that the reported PRD promotion
+  exists.
+- Start the stopped Warehouse for schema discovery or profiling.
+- Treat `.env` catalog/schema strings, Gold table names or a local passing test
+  suite as manifest-backed source evidence.
+- Replace Silver ENTSO-E PIT vintages with Gold Latest, or restore the obsolete
+  duplicate Gold vintage fact.
+
+Verification:
+
+- Silver/Gold acceptance, materialization, snapshot v4, cost-preflight and
+  zero-query matrix: `101 passed in 9.56s`;
+- one read-only Databricks control-plane Warehouse metadata GET;
+- Databricks SQL statements, Warehouse start requests, business rows and
+  writes: `0/0/0/0`;
+- no real PRD export under `build/databricks-exports/` and no current cost
+  receipt found.
+
+Invariants not to break:
+
+- The CH monthly BASE solver remains the sole monthly-level authority; EEX
+  solver constraints require the signed vintage evidence chain.
+- ENTSO-E, spot, weather, Swissgrid, AFRY and LSEG may shape or benchmark only
+  under their separate admission contracts.
+- Model admission remains
+  `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS`; T057 remains sealed until
+  a new independently frozen future holdout exists.
+
 ## D-20260821-248 - Separate the ENTSO-E Gold serving layer from the Silver PIT authority
 
 Decision:
@@ -20820,3 +21497,375 @@ Residual invariants and blockers:
 - No prospective data, T057 outcome, candidate or production promotion was
   consumed. Monthly solver authority, LT/CT separation and OMPEX
   benchmark-only status remain unchanged. Production is strict `NO_GO`.
+
+## D-20260901-266 - Separate realized day-ahead truth from causal availability and expand A03 downstream
+
+Decision:
+
+- Add a pure, connector-free LT consumption contract for ENTSO-E day-ahead
+  intervals. Its two usage modes are typed and mutually exclusive:
+  `realized_final` accepts only final realized truth and has no PIT claim;
+  `causal_asof` requires an explicit observation time and a single preserved
+  availability basis.
+- Treat `FMV_FIRST_SEEN`, `SOURCE_DOCUMENT_CREATED` and
+  `UNKNOWN_BACKFILL` as distinct upstream facts. Permit first-seen evidence
+  only from its actual first observed timestamp. Permit source-document time
+  for causal use only when original day-ahead publication is independently
+  proven and precedes delivery. Never substitute one basis for another;
+  unknown backfills fail causal use.
+- Interpret A01 as exactly one native-resolution interval. Interpret A03 as a
+  strictly positive integer multiple of native resolution and expand it
+  deterministically into half-open native-cadence intervals. Reject overlaps,
+  true gaps, partial-window intervals, nonmultiples and intervals that cross an
+  effective-dated series-rule boundary.
+- Keep the seven-series inventory separate from the selected series. Require
+  a canonical, hash-bound, effective-dated rule for each used market. AT and
+  DE-LU have no default sequence; CH, AT, DE-LU and FR require a passed LSEG
+  reconciliation status, while IT-North must disclose that no matching LSEG
+  curve exists.
+- Preserve UTC bounds, market timezone and local offset, native resolution,
+  original source bounds, curve type, classification sequence, availability
+  basis/mode, quality/finality/history flags and source provenance in the
+  expanded result.
+- Allow spot to produce only a duration-weighted zero-mean shape inside each
+  local solver month when `monthly_level_authority="solver"`. Grant no
+  monthly-level, model-input, model-selection, publication or production
+  authority.
+
+Reason:
+
+The existing PRD gate correctly inventories seven series and refuses a silent
+AT/DE-LU sequence default, but its bounded PIT validator equates interval
+duration with resolution and therefore rejects valid A03 blocks. It also
+exposes only one PIT-shaped artifact, even though historical final truth and
+information provably available at an observation time are different economic
+objects. The reconstructed July evidence proves that XML `createdDateTime`
+currently reflects returned/backfilled document creation rather than original
+historical day-ahead publication, so causal use must fail closed.
+
+The producer parser already defines A03 end as the next point start or Period
+end and keeps `curve_type` in Bronze. The current Silver schema does not
+persist `curve_type`. The consumer therefore requires it explicitly and does
+not infer or relabel current PRD rows. A governed producer/export extension is
+still required before real PRD consumption.
+
+Rejected alternatives:
+
+- Reuse late `createdDateTime` as historical PIT authority or silently fall
+  back to first-seen time.
+- Treat every wide interval as corrupt, forward-fill across gaps or assume 24
+  hours in every Europe/Zurich market day.
+- Average AT/DE-LU sequences, default to sequence 1 or let an interval straddle
+  an auction-regime transition.
+- Infer lost Silver `curve_type` solely from duration, or claim a synthetic
+  contract test admits real PRD data.
+- Add spot price levels after the monthly solve or patch individual months.
+
+Verification and cost:
+
+- dedicated contract after hostile-boundary correction: `18 passed`;
+- final adjacent ENTSO-E/LSEG/LT-CT matrix: `136 passed, 1 skipped`;
+- final required minimum LT matrix: `58 passed, 1 skipped`;
+- LT package contract: `26 passed`;
+- targeted Ruff check: pass; targeted Ruff format: pass after formatting;
+- Databricks statements, Warehouse starts, business rows, writes and network
+  calls: `0/0/0/0/0`.
+
+Invariants not to break:
+
+- The CH EEX-constrained monthly BASE solver remains sole monthly-level
+  authority. Day-ahead prices can supply realized truth, validation or a
+  zero-mean shape only.
+- `createdDateTime`, FMV first-seen and unknown backfill availability remain
+  distinct and auditable. A technical vintage is not automatically an
+  economic price revision.
+- LT remains independent from `pfc_shaping.ct.*`; T057 remains sealed and
+  model admission remains
+  `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS`.
+
+## D-20260902-269 - Define the FMV Swiss future-spot, scenario and hedge product architecture
+
+Decision:
+
+- Define the primary LT product as a quarter-hour Swiss central curve that is
+  consistent with admitted EEX CH forwards and represents a conditional
+  central view of future spot prices, not an exact realised-spot prediction.
+- Keep four products distinct and lineage-bound: `market_central_ch`,
+  `fundamental_scenario_ch`, `stochastic_spot_paths_ch` and downstream
+  `portfolio_valuation_and_hedge` results.
+- Prioritise FMV's Swiss hydro/PV activity, Valais client profiles and large
+  industrial loads. Treat CH as the first governed production curve and DE as
+  the first hedge/spread market. Keep FR, AT and IT-North as observation/risk
+  markets until access, products, liquidity, credit and risk controls permit
+  a separately governed execution role.
+- Require every promoted market curve to have its own forward-level authority.
+  DE or neighbouring markets may inform Swiss zero-mean shape and dependence,
+  but may not set the CH level.
+- Let a shape-only scenario alter quarter-hour, daily and seasonal allocation
+  only while preserving the applicable solver means. Treat any assumption
+  that changes month, quarter or year levels as a separately labelled
+  fundamental curve resolved upstream; never add it after the central solve.
+- Keep the FMV hydro optimiser and hedge optimiser downstream. Price scenarios
+  are their inputs; water value, dispatch, open-position and hedge decisions
+  are their outputs and may not rewrite the market PFC.
+- Select models layer by layer under one preregistered causal rolling-origin
+  protocol: retain the monthly constrained solver, replay the current MLP as
+  baseline, challenge hourly shape with calendar/Ridge/GAM/LightGBM and a
+  correctly weighted MLP, select quarter-hour shape separately, then qualify
+  probabilistic paths and decision optimisers.
+
+Reason:
+
+FMV needs a curve useful for valuation and hedging, but also needs plausible
+future price regimes driven by hydro, weather, PV penetration,
+electrification, capacity changes, outages and cross-border conditions. One
+deterministic curve cannot simultaneously be market valuation truth, a
+physical probability distribution, an asset water value and a trading
+decision. Separating these products preserves EEX consistency while making
+their economic roles and validation criteria auditable.
+
+Rejected alternatives:
+
+- Describe the central PFC as the exact future spot path or use a single RMSE
+  score as proof of FMV usefulness.
+- Mix physical P scenarios, market-consistent Q valuation, asset water value
+  and hedge decisions in one opaque model output.
+- Let hydro, PV, clients or neighbouring markets overwrite CH solver monthly
+  means after the solve.
+- Promote the legacy DE branch as equivalent to CH or present FR/AT/IT-North
+  as executable hedge markets without their own authorities and controls.
+- Patch or retrain the MLP, enable probabilistic bands or optimise hedges
+  before governed data, a frozen protocol and an untouched future holdout.
+
+Invariants not to break:
+
+- The current CH monthly solver remains the sole admitted level authority.
+- Central, fundamental-scenario, stochastic-path, hydro-decision and
+  hedge-decision artifacts remain explicitly typed and separately governed.
+- Market-purpose or scenario labels grant no trade-execution authority.
+- LT remains independent from `pfc_shaping.ct.*`; T057 remains sealed and
+  model admission remains
+  `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS`.
+
+## D-20260902-268 - Separate consumer-complete causal/final exports and stage the CH-DE hedging scope
+
+Decision:
+
+- Keep the historical nine-column PIT SQL and both real July receipts
+  unchanged. Add two separate v2 source projections from
+  `prd.silver.ge_power_entsoe_time_series_vintages`: one `causal_asof` export
+  and one `realized_final` candidate export. Their SHA-256 bindings are
+  respectively
+  `f86cfeeec6bb2dc6d9c579426df091d7d45b01f0bca848b47aba62500cedbc6d`
+  and
+  `9f4104e4db8b16bfa21e0fce26afb47d364f983b95209424293356489fe6d81a`.
+- Project the complete consumer lineage needed downstream: normalized source
+  bounds/right edge, resolution, price, series/classification, publication and
+  first-seen timestamps, availability, history/DQ, document/revision, Bronze
+  snapshot/file lineage and vintage ID. Do not project or infer `curve_type`.
+- Permit an explicit non-empty subset of CH, DE-LU, AT, FR and IT-North rather
+  than forcing all five markets into every bounded extract. Bind each selected
+  field to one explicit business purpose: valuation/hedging scope,
+  observation/risk or future-market candidate. Keep five-zone/seven-series
+  qualification as a separate source-wide control.
+- Bound one export window to at most 32 days and at most two explicitly
+  enumerated UTC `_year`/`_month` partitions. This admits a full Swiss local
+  delivery month across UTC partition boundaries and DST without assuming 24
+  hours per market day.
+- For `causal_asof`, rank only by the admitted availability timestamp and a
+  deterministic vintage ID after filtering availability at the origin. Do not
+  use mutable latest-seen revision/path metadata as the economic ranking key.
+  `FMV_FIRST_SEEN` remains causal on first observation; every
+  `SOURCE_DOCUMENT_CREATED` row requires a separate original-publication
+  receipt and a timestamp strictly before delivery; `UNKNOWN_BACKFILL` fails.
+- For `realized_final`, treat latest-revision ranking only as a candidate. Set
+  `is_final=True` only after external finality evidence covers the exact
+  delivery window and SeriesKeys, postdates delivery completion, predates the
+  assessment cutoff and binds the semantic SHA-256 of the exact covered export
+  rows. Independent LSEG settlement reconciliation may cover CH/AT/DE-LU/FR;
+  IT-North requires platform finality evidence.
+- Archive synthetic/local results in an unsigned self-contained replay package
+  binding raw Parquet, consumer Parquet and the complete audit. Replay reruns
+  the adapter and detects artifact or evidence/value drift. It grants no model,
+  publication or production authority.
+- Record CH/DE as the target valuation and hedge-risk scope, not as equal
+  current implementation authority. The hard monthly solver remains CH-only;
+  the existing DE branch still follows the legacy monthly path. Any governed
+  DE PFC requires its own EEX DE level authority and promotion evidence.
+- Freeze the current model while data and holdout admission remain blocked.
+  The configured 64x64 MLP is called, but its computed 180-day weights do not
+  reweight hourly samples in the final `MLPRegressor.fit`; a correctly weighted
+  MLP must therefore be a preregistered challenger/ablation, not a silent patch
+  to the baseline.
+
+Reason:
+
+Consumer v2 cannot be fed safely by the historical PIT projection because that
+projection omits availability basis, first-seen, finality authority and source
+lineage. Silver vintages contain the direct fields required for a complete
+bridge, but deployed producer code contains no finality column and historical
+`createdDateTime` is not original publication proof. Technical latest state,
+economic final truth and causal availability are therefore distinct contracts.
+
+The stated FMV use is broader than a price-shape experiment: CH and DE curves
+support valuation and hedge-risk management, while FR/AT/IT-North initially
+inform spreads and risk. That business scope requires market-specific level
+authorities and must not be confused with the present CH-only solver authority
+or with authorization to trade in a market.
+
+Rejected alternatives:
+
+- Add `is_final=True` from latest revision rank, DQ pass, historical status or
+  query time without value-bound external evidence.
+- Reuse returned-document `createdDateTime` or latest mutable source-file
+  metadata as causal history.
+- Require all five markets for every CH/DE export, or silently choose/average
+  the AT and DE-LU auction sequences.
+- Define a market month as a single UTC partition, drop its boundary hours or
+  normalize DST days to 24 hours.
+- Promote the existing DE legacy branch as equivalent to the governed CH
+  solver, or begin FR/AT/IT output branches without their own forwards and
+  market-access gates.
+- Fix or retune the MLP before governed inputs, rolling-origin specification
+  and the new future holdout are frozen.
+- Start the stopped Warehouse merely to produce a new receipt for a locally
+  testable contract.
+
+Verification and cost:
+
+- specialized export/evidence/replay contract: `14 passed`;
+- adjacent consumer, PRD, capture, reconciliation and Databricks replay/snapshot
+  matrix: `153 passed`;
+- complete non-slow ENTSO-E/LSEG/spot matrix across 39 test files:
+  `854 passed`;
+- required LT minimum plus LT package contract: `84 passed, 1 skipped`;
+- targeted Ruff check and Ruff format check: pass;
+- Databricks connections/statements, business rows, Warehouse starts, writes,
+  Databricks network calls and incremental cost: `0/0/0/0/0/0/zero`.
+  One read-only GitHub connector lookup returned `404`; it made no mutation,
+  and producer verification used the governed local clone instead.
+
+Invariants not to break:
+
+- The CH monthly BASE solver remains the sole current monthly-level authority;
+  no hourly, hydro, neighbouring-market or spot layer may rewrite its means.
+- Market-purpose labels grant no trading, model-input, model-selection,
+  publication or production authority.
+- `realized_final` and `causal_asof` remain separate and value-bound. Evidence
+  authenticity is an upstream governed-admission responsibility; this local
+  module verifies exact scope, hash and deterministic replay only.
+- The current MLP remains an unpromoted baseline candidate. The recency-weight
+  caveat must be included in any champion-challenger protocol.
+- LT remains independent from `pfc_shaping.ct.*`; T057 remains sealed and
+  model admission remains
+  `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS`.
+- No real-data or production authority follows from this local synthetic
+  contract qualification.
+
+## D-20260902-267 - Consume producer-normalized Silver intervals without curve_type
+
+Decision:
+
+- Supersede only the clauses of D-20260901-266 that require `curve_type` at the
+  LT consumer boundary, preserve it in the expanded result or condition wide
+  interval handling on A01/A03. All availability, auction-selection, LSEG,
+  monthly-authority, T057 and production-blocking clauses of D-266 remain in
+  force.
+- Treat `IntervalStartUtc`, `IntervalEndUtc`, `Date_Time_UTC` and `resolution`
+  as the producer-normalized temporal contract. The bounded LT projection
+  consumes the two interval bounds and native resolution, requires a strictly
+  positive integer multiple aligned to the native UTC cadence, and repeats the
+  day-ahead price deterministically over half-open native intervals. It never
+  infers, reconstructs or emits `curve_type`.
+- Preserve each original source interval start/end on every expanded consumer
+  row. Reject missing or inverted bounds, unsupported resolution, nonmultiples,
+  off-grid bounds, overlaps, true gaps, partial-window coverage and blocks that
+  cross an effective-dated series-rule boundary.
+- Version the bounded PIT audit as
+  `fmv_entsoe_day_ahead_prd_pit_extract.v2`. It accepts normalized
+  multi-cadence blocks but still rejects invalid bounds, nonmultiples,
+  off-grid intervals, duplicates and overlaps. It deliberately does not claim
+  complete cadence coverage; that remains a downstream consumer or
+  reconciliation check.
+- Version the synthetic ENTSO-E/LSEG reconciliation report as
+  `fmv_lseg_entsoe_spot_reconciliation.v2` and expand admitted ENTSO-E blocks
+  at native cadence before complete UTC-hour comparison.
+- Keep both existing SQL files byte-identical. The historical profile v1 and
+  July diagnostic remain replay evidence for the predicates used at capture
+  time, including their old `duration == resolution` counter; they are not a
+  v2 normalized-interval admission receipt. No historical artifact is edited
+  or relabeled.
+
+Reason:
+
+The deployed producer code at
+`a7e920d95b94b2db59180412f31213f917e8d8a3` reads `curveType` in Bronze,
+sets A01 end to start plus one resolution, sets A03 end to the next point start
+or Period end, and assigns that normalized end to the right-edge timestamp.
+Both Silver vintages and latest are selected from the same staged normalized
+bounds and omit `curve_type`. GitHub ancestry shows deployed SHA `a7e920d...`
+is 25 commits ahead of parser correction
+`8549319ff944bfcf2e8123b05907ac025a8f23b8` with that correction as merge
+base. Jerome independently confirmed the same producer contract.
+
+The successful 24 August full Bronze/Silver/Gold rebuild, Unity Catalog schema
+inventory and July value-blind diagnostic jointly show that the Silver rows
+have non-null positive normalized bounds, supported resolution, exact
+`Date_Time_UTC = IntervalEndUtc`, and 404 wider durations that are cadence
+multiples. Requiring downstream XML representation metadata therefore rejects
+valid producer-normalized blocks without adding temporal safety.
+
+Historical evidence treatment:
+
+- PIT SQL SHA-256 remains
+  `7b444430db6b62a7bcd9f0bc6e5f05858a56b9756be68f70016c107a4b271ebf`.
+- Profile SQL SHA-256 remains
+  `e48bc8b09d6f3676616ed42966d50a3f44d9eaf3649f9ce9c9543a0bc024259e`.
+- Real July profile capture replays as `PASS_CAPTURE_REPLAY`, content ID
+  `abef7f875e43358cdd663f1f17fd45a862907a79ddedb6aef9dd42da121bad2c`.
+- Real July temporal diagnostic replays as
+  `PASS_DIAGNOSTIC_CAPTURE_REPLAY`, content ID
+  `a5f5f3b948212d65112b2dfa80e3d4cb1ef1872d827f7ff28312b2dfa80e3d4`.
+- No real PIT v1 receipt exists because the historical gate never authorized
+  extraction. The new v2 contract has synthetic qualification only and grants
+  no real-data authority.
+
+Rejected alternatives:
+
+- Ask the producer to duplicate Bronze `curve_type` into Silver solely for the
+  LT consumer.
+- Infer A01/A03 from width, SeriesKey, field name or any synthetic marker.
+- Accept every positive wide interval without native-cadence alignment,
+  integer-multiple, overlap and coverage checks.
+- Rewrite the hash-bound v1 profile SQL or old capture so that historical
+  evidence appears to pass a contract it did not execute.
+- Start Databricks compute or issue another business-data query for a question
+  already closed by producer code, existing captures and owner confirmation.
+
+Verification and cost:
+
+- focused consumer/PIT/reconciliation matrix: `95 passed`;
+- capture and temporal-diagnostic tests: `10 passed`;
+- complete non-slow ENTSO-E plus LSEG reconciliation matrix: `840 passed`;
+- required LT minimum: `58 passed, 1 skipped`; the skip is the pre-existing
+  optional TensorFlow import boundary;
+- LT package contract: `26 passed`;
+- both real historical captures replay exactly with zero Databricks statements;
+- Databricks statements, Warehouse starts/resizes/creates, business rows,
+  writes and incremental cost: `0/0/0/0/0/zero`.
+
+Invariants not to break:
+
+- `realized_final` and `causal_asof` remain distinct. Late or unknown backfill
+  availability cannot become historical PIT authority.
+- AT and DE-LU classification sequence selection remains explicit,
+  effective-dated and independently controlled; no default or averaging is
+  allowed.
+- LSEG remains an independent CH/AT/DE-LU/FR control; IT-North remains
+  explicitly ENTSO-E-only.
+- The CH EEX-constrained monthly BASE solver remains sole monthly-level
+  authority. Day-ahead prices can provide realized truth, validation or a
+  duration-weighted zero-mean monthly shape only.
+- LT remains independent from `pfc_shaping.ct.*`; T057 remains sealed and
+  model admission remains
+  `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS`.
