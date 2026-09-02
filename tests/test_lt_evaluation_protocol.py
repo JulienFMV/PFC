@@ -89,6 +89,9 @@ def test_protocol_bindings_match_exact_local_bytes() -> None:
     assert bindings.evaluation_engine_normalized_lf_sha256 == _normalized_lf_sha256(
         "pfc_shaping/lt/evaluation_engine.py"
     )
+    assert bindings.origin_registration_envelope_normalized_lf_sha256 == _normalized_lf_sha256(
+        "pfc_shaping/lt/origin_registration_envelope.py"
+    )
     assert bindings.package_contract_normalized_lf_sha256 == _normalized_lf_sha256(
         "pfc_shaping/package_contract.py"
     )

@@ -155,7 +155,7 @@ Read in this order:
   manifest is hash-closed, but external registration is pending, countable
   origins remain zero, truth opening/training/selection are unauthorized and
   T057 is neither referenced nor consumed.
-- The evaluation protocol is now source-bound v2. Four challenger
+- The evaluation protocol is now source-bound v3. Four challenger
   implementations and a scoring engine operate only on immutable synthetic
   fixtures: the weighted MLP uses a verified observation-level loss, the
   linear/GAM/tree challengers are deterministic, and all outputs retain
@@ -163,6 +163,15 @@ Read in this order:
   energy neutralization and all four lead buckets; unimplemented economic or
   uncovered horizon metrics remain visibly `UNSUPPORTED_NEVER_PASS`. No local
   data through 31 August was opened or used.
+- The next offline registration-preparation increment is complete. LT now
+  builds exact canonical bytes with domain-separated identities for independent
+  Ed25519 schedule-entry signing, verifies a complete ordered 12-slot schedule,
+  checks Swiss local
+  delivery starts and binds one origin information set to the exact schedule,
+  signer and artifact commitments. The runtime has no private-key capability,
+  no real signed schedule was created, and trusted time/request/remote
+  registry/HEAD evidence remains explicitly missing. Scheduled origins remain
+  12, countable origins remain zero and future truth remains closed.
 
 ## Invariants
 
@@ -175,8 +184,8 @@ Read in this order:
   `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS` until independently
   governed local exports and a new future holdout exist.
 
-See durable decisions D-20260821-248 through D-20260902-273 and
-`SESSION-HANDOFF-20260902-LT-SYNTHETIC-EVALUATION-ENGINE-V1.md` for the
+See durable decisions D-20260821-248 through D-20260902-274 and
+`SESSION-HANDOFF-20260902-LT-ORIGIN-REGISTRATION-ENVELOPE-V1.md` for the
 latest exact implementation files, hashes, tests and residual risks. The PFC
 target, source-acquisition, scenario-product, ENTSO-E export,
 normalized-interval and preceding repo-hygiene handoffs retain their exact

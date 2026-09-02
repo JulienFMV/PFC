@@ -21583,6 +21583,89 @@ Invariants not to break:
   model admission remains
   `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS`.
 
+## D-20260902-274 - Prepare origin registration without manufacturing authority
+
+Decision:
+
+- Supersede evaluation protocol v2 with v3 solely to bind the new
+  origin-registration preparation source and updated governed-wheel inventory.
+  Preserve the five candidates, metrics, 12-slot cohort, solver-level boundary
+  and all negative authorities. The v3 semantic SHA-256 is
+  `e73d0b63160835f7c10b582152435361e51ac9568d433a721ded92327fac7137`.
+- Add a pure LT preparation boundary that constructs exact canonical
+  schedule-entry signature payloads with domain-separated identities, attaches
+  only externally supplied Ed25519 signatures and verifies every entry against
+  one caller-held public key. Do not expose or import a private-key capability
+  in LT code.
+- Require the signed schedule to match the exact ordered October 2026 through
+  September 2027 cohort. Validate canonical JSON, strict fields, signature
+  encoding and identity, EEX trading-day month, capture chronology, frozen
+  origin inclusion and Swiss local first-delivery start across CET/CEST.
+- Bind each information-set envelope to the exact signed schedule manifest,
+  schedule entry and signer plus the structural inventory, causal EEX
+  inventory/vintage, solver configuration, candidate, prediction, scenario,
+  target universe, ex-ante mask rule, calendar/strata, runtime, wheel and
+  source-revision commitments.
+- Require the exact schedule bytes and public key again whenever an envelope
+  is verified. A different correctly signed schedule is not substitutable.
+- Keep trusted origin time, independent request signing, external
+  compare-and-append receipt and fresh external HEAD observation explicitly
+  missing. Keep external registration, countability, truth opening, training,
+  selection, scientific admission, production and promotion false.
+- Include the preparation module in the governed wheel positive inventory.
+  Bind its normalized-LF source SHA-256
+  `0c74cff02e886075b25d1f0893ec5b756a4e6661c88ee6cfd57aa8f07caaff8d`
+  and the updated package-contract SHA-256
+  `43608e2a1f07743bb9a6a3ef247847086505bc617ceb6af18ae154ff46bc7efc`.
+
+Reason:
+
+The locally frozen cohort can be prepared rigorously while ENTSO-E and the
+external platform are unavailable, but local dates and signatures must not be
+promoted into an official EEX schedule or external registry fact. Separating
+canonical payload preparation from independent signing and remote registry
+receipts makes every missing authority visible and permits exhaustive
+synthetic verification without opening truth.
+
+Rejected alternatives:
+
+- Treat the locally proposed Tuesdays as an official EEX trading calendar or
+  infer last-trading-day facts at runtime.
+- Generate, persist or commit a model-operator private key or a synthetic
+  signature presented as external evidence.
+- Accept a signature without an exact public-key identity, canonical base64,
+  domain-bound entry ID, complete ordered cohort or schedule re-verification.
+- Let a signed schedule alone create a countable origin, authorize training or
+  open future truth.
+- Substitute a second valid schedule after the information-set envelope was
+  prepared, or accept a re-hashed authority escalation.
+- Read local data through 31 August, query Databricks, start a Warehouse, open
+  T057, modify CT or change the CH monthly solver authority for this step.
+
+Verification and cost:
+
+- dedicated canonical/signature/envelope mutation matrix: `18 passed`;
+- expanded evaluation/registry/estimand/curve/import/shape/solver matrix:
+  `300 passed, 1 skipped`;
+- required LT minimum: `58 passed, 1 skipped`;
+- targeted Ruff check and new-file format checks: pass;
+- real rows, private keys or real signatures persisted, production model
+  retraining, real truth opening, Databricks statements, Warehouse starts,
+  model artifacts, CT changes and solver-level changes:
+  `0/0/0/0/0/0/0/0/0/0`.
+
+Invariants not to break:
+
+- Schedule signature validity is evidence only. Countability requires trusted
+  origin time, independent request authority, remote CAS receipt and fresh
+  remote HEAD under the externally approved protocol.
+- The cohort still has 12 scheduled and zero countable origins; future truth
+  remains closed.
+- No LT runtime may possess a private origin-schedule signing key.
+- The CH monthly BASE solver remains the sole monthly-level authority.
+- T057 remains sealed; LT remains independent from `pfc_shaping.ct.*`; global
+  admission remains `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS`.
+
 ## D-20260902-273 - Implement only the synthetic, authority-negative evaluation path
 
 Decision:

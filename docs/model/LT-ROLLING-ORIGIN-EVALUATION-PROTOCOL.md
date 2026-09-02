@@ -1,4 +1,4 @@
-# LT rolling-origin evaluation protocol v2
+# LT rolling-origin evaluation protocol v3
 
 ## Scope
 
@@ -14,7 +14,7 @@ visible, but they do not replace the required external registry, trusted time,
 FMV risk margins, power calibration or source admission.
 
 Canonical semantic SHA-256:
-`1134a5e24cfabc797d8931a986bce87ac983dcaaec5dd39680929463c62bdf3e`.
+`e73d0b63160835f7c10b582152435361e51ac9568d433a721ded92327fac7137`.
 
 ## Candidate family
 
@@ -29,10 +29,12 @@ The comparison contains exactly one incumbent and four challengers:
 
 The incumbent has no tuning grid. Challenger tuning may occur only inside
 nested, externally registered development origins. Future-holdout tuning is
-forbidden. Version 2 binds every challenger to the normalized source hash
+forbidden. Version 3 binds every challenger to the normalized source hash
 `887f3b00d33231b52c58395ef43b5310624222922e955a6425d723e885cb5e19`.
 The scoring engine is independently bound to
 `034a06c14ec5aff337ab58cf4ab2e79a63c49f2f1d656dbc5fb3bd950c310ffc`.
+The origin-envelope boundary is bound to
+`0c74cff02e886075b25d1f0893ec5b756a4e6661c88ee6cfd57aa8f07caaff8d`.
 
 The weighted MLP uses an exact observation-level exponential loss, a frozen
 180-day half-life, a deterministic 64x64 ReLU network and analytic gradients.
@@ -96,3 +98,31 @@ immutable negative authority object. Their manifests state
 `real_data_training_performed=false`, `real_truth_opened=false`,
 `countable_origin=false` and `ranking_or_selection_performed=false`. The code
 has no file, network, Databricks or CT access path.
+
+## External-registration preparation boundary
+
+`pfc_shaping.lt.origin_registration_envelope` closes the local preparation
+step without claiming an external registration. It builds exact canonical
+schedule-entry bytes with domain-separated identities for an independent
+Ed25519 signer, attaches only a caller-supplied signature, and verifies all
+twelve individually signed entries against one caller-held public key. It
+accepts no private key.
+
+The signed schedule must match the exact ordered cohort, each EEX trading day
+must belong to its cadence month, every capture window must contain the frozen
+origin, and the registry deadline must precede the first Swiss local delivery
+month. The Europe/Zurich-to-UTC conversion is checked across CET/CEST rather
+than inferred from an abbreviation.
+
+An information-set envelope requires exact hashes for the structural origin
+inventory, causal EEX inventory and vintage, solver configuration, candidates,
+predictions, scenarios, universe, ex-ante mask rule, calendar/strata, runtime,
+wheel and source revision. Verification requires the exact signed schedule
+bytes and trust key again; a different valid schedule cannot be substituted.
+
+Even after schedule-signature verification, the envelope records the trusted
+origin-time receipt, independent request signature, remote compare-and-append
+receipt and fresh remote HEAD observation as missing. Every operational,
+scientific, truth-opening and production authority remains false. Synthetic
+signatures in tests qualify only the verifier and are not written as project
+evidence.

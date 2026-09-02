@@ -188,6 +188,7 @@ def test_pyproject_forbids_generated_console_script_launchers() -> None:
         "pfc_shaping/lt/evaluation_challengers.py",
         "pfc_shaping/lt/evaluation_engine.py",
         "pfc_shaping/lt/evaluation_protocol.py",
+        "pfc_shaping/lt/origin_registration_envelope.py",
     }
     assert evaluation_runtime.issubset(ALLOWED_RUNTIME_PYTHON_FILES)
     prospective_runtime = {
