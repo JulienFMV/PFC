@@ -29,6 +29,13 @@ The next admissible work is evidence completion around those exact bytes:
 3. convert the causal daily snapshots into the existing signed EEX vintage
    catalogue rather than creating a second authority.
 
+Local status on 2026-09-03: item 1 is complete under D-20260903-280. The
+zero-query validator now binds the exact reviewed SQL bytes and SHA-256 to the
+exact historical manifest, three ordered PRD tables, CH/POWER predicates,
+12-column result schema and opaque artifact declaration. It does not open the
+price artifact. Items 2 and 3 remain external/governed work and all model,
+selection and production authorities remain false.
+
 Until then the snapshot is useful local evidence, not a model input.
 
 ### ENTSO-E

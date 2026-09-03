@@ -21583,6 +21583,71 @@ Invariants not to break:
   model admission remains
   `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS`.
 
+## D-20260903-280 - Bind the reused EEX capture to its exact query without opening values
+
+Decision:
+
+- Extend the existing D231 zero-query validator instead of creating another
+  EEX intake or vintage abstraction. Freeze the exact 625-byte LF-normalized
+  three-table SQL statement and its SHA-256
+  `54a2e7e1752af4506673d2b5cbc2666f0deea45ec96e6d82561e4b265c78797a`.
+- Bind that statement to the exact historical manifest SHA-256
+  `f8ec096be43851d85b16ec2b678d4a695fb0521c2c651e8bcf7c2491a29b50c1`,
+  the ordered PRD table identities, CH/POWER predicates, exact 12-column
+  Databricks schema, statement/capture metadata and the opaque NDJSON
+  declaration: 82,552 rows, 29,763,661 bytes and SHA-256
+  `593e916b6aa18ad83f7bd7941ff68184cd71da8882ef4eb381de46d09ce64812`.
+- Keep the validator metadata-only. It reads the 3,810-byte manifest already
+  hash-bound by D231 and does not open, parse or rehash the market-value
+  artifact. It performs no Databricks request and exposes no connector.
+- Mark only exact query/predicate/table provenance as locally verified.
+  Independent source time, signed envelopes and conversion to the existing
+  signed EEX vintage catalogue remain false. Model-input, training, selection,
+  production and promotion authority remain false.
+
+Reason:
+
+The captured manifest retained only a query digest while the exact query text
+survived in an ignored local helper. Freezing the statement in the existing
+zero-query validation boundary makes the digest reviewable and closes the
+first explicitly listed EEX outage-plan task. Reusing the current boundary
+avoids a second EEX authority system and preserves the signed vintage catalogue
+as the only future admission target.
+
+Rejected alternatives:
+
+- Issue a replacement Databricks statement or start a Warehouse to obtain a
+  newer receipt.
+- Open the NDJSON or Parquet values merely to reconfirm metadata already bound
+  by the historical artifact hash.
+- Extend the workbook-specific signed vintage intake to accept this joined
+  Databricks export before independent source-time and envelope evidence exist.
+- Mark the local capture PIT-valid, model-ready or production-authoritative.
+- Generate scenarios, paths or model comparisons while governed EEX/ENTSO-E
+  admission and the independent future holdout remain blocked.
+
+Verification and cost:
+
+- focused D231 validator matrix: `39 passed`;
+- EEX normalizer, Databricks LT materializer and governed acquisition adjacent
+  matrix: `119 passed`;
+- targeted Ruff check: pass; adjacent formatter-only drift was removed from
+  the final diff after review;
+- Databricks requests/statements, Warehouse starts, network calls, price rows
+  opened, model retraining, CT changes, T057 access and solver changes:
+  `0/0/0/0/0/0/0/0/0`.
+
+Invariants not to break:
+
+- Query provenance is not independent source time, source authenticity,
+  signature admission or PIT authority.
+- The Databricks daily export must enter the existing signed EEX vintage
+  catalogue through a separate governed conversion; it must not create a
+  second level authority.
+- The CH monthly BASE solver remains the sole monthly-level authority. LT
+  remains independent of CT, T057 remains sealed and model admission remains
+  `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS`.
+
 ## D-20260903-279 - Stop origin transport work at the operational authority boundary
 
 Decision:

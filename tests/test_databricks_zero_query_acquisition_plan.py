@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import inspect
 import json
 from pathlib import Path
@@ -9,12 +10,16 @@ import pytest
 from pfc_shaping.pipeline import production_phases
 from pfc_shaping.validation import databricks_zero_query_acquisition_plan as module
 from pfc_shaping.validation.databricks_zero_query_acquisition_plan import (
+    EEX_DAILY_JOIN_SQL,
+    EEX_DAILY_JOIN_SQL_SHA256,
     ENTSOE_METADATA_ROW_LIMIT,
     ENTSOE_SCHEMA_SQL_SHA256,
     ENTSOE_TARGET_TABLES,
     ZERO_QUERY_PLAN_CONTENT_ID,
     ZERO_QUERY_PLAN_STATUS,
     DatabricksZeroQueryPlanError,
+    validate_eex_daily_join_sql,
+    validate_eex_local_capture_manifest,
     validate_entsoe_schema_inventory_sql,
     validate_zero_query_acquisition_plan,
     verify_zero_query_acquisition_plan_paths,
@@ -50,6 +55,10 @@ def _verify() -> dict[str, object]:
     )
 
 
+def _eex_manifest() -> dict[str, object]:
+    return json.loads(EEX_MANIFEST_PATH.read_text(encoding="utf-8-sig"))
+
+
 def test_contract_is_exact_zero_execution_and_non_authoritative() -> None:
     document = json.loads(PLAN_PATH.read_text(encoding="utf-8"))
     result = validate_zero_query_acquisition_plan(document)
@@ -77,6 +86,11 @@ def test_valid_local_package_reuses_eex_and_prepares_metadata_only() -> None:
     assert result["entsoe_metadata_row_limit"] == 1024
     assert result["eex_capture_action"] == "REUSE_EXISTING_LOCAL_CAPTURE_NO_QUERY"
     assert result["eex_capture_row_count"] == 82552
+    assert result["eex_query_sha256"] == EEX_DAILY_JOIN_SQL_SHA256
+    assert result["eex_exact_query_and_predicate_provenance_verified"] is True
+    assert result["eex_independent_source_time_verified"] is False
+    assert result["eex_signed_envelopes_verified"] is False
+    assert result["eex_vintage_catalog_conversion_verified"] is False
     assert result["eex_new_statement_count"] == 0
     assert result["databricks_request_count"] == 0
     assert result["warehouse_start_count"] == 0
@@ -85,6 +99,100 @@ def test_valid_local_package_reuses_eex_and_prepares_metadata_only() -> None:
     assert result["remote_write_count"] == 0
     assert result["training_authorized"] is False
     assert result["production_authorized"] is False
+
+
+def test_eex_join_sql_is_exact_reviewable_provenance() -> None:
+    result = validate_eex_daily_join_sql(EEX_DAILY_JOIN_SQL.encode("utf-8"))
+
+    assert result == {
+        "query_sha256": EEX_DAILY_JOIN_SQL_SHA256,
+        "statement_count": 1,
+        "source_tables": [
+            "prd.gold.facteexpricedaily",
+            "prd.gold.dimeexproduct",
+            "prd.gold.dimeexdeliveryperiod",
+        ],
+        "source_filter": {"Country": "CH", "Commodity": "POWER"},
+        "selected_column_count": 12,
+        "read_only": True,
+        "executed_by_validator": False,
+    }
+
+
+def test_eex_join_sql_byte_drift_fails_closed() -> None:
+    changed = EEX_DAILY_JOIN_SQL.replace("p.Country = 'CH'", "p.Country = 'DE'")
+
+    with pytest.raises(DatabricksZeroQueryPlanError, match="SQL bytes differ"):
+        validate_eex_daily_join_sql(changed.encode("utf-8"))
+
+
+def test_eex_manifest_binds_exact_query_and_artifact_without_authority() -> None:
+    manifest = _eex_manifest()
+
+    result = validate_eex_local_capture_manifest(manifest)
+
+    assert result["status"] == (
+        "PASS_EXACT_QUERY_AND_PREDICATE_PROVENANCE_NO_DATA_AUTHORITY"
+    )
+    assert result["query_sha256"] == EEX_DAILY_JOIN_SQL_SHA256
+    assert result["exact_query_and_predicate_provenance_verified"] is True
+    assert result["artifact_bytes_opened_by_validator"] is False
+    assert result["independent_source_time_verified"] is False
+    assert result["signed_envelopes_verified"] is False
+    assert result["vintage_catalog_conversion_verified"] is False
+    assert result["model_input_authorized"] is False
+    assert result["production_authorized"] is False
+    assert result["databricks_request_count"] == 0
+    assert result["warehouse_start_count"] == 0
+    assert result["network_call_count"] == 0
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        ("extra_field", "manifest fields"),
+        ("query", "query SHA-256"),
+        ("tables", "source tables"),
+        ("filter", "source filter"),
+        ("columns", "result columns"),
+        ("write", "data mutation"),
+        ("boolean_type_confusion", "read-only SQL"),
+        ("integer_type_confusion", "statement count"),
+        ("artifact_hash", "artifact hash"),
+        ("artifact_size", "artifact size"),
+        ("statement", "statement ID"),
+    ],
+)
+def test_eex_manifest_provenance_mutations_fail_closed(
+    mutation: str,
+    message: str,
+) -> None:
+    changed = copy.deepcopy(_eex_manifest())
+    if mutation == "extra_field":
+        changed["invented_authority"] = False
+    elif mutation == "query":
+        changed["query_sha256"] = "0" * 64
+    elif mutation == "tables":
+        changed["source_tables"].reverse()
+    elif mutation == "filter":
+        changed["source_filter"]["Country"] = "DE"
+    elif mutation == "columns":
+        changed["columns"][0]["name"] = "UnknownProductID"
+    elif mutation == "write":
+        changed["databricks_data_mutation"] = True
+    elif mutation == "boolean_type_confusion":
+        changed["read_only_sql"] = 1
+    elif mutation == "integer_type_confusion":
+        changed["statement_count"] = True
+    elif mutation == "artifact_hash":
+        changed["artifact"]["sha256"] = "0" * 64
+    elif mutation == "artifact_size":
+        changed["artifact"]["size_bytes"] += 1
+    elif mutation == "statement":
+        changed["statement_id"] = "invented"
+
+    with pytest.raises(DatabricksZeroQueryPlanError, match=message):
+        validate_eex_local_capture_manifest(changed)
 
 
 def test_sql_is_one_bounded_metadata_statement_only() -> None:

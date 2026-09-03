@@ -24,6 +24,49 @@ ENTSOE_SCHEMA_SQL_SHA256 = (
 EEX_LOCAL_MANIFEST_SHA256 = (
     "f8ec096be43851d85b16ec2b678d4a695fb0521c2c651e8bcf7c2491a29b50c1"
 )
+EEX_DAILY_JOIN_SQL_SHA256 = (
+    "54a2e7e1752af4506673d2b5cbc2666f0deea45ec96e6d82561e4b265c78797a"
+)
+EEX_DAILY_JOIN_SQL = """SELECT
+  f.ProductID,
+  f.DeliveryPeriodID,
+  f.QuotationDateID,
+  CAST(f.SettlementPrice AS DOUBLE) AS SettlementPriceEurMWh,
+  CAST(f.LastPrice AS DOUBLE) AS LastPriceEurMWh,
+  f.Meta_Load_Timestamp AS FactLoadTimestampUtc,
+  p.Country,
+  p.Commodity,
+  p.ProductType,
+  p.DeliveryPeriodType,
+  d.DeliveryStartDate,
+  d.DeliveryEndDate
+FROM prd.gold.facteexpricedaily f
+JOIN prd.gold.dimeexproduct p
+  ON p.ProductID = f.ProductID
+JOIN prd.gold.dimeexdeliveryperiod d
+  ON d.DeliveryPeriodID = f.DeliveryPeriodID
+WHERE p.Country = 'CH'
+  AND p.Commodity = 'POWER'
+ORDER BY f.QuotationDateID, f.ProductID, f.DeliveryPeriodID"""
+EEX_SOURCE_TABLES = (
+    "prd.gold.facteexpricedaily",
+    "prd.gold.dimeexproduct",
+    "prd.gold.dimeexdeliveryperiod",
+)
+EEX_CAPTURE_COLUMNS = (
+    ("ProductID", "LONG", "BIGINT"),
+    ("DeliveryPeriodID", "LONG", "BIGINT"),
+    ("QuotationDateID", "INT", "INT"),
+    ("SettlementPriceEurMWh", "DOUBLE", "DOUBLE"),
+    ("LastPriceEurMWh", "DOUBLE", "DOUBLE"),
+    ("FactLoadTimestampUtc", "TIMESTAMP", "TIMESTAMP"),
+    ("Country", "STRING", "STRING"),
+    ("Commodity", "STRING", "STRING"),
+    ("ProductType", "STRING", "STRING"),
+    ("DeliveryPeriodType", "STRING", "STRING"),
+    ("DeliveryStartDate", "DATE", "DATE"),
+    ("DeliveryEndDate", "DATE", "DATE"),
+)
 ENTSOE_INTAKE_CONTRACT_SHA256 = (
     "7ede1698099390babfa1d130bfecae61fd1e090888a3d6e6e4f892119db52b87"
 )
@@ -185,7 +228,7 @@ def verify_zero_query_acquisition_plan_paths(
         max_bytes=100_000,
     )
     eex = _strict_json(eex_raw, "EEX local manifest")
-    _validate_eex_manifest(eex)
+    eex_assessment = validate_eex_local_capture_manifest(eex)
     entsoe_contract_raw = _read_exact(
         entsoe_intake_contract_path,
         expected_sha256=ENTSOE_INTAKE_CONTRACT_SHA256,
@@ -210,6 +253,19 @@ def verify_zero_query_acquisition_plan_paths(
         "eex_capture_action": "REUSE_EXISTING_LOCAL_CAPTURE_NO_QUERY",
         "eex_capture_row_count": eex["row_count"],
         "eex_capture_artifact_sha256": eex["artifact"]["sha256"],
+        "eex_query_sha256": eex_assessment["query_sha256"],
+        "eex_exact_query_and_predicate_provenance_verified": eex_assessment[
+            "exact_query_and_predicate_provenance_verified"
+        ],
+        "eex_independent_source_time_verified": eex_assessment[
+            "independent_source_time_verified"
+        ],
+        "eex_signed_envelopes_verified": eex_assessment[
+            "signed_envelopes_verified"
+        ],
+        "eex_vintage_catalog_conversion_verified": eex_assessment[
+            "vintage_catalog_conversion_verified"
+        ],
         "eex_new_statement_count": 0,
         "current_statement_budget": 0,
         "future_metadata_statement_budget_if_authorized": 1,
@@ -288,28 +344,142 @@ def validate_entsoe_schema_inventory_sql(payload: bytes) -> dict[str, object]:
     }
 
 
-def _validate_eex_manifest(manifest: Mapping[str, object]) -> None:
+def validate_eex_daily_join_sql(payload: bytes) -> dict[str, object]:
+    """Bind the historical D231 statement to exact reviewable SQL bytes."""
+
+    expected = EEX_DAILY_JOIN_SQL.encode("utf-8")
+    if payload != expected:
+        raise DatabricksZeroQueryPlanError("EEX daily join SQL bytes differ")
+    query_hash = hashlib.sha256(payload).hexdigest()
+    _equal(query_hash, EEX_DAILY_JOIN_SQL_SHA256, "EEX daily join SQL SHA-256")
+    return {
+        "query_sha256": query_hash,
+        "statement_count": 1,
+        "source_tables": list(EEX_SOURCE_TABLES),
+        "source_filter": {"Country": "CH", "Commodity": "POWER"},
+        "selected_column_count": len(EEX_CAPTURE_COLUMNS),
+        "read_only": True,
+        "executed_by_validator": False,
+    }
+
+
+def validate_eex_local_capture_manifest(
+    manifest: Mapping[str, object],
+) -> dict[str, object]:
+    """Validate the exact D231 capture metadata without opening price rows."""
+
+    item = _mapping(manifest, "EEX local manifest")
     _equal(
-        manifest.get("schema_version"),
+        set(item),
+        {
+            "schema_version",
+            "status",
+            "capture_date",
+            "started_at_utc",
+            "completed_at_utc",
+            "source_system",
+            "catalog",
+            "schema",
+            "source_tables",
+            "source_filter",
+            "currency_unit",
+            "read_only_sql",
+            "databricks_data_mutation",
+            "statement_count",
+            "statement_id",
+            "query_sha256",
+            "columns",
+            "row_count",
+            "chunk_count",
+            "artifact",
+            "reuse_policy",
+        },
+        "EEX manifest fields",
+    )
+    _equal(
+        item.get("schema_version"),
         "fmv_databricks_eex_daily_snapshot.v1",
         "EEX manifest schema",
     )
     _equal(
-        manifest.get("status"),
+        item.get("status"),
         "PASS_LOCAL_SNAPSHOT_ONLY_NOT_MODEL_OR_PROMOTION_AUTHORITY",
         "EEX manifest status",
     )
-    _equal(manifest.get("catalog"), "prd", "EEX catalog")
-    _equal(manifest.get("schema"), "gold", "EEX schema")
-    _equal(manifest.get("row_count"), 82552, "EEX row count")
-    _equal(manifest.get("statement_count"), 1, "historical EEX statement count")
-    _equal(manifest.get("read_only_sql"), True, "historical EEX read-only SQL")
-    artifact = _mapping(manifest.get("artifact"), "EEX artifact")
+    _equal(item.get("capture_date"), "2026-08-05", "EEX capture date")
+    _equal(
+        item.get("started_at_utc"),
+        "2026-08-05T12:17:41.6677282Z",
+        "EEX capture start",
+    )
+    _equal(
+        item.get("completed_at_utc"),
+        "2026-08-05T12:18:30.2434903Z",
+        "EEX capture completion",
+    )
+    _equal(item.get("source_system"), "DATABRICKS_SQL_WAREHOUSE", "EEX source")
+    _equal(item.get("catalog"), "prd", "EEX catalog")
+    _equal(item.get("schema"), "gold", "EEX schema")
+    _equal(item.get("source_tables"), list(EEX_SOURCE_TABLES), "EEX source tables")
+    _equal(
+        item.get("source_filter"),
+        {"Country": "CH", "Commodity": "POWER"},
+        "EEX source filter",
+    )
+    _equal(item.get("currency_unit"), "EUR/MWh", "EEX currency unit")
+    _strict_scalar(item.get("read_only_sql"), True, "historical EEX read-only SQL")
+    _strict_scalar(item.get("databricks_data_mutation"), False, "EEX data mutation")
+    _strict_scalar(item.get("statement_count"), 1, "historical EEX statement count")
+    _equal(
+        item.get("statement_id"),
+        "01f190c7-a826-1d40-aa60-597d2e6a36f0",
+        "EEX statement ID",
+    )
+    query = validate_eex_daily_join_sql(EEX_DAILY_JOIN_SQL.encode("utf-8"))
+    _equal(item.get("query_sha256"), query["query_sha256"], "EEX query SHA-256")
+    _equal(
+        item.get("columns"),
+        [
+            {"name": name, "type_name": type_name, "type_text": type_text}
+            for name, type_name, type_text in EEX_CAPTURE_COLUMNS
+        ],
+        "EEX result columns",
+    )
+    _strict_scalar(item.get("row_count"), 82_552, "EEX row count")
+    _strict_scalar(item.get("chunk_count"), 2, "EEX chunk count")
+    artifact = _mapping(item.get("artifact"), "EEX artifact")
+    _equal(set(artifact), {"path", "size_bytes", "sha256"}, "EEX artifact fields")
+    _equal(artifact.get("path"), "eex_ch_power.ndjson", "EEX artifact path")
+    _strict_scalar(artifact.get("size_bytes"), 29_763_661, "EEX artifact size")
     _equal(
         artifact.get("sha256"),
         "593e916b6aa18ad83f7bd7941ff68184cd71da8882ef4eb381de46d09ce64812",
         "EEX artifact hash",
     )
+    _equal(
+        item.get("reuse_policy"),
+        "REUSE_LOCAL_CAPTURE; MAX_ONE_DATABRICKS_ATTEMPT_PER_LOCAL_DATE",
+        "EEX reuse policy",
+    )
+    return {
+        "schema_version": "fmv_eex_databricks_capture_provenance_assessment.v1",
+        "status": "PASS_EXACT_QUERY_AND_PREDICATE_PROVENANCE_NO_DATA_AUTHORITY",
+        "query_sha256": query["query_sha256"],
+        "expected_manifest_sha256": EEX_LOCAL_MANIFEST_SHA256,
+        "artifact_sha256": artifact["sha256"],
+        "exact_query_and_predicate_provenance_verified": True,
+        "artifact_bytes_opened_by_validator": False,
+        "independent_source_time_verified": False,
+        "signed_envelopes_verified": False,
+        "vintage_catalog_conversion_verified": False,
+        "model_input_authorized": False,
+        "training_authorized": False,
+        "selection_authorized": False,
+        "production_authorized": False,
+        "databricks_request_count": 0,
+        "warehouse_start_count": 0,
+        "network_call_count": 0,
+    }
 
 
 def _validate_entsoe_intake_contract(contract: Mapping[str, object]) -> None:
@@ -377,6 +547,13 @@ def _mapping(value: object, label: str) -> Mapping[str, object]:
 
 def _equal(value: object, expected: object, label: str) -> None:
     if value != expected:
+        raise DatabricksZeroQueryPlanError(
+            f"{label} differs: expected {expected!r}, received {value!r}"
+        )
+
+
+def _strict_scalar(value: object, expected: bool | int, label: str) -> None:
+    if type(value) is not type(expected) or value != expected:
         raise DatabricksZeroQueryPlanError(
             f"{label} differs: expected {expected!r}, received {value!r}"
         )
