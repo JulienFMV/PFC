@@ -52,6 +52,18 @@ effective-dated AT and DE-LU series selections. The export must use the exact
 v2 realized SQL hash recorded in the plan and carry value-bound finality
 evidence.
 
+Local status on 2026-09-03: the metadata-only owner request is frozen at
+`.planning/phases/14-lt-audit-remediation/ENTSOE-DAY-AHEAD-EFFECTIVE-SERIES-SELECTION-REQUEST-V1-20260903.json`
+with canonical JSON SHA-256
+`6794566035e40b69eb5d104d09e317896b69502ca800513ef094ca46673d6cfb`.
+It covers exactly the July Swiss-local window and the two admitted
+classification candidates for each of AT and DE-LU. It requests no business
+values. It has not been transmitted, no owner response has been received and
+no series selection is authorized. Defaults, averaging and consumer inference
+remain forbidden. Each selected key must cover the whole request window; an
+in-window classification change blocks this request and requires a separately
+reviewed segmented-export plan.
+
 If the internal materialized Silver snapshot is unavailable, stop. Wait for
 producer recovery; do not replace ENTSO-E with legacy local or synthetic data.
 If the snapshot is available, the public outage still forbids any claim of

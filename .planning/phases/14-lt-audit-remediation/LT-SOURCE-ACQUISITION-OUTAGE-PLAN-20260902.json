@@ -2,6 +2,7 @@
   "schema_version": "fmv_lt_source_acquisition_outage_plan.v1",
   "status": "BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS",
   "created_on": "2026-09-02",
+  "updated_on": "2026-09-03",
   "public_service_observation": {
     "observed_on": "2026-09-02",
     "reporter": "SMARD_BUNDESNETZAGENTUR",
@@ -53,8 +54,15 @@
         ],
         "declared_row_count": 82552
       },
+      "bound_query_provenance": {
+        "status": "VERIFIED_LOCALLY_WITHOUT_OPENING_BUSINESS_ROWS",
+        "decision_id": "D-20260903-280",
+        "query_size_bytes": 625,
+        "query_sha256": "54a2e7e1752af4506673d2b5cbc2666f0deea45ec96e6d82561e4b265c78797a",
+        "manifest_sha256": "f8ec096be43851d85b16ec2b678d4a695fb0521c2c651e8bcf7c2491a29b50c1",
+        "artifact_sha256": "593e916b6aa18ad83f7bd7941ff68184cd71da8882ef4eb381de46d09ce64812"
+      },
       "remaining_evidence": [
-        "EXACT_THREE_TABLE_QUERY_AND_PREDICATE_PROVENANCE",
         "INDEPENDENT_SOURCE_TIME_EVIDENCE",
         "SIGNED_ENVELOPES_AND_EXTERNAL_TIME",
         "CONVERSION_TO_EXISTING_SIGNED_EEX_VINTAGE_CATALOG"
@@ -90,7 +98,13 @@
           "FR",
           "IT_NORTH"
         ],
-        "series_selection_status": "PENDING_EFFECTIVE_DATED_AT_AND_DE_LU_SELECTION_EVIDENCE",
+        "series_selection_status": "REQUEST_PREPARED_RESPONSE_NOT_RECEIVED",
+        "series_selection_request": {
+          "path": ".planning/phases/14-lt-audit-remediation/ENTSOE-DAY-AHEAD-EFFECTIVE-SERIES-SELECTION-REQUEST-V1-20260903.json",
+          "canonical_json_sha256": "6794566035e40b69eb5d104d09e317896b69502ca800513ef094ca46673d6cfb",
+          "owner_response_received": false,
+          "selection_authorized": false
+        },
         "requires_existing_materialized_rows": true,
         "requires_source_refresh": false,
         "requires_value_bound_finality_evidence": true,
@@ -113,9 +127,12 @@
       "it_north_covered_by_lseg": false
     }
   },
-  "execution_order": [
+  "completed_local_steps": [
     "REUSE_AND_BIND_EXISTING_EEX_CAPTURE_WITHOUT_NEW_QUERY",
-    "REQUEST_ENTSOE_EFFECTIVE_DATED_SERIES_SELECTION_EVIDENCE",
+    "PREPARE_ENTSOE_EFFECTIVE_DATED_SERIES_SELECTION_REQUEST"
+  ],
+  "execution_order": [
+    "TRANSMIT_REQUEST_AND_OBTAIN_ENTSOE_EFFECTIVE_DATED_SERIES_SELECTION_EVIDENCE",
     "REQUEST_PLATFORM_OWNED_JULY_REALIZED_EXPORT_FROM_EXISTING_MATERIALIZED_SILVER",
     "VALIDATE_UNSIGNED_ENTSOE_V2_REPLAY_LOCALLY",
     "REQUEST_MATCHED_LSEG_RECONCILIATION_AND_FINALITY_EVIDENCE",

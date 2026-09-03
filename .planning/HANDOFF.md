@@ -5,7 +5,7 @@ Read in this order:
 1. `AGENTS.md`
 2. `.planning/HANDOFF.md`
 3. `.planning/phases/14-lt-audit-remediation/DECISION-LOG.md`
-4. `.planning/phases/14-lt-audit-remediation/SESSION-HANDOFF-20260903-EEX-EXACT-QUERY-PROVENANCE.md`
+4. `.planning/phases/14-lt-audit-remediation/SESSION-HANDOFF-20260903-ENTSOE-EFFECTIVE-SERIES-SELECTION-REQUEST.md`
 
 ## Current state
 
@@ -217,6 +217,13 @@ Read in this order:
   declaration. Independent source time, signed envelopes and conversion to the
   existing signed EEX vintage catalogue remain missing, so the capture is not
   a model input and no later evaluation/scenario step is authorized.
+- The next local ENTSO-E preparation item is now closed without a data query or
+  invented selection. A canonical machine-readable request freezes the exact
+  July 2026 `realized_final` window, fixed CH/FR/IT-North keys and the two
+  admitted candidates for each of AT and DE-LU. It has not been transmitted,
+  no owner response exists and all source-selection/model authorities remain
+  false. The machine outage plan now reflects both this state and the completed
+  D280 EEX query binding.
 
 ## Invariants
 
@@ -229,8 +236,8 @@ Read in this order:
   `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS` until independently
   governed local exports and a new future holdout exist.
 
-See durable decisions D-20260821-248 through D-20260903-280 and
-`SESSION-HANDOFF-20260903-EEX-EXACT-QUERY-PROVENANCE.md` for the
+See durable decisions D-20260821-248 through D-20260903-281 and
+`SESSION-HANDOFF-20260903-ENTSOE-EFFECTIVE-SERIES-SELECTION-REQUEST.md` for the
 latest exact implementation files, hashes, tests and residual risks. The PFC
 target, source-acquisition, scenario-product, ENTSO-E export,
 normalized-interval and preceding repo-hygiene handoffs retain their exact

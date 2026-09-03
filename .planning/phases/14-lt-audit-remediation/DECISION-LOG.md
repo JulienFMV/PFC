@@ -21583,6 +21583,78 @@ Invariants not to break:
   model admission remains
   `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS`.
 
+## D-20260903-281 - Freeze the bounded ENTSO-E AT/DE-LU selection request without inventing a response
+
+Decision:
+
+- Freeze one metadata-only request for the July 2026 `realized_final` smoke
+  export. Bind the exact Swiss-local month as
+  `[2026-06-30T22:00:00Z, 2026-07-31T22:00:00Z)` over UTC partitions June and
+  July 2026.
+- Keep CH, FR and IT-North on their unique admitted keys. Ask the data owner to
+  choose explicitly and effective-date exactly one of the two already admitted
+  classification sequences for AT and exactly one for DE-LU.
+- Require exactly one rule per field covering the complete half-open request
+  window, plus owner identity, selection basis, source reference, sequence/key
+  consistency, asserted time and evidence-document digest in the future
+  response. Forbid in-window changes, gaps, overlaps, implicit defaults,
+  averaging and consumer inference. A reported in-window change requires a
+  separately reviewed segmented-export plan.
+- Bind the request into the outage plan with canonical JSON SHA-256
+  `6794566035e40b69eb5d104d09e317896b69502ca800513ef094ca46673d6cfb`.
+  Record that the request has not been transmitted, no owner response has been
+  received and no selection is authorized.
+- Update the stale EEX lane in the same machine plan to reflect D280: exact
+  query provenance is complete, while independent source time, signed
+  envelopes and conversion to the existing signed EEX vintage catalogue remain
+  open.
+
+Reason:
+
+The existing ENTSO-E validator already rejects unknown SeriesKeys and has no
+implicit multi-auction choice. The missing fact is an owner-controlled
+effective-dated choice, not another runtime abstraction. A narrow immutable
+request makes that dependency executable by the external owner without
+fabricating the answer or opening prices. Updating the plan removes a stale
+completed EEX action and exposes the true next external step.
+
+Rejected alternatives:
+
+- Pick classification sequence 1 or 2 from naming, row counts, recency or
+  local intuition.
+- Average the two sequences or silently fall back when one is absent.
+- Add a second selection validator or transport client before an owner response
+  and operational delivery profile exist.
+- Query Databricks, start a Warehouse, refresh ENTSO-E or open price rows to
+  answer a metadata-ownership question.
+- Treat the request itself, a future unauthenticated response or synthetic
+  tests as data-source, model-input, production or trading authority.
+
+Verification and cost:
+
+- focused plan/request matrix: `4 passed`;
+- adjacent ENTSO-E export and outage-plan matrix: `24 passed, 1 deselected`;
+  the deselected historical EEX test would rehash the 29.8 MB opaque artifact
+  and was unnecessary for this metadata-only increment;
+- required LT minimum: `58 passed, 1 skipped`; the skip is the pre-existing
+  optional TensorFlow import boundary;
+- targeted Ruff and JSON syntax checks: pass;
+- Databricks connections/statements, Warehouse starts, business rows opened,
+  network calls, remote writes, model retraining, CT changes, T057 access and
+  solver changes: `0/0/0/0/0/0/0/0/0/0`.
+
+Invariants not to break:
+
+- No AT or DE-LU SeriesKey is selected until authenticated, owner-supplied,
+  effective-dated evidence is bound and admitted.
+- `realized_final` remains distinct from `causal_asof`; July backfill cannot be
+  relabelled as historical causal truth.
+- The CH EEX-constrained monthly BASE solver remains sole monthly-level
+  authority. ENTSO-E/LSEG may provide truth, control or zero-mean shape only.
+- LT remains independent from `pfc_shaping.ct.*`; T057 remains sealed and
+  model admission remains
+  `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS`.
+
 ## D-20260903-280 - Bind the reused EEX capture to its exact query without opening values
 
 Decision:
