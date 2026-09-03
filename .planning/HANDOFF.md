@@ -5,7 +5,7 @@ Read in this order:
 1. `AGENTS.md`
 2. `.planning/HANDOFF.md`
 3. `.planning/phases/14-lt-audit-remediation/DECISION-LOG.md`
-4. `.planning/phases/14-lt-audit-remediation/SESSION-HANDOFF-20260903-LT-ORIGIN-REGISTRY-TRUST-CONFORMANCE-V1.md`
+4. `.planning/phases/14-lt-audit-remediation/SESSION-HANDOFF-20260903-LT-ORIGIN-TRANSPORT-GAP-AUDIT.md`
 
 ## Current state
 
@@ -201,6 +201,15 @@ Read in this order:
   registration and countable origins remain false. Evaluation protocol v6
   binds the exact contract and implementation hashes without changing its
   candidates, metrics, cohort or monthly solver boundary.
+- The remaining origin transport gap has been audited and deliberately stops
+  at the operational authority boundary. Request/response signatures,
+  operation replay/lookup, sanitized rejections and fresh HEAD challenges
+  already cover the locally provable semantics. The unresolved identity,
+  credential, endpoint, timeout/status, availability/SLO and remote durability
+  properties require one externally selected service profile. No origin
+  client, generic transport abstraction or duplicate error envelope was added;
+  the separate snapshot-publication mTLS client is precedent only and must not
+  be imported or copied into the pure LT origin surface.
 
 ## Invariants
 
@@ -213,8 +222,8 @@ Read in this order:
   `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS` until independently
   governed local exports and a new future holdout exist.
 
-See durable decisions D-20260821-248 through D-20260903-278 and
-`SESSION-HANDOFF-20260903-LT-ORIGIN-REGISTRY-TRUST-CONFORMANCE-V1.md` for the
+See durable decisions D-20260821-248 through D-20260903-279 and
+`SESSION-HANDOFF-20260903-LT-ORIGIN-TRANSPORT-GAP-AUDIT.md` for the
 latest exact implementation files, hashes, tests and residual risks. The PFC
 target, source-acquisition, scenario-product, ENTSO-E export,
 normalized-interval and preceding repo-hygiene handoffs retain their exact

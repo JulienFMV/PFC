@@ -21583,6 +21583,85 @@ Invariants not to break:
   model admission remains
   `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS`.
 
+## D-20260903-279 - Stop origin transport work at the operational authority boundary
+
+Decision:
+
+- Do not add more origin-registry runtime code for transport authentication,
+  replay, availability or error handling in the current construction phase.
+  The exact request signature, registry receipt/HEAD signatures, trust-bundle
+  lifecycle, operation idempotence/lookup, sanitized rejection and nonce/TTL
+  checks already close the invariants that are locally provable.
+- Classify the remaining gap as operational: endpoint/protocol choice, server
+  identity, client mTLS or workload identity, credential custody, transport
+  timeouts/statuses, rate limits, monitoring, SLO, remote linearizability,
+  WORM retention and DR evidence.
+- Use `pfc_shaping.data.snapshot_anchor_client` only as semantic precedent for
+  failure classification. Do not import, copy or generalize it into the origin
+  surface: it owns HTTP/SSL, environment, certificate/private-key and
+  publication-domain responsibilities that the pure LT origin modules must
+  not acquire.
+- Preserve the future operational rule that any uncertain
+  compare-and-append outcome is `INDETERMINATE_APPEND` and must be resolved by
+  exact immutable operation lookup before retry. Read unavailability and
+  invalid or unauthenticated responses grant no state or freshness authority.
+- Reopen implementation only after one exact externally owned transport
+  profile defines identity, credential ownership, wire/status mapping,
+  deadlines, response bounds and operational guarantees. Never replace that
+  evidence with caller-supplied booleans or synthetic local success.
+
+Reason:
+
+The repository already contains both sides of the useful local boundary. The
+origin stack is public-key-only and verifies exact application documents,
+fresh HEAD challenges and deterministic state semantics. The separate
+snapshot-publication stack demonstrates how a real mTLS client distinguishes
+determinate conflicts from post-dispatch indeterminacy and recovers by exact
+operation lookup. What remains cannot be validated without choosing and
+operating the real origin service. Another local envelope or generic client
+would duplicate mature mechanisms, create cross-domain coupling and falsely
+suggest that transport identity or availability had been qualified.
+
+Rejected alternatives:
+
+- Copy the snapshot-publication mTLS client and replace its paths or domain
+  constants for origin registration.
+- Introduce a generic transport framework before a second concrete approved
+  profile exists.
+- Invent HTTP status, timeout, authentication or retry semantics not selected
+  by an operational owner.
+- Add a caller-settable `authenticated`, `durable`, `available` or
+  `linearizable` flag to synthetic evidence.
+- Build a second signed error envelope even though authenticated channel and
+  service-error semantics are not specified.
+- Continue writing code solely to avoid an explicit boundary stop.
+
+Verification and cost:
+
+- complete audit note and reopening checklist:
+  `LT-ORIGIN-REGISTRY-TRANSPORT-GAP-AUDIT-20260903.md`;
+- AST imports confirm no HTTP, SSL, filesystem, environment, credential or
+  private-key dependency in the three pure LT origin modules;
+- focused origin request/receipt/trust tests and documentation diff checks are
+  recorded in the session handoff;
+- runtime source, tests, package/evaluation hashes and model code changed: `0`;
+- data rows, network calls, Databricks statements, Warehouse starts, real
+  signatures, model training, CT changes, T057 access and solver changes:
+  `0/0/0/0/0/0/0/0/0`.
+
+Invariants not to break:
+
+- An application request signature does not authenticate the live transport
+  peer; a locally verified registry signature does not externally admit its
+  root or service.
+- A timeout or malformed response after append dispatch can never be treated
+  as proof of no commit. Exact operation lookup precedes every retry.
+- A cached HEAD or reused challenge is never fresh authority; each live check
+  requires a new unpredictable caller nonce and trusted verification time.
+- Origin registration remains zero-countable and future truth stays closed.
+  LT remains independent of CT, T057 remains sealed and the CH monthly BASE
+  solver remains sole monthly-level authority.
+
 ## D-20260903-278 - Freeze authority-negative registry trust and transport conformance
 
 Decision:
