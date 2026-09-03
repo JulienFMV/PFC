@@ -113,6 +113,7 @@ pfc_shaping/lt/evaluation_protocol.py
 pfc_shaping/lt/origin_registration_envelope.py
 pfc_shaping/lt/origin_registration_receipt.py
 pfc_shaping/lt/origin_registration_request.py
+pfc_shaping/lt/origin_registry_conformance.py
 pfc_shaping/lt/model/__init__.py
 pfc_shaping/lt/model/assembler.py
 pfc_shaping/lt/model/electrification_shape.py

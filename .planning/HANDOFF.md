@@ -5,7 +5,7 @@ Read in this order:
 1. `AGENTS.md`
 2. `.planning/HANDOFF.md`
 3. `.planning/phases/14-lt-audit-remediation/DECISION-LOG.md`
-4. `.planning/phases/14-lt-audit-remediation/SESSION-HANDOFF-20260902-LT-SYNTHETIC-EVALUATION-ENGINE-V1.md`
+4. `.planning/phases/14-lt-audit-remediation/SESSION-HANDOFF-20260903-LT-ORIGIN-REGISTRY-TRUST-CONFORMANCE-V1.md`
 
 ## Current state
 
@@ -191,6 +191,16 @@ Read in this order:
   external CAS/WORM operation, trusted commit time and independent conformance
   evidence are missing, so externally registered/countable origins remain
   zero. The incompatible SQLite reference is not promoted.
+- The next authority-negative registry layer is now locally frozen and
+  synthetic-tested. A signed trust-bundle chain constrains registry public-key
+  validity and irreversible lifecycle transitions under a distinct
+  caller-supplied root key. A thread-safe in-memory harness qualifies
+  transport-neutral HEAD, atomic compare-and-append, exact retry, uniqueness
+  and immutable sanitized rejection semantics. It has no key custody, clock,
+  nonce, persistence, network or external CAS/WORM capability; trust admission,
+  registration and countable origins remain false. Evaluation protocol v6
+  binds the exact contract and implementation hashes without changing its
+  candidates, metrics, cohort or monthly solver boundary.
 
 ## Invariants
 
@@ -203,8 +213,8 @@ Read in this order:
   `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS` until independently
   governed local exports and a new future holdout exist.
 
-See durable decisions D-20260821-248 through D-20260903-277 and
-`SESSION-HANDOFF-20260902-LT-ORIGIN-RECEIPT-HEAD-WIRE-V1.md` for the
+See durable decisions D-20260821-248 through D-20260903-278 and
+`SESSION-HANDOFF-20260903-LT-ORIGIN-REGISTRY-TRUST-CONFORMANCE-V1.md` for the
 latest exact implementation files, hashes, tests and residual risks. The PFC
 target, source-acquisition, scenario-product, ENTSO-E export,
 normalized-interval and preceding repo-hygiene handoffs retain their exact

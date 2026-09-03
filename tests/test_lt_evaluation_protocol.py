@@ -98,6 +98,9 @@ def test_protocol_bindings_match_exact_local_bytes() -> None:
     assert bindings.origin_registration_receipt_normalized_lf_sha256 == _normalized_lf_sha256(
         "pfc_shaping/lt/origin_registration_receipt.py"
     )
+    assert bindings.origin_registry_conformance_normalized_lf_sha256 == _normalized_lf_sha256(
+        "pfc_shaping/lt/origin_registry_conformance.py"
+    )
     assert (
         bindings.origin_receipt_head_wire_contract_sha256
         == hashlib.sha256(
@@ -105,6 +108,16 @@ def test_protocol_bindings_match_exact_local_bytes() -> None:
                 ROOT
                 / ".planning/phases/14-lt-audit-remediation"
                 / "CH-LT-ORIGIN-REGISTRY-RECEIPT-HEAD-WIRE-CONTRACT-DRAFT-V1-20260902.json"
+            ).read_bytes()
+        ).hexdigest()
+    )
+    assert (
+        bindings.origin_registry_trust_transport_contract_sha256
+        == hashlib.sha256(
+            (
+                ROOT
+                / ".planning/phases/14-lt-audit-remediation"
+                / "CH-LT-ORIGIN-REGISTRY-TRUST-TRANSPORT-CONFORMANCE-DRAFT-V1-20260903.json"
             ).read_bytes()
         ).hexdigest()
     )

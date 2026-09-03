@@ -1,4 +1,4 @@
-# LT rolling-origin evaluation protocol v5
+# LT rolling-origin evaluation protocol v6
 
 ## Scope
 
@@ -14,7 +14,7 @@ visible, but they do not replace the required external registry, trusted time,
 FMV risk margins, power calibration or source admission.
 
 Canonical semantic SHA-256:
-`800c1db06f3a760998d318553fcece605d86581991b2548132fb18e61e5ff9d7`.
+`152b453db2e19e4ea16007865cfabb91bf9147cef46105da1f9f584956769fbd`.
 
 ## Candidate family
 
@@ -29,7 +29,7 @@ The comparison contains exactly one incumbent and four challengers:
 
 The incumbent has no tuning grid. Challenger tuning may occur only inside
 nested, externally registered development origins. Future-holdout tuning is
-forbidden. Version 5 binds every challenger to the normalized source hash
+forbidden. Version 6 binds every challenger to the normalized source hash
 `887f3b00d33231b52c58395ef43b5310624222922e955a6425d723e885cb5e19`.
 The scoring engine is independently bound to
 `034a06c14ec5aff337ab58cf4ab2e79a63c49f2f1d656dbc5fb3bd950c310ffc`.
@@ -41,6 +41,11 @@ The receipt/HEAD verifier is bound to normalized source hash
 `d3224f53aa1912301ac87f5db0c4721547978c1da17358411d37adc558299eb7`
 and its exact wire-contract file to
 `1f9d1f6495f716b7afb3497195626b24fe427b7dedf3f6f001c00051d6688047`.
+The registry trust/conformance implementation is bound to normalized source
+hash
+`e7defb0700665bb68ca4debe490b6920816739f6882850752f304827b17cfdf1`
+and its exact trust/transport contract file to
+`57ce79771d25cf6a858a2c2fef585d202b66d05aff6a107b834f2afb9407df39`.
 
 The weighted MLP uses an exact observation-level exponential loss, a frozen
 180-day half-life, a deterministic 64x64 ReLU network and analytic gradients.
@@ -181,3 +186,34 @@ The wire contract ID is
 its exact file SHA-256 is
 `1f9d1f6495f716b7afb3497195626b24fe427b7dedf3f6f001c00051d6688047`.
 The incompatible SQLite reference remains test-only and is not promoted.
+
+## Registry trust and transport-conformance boundary
+
+`pfc_shaping.lt.origin_registry_conformance` verifies exact signed trust
+bundles under a caller-supplied Ed25519 root public key. Bundles contain a
+strictly ordered public registry-key inventory, exactly one currently active
+signer, half-open validity windows and an append-only lifecycle chain.
+Historical keys may verify receipts only inside their frozen window;
+revoked or compromised keys are always rejected. The trust root and registry
+signer roles must remain cryptographically distinct.
+
+The same module provides a deterministic, thread-safe, in-memory model of the
+transport-neutral `get_head`, compare-and-append and operation-lookup
+semantics. It exercises atomic sequence/predecessor comparison, uniqueness,
+exact idempotent retry, divergent-retry rejection, immutable committed bytes
+and sanitized rejected-operation retention. Candidate preparation reverifies
+the complete receipt/request/envelope/schedule chain against the selected
+bundle key before this synthetic state-machine test.
+
+This is not a registry client or service. It owns no private key, credential,
+clock or nonce; performs no filesystem, database or network I/O; and cannot
+provide remote linearizability, WORM retention, service identity or trusted
+commit time. A locally valid trust-root signature admits neither that root nor
+the registry service. All registration, countability, truth-opening,
+training, selection, scientific, production and promotion authorities remain
+false.
+
+The trust/transport contract ID is
+`84839a92bc62426c964da9eaefcf719be80808c79089b7ac2142af14d033206b`;
+its exact file SHA-256 is
+`57ce79771d25cf6a858a2c2fef585d202b66d05aff6a107b834f2afb9407df39`.

@@ -16,10 +16,10 @@ from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any
 
-EVALUATION_PROTOCOL_VERSION = "fmv-lt-hourly-evaluation-protocol-v5"
+EVALUATION_PROTOCOL_VERSION = "fmv-lt-hourly-evaluation-protocol-v6"
 EVALUATION_STATUS = "LOCAL_HASH_FROZEN_NOT_EXTERNALLY_REGISTERED_NO_GO"
 CANONICAL_PROTOCOL_SEMANTIC_SHA256 = (
-    "800c1db06f3a760998d318553fcece605d86581991b2548132fb18e61e5ff9d7"
+    "152b453db2e19e4ea16007865cfabb91bf9147cef46105da1f9f584956769fbd"
 )
 PRIMARY_METRIC = "MONTHLY_LEVEL_NEUTRALIZED_MAE_EUR_MWH"
 SECONDARY_METRICS = (
@@ -220,6 +220,8 @@ class ProtocolBindings:
     origin_registration_request_normalized_lf_sha256: str
     origin_registration_receipt_normalized_lf_sha256: str
     origin_receipt_head_wire_contract_sha256: str
+    origin_registry_conformance_normalized_lf_sha256: str
+    origin_registry_trust_transport_contract_sha256: str
     package_contract_normalized_lf_sha256: str
     runtime_spec_normalized_lf_sha256: str
 
@@ -247,6 +249,12 @@ class ProtocolBindings:
             ),
             "origin_receipt_head_wire_contract_sha256": (
                 self.origin_receipt_head_wire_contract_sha256
+            ),
+            "origin_registry_conformance_normalized_lf_sha256": (
+                self.origin_registry_conformance_normalized_lf_sha256
+            ),
+            "origin_registry_trust_transport_contract_sha256": (
+                self.origin_registry_trust_transport_contract_sha256
             ),
             "package_contract_normalized_lf_sha256": (self.package_contract_normalized_lf_sha256),
             "runtime_spec_normalized_lf_sha256": self.runtime_spec_normalized_lf_sha256,
@@ -463,7 +471,7 @@ def default_evaluation_protocol() -> EvaluationProtocol:
     )
     slots = tuple(_origin_slot(*parts) for parts in origin_dates)
     protocol = EvaluationProtocol(
-        protocol_id="ch-lt-hourly-challengers-2026-v5",
+        protocol_id="ch-lt-hourly-challengers-2026-v6",
         locally_frozen_at_utc=frozen_at,
         candidates=candidates,
         holdout=FutureHoldout(
@@ -503,8 +511,14 @@ def default_evaluation_protocol() -> EvaluationProtocol:
             origin_receipt_head_wire_contract_sha256=(
                 "1f9d1f6495f716b7afb3497195626b24fe427b7dedf3f6f001c00051d6688047"
             ),
+            origin_registry_conformance_normalized_lf_sha256=(
+                "e7defb0700665bb68ca4debe490b6920816739f6882850752f304827b17cfdf1"
+            ),
+            origin_registry_trust_transport_contract_sha256=(
+                "57ce79771d25cf6a858a2c2fef585d202b66d05aff6a107b834f2afb9407df39"
+            ),
             package_contract_normalized_lf_sha256=(
-                "cfb123ad7a0549dabfceec933fa8056aa81dad0328872fc097156ba68f1901b8"
+                "c9408d30b371393b4c5dbf46f94af650e6c64b5639ab39033b1a95fb98f23278"
             ),
             runtime_spec_normalized_lf_sha256=(
                 "c61b2261c4ee0048d72a70ddb183b99b6a50cb52bf677bfbc663441db232987f"

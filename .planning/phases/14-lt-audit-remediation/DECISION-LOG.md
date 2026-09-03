@@ -21583,6 +21583,104 @@ Invariants not to break:
   model admission remains
   `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS`.
 
+## D-20260903-278 - Freeze authority-negative registry trust and transport conformance
+
+Decision:
+
+- Supersede evaluation protocol v5 with v6 only to bind the local registry
+  trust/transport contract, its pure LT conformance implementation and the
+  updated governed-wheel inventory. Preserve the five candidates, metrics,
+  12-slot cohort, solver boundary and every negative authority. The v6
+  semantic SHA-256 is
+  `152b453db2e19e4ea16007865cfabb91bf9147cef46105da1f9f584956769fbd`.
+- Freeze
+  `CH-LT-ORIGIN-REGISTRY-TRUST-TRANSPORT-CONFORMANCE-DRAFT-V1-20260903.json`
+  as a local construction contract, not an externally admitted trust or
+  service protocol. Its semantic contract ID is
+  `84839a92bc62426c964da9eaefcf719be80808c79089b7ac2142af14d033206b`
+  and its exact LF-pinned file SHA-256 is
+  `57ce79771d25cf6a858a2c2fef585d202b66d05aff6a107b834f2afb9407df39`.
+- Verify exact canonical public-key trust bundles signed under a
+  caller-supplied Ed25519 root. Require a cryptographically distinct root and
+  registry signer, exactly one active registry key, half-open validity windows,
+  append-only key inventory, immutable key material/windows and irreversible
+  lifecycle transitions. Historical keys verify only receipts committed in
+  their frozen window; revoked or compromised keys never verify receipts.
+- Model transport-neutral `get_head`, compare-and-append and operation lookup
+  only through a deterministic thread-safe in-memory harness. Require one
+  linearization point across exact retry, uniqueness, sequence/predecessor CAS
+  and append. Preserve exact committed request/receipt bytes and retain only a
+  deterministic sanitized record for rejected operations.
+- Reverify the complete receipt/request/envelope/schedule chain against the
+  bundle-selected registry key before creating an integrated synthetic append
+  candidate. Keep the isolated state-machine candidate type available for
+  deterministic unit tests; neither path grants authority.
+- Keep private keys, signature generation, nonce/clock generation,
+  credentials, filesystem/database/network I/O, registry deployment and real
+  operations absent. A locally verified root signature and synthetic state
+  transition leave trust admission, external CAS/WORM, registration,
+  countability, truth opening, training, selection, scientific admission,
+  production and promotion false.
+- Bind normalized-LF source SHA-256 values
+  `e7defb0700665bb68ca4debe490b6920816739f6882850752f304827b17cfdf1`
+  for the conformance module,
+  `c9408d30b371393b4c5dbf46f94af650e6c64b5639ab39033b1a95fb98f23278`
+  for the package contract and
+  `516edb82a74f14289db59839c40147f7c3531845b9725b89a0ad5c1102d2c0ee`
+  for evaluation protocol v6.
+
+Reason:
+
+The receipt verifier introduced by D-20260902-276 could prove exact bytes only
+under an arbitrary caller-supplied registry key; key rotation, revocation and
+the expected atomic service semantics were still implicit. These invariants
+can be made executable with synthetic keys and in-memory state while the
+project remains in construction. Doing so closes local ambiguity without
+claiming that a test root, process lock or cached HEAD is an independent
+registry authority.
+
+Rejected alternatives:
+
+- Wait for operational approval before continuing local construction.
+- Treat any locally signed trust bundle as admission of its root or signer.
+- Promote the SQLite reference database into the external registry service or
+  use local filesystem persistence as CAS/WORM evidence.
+- Permit key removal, validity-window rewrites, lifecycle regression, multiple
+  active signers, or receipt verification under revoked/compromised keys.
+- Return a successful retry for the same operation UUID with divergent exact
+  bytes, overwrite prior operation results, or retain rejected payloads and
+  exception text.
+- Add network clients, credentials, deployment configuration, live registry
+  calls, Databricks access, model training, CT changes, T057 access or monthly
+  solver changes to this construction increment.
+
+Verification and cost:
+
+- dedicated trust/transport synthetic and adversarial matrix: `16 passed`;
+- focused trust/receipt/request/envelope/protocol/package matrix:
+  `123 passed`;
+- expanded evaluation/registry/estimand/curve/import/shape/solver matrix:
+  `364 passed, 1 skipped`;
+- required LT minimum: `58 passed, 1 skipped`;
+- targeted Ruff checks and format checks: pass;
+- real rows, real signatures, production private keys, model retraining, truth
+  opening, Databricks statements, Warehouse starts, model artifacts, CT
+  changes and solver-level changes: `0/0/0/0/0/0/0/0/0/0`.
+
+Invariants not to break:
+
+- Local cryptographic verification admits no trust root, registry identity,
+  trusted time, persistence or external operation.
+- A process-local lock demonstrates only the required state-machine behaviour;
+  it is not evidence of remote linearizability, durability or WORM retention.
+- All synthetic committed and rejected outcomes remain noncountable and grant
+  no truth, training, selection, production or promotion authority.
+- The incompatible SQLite reference remains test-only and excluded from the
+  governed wheel.
+- The cohort remains 12 scheduled and zero countable origins. Future truth
+  remains closed; the CH monthly BASE solver remains sole monthly-level
+  authority; LT stays independent of CT and T057 remains sealed.
+
 ## D-20260903-277 - Make disciplined engineering execution rules permanent
 
 Decision:
