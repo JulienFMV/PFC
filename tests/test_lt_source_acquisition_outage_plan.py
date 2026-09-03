@@ -19,6 +19,13 @@ SELECTION_REQUEST_PATH = (
     / "14-lt-audit-remediation"
     / "ENTSOE-DAY-AHEAD-EFFECTIVE-SERIES-SELECTION-REQUEST-V1-20260903.json"
 )
+SELECTION_EVIDENCE_PATH = (
+    ROOT
+    / ".planning"
+    / "phases"
+    / "14-lt-audit-remediation"
+    / "ENTSOE-DAY-AHEAD-EFFECTIVE-SERIES-SELECTION-EVIDENCE-V1-20260903.json"
+)
 
 
 def _plan() -> dict[str, object]:
@@ -41,6 +48,10 @@ def _selection_request() -> dict[str, object]:
     return json.loads(SELECTION_REQUEST_PATH.read_text(encoding="utf-8"))
 
 
+def _selection_evidence() -> dict[str, object]:
+    return json.loads(SELECTION_EVIDENCE_PATH.read_text(encoding="utf-8"))
+
+
 def _canonical_json_sha256(payload: object) -> str:
     canonical = json.dumps(
         payload,
@@ -51,14 +62,23 @@ def _canonical_json_sha256(payload: object) -> str:
     return hashlib.sha256(canonical).hexdigest()
 
 
-def test_plan_is_authority_and_execution_negative() -> None:
+def test_plan_records_only_the_bounded_comparison_and_keeps_authorities_negative() -> None:
     plan = _plan()
 
     execution = plan["execution"]
     authorities = plan["authorities"]
     assert isinstance(execution, dict)
     assert isinstance(authorities, dict)
-    assert execution and all(type(value) is int and value == 0 for value in execution.values())
+    assert execution == {
+        "databricks_api_requests": 6,
+        "databricks_statements": 1,
+        "warehouse_starts": 0,
+        "warehouse_resizes": 0,
+        "warehouse_creates": 0,
+        "aggregate_business_value_comparisons": 1,
+        "raw_business_rows_returned": 0,
+        "remote_writes": 0,
+    }
     assert authorities and all(value is False for value in authorities.values())
     assert plan["status"] == "BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS"
 
@@ -121,7 +141,12 @@ def test_entsoe_sql_bindings_match_and_no_warehouse_start_is_authorized() -> Non
         _sha256(ROOT / "docs/data/sql/databricks_prd_entsoe_day_ahead_realized_export_v2.sql")
         == bindings["realized_final_sha256"]
     )
-    assert entsoe["local_cost_preflight"] == "STOP_NO_ACTIVE_WAREHOUSE"
+    assert entsoe["local_cost_preflight"] == (
+        "BOUNDED_COMPARISON_EXECUTED_ON_ALREADY_RUNNING_WAREHOUSE"
+    )
+    assert entsoe["internal_silver_snapshot_condition"] == (
+        "JULY_ROWS_VERIFIED_ACCESSIBLE_AT_COMPARISON_TIME_NO_FRESHNESS_CLAIM"
+    )
     assert entsoe["warehouse_start_authorized"] is False
 
 
@@ -155,16 +180,19 @@ def test_entsoe_selection_request_is_exactly_bound_and_authority_negative() -> N
     assert binding["canonical_json_sha256"] == _canonical_json_sha256(request)
     assert binding["owner_response_received"] is False
     assert binding["selection_authorized"] is False
-    assert plan_request["series_selection_status"] == "REQUEST_PREPARED_RESPONSE_NOT_RECEIVED"
+    assert plan_request["series_selection_status"] == (
+        "CONSTRUCTION_REFERENCE_SELECTION_FROZEN_FROM_EXACT_LSEG_PARITY"
+    )
     assert request["status"] == (
         "REQUEST_PREPARED_RESPONSE_NOT_RECEIVED_NO_EXECUTION_OR_MODEL_AUTHORITY"
     )
     assert plan["completed_local_steps"] == [
         "REUSE_AND_BIND_EXISTING_EEX_CAPTURE_WITHOUT_NEW_QUERY",
         "PREPARE_ENTSOE_EFFECTIVE_DATED_SERIES_SELECTION_REQUEST",
+        "RESOLVE_ENTSOE_AT_AND_DE_LU_CONSTRUCTION_REFERENCE_BY_EXACT_LSEG_PARITY",
     ]
     assert plan["execution_order"][0] == (
-        "TRANSMIT_REQUEST_AND_OBTAIN_ENTSOE_EFFECTIVE_DATED_SERIES_SELECTION_EVIDENCE"
+        "REQUEST_PLATFORM_OWNED_JULY_REALIZED_EXPORT_FROM_EXISTING_MATERIALIZED_SILVER"
     )
 
     scope = request["request_scope"]
@@ -180,6 +208,72 @@ def test_entsoe_selection_request_is_exactly_bound_and_authority_negative() -> N
     assert isinstance(execution, dict)
     assert isinstance(authorities, dict)
     assert execution and all(type(value) is int and value == 0 for value in execution.values())
+    assert authorities and all(value is False for value in authorities.values())
+
+
+def test_entsoe_selection_evidence_freezes_sequence_one_from_exact_lseg_parity() -> None:
+    plan_request = _lane("entsoe")["first_delivery_request"]
+    assert isinstance(plan_request, dict)
+    binding = plan_request["series_selection_evidence"]
+    assert isinstance(binding, dict)
+
+    evidence = _selection_evidence()
+    assert binding["path"] == str(SELECTION_EVIDENCE_PATH.relative_to(ROOT)).replace(
+        "\\", "/"
+    )
+    assert binding["canonical_json_sha256"] == _canonical_json_sha256(evidence)
+    assert plan_request["series_selection_status"] == (
+        "CONSTRUCTION_REFERENCE_SELECTION_FROZEN_FROM_EXACT_LSEG_PARITY"
+    )
+    assert binding["construction_smoke_export_selection_frozen"] is True
+    assert binding["governed_model_selection_authorized"] is False
+
+    selected = evidence["construction_reference_selection"]
+    assert isinstance(selected, dict)
+    assert selected == {
+        "at_price": "day_ahead_prices||at_price||1",
+        "de_lu_price": "day_ahead_prices||de_lu_price||1",
+        "selection_basis": "EXACT_FULL_WINDOW_LSEG_EPEX_ACTUAL_PRICE_PARITY",
+        "in_window_change_observed": False,
+        "construction_smoke_export_selection_frozen": True,
+    }
+
+    metrics = evidence["comparison_metrics"]
+    assert isinstance(metrics, list)
+    assert len(metrics) == 4
+    by_identity = {
+        (row["field_name"], row["classification_sequence"]): row for row in metrics
+    }
+    for field in ("at_price", "de_lu_price"):
+        selected_metrics = by_identity[(field, "1")]
+        assert selected_metrics["entsoe_quarter_hours"] == 2976
+        assert selected_metrics["matched_lseg_quarter_hours"] == 2976
+        assert selected_metrics["missing_lseg_quarter_hours"] == 0
+        assert selected_metrics["overlapping_quarter_hours"] == 0
+        assert selected_metrics["mae_eur_per_mwh"] == 0.0
+        assert selected_metrics["rmse_eur_per_mwh"] == 0.0
+        assert selected_metrics["correlation"] == 1.0
+        assert selected_metrics["equal_to_half_cent_quarter_hours"] == 2976
+        assert by_identity[(field, "2")]["mae_eur_per_mwh"] > 9.0
+
+    limitations = evidence["limitations"]
+    execution = evidence["comparison_execution"]
+    authorities = evidence["authorities"]
+    assert isinstance(limitations, dict)
+    assert isinstance(execution, dict)
+    assert isinstance(authorities, dict)
+    assert execution["state"] == "SUCCEEDED"
+    assert execution["statement_count"] == 1
+    assert execution["result_row_count"] == 4
+    assert execution["result_truncated"] is False
+    assert execution["warehouse_state_before"] == "RUNNING"
+    assert execution["warehouse_start_count"] == 0
+    assert execution["raw_price_rows_returned"] == 0
+    assert execution["read_bytes"] == 9_364_142_086
+    assert execution["write_remote_bytes"] == 0
+    assert limitations["owner_response_received"] is False
+    assert limitations["executed_query_text_hash_verified"] is False
+    assert limitations["realized_finality_proven"] is False
     assert authorities and all(value is False for value in authorities.values())
 
 

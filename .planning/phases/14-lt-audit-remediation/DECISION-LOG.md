@@ -21583,6 +21583,85 @@ Invariants not to break:
   model admission remains
   `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS`.
 
+## D-20260903-282 - Select sequence 1 for the July AT/DE-LU construction reference by exact LSEG parity
+
+Decision:
+
+- Use local `JulienFMV` read access to inspect the deployed producer repository
+  `FMVSA/opendata-lakehouse` at
+  `a7e920d95b94b2db59180412f31213f917e8d8a3`. Confirm that A44
+  classification sequences 1 and 2 are distinct source auction identities and
+  that the producer deliberately defines no default.
+- Following explicit user authorization, run one bounded aggregate comparison
+  on the PBI SQL Warehouse only after observing it already `RUNNING`. Do not
+  start, resize or create compute and do not return raw prices.
+- Compare both AT and DE-LU sequences over the complete Swiss-local July 2026
+  window against the independently configured LSEG EPEX `auction_day_ahead`
+  curves. Expand valid aligned ENTSO-E blocks to native 15-minute intervals
+  before matching.
+- Freeze `day_ahead_prices||at_price||1` and
+  `day_ahead_prices||de_lu_price||1` for the construction-only July
+  `realized_final` smoke export. Each matches LSEG exactly on all 2,976 quarter
+  hours, with zero missing or overlapping intervals. Sequence 2 has MAE
+  `11.299412 EUR/MWh` for AT and `9.549943 EUR/MWh` for DE-LU.
+- Keep all governed authorities false. Exact LSEG parity establishes the
+  construction reference but does not prove original publication time,
+  realized finality, causal availability, model-input eligibility or
+  production admission.
+
+Reason:
+
+The ambiguity was resolvable from systems already available to the user. Code
+alone could prove distinct identities but not choose the reference auction.
+The exact full-window equality with the independently bound EPEX actual-price
+curves supplies a much stronger construction criterion than naming convention,
+row count or intuition. Waiting for a duplicate human confirmation would add
+process but no additional construction evidence.
+
+Rejected alternatives:
+
+- Keep the selection blocked despite accessible producer code and comparison
+  data.
+- Choose sequence 1 merely by numeric convention, or choose/average sequence 2.
+- Compare only a sample of dates or raw rows instead of every July quarter
+  hour.
+- Start a stopped Warehouse, refresh ENTSO-E, return raw prices or rerun the
+  comparison after the result was already decisive.
+- Promote exact parity into finality, PIT, model-selection or production
+  authority.
+
+Evidence and cost:
+
+- Databricks statement `01f1a79c-0849-1281-af0c-ee155e8346ce` completed from
+  `2026-09-03T13:33:22.103000Z` to
+  `2026-09-03T13:33:49.508000Z`;
+- four aggregate rows, not truncated; raw price rows returned: `0`;
+- bytes/files read: `9,364,142,086 / 102`; bytes/files pruned:
+  `1,533,406,893 / 155`; remote-write bytes and spill: `0/0`;
+- Warehouse starts/resizes/creates: `0/0/0`;
+- query history did not expose hash-verifiable SQL text, so the evidence does
+  not claim exact executed-query provenance;
+- canonical evidence SHA-256:
+  `968c3e0d5336f4ff38a130271456f7889c7a885e2e119ef62e5df596f7f8c0ab`.
+- focused outage-plan/evidence matrix: `12 passed`;
+- adjacent ENTSO-E export/LSEG reconciliation matrix: `52 passed`;
+- required LT minimum: `58 passed, 1 skipped`; the skip is the pre-existing
+  optional TensorFlow import boundary;
+- targeted Ruff, JSON syntax and `git diff --check`: pass.
+
+Invariants not to break:
+
+- Sequence 1 is frozen only for this complete July construction window. A
+  different month or an in-window source-identity change requires a fresh
+  effective-dated comparison.
+- `realized_final` remains distinct from `causal_asof`; July backfill cannot be
+  relabelled as historical causal truth.
+- The 9.36 GB comparison is not to be repeated. The next data delivery belongs
+  to the platform-owned bounded export lane.
+- The CH EEX-constrained monthly BASE solver remains sole monthly-level
+  authority. LT remains independent from CT, T057 remains sealed and model
+  admission remains `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS`.
+
 ## D-20260903-281 - Freeze the bounded ENTSO-E AT/DE-LU selection request without inventing a response
 
 Decision:

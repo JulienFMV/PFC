@@ -16,12 +16,13 @@
     "authorizes_execution": false
   },
   "execution": {
-    "databricks_connections": 0,
-    "databricks_statements": 0,
+    "databricks_api_requests": 6,
+    "databricks_statements": 1,
     "warehouse_starts": 0,
     "warehouse_resizes": 0,
     "warehouse_creates": 0,
-    "business_rows_opened": 0,
+    "aggregate_business_value_comparisons": 1,
+    "raw_business_rows_returned": 0,
     "remote_writes": 0
   },
   "authorities": {
@@ -69,10 +70,10 @@
       ]
     },
     "entsoe": {
-      "status": "WAITING_FOR_PLATFORM_OWNED_EXISTING_SNAPSHOT_DELIVERY",
+      "status": "CONSTRUCTION_REFERENCE_SELECTION_FROZEN_PLATFORM_EXPORT_PENDING",
       "public_source_refresh_condition": "DEGRADED_REPORTED_2026-09-01",
-      "internal_silver_snapshot_condition": "UNVERIFIED_FROM_THIS_WORKSTATION",
-      "local_cost_preflight": "STOP_NO_ACTIVE_WAREHOUSE",
+      "internal_silver_snapshot_condition": "JULY_ROWS_VERIFIED_ACCESSIBLE_AT_COMPARISON_TIME_NO_FRESHNESS_CLAIM",
+      "local_cost_preflight": "BOUNDED_COMPARISON_EXECUTED_ON_ALREADY_RUNNING_WAREHOUSE",
       "warehouse_start_authorized": false,
       "source_refresh_required_for_smoke_export": false,
       "delivery_mode": "PLATFORM_OWNED_EXISTING_MATERIALIZED_SNAPSHOT_ONLY",
@@ -98,12 +99,20 @@
           "FR",
           "IT_NORTH"
         ],
-        "series_selection_status": "REQUEST_PREPARED_RESPONSE_NOT_RECEIVED",
+        "series_selection_status": "CONSTRUCTION_REFERENCE_SELECTION_FROZEN_FROM_EXACT_LSEG_PARITY",
         "series_selection_request": {
           "path": ".planning/phases/14-lt-audit-remediation/ENTSOE-DAY-AHEAD-EFFECTIVE-SERIES-SELECTION-REQUEST-V1-20260903.json",
           "canonical_json_sha256": "6794566035e40b69eb5d104d09e317896b69502ca800513ef094ca46673d6cfb",
           "owner_response_received": false,
           "selection_authorized": false
+        },
+        "series_selection_evidence": {
+          "path": ".planning/phases/14-lt-audit-remediation/ENTSOE-DAY-AHEAD-EFFECTIVE-SERIES-SELECTION-EVIDENCE-V1-20260903.json",
+          "canonical_json_sha256": "968c3e0d5336f4ff38a130271456f7889c7a885e2e119ef62e5df596f7f8c0ab",
+          "at_series_key": "day_ahead_prices||at_price||1",
+          "de_lu_series_key": "day_ahead_prices||de_lu_price||1",
+          "construction_smoke_export_selection_frozen": true,
+          "governed_model_selection_authorized": false
         },
         "requires_existing_materialized_rows": true,
         "requires_source_refresh": false,
@@ -129,10 +138,10 @@
   },
   "completed_local_steps": [
     "REUSE_AND_BIND_EXISTING_EEX_CAPTURE_WITHOUT_NEW_QUERY",
-    "PREPARE_ENTSOE_EFFECTIVE_DATED_SERIES_SELECTION_REQUEST"
+    "PREPARE_ENTSOE_EFFECTIVE_DATED_SERIES_SELECTION_REQUEST",
+    "RESOLVE_ENTSOE_AT_AND_DE_LU_CONSTRUCTION_REFERENCE_BY_EXACT_LSEG_PARITY"
   ],
   "execution_order": [
-    "TRANSMIT_REQUEST_AND_OBTAIN_ENTSOE_EFFECTIVE_DATED_SERIES_SELECTION_EVIDENCE",
     "REQUEST_PLATFORM_OWNED_JULY_REALIZED_EXPORT_FROM_EXISTING_MATERIALIZED_SILVER",
     "VALIDATE_UNSIGNED_ENTSOE_V2_REPLAY_LOCALLY",
     "REQUEST_MATCHED_LSEG_RECONCILIATION_AND_FINALITY_EVIDENCE",

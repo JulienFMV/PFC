@@ -5,7 +5,9 @@
 The public ENTSO-E incident does not make historical materialized Silver rows
 invalid, and it does not prove that those rows are available. It only blocks a
 claim that a fresh source pull is currently complete. The local workstation
-must not test that distinction by querying Databricks or starting compute.
+must not test source recovery by querying Databricks or starting compute. A
+later explicitly authorized, bounded construction comparison used an already
+running Warehouse; it did not test or establish source recovery or freshness.
 
 The machine-readable disposition is
 `.planning/phases/14-lt-audit-remediation/LT-SOURCE-ACQUISITION-OUTAGE-PLAN-20260902.json`.
@@ -40,9 +42,10 @@ Until then the snapshot is useful local evidence, not a model input.
 
 ### ENTSO-E
 
-Use only a platform-owned delivery of rows already materialized before the
-incident. The laptop-side cost preflight remains `STOP_NO_ACTIVE_WAREHOUSE`.
-This plan neither asks for nor authorizes a Warehouse start.
+Use only rows already materialized before the incident. On 2026-09-03 the PBI
+SQL Warehouse was independently observed `RUNNING`; one explicitly authorized
+bounded aggregate comparison ran without starting, resizing or creating
+compute. This plan still authorizes no Warehouse start.
 
 The first request is deliberately a July 2026 `realized_final` smoke export.
 It exercises the v2 adapter and the LSEG reconciliation on a complete Swiss
@@ -59,10 +62,30 @@ with canonical JSON SHA-256
 It covers exactly the July Swiss-local window and the two admitted
 classification candidates for each of AT and DE-LU. It requests no business
 values. It has not been transmitted, no owner response has been received and
-no series selection is authorized. Defaults, averaging and consumer inference
-remain forbidden. Each selected key must cover the whole request window; an
-in-window classification change blocks this request and requires a separately
-reviewed segmented-export plan.
+the request itself authorizes no selection. Defaults, averaging and consumer
+inference remain forbidden. Each selected key must cover the whole request
+window; an in-window classification change blocks this request and requires a
+separately reviewed segmented-export plan.
+
+The construction-only selection question was subsequently resolved without an
+owner response. The deployed producer code proves that sequences 1 and 2 are
+distinct A44 auction identities with no implicit default. A bounded comparison
+against the independently configured LSEG EPEX day-ahead curves then found:
+
+- AT sequence 1: exact equality for all 2,976 July quarter-hours; sequence 2
+  MAE `11.299412 EUR/MWh`;
+- DE-LU sequence 1: exact equality for all 2,976 July quarter-hours; sequence 2
+  MAE `9.549943 EUR/MWh`.
+
+Therefore the July construction smoke export uses
+`day_ahead_prices||at_price||1` and
+`day_ahead_prices||de_lu_price||1`. The aggregate query returned no raw price
+rows, but it read 9,364,142,086 bytes; do not repeat it. Its evidence is frozen
+in
+`.planning/phases/14-lt-audit-remediation/ENTSOE-DAY-AHEAD-EFFECTIVE-SERIES-SELECTION-EVIDENCE-V1-20260903.json`.
+This parity selects the construction reference only. It does not prove source
+publication time, realized finality, causal availability, model input or
+production authority.
 
 If the internal materialized Silver snapshot is unavailable, stop. Wait for
 producer recovery; do not replace ENTSO-E with legacy local or synthetic data.

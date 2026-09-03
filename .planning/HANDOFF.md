@@ -5,7 +5,7 @@ Read in this order:
 1. `AGENTS.md`
 2. `.planning/HANDOFF.md`
 3. `.planning/phases/14-lt-audit-remediation/DECISION-LOG.md`
-4. `.planning/phases/14-lt-audit-remediation/SESSION-HANDOFF-20260903-ENTSOE-EFFECTIVE-SERIES-SELECTION-REQUEST.md`
+4. `.planning/phases/14-lt-audit-remediation/SESSION-HANDOFF-20260903-ENTSOE-SERIES-SELECTION-RESOLVED.md`
 
 ## Current state
 
@@ -224,6 +224,15 @@ Read in this order:
   no owner response exists and all source-selection/model authorities remain
   false. The machine outage plan now reflects both this state and the completed
   D280 EEX query binding.
+- After the user clarified the available `JulienFMV` GitHub and Databricks
+  access, the July AT/DE-LU construction selection was resolved. Deployed
+  producer code confirms sequences 1/2 are distinct A44 auction identities;
+  one aggregate comparison on an already-running Warehouse shows sequence 1
+  equals the independent LSEG EPEX actual curve on all 2,976 July quarter-hours
+  for both markets, while sequence 2 differs materially. AT and DE-LU sequence
+  1 are therefore frozen for the construction smoke export only. The statement
+  returned no raw prices but read 9.36 GB, so it must not be repeated. Finality,
+  causal, model and production authorities remain false.
 
 ## Invariants
 
@@ -236,8 +245,8 @@ Read in this order:
   `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS` until independently
   governed local exports and a new future holdout exist.
 
-See durable decisions D-20260821-248 through D-20260903-281 and
-`SESSION-HANDOFF-20260903-ENTSOE-EFFECTIVE-SERIES-SELECTION-REQUEST.md` for the
+See durable decisions D-20260821-248 through D-20260903-282 and
+`SESSION-HANDOFF-20260903-ENTSOE-SERIES-SELECTION-RESOLVED.md` for the
 latest exact implementation files, hashes, tests and residual risks. The PFC
 target, source-acquisition, scenario-product, ENTSO-E export,
 normalized-interval and preceding repo-hygiene handoffs retain their exact
