@@ -21583,6 +21583,63 @@ Invariants not to break:
   model admission remains
   `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS`.
 
+## D-20260903-277 - Make disciplined engineering execution rules permanent
+
+Decision:
+
+- Add four permanent execution principles to the canonical root `AGENTS.md`:
+  think before coding, simplicity first, surgical changes and outcome-driven
+  execution.
+- Require agents to state the objective, success criteria and material
+  assumptions before non-trivial implementation and to expose materially
+  different interpretations.
+- Ask for clarification only when repository evidence cannot safely resolve a
+  choice that changes behaviour, risk, authority or scope. Otherwise select
+  and state the narrowest safe reversible assumption.
+- Forbid speculative features, configuration and extension points. Prefer
+  direct code; allow a small single-use boundary only when it materially
+  isolates a security invariant, stable contract or necessary test seam.
+- Require every changed line to trace to the requested outcome, tests,
+  verification or mandatory governance evidence. Report unrelated issues
+  without opportunistically changing them.
+- Convert work into observable success criteria, use regression tests for bugs
+  when feasible, include verification in brief multi-step plans and continue
+  independently until success or a proven external blocker.
+
+Reason:
+
+The principles address recurring failure modes without weakening the existing
+autonomy, safety and governance contracts. The two qualifications prevent
+unnecessary clarification loops and avoid banning abstractions that are
+actually required to isolate cryptographic, authority or test boundaries.
+Keeping the rules in `AGENTS.md` makes them available to Codex and local agents
+on every session; `CLAUDE.md` already points to that canonical file.
+
+Rejected alternatives:
+
+- Copy the same rules into `CLAUDE.md`, which would create a second source of
+  truth and eventual drift.
+- Require a user question for every uncertainty, including narrow reversible
+  decisions already resolved by repository evidence.
+- Treat all single-use abstractions as forbidden even when they isolate a
+  security invariant or externally stable contract.
+- Apply the principles by refactoring existing unrelated code instead of only
+  governing future work.
+
+Verification:
+
+- `CLAUDE.md` remains a pointer to canonical `AGENTS.md` with no duplicated
+  rules;
+- the targeted documentation diff passes `git diff --check`;
+- no runtime code, test, data, CT, solver, model or authority state changed.
+
+Invariants not to break:
+
+- These are concise decision rules, not a requirement to expose private chain
+  of thought or create process for trivial work.
+- Existing project, workstation, LT/CT, solver, evidence and handoff rules take
+  precedence whenever they are stricter.
+
 ## D-20260902-276 - Freeze and verify a local receipt/HEAD wire without creating authority
 
 Decision:

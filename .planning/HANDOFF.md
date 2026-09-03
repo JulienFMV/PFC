@@ -18,6 +18,11 @@ Read in this order:
   outside Git. Deterministic test fixtures and governed evidence remain in
   Git.
 - Generated caches and output directories were cleaned on 2026-08-21.
+- The root `AGENTS.md` now permanently requires explicit material assumptions,
+  minimal designs, surgical diffs and outcome-driven verification. It asks for
+  clarification only when repository evidence cannot resolve a consequential
+  choice, and permits a single-use abstraction only when it materially
+  isolates a security invariant, stable contract or necessary test seam.
 - The external audit's confirmed front-edge, KKT, dependency, CI and legacy
   entrypoint defects are remediated locally. Its post-solver seam-patch and
   dead-contract claims were rejected after code-path verification.
@@ -198,7 +203,7 @@ Read in this order:
   `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS` until independently
   governed local exports and a new future holdout exist.
 
-See durable decisions D-20260821-248 through D-20260902-276 and
+See durable decisions D-20260821-248 through D-20260903-277 and
 `SESSION-HANDOFF-20260902-LT-ORIGIN-RECEIPT-HEAD-WIRE-V1.md` for the
 latest exact implementation files, hashes, tests and residual risks. The PFC
 target, source-acquisition, scenario-product, ENTSO-E export,

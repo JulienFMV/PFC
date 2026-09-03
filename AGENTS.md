@@ -5,6 +5,53 @@
 This file is the canonical root contract for Codex and local agents. If
 `CLAUDE.md` exists, it must point here instead of duplicating rules.
 
+## Engineering execution principles
+
+Think before coding:
+
+- Before implementation, inspect the relevant contracts and existing
+  interfaces, then state the objective, success criteria and material
+  assumptions briefly.
+- When several interpretations are plausible, expose the alternatives that
+  would materially change behaviour, risk or scope. Ask only when that choice
+  cannot be resolved safely from repository evidence; otherwise take the
+  narrowest safe assumption and state it.
+- Name missing information or authority explicitly. Do not guess through a
+  consequential ambiguity or irreversible action.
+- Prefer a simpler valid approach and push back briefly when the requested or
+  apparent design adds complexity without improving the success criteria.
+
+Simplicity first:
+
+- Implement only what the request and its verification criteria require. Do
+  not add speculative features, configuration switches or extension points.
+- Prefer direct code over a new abstraction used once. Introduce a boundary
+  only when it materially isolates a security invariant, stable contract or
+  necessary test seam, and keep it as small as possible.
+- Apply the senior-review test: if the same behaviour and safeguards can be
+  expressed substantially more clearly with less code, simplify before
+  handing off.
+
+Make surgical changes:
+
+- Every changed line must trace to the requested outcome, a required test,
+  verification evidence or mandatory handoff/governance documentation.
+- Match the surrounding style and avoid unrelated refactors, formatting churn
+  or opportunistic cleanup.
+- Report unrelated defects or dead code instead of changing them. Preserve
+  existing user work and keep diffs narrow and reviewable.
+
+Execute against outcomes:
+
+- Translate requests into observable success criteria before changing code.
+  For a bug, reproduce it with a failing regression test when feasible; for a
+  behavioural change, define the relevant positive and negative tests.
+- For multi-step work, publish a brief plan that includes verification, then
+  update it as evidence changes. Do not turn trivial work into process.
+- Continue independently until the criteria pass or a genuine external
+  blocker is proven. Avoid repeated clarification loops when repository
+  evidence supports one narrow, reversible interpretation.
+
 Permanent project facts:
 
 - LT code must remain independent from CT code. Do not import
