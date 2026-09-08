@@ -6,6 +6,12 @@ This is an offline, deterministic development boundary. It opens only local
 DataFrames already exported from Databricks. It contains no connector, SQL,
 Warehouse start, remote write, snapshot signing or production authority.
 
+D317 audit qualification (2026-09-08): the atomic Silver PIT path and its
+downstream replay are tested on synthetic fixtures. They have not been
+qualified on PRD Silver. The real D300 exploration used latest-observed
+materialization; it is not historical PIT. PRD block intervals and the
+documented publication/first-observation inconsistency remain unresolved.
+
 Implementation:
 `pfc_shaping/data/databricks_lt_materialization.py`.
 
@@ -21,7 +27,7 @@ in `pfc_shaping/data/databricks_lt_snapshot.py` as
 |---|---|---|
 | Gold spot interval fact | exact market/product filter, known-and-delivered cutoff, atomic interval expansion | `epex_<market>` raw `price_eur_mwh`, then governed `clean_epex` features |
 | Gold ENTSO-E dimension + Latest | explicit SeriesKey mapping and known current-state selection | current-serving `entso` raw and derived features |
-| Gold ENTSO-E dimension + Silver vintages | availability-known, `availability_timestamp_utc <= origin`, DQ exclusion and latest eligible revision | point-in-time `entso` raw and derived features |
+| Gold ENTSO-E dimension + atomic Silver vintages | availability-known, `availability_timestamp_utc <= origin`, DQ exclusion and latest eligible revision | fixture-qualified PIT candidate `entso`; PRD PIT admission remains open |
 | Gold EEX daily fact/dimensions | `materialize_eex_forward_history`: exact joined projection, `FactLoadTimestampUtc <= as_of_utc`, Swiss quotation-date cutoff, then the existing EEX normalizer | causal `eex_forwards_history` candidate content |
 
 The materialization result always declares all scientific and production
@@ -82,8 +88,17 @@ Silver vintages are eligible only when:
 - availability basis and publication/first-seen timestamps are coherent.
 
 `UNKNOWN_BACKFILL` rows remain valid stored history but cannot fill a PIT
-feature grid. Later revisions are excluded at an earlier origin. Ambiguous
-ties at the same availability/revision/last-seen ordering fail closed.
+feature grid. `SOURCE_DOCUMENT_CREATED` is rejected for the PIT path:
+document creation does not prove original publication or causal availability.
+Later revisions are excluded at an earlier origin. Ambiguous ties at the
+same availability/revision/first-observed ordering fail closed; future
+last-observed timestamps do not decide which value was available.
+
+Snapshot v4 calibration and generic ENTSO-E replay reject current/latest
+Databricks materializations. Materialization metadata is bound into replay
+frame hashes. These checks enforce the declared mode; they do not turn an
+unqualified source into admitted PIT evidence. The latest-observed lane keeps
+its existing revision ordering, which differs from the realized-export SQL.
 
 The Gold Latest path is current-serving only. It also requires known
 availability, but it does not become historical PIT evidence merely because
@@ -102,12 +117,26 @@ belong upstream and must be explicit; the constructor does neither implicitly.
 
 ## Time and interval policy
 
+- Mapped timestamp columns require explicit timezone-aware timestamps or
+  timezone-aware ISO strings. Numeric epochs without a unit contract and
+  naive timestamps are rejected, including availability/publication fields.
+- Grid spacing and native interval alignment are checked in nanoseconds;
+  a consistent half-second offset is invalid.
 - Input interval start/end/right edge and ISO-8601 resolution must agree.
 - Atomic 15-, 30- and 60-minute values may be expanded to a 15-minute UTC
   transport grid inside their declared intervals.
 - Overlaps, gaps, non-finite values and inconsistent component coverage fail.
 - Europe/Zurich DST fall-back keeps two distinct UTC hours; no local timestamp
   is deduplicated.
+
+Spot raw and derived frames carry `fmv_databricks_spot_resolution.v1`
+provenance: native cadence counts, expansion counts and a permanently false
+`native_quarter_hour_truth_eligible`. Replay and snapshot quality validate the
+same provenance contract, independently of the Energy Charts schema. Even
+native 15-minute cadence still needs product identity and source admission.
+The physical ENTSO-E transport grid remains 15 minutes; repeated hourly MW
+values are not four independent measurements. Its rolling-quantile weighting
+and native-resolution representation remain separate follow-up work (F-23).
 - Fractional cadence declarations and sub-minute interval drift are rejected;
   durations are compared exactly rather than truncated to integer minutes.
 - The production climatology now fails when any Swiss-local month/hour/quarter

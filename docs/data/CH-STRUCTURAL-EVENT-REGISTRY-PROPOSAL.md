@@ -3,6 +3,13 @@
 État : proposition et premier relevé documentaire, 8 septembre 2026.
 Aucun collecteur récurrent ni connecteur au modèle n'est activé.
 
+Complément D317 : consulter la [réponse à l'audit](../model/PFC-CH-AUDIT-RESPONSE-20260908.md)
+et la [veille V2](CH-STRUCTURAL-EVENT-WATCHLIST-20260908-V2.json).
+Le cadrage 2026–2029 ci-dessous concerne la comparaison centrale ; l'export
+étendu D312 couvre octobre 2026 à décembre 2032. Les événements 2030–2032
+peuvent donc concerner cette extension. Les quatre observations V1 restent
+conservées ; la V2 les révise explicitement et ajoute quatre événements.
+
 ## Projets vérifiés
 
 Swissgrid recense 31 projets dans son Réseau stratégique 2040. Le programme

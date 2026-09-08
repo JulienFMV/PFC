@@ -18,7 +18,7 @@ from pfc_shaping.lt.local_benchmark import AUTHORITIES
 from pfc_shaping.lt.model.shape_hourly_mlp_hydro import HydroAlignedShapeHourlyMLP
 from pfc_shaping.lt.signed_benchmark import calendar_cell_reference
 from pfc_shaping.lt.structural_readiness import center_signed_hourly_shape
-from pfc_shaping.validation.lt_benchmark_snapshots import bound_file, utc, read_registry, append_snapshot
+from pfc_shaping.validation.lt_benchmark_snapshots import bound_file, utc, read_registry, append_snapshot, validate_eex_quote_dates
 from scripts.run_lt_hourly_stability import training_thresholds
 from scripts.run_lt_signed_composition import ROOT, SOURCE, sha, write_json, assembler, save_curve
 
@@ -38,7 +38,10 @@ def preflight(root, request, registry, now):
         raise ValueError('frozen recipe and genuinely later Swiss capture day required')
     paths = {}
     for role, source in request['inputs'].items():
-        if set(source) != {'artifact','observed_at_utc','issue_at_utc','vendor_availability_authenticated'}:
+        fields = {'artifact','observed_at_utc','issue_at_utc','vendor_availability_authenticated'}
+        if role == 'EEX':
+            fields.add('quotation_dates')
+        if set(source) != fields:
             raise ValueError('exact source observation schema required')
         if utc(source['observed_at_utc']) > utc(now) or source['vendor_availability_authenticated'] is not False:
             raise ValueError('local pre-cutoff source observation required')
@@ -47,6 +50,8 @@ def preflight(root, request, registry, now):
         if source['issue_at_utc'] is not None and utc(source['issue_at_utc']) > utc(source['observed_at_utc']):
             raise ValueError('source issued after local observation')
         paths[role] = bound_file(root, source['artifact'])
+        if role == 'EEX':
+            validate_eex_quote_dates(root, source)
     for name, digest in recipe['source_code_sha256'].items():
         if sha(root/name) != digest:
             raise ValueError('frozen model code changed')
@@ -86,8 +91,7 @@ def main():
     solved = solve_monthly_level_authority(market='CH', delivery_months=months, own_base_prices=own,
         all_market_base_prices={}, eex_history=history, run_timestamp=origin, settings=settings,
         timezone='Europe/Zurich', source_hashes={'current_eex_history':sha(paths['EEX'])}, original_forward_prices=own, allow_unverified_inputs=True)
-    write_json(out/'solver.json', dict(monthly_manifest=solved.manifest, assembler_base_prices=solved.assembler_base_prices,
-        quoted_keys=sorted(solved.quoted_keys), authority=dict(AUTHORITIES)))
+    write_json(out/'solver.json', solver_receipt(solved, request, settings))
     grid = _solver_delivery_quarter_hour_grid(months, timezone='Europe/Zurich')
     hourly = pd.date_range(grid[0], grid[-1], freq='h')
     raw, _ = calendar_cell_reference(target.signed_target, hourly)
@@ -100,7 +104,7 @@ def main():
     committed = pd.Timestamp.now(tz='UTC')
     # Recheck exact input bytes after construction before registration.
     for source in request['inputs'].values(): bound_file(ROOT, source['artifact'])
-    entry = dict(schema='fmv-benchmark-snapshot.v1', valuation_at_utc=origin.isoformat(), candidate_committed_at_utc=committed.isoformat(),
+    entry = dict(schema='fmv-benchmark-snapshot.v2', valuation_at_utc=origin.isoformat(), candidate_committed_at_utc=committed.isoformat(),
         registered_at_utc=pd.Timestamp.now(tz='UTC').isoformat(), recipe=request['recipe'],
         candidate=dict(path=(out/'D304/curve.parquet').relative_to(ROOT).as_posix(),sha256=sha(out/'D304/curve.parquet')),
         inputs=request['inputs'], authority=dict(AUTHORITIES), evidence_class='LOCAL_OBSERVED_NOT_INDEPENDENTLY_AUTHENTICATED')
@@ -109,6 +113,31 @@ def main():
     write_json(out/'manifest.json', {p.relative_to(out).as_posix():sha(p) for p in out.rglob('*') if p.is_file()})
     registered = append_snapshot(ROOT, args.registry, entry, now=pd.Timestamp.now(tz='UTC'))
     print(json.dumps(dict(status='LOCAL_DAILY_D304_REGISTERED', registry_record=str(registered))))
+
+
+def solver_receipt(solved, request, settings):
+    """Expose actual source and numerical hierarchy without granting hard-quote authority."""
+    return dict(
+        monthly_manifest=solved.manifest,
+        assembler_base_prices=solved.assembler_base_prices,
+        quoted_keys=sorted(solved.quoted_keys),
+        quote_diagnostics=json.loads(solved.constraints.quote_diagnostics.to_json(orient='records')),
+        observed_forward_source=dict(
+            source_kind='DATABRICKS_PRD_GOLD_LOCAL_OBSERVATION',
+            artifact=request['inputs']['EEX']['artifact'],
+            quotation_dates=request['inputs']['EEX']['quotation_dates'],
+            observed_at_utc=request['inputs']['EEX']['observed_at_utc'],
+            hard_quote_eligible=False, promotion_eligible=False,
+        ),
+        numerical_conflict_policy=dict(
+            quote_conflict_tolerance_eur_mwh=float(settings.get('quote_conflict_tolerance', 0.01)),
+            hierarchy='MONTH_THEN_QUARTER_THEN_CALENDAR',
+            legacy_redundant_consistent_means='REDUNDANT_WITHIN_NUMERICAL_TOLERANCE',
+            audit_conflicts_accepted=False, signed_policy=False,
+        ),
+        legacy_manifest_source_label='TEST_FIXTURE denotes the unverified-input API lane, not source origin',
+        authority=dict(AUTHORITIES),
+    )
 
 
 if __name__ == '__main__':

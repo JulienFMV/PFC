@@ -272,11 +272,20 @@ def _validate_raw_frame(
                 raise LTInputReplayError(
                     f"LT replay EPEX resolution provenance is invalid: {role}"
                 ) from exc
+        materialization = frame.attrs.get("fmv_databricks_lt_materialization")
+        if materialization is not None:
+            databricks_spot_resolution_provenance(frame)
     elif role == "entso":
         required = {"load_mw", "solar_mw", "wind_mw"}
         forbidden = {"solar_regime", "load_deviation", "flow_deviation"}
         if not required.issubset(frame.columns) or forbidden.intersection(frame.columns):
             raise LTInputReplayError("LT replay ENTSO-E bronze schema is invalid")
+        materialization = frame.attrs.get("fmv_databricks_lt_materialization")
+        if materialization is not None and (
+            not isinstance(materialization, Mapping)
+            or materialization.get("mode") != "SILVER_POINT_IN_TIME"
+        ):
+            raise LTInputReplayError("LT replay ENTSO-E current/latest materialization is not PIT")
     elif role == "hydro":
         required = {"fill_pct", "fill_gwh", "max_capacity_gwh"}
         forbidden = {"fill_deviation", "water_value_proxy", "iso_week"}
@@ -285,6 +294,49 @@ def _validate_raw_frame(
     numeric = frame.select_dtypes(include=[np.number])
     if numeric.empty or not np.isfinite(numeric.to_numpy(dtype=float)).all():
         raise LTInputReplayError(f"LT replay raw numeric values are not finite: {role}")
+
+
+def databricks_spot_resolution_provenance(frame: pd.DataFrame) -> dict[str, object]:
+    """Validate the same source cadence evidence in replay and snapshot quality."""
+    materialization = frame.attrs.get("fmv_databricks_lt_materialization")
+    provenance = frame.attrs.get(OBSERVATION_RESOLUTION_PROVENANCE_ATTR)
+    if not isinstance(materialization, Mapping) or not isinstance(provenance, Mapping):
+        raise LTInputReplayError("Databricks spot resolution provenance is missing")
+    counts = materialization.get("source_cadence_minutes")
+    if (
+        not isinstance(counts, Mapping)
+        or not counts
+        or not set(counts) <= {"15", "30", "60"}
+        or any(type(count) is not int or count < 1 for count in counts.values())
+    ):
+        raise LTInputReplayError("Databricks source cadence counts are invalid")
+    expected = {
+        "schema_version": "fmv_databricks_spot_resolution.v1",
+        "source_cadence_minutes": dict(counts),
+        "source_observation_count": sum(counts.values()),
+        "output_observation_count": len(frame),
+        "output_cadence_seconds": 900,
+        "native_quarter_hour_cadence_eligible": set(counts) == {"15"},
+        "native_quarter_hour_truth_eligible": False,
+        "quarter_hour_truth_blocker": (
+            "PRODUCT_IDENTITY_AND_SOURCE_ADMISSION_REQUIRED"
+            if set(counts) == {"15"} else "UPSAMPLED_SOURCE_INTERVALS"
+        ),
+    }
+    output_count = sum(int(cadence) // 15 * count for cadence, count in counts.items())
+    if (
+        dict(provenance) != expected
+        or any(type(provenance.get(key)) is not type(value) for key, value in expected.items())
+        or output_count != len(frame)
+    ):
+        raise LTInputReplayError("Databricks spot resolution provenance is inconsistent")
+    if not isinstance(frame.index, pd.DatetimeIndex) or frame.index.tz is None:
+        raise LTInputReplayError("Databricks spot resolution index is invalid")
+    ticks = frame.index.as_unit("ns").asi8
+    quarter_ns = 900_000_000_000
+    if (ticks % quarter_ns != 0).any() or (np.diff(ticks) != quarter_ns).any():
+        raise LTInputReplayError("Databricks spot output cadence is not an exact 15-minute grid")
+    return dict(provenance)
 
 
 def _frame_sha256(frame: pd.DataFrame) -> str:
@@ -299,6 +351,8 @@ def _frame_sha256(frame: pd.DataFrame) -> str:
         metadata["resolution_provenance"] = frame.attrs[
             OBSERVATION_RESOLUTION_PROVENANCE_ATTR
         ]
+    if "fmv_databricks_lt_materialization" in frame.attrs:
+        metadata["databricks_materialization"] = frame.attrs["fmv_databricks_lt_materialization"]
     digest = hashlib.sha256(
         json.dumps(metadata, sort_keys=True, separators=(",", ":")).encode("utf-8")
     )

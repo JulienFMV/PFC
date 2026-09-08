@@ -23,6 +23,20 @@ from pfc_shaping.data.databricks_lt_snapshot import (
 )
 
 
+@pytest.mark.parametrize('mode', ['GOLD_ENTSOE_CURRENT', None, 'SILVER_LATEST_OBSERVED_LOCAL_ONLY'])
+def test_snapshot_calibration_gate_rejects_non_pit_entsoe_modes(mode):
+    from pfc_shaping.data.databricks_lt_snapshot import _verify_export_manifest
+
+    manifest = dict(schema_version=DATABRICKS_EXPORT_MANIFEST_SCHEMA, role='entso',
+        source_environment='PRD', export_mode=DATABRICKS_EXPORT_MODE,
+        predecessor_generation_id=None, as_of_utc='2026-10-24T03:00:00+00:00',
+        exported_at_utc='2026-10-24T04:00:00+00:00', source_queries={}, cost_evidence={}, authorities={})
+    manifest['export_id'] = databricks_export_id(manifest)
+    with pytest.raises(DatabricksLTSnapshotError, match='requires SILVER_ENTSOE_POINT_IN_TIME'):
+        _verify_export_manifest(manifest, role='entso', replay_manifest={'role': 'entso'},
+            replay_config={'mode': mode}, artifact_payloads={})
+
+
 def _parquet_payload(frame: pd.DataFrame) -> bytes:
     buffer = BytesIO()
     frame.to_parquet(buffer, index=True)

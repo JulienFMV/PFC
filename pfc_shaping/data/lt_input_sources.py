@@ -38,7 +38,10 @@ from pfc_shaping.data.governed_lt_acquisition import (
     validate_raw_envelope,
     verify_provider_raw_replay,
 )
-from pfc_shaping.data.lt_input_replay import verify_core_lt_role_replay
+from pfc_shaping.data.lt_input_replay import (
+    databricks_spot_resolution_provenance,
+    verify_core_lt_role_replay,
+)
 from pfc_shaping.data.shared_data_root import (
     FMV_DATA_ROOT_ENV,
     PFC_LT_DATA_ROOT_ENV,
@@ -1497,11 +1500,17 @@ def _quality_frame_metrics(payload: bytes, *, role: str, label: str) -> dict[str
         "missing_value_count": int(frame.isna().sum().sum()),
         "duplicate_timestamp_count": int(frame.index.duplicated().sum()),
     }
-    if role.startswith("epex_") and OBSERVATION_RESOLUTION_PROVENANCE_ATTR in frame.attrs:
-        metrics["resolution_provenance"] = energy_price_resolution_provenance(
-            frame,
-            role=role,
-        )
+    if role.startswith("epex_") and (
+        OBSERVATION_RESOLUTION_PROVENANCE_ATTR in frame.attrs
+        or "fmv_databricks_lt_materialization" in frame.attrs
+    ):
+        if "fmv_databricks_lt_materialization" in frame.attrs:
+            metrics["resolution_provenance"] = databricks_spot_resolution_provenance(frame)
+        else:
+            metrics["resolution_provenance"] = energy_price_resolution_provenance(
+                frame,
+                role=role,
+            )
     if metrics["missing_value_count"] != 0:
         raise ValueError(f"LT input role {role} quality {label} frame has missing values")
     if metrics["duplicate_timestamp_count"] != 0:

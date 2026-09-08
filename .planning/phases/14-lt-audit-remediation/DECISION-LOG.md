@@ -24937,3 +24937,37 @@ independent verification, code checkpoint receipt, tests and preservation pins.
 Code checkpoint dee652bc919d06345f71304d1f1eaacf0edf7bc7 was pushed and verified;
 591passed/5skipped. Subsequent public changes are documentation only. Zero new
 Warehouse starts; last observedRUNNING/auto-stop45min, shutdown unconfirmed.
+
+## D-20260908-317 — Claude audit response and causal collection hardening
+
+Decision: incorporate Claude's unmodified audit, reproduce the concrete EEX
+history/time-causality defects, fix collector and materialization boundaries,
+and keep the signed D304 model recipe unchanged. Publish all 33 dispositions;
+separate implemented corrections, qualified claims and open admission work.
+Reason: a quarantined quotation date could erase accepted history; epochs,
+subsecond grids and document-created timestamps could contaminate PIT. The
+daily receipt also understated the actual numerical EEX conflict hierarchy.
+New daily records use quotation-bound v2; legacy v1 remains readable.
+Rejected: silently changing the 0.01 EUR/MWh solver tolerance or source API,
+equating fixture-tested Silver PIT with PRD qualification, calling the price-
+conditioned shape a proven 2024 explanation, treating a Git hash as sufficient
+future holdout admission, retrospective pilot days, broad lint cleanup, or
+publishing granular private notes/source artifacts.
+Invariants: D304 reference, D305–D307 comparisons, sole monthly solver level
+authority, existing assembler/EEX projection, no month-wise model selection,
+all6false, no CT/protected data/AFRY/T057. All frozen recipe bindings remain
+unchanged. No SQL/Warehouse/GPU/model fit in D317. Pilot remains1/20.
+Evidence: 38-module matrix716passed/5skipped/0failed; independent old/current
+function probes and exact75-month frozen solver replay (max error0.0).
+First matrix failure (Databricks versus Energy Charts quality provenance) is
+preserved; corrected shared validation passes the full target matrix.
+Qualification: signed conflict policy, PRD block/PIT semantics, physical
+resolution weighting and lint remain open; remote CI is separately observed.
+F-01/F-05/F-06/F-10 must be addressed before the next frozen CPU benchmark.
+Event watchlist V2 adds CH–EU electricity agreement, border-capacity MTU15 and
+Beznau retirements. Correct D316's horizon shorthand: core comparison2026–29,
+extended D312 solver export2026-10through2032-12; no implied far-horizon or
+vendor-coverage admission. Source dates/effects/probabilities are not invented.
+Details: docs/model/PFC-CH-AUDIT-RESPONSE-20260908.md;
+SESSION-HANDOFF-20260908-AUDIT-RESPONSE.md; local evidence and publication
+receipts under build/lt-audit-response-20260908/.

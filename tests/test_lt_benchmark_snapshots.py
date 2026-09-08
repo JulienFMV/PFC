@@ -35,6 +35,26 @@ def test_append_and_verify(pilot):
     assert len(records) == 1 and digest == hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def test_v2_preserves_v1_history_and_binds_new_eex_surface(pilot):
+    root, registry, entry = pilot
+    first = append_snapshot(root, registry, entry, now='2026-09-08T11:00Z')
+    first_bytes = first.read_bytes()
+    second = copy.deepcopy(entry)
+    second['schema'] = 'fmv-benchmark-snapshot.v2'
+    for key in ['valuation_at_utc', 'candidate_committed_at_utc', 'registered_at_utc']:
+        second[key] = second[key].replace('2026-09-08', '2026-09-09')
+    eex = root/'build/eex.parquet'
+    pd.DataFrame(dict(date=pd.to_datetime(['2026-09-08']), price=[50.])).to_parquet(eex)
+    source = second['inputs']['EEX']
+    source['artifact'] = dict(path='build/eex.parquet', sha256=hashlib.sha256(eex.read_bytes()).hexdigest())
+    source['observed_at_utc'] = '2026-09-09T09:00:00Z'
+    source['quotation_dates'] = dict.fromkeys(['raw_latest_date', 'normalized_latest_date', 'merged_latest_date'], '2026-09-08')
+    append_snapshot(root, registry, second, now='2026-09-09T11:00Z')
+    records, _ = read_registry(root, registry, now='2026-09-09T11:00Z')
+    assert len(records) == 2 and first.read_bytes() == first_bytes
+    assert records[1]['entry']['inputs']['EEX']['quotation_dates']['merged_latest_date'] == '2026-09-08'
+
+
 @pytest.mark.parametrize('change', ['after_cutoff','future_registration','late_issue','authority','missing_source','naive','changed_hash'])
 def test_bad_entry_rejected_without_write(pilot, change):
     root, registry, entry = pilot

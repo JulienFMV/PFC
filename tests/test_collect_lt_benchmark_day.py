@@ -135,3 +135,136 @@ def test_missing_query_dates_never_erase_saved_eex_history():
 def test_eex_merge_rejects_unobserved_normalized_date():
     frame=pd.DataFrame(dict(date=pd.to_datetime(['2026-09-04']),price=[1.]))
     with pytest.raises(ValueError): merge_observed_eex_dates(frame,frame,['20260901'])
+
+
+def test_quarantined_returned_date_never_erases_accepted_history():
+    history = pd.DataFrame(dict(date=pd.to_datetime(['2026-09-04', '2026-09-07']), price=[1., 2.]))
+    fresh = history.iloc[:1].copy()
+    saved = history.copy(deep=True)
+    with pytest.raises(ValueError, match='quarantin|accepted|surface'):
+        merge_observed_eex_dates(history, fresh, ['20260904', '20260907'])
+    pd.testing.assert_frame_equal(history, saved)
+
+
+def test_empty_normalized_delta_cannot_replace_history():
+    history = pd.DataFrame(dict(date=pd.to_datetime(['2026-09-07']), price=[2.]))
+    with pytest.raises(ValueError, match='quarantin|accepted|empty'):
+        merge_observed_eex_dates(history, history.iloc[:0], ['20260907'])
+
+
+def test_unaccepted_newest_date_cannot_fall_back_silently():
+    history = pd.DataFrame(dict(date=pd.to_datetime(['2026-09-04']), price=[2.]))
+    with pytest.raises(ValueError, match='surface|accepted'):
+        merge_observed_eex_dates(history, history, ['20260904', '20260907'])
+
+
+def test_eex_merge_rejects_schema_drift():
+    history = pd.DataFrame(dict(date=pd.to_datetime(['2026-09-04']), price=[2.]))
+    fresh = history.rename(columns={'price': 'wrong_column'})
+    with pytest.raises(ValueError, match='schema|columns'):
+        merge_observed_eex_dates(history, fresh, ['20260904'])
+
+
+def test_finish_records_actual_absence_of_stop_requests(tmp_path):
+    queries = BoundedQueries(lambda *args: dict(state='RUNNING', auto_stop_mins=45), 'test', tmp_path)
+    queries.finish()
+    receipt = json.loads((tmp_path/'warehouse-final.json').read_text())
+    assert receipt['stop_requests'] == 0
+    assert receipt['manual_stop_attempted'] is False
+    assert 'manual_stop' not in receipt
+
+
+def capture_case(tmp_path, monkeypatch, *, fail_query=False, fail_finish=False):
+    from types import SimpleNamespace
+
+    from scripts import collect_lt_benchmark_day as collector
+
+    build = tmp_path/'build'
+    build.mkdir()
+    out = build/'capture'
+    out.mkdir()
+    now = pd.Timestamp.now(tz='UTC')
+    current = now.tz_convert('Europe/Zurich').tz_localize(None).normalize()
+    for name, price in [('initial', 1.), ('registered', 2.)]:
+        pd.DataFrame(dict(date=[current-pd.Timedelta(days=10)], price=[price])).to_parquet(build/(name+'.parquet'))
+    (build/'recipe').write_bytes(b'frozen recipe')
+    (build/'target').write_bytes(b'bound history')
+    directory = build/'ompex'
+    directory.mkdir()
+    (directory/('HFC_Ompex_'+current.strftime('%Y%m%d')+'_101700.xlsx')).write_bytes(b'workbook fixture')
+    def ref(name):
+        return dict(path='build/'+name, sha256=collector.sha(build/name))
+    config = dict(recipe=ref('recipe'), initial_eex_history=ref('initial.parquet'),
+        ch_history=ref('target'), ompex_read_only_directory=str(directory), warehouse_id='test')
+    records = [dict(entry=dict(recipe=config['recipe'], inputs={'EEX': {'artifact': ref('registered.parquet')}}))]
+    monkeypatch.setattr(collector, 'parse_ompex_workbook', lambda *a, **kw:
+        SimpleNamespace(data=pd.DataFrame({'price': [1.]}), receipt={}))
+    fresh = pd.DataFrame(dict(date=[current-pd.Timedelta(days=1)], price=[3.]))
+    monkeypatch.setattr(collector, 'normalize_databricks_eex_daily_snapshot', lambda *a, **kw:
+        SimpleNamespace(history=fresh, quarantine=pd.DataFrame({'reason': []}), audit={'rows': 1}))
+    class Queries:
+        def __init__(self, *args):
+            pass
+        def ready(self):
+            pass
+        def query(self, label, *args, **kwargs):
+            if fail_query:
+                raise ValueError('primary capture failure')
+            if label == 'EEX':
+                raw = pd.DataFrame(dict(QuotationDateID=[fresh.date.iloc[0].strftime('%Y%m%d')],
+                    FactLoadTimestampUtc=[now-pd.Timedelta(hours=1)]))
+                raw.to_parquet(out/'sql/EEX.parquet')
+                return raw
+            if label == 'LSEG-dimension':
+                return pd.DataFrame(dict(Country=['CHE'], Unit=['EUR/MWh'], ValueFrequency=['1h'], GroupName=['continuous_forward']))
+            return pd.DataFrame({'price': [1.]})
+        def finish(self):
+            if fail_finish:
+                raise RuntimeError('secondary final observation failure')
+    monkeypatch.setattr(collector, 'BoundedQueries', Queries)
+    monkeypatch.setattr(collector, 'normalize_lseg', lambda *args:
+        (pd.Series([1.], name='price_eur_mwh', index=pd.date_range(current, periods=1, tz='UTC')), now.isoformat()))
+    return collector, out, config, records
+
+
+def test_day_two_capture_uses_first_registered_history(tmp_path, monkeypatch):
+    collector, out, config, records = capture_case(tmp_path, monkeypatch)
+    request = collector.capture(tmp_path, out, config, records, request=None)
+    assert pd.read_parquet(out/'EEX.parquet').price.tolist() == [2., 3.]
+    assert len(set(request['inputs']['EEX']['quotation_dates'].values())) == 1
+    receipt = json.loads((out/'eex-history-merge.json').read_text())
+    assert receipt['previous_history'] == records[0]['entry']['inputs']['EEX']['artifact']
+
+
+def test_final_warehouse_failure_preserves_primary_capture_error(tmp_path, monkeypatch):
+    collector, out, config, records = capture_case(tmp_path, monkeypatch, fail_query=True, fail_finish=True)
+    with pytest.raises(ValueError, match='primary capture failure'):
+        collector.capture(tmp_path, out, config, records, request=None)
+    receipt = json.loads((out/'sql/warehouse-final-failure.json').read_text())
+    assert receipt['type'] == 'RuntimeError'
+    assert receipt['stop_requests'] == 0
+
+
+@pytest.mark.parametrize('failure', ['registry', 'config'])
+def test_early_failure_after_safe_output_has_durable_receipt(tmp_path, monkeypatch, failure):
+    import sys
+
+    from scripts import collect_lt_benchmark_day as collector
+
+    monkeypatch.setattr(collector, 'ROOT', tmp_path)
+    monkeypatch.chdir(tmp_path)
+    build = tmp_path/'build'
+    build.mkdir()
+    config = build/'config.json'
+    config.write_text('{}')
+    registry = build/'registry'
+    registry.mkdir()
+    out = build/'attempt'
+    if failure == 'registry':
+        (registry/'0001-invalid.json').write_text('{}')
+    monkeypatch.setattr(sys, 'argv', ['collector', '--config', str(config), '--registry', str(registry), '--output', str(out)])
+    with pytest.raises(ValueError):
+        collector.main()
+    receipt = json.loads((out/'failure.json').read_text())
+    assert receipt['type'] == 'ValueError'
+    assert 'failure.json' in json.loads((out/'manifest.json').read_text())

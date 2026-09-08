@@ -55,7 +55,7 @@ consumer-neutral local data root selected by `FMV_DATA_ROOT`.
 | Spot | Gold interval fact and product dimension | realized-price truth for calibration and backtests |
 | ENTSO-E current | Gold dimension and latest fact | current serving and operational features |
 | ENTSO-E resources | Gold current series-resource bridge | optional current outage/equipment enrichment |
-| ENTSO-E vintages | `silver.ge_power_entsoe_time_series_vintages` | canonical PIT history, revisions and historical resource mappings |
+| ENTSO-E vintages | `silver.ge_power_entsoe_time_series_vintages` | intended PIT source, revisions and historical resource mappings; atomic PIT code is fixture-tested, PRD PIT qualification remains open (D317) |
 | LSEG HPFC | selected `continuous_forward/CHE` Gold curve, latest and bounded vintages | external benchmark only |
 | Weather/Swissgrid | governed Gold facts | candidate exogenous features after their own admission gates |
 

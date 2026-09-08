@@ -19,6 +19,7 @@ from pfc_shaping.data.acquisition_contract import (
     DATABRICKS_UPSTREAM_REPLAY_KIND,
 )
 from pfc_shaping.data.databricks_lt_replay import (
+    SILVER_ENTSOE_PIT_MODE,
     verify_databricks_replay_package,
 )
 
@@ -289,6 +290,10 @@ def _verify_export_manifest(
         raise DatabricksLTSnapshotError("Databricks export_id is invalid")
     if manifest.get("role") != role or replay_manifest.get("role") != role:
         raise DatabricksLTSnapshotError("Databricks export role differs")
+    if role == "entso" and replay_config.get("mode") != SILVER_ENTSOE_PIT_MODE:
+        raise DatabricksLTSnapshotError(
+            "calibration-eligible ENTSO-E requires SILVER_ENTSOE_POINT_IN_TIME; current/latest is not PIT"
+        )
     if (
         manifest.get("source_environment") != "PRD"
         or replay_manifest.get("source_environment") != "PRD"

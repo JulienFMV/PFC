@@ -4,6 +4,8 @@ import hashlib
 import json
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 PLAN_PATH = (
     ROOT
@@ -160,6 +162,8 @@ def test_existing_eex_capture_matches_the_bound_local_bytes() -> None:
         artifact = eex[role]
         assert isinstance(artifact, dict)
         path = ROOT / str(artifact["path"])
+        if not path.exists():
+            pytest.skip("bound local EEX capture bytes are absent from this checkout")
         assert path.stat().st_size == artifact["size_bytes"]
         assert _sha256(path) == artifact["sha256"]
 

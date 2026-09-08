@@ -35,10 +35,31 @@ def bound_file(root, reference):
     return path
 
 
+def validate_eex_quote_dates(root, source):
+    """Bind the new daily record to one explicit accepted quotation surface."""
+    dates = source.get('quotation_dates')
+    fields = {'raw_latest_date', 'normalized_latest_date', 'merged_latest_date'}
+    if not isinstance(dates, dict) or set(dates) != fields:
+        raise ValueError('exact EEX quotation date provenance required')
+    for value in dates.values():
+        if not isinstance(value, str) or pd.Timestamp(value).strftime('%Y-%m-%d') != value:
+            raise ValueError('EEX quotation dates must be ISO calendar dates')
+    if len(set(dates.values())) != 1:
+        raise ValueError('raw, normalized and merged EEX quotation surfaces differ')
+    history = pd.read_parquet(bound_file(root, source['artifact']))
+    if history.empty or 'date' not in history or pd.to_datetime(history.date).isna().any():
+        raise ValueError('nonempty EEX quotation history required')
+    if pd.to_datetime(history.date).max().strftime('%Y-%m-%d') != dates['merged_latest_date']:
+        raise ValueError('EEX artifact quotation surface differs from provenance')
+    if dates['merged_latest_date'] > utc(source['observed_at_utc']).tz_convert('Europe/Zurich').strftime('%Y-%m-%d'):
+        raise ValueError('future EEX quotation date')
+    return dict(dates)
+
+
 def validate_entry(root, entry, now):
     required = {'schema', 'valuation_at_utc', 'candidate_committed_at_utc', 'registered_at_utc',
                 'recipe', 'candidate', 'inputs', 'authority', 'evidence_class'}
-    if set(entry) != required or entry['schema'] != 'fmv-benchmark-snapshot.v1':
+    if set(entry) != required or entry['schema'] not in {'fmv-benchmark-snapshot.v1', 'fmv-benchmark-snapshot.v2'}:
         raise ValueError('unexpected snapshot schema')
     if (set(entry['authority']) != set(AUTHORITIES) or any(v is not False for v in entry['authority'].values())
             or entry['evidence_class'] != 'LOCAL_OBSERVED_NOT_INDEPENDENTLY_AUTHENTICATED'):
@@ -51,8 +72,12 @@ def validate_entry(root, entry, now):
     bound_file(root, entry['candidate'])
     if set(entry['inputs']) != {'EEX', 'CH_HISTORY', 'OMPEX', 'LSEG'}:
         raise ValueError('all four source roles required')
-    for source in entry['inputs'].values():
-        if set(source) != {'artifact', 'observed_at_utc', 'issue_at_utc', 'vendor_availability_authenticated'}:
+    for role, source in entry['inputs'].items():
+        fields = {'artifact', 'observed_at_utc', 'issue_at_utc', 'vendor_availability_authenticated'}
+        if role == 'EEX' and entry['schema'] == 'fmv-benchmark-snapshot.v2':
+            fields.add('quotation_dates')
+            validate_eex_quote_dates(root, source)
+        if set(source) != fields:
             raise ValueError('exact source observation schema required')
         observed = utc(source['observed_at_utc'])
         if observed > valuation:

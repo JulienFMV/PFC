@@ -6,9 +6,11 @@ The LT workstation consumes immutable, manifested local exports. It does not
 run model training or PFC generation against live Databricks tables.
 
 This contract supersedes the Gold-only D293 draft. ENTSO-E Gold remains the
-current serving layer, while ENTSO-E Silver vintages are the canonical
-point-in-time layer. Silver is therefore intentional for this one role and is
-not a fallback used to excuse an incomplete Gold table.
+current serving layer; Silver vintages are the intended source for historical
+point-in-time admission. Silver presence alone does not prove PIT semantics.
+The atomic PIT path has only fixture qualification as of D317 (2026-09-08);
+real PRD evidence used latest-observed materialization. PRD interval blocks
+and publication/first-observation semantics still require qualification.
 
 ## Required source roles
 
@@ -41,7 +43,8 @@ required:
    signed `lt_input_snapshot.v4` bundle whose manifest binds every output to
    its source tables, query, predicate, watermarks, code and PIT policy.
 
-Stage 2 is implemented end-to-end for Gold spot and Gold/Silver ENTSO-E in
+Stage 2 is implemented and tested end-to-end on fixtures for Gold spot and
+atomic Gold/Silver ENTSO-E in
 `pfc_shaping/data/databricks_lt_materialization.py`, with exact package replay
 in `pfc_shaping/data/databricks_lt_replay.py` and signed publisher admission in
 `pfc_shaping/data/databricks_lt_snapshot.py`. The API-specific
@@ -52,6 +55,12 @@ copies already-curated files and declares `source_class` as
 `MIGRATED_UNVERIFIED` and `calibration_eligible` as false. It must not be
 presented as the Gold/Silver transformation or as scientific admission. See
 `docs/data/DATABRICKS-LT-MATERIALIZATION.md` for the exact boundary.
+
+The v4 ENTSO-E calibration gate requires replay mode
+`SILVER_ENTSOE_POINT_IN_TIME`. Gold-current/latest-observed exports cannot
+enter that gate. Source document creation is not accepted as original
+publication evidence. No production or scientific admission follows from
+passing the local fixture suite.
 
 The Gold EEX joined projection now has an offline causal materializer too. It
 filters on both FMV fact-load time and Swiss quotation date before reusing the

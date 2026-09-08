@@ -24,7 +24,10 @@ from pfc_shaping.data.databricks_eex_daily_snapshot import (
     DatabricksEexDailyNormalizationError,
     normalize_databricks_eex_daily_snapshot,
 )
-from pfc_shaping.data.governed_lt_acquisition import dataframe_semantic_sha256
+from pfc_shaping.data.governed_lt_acquisition import (
+    OBSERVATION_RESOLUTION_PROVENANCE_ATTR,
+    dataframe_semantic_sha256,
+)
 from pfc_shaping.data.lt_replay_transforms import build_entso_features, clean_epex
 
 MATERIALIZATION_SCHEMA_VERSION = "fmv_databricks_lt_materialization.v1"
@@ -397,6 +400,10 @@ def materialize_entsoe_pit_features(
         last_observed=source["LastObservedAtUtc"],
         label="Silver vintages",
     )
+    if source["AvailabilityBasis"].eq("SOURCE_DOCUMENT_CREATED").any():
+        raise DatabricksLTMaterializationError(
+            "Silver original publication is unproven; document creation is not PIT availability"
+        )
     dq_failed = _strict_boolean_series(
         source["dq_failed"],
         label="Silver dq_failed",
@@ -687,6 +694,19 @@ def materialize_spot_price_history(
         ),
     }
     raw.attrs[MATERIALIZATION_METADATA_ATTR] = metadata
+    raw.attrs[OBSERVATION_RESOLUTION_PROVENANCE_ATTR] = {
+        "schema_version": "fmv_databricks_spot_resolution.v1",
+        "source_cadence_minutes": cadence_counts,
+        "source_observation_count": len(eligible),
+        "output_observation_count": len(raw),
+        "output_cadence_seconds": 900,
+        "native_quarter_hour_cadence_eligible": set(cadence_counts) == {"15"},
+        "native_quarter_hour_truth_eligible": False,
+        "quarter_hour_truth_blocker": (
+            "PRODUCT_IDENTITY_AND_SOURCE_ADMISSION_REQUIRED"
+            if set(cadence_counts) == {"15"} else "UPSAMPLED_SOURCE_INTERVALS"
+        ),
+    }
     derived = clean_epex(raw)
     audit = {
         **metadata,
@@ -728,6 +748,14 @@ def _canonical_silver_vintages(frame: pd.DataFrame) -> pd.DataFrame:
     )
     if projection["VintageID"].isna().any() or projection["VintageID"].duplicated().any():
         raise DatabricksLTMaterializationError("Silver VintageID must be non-null and unique")
+    for column in (
+        "IntervalStartUtc", "IntervalEndUtc", "DateTimeUtc", "AvailabilityTimestampUtc",
+        "PublicationTimestampUtc", "FirstObservedAtUtc", "LastObservedAtUtc",
+    ):
+        projection[column] = _utc_series(
+            projection[column], label=f"Silver {column}",
+            allow_missing=column in {"AvailabilityTimestampUtc", "PublicationTimestampUtc"},
+        )
     for column in ("SeriesKey", "SourceDocumentMRID"):
         values = projection[column].astype("string").str.strip()
         if values.isna().any() or values.eq("").any():
@@ -750,7 +778,7 @@ def _select_latest_vintage_state(frame: pd.DataFrame) -> pd.DataFrame:
             "Silver source document revision number is invalid"
         )
     identity = ["SeriesKey", "IntervalStartUtc", "DateTimeUtc"]
-    order = ["AvailabilityTimestampUtc", "RevisionNumber", "LastObservedAtUtc"]
+    order = ["AvailabilityTimestampUtc", "RevisionNumber", "FirstObservedAtUtc"]
     tied = working.duplicated([*identity, *order], keep=False)
     if tied.any():
         semantic = ["FieldValue", "IntervalEndUtc", "Resolution"]
@@ -988,6 +1016,8 @@ def _expand_entsoe_intervals(frame: pd.DataFrame) -> pd.Series:
         | duration.ne(expected_duration)
         | ~resolution_seconds.isin((900, 1800, 3600))
     )
+    if (start.array.as_unit("ns").asi8 % (resolution_seconds.to_numpy() * 1_000_000_000)).any():
+        raise DatabricksLTMaterializationError("ENTSO-E interval is not aligned to its native grid")
     if invalid.any():
         raise DatabricksLTMaterializationError(
             "ENTSO-E interval/resolution is not an atomic 15/30/60-minute value"
@@ -1023,6 +1053,8 @@ def _expand_spot_intervals(frame: pd.DataFrame) -> tuple[pd.DataFrame, dict[str,
         raise DatabricksLTMaterializationError(
             "Gold spot interval is not an atomic 15/30/60-minute value"
         )
+    if (start.array.as_unit("ns").asi8 % (cadence.to_numpy() * 60_000_000_000)).any():
+        raise DatabricksLTMaterializationError("Gold spot interval is not aligned to its native grid")
     repeats = (cadence // 15).to_numpy(dtype=np.int64)
     timestamps = _expanded_quarter_hour_timestamps(start, repeats)
     values = np.repeat(prices.to_numpy(dtype=float), repeats)
@@ -1062,9 +1094,12 @@ def _require_complete_quarter_hour_grid(
     utc_index = index.tz_convert("UTC")
     if not utc_index.is_monotonic_increasing or utc_index.has_duplicates:
         raise DatabricksLTMaterializationError(f"{label} index is not sorted and unique")
+    nanoseconds = utc_index.as_unit("ns").asi8
+    if (nanoseconds % 900_000_000_000).any():
+        raise DatabricksLTMaterializationError(f"{label} index is not quarter-hour aligned")
     if len(utc_index) > 1:
-        differences = np.diff(utc_index.asi8) // 1_000_000_000
-        if not bool(np.equal(differences, 900).all()):
+        differences = np.diff(nanoseconds)
+        if not bool(np.equal(differences, 900_000_000_000).all()):
             raise DatabricksLTMaterializationError(
                 f"{label} contains a 15-minute grid gap"
             )
@@ -1114,7 +1149,24 @@ def _utc_series(
     label: str,
     allow_missing: bool = False,
 ) -> pd.Series:
-    parsed = pd.to_datetime(values, errors="coerce", utc=True)
+    if isinstance(values.dtype, pd.DatetimeTZDtype):
+        parsed = values.dt.tz_convert("UTC")
+    else:
+        # Never infer epoch units or interpret a naive local clock as UTC.
+        def explicit_timestamp(value):
+            if pd.isna(value):
+                return pd.NaT
+            if isinstance(value, (int, float, np.number, bool)):
+                raise DatabricksLTMaterializationError(f"{label} contains numeric timestamps without units")
+            try:
+                timestamp = pd.Timestamp(value)
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise DatabricksLTMaterializationError(f"{label} contains invalid timestamps") from exc
+            if timestamp.tzinfo is None:
+                raise DatabricksLTMaterializationError(f"{label} timestamps must have an explicit timezone")
+            return timestamp.tz_convert("UTC")
+
+        parsed = pd.to_datetime(values.map(explicit_timestamp), utc=True)
     invalid = parsed.isna() & (values.notna() if allow_missing else True)
     if invalid.any():
         raise DatabricksLTMaterializationError(f"{label} contains invalid timestamps")

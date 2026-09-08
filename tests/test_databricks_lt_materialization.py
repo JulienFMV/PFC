@@ -33,6 +33,120 @@ from pfc_shaping.data.databricks_lt_replay import (
 )
 
 
+@pytest.mark.parametrize("column", [
+    "availability_timestamp_utc", "first_seen_pull_ts_utc",
+    "last_seen_pull_ts_utc", "IntervalStartUtc", "IntervalEndUtc", "Date_Time_UTC",
+])
+@pytest.mark.parametrize("kind", ["epoch_seconds", "naive"])
+def test_pit_rejects_ambiguous_timestamp_representation(column, kind):
+    source = _silver_vintages()
+    stamps = pd.to_datetime(source[column], utc=True)
+    source[column] = (stamps.map(lambda value: value.timestamp()).astype("int64")
+                      if kind == "epoch_seconds" else stamps.dt.tz_localize(None))
+    with pytest.raises(DatabricksLTMaterializationError, match="timestamp|timezone"):
+        materialize_entsoe_pit_features(
+            dimension=_dimension(), silver_vintages=source, mapping=_mapping(),
+            as_of_utc="2026-10-24T03:00:00Z",
+        )
+
+
+def test_document_creation_is_not_causal_pit_availability():
+    source = _silver_vintages()
+    late = source["SK_ge_power_entsoe_time_series_vintages"].eq("V-LATE-REVISION")
+    source.loc[late, "availability_basis"] = "SOURCE_DOCUMENT_CREATED"
+    source.loc[late, ["availability_timestamp_utc", "publication_timestamp_utc"]] = pd.Timestamp("2026-10-24T03:00:00Z")
+    with pytest.raises(DatabricksLTMaterializationError, match="availability semantics|publication.*unproven"):
+        materialize_entsoe_pit_features(
+            dimension=_dimension(), silver_vintages=source, mapping=_mapping(),
+            as_of_utc="2026-10-24T03:00:00Z",
+        )
+
+
+@pytest.mark.parametrize("lane", ["pit", "gold", "spot"])
+def test_materialization_rejects_consistently_shifted_subsecond_grid(lane):
+    shift = pd.Timedelta(milliseconds=500)
+    with pytest.raises(DatabricksLTMaterializationError, match="align|grid"):
+        if lane == "spot":
+            source = _spot_rows()
+            for column in ("DeliveryStartUtc", "DeliveryEndUtc"):
+                source[column] += shift
+            materialize_spot_price_history(source, market_zone="CH", source_product="CH_DAY_AHEAD", as_of_utc="2026-10-25T05:00Z")
+        elif lane == "gold":
+            source = _gold_latest()
+            for column in ("IntervalStartUtc", "IntervalEndUtc", "DateTimeUtc"):
+                source[column] += shift
+            materialize_entsoe_current_features(dimension=_dimension(), gold_latest=source, mapping=_mapping(), as_of_utc="2026-10-24T03:00Z")
+        else:
+            source = _silver_vintages()
+            for column in ("IntervalStartUtc", "IntervalEndUtc", "Date_Time_UTC"):
+                source[column] += shift
+            materialize_entsoe_pit_features(dimension=_dimension(), silver_vintages=source, mapping=_mapping(), as_of_utc="2026-10-24T03:00Z")
+
+
+def test_pit_tie_cannot_be_resolved_by_future_last_observation():
+    source = _silver_vintages().iloc[:-1].copy()
+    rival = source.iloc[[0]].copy()
+    rival["SK_ge_power_entsoe_time_series_vintages"] = "V-CONFLICT"
+    rival["field_value"] = 999.0
+    rival["last_seen_pull_ts_utc"] = pd.Timestamp("2026-10-25T05:00Z")
+    source = pd.concat([source, rival], ignore_index=True)
+    with pytest.raises(DatabricksLTMaterializationError, match="ambiguous"):
+        materialize_entsoe_pit_features(dimension=_dimension(), silver_vintages=source, mapping=_mapping(), as_of_utc="2026-10-24T03:00Z")
+
+
+def test_correlated_epoch_units_cannot_admit_a_post_origin_revision():
+    source = _silver_vintages()
+    for column in ("availability_timestamp_utc", "publication_timestamp_utc",
+                   "first_seen_pull_ts_utc", "last_seen_pull_ts_utc"):
+        source[column] = source[column].map(lambda value: value.timestamp()).astype('int64')
+    with pytest.raises(DatabricksLTMaterializationError, match='numeric timestamps'):
+        materialize_entsoe_pit_features(dimension=_dimension(), silver_vintages=source, mapping=_mapping(), as_of_utc="2026-10-24T03:00Z")
+
+
+@pytest.mark.parametrize('mode', ['gold', 'latest', 'pit'])
+def test_replay_consumes_entsoe_materialization_semantics(mode):
+    from pfc_shaping.data.lt_input_replay import LTInputReplayError, _validate_raw_frame
+
+    if mode == 'gold':
+        result = materialize_entsoe_current_features(dimension=_dimension(), gold_latest=_gold_latest(), mapping=_mapping(), as_of_utc="2026-10-24T03:00Z")
+    elif mode == 'latest':
+        result = _local_observed(_silver_vintages())
+    else:
+        result = materialize_entsoe_pit_features(dimension=_dimension(), silver_vintages=_silver_vintages(), mapping=_mapping(), as_of_utc="2026-10-24T03:00Z")
+    if mode == 'pit':
+        _validate_raw_frame('entso', result.raw_frame, require_resolution_provenance=False)
+    else:
+        with pytest.raises(LTInputReplayError, match='not PIT'):
+            _validate_raw_frame('entso', result.raw_frame, require_resolution_provenance=False)
+
+
+@pytest.mark.parametrize('attack', ['none', 'missing', 'claim_native_truth'])
+def test_replay_enforces_databricks_hourly_price_provenance(attack):
+    from pfc_shaping.data.governed_lt_acquisition import OBSERVATION_RESOLUTION_PROVENANCE_ATTR
+    from pfc_shaping.data.lt_input_replay import LTInputReplayError, _validate_raw_frame
+    from pfc_shaping.data.lt_input_sources import _quality_frame_metrics
+
+    result = materialize_spot_price_history(_spot_rows(), market_zone='CH', source_product='CH_DAY_AHEAD', as_of_utc='2026-10-25T05:00Z')
+    frame = pd.read_parquet(BytesIO(_parquet_payload(result.raw_frame)))
+    provenance = frame.attrs[OBSERVATION_RESOLUTION_PROVENANCE_ATTR]
+    assert provenance['native_quarter_hour_truth_eligible'] is False
+    assert provenance['source_observation_count'] * 4 == len(frame)
+    assert result.derived_frame.attrs == result.raw_frame.attrs
+    if attack == 'missing':
+        del frame.attrs[OBSERVATION_RESOLUTION_PROVENANCE_ATTR]
+    elif attack == 'claim_native_truth':
+        provenance['native_quarter_hour_truth_eligible'] = True
+    if attack == 'none':
+        _validate_raw_frame('epex_ch', frame, require_resolution_provenance=False)
+        quality = _quality_frame_metrics(_parquet_payload(frame), role='epex_ch', label='bronze')
+        assert quality['resolution_provenance'] == provenance
+    else:
+        with pytest.raises(LTInputReplayError, match='provenance'):
+            _validate_raw_frame('epex_ch', frame, require_resolution_provenance=False)
+        with pytest.raises(LTInputReplayError, match='provenance'):
+            _quality_frame_metrics(_parquet_payload(frame), role='epex_ch', label='bronze')
+
+
 def _dimension() -> pd.DataFrame:
     return pd.DataFrame(
         [

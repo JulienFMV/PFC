@@ -11,6 +11,21 @@ Read in this order:
 
 ## Current state
 
+- D317 audit response implemented; read
+  SESSION-HANDOFF-20260908-AUDIT-RESPONSE.md and
+  docs/model/PFC-CH-AUDIT-RESPONSE-20260908.md first. Claude audit imported
+  unchanged; all33findings dispositioned. Collector/PIT/time/grid/provenance
+  fixes pass716tests/5skip; five independent old/current probes and75monthly
+  solver levels reverified (maxerror0.0). D304 frozen bindings unchanged.
+  New daily recordsv2 bind EEX quotation dates; oldv1bytes remain readable.
+  Signed conflict policy, real PRD PIT/block qualification, physical cadence
+  weighting, future holdout and lint debt remain open. Do not run a new model
+  benchmark before F-01/F-05/F-06/F-10 safeguards. WatchlistV2adds4events;
+  extended D312 horizon is2026-10through2032-12, core comparison2026–2029.
+  Pilot1/20, no new SQL/Warehouse/GPU/fit; all6false. Six richer local private
+  notes remain intentionally different from public Git. Publication/CI and
+  preservation receipts are in build/lt-audit-response-20260908/.
+
 - D316 national source readiness completed; read
   SESSION-HANDOFF-20260908-NATIONAL-READINESS.md and
   docs/data/CH-NATIONAL-INPUT-READINESS-20260908.md.21national families;

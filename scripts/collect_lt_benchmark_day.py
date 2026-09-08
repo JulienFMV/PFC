@@ -140,7 +140,7 @@ class BoundedQueries:
         state = self.request('GET', '/api/2.0/sql/warehouses/'+self.warehouse)
         write(self.out/'warehouse-final.json', dict(state=state.get('state'), auto_stop_mins=state.get('auto_stop_mins'),
             warehouse_started=self.started, statements=self.count, table_writes=0,
-            manual_stop='PRIOR_HTTP403_NOT_RETRIED', shutdown_confirmed=state.get('state') == 'STOPPED'))
+            stop_requests=0, manual_stop_attempted=False, shutdown_confirmed=state.get('state') == 'STOPPED'))
 
 
 def normalize_lseg(frame, observed):
@@ -164,11 +164,23 @@ def normalize_lseg(frame, observed):
 
 
 def merge_observed_eex_dates(history, normalized, quotation_dates):
-    """Only dates actually returned by the source replace saved history."""
+    """Replace accepted dates only; refuse erased dates and silent surface fallback."""
+    if set(history.columns) != set(normalized.columns) or 'date' not in history:
+        raise ValueError('historical and normalized EEX columns must have the same schema')
     dates = pd.to_datetime(pd.Series(quotation_dates).astype(str)).dt.normalize()
     if dates.empty or dates.isna().any() or not pd.to_datetime(normalized.date).isin(dates).all():
         raise ValueError('normalized rows must belong to observed quotation dates')
-    return pd.concat([history.loc[~pd.to_datetime(history.date).isin(dates)], normalized], ignore_index=True)
+    accepted = pd.to_datetime(normalized.date).dt.normalize()
+    saved = pd.to_datetime(history.date).dt.normalize()
+    if accepted.empty:
+        raise ValueError('empty accepted EEX delta cannot replace history')
+    lost_dates = set(dates) & set(saved) - set(accepted)
+    if lost_dates or dates.max() != accepted.max():
+        raise ValueError('returned date has no accepted EEX rows; quarantine or stale surface fallback')
+    merged = pd.concat([history.loc[~saved.isin(accepted)], normalized], ignore_index=True)
+    if pd.to_datetime(merged.date).max().normalize() != dates.max():
+        raise ValueError('merged EEX surface differs from observed accepted surface')
+    return merged
 
 
 def capture(root, out, config, records, *, request):
@@ -177,7 +189,7 @@ def capture(root, out, config, records, *, request):
     recipe = bound_file(root, config['recipe'])
     if records and config['recipe'] != records[0]['entry']['recipe']:
         raise ValueError('frozen recipe changed')
-    history_ref = records[-1]['entry']['inputs']['EEX']['artifact'] if len(records)>1 else config['initial_eex_history']
+    history_ref = records[-1]['entry']['inputs']['EEX']['artifact'] if records else config['initial_eex_history']
     history = pd.read_parquet(bound_file(root, history_ref))
     if 'date' not in history:
         raise ValueError('normalized historical EEX input required')
@@ -209,10 +221,18 @@ def capture(root, out, config, records, *, request):
         if (pd.to_datetime(raw.FactLoadTimestampUtc, utc=True) > eex_seen).any():
             raise ValueError('EEX loaded after observation')
         normalized = normalize_databricks_eex_daily_snapshot(raw, source_snapshot_sha256=sha(sql_dir/'EEX.parquet'), as_of_date=now.tz_convert('Europe/Zurich').date())
-        merged = merge_observed_eex_dates(history, normalized.history, raw.QuotationDateID)
-        merged.to_parquet(out/'EEX.parquet', index=False)
         write(out/'eex-normalization.json', dict(normalized.audit))
         normalized.quarantine.to_parquet(out/'eex-quarantine.parquet', index=False)
+        merged = merge_observed_eex_dates(history, normalized.history, raw.QuotationDateID)
+        merged.to_parquet(out/'EEX.parquet', index=False)
+        quotation_dates = dict(
+            raw_latest_date=pd.to_datetime(raw.QuotationDateID.astype(str)).max().strftime('%Y-%m-%d'),
+            normalized_latest_date=pd.to_datetime(normalized.history.date).max().strftime('%Y-%m-%d'),
+            merged_latest_date=pd.to_datetime(merged.date).max().strftime('%Y-%m-%d'),
+        )
+        write(out/'eex-history-merge.json', dict(previous_history=history_ref, quotation_dates=quotation_dates,
+            saved_rows=len(history), accepted_delta_rows=len(normalized.history), merged_rows=len(merged),
+            replacement_dates=sorted(pd.to_datetime(normalized.history.date).dt.strftime('%Y-%m-%d').unique())))
         dimension = queries.query('LSEG-dimension', "SELECT CurveID, GroupName, Country, Unit, ValueFrequency, VendorTimezone FROM prd.gold.dimlsegcurves WHERE CurveID = '110181967'", row_limit=3)
         if len(dimension)!=1 or dimension.Country.iloc[0]!='CHE' or dimension.Unit.iloc[0]!='EUR/MWh' or dimension.ValueFrequency.iloc[0]!='1h' or dimension.GroupName.iloc[0]!='continuous_forward':
             raise ValueError('frozen LSEG curve semantics changed')
@@ -224,7 +244,14 @@ def capture(root, out, config, records, *, request):
         lseg_seen = pd.Timestamp.now(tz='UTC')
         series, issue = normalize_lseg(pd.concat(frames, ignore_index=True), lseg_seen)
         series.to_frame().to_parquet(out/'LSEG.parquet')
-    finally:
+    except BaseException:
+        try:
+            queries.finish()
+        except Exception as final_error:
+            write(sql_dir/'warehouse-final-failure.json', dict(type=type(final_error).__name__,
+                message=str(final_error), stop_requests=0, manual_stop_attempted=False))
+        raise
+    else:
         queries.finish()
     def ref(path):
         return dict(path=path.relative_to(root).as_posix(), sha256=sha(path))
@@ -235,6 +262,8 @@ def capture(root, out, config, records, *, request):
             vendor_availability_authenticated=False)
     bound_file(root, config['recipe'])
     bound_file(root, config['ch_history'])
+    bound_file(root, history_ref)
+    inputs['EEX']['quotation_dates'] = quotation_dates
     return dict(recipe=ref(recipe), inputs=inputs)
 
 
@@ -247,28 +276,27 @@ def main():
     if Path.cwd() != ROOT:
         raise ValueError('canonical workspace required')
     output = fresh_output(ROOT, args.output)
-    status, records = due_day(ROOT, args.registry, pd.Timestamp.now(tz='UTC'))
     output.mkdir(parents=True, exist_ok=False)
-    if status != 'DUE':
-        write(output/'status.json', dict(status=status, network_calls=0, authority=dict(AUTHORITIES)))
-        print(json.dumps(dict(status=status, network_calls=0)))
-        return
-    config_path = args.config.resolve(strict=True)
-    if not config_path.is_relative_to(ROOT/'build'):
-        raise ValueError('local capture config required')
-    config = json.loads(config_path.read_text())
-    if set(config) != {'recipe','initial_eex_history','ch_history','ompex_read_only_directory','warehouse_id'}:
-        raise ValueError('exact collector config schema required')
-    # Preserve the reviewed configuration and code before any external call.
-    write(output/'plan.json', dict(config=config, config_sha256=sha(config_path), collector_sha256=sha(Path(__file__)),
-        started_at_utc=pd.Timestamp.now(tz='UTC').isoformat(), authority=dict(AUTHORITIES)))
-    from scripts.capture_entsoe_day_ahead_prd_profile import _load_credentials, _request_json
-    host, warehouse, token = _load_credentials()
-    if warehouse != config['warehouse_id']:
-        raise ValueError('configured Warehouse differs from credential boundary')
-    def request(method, path, body=None):
-        return _request_json(method=method, url=host+path, token=token, body=body, timeout_seconds=30)
     try:
+        status, records = due_day(ROOT, args.registry, pd.Timestamp.now(tz='UTC'))
+        if status != 'DUE':
+            write(output/'status.json', dict(status=status, network_calls=0, authority=dict(AUTHORITIES)))
+            print(json.dumps(dict(status=status, network_calls=0)))
+            return
+        config_path = args.config.resolve(strict=True)
+        if not config_path.is_relative_to(ROOT/'build'):
+            raise ValueError('local capture config required')
+        config = json.loads(config_path.read_text())
+        if set(config) != {'recipe','initial_eex_history','ch_history','ompex_read_only_directory','warehouse_id'}:
+            raise ValueError('exact collector config schema required')
+        write(output/'plan.json', dict(config=config, config_sha256=sha(config_path), collector_sha256=sha(Path(__file__)),
+            started_at_utc=pd.Timestamp.now(tz='UTC').isoformat(), authority=dict(AUTHORITIES)))
+        from scripts.capture_entsoe_day_ahead_prd_profile import _load_credentials, _request_json
+        host, warehouse, token = _load_credentials()
+        if warehouse != config['warehouse_id']:
+            raise ValueError('configured Warehouse differs from credential boundary')
+        def request(method, path, body=None):
+            return _request_json(method=method, url=host+path, token=token, body=body, timeout_seconds=30)
         with capture_lock(args.registry.resolve(strict=True)):
             status, records = due_day(ROOT, args.registry, pd.Timestamp.now(tz='UTC'))
             if status != 'DUE':
