@@ -11,6 +11,18 @@ Read in this order:
 
 ## Current state
 
+- D316 national source readiness completed; read
+  SESSION-HANDOFF-20260908-NATIONAL-READINESS.md and
+  docs/data/CH-NATIONAL-INPUT-READINESS-20260908.md.21national families;
+  four bounded SELECTs, one truncated/rejected and three independently
+  reconciled. D300 national physical/hydro evidence reverified. Missing work
+  is grids/revisions, outage semantics and future trajectories; no client
+  file prerequisite. Structural event registry proposed with four sourced
+  examples, no scheduler/model activation. D304/solver unchanged, all6false.
+  GitHub code checkpoint dee652bc919d06345f71304d1f1eaacf0edf7bc7, branch
+  fix/lt-audit-remediation,591tests passed/5skipped. Six richer local business
+  notes intentionally differ from public Git; do not stage them wholesale.
+
 - D315 user clarification: national CH PFC quality comes first; customer budgets
   are optional economic exposure profiles, not Swiss load/generation proxies
   or prerequisites. Read SESSION-HANDOFF-20260908-PUBLIC-AUDIT-CHECKPOINT.md and

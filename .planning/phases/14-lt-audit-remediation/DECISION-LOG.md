@@ -24908,3 +24908,32 @@ publication nor the local diagnostic population is production admission.
 Evidence: SESSION-HANDOFF-20260908-PUBLIC-AUDIT-CHECKPOINT.md and
 docs/model/PFC-CH-AUDIT-ENTRYPOINT-20260908.md; local checkpoint manifests,
 tests and exact Git receipt under build/lt-national-readiness-20260908/.
+
+## D-20260908-316 — National qualification and structural event watchlist
+
+Decision: reuse D300 national physical/hydro evidence; qualify national grids,
+revision/availability semantics, outage asset identities and future system
+trajectories. Customer budgets are not national proxies or prerequisites.
+Add a documented proposal and four official-source examples for a versioned
+structural event register. This step activates no collector or model input.
+Reason: four bounded SELECTs establish21families but neither complete national
+future trajectories nor independent historical PIT. Three accepted results
+reconcile with raw JSON; the first truncated result remains rejected. Physical
+line ratings and announcements cannot quantify commercial capacity or prices.
+The user asked how network projects and their revisions should inform PFC.
+Rejected: another broad client-data request, treating raw counts as hours,
+top-level null IDs as proof of absent raw identity, available outage capacity
+as MW lost, assumed year-start commissioning, invented EUR/MWh event patches,
+automatic retraining or uncalibrated scenario probabilities. Public EEX quotes
+may already reflect announcements; avoid duplicating their level effect.
+Invariants: D304, D305–D307 comparisons, sole solver monthly-level authority,
+existing assembler/EEX projection, no per-month model choice, all6false,
+no CT/protected data/AFRY values/T057. Source observations and effective dates
+must be separate; no historical backdating or overwriting prior revisions.
+Evidence: SESSION-HANDOFF-20260908-NATIONAL-READINESS.md; docs/data/
+CH-NATIONAL-INPUT-READINESS-20260908.md and CH-STRUCTURAL-EVENT-REGISTRY-PROPOSAL.md.
+Local task root build/lt-national-readiness-20260908/ has SQL/response evidence,
+independent verification, code checkpoint receipt, tests and preservation pins.
+Code checkpoint dee652bc919d06345f71304d1f1eaacf0edf7bc7 was pushed and verified;
+591passed/5skipped. Subsequent public changes are documentation only. Zero new
+Warehouse starts; last observedRUNNING/auto-stop45min, shutdown unconfirmed.
