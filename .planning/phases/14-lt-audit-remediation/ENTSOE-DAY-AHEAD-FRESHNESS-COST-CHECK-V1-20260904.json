@@ -1,0 +1,166 @@
+{
+  "schema_version": "fmv_entsoe_day_ahead_freshness_cost_check.v1",
+  "status": "TABLE_UPDATED_TODAY_CH_DELIVERY_GAP_OBSERVED_WAREHOUSE_STOP_FORBIDDEN",
+  "authorization": {
+    "explicit_user_authorization_present": true,
+    "authorized_scope": "USE_PBI_SQL_WAREHOUSE_FOR_TABLE_FRESHNESS_AND_COST_CHECK",
+    "export_execution_authorized": false,
+    "model_or_production_authority_granted": false
+  },
+  "warehouse": {
+    "name": "PBI SQL Warehouse - Analytics",
+    "warehouse_id_sha256": "3f1905a33ac0c15557f450880efcdd01320ad36c116d5a80f914df1903e9fb2a",
+    "type": "CLASSIC",
+    "size": "2X-Small",
+    "dbu_per_hour_public_rate_card": 4,
+    "state_when_authorized_sequence_began": "STARTING",
+    "state_at_first_query": "RUNNING",
+    "running_observed_at_utc": "2026-09-04T07:54:39.324Z",
+    "active_query_count_before_stop_attempt": 0,
+    "active_session_count_before_stop_attempt": 0,
+    "stop_request_status": "REJECTED_HTTP_403",
+    "state_after_rejected_stop_utc": "2026-09-04T07:57:58.266Z",
+    "state_after_rejected_stop": "RUNNING",
+    "configured_auto_stop_minutes": 45
+  },
+  "delta_detail": {
+    "source_table": "prd.silver.ge_power_entsoe_time_series_vintages",
+    "statement_id": "01f1a835-efc1-1ea7-af7a-33d43b831b79",
+    "submitted_query_sha256": "b17a8b7eee13e3a35ee1b497087b68357b0fe23fa59d4e1ba021ab3d6c7201ed",
+    "query_history_text_status": "REDACTED_OR_UNAVAILABLE_TEN_BYTE_PLACEHOLDER",
+    "state": "FINISHED",
+    "result_truncated": false,
+    "last_modified_utc": "2026-09-04T06:42:56Z",
+    "partition_columns": [
+      "_year",
+      "_month"
+    ],
+    "num_files": 137,
+    "size_in_bytes": 1548216106,
+    "duration_ms": 4041,
+    "read_bytes": 0,
+    "read_files_count": 0,
+    "rows_read_count": 0,
+    "rows_produced": 1,
+    "write_remote_bytes": 0,
+    "spill_to_disk_bytes": 0
+  },
+  "bounded_freshness_query": {
+    "statement_id": "01f1a836-1856-19e4-ac0b-d09316b79ca7",
+    "submitted_query_sha256": "46e3d0d8da549b5457042745b4cf3623cfe93ae68e1df314fdffc1adf05261b3",
+    "submitted_query_size_bytes": 861,
+    "query_history_text_status": "REDACTED_OR_UNAVAILABLE_TEN_BYTE_PLACEHOLDER",
+    "state": "FINISHED",
+    "result_truncated": false,
+    "partition_scope": [
+      "2026-08",
+      "2026-09"
+    ],
+    "group_name": "day_ahead_prices",
+    "price_columns_selected": false,
+    "duration_ms": 3700,
+    "read_bytes": 7798287,
+    "read_files_bytes": 44071749,
+    "read_files_count": 2,
+    "rows_read_count": 405359,
+    "rows_produced": 5,
+    "pruned_bytes": 1504144357,
+    "pruned_files_count": 135,
+    "write_remote_bytes": 0,
+    "spill_to_disk_bytes": 0,
+    "failed_task_count": 0
+  },
+  "selected_series_watermarks": [
+    {
+      "field_name": "at_price",
+      "series_key": "day_ahead_prices||at_price||1",
+      "max_interval_end_utc": "2026-09-04T22:00:00Z",
+      "max_pull_utc": "2026-09-03T16:36:19Z",
+      "max_ingest_utc": "2026-09-03T16:45:33.985Z",
+      "max_silver_update_utc": "2026-09-03T16:47:51.251Z",
+      "distinct_interval_count": 3326,
+      "vintage_row_count": 3326,
+      "dq_failed_count": 0
+    },
+    {
+      "field_name": "ch_price",
+      "series_key": "day_ahead_prices||ch_price",
+      "max_interval_end_utc": "2026-09-02T22:00:00Z",
+      "max_pull_utc": "2026-09-03T16:36:19Z",
+      "max_ingest_utc": "2026-09-03T16:45:33.985Z",
+      "max_silver_update_utc": "2026-09-03T16:47:51.251Z",
+      "distinct_interval_count": 781,
+      "vintage_row_count": 781,
+      "dq_failed_count": 0
+    },
+    {
+      "field_name": "de_lu_price",
+      "series_key": "day_ahead_prices||de_lu_price||1",
+      "max_interval_end_utc": "2026-09-04T22:00:00Z",
+      "max_pull_utc": "2026-09-03T16:36:19Z",
+      "max_ingest_utc": "2026-09-03T16:45:33.985Z",
+      "max_silver_update_utc": "2026-09-03T16:47:51.251Z",
+      "distinct_interval_count": 3300,
+      "vintage_row_count": 3300,
+      "dq_failed_count": 0
+    },
+    {
+      "field_name": "fr_price",
+      "series_key": "day_ahead_prices||fr_price",
+      "max_interval_end_utc": "2026-09-04T22:00:00Z",
+      "max_pull_utc": "2026-09-03T16:36:19Z",
+      "max_ingest_utc": "2026-09-03T16:45:33.985Z",
+      "max_silver_update_utc": "2026-09-03T16:47:51.251Z",
+      "distinct_interval_count": 3215,
+      "vintage_row_count": 3215,
+      "dq_failed_count": 0
+    },
+    {
+      "field_name": "it_nord_price",
+      "series_key": "day_ahead_prices||it_nord_price",
+      "max_interval_end_utc": "2026-09-04T22:00:00Z",
+      "max_pull_utc": "2026-09-03T16:36:19Z",
+      "max_ingest_utc": "2026-09-03T16:45:33.985Z",
+      "max_silver_update_utc": "2026-09-03T16:47:51.251Z",
+      "distinct_interval_count": 3057,
+      "vintage_row_count": 3057,
+      "dq_failed_count": 0
+    }
+  ],
+  "assessment": {
+    "silver_table_modified_on_observation_date": true,
+    "neighbor_selected_series_cover_through_2026_09_04": true,
+    "ch_selected_series_max_delivery_end_utc": "2026-09-02T22:00:00Z",
+    "ch_delivery_gap_observed": true,
+    "ch_gap_consistent_with_recent_entsoe_outage": true,
+    "all_selected_series_dq_failed_count_zero": true,
+    "july_realized_export_source_rows_invalidated": false,
+    "current_source_completeness_proven": false
+  },
+  "execution": {
+    "databricks_control_plane_get_count": 60,
+    "databricks_statement_count": 2,
+    "warehouse_start_request_count": 0,
+    "warehouse_stop_request_count": 1,
+    "warehouse_stop_success_count": 0,
+    "business_price_rows_returned": 0,
+    "databricks_write_count": 0,
+    "github_coordination_comment_count": 1
+  },
+  "coordination": {
+    "issue_url": "https://github.com/FMVSA/opendata-lakehouse/issues/4",
+    "comment_url": "https://github.com/FMVSA/opendata-lakehouse/issues/4#issuecomment-5537505188",
+    "requested_action": "CONFIRM_CH_BACKFILL_AND_PROVIDE_COST_EXPORT_AND_FINALITY_EVIDENCE"
+  },
+  "authorities": {
+    "july_export_execution_authorized": false,
+    "realized_finality_proven": false,
+    "causal_asof_authorized": false,
+    "model_input_authorized": false,
+    "model_selection_authorized": false,
+    "monthly_level_authorized": false,
+    "publication_authorized": false,
+    "production_authorized": false,
+    "trading_authorized": false
+  }
+}

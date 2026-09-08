@@ -47,6 +47,29 @@ def _frame(rows: list[dict[str, object]]) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=EXPECTED_COLUMNS)
 
 
+@pytest.mark.parametrize("date_key", [20260804, "20260804"])
+def test_prd_integer_date_key_is_a_calendar_date(date_key) -> None:
+    row = _row(
+        product_id="month-base",
+        delivery_period_id="september",
+        quotation_date="2026-08-04",
+        settlement_price=70.0,
+        product_type="BASE",
+        delivery_period_type="MONTH",
+        delivery_start="2026-09-01",
+        delivery_end="2026-09-30",
+    )
+    expected = normalize_databricks_eex_daily_snapshot(
+        _frame([row]), source_snapshot_sha256=SOURCE_SHA256
+    )
+    row["QuotationDateID"] = date_key
+    actual = normalize_databricks_eex_daily_snapshot(
+        _frame([row]), source_snapshot_sha256=SOURCE_SHA256
+    )
+    pd.testing.assert_frame_equal(actual.history, expected.history)
+    assert actual.audit == expected.audit
+
+
 def test_normalizes_base_and_weekday_bounded_peak_products() -> None:
     rows = [
         _row(

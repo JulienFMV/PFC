@@ -386,6 +386,39 @@ def test_sfoe_exact_csv_replays_without_cache_or_clipping() -> None:
     )
 
 
+@pytest.mark.parametrize("include_discrepant_week", [False, True])
+def test_sfoe_reconciles_totals_for_the_selected_window(include_discrepant_week: bool) -> None:
+    body = (FIXTURES / "sfoe_ogd17.csv").read_bytes().replace(b",7000,", b",7001,")
+    envelope = build_raw_envelope(
+        acquisition_id="acquisition-001",
+        source_role="hydro",
+        source_system=SFOE_SOURCE_SYSTEM,
+        source_locator=SFOE_OGD17_URL,
+        provider_id=SFOE_SOURCE_SYSTEM,
+        received_at_utc=RECEIVED,
+        documents=[
+            CapturedProviderDocument(
+                document_id="ogd17_reservoir_levels",
+                request_url=SFOE_OGD17_URL,
+                request_parameters={},
+                response_media_type="text/csv",
+                body=body,
+            )
+        ],
+    )
+    config = build_provider_transform_config(
+        role="hydro",
+        start_utc="2026-06-14T00:00:00Z" if include_discrepant_week else "2026-06-21T22:00:00Z",
+        end_utc="2026-07-02T00:00:00Z",
+    )
+    if include_discrepant_week:
+        with pytest.raises(GovernedLTAcquisitionError, match="regional totals do not reconcile"):
+            transform_provider_raw(envelope_payload=envelope, parser_config=config)
+    else:
+        result = transform_provider_raw(envelope_payload=envelope, parser_config=config)
+        assert result["fill_gwh"].tolist() == [7200.0, 7400.0]
+
+
 def test_sfoe_rejects_observation_date_after_received_at() -> None:
     envelope = build_raw_envelope(
         acquisition_id="acquisition-001",

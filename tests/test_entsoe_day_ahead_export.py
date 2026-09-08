@@ -18,6 +18,7 @@ from pfc_shaping.validation.entsoe_day_ahead_export import (
     CAUSAL_SQL_PATH,
     CAUSAL_SQL_SHA256,
     RAW_COLUMNS,
+    REALIZED_LATEST_CANDIDATE_USAGE,
     REALIZED_SQL_PATH,
     REALIZED_SQL_SHA256,
     DayAheadMarketUse,
@@ -31,6 +32,7 @@ from pfc_shaping.validation.entsoe_day_ahead_export import (
     build_realized_export_parameters,
     validate_causal_export,
     validate_realized_export,
+    validate_realized_latest_candidate,
     verify_export_replay_package,
     verify_export_sql_bindings,
 )
@@ -372,6 +374,42 @@ def test_realized_latest_revision_is_not_final_without_scoped_evidence() -> None
             finality_evidence=(premature,),
             **kwargs,
         )
+
+
+def test_latest_revision_candidate_is_replayable_but_not_final_authority() -> None:
+    raw = _frame(_row("ch_price"), _row("de_lu_price"))
+    for column in (
+        "interval_start_utc",
+        "date_time_utc",
+        "interval_end_utc",
+        "publication_timestamp_utc",
+        "first_seen_pull_ts_utc",
+        "availability_timestamp_utc",
+    ):
+        raw[column] = raw[column].astype(str)
+    candidate = validate_realized_latest_candidate(
+        raw,
+        series_selection=SELECTION,
+        market_uses=MARKET_USES,
+        window_start_utc=START,
+        window_end_utc=END,
+        assessed_at_utc=ASSESSED,
+        query_sha256=REALIZED_SQL_SHA256,
+    )
+
+    assert candidate.audit["usage"] == REALIZED_LATEST_CANDIDATE_USAGE
+    assert candidate.audit["authorities"]["consumer_contract_authorized"] is False
+    assert candidate.audit["authorities"]["realized_finality_evidence_validated"] is False
+    assert not candidate.frame["is_final"].any()
+
+    package = build_export_replay_package(raw_frame=raw, export=candidate)
+    report = verify_export_replay_package(
+        artifacts=package.artifacts,
+        manifest_payload=package.manifest_payload,
+    )
+    assert report["usage"] == REALIZED_LATEST_CANDIDATE_USAGE
+    assert report["status"] == "VERIFIED_SELF_CONTAINED_DAY_AHEAD_EXPORT_REPLAY"
+    assert report["authorities"]["model_input_authorized"] is False
 
 
 def test_it_north_requires_platform_finality_not_lseg_reconciliation() -> None:

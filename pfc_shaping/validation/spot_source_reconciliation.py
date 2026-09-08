@@ -20,6 +20,11 @@ import pandas as pd
 
 from pfc_shaping.data.governed_lt_acquisition import dataframe_semantic_sha256
 from pfc_shaping.path_safety import read_stable_single_link_file
+from pfc_shaping.validation.entsoe_day_ahead_export import (
+    DayAheadConsumerExport,
+    EntsoeDayAheadExportError,
+    validate_realized_latest_candidate,
+)
 from pfc_shaping.validation.entsoe_day_ahead_prd import (
     PIT_COLUMNS,
     DayAheadPitExtract,
@@ -30,8 +35,11 @@ from pfc_shaping.validation.entsoe_day_ahead_prd import (
 ROOT = Path(__file__).resolve().parents[2]
 LSEG_PIT_SQL_PATH = ROOT / "docs/data/sql/databricks_prd_lseg_epex_actuals_pit_extract.sql"
 LSEG_PIT_SQL_SHA256 = "a4cc587d9f8116dd3f20c295ce8edbf291bfcf06a3f70f859d6fc9816c336bed"
+LSEG_LATEST_SQL_PATH = ROOT / "docs/data/sql/databricks_prd_lseg_epex_actuals_latest_extract.sql"
+LSEG_LATEST_SQL_SHA256 = "be9e94de41c9e0c65f1814be617e3abd591103d6b869c6c80444761e6de22fff"
 
 LSEG_PIT_AUDIT_SCHEMA = "fmv_lseg_epex_actuals_prd_pit_extract.v1"
+LSEG_LATEST_AUDIT_SCHEMA = "fmv_lseg_epex_actuals_prd_latest_extract.v1"
 RECONCILIATION_SCHEMA = "fmv_lseg_entsoe_spot_reconciliation.v2"
 PASS_STATUS = "PASS_SPOT_SOURCE_RECONCILIATION_NOT_MODEL_AUTHORITY"
 BLOCKED_STATUS = "BLOCKED_SPOT_SOURCE_RECONCILIATION"
@@ -75,6 +83,14 @@ class SpotSourceReconciliationError(ValueError):
 @dataclass(frozen=True)
 class LsegActualsPitExtract:
     """Validated local LSEG actual-price rows plus their audit binding."""
+
+    frame: pd.DataFrame
+    audit: Mapping[str, object]
+
+
+@dataclass(frozen=True)
+class LsegActualsLatestExtract:
+    """Validated latest LSEG actual-price rows without historical PIT authority."""
 
     frame: pd.DataFrame
     audit: Mapping[str, object]
@@ -211,74 +227,125 @@ def verify_lseg_sql_binding() -> str:
     return observed
 
 
+def verify_lseg_latest_sql_binding() -> str:
+    """Verify the immutable, bounded LSEG latest-observation template."""
+
+    try:
+        payload = read_stable_single_link_file(
+            LSEG_LATEST_SQL_PATH, label="LSEG EPEX latest SQL", max_bytes=200_000
+        )
+    except (OSError, ValueError) as exc:
+        raise SpotSourceReconciliationError("LSEG EPEX latest SQL read failed") from exc
+    observed = hashlib.sha256(payload).hexdigest()
+    if observed != LSEG_LATEST_SQL_SHA256:
+        raise SpotSourceReconciliationError("LSEG EPEX latest SQL binding differs")
+    return observed
+
+
 def build_lseg_epex_actuals_pit_parameters(
     *,
     window_start_utc: str | pd.Timestamp,
     window_end_utc: str | pd.Timestamp,
     as_of_utc: str | pd.Timestamp,
 ) -> dict[str, object]:
-    """Build one-month, partition-pruned parameters for the LSEG template."""
+    """Build one UTC-calendar-month parameters for the LSEG PIT template."""
 
     verify_lseg_sql_binding()
-    start = _utc_timestamp(window_start_utc, "LSEG PIT window start")
-    end = _utc_timestamp(window_end_utc, "LSEG PIT window end")
-    as_of = _utc_timestamp(as_of_utc, "LSEG PIT as-of")
-    _ordered_window(start, end, "LSEG PIT")
+    return _build_lseg_window_parameters(
+        window_start_utc=window_start_utc,
+        window_end_utc=window_end_utc,
+        cutoff_utc=as_of_utc,
+        label="LSEG PIT",
+        allow_two_utc_months=False,
+    )
+
+
+def build_lseg_epex_actuals_latest_parameters(
+    *,
+    window_start_utc: str | pd.Timestamp,
+    window_end_utc: str | pd.Timestamp,
+    assessed_at_utc: str | pd.Timestamp,
+) -> dict[str, object]:
+    """Build bounded latest-observation parameters without claiming historical PIT."""
+
+    verify_lseg_latest_sql_binding()
+    bounded = _build_lseg_window_parameters(
+        window_start_utc=window_start_utc,
+        window_end_utc=window_end_utc,
+        cutoff_utc=assessed_at_utc,
+        label="LSEG latest",
+        allow_two_utc_months=True,
+    )
+    return {
+        "start_utc": bounded["start_utc"],
+        "end_utc": bounded["end_utc"],
+        "assessed_at_utc": bounded["as_of_utc"],
+        "start_value_date": bounded["start_value_date"],
+        "end_value_date": bounded["end_value_date"],
+    }
+
+
+def _build_lseg_window_parameters(
+    *,
+    window_start_utc: str | pd.Timestamp,
+    window_end_utc: str | pd.Timestamp,
+    cutoff_utc: str | pd.Timestamp,
+    label: str,
+    allow_two_utc_months: bool,
+) -> dict[str, object]:
+    start = _utc_timestamp(window_start_utc, f"{label} window start")
+    end = _utc_timestamp(window_end_utc, f"{label} window end")
+    cutoff = _utc_timestamp(cutoff_utc, f"{label} cutoff")
+    _ordered_window(start, end, label)
     if end - start > pd.Timedelta(days=MAX_PIT_WINDOW_DAYS):
-        raise SpotSourceReconciliationError("LSEG PIT window exceeds 31 days")
+        raise SpotSourceReconciliationError(f"{label} window exceeds 31 days")
     if any(value.second or value.microsecond or value.minute % 15 for value in (start, end)):
-        raise SpotSourceReconciliationError("LSEG PIT bounds must lie on a 15-minute UTC grid")
-    month_start = pd.Timestamp(year=start.year, month=start.month, day=1, tz="UTC")
-    next_month = month_start + pd.offsets.MonthBegin(1)
-    if start < month_start or end > next_month:
+        raise SpotSourceReconciliationError(f"{label} bounds must lie on a 15-minute UTC grid")
+    last_instant = end - pd.Timedelta(nanoseconds=1)
+    start_month = start.year * 12 + start.month
+    end_month = last_instant.year * 12 + last_instant.month
+    month_span = end_month - start_month
+    allowed_spans = {0, 1} if allow_two_utc_months else {0}
+    if month_span not in allowed_spans:
+        scope = "at most two" if allow_two_utc_months else "one"
         raise SpotSourceReconciliationError(
-            "LSEG PIT window must stay inside one UTC calendar month"
+            f"{label} window must stay inside {scope} UTC calendar month(s)"
         )
-    if as_of < end:
+    if cutoff < end:
         raise SpotSourceReconciliationError(
-            "LSEG actuals reconciliation as-of precedes the delivery window end"
+            "LSEG actuals reconciliation cutoff precedes the delivery window end"
         )
     return {
         "start_utc": _utc_text(start),
         "end_utc": _utc_text(end),
-        "as_of_utc": _utc_text(as_of),
+        "as_of_utc": _utc_text(cutoff),
         "start_value_date": start.date().isoformat(),
         "end_value_date": end.date().isoformat(),
     }
 
 
-def validate_lseg_epex_actuals_pit_extract(
+def _validate_lseg_extract_rows(
     frame: pd.DataFrame,
     *,
-    window_start_utc: str | pd.Timestamp,
-    window_end_utc: str | pd.Timestamp,
-    as_of_utc: str | pd.Timestamp,
-    pit_query_sha256: str,
-) -> LsegActualsPitExtract:
-    """Validate exact LSEG price curves and their pipeline-first-seen PIT cut."""
-
-    if _sha256(pit_query_sha256, "LSEG PIT query") != LSEG_PIT_SQL_SHA256:
-        raise SpotSourceReconciliationError("LSEG PIT query SHA-256 differs")
-    parameters = build_lseg_epex_actuals_pit_parameters(
-        window_start_utc=window_start_utc,
-        window_end_utc=window_end_utc,
-        as_of_utc=as_of_utc,
-    )
-    result = _exact_frame(frame, LSEG_PIT_COLUMNS, "LSEG EPEX PIT extract")
+    window_start_utc: str,
+    window_end_utc: str,
+    cutoff_utc: str,
+    label: str,
+) -> pd.DataFrame:
+    result = _exact_frame(frame, LSEG_PIT_COLUMNS, label)
     if result.empty:
-        raise SpotSourceReconciliationError("LSEG EPEX PIT extract is empty")
+        raise SpotSourceReconciliationError(f"{label} is empty")
     if len(result) >= PIT_RESULT_ROW_LIMIT:
-        raise SpotSourceReconciliationError("LSEG EPEX PIT extract hit the rejection sentinel")
+        raise SpotSourceReconciliationError(f"{label} hit the rejection sentinel")
 
     for column in ("market_zone", "curve_id", "resolution", "curve_value_vintage_id"):
         result[column] = result[column].map(lambda value: _text(value, column))
-    timestamp_columns = (
+    for column in (
         "interval_start_utc",
         "interval_end_utc",
         "pipeline_first_seen_at_utc",
         "pull_ts_utc",
-    )
-    for column in timestamp_columns:
+    ):
         values = pd.to_datetime(result[column], errors="coerce", utc=True)
         if values.isna().any():
             raise SpotSourceReconciliationError(f"LSEG extract contains invalid {column}")
@@ -301,17 +368,17 @@ def validate_lseg_epex_actuals_pit_extract(
     if set(result["market_zone"]) != set(LSEG_CURVES):
         raise SpotSourceReconciliationError("LSEG extract does not contain all four market zones")
 
-    start = _utc_timestamp(parameters["start_utc"], "LSEG PIT start")
-    end = _utc_timestamp(parameters["end_utc"], "LSEG PIT end")
-    as_of = _utc_timestamp(parameters["as_of_utc"], "LSEG PIT as-of")
+    start = _utc_timestamp(window_start_utc, "LSEG extract start")
+    end = _utc_timestamp(window_end_utc, "LSEG extract end")
+    cutoff = _utc_timestamp(cutoff_utc, "LSEG extract cutoff")
     if result["interval_start_utc"].lt(start).any() or result["interval_start_utc"].ge(end).any():
         raise SpotSourceReconciliationError(
             "LSEG extract contains rows outside the delivery window"
         )
     if result["interval_end_utc"].gt(end).any():
         raise SpotSourceReconciliationError("LSEG extract ends after the delivery window")
-    if result["pipeline_first_seen_at_utc"].gt(as_of).any():
-        raise SpotSourceReconciliationError("LSEG extract leaks a value unavailable at the as-of")
+    if result["pipeline_first_seen_at_utc"].gt(cutoff).any():
+        raise SpotSourceReconciliationError("LSEG extract leaks a value unavailable at the cutoff")
     if result["pull_ts_utc"].lt(result["pipeline_first_seen_at_utc"]).any():
         raise SpotSourceReconciliationError("LSEG pull time precedes pipeline first-seen time")
 
@@ -330,9 +397,35 @@ def validate_lseg_epex_actuals_pit_extract(
     ).any():
         raise SpotSourceReconciliationError("LSEG extract interval grain is duplicated")
 
-    result = result.sort_values(
+    return result.sort_values(
         ["market_zone", "interval_start_utc", "interval_end_utc"], kind="mergesort"
     ).reset_index(drop=True)
+
+
+def validate_lseg_epex_actuals_pit_extract(
+    frame: pd.DataFrame,
+    *,
+    window_start_utc: str | pd.Timestamp,
+    window_end_utc: str | pd.Timestamp,
+    as_of_utc: str | pd.Timestamp,
+    pit_query_sha256: str,
+) -> LsegActualsPitExtract:
+    """Validate exact LSEG price curves and their pipeline-first-seen PIT cut."""
+
+    if _sha256(pit_query_sha256, "LSEG PIT query") != LSEG_PIT_SQL_SHA256:
+        raise SpotSourceReconciliationError("LSEG PIT query SHA-256 differs")
+    parameters = build_lseg_epex_actuals_pit_parameters(
+        window_start_utc=window_start_utc,
+        window_end_utc=window_end_utc,
+        as_of_utc=as_of_utc,
+    )
+    result = _validate_lseg_extract_rows(
+        frame,
+        window_start_utc=parameters["start_utc"],
+        window_end_utc=parameters["end_utc"],
+        cutoff_utc=parameters["as_of_utc"],
+        label="LSEG EPEX PIT extract",
+    )
     audit = {
         "schema_version": LSEG_PIT_AUDIT_SCHEMA,
         "status": "PASS_LSEG_BOUNDED_PIT_EXTRACT_NOT_MODEL_INPUT_AUTHORITY",
@@ -357,6 +450,55 @@ def validate_lseg_epex_actuals_pit_extract(
     return LsegActualsPitExtract(result, audit)
 
 
+def validate_lseg_epex_actuals_latest_extract(
+    frame: pd.DataFrame,
+    *,
+    window_start_utc: str | pd.Timestamp,
+    window_end_utc: str | pd.Timestamp,
+    assessed_at_utc: str | pd.Timestamp,
+    latest_query_sha256: str,
+) -> LsegActualsLatestExtract:
+    """Validate an exact latest LSEG snapshot without granting PIT authority."""
+
+    if _sha256(latest_query_sha256, "LSEG latest query") != LSEG_LATEST_SQL_SHA256:
+        raise SpotSourceReconciliationError("LSEG latest query SHA-256 differs")
+    parameters = build_lseg_epex_actuals_latest_parameters(
+        window_start_utc=window_start_utc,
+        window_end_utc=window_end_utc,
+        assessed_at_utc=assessed_at_utc,
+    )
+    result = _validate_lseg_extract_rows(
+        frame,
+        window_start_utc=parameters["start_utc"],
+        window_end_utc=parameters["end_utc"],
+        cutoff_utc=parameters["assessed_at_utc"],
+        label="LSEG EPEX latest extract",
+    )
+    audit = {
+        "schema_version": LSEG_LATEST_AUDIT_SCHEMA,
+        "status": "PASS_LSEG_BOUNDED_LATEST_EXTRACT_NOT_PIT_OR_MODEL_AUTHORITY",
+        "latest_query_sha256": LSEG_LATEST_SQL_SHA256,
+        "row_count": len(result),
+        "frame_semantic_sha256": dataframe_semantic_sha256(result),
+        "window_start_utc": parameters["start_utc"],
+        "window_end_utc": parameters["end_utc"],
+        "assessed_at_utc": parameters["assessed_at_utc"],
+        "curve_binding": {
+            zone: {"curve_id": curve, "resolution": resolution}
+            for zone, (curve, resolution) in LSEG_CURVES.items()
+        },
+        "authorities": {
+            "latest_observation_validated": True,
+            "point_in_time_filter_validated": False,
+            "cadence_completeness_authorized": False,
+            "model_input_authorized": False,
+            "model_selection_authorized": False,
+            "production_authorized": False,
+        },
+    }
+    return LsegActualsLatestExtract(result, audit)
+
+
 def reconcile_lseg_entsoe_spot(
     *,
     entsoe: DayAheadPitExtract,
@@ -369,6 +511,45 @@ def reconcile_lseg_entsoe_spot(
         raise SpotSourceReconciliationError("reconciliation policy has the wrong type")
     entsoe_frame, entsoe_audit = _validated_entsoe_artifact(entsoe)
     lseg_frame, lseg_audit = _validated_lseg_artifact(lseg)
+    return _reconcile_validated_frames(
+        entsoe_frame=entsoe_frame,
+        entsoe_audit=entsoe_audit,
+        lseg_frame=lseg_frame,
+        lseg_audit=lseg_audit,
+        policy=policy,
+    )
+
+
+def reconcile_lseg_entsoe_latest_candidate(
+    *,
+    entsoe_raw_frame: pd.DataFrame,
+    entsoe: DayAheadConsumerExport,
+    lseg: LsegActualsLatestExtract,
+    policy: SpotReconciliationPolicy,
+) -> SpotReconciliationReport:
+    """Compare LSEG with an exactly replayed, explicitly non-final ENTSO-E candidate."""
+
+    if not isinstance(policy, SpotReconciliationPolicy):
+        raise SpotSourceReconciliationError("reconciliation policy has the wrong type")
+    entsoe_frame, entsoe_audit = _validated_entsoe_latest_candidate(entsoe_raw_frame, entsoe)
+    lseg_frame, lseg_audit = _validated_lseg_latest_artifact(lseg)
+    return _reconcile_validated_frames(
+        entsoe_frame=entsoe_frame,
+        entsoe_audit=entsoe_audit,
+        lseg_frame=lseg_frame,
+        lseg_audit=lseg_audit,
+        policy=policy,
+    )
+
+
+def _reconcile_validated_frames(
+    *,
+    entsoe_frame: pd.DataFrame,
+    entsoe_audit: Mapping[str, object],
+    lseg_frame: pd.DataFrame,
+    lseg_audit: Mapping[str, object],
+    policy: SpotReconciliationPolicy,
+) -> SpotReconciliationReport:
     audit_keys = ("window_start_utc", "window_end_utc", "as_of_utc")
     if any(entsoe_audit.get(key) != lseg_audit.get(key) for key in audit_keys):
         raise SpotSourceReconciliationError("LSEG and ENTSO-E audit windows do not match")
@@ -514,6 +695,52 @@ def _validated_entsoe_artifact(
     return revalidated.frame, revalidated.audit
 
 
+def _validated_entsoe_latest_candidate(
+    raw_frame: pd.DataFrame,
+    value: object,
+) -> tuple[pd.DataFrame, Mapping[str, object]]:
+    if not isinstance(value, DayAheadConsumerExport) or not isinstance(value.audit, Mapping):
+        raise SpotSourceReconciliationError("ENTSO-E latest candidate has the wrong type")
+    audit = value.audit
+    try:
+        revalidated = validate_realized_latest_candidate(
+            raw_frame,
+            series_selection=audit.get("series_selection"),
+            market_uses=audit.get("market_uses"),
+            window_start_utc=audit.get("window_start_utc"),
+            window_end_utc=audit.get("window_end_utc"),
+            assessed_at_utc=audit.get("temporal_cutoff_utc"),
+            query_sha256=audit.get("query_sha256"),
+        )
+    except (EntsoeDayAheadExportError, TypeError) as exc:
+        raise SpotSourceReconciliationError(
+            "ENTSO-E latest candidate audit binding is invalid"
+        ) from exc
+    try:
+        pd.testing.assert_frame_equal(
+            revalidated.frame,
+            value.frame,
+            check_dtype=True,
+            check_exact=True,
+            check_like=False,
+            check_freq=False,
+        )
+    except AssertionError as exc:
+        raise SpotSourceReconciliationError(
+            "ENTSO-E latest candidate audit binding is invalid"
+        ) from exc
+    if dict(revalidated.audit) != dict(audit):
+        raise SpotSourceReconciliationError("ENTSO-E latest candidate audit binding is invalid")
+    frame = revalidated.frame.rename(columns={"native_resolution": "resolution"})
+    reconciliation_audit = {
+        "window_start_utc": audit["window_start_utc"],
+        "window_end_utc": audit["window_end_utc"],
+        "as_of_utc": audit["temporal_cutoff_utc"],
+        "frame_semantic_sha256": audit["consumer_frame_semantic_sha256"],
+    }
+    return frame, reconciliation_audit
+
+
 def _validated_lseg_artifact(
     value: object,
 ) -> tuple[pd.DataFrame, Mapping[str, object]]:
@@ -534,6 +761,34 @@ def _validated_lseg_artifact(
     if dict(revalidated.audit) != dict(audit):
         raise SpotSourceReconciliationError("LSEG PIT audit binding is invalid")
     return revalidated.frame, revalidated.audit
+
+
+def _validated_lseg_latest_artifact(
+    value: object,
+) -> tuple[pd.DataFrame, Mapping[str, object]]:
+    if not isinstance(value, LsegActualsLatestExtract) or not isinstance(value.audit, Mapping):
+        raise SpotSourceReconciliationError("LSEG latest artifact has the wrong type")
+    frame = _exact_frame(value.frame, LSEG_PIT_COLUMNS, "LSEG latest artifact")
+    audit = value.audit
+    try:
+        revalidated = validate_lseg_epex_actuals_latest_extract(
+            frame,
+            window_start_utc=audit.get("window_start_utc"),
+            window_end_utc=audit.get("window_end_utc"),
+            assessed_at_utc=audit.get("assessed_at_utc"),
+            latest_query_sha256=audit.get("latest_query_sha256"),
+        )
+    except (SpotSourceReconciliationError, TypeError) as exc:
+        raise SpotSourceReconciliationError("LSEG latest audit binding is invalid") from exc
+    if dict(revalidated.audit) != dict(audit):
+        raise SpotSourceReconciliationError("LSEG latest audit binding is invalid")
+    reconciliation_audit = {
+        "window_start_utc": audit["window_start_utc"],
+        "window_end_utc": audit["window_end_utc"],
+        "as_of_utc": audit["assessed_at_utc"],
+        "frame_semantic_sha256": audit["frame_semantic_sha256"],
+    }
+    return revalidated.frame, reconciliation_audit
 
 
 def _expand_normalized_entsoe_blocks(frame: pd.DataFrame) -> pd.DataFrame:
@@ -782,17 +1037,24 @@ __all__ = [
     "BLOCKED_STATUS",
     "ENTSOE_FIELDS",
     "LSEG_CURVES",
+    "LSEG_LATEST_SQL_PATH",
+    "LSEG_LATEST_SQL_SHA256",
     "LSEG_PIT_COLUMNS",
     "LSEG_PIT_SQL_PATH",
     "LSEG_PIT_SQL_SHA256",
     "LsegActualsPitExtract",
+    "LsegActualsLatestExtract",
     "PASS_STATUS",
     "SpotFinding",
     "SpotReconciliationPolicy",
     "SpotReconciliationReport",
     "SpotSourceReconciliationError",
     "build_lseg_epex_actuals_pit_parameters",
+    "build_lseg_epex_actuals_latest_parameters",
+    "reconcile_lseg_entsoe_latest_candidate",
     "reconcile_lseg_entsoe_spot",
     "validate_lseg_epex_actuals_pit_extract",
+    "validate_lseg_epex_actuals_latest_extract",
+    "verify_lseg_latest_sql_binding",
     "verify_lseg_sql_binding",
 ]

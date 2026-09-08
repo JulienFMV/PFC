@@ -21583,6 +21583,1062 @@ Invariants not to break:
   model admission remains
   `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS`.
 
+## D-20260904-297 - Reuse the native solver assembler and override only challenger f_H
+
+Decision:
+
+- Add one pure in-memory common-curve adapter around the existing
+  solver-authority `PFCAssembler`; do not copy its price formula or call the
+  production orchestration. Shallow copies preserve the template and its
+  already fitted common components.
+- Let the incumbent copy call the exact source-bound `ShapeHourlyMLP.apply`.
+  For each of the four challengers, replace only that returned `f_H` with one
+  hash-reverified D296 postprocessed batch and copy the incumbent's exact
+  global and seasonal `f_W` maps into the minimal proxy.
+- Pass identical solver monthly prices, quoted keys, UTC quarter-hour grid,
+  origin, ENTSO-E intraday context and hydro context to every copy. Require
+  bit-identical `B`, `f_S`, `f_W`, `f_Q`, `f_WV`, `delta_wv` and `f_bridge`
+  outputs across all five candidates.
+- Require final solver product projection for every candidate and verify each
+  EUR/MWh curve preserves the solver monthly means within `1e-6`. Return the
+  exact five frozen candidates as detached read-only vectors compatible with
+  `SyntheticEvaluationSet`.
+- Reject legacy level paths, uncertainty output and unfrozen solar,
+  electrification or amplitude layers. Do not expose outage context: those
+  disabled implementation positions are excluded by D291 and cannot enter the
+  common comparison implicitly.
+- Keep model training, truth opening, scoring, selection, monthly-level change,
+  publication and production authority false.
+
+Reason:
+
+Read-only tracing found that `PFCAssembler.build` is already the final common
+EUR/MWh boundary. After `ShapeHourly.apply`, it owns `f_W`, the `ShapeIntraday`
+quarter-hour context, water-value handling, horizon damping, the normalized
+near-term bridge, monthly solver recentering and the final hard
+BASE/PEAK/OFFPEAK projection. `production_phases.py` performs no later CH price
+mutation. Injecting `f_H` at that single seam therefore preserves the native
+incumbent and all common layers with substantially less risk than a second
+assembly implementation.
+
+Rejected alternatives:
+
+- Reimplement the multiplicative/additive formula, monthly recentering or
+  final product optimizer in an evaluation-only module.
+- Modify `PFCAssembler`, `ShapeHourlyMLP` or `production_phases.py` to add a
+  candidate switch.
+- Normalize the incumbent again, or send factor values directly to the EUR/MWh
+  scorer.
+- Recompute `f_W` per challenger, let challengers choose their own intraday or
+  water-value context, or allow optional model-specific layers into the frozen
+  comparison.
+- Run the monthly solver, fit a model, open future truth, start a Warehouse or
+  use the GPU to qualify an in-memory interface.
+
+Evidence and verification:
+
+- common assembly implementation SHA-256:
+  `a34b0324785b036a9b0735335c10392bf9225bd92795c22f033458ed403278f3`;
+- common assembly test SHA-256:
+  `469c7c9868343831bdea382fb02650da98366ef28b65926a8106afd52f0c3738`;
+- focused assembly/postprocess/contract/scorer suite: `36 passed`;
+- expanded evaluation, feature availability, materialization, monthly solver,
+  LT/CT-import and package matrix: `248 passed, 1 skipped`;
+- required minimum LT matrix: `58 passed, 1 skipped`;
+- targeted Ruff check and format: pass; `git diff --check`: pass;
+- protected incumbent normalized-LF SHA-256 remains
+  `8f199d8075d1cd0e1d0231c3999a819d2663c4ca0a6af8ebb1178b1e6bab4aef`;
+- protected `production_phases.py` SHA-256 remains
+  `6dcdba561946747dbb8023ff799f72d1188c2898f56a7c47b568b6ac9016d712`;
+- Databricks statements, Warehouse starts, business rows, monthly BASE solver
+  runs, model fits, future truth rows, scoring runs and GPU executions:
+  `0/0/0/0/0/0/0/0`.
+
+Invariants not to break:
+
+- Only the candidate `f_H` differs before common assembly. The native incumbent
+  is never proxied, refitted or modified.
+- Solver monthly levels, incumbent `f_W`, quarter-hour context and every
+  admitted downstream layer are identical for all five candidates.
+- Full EUR/MWh assembly precedes the evaluation engine's separate
+  monthly-level-neutralized scoring transform.
+- The CH monthly BASE solver remains sole level authority. LT remains
+  independent from CT, T057 remains sealed and every operational authority
+  remains false.
+
+## D-20260904-296 - Apply incumbent-equivalent factor normalization once to challengers only
+
+Decision:
+
+- Add one pure postprocessor for raw predictions from the four frozen
+  challengers. Resolve candidate and origin against the canonical protocol,
+  require an origin-safe timezone-aware quarter-hour grid and one finite raw
+  factor per delivery row.
+- Reproduce `ShapeHourlyMLP.apply` exactly after prediction: floor raw factors
+  at `0.1`, divide by the arithmetic mean for each Swiss-local day, then clip
+  to `[0.4, 2.0]`.
+- Reject the incumbent candidate ID because its native `apply` already performs
+  these operations. This makes double normalization a contract error rather
+  than a caller convention.
+- Return detached read-only `f_H` values with separate hashes for raw factors,
+  delivery timestamps and postprocessed values. Keep every model, truth,
+  selection, monthly-level, publication and production authority false.
+- Do not add a separate parity-bundle abstraction: D295's integration test
+  already combines target metadata, D292 features and D290/D293 assembly on
+  one exact population.
+
+Reason:
+
+The native incumbent and generic challengers expose predictions on opposite
+sides of the factor-normalization seam. Scoring or assembling raw challenger
+outputs would be unfair, while normalizing the incumbent again would also
+change it. A small challenger-only function is the narrowest boundary that
+makes the shared output estimand explicit and testable.
+
+Rejected alternatives:
+
+- Normalize all five candidates in one generic function, including the
+  already-normalized incumbent.
+- Copy the post-processing into every challenger implementation.
+- Treat raw challenger regression outputs as final `f_H` or EUR/MWh prices.
+- Add continuity, full-month or curve-assembly rules to this single-purpose
+  factor transform.
+- Create another target/feature population object when the existing builder
+  integration test already proves that seam.
+
+Evidence and verification:
+
+- factor-postprocessor file SHA-256:
+  `9a3976ff88559281cdc30f869b8b4994736840dd456a91099dade2589020558e`;
+- factor-postprocessor test SHA-256:
+  `70870396ea6fd61c8f4846021076ddb6f79b6e61a2dc6d7db7790a85ff8d8fde`;
+- initial focused suite: `13 passed`;
+- post-format expanded evaluation, feature-availability, materialization,
+  LT/CT-import and package matrix: `211 passed, 1 skipped`;
+- targeted Ruff check and format: pass;
+- `git diff --check`: pass with inherited line-ending notices only;
+- Databricks statements, Warehouse starts, business rows, trained estimators,
+  future truth rows and GPU executions: `0/0/0/0/0/0`.
+
+Invariants not to break:
+
+- Native incumbent post-processing occurs inside native `apply`; challenger
+  post-processing occurs once in this separate boundary.
+- Postprocessed `f_H` remains a factor, not an EUR/MWh scoring curve.
+- The CH monthly BASE solver remains sole level authority. LT remains
+  independent from CT, T057 remains sealed and every authority remains false.
+
+## D-20260904-295 - Reproduce the incumbent hourly target before any challenger fit
+
+Decision:
+
+- Add one pure in-memory constructor for the D294 learning estimand. Its exact
+  source columns are delivery UTC, price availability UTC and direct CH
+  quarter-hour `price_eur_mwh`; it accepts no connector, model or alternate
+  market field.
+- Verify the frozen origin, require delivery and price availability strictly
+  before it, reject duplicate or off-grid delivery timestamps and infinities,
+  and sort source rows deterministically. Missing price rows follow the frozen
+  incumbent exclusion rather than being filled.
+- Reproduce the source-bound incumbent sequence exactly: Swiss-local daily
+  arithmetic mean, `daily_mean > 5`, price/day ratio, `[0.2, 3.0]` clipping and
+  180-day recency-weighted aggregation by local date and clock hour. Merge the
+  repeated autumn hour as the incumbent does.
+- Represent each aggregate by its earliest contributing UTC timestamp and by
+  the maximum availability of all contributing price rows. Derive a stable
+  local-date/hour row ID and bind row identity, delivery, availability and
+  values with separate SHA-256 hashes.
+- Expose only detached `target_f_h` metadata for the D293/D294 common assembly.
+  Keep target construction, feature construction and the sole downstream
+  complete-case mask as separate responsibilities.
+
+Reason:
+
+D294 established that raw prices and the learned shape factor are different
+numerical spaces. A real runner cannot be safe until the factor transformation
+is executable and testable independently of fitting. Reusing the exact native
+rules also avoids a seemingly harmless DST, clipping or weighting cleanup that
+would silently change the incumbent comparison population.
+
+Rejected alternatives:
+
+- Let each challenger build its own target or fit direct raw prices.
+- Modify the hash-bound incumbent to expose internal arrays.
+- Correct the repeated autumn hour or replace weighted within-hour aggregation
+  with a simple mean during benchmark construction.
+- Combine target, feature, model and scoring logic in one runner.
+- Query PRD or train a real/synthetic estimator to validate a pure transform.
+
+Evidence and verification:
+
+- target-builder file SHA-256:
+  `2e73bda5aaae8dc27c3b345cddae158e5e22f0f9f53dc16d21de29f13dfe85db`;
+- target-builder test SHA-256:
+  `e97f2b85ecbc8a95453648a0ec25ffcfa941390fa43bf538eb1e4742706cd981`;
+- initial target-builder suite: `11 passed`;
+- target-builder plus common-input integration suite: `30 passed`;
+- post-format expanded evaluation, feature-availability, materialization,
+  LT/CT-import and package matrix: `198 passed, 1 skipped`;
+- targeted Ruff check and format: pass;
+- Databricks statements, Warehouse starts, business rows, trained estimators,
+  future truth rows and GPU executions: `0/0/0/0/0/0`.
+
+Invariants not to break:
+
+- `target_f_h` is derived from direct CH prices but is not raw-price truth and
+  cannot be scored as EUR/MWh.
+- The constructor reproduces the incumbent; it does not repair or replace it.
+- Only the existing common input adapter forms the model complete-case arrays.
+- The CH monthly BASE solver remains sole level authority. LT remains
+  independent from CT, T057 remains sealed and every authority remains false.
+
+## D-20260904-294 - Preserve the native incumbent and separate f_H learning from EUR/MWh scoring
+
+Decision:
+
+- Select `NATIVE_INCUMBENT_REPLAY_WITH_COMMON_CHALLENGER_OBSERVATIONS`. The
+  hash-bound `ShapeHourlyMLP.fit/apply` implementation remains the incumbent;
+  a convenient generic MLP is not an equivalent baseline and is forbidden.
+- Let the four challengers consume the common nine-column matrix only after a
+  common training target reproduces the incumbent's `f_H` construction:
+  direct CH quarter-hour price divided by Swiss-local daily mean, daily mean
+  strictly above 5 EUR/MWh, quarter-hour ratio clipped to `[0.2, 3.0]`, then
+  incumbent-weighted aggregation by Swiss-local date and clock hour. Preserve
+  the incumbent's repeated-autumn-hour merge rather than silently fixing it.
+- Require the input adapter's target column to be `target_f_h`; reject the old
+  `target_eur_mwh` name. D293's timestamp alignment, aggregate availability,
+  integrity checks and single complete-case mask remain unchanged; only its
+  ambiguous target label is superseded.
+- Require every candidate to emit `f_H` on the native quarter-hour prediction
+  grid and apply the incumbent-equivalent positivity floor, local-day
+  normalization and final clip exactly once. Candidate factors are not sent
+  directly to the scoring engine.
+- Assemble every candidate with the same solver-owned monthly levels and
+  downstream layers before producing full EUR/MWh predictions. The scoring
+  engine then performs its separate energy-weighted local-month centering.
+- Freeze this choice in a metadata-only, authority-negative contract. Keep the
+  existing challenger module synthetic-only; a real-data runner remains a
+  later, separately governed interface.
+
+Reason:
+
+The audit found two different interfaces and two different numerical spaces.
+The incumbent internally learns a daily-normalized hourly factor from
+quarter-hour spot prices and applies factor post-processing, while the generic
+challengers accept arbitrary matrix targets. The evaluation engine expects
+full price curves in EUR/MWh and removes only monthly levels. Passing raw price
+levels to challengers or passing `f_H` factors to the scorer would therefore
+compare different estimands. Replacing the incumbent would also invalidate its
+frozen source identity.
+
+Rejected alternatives:
+
+- Fit all generic challengers directly on raw `target_eur_mwh`.
+- Replace the incumbent with a new matrix-based surrogate under the existing
+  candidate ID.
+- Score `f_H` directly as though it were a price curve in EUR/MWh.
+- Correct DST grouping, clipping, weighting or daily normalization inside the
+  frozen incumbent during benchmark construction.
+- Reuse the synthetic-only challenger lab as a real-data execution boundary.
+
+Evidence and verification:
+
+- execution-contract semantic SHA-256:
+  `91129fd87a945050d11f724461fa6677726a56dfd8da366143ac7fe61f3cf976`;
+- execution-contract file SHA-256:
+  `34dc57b874edf2484178685534179db2296a1f30da7fa03dc1b5f361bd6fb8d7`;
+- execution-contract test SHA-256:
+  `36269b221ee2b308daee2db115dbd13955957278f7d3e33cd08bf49bd4012e53`;
+- corrected input adapter SHA-256:
+  `e6a70e6fcef4137e740d79cd398513966465e3be18a5ce7598096d281325ddca`;
+- corrected input tests SHA-256:
+  `327af1e4eb504fac0f00247a320af7ccaff73a5e63cfc587cb6616ef1190c565`;
+- focused contract/input suite: `24 passed`;
+- Databricks statements, Warehouse starts, business rows, model fits, truth
+  rows and GPU executions: `0/0/0/0/0/0`.
+
+Invariants not to break:
+
+- The source-bound incumbent and generic challenger adapters remain distinct.
+- All candidates learn the same factor estimand and are scored only after the
+  same full-price assembly.
+- The CH monthly BASE solver remains sole level authority. LT remains
+  independent from CT, T057 remains sealed and every authority remains false.
+
+## D-20260904-293 - Align constructed features to PRD observations by identity and time
+
+Decision:
+
+- Extend the existing common PRD input module with one assembly function. It
+  accepts exact training metadata (`row_id`, delivery, target availability and
+  target) and exact prediction metadata (`row_id`, delivery), plus the two
+  constructed D292 feature batches and source snapshot hashes.
+- Require each metadata delivery population to match its constructed feature
+  batch exactly and uniquely. Align by canonical UTC timestamp rather than row
+  position, so reordered inputs cannot attach a feature vector to the wrong
+  identity or target.
+- Compute training row availability as the elementwise maximum of target and
+  aligned hydro availability. Use aligned admitted hydro-climatology
+  availability for prediction rows; do not accept a caller-invented aggregate
+  availability field.
+- Before alignment, revalidate each constructed batch's type, origin, split,
+  canonical feature inventory, dimensions, deterministic-feature finiteness,
+  hydro fraction domain, read-only state, negative authority and exact
+  value/delivery hashes.
+- Delegate the resulting exact frames to `prepare_prd_origin_inputs`; retain its
+  sole complete-case mask, deterministic sorting, read-only arrays and
+  authority-negative result. Add only the upstream batch hashes and alignment
+  policy to its audit.
+
+Reason:
+
+The D292 constructor intentionally knows nothing about row identities or price
+targets, while D290 accepts complete frames. Joining them positionally would
+allow a harmless source reorder to attach the wrong target, and asking callers
+to provide `available_at_utc` would hide how dependency availability was
+combined. One timestamp-set join plus delegation closes both gaps without a
+second feature builder, mask or model runner.
+
+Rejected alternatives:
+
+- Concatenate feature arrays and metadata by current row position.
+- Let the caller declare aggregate availability without preserving target and
+  hydro availability separately.
+- Reimplement D290 validation or apply another model-specific missingness mask.
+- Trust a frozen dataclass without rechecking its hashes and value invariants.
+- Add data queries, real fitting, truth opening or GPU execution to assembly.
+
+Evidence and verification:
+
+- updated implementation SHA-256:
+  `e020a3a393dc5b5efe9377124538ec08dfadb5c32cabb6d1b902d035f49f4331`;
+- updated test SHA-256:
+  `2ecfc205606140f2fadd008031373a87036759807d30f33ee1d5276ee7f06dcf`;
+- focused builder/inventory/input suite: `37 passed, 1 warning`;
+- expanded evaluation, PIT availability, materialization, LT-import and package
+  matrix: `180 passed, 1 skipped, 1 warning`.
+
+Invariants not to break:
+
+- One canonical UTC delivery timestamp identifies each row inside a split;
+  training and prediction populations remain disjoint under D290.
+- Only D290 forms the complete-case population and prepared arrays. Assembly
+  cannot grant model, truth, selection or production authority.
+- Source hashes remain caller-supplied evidence; this function performs no
+  acquisition or remote verification.
+- The CH monthly BASE solver remains sole level authority. LT remains
+  independent from CT, T057 remains sealed and every authority remains false.
+
+## D-20260904-292 - Construct hourly features without inventing upstream values
+
+Decision:
+
+- Add a pure in-memory constructor for the exact D291 nine-column hourly
+  matrix. Its input is exactly delivery UTC, hydro availability UTC and
+  `hydro_fill`; extra raw ENTSO-E or outage columns fail closed.
+- Bind construction to one exact frozen protocol origin and to either the
+  historical `REALIZED_ACTUAL` hydro role or future
+  `ORIGIN_FROZEN_CLIMATOLOGY` role. Enforce training delivery/availability
+  before origin, prediction delivery at/after origin, prediction availability
+  no later than origin and a climatology cutoff strictly before origin.
+- Reuse the incumbent `_encode_features` implementation for Swiss-local hour,
+  month, weekday, Valais/German holiday precedence and 365.25-day maturity.
+  Take only the nine admitted positions; the disabled outage constants never
+  enter the returned candidate matrix.
+- Require materialized hydro in explicit fraction units `[0,1]`. Preserve nulls
+  for the later common mask and reject percentages, infinities and non-numeric
+  values instead of inferring a conversion or fill.
+- Return detached read-only values and hash-only audit identities with every
+  acquisition, forecast, fill, training, truth, selection, monthly-level and
+  production authority false.
+
+Reason:
+
+D291 froze feature semantics but the PRD adapter still required callers to
+construct values consistently. The incumbent historically accepts both percent
+and fraction hydro through a heuristic and can supply neutral defaults. Those
+conveniences are inappropriate at a governed comparison boundary. A small
+constructor that reuses its mathematical encoder while rejecting upstream
+guesswork closes the reproducibility gap without adding a connector, feature
+forecast or model runner.
+
+Rejected alternatives:
+
+- Read PRD, construct the hydro climatology or normalize percentages inside the
+  feature constructor.
+- Duplicate the incumbent trigonometric encoding in a second implementation.
+- Fill missing hydro, accept raw ENTSO-E actuals for future rows or expose the
+  three disabled outage positions as data features.
+- Combine feature construction with model fitting, truth opening or GPU work.
+
+Evidence and verification:
+
+- builder implementation SHA-256:
+  `dc506bb85456f215ec588598c44dd757a8134e73e2498d5597fefe6440058504`;
+- builder test SHA-256:
+  `9fe4a5422edf675f58d576686ca0d96d5abf19fdc3856bc294d02ed5a3091b91`;
+- focused feature-builder/inventory/input suite:
+  `29 passed, 1 warning`;
+- expanded evaluation, PIT availability, materialization, LT-import and package
+  matrix: `172 passed, 1 skipped, 1 warning`.
+
+Invariants not to break:
+
+- This constructor consumes already materialized origin-safe inputs; it has no
+  authority to acquire, repair, forecast or bless upstream data.
+- Hydro unit conversion and climatology generation remain explicit upstream
+  responsibilities. Missing values remain visible until the one common mask.
+- Every candidate receives the exact same values and row population. The CH
+  monthly BASE solver remains sole level authority.
+- LT remains independent from CT, T057 remains sealed, and every model and
+  production authority remains false.
+
+## D-20260904-291 - Freeze the exact common hourly feature inventory
+
+Decision:
+
+- Freeze one exact ordered nine-column matrix for the incumbent and all four
+  challengers: `hour_sin`, `hour_cos`, `month_sin`, `month_cos`, `dow_sin`,
+  `dow_cos`, `is_holiday`, `hydro_fill` and `years_ahead`.
+- Treat calendar and maturity entries as known deterministic inputs. For hydro,
+  permit historical realized values only when available before the origin and
+  require the future week-of-year climatology to be fitted strictly before that
+  origin. The final `hydro_fill` input is an explicit fraction `[0,1]`; preserve
+  nulls until the single common complete-case mask.
+- Keep `unavailable_nuclear`, `unavailable_hydro` and
+  `unavailable_thermal` outside the candidate matrix. The governed incumbent
+  configuration disables outages, so its three implementation positions are
+  fixed compatibility constants, not observations and not authorization to
+  zero-fill missing data.
+- Exclude raw PRD `load_mw`, `solar_mw`, `wind_mw` and `cross_border_mw` from
+  same-target future candidate inputs. Keep causal `solar_regime`,
+  `load_deviation` and `flow_deviation` climatologies as separate quarter-hour
+  context applied identically downstream of every hourly candidate.
+- Make the common PRD adapter reject any alternate feature set or order. Keep
+  this decision metadata-only: no materialization, model fit, truth opening,
+  ranking, Warehouse or GPU execution.
+
+Reason:
+
+The frozen comparison is between hourly model families, while the current
+production stack also contains a common quarter-hour ENTSO-E correction. A
+union of every PRD field would give challengers information the source-bound
+incumbent does not consume. Conversely, treating disabled outage positions as
+real zero-valued forecasts would violate the existing PIT feature contract and
+hide absent M01-M36 support. The nine-column intersection preserves incumbent
+parity and a common model population without crossing those two boundaries.
+
+Rejected alternatives:
+
+- Add raw realized ENTSO-E load, solar, wind or flow as future features merely
+  because the corresponding histories exist in PRD.
+- Admit outage columns with zero or neutral fill when the governed config has
+  disabled their data source and no complete M01-M36 forecast exists.
+- Add causal intraday climatologies only to challengers or conflate their
+  shared downstream use with the hourly candidate matrix.
+- Let each execution caller select or reorder its own feature inventory.
+- Modify the incumbent MLP, intraday layer or monthly solver in this decision.
+
+Evidence and verification:
+
+- inventory semantic SHA-256:
+  `83fabacc804de4201560877400fefa6974076f64d14f9738306a86bcf815a6fd`;
+- inventory implementation SHA-256:
+  `fb46b71208bf820603e4c4d81552c5539e605908139f439e4b42ae1118de0a70`;
+- updated PRD adapter SHA-256:
+  `e020a3a393dc5b5efe9377124538ec08dfadb5c32cabb6d1b902d035f49f4331`;
+- inventory test SHA-256:
+  `9939bf9e1074016564da0057f3af4c65a4447104490d12206e30940f918dfa87`;
+- updated adapter test SHA-256:
+  `2ecfc205606140f2fadd008031373a87036759807d30f33ee1d5276ee7f06dcf`;
+- focused and adjacent results are recorded in the associated session handoff.
+
+Invariants not to break:
+
+- Every candidate receives the same ordered matrix and complete-case
+  population. Disabled implementation constants do not become data features.
+- PRD remains the enterprise source boundary; source/API recovery remains Data
+  Engineering responsibility. Consumer checks remain about causal fitness.
+- Non-calendar effects remain zero-mean inside the solver month. The CH monthly
+  BASE solver remains sole level authority.
+- LT remains independent from CT, T057 remains sealed, and all acquisition,
+  training, truth, selection, publication and production authorities remain
+  false.
+
+## D-20260904-290 - Freeze a pure common PRD origin-input boundary before choosing features
+
+Decision:
+
+- Add a pure in-memory adapter for already materialized enterprise PRD frames.
+  It accepts no query or connector configuration and grants no data-acquisition,
+  training, truth-opening, selection, monthly-level, publication or production
+  authority.
+- Bind every preparation to one exact origin in the frozen protocol. Training
+  delivery and maximum dependency availability must be strictly before the
+  origin; prediction delivery must be at or after it and feature availability
+  no later than it. Prediction input has no target column.
+- Require one explicit ordered feature inventory, identical for the seasonal
+  reference, incumbent and all challengers. Apply one deterministic
+  complete-case mask per split before model execution, sort by delivery and row
+  identity, detach read-only arrays and record value/identity hashes plus source
+  snapshot SHA-256 bindings.
+- Do not choose the feature inventory in this change. The incumbent MLP's 12
+  inputs and the newer PRD ENTSO-E fundamentals overlap imperfectly; their
+  inclusion requires a separate visible decision rather than an inferred
+  union, default fill or model-specific mask.
+
+Reason:
+
+The existing evaluation protocol says all candidates use the same frozen-origin
+features but does not enumerate those features. Directly wiring current PRD
+materializations into model fits would therefore hide a consequential modeling
+choice and risk unequal populations or availability leakage. The small adapter
+closes only the shared structural and temporal contract, leaving the unresolved
+feature policy explicit.
+
+Rejected alternatives:
+
+- Query Databricks or combine source extraction, feature selection and model
+  fitting inside the adapter.
+- Guess a union of the historical MLP inputs and new ENTSO-E features, silently
+  fill absent values or permit each model to drop different rows.
+- Put future truth in the prediction frame or treat current latest rows as
+  historical point-in-time observations.
+- Add GPU execution to a validation-only boundary with no computational need.
+
+Evidence and verification:
+
+- implementation file SHA-256:
+  `e020a3a393dc5b5efe9377124538ec08dfadb5c32cabb6d1b902d035f49f4331`;
+- test file SHA-256:
+  `2ecfc205606140f2fadd008031373a87036759807d30f33ee1d5276ee7f06dcf`;
+- focused and adjacent results are recorded in the associated session handoff.
+
+Invariants not to break:
+
+- PRD is the enterprise source boundary; upstream API recovery remains Data
+  Engineering responsibility. Consumer-side checks address fitness for the
+  frozen origin, not enterprise-source legitimacy.
+- Every benchmark participant receives the same ordered feature matrix and
+  eligible population. Feature inventory selection remains explicitly false.
+- The adapter performs no fit, scoring, ranking, truth opening, I/O or GPU work.
+- The CH EEX-constrained monthly BASE solver remains sole monthly-level
+  authority. LT remains independent from CT, T057 remains sealed and all model
+  and production authorities remain false.
+
+## D-20260904-289 - Keep the seasonal reference outside the five-model selection inventory
+
+Decision:
+
+- Resolve the charter/protocol ambiguity by treating the transparent
+  market-constrained seasonal model as the permanent primary promotion
+  reference, scored separately before candidate ranking on the same origins,
+  rows, masks, weights, metrics and lead buckets.
+- Keep the frozen evaluation inventory unchanged: one incumbent MLP and four
+  selectable challengers (recency-weighted MLP, Ridge, spline-Ridge GAM and
+  deterministic CPU LightGBM). The seasonal reference is not a sixth candidate,
+  receives no tuning grid and cannot participate in model selection.
+- Add an authority-negative companion contract only. Do not implement a
+  real-data seasonal fit or scorer until the common PRD feature/observation
+  adapter is specified and the prospective origin requirements are met.
+- Record the available GPU explicitly without changing the compute contract.
+  The seasonal reference and canonical LightGBM remain CPU deterministic. GPU
+  fit/model selection requires a separate CPU/GPU parity qualification; the
+  CPU float64 implementation remains the hard-gate oracle.
+
+Reason:
+
+The quality charter requires at least 2% weighted MAE and RMSE improvement
+against a transparent seasonal baseline, while evaluation protocol v6 accepts
+an exact five-model prediction inventory. Making the reference a candidate
+would silently change the registered comparison family and create a tuning
+conflict. A small companion contract closes placement and runtime semantics
+without changing the existing protocol hash or pretending that real-data
+execution already exists.
+
+Rejected alternatives:
+
+- Add the seasonal baseline as a sixth selectable candidate or replace the
+  current MLP incumbent.
+- Leave the primary benchmark implicit and let each evaluation choose a
+  seasonal formula or population ad hoc.
+- Switch LightGBM or model fitting to GPU merely because hardware is available,
+  before deterministic parity and runtime evidence exist.
+- Implement the PRD adapter, seasonal fitting and scoring in the same change
+  before their shared input contract is audited.
+
+Evidence and verification:
+
+- companion semantic SHA-256:
+  `a0b1dd1f8add11086b1dba8e1b447377388b748a2221e9edd6029092001d0418`;
+- implementation file SHA-256:
+  `f869da02b5807cf2b6cc6d0fa136307c995c6f95d9991c6975295ff560cc26ae`;
+- targeted and adjacent tests are recorded in the associated session handoff.
+
+Invariants not to break:
+
+- Reference and candidates use identical eligible populations and frozen
+  origins; the reference cannot be tuned on the future holdout.
+- GPU availability does not relax causal provenance, determinism, replay,
+  monthly conservation or CPU hard-gate checks.
+- The CH EEX-constrained monthly BASE solver remains sole monthly-level
+  authority. LT remains independent from CT, T057 remains sealed and all
+  training, selection, publication and production authorities remain false.
+
+## D-20260904-288 - Reconcile July against bounded LSEG latest without promoting it
+
+Decision:
+
+- Reconcile the already validated July ENTSO-E latest candidate against the
+  four independently configured LSEG EPEX actual curves for CH, AT, DE-LU and
+  FR. Keep IT-North ENTSO-E-only because no active LSEG EPEX curve covers it.
+- Freeze the acceptance policy before comparing values: 744 matched hours and
+  full hourly overlap per cross-check zone; maximum p95 absolute difference,
+  absolute bias and single-hour difference each `0.005 EUR/MWh`.
+- Reject the unpartitioned 11,544,235,073-byte LSEG vintage table without
+  querying it. Use the 16,758,198-byte latest Silver table under a 32 MiB hard
+  ceiling because this task requires current realized-source consistency, not
+  a historical point-in-time claim.
+- Accept the result as exact latest-source reconciliation: every cross-check
+  zone has 744 matched hours, no gaps and zero price difference. Do not infer
+  finality, original publication time, causal availability, model authority or
+  production authority from that equality.
+
+Reason:
+
+The expensive vintage table adds historical capture chronology that is not
+needed to answer whether the frozen July latest snapshots agree. The smaller
+Silver table retains the interval, first-seen, pull and DQ fields needed for a
+bounded latest extract. Its successful statement read 13,141,107 bytes and
+returned 9,672 native rows. PBI was already running, so no Warehouse start,
+resize or creation was needed. Freezing thresholds before opening values avoids
+post-result tuning.
+
+Rejected alternatives:
+
+- Repeat the 9.36 GB AT/DE-LU disambiguation query or scan the 11.54 GB LSEG
+  vintage table.
+- Treat exact provider equality as a platform-signed finality receipt or
+  historical PIT evidence.
+- Add an abstraction beyond the two existing validated artifact adapters, or
+  silently substitute LSEG when a future discrepancy appears.
+- Expand the work into model input, retraining, publication or production
+  promotion.
+
+Evidence and verification:
+
+- query contract SHA-256:
+  `be9e94de41c9e0c65f1814be617e3abd591103d6b869c6c80444761e6de22fff`;
+- successful statement `01f1a842-8df8-1f79-93d3-90abb9bc505f`: 13,141,107
+  bytes read, 9,672 rows produced, zero remote-write or spill bytes;
+- one preceding compile failure read zero bytes; the missing derived vintage
+  identifier was corrected from the deployed producer formula before the only
+  successful capture;
+- LSEG Parquet SHA-256:
+  `f99585749ad8e0bc113109a9f7a645e909dc4c12a7baed6a6ab18cb7c6b17e71`;
+- frozen evidence canonical JSON SHA-256:
+  `557f0965b9cfe60884d69c0709d3863030ee6aeba1adaab466b46d31a200b32b`;
+- focused and adjacent test results are recorded in the associated session
+  handoff.
+
+Invariants not to break:
+
+- The reconciliation is latest-to-latest and does not prove `realized_final`
+  or `causal_asof` semantics. IT-North remains independently unreconciled.
+- Any future discrepancy blocks and never licenses silent source substitution.
+- The CH EEX-constrained monthly BASE solver remains sole monthly-level
+  authority. LT remains independent from CT, T057 remains sealed and model
+  admission remains `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS`.
+
+## D-20260904-287 - Replay latest July observations without inventing finality
+
+Decision:
+
+- Correct the overly broad operational conclusion in D286: a missing
+  platform-signed finality receipt blocks only the `realized_final` label. It
+  does not block local adapter validation, deterministic replay or a separately
+  authorized independent reconciliation of an explicitly non-final snapshot.
+- Add `realized_latest_candidate` as an export-only lane. It applies the exact
+  realized SQL hash, selected SeriesKeys, delivery bounds, normalized interval,
+  DQ and assessment-cutoff checks, but emits `is_final=false`, no evidence and
+  `consumer_contract_authorized=false`.
+- Permit the existing self-contained replay builder to normalize the raw SQL
+  transport representation before comparing its semantic hash. This aligns the
+  archived source bytes with the normalized frame covered by the audit and
+  preserves exact replay/tamper detection.
+- Build and independently verify the candidate replay from the existing July
+  Parquet. Do not reconnect to Databricks, start a Warehouse, rerun the export
+  or transmit any price value.
+- Keep `realized_final` unchanged. Promotion of these same bytes still requires
+  external evidence bound to the exact semantic hash, window and SeriesKeys.
+  The open producer issue tracks that optional promotion evidence and the
+  separate September CH backfill; it is no longer a wait condition for local
+  replay or reconciliation preparation.
+
+Reason:
+
+The producer contract at main commit
+`545c56c5d08b9c360120eb5014f0d5a7fe7fd2f2` describes retained latest value
+versions and a seven-day rolling overlap to capture corrections. Its contract,
+cadence, pipeline and validation sources expose no signed finality service.
+Requiring a facility that does not exist made a safe local task appear blocked.
+The explicit candidate lane states exactly what is known without weakening the
+meaning of finality.
+
+Rejected alternatives:
+
+- Relabel latest observed rows as `realized_final`, infer finality from age,
+  DQ, revision number or successful replay, or fabricate a platform receipt.
+- Make the candidate a third downstream `SpotUsage`; the consumer continues to
+  accept only governed `causal_asof` or `realized_final` data.
+- Wait indefinitely for issue 4 before testing the adapter, rerun the July SQL,
+  repeat the 9.36 GB disambiguation query or start the Warehouse.
+- Grant model-input, model-selection, monthly-level, publication, production or
+  trading authority from the candidate replay.
+
+Evidence and verification:
+
+- source candidate unchanged: 12,083 rows, semantic SHA-256
+  `5a6d72b5531e843dc4e7920c519cc3d93189e70d91277662a763f6575967374e`;
+- replay build ID:
+  `b00f2b725c66d91e7b8ec681b578fd080be77837a6e75f9b1de675caade20a26`;
+- replay manifest SHA-256:
+  `c2c733cac80ae87f7b8b56572720ba02447a574d030313530f953c92d4b8b8a2`;
+- source/consumer/audit artifact SHA-256 values are bound in
+  `ENTSOE-DAY-AHEAD-JULY-LATEST-CANDIDATE-REPLAY-V1-20260904.json`;
+- real replay status:
+  `VERIFIED_SELF_CONTAINED_DAY_AHEAD_EXPORT_REPLAY`, 12,083 raw and 12,083
+  consumer rows;
+- Databricks requests/statements, Warehouse starts and downloaded rows for this
+  correction: `0/0/0/0`; one authority-negative scope correction was posted to
+  issue 4 at
+  `https://github.com/FMVSA/opendata-lakehouse/issues/4#issuecomment-5538187585`.
+
+Invariants not to break:
+
+- `realized_latest_candidate` is replay/reconciliation evidence only. It is not
+  final truth, historical PIT truth, a governed consumer input or a holdout.
+- `realized_final` and `causal_asof` remain distinct and their evidence gates
+  remain unchanged.
+- The CH EEX-constrained monthly BASE solver remains sole monthly-level
+  authority. LT remains independent from CT, T057 remains sealed and model
+  admission remains `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS`.
+
+## D-20260904-286 - Capture July as a quarantined candidate while finality remains external
+
+Decision:
+
+- Treat the current September CH delivery gap as independent from the already
+  materialized July construction window. Following explicit user authority to
+  use the PBI Warehouse and advance July, accept the current whole-table
+  1,548,216,106-byte storage size as the hard worst-case scan ceiling for this
+  bounded work.
+- Run one value-blind normalized coverage query over the exact Swiss-local July
+  window and five frozen SeriesKeys. Admit coverage only if every series
+  expands to exactly 2,976 quarter-hours with zero missing, overlapping or
+  invalid native intervals.
+- After coverage passes, run the exact hash-bound v2 realized SQL once and
+  preserve its result only below `build/` as a quarantined latest-revision
+  candidate. Do not print, commit or transmit price values. Bind the candidate
+  Parquet bytes and semantic frame hash in authority-negative evidence.
+- Exercise the complete local realized validator with no fabricated evidence.
+  Record success only when raw SQL, selection, window, quality and interval
+  validation pass and rejection occurs exactly at the missing finality-evidence
+  gate.
+- Ask the producer on issue 4 for a platform-signed finality receipt bound to
+  candidate semantic SHA-256
+  `5a6d72b5531e843dc4e7920c519cc3d93189e70d91277662a763f6575967374e`,
+  the exact window and all five SeriesKeys. IT-North still requires platform
+  authority. Do not rerun the candidate while that response is pending.
+
+Reason:
+
+The normalized coverage evidence proves that each frozen July series is
+complete despite the later September CH outage. This permits useful reversible
+work without waiting for source recovery. Latest-revision rows alone cannot
+prove settlement/finality, however, so retaining them in quarantine and
+stopping at the existing validator boundary is the narrowest safe advance.
+
+The historical v1 profile statement also ran and reported availability-order
+and duration findings. D267 already documents that its exact-duration rule is
+superseded for producer-normalized multi-cadence intervals. The new normalized
+coverage query expands only valid integer-multiple intervals and found zero
+interval defects; the v1 result is retained as historical evidence but grants
+no admission authority.
+
+Rejected alternatives:
+
+- Block all July work until September CH backfill completes.
+- Label the latest-revision candidate `realized_final` without a value-bound
+  receipt, or relabel the August backfill as `causal_asof`.
+- Repeat the 9.36 GB AT/DE-LU disambiguation query, change the frozen sequence-1
+  choices or substitute LSEG for IT-North platform finality.
+- Commit or transmit the raw Parquet, print prices, start/resize/create compute
+  or retry the previously forbidden Warehouse stop.
+- Treat the old v1 exact-duration findings as authoritative over the normalized
+  interval contract established by D267.
+
+Evidence, cost and failures:
+
+- legacy v1 profile statement `01f1a839-2d94-17af-a3d5-034530bd0fbc`:
+  48,299,260 bytes read, 8.124 seconds, seven metadata rows, no prices;
+- normalized coverage statement `01f1a839-d542-1737-b4ff-0f1db847ad4f`:
+  65,771,005 bytes read, 3.364 seconds, five metadata rows and exact 2,976
+  quarter-hours per selected series;
+- candidate statement `01f1a83b-585c-1557-9635-6a5640331f9a`:
+  31,967,426 bytes read, 6.955 seconds, 12,083 native rows and one
+  6,653,296-byte Arrow result download;
+- local Parquet: 564,727 bytes, SHA-256
+  `046ae86ab84a72c61ea44547cc386f85e49d37d325352f4bfca208a08e5a9baa`;
+- local raw validation status:
+  `PASS_RAW_EXPORT_CONTRACT_BLOCKED_ONLY_ON_FINALITY_EVIDENCE`;
+- one workspace-wrapper precheck correctly rejected a non-allowlisted capture
+  module. Four connector transport attempts produced no statement: three
+  failed on the managed Windows certificate-store ASN.1 error and one was
+  interrupted after 180 seconds; query history confirmed no connector query.
+  The single Statement Execution API candidate was not retried;
+- Warehouse state before all successful statements: `RUNNING`; starts,
+  resizes, creates and Databricks writes: `0/0/0/0`;
+- candidate/finality coordination comment:
+  `https://github.com/FMVSA/opendata-lakehouse/issues/4#issuecomment-5537931901`;
+- canonical non-value evidence SHA-256:
+  `ec937b823551e301dc5b0c553301b2b21b1584c6b2c6a166d7803dab4206c56d`.
+
+Invariants not to break:
+
+- The local Parquet is a quarantined latest-revision candidate. It is not
+  `realized_final`, `causal_asof`, a model input, a holdout or a published
+  dataset until exact external evidence passes the existing validator.
+- The candidate must not be rerun merely because finality is pending. Any
+  receipt must bind its exact semantic hash, window and five SeriesKeys.
+- The September CH recovery is tracked separately and cannot retroactively
+  establish July causal availability.
+- The CH EEX-constrained monthly BASE solver remains sole monthly-level
+  authority. LT remains independent from CT, T057 remains sealed and model
+  admission remains `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS`.
+
+## D-20260904-285 - Distinguish current table modification from the CH delivery gap
+
+Decision:
+
+- Accept the user's explicit authorization to use the PBI SQL Warehouse for a
+  freshness and cost check. Preserve July export authority as false and select
+  no price values.
+- Before SQL, inspect the exact Silver/Gold/EEX schemas through Unity Catalog.
+  Observe the PBI Warehouse already `STARTING`; issue no start request, wait
+  until `RUNNING` and use only that Warehouse.
+- Execute exactly two value-blind statements: `DESCRIBE DETAIL` for the Silver
+  vintage table and one August/September partition-pruned watermark aggregate
+  over the five July-selected day-ahead SeriesKeys. Use zero retry, return only
+  timestamps/counts and retrieve query-history cost metrics.
+- Record that Silver was physically modified at
+  `2026-09-04T06:42:56Z`, contains 137 files and 1,548,216,106 bytes. The
+  watermark statement read 7,798,287 bytes from two files in 3.7 seconds while
+  pruning 1,504,144,357 bytes and 135 files; it wrote and spilled zero bytes.
+- Distinguish source coverage by market: AT sequence 1, DE-LU sequence 1, FR
+  and IT-North reach `2026-09-04T22:00:00Z`, while CH reaches only
+  `2026-09-02T22:00:00Z`. Treat the two-day CH gap as consistent with the
+  recent ENTSO-E incident, not as proof that every table is current and
+  complete. Preserve the July realized export rows as not invalidated.
+- Check for active work before shutdown; observe zero active sessions and
+  queries. Record one explicit stop request rejected with HTTP 403, do not
+  retry it and leave the configured 45-minute auto-stop or a platform owner to
+  stop the Warehouse.
+- Post the evidence and CH-gap request to private producer issue 4. Keep all
+  model, finality, monthly-level, publication, production and trading
+  authorities false.
+
+Reason:
+
+Unity Catalog object timestamps alone cannot prove row-level source freshness.
+The newly authorized bounded check demonstrates that the physical table was
+updated today at low scan cost, but also proves that the selected CH delivery
+series trails its neighbors by two days. The distinction matters during the
+reported ENTSO-E outage: successful pipeline activity and clean DQ flags do
+not establish complete source coverage.
+
+Rejected alternatives:
+
+- Infer current completeness from Unity Catalog `updated_at`, Gold refresh
+  timestamps or zero DQ failures alone.
+- Select or return price values, scan unbounded history or run the July export
+  before finality/output terms are supplied.
+- Claim this client started the Warehouse when the first authorized state was
+  already `STARTING`.
+- Retry the forbidden stop request, leave an undocumented Warehouse lifecycle
+  failure or treat auto-stop as immediate shutdown.
+- Relabel the July backfill as causal history or escalate the observed CH gap
+  into model authority.
+
+Evidence and cost:
+
+- Delta-detail statement:
+  `01f1a835-efc1-1ea7-af7a-33d43b831b79`, 4.041 seconds, zero bytes read;
+- watermark statement:
+  `01f1a836-1856-19e4-ac0b-d09316b79ca7`, 3.700 seconds, 7,798,287 bytes
+  read, 44,071,749 file bytes, two files and 405,359 rows read;
+- both query texts appear only as the same ten-byte redacted/unavailable
+  placeholder in query history, so submitted-query hashes are locally bound
+  but not independently reverified from history;
+- current-session Databricks GETs/statements/start requests/stop requests:
+  `60/2/0/1`; the single stop request failed HTTP 403;
+- price rows, Databricks writes, remote-write bytes and failed tasks:
+  `0/0/0/0`;
+- evidence canonical JSON SHA-256:
+  `f60acd4b2f524fec23413428993555a55f8e114f3ab97fa6f224b9189ab6270b`;
+- GitHub evidence comment:
+  `https://github.com/FMVSA/opendata-lakehouse/issues/4#issuecomment-5537505188`.
+
+Invariants not to break:
+
+- A table modified today is not necessarily source-complete; CH remains
+  incomplete through the observed window until the producer supplies or
+  explains the missing delivery coverage.
+- The freshness check does not authorize the July export. Issue 4 must still
+  provide acceptable output/finality terms, followed by explicit cost
+  acceptance.
+- Do not retry the 403 stop request and do not repeat the 9.36 GB selection
+  comparison.
+- `realized_final` remains distinct from `causal_asof`; the CH solver remains
+  sole monthly-level authority, LT remains independent from CT, T057 remains
+  sealed and model admission remains
+  `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS`.
+
+## D-20260904-284 - Request the platform cost quote without authorizing execution
+
+Decision:
+
+- Recheck the configured PBI SQL Warehouse through one read-only control-plane
+  GET. Observe it still `STOPPED` at `2026-09-04T07:36:57.614Z`; do not submit
+  SQL and do not start, resize or create compute.
+- Use the locally authenticated `JulienFMV` GitHub identity to verify that no
+  equivalent issue exists in the private producer repository, then open
+  `FMVSA/opendata-lakehouse#4` as the platform coordination channel.
+- Limit the issue to a hard scan upper bound or platform export quote, expected
+  file/byte/runtime/DBU/cloud-cost ceiling, already-running-Warehouse
+  confirmation, exact output terms, the assessment-cutoff rule and
+  value-bound finality evidence for all five selected SeriesKeys. State
+  explicitly that the issue grants no SQL or Warehouse-start authority.
+- Preserve the D283 preflight bytes and identity unchanged. Record the GitHub
+  issue as one coordination remote write and keep every source, model,
+  monthly-level, publication, production and trading authority false.
+
+Reason:
+
+D283 exhausted safe local cost discovery: the Warehouse was stopped and Unity
+Catalog exposed no current hard scan bound. A narrow request to the owning
+platform is the required next step and avoids manufacturing a ceiling from
+stale or non-equivalent scan observations. The exact query, window and series
+selection are already frozen, so the platform can answer without another
+selection query or access to local business values.
+
+Rejected alternatives:
+
+- Start the Warehouse, rely on auto-start or submit `EXPLAIN` while it is
+  stopped.
+- Treat the user's continuation instruction as acceptance of an unknown cost
+  ceiling.
+- Open a broad data request, attach price values or ask the platform to repeat
+  the 9.36 GB sequence comparison.
+- Guess an assignee or silently execute before the issue response is reviewed.
+
+Evidence and cost:
+
+- latest Warehouse observation: `STOPPED` at
+  `2026-09-04T07:36:57.614Z`;
+- new Databricks GETs/statements/business rows: `1/0/0`;
+- GitHub issue lookup/create/verification calls: `1/1/1`;
+- issue: `https://github.com/FMVSA/opendata-lakehouse/issues/4`, created
+  `2026-09-04T07:38:22Z`, state `OPEN`, zero assignees and zero comments at
+  verification;
+- Warehouse starts/resizes/creates: `0/0/0`;
+- business-data remote writes: `0`; governance-coordination remote writes:
+  `1`.
+
+Invariants not to break:
+
+- Issue 4 is a request for cost and delivery evidence, not execution
+  authorization. A complete response and explicit human acceptance of the
+  resulting ceiling are still required.
+- The D283 preflight remains immutable; its three Databricks GETs and zero
+  remote writes describe the preceding observation only.
+- AT and DE-LU sequence 1 remain fixed only for the July construction export;
+  the 9.36 GB comparison must not be repeated.
+- `realized_final` remains distinct from `causal_asof`; the CH solver remains
+  sole monthly-level authority, LT remains independent from CT, T057 remains
+  sealed and model admission remains
+  `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS`.
+
+## D-20260904-283 - Stop the prepared July realized export at the live cost fence
+
+Decision:
+
+- Freeze the exact July 2026 `realized_final` construction export scope: Swiss
+  local month `[2026-06-30T22:00:00Z, 2026-07-31T22:00:00Z)`, UTC partitions
+  June and July, the hash-bound v2 realized SQL, unique CH/FR/IT-North keys and
+  the already-selected AT/DE-LU sequence-1 keys.
+- Perform only three read-only Databricks control-plane metadata GETs. Observe
+  the configured PBI SQL Warehouse `STOPPED`; do not start, resize or create
+  compute and do not submit SQL.
+- Confirm through current Unity Catalog metadata that the Silver source is a
+  managed Delta table partitioned by `_year` and `_month`. Treat the missing
+  current `sizeInBytes` and file count as an unproven hard scan bound even
+  though the query's two-partition predicate is hash-bound.
+- Preserve the 1 September 47,915,292-byte value-blind profile only as a
+  reference, not as a ceiling for the wider two-partition export. Preserve the
+  9.36 GB selection comparison only as frozen evidence and prohibit repeating
+  it.
+- Set the preflight status to
+  `STOP_NO_ACTIVE_WAREHOUSE_AND_SCAN_BOUND_UNPROVEN`. Require a platform export
+  quote or current hard scan upper bound, an already-running separately
+  authorized Warehouse, explicit human acceptance of the resulting ceiling,
+  exact assessment time/output terms and value-bound finality evidence before
+  execution. Keep every model and production authority false.
+
+Reason:
+
+The construction identity is no longer ambiguous, but an exact query scope is
+not a cost authorization. The current Warehouse state independently fails the
+no-start rule, and the available metadata cannot prove a current byte ceiling.
+Historical scan observations are informative but cannot safely cap a different
+projection over two UTC partitions. Stopping now preserves both the cost fence
+and the user's explicit no-start constraint while leaving an exact,
+reviewable export request for the platform lane.
+
+Rejected alternatives:
+
+- Start the stopped Warehouse or rely on its auto-start behavior.
+- Submit `EXPLAIN`, a sample export or the full export merely to discover its
+  cost.
+- Reuse the 47.9 MB July profile as a hard cap, use the stale whole-table size
+  as a current cap or invent a human-approved scan ceiling.
+- Repeat the 9.36 GB LSEG disambiguation comparison.
+- Drop the June boundary partition, change either sequence-1 selection or
+  label the July backfill `causal_asof`.
+
+Evidence and cost:
+
+- preflight observation time: `2026-09-04T06:56:56.217Z`;
+- Databricks control-plane GETs/statements/business rows: `3/0/0`;
+- Warehouse starts/resizes/creates and remote writes: `0/0/0/0`;
+- preflight canonical JSON SHA-256:
+  `b520d9c44215341ddd6b09c68180d22dde45135c0b70627ba6c0f3d7a029fd1f`;
+- current hard scan upper bound and approved maximum scan bytes: unavailable;
+- model training/retraining, CT changes, T057 access and solver changes:
+  `0/0/0/0/0`.
+
+Invariants not to break:
+
+- No SQL may run while the Warehouse is stopped or the hard scan bound and
+  human cost ceiling remain absent.
+- AT and DE-LU sequence 1 remain fixed only for this complete July
+  construction window; the 9.36 GB comparison must not be repeated.
+- `realized_final` remains distinct from `causal_asof`; the export cannot grant
+  model-input, monthly-level, publication, production or trading authority.
+- The CH EEX-constrained monthly BASE solver remains sole monthly-level
+  authority. LT remains independent from CT, T057 remains sealed and model
+  admission remains `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS`.
+
 ## D-20260903-282 - Select sequence 1 for the July AT/DE-LU construction reference by exact LSEG parity
 
 Decision:
@@ -22902,3 +23958,953 @@ Invariants not to break:
 - LT remains independent from `pfc_shaping.ct.*`; T057 remains sealed and
   model admission remains
   `BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS`.
+
+## D-20260907-298 - Retain the real-runner external gate after a read-only prerequisite audit
+
+Decision:
+
+- Keep origin registration/countability, source/model admission, truth opening,
+  training, scoring/selection, publication and production authorities false.
+  D297 already closes common full-price assembly; add no further adapter.
+- Record zero countable origins and a locally frozen October 2026-September
+  2027 cohort, pending independent registration. A schedule or synthetic
+  signature does not establish an externally frozen holdout.
+- Retain the EEX independent source-time, signed-envelope/external-time and
+  signed-vintage-catalog conversion blockers. Retain governed causal ENTSO-E
+  package admission as separate from the completed July latest replay.
+- Keep finality optional for that authority-negative replay/reconciliation;
+  it is required for realized_final promotion of the same captured bytes.
+- Treat GitHub issue 4 and comment reads returning 404 as unavailable current
+  evidence, not proof of an absent response. No current Warehouse state is
+  asserted. The next act is receipt/read-only review of the externally owned
+  registry profile and source attestations through an authorized channel.
+
+Reason:
+
+The existing EEX capture and ENTSO-E replay hashes still match the recorded
+evidence, but none grants external trust or causal/model authority. Accessible
+contracts explicitly retain the pending gates. The current GitHub connector
+cannot retrieve the private coordination issue. Additional local assembly
+code would resolve none of these missing independent attestations.
+
+Rejected alternatives:
+
+- Promote local integrity, latest-source LSEG parity or elapsed holdout dates
+  into independent registration, finality or historical PIT authority.
+- Repeat July acquisition, invent an origin service/client, use synthetic or
+  legacy substitutes, or run a model to work around missing evidence.
+- Assume the historical issue or Warehouse state is still current after 404.
+
+Invariants not to break:
+
+- CH monthly BASE solver remains sole monthly-level authority; no monthly
+  mean rewrite, CT coupling or T057 opening.
+- No training, real scoring, solver execution, Warehouse or GPU use; all
+  operational authorities remain false and no external message is sent.
+- A missed prospective slot is not shifted, backfilled or reweighted. Risk
+  margins and outcome-blind power qualification remain separate gates.
+
+Evidence and verification:
+
+`SESSION-HANDOFF-20260907-REAL-RUNNER-EXTERNAL-PREREQUISITES.md` records exact
+paths, hashes, read-only commands, two GitHub 404 responses, limitations and
+the smallest next authorized act. Only governance documentation changed;
+no new test run or real-data semantic replay is claimed.
+
+## D-20260907-299 - Prepare local PRD calibration and correctly parse EEX integer quotation dates
+
+Decision:
+
+- Record the user's explicit authorization to calibrate the existing PFC
+  components locally on CPU. Scope D298's independent registry/holdout blockers
+  to prospective scientific evaluation; do not impose them indiscriminately on
+  exploratory local preparation or claim that local calibration is promotion.
+- Parse PRD EEX `QuotationDateID` integer YYYYMMDD keys as calendar dates in
+  both the daily normalizer and the origin-filtering materializer. Reject invalid
+  dates. Preserve delivery-date parsing, prices, solver formulas and authorities.
+- Reuse the captured August EEX bytes for a local materialization proof only.
+  Use current PRD exports for the eventual current PFC, not the stale August
+  quote date. Current catalog statistics are preparation evidence, not a hard
+  transactional scan guarantee or complete market coverage proof.
+- Preserve the existing national SFOE hydro route until an exact equivalent
+  Gold mapping is established. Record the two 2004/2008 regional-sum exceptions
+  without correcting data, relaxing tolerances or claiming that they invalidate
+  a modern selected calibration window. Full source replay remains to be done.
+
+Reason:
+
+Live PRD metadata declares the EEX key as INT. Regression tests proved the
+existing pandas conversion normalized valid integer keys to 1970 dates. That
+is a consumer-interface defect, not a missing producer certificate. The fix
+enables correct typed PRD consumption. Local exploratory construction and
+prospective comparative evidence also have different purposes; the previous
+audit must not obscure the immediate input-preparation work.
+
+Rejected alternatives:
+
+- Assume PRD placement proves all downstream date, market, coverage or model
+  requirements, or ask data engineering to repair our integer parsing.
+- Rebuild producer-wide quality checks, add another assembly adapter, reuse
+  stale/legacy data as current PRD, or silently replace national hydro with
+  individual-asset measures.
+- Treat local clock/hash evidence as independent origin registration or bypass
+  operational admission by setting authority flags to true.
+
+Invariants not to break:
+
+- CH monthly BASE solver remains sole monthly-level authority; hard EEX product
+  checks, LT/CT independence, T057 sealing and production promotion gates remain.
+- No model/selection/scientific/production admission is inferred from the new
+  local materialization. Previous signed/source-bound bundles remain unchanged.
+- No GPU, training, scoring or Warehouse execution occurred in this increment;
+  CPU calibration is authorized but still awaits the complete usable input set.
+
+Verification:
+
+- Reproduction: 3 failed, 2 passed for typed/compact date-key regressions.
+- Final seven-file materialization/snapshot/minimum-LT matrix: 104 passed,
+  4 optional CT dependency skips, receipt `build/workspace-local-runs/d299final/`.
+- Real EEX replay: 82,552 source rows, 34,105 solver-history rows, all materializer
+  authorities false; dates remain 2019-01-02 through 2026-08-04.
+- Eight Databricks control-plane GETs and one bounded SFOE GET; zero SQL,
+  Warehouse changes, remote writes or model execution.
+- Exact paths, source/output hashes, limitations and next local work are in
+  `SESSION-HANDOFF-20260907-LOCAL-PFC-PRD-INPUT-READINESS.md`.
+
+## D-20260907-300 - Generate and review the local FMV PFC from current PRD inputs
+
+Decision:
+
+- Complete the user's explicitly authorized local CPU construction with fresh
+  PRD EEX and ENTSO-E, bounded independent LSEG reconciliation and national
+  SFOE hydro. Independent registration/holdout remain scientific evaluation
+  requirements, not universal blockers to this local artifact.
+- Consume complete declared source windows, expand ENTSO-E revision blocks
+  before latest-observation selection, preserve exact dictionary semantics
+  and normalize Arrow timestamp units. Restrict SFOE regional reconciliation
+  to consumed weeks while retaining global finite/date/capacity guards.
+- Correct hydro alignment in a separately identified local MLP component,
+  preserving the frozen scientific incumbent. Fix sparse intraday correction
+  loading without changing the fitted coefficients, calibration or assembler.
+- Reuse the existing monthly solver's non-promotional research lane and
+  existing PFCAssembler. Preserve the 75-month native horizon, then export its
+  exact October 2026-December 2029 slice: **114,052 quarter-hour prices**.
+- Preserve all nine strict quote-conflict alerts and explicitly report
+  `all_product_gates_pass=false`. Six raw redundant parent quote discrepancies
+  are below 0.003224 EUR/MWh, with three implied OFFPEAK discrepancies below
+  0.005841. The existing 0.01 solver tolerance was not changed. No production
+  hierarchy waiver is created or inferred from their small magnitude.
+
+Reason:
+
+Real execution exposed consumer defects that PRD placement cannot prevent:
+revised blocks overlap after expansion, microsecond timestamps were used as
+nanoseconds, hydro observations were neutralized by UTC-day alignment, and
+Parquet null padding of absent coefficients became NaN intraday factors.
+These defects belong to the model consumer and are now regression-covered.
+The exported curve can be reviewed locally while independent predictive and
+operational claims remain unproven.
+
+Rejected alternatives:
+
+- Wait for a generic producer certificate to fix our code, or treat a PRD
+  table name as proof of downstream unit/calendar/coverage/model correctness.
+- Modify the already frozen incumbent hash, invent an assembly adapter,
+  refit all components to repair a loader, or patch individual monthly levels.
+- Fill missing CH/load days, substitute legacy/synthetic prices, treat a
+  latest-observed rebuild as historical PIT/final truth, or fabricate signed
+  ForwardSnapshot/admission evidence to run the operational CLI.
+- Hide the nine quote conflicts behind an all-PASS label, waive them locally,
+  or smooth sparse intraday profiles merely to improve a plot. The existing
+  experimental regularization remains disabled until a scoped evaluation.
+- Claim the native positive curve is a validated negative-price/tail-risk
+  model, or claim that the MLP applies age weights canceled by its current fit.
+
+Invariants not to break:
+
+- Solver is sole monthly BASE authority. No post-solver month patches,
+  production flag promotion, CT coupling, AFRY, GPU or T057 opening.
+- Production, promotion, scientific-admission and trading authorities remain
+  false. The nested solver `TEST_FIXTURE` label is its existing unsigned
+  research sentinel; actual real source identity is bound separately in the
+  local source/solver manifests. It is not signed provenance or synthetic data.
+- Data engineering owns producer recovery/vintage meaning/platform access;
+  the model consumer owns transformations, feature semantics and export checks.
+  Independently frozen origins/holdout are still required for later scientific
+  model comparison and are not manufactured by this local calibration.
+
+Evidence and verification:
+
+- One existing 2X-Small Warehouse start; 14 accepted read-only SQL statements,
+  13 succeeded and one failed in analysis. No data write/resize/create. The
+  sole stop request returned 403; final GET at 08:46:08.331Z confirms STOPPED.
+- EEX: 84,370 raw rows, 34,977 normalized historical rows, latest quote date
+  4 September. Silver ENTSO-E v55: 239,288 exported rows. LSEG v2911 exactly
+  corroborates the selected DE sequence over 29,768 additional quarter-hours,
+  retaining July's existing independent evidence. SFOE: 922 consumed weeks.
+- Three CPU fits completed once. The loader correction preserves their bytes;
+  archived source/AST and test evidence bind the corrected loading path.
+- Final regression/minimum-LT/frozen-contract matrix: **217 passed, 5 skipped**,
+  one existing timezone warning. Initial failing reproductions retained.
+- Monthly means preserved within 8.072e-12 EUR/MWh. Exact UTC/DST coverage,
+  CSV round-trip within 5.001e-11 EUR/MWh, independent repricing of all 38
+  raw quotes. Strict audit: 80 PASS, 9 QUOTE_CONFLICT, no CRITICAL/UNSUPPORTED.
+- Main CSV SHA-256:
+  `d35599fa0aaf51b2e89b85857f2cf4a814e624dbef51375cbf52ae59d3f16b02`.
+  Corrected local manifest SHA-256:
+  `ec9680351a79fac993f12b6c023e5bbba194ca887eff885dc02feee4159acae4`.
+- Exact files, commands, artifacts, model/settings/source hashes, failed
+  attempts, limitations and next useful acts are recorded in
+  `SESSION-HANDOFF-20260907-LOCAL-PFC-SOURCE-INTEGRATION.md`. Desk-facing report:
+  `build/local-pfc-source-preflight-20260907/README-PFC-FMV.md`.
+
+## D-20260907-301 — Authorized local chronological CPU model benchmark
+
+Decision:
+
+Implement and execute the explicitly requested local development benchmark on
+retained D300 CH/EEX/SFOE bytes. Freeze two tuning years2021–2022 before four
+assessment origins2023–2026, with complete truth months through August2026.
+Refit native corrected/frozen MLPs and the declared challenger families per
+origin. Use the same hourly target/features, market solver and existing assembly
+seam; keep f_Q and water value neutral to isolate hourly algorithm effects.
+Report an untuned seasonal reference outside candidate selection, failures,
+common complete hourly rows, horizon/regime coverage and compute time.
+
+Reason:
+
+The local comparison can guide engineering now; revised PRD history does not
+establish historical availability or independent predictive validation. A
+separate local execution identity prevents conflating the D300 hydro correction
+with the frozen v6 incumbent and prevents routing real values through synthetic
+fixtures or future prospective registry slots.
+
+Rejected alternatives:
+
+- Wait for scientific admission before any useful local development, invent
+  source timing, reuse all-history fitted weights across historical folds, or
+  tune on assessment outcomes.
+- Modify frozen scientific hashes, add another assembly adapter, jointly change
+  hourly/intraday/negative-price architecture, or silently accept non-converged
+  weighted MLP fits and missing horizon coverage.
+- Count replicated quarter-hours or overlapping origins as independent trials,
+  erase quote conflicts, or interpret policy thresholds as statistical proof.
+
+Invariants not to break:
+
+Solver remains sole monthly-level authority. No production flag promotion,
+external publication, new extraction/Warehouse, GPU, CT, AFRY or T057 access.
+Production/promotion/scientific/trading authorities stay false. Local fits,
+scoring and tuning are truthfully recorded as executed, not synthetic actions.
+D300 source/model/curve bytes and scientific v6 remain unchanged. Durable
+evidence is under build/local-lt-benchmark-20260907; final execution and review
+are recorded in SESSION-HANDOFF-20260907-LOCAL-CPU-BENCHMARK.md.
+
+Outcome:
+
+The global local curve retains the current hydro-corrected MLP: primary mean
+origin MAE22.817767EUR/MWh versus22.915155LightGBM,23.113075seasonal reference,
+25.024331GAM and25.930839Ridge. Weighted MLP failed its fixed500iteration
+convergence budget in both tuning origins and was not assessed. None of the
+evaluated models reaches the combined2% MAE/RMSE improvement target versus the
+reference. LightGBM remains an engineering candidate for a predeclared maturity
+experiment: first12-month sensitivity/threeorigins improves MAE2.51% versus MLP,
+while the global metric worsens0.43%; no outcome-selected horizon switch.
+
+Observed PEAK coverage differs across origins. A separate post-hoc BASE-only
+assembly sensitivity held saved models and solver monthly levels fixed across
+all four origins and three comparators,12curves/0fits. It did not reverse the
+global ranking. Primary scores and frozen source code were preserved.
+102primary curves and12sensitivity curves were independently checked; maximum
+primary monthly residual2.4102e-11EUR/MWh.108tests pass/fouroptional CT skips.
+The final portable report, exact scores, failures, settings, hashes, source
+coverage and limitations are retained in the D301 task root and final handoff.
+These are retrospective hourly development results, not scientific promotion.
+
+## D-20260907-302 — Executable structural inventory and signed hourly target
+
+Decision:
+
+After the user requested continuing the 2030+ structural shaping work, implement
+the first input/target lot: read-only, hash-pinned annual-source diagnostics
+and signed EUR/MWh hourly deviations centered within complete Swiss months.
+Execute against five retained public-source inventories and D300 historical
+CH prices; keep all scientific and operational authorities false.
+
+Reason:
+
+The existing MLP/climatology and fixed-coefficient electrification prototype
+do not establish the response to future solar, batteries or flexible demand.
+An executable missing-input matrix and a signed target are necessary before
+claiming that a newer regression or pretrained model solves this problem.
+
+Rejected alternatives:
+
+- Silently map distinct TYNDP/EP2050 scenario labels, interpolate/clamp missing
+  years, accept proxy-neutralized zeros as evidence of no flexibility, or
+  interpret annual non-null columns as chronological dispatch readiness.
+- Claim a 2030 forecast from historical targets or a model accuracy gain from
+  zero-mean arithmetic; pass signed EUR/MWh through the frozen multiplicative
+  f_H interface without separately validating the existing assembly boundary.
+- Enable AFRY shaping, add a new assembly adapter, or restart acquisition/GPU
+  merely to perform this local engineering milestone.
+
+Invariants not to break:
+
+One monthly BASE solver remains level authority, with final supported BASE/PEAK
+constraints. No source value imputation, production flag changes, or protected
+data writes. All source labels and missing/invalid/zero statuses are retained.
+D300 curve/prepared manifest, D301 plan/scores and scientific v6 stay unchanged.
+AFRY calendar/model gate and T057 remain sealed. No new permission loop for
+already-authorized local engineering.
+
+Outcome:
+
+135 tests passed/four optional CT skips. 91 complete months and66,455native
+hours, including1,032negative-price hours, pass signed-target checks; monthly
+mean residual <=5.5581e-14EUR/MWh, independent error <=1.1369e-13EUR/MWh.
+The audit proves fragmented annual coverage and missing battery operation/
+flexibility/chronology inputs, not admitted future predictions. Canonical
+artifacts: build/lt-structural-shaping-20260907/audit-v2; manifest SHA-256
+edee3eea45294fc4151d46f8952bea3d6ef11b9ef9754bdc63f271977fadf03b.
+Detailed files, commands, failures, hashes and next code lot are in
+SESSION-HANDOFF-20260907-STRUCTURAL-SHAPING-V1.md.
+
+## D-20260907-303 — Order modeling lots around measurable final-PFC improvement
+
+Decision:
+
+Following the user's explicit request to reassess timing against the continuing
+FMV mission, place signed-shape integration and a bounded comparison of final
+market-constrained curves before an isolated storage/flexibility kernel. Prepare
+public structural assumptions alongside that integration. The subsequent physical
+milestone connects chronology, operations, prices and PFC shape on a coherent
+reference/2030 case. This supersedes D302's immediate-next storage-kernel order,
+without discarding its executable inventory or signed-target arithmetic.
+
+Reason:
+
+A post-hoc diagnostic of frozen D301 bytes reproduces the global scores and
+exposes a plausible representation bottleneck: negative-truth hours are3.209655%
+of origin-hour pairs but25.091520% of current MLP squared error. Before origin2026,
+116 of805 negative training hours are excluded with low-mean days and689 have
+their ratio floored. All six training matrices have zero maturity variation.
+These observations motivate controlled experiments; they do not isolate causes,
+establish an achievable gain, or require a central curve to reproduce realized
+negative-price frequencies. Final EEX projection improves current MLP MAE on
+three origins, reinforcing the need to compare final curves. D302's annual
+source coverage alone cannot support a structural 2030 price simulation.
+
+Rejected alternatives:
+
+- Accumulate a storage kernel or new architectures without a measured final-PFC
+  acceptance criterion; require a full investment/dispatch platform before any
+  improvement of the current local curve.
+- Choose different models by maturity after observing these dependent results,
+  label a constant training feature learned maturity, force negative-price
+  frequency into the deterministic curve, or call a signed target a proven win.
+- Delegate economic scenario choices and physical model design to the data
+  engineer, manufacture missing source attestations, or block authorized local
+  modeling solely on an independent scientific holdout.
+
+Invariants not to break:
+
+Retain D300/D301/D302 artifact identities and the current global MLP reference.
+Before evolving a shared assembly dependency, retain the old source bytes and
+identify the new execution version explicitly; no silent re-certification of
+frozen scientific v6. Reuse the existing assembler, preserve solver monthly
+BASE and supported PEAK constraints, and avoid double-counting weekly shape.
+No new adapter, post-solver month patch, scientific/promotion authority, AFRY
+model input, T057, CT, protected-data mutation, Warehouse or GPU action.
+
+Outcome:
+
+Completed the diagnostic, not the subsequent signed-model experiment. Independent
+verification passed on12 model/origin comparisons,6 training origins,139 pinned
+inputs and8 outputs. All96 origin-months partition into delivery years with
+explicit unequal coverage. No estimator fit, new forecast or product code change.
+Artifacts: build/lt-priority-review-20260907/results-v2; manifest SHA-256
+5eeb5831a8bc00287b7598915a508de747494effa5bcca572f43dde30460655a.
+Exact files, commands, diagnostic failure/correction, numerical results,
+responsibilities and next-lot criteria are retained in
+SESSION-HANDOFF-20260907-PFC-PRIORITY-REVIEW.md. Authorities remain false.
+
+## D-20260907-304 — Signed hourly assembly and controlled local representation comparison
+
+Decision:
+
+Implement D303's authorized next lot in the existing PFCAssembler: an explicit
+monthly-neutral signed hourly EUR/MWh input using the shared final BASE/PEAK
+projection, with neutral ancillary layers. Preserve the75-file pre-edit D301
+source/config capture and identify the evolved assembler separately. Execute
+the fixed seasonal/LightGBM by ratio/signed representation comparison on CPU,
+using retained PRD inputs and independent verification of saved results.
+
+Reason:
+
+D303 identified a representation limit worth testing before more complexity.
+A bounded comparison through final constrained prices can measure whether
+removing that limit improves the local product. Signed shape includes weekday
+variation, so native f_W must not be multiplied a second time. Strict units,
+closed-month labels and explicit ancillary scope prevent a new target from
+silently acquiring level, intraday, hydro or scientific authority.
+
+Rejected alternatives:
+
+- Disguise EUR/MWh as f_H, divide by possibly zero BASE, reuse water-value delta
+  as a different component, introduce another adapter, or patch solved months.
+- Alter frozen D301/scientific hashes, refit cached native controls, retune a
+  candidate after results, or change multiple model families without matched
+  representation controls.
+- Force the central curve to match realized negative-hour frequency, infer
+  maturity skill from a constant training feature, or interpret a successful
+  arithmetic/unit test as empirical forecast superiority.
+
+Invariants not to break:
+
+Default numerical behavior remains identical on retained D301 real cases.
+Solver BASE and supported final product constraints remain authoritative;
+raw source conflicts and missing PEAK retain their statuses. Historical data
+are latest-observed/revised, development origins already exposed and dependent.
+No operational promotion, external attestation fabrication, Warehouse/GPU,
+AFRY values, T057, CT modification or protected-data write. All authorities false.
+
+Outcome:
+
+Twelve CPU LightGBM fits,12 reference calculations,24 new candidates,6 cached
+MLP comparisons and6 signed integration controls completed without candidate
+failure. Sixty pre/final prediction stages independently recomputed,12 serialized
+models replayed exactly,125 pinned inputs/81 code-config files/276 outputs checked.
+Native price regression error is zero; signed round-trip hourly error <=6.2528e-13,
+monthly solver residual <=2.5182e-11 EUR/MWh.
+
+Signed seasonal is the promising local development candidate: final mean-origin
+MAE20.345234/RMSE30.180010 versus incumbent22.817767/33.604667, gains10.836%/10.191%,
+MAE wins4/4origins and improvement in all declared aggregate segments. Signed
+LightGBM worsens MAE4.594%, so complexity is not selected by default. The contrast
+concerns the representation/composition package, not clipping alone. Full charter,
+independent confirmation, complete15min/hydro composition and2030 structural
+accuracy remain unestablished; no automatic replacement of D300 is performed.
+
+New tests44 pass. Selected matrix161pass/5skip/2pre-existing Phase5 golden-curve
+failures. Both failures reproduce with identical assertion messages on the
+captured pre-edit assembler; no fixture update or waiver. The live assembler now
+has SHA-256 e30c2f8d30aca02149b40ead0e36349bb42251d60d87c1b1969ed428859f887b;
+old runtime pins are retained and must correctly reject this changed dependency.
+
+Artifacts: build/lt-signed-benchmark-20260907; comparative report
+RAPPORT-COMPARATIF.md and run-v1/manifest.json SHA-256
+446c940cc1a62845bbde664bdc61509078efca802467ccfd7451982031f134af.
+SESSION-HANDOFF-20260907-SIGNED-SHAPE-BENCHMARK.md records exact settings,
+commands, files, failures, hashes and the next complete-PFC qualification.
+
+## D-20260907-305 — Signed composition qualified; reject unconditional intraday adoption
+
+Decision:
+
+Extend the existing signed PFCAssembler lane with explicit EUR/MWh intrahour
+residuals already neutral in every parent hour, and the existing additive
+water-value API. Execute the fixed local CPU hydro ablation, native DE
+disaggregation comparison and five current PFC alternatives. Keep the hourly
+signed reference as a promising candidate; do not adopt either tested ancillary
+addition automatically. Prioritize price-conditioned intraday composition next,
+starting with the existing component and explicit negative/near-zero checks.
+
+Reason:
+
+The D304 hourly gain must survive complete-product composition. Absolute quarter
+residuals provide a finite, explicit transport contract without division by BASE
+or hidden level authority. Numerical compatibility does not prove predictive
+quality: hydro slightly worsens the mean score, while unconditional DE residuals
+improve the overall error but more than double negative-parent error. This is a
+material FMV regime failure, so mean error alone cannot justify adoption.
+
+Rejected alternatives:
+
+- Add an assembly adapter, disguise intraday residuals as water value, multiply
+  weekday shape twice, rewrite solver levels or patch individual months.
+- Treat repeated CH hourly observations as native15min truth; use future hydro
+  observations at historical origins; fit current all-history components in old
+  origins; treat unsupported week53 hydro sentinels as real zero anomalies.
+- Promote on aggregate DE MAE, choose an outcome-fitted monthly model switch,
+  or automatically enable water value because it is available in the pipeline.
+- Attach validated uncertainty, CH transfer or structural2030 claims to these
+  point forecasts, or alter old scientific runtime pins to accept evolved code.
+
+Invariants not to break:
+
+One CH monthly BASE solver; accepted EEX products enforced by the shared final
+projection; raw quote conflicts remain explicit. Intraday residuals preserve
+parent-hour means, hydro deltas preserve monthly means and are applied once.
+No production/promotion/scientific/trading/origin-registration/countable-origin
+authority, Warehouse, GPU, AFRY/T057, CT/protected data changes or external sends.
+D300/D301/D304 retained outputs remain unchanged; current native reproduction
+is exact, signed D304 reproduction is within5.6844e-14 EUR/MWh.
+
+Outcome:
+
+Final run-v4 performed6 water fits,16 factor-model fits and29 curve assemblies.
+Four-origin hourly MAE/RMSE: MLP22.817767/33.604667;
+MLP+hydro22.821732/33.610301; signed20.345234/30.180010;
+signed+hydro20.352302/30.184130. Hydro is not demonstrated useful in this recipe.
+
+Eight DE monthly tests,23324 native QH, conditional on observed parent-hour
+price: nativeMAE6.571542/RMSE12.322029; regularized6.487984/12.287431;
+additive6.225856/11.424343. Additive gains5.260%/7.285% overall but wins only5/8
+months; on1728 negative-parent QH its MAE4.707404 versus native2.152440 worsens
+118.70%. Reject unconditional adoption. CH transfer remains unvalidated.
+
+Five current PFC alternatives each114052 QH Oct2026-Dec2029 (219268 full native
+horizon through2032), all80 PASS/9 QUOTE_CONFLICT, noCRITICAL. Monthly residual
+maximum2.4102e-11 across the experiment; intraday hourly-mean effect<=1.9327e-12.
+48 error stages independently checked;12 water and16 factor replays exact;
+eight additive calculations replay exact.151 inputs/87 source pins/203 outputs.
+Final run directly checks two newly used D300 helper hashes;156 numerical data
+files are byte-identical to the first successful run-v3. Both attempts retained.
+
+78 focused tests pass (34 new). Broader matrix196pass/5skip/2 existing Phase5
+golden fixture failures; exact assertion messages match D304's pre-edit-proven
+failures. Existing water calibration UTC-month aggregation remains documented.
+Session records failed preparations and the repeated runs, not just successful
+fit counts. No output was published or default model replaced.
+
+Artifacts: build/lt-signed-composition-20260907/RAPPORT-COMPARATIF.md;
+run-v4/plan.json SHA256
+2b1eda9e4e3d03f142aaf8056922e2c01551dfcea3be3dfc88fd3304e46904ff;
+run-v4/manifest.json SHA256
+72509923aab50948116544ec3d3f85c6bcce4366896d938174899df068b87df2.
+See SESSION-HANDOFF-20260907-SIGNED-COMPOSITION.md for commands and closure.
+
+## D-20260907-306 — Reuse price-conditioned intraday; no robust adoption
+
+Decision:
+
+Keep D304/D305 references and add only a signed price-space residual method to
+the existing ShapeIntraday component. Execute its frozen CPU benchmark and
+export signed+native/signed+regularized PFC alternatives through the unchanged
+assembler and EEX projection. No estimator/default/authority replacement.
+Reject global adoption after the price-regime and horizon checks; retain the
+unconditional-additive rejection and do not activate hydro.
+
+Reason:
+
+Existing factors can be composed as hourly_price*(f_Q-1), centered per UTC hour,
+without a ratio or new adapter. This preserves negative hourly prices and solver
+levels but does not learn nonlinear price-regime behavior; zero parents stay
+flat. Eight D305 control populations reproduce exactly within tolerance.
+Extending to36 origin-month pairs exposes conditional negative-parent error
+regressions hidden by mean improvement. Effective forecast gains are much
+smaller than observed-parent disaggregation gains and cannot validate CH transfer.
+
+Rejected alternatives:
+
+- New model before testing the existing component; post-score regime/month
+  switches; adopt because aggregate MAE improves; treat flat zero-price behavior
+  as evidence of accurate intrahour dispersion.
+- Call observed-parent conditional decomposition an effective price forecast,
+  supply future monthly/hourly levels to the forecast lane, or label the simple
+  pre-origin DE calendar-price proxy an EEX-calibrated DE PFC.
+- Treat repeated hourly CH prices or five unsupported historical DE-training
+  origins as native15min transfer evidence. Treat2030+ exports as validated
+  structural forecasts or attach validated risk bands.
+- New assembler adapter, monthly correction, hydro activation, model promotion,
+  alteration of D304/D305 artifacts or their historical source pins.
+
+Invariants not to break:
+
+One CH monthly BASE solver; unchanged shared EEX projection and explicit quote
+conflicts. Preserve each hourly mean and solver monthly levels within1e-9.
+No Warehouse/GPU/AFRY/T057/CT/protected-data mutation. Production, promotion,
+scientific admission, trading, external registration and countable origin false.
+Protocol fixed before results; paired populations, price/season/horizon gates,
+empty-population UNSUPPORTED and saved-output independent verification.
+
+Outcome:
+
+36 DE origin-month pairs/105588 QH-origin;16 D305 factor fits reused, four new
+CH-composition DE fits and14 curve assemblies. Conditional native pooled
+MAE7.993026 versus flat8.491463 (-5.87%), RMSE15.394107 versus15.243350 (+0.99%).
+Negative-parent MAE3.353739 versus2.991296 (+12.12%); regularized3.428422
+(+14.61%). Additive near-zero MAE4.903779 versus flat0.919231. Conditional
+native/regularized/additive fail12/13/10 predefined controls. No robust winner.
+Effective forecast native MAE49.959645 versus flat50.143042 (-0.365746%);
+negative-truth MAE around99 EUR/MWh illustrates dominant hourly forecast error,
+not good performance merely because >5% regression gates pass.
+
+Two current114052-QH CSV candidates Oct2026-Dec2029, each219268-QH full Parquet
+through2032;80 PASS/9 QUOTE_CONFLICT/noCRITICAL. Both480negative QH; minima
+-30.989868 native/-32.667008 regularized. Descriptive only. Independent review
+recomputes2880 metrics/288 prediction series and checks14 CH curves and gates,
+CSV/Parquet parity,619 input pins/90 sources/178 outputs. Hourly drift max
+1.7906e-12; monthly residual max2.3931e-11. All733 D301 inventory files and
+D304/D305 outputs unchanged. Existing ShapeIntraday methods AST-identical.
+
+99 focused tests pass; broad221pass/5skip/2 known Phase5 failures with exact
+D305 failure messages. Verification v1/v2 needed representation fixes for
+zero-boundary summation and empty CSV text; v3 succeeds without benchmark rerun.
+
+Artifacts: build/lt-price-conditioned-20260907/RAPPORT-COMPARATIF.md;
+run-v1/plan.json SHA256
+a379ed7e8786483737a1bdeeac76211f44389a28698b5ebfb2dbacec060b8c5e;
+run-v1/manifest.json SHA256
+87ddf8e4f38fa78558d8877f7494e555a92270b99770c5cc55b88abb5d02111a.
+Exact files, commands, failures and follow-up boundaries in
+SESSION-HANDOFF-20260907-PRICE-CONDITIONED-INTRADAY.md.
+
+## D-20260908-307 — Hourly CH focus; recency gains do not pass regime screening
+
+Decision:
+
+Continue observable CH hourly quality with existing signed calendar means and
+fixed365.25/730.5day recency alternatives. Retain D304/D305/D306 and incumbent
+MLP controls; no automatic adoption. Official EPEX July2026 p40 defines CH
+day-ahead60min. JAO30June postpones Swiss-border15min MTU/block bids to2027,
+but neither end2027 nor domestic energy-auction go-live is confirmed. Keep
+capacity and energy timelines distinct; no automatic resolution switch.
+
+Reason:
+
+D306 established intrahour conservation but no robust adoption or native CH
+quarter-hour skill. Hourly-price error dominates. Explicit weights within the
+same calendar cells test adaptation to recent years without a new estimator,
+feature inventory or assembler. The same solver levels isolate shape effects.
+The two-year alternative improves aggregate scores but fails several delivery-
+year/ramp checks and the2% MAE criterion. Mean performance is insufficient.
+
+Rejected alternatives:
+
+- Treat the old Q3 2026 roadmap or capacity-allocation delay as a firm EPEX
+  energy-auction end2027 date; confuse continuous intraday with day-ahead truth.
+- Replace the incumbent or D304 solely because one half-life has lower MAE;
+  choose models by exposed month/year scores; add new model complexity first.
+- Drop negative observations, change training populations, tune half-lives
+  after results, rewrite solver months or use future realized levels as input.
+- Claim success for the empty HIGH_PRICE assessment mask, lower its threshold
+  after results, or claim the level forward-spot gap proves a solver defect.
+- Relabel old live-source pins after the reference helper evolves, overwrite
+  prior artifacts, introduce native15min CH/2030/uncertainty authority claims.
+
+Invariants not to break:
+
+One CH solver level authority; unchanged signed assembly and EEX projection.
+Hourly repeated QH are transport, not four observations. Fixed paired
+populations and pre-origin thresholds; preserve negative prices, DST and leap
+hours. All production/promotion/scientific/trading/registration/countable-origin
+fields false. No Warehouse/GPU/AFRY/T057/CT/protected-data mutation.
+
+Outcome:
+
+Six origins plus current,21 seasonal computations/assembled signed curves,
+7 copied MLP controls,0 ML fits. Four-origin shape MAE/RMSE:
+MLP22.817767/33.604667; D30420.345234/30.180010;
+half-life1year20.134905/29.144896;2years19.991763/29.214678.
+Two-year gain1.737363%/3.198581% versus D304,3/4 origin wins but4 supported
+regressions. Delivery2024 shape MAE+6.25%, ramp+9.58%; autumn ramp+6.79%,
+near-zero ramp+5.37%. One-year gains1.033799%/3.429803%,2/4wins,12regressions.
+Both fail local screening; no adoption. HIGH_PRICE has no assessment rows and
+remains UNSUPPORTED. Per-origin, season, year, horizon and common-first8-month
+tables remain available, including all adverse results.
+
+Full-price MAE: MLP55.641665, D30454.847770,1year53.869560,2years54.207832.
+Monthly level MAE47.260956 is identical across candidates; monthly MSE(full)=
+MSE(shape)+MSE(level) verified. Historical forward-spot differences include
+market information and risk premiums, distinct from solver repricing accuracy.
+
+Three current signed28513-row hourly exports and114052-row repeated-QH CSVs,
+full219268-QH Parquet through2032; same retained7September valuation and
+4September quotes.80PASS/9QUOTE_CONFLICT/noCRITICAL. Independent verification:
+799 input pins/95 sources/373 outputs,21 reference replays,3808 metric rows,
+960 monthly decompositions,12096 support cells. Max monthly solver residual
+2.4102e-11; raw replay4.2633e-14.733 D301 files and D304–D306 artifacts unchanged.
+57 focused tests pass;234pass/5skip/2 exact pre-existing Phase5 failures.
+
+The local raw-source download failed in the Python certificate store; official
+web access/page screenshot succeeded, with source links/paraphrases retained
+and no claim of raw source-byte capture. Run-v1 stopped before scores on pandas
+frequency metadata; run-v2 checks exact timestamps/values with check_freq=False
+and completes. Review-v1 succeeds independently. No TLS bypass or fixture edit.
+
+Artifacts: build/lt-hourly-recency-20260908/RAPPORT-COMPARATIF.md.
+Plan SHA2560822169468cb9fd1ff59ec250a4fcdda98886e7bab8b8c0807b967f61a53052e;
+run manifest05a44fbda7f3619d129a88943e68cf76950ac3564ad25c0fc1b286023152d8ab.
+Exact sources, commands, failures and next boundary:
+SESSION-HANDOFF-20260908-HOURLY-RECENCY.md.
+
+
+## D-20260908-308 — Fixed global hourly blends; D304 retained after stability gates
+
+Decision:
+
+Keep D304 equal-history signed shape as primary local hourly reference. Retain
+D305 hydro and D306 intraday comparisons without activating them; D307 and
+MLP remain paired hourly controls. Four globally fixed25%/50% blends against
+both365.25/730.5day components completed. None passes the full local screen;
+no model adoption, promotion or month-specific selection.
+
+Reason:
+
+Pure recency gains masked adverse delivery-year/ramp behavior. Conservative
+blending tests stability with no new estimator or assembly boundary. Retaining
+both half-lives avoids selecting the best exposed result. The same2% gain
+requirement is kept despite dilution; supported shape-tail diagnostics and an
+origin-level veto make failure visible. These are exposed development origins.
+
+Rejected alternatives:
+
+- Optimize weights on the six exposed origins, select the better D307 half-life
+  alone, switch by month/year/horizon, or weaken2%/5% gates after results.
+- Repair monthly forward-spot error after the solver, change signed-price
+  representation, introduce clipping/hydro/intraday layers or a new assembler.
+- Treat empty absolute HIGH_PRICE as passed, lower thresholds after scoring,
+  equate shape-tail support to validated absolute spike accuracy or promotion.
+- Refit cached models, overwrite D304–D307 artifacts, or relabel old source pins.
+
+Invariants not to break:
+
+Unchanged existing assembler and final EEX projection, one solver level authority,
+monthly residual<=1e-9 and explicit quote conflicts. All seven numerical threshold
+sets frozen before assembly/scoring using closed pre-origin months. Same paired
+truth population, retained negatives, Swiss month labels, UTC gap/DST handling;
+shape/full/level/ramp diagnostics separated. All six authorities false. No
+Warehouse/GPU/AFRY/T057/CT/protected-data mutation, external send or model switch.
+
+Outcome:
+
+28 new assemblies,28 cached controls,0 statistical estimator fits. All four
+blends win3/4 origins but miss the2% shape MAE gain. Three have no>5% declared
+regime/origin regression; half-life1year at50% has two segment and two origin
+regressions (delivery2024 and origin2023 respectively).
+
+| Candidate | Shape MAE | Shape RMSE | MAE gain % | Regime / origin regressions |
+|---|---:|---:|---:|---:|
+| blend-hl365-a25 | 20.155702 | 29.713319 | 0.931579 | 0 / 0 |
+| blend-hl365-a50 | 20.059879 | 29.386879 | 1.402563 | 2 / 2 |
+| blend-hl730-a25 | 20.213340 | 29.873700 | 0.648277 | 0 / 0 |
+| blend-hl730-a50 | 20.110168 | 29.610510 | 1.155386 | 0 / 0 |
+
+D30420.345234/30.180010 remains reference. Shape-tail masks supported across
+four origins (low3822/high1751/absolute1888 hours-origin); HIGH_PRICE0 remains
+UNSUPPORTED. Level MAE47.260956/RMSE55.960385 identical across eight variants.
+Four candidate CSV pairs28513hourly/114052repeated-QH each, Oct2026–Dec2029;
+full219268QH Parquet through2032, retained7September valuation.80PASS/
+9QUOTE_CONFLICT/0CRITICAL, maximum solver residual2.4102e-11.
+
+Independent calculations verify1173 inputs/100 sources/622 outputs,8768 metric
+rows,1920 monthly decompositions,21 component reconstructions and49 signed raw
+prediction checks.28 affine pre/final assembly checks and direct product means
+also pass.733 D301 files and D304–D307 evidence unchanged.78 focused tests pass;
+matrix255pass/5skip/2 exact pre-existing Phase5 failures. Supplemental checker
+needed an OFFPEAK-mask fix; benchmark and primary review succeeded first try.
+
+Plan SHA256 60ae52b021d605d0ba535ecab5792af0c6c52031028b6488bbd6ad7930cd9fc7.
+Run manifest SHA256 1f131effbce0af30e418aa9f47d72bb097c04746e23c7cd68feec9ffeecb0628.
+Report: build/lt-hourly-stability-20260908/RAPPORT-COMPARATIF.md.
+Exact commands, hashes, limitations and next boundary: SESSION-HANDOFF-20260908-HOURLY-STABILITY.md.
+
+
+## D-20260908-309 — Revision/seam audit does not justify calendar smoothing
+
+Decision:
+
+Retain D304 as primary local signed reference and preserve D305–D308. Execute
+the bounded revision/seam audit using the admitted D300–D308 local lineage.
+No smooth-calendar challenger is launched: the trigger fixed before audit
+results is not met. Preserve daily-vintage UNSUPPORTED and the future holdout
+draft's unregistered status; no promotion or month-specific model decision.
+
+Reason:
+
+Same-valuation alternatives are not successive PFC vintages. Historical D301
+origins explicitly use latest-observed revised data, not point-in-time capture.
+Four valid overlap pairs permit controlled retrospective attribution; the
+earlier two have no common delivery. Older D304 shape reassembled with newer
+levels/quotes isolates history effects without rewriting solver months.
+Seasonal seams are not systematically worse than other month seams in the
+frozen comparison. A smoother would add complexity without the stated evidence.
+
+Rejected alternatives:
+
+- Pretend replayed annual origins or same-valuation model alternatives are
+  archived daily production vintages; fabricate missing source availability.
+- Smooth prices across solver months, relabel operational FMV seasons as
+  meteorological quarters, retune thresholds, or force a challenger after a
+  negative diagnostic. Native FMV boundaries are Apr/Jun/Oct/Nov.
+- Assign all final-price revision to history or shape; omit EEX projection
+  interactions; add absolute contributions as if they were an exact variance
+  decomposition. Additive identities concern signed values, not their norms.
+- Claim18 future scale exceedances are proven forecast failures, waive quote
+  conflicts, register the holdout without independent custody or reopen T057.
+
+Invariants not to break:
+
+Existing assembler/EEX projection unchanged; monthly solver alone controls
+levels, residual<=1e-9. Before results freeze all7 pre-origin scale sets and
+support rules. Preserve price signs, native hourly population, DST/leap hours,
+separate raw shape/centering/level/projection effects and complete-month truth.
+No product-code, Warehouse/GPU/AFRY/T057/CT/protected-data changes. All six
+production/promotion/scientific/trading/registration/countable-origin fields false.
+
+Outcome:
+
+56 saved curves,59120 midnight/boundary event rows,11136 seam metric rows,
+32 revision series/416 metrics,4 new counterfactual assemblies,72337 paired
+delivery hours.12 pre-origin calendar calculations+4 replay calculations,
+0 statistical estimator fits. Full/shape seam MAE: seasonal18.264819/13.446529
+(30 events), other-month18.982272/16.858420 (62), within-month-midnight6.914071
+for both. Four exposed assessment origins. Ratios0.962204/0.797615 do not
+exceed1.10; raw contribution share89.916% alone does not trigger smoothing.
+
+Mean absolute final revision / monthly-level contribution / history contribution
+after projection:2023->2024 106.133800/106.133800/1.917505;
+2024->2025 8.430539/8.040707/1.209925;
+2025->2026 8.974489/8.106808/1.344830;
+2026->current 34.831455/34.790291/1.338851 EUR/MWh. Absolute components do not
+sum; market/grid and updated-history signed contributions do sum exactly.
+
+Two first pairs have0 overlap, UNSUPPORTED. Daily real-vintage stability remains
+UNSUPPORTED. Current D304 has18/74 full-horizon month-boundary scale exceedances,
+descriptive future observations without truth, not automatically defects.
+The current counterfactual exports28513hourly/114052repeated-QH CSV rows,
+full219268QH Parquet;80PASS/9QUOTE_CONFLICT/0CRITICAL at retained7September mark.
+
+Independent verification1796inputs/104sources/173outputs, all event/error/revision
+identities and repricing; max solver2.4102e-11, boundary identity1.1369e-13.
+246 direct product means,5 residual gates delegated to main repricing;733 D301
+and746 D308 closure-bound files unchanged.90 focused tests pass; matrix272pass/
+5skip/2 exact D308 Phase5 failures. One pre-freeze test had a wrong season
+expectation, corrected against existing code; audit/review first executions pass.
+
+Prospective holdout draft binds D304 Oct2026–Sep2027, independent custodian and
+truth finalization/availability contract still missing; no registration or
+three-year qualification. Report build/lt-hourly-revision-audit-20260908/RAPPORT-AUDIT.md.
+Plan SHA256 180946ad9482960c10249781e263d2e4e988a3db96c4744ac3b3fbc6cb1fa9a4.
+Run manifest SHA256 f3038565ee5022ffecddfaf12cf1f5a4c04836e7a4b91f21e09d236d129986e8.
+Exact evidence and next boundary: SESSION-HANDOFF-20260908-HOURLY-REVISION-AUDIT.md.
+
+
+## D-20260908-310 — Reject bounded learned-maturity residual; retain D304
+
+Decision: D310 completed: bounded origin/delivery residual maturity experiment rejected.
+D304 retained; no model/month or model/horizon switching, no further tuning.
+Calendar-only residual shape MAE/RMSE21.182405/29.983503 versus D304
+20.345234/30.180010; maturity21.453508/30.241637. Maturity MAE worsens5.447341%
+versus D304 and1.279849% versus calendar-only; RMSE worsens0.860923% versus
+calendar-only. Two origin wins each;23/25 regime regressions and5 per-origin
+shape/ramp regressions each. Both seam screens pass, both combined screens fail.
+Monthly level errors identical47.260956/55.960385. All six authorities false.
+
+Reason: varying origin/delivery training addresses the constant-years_ahead
+formulation limit but this frozen ridge does not improve hourly stability.
+Rejected alternatives: promoting on slight calendar RMSE improvement despite
+MAE/ramp regressions; post-result ridge tuning; month/horizon-specific winners;
+claiming three-year learned support in early folds; treating revised history
+as PIT or same-date exports as independently registered vintages.
+Invariants: solver monthly levels, existing assembler/EEX, D304 and D305–D309
+evidence unchanged; all six authorities false; no Warehouse/AFRY/T057/CT.
+GPU is explicitly authorized by user when useful; no GPU compute needed here.
+14 fits/14 assemblies,10new tests/48focused pass,282pass/5skip/2exact known
+Phase5 failures. Independent numerical review passes with documented Parquet
+frequency-metadata adapter; no frozen source or results changed.
+User LSEG/OMPEX source hints saved for matched-vintage benchmark qualification;
+no external reads yet. Report build/lt-maturity-20260908/RAPPORT-MATURITE.md.
+Plan SHA256 15a03996c361602220a1c7714afad1e018d0a38432a2ffc810711cc65c8c2e6e.
+Run manifest SHA256 451b3a8fdb07744852a3b97d96351ed5e4a5ced897e54845ecc6e947cec07bd9.
+Exact evidence: SESSION-HANDOFF-20260908-HOURLY-MATURITY.md.
+
+
+## D-20260908-311 — External LSEG/OMPEX descriptive benchmark; D304 retained
+
+Decision: capture the user-supplied Sep8OMPEX and bounded PRD LSEG Latest after
+D304 is frozen; compare level and shape separately without accuracy or selection
+authority. OMPEX39months28513h, LSEG27months19753h, no2029. Distances level/shape
+OMPEX3.982965/10.632228 and LSEG18.093715/20.547824EUR/MWh; common27month table
+keeps equal coverage. D304Sep7 differs in valuation from Sep8externals.
+Reason: external evidence is useful for structure/level diagnostics but future
+truth and authenticated same-origin vintages are absent.
+Rejected: substituting stale AugustOMPEX; reconstructing Sep7LSEG from Sep8Latest;
+selecting alignment on minimum error; treating _15min as nativeQH; promoting or
+tuning on forecast-to-forecast distance; extending LSEG2029.
+Invariants: solver/EEX/D304 unchanged, all6authoritiesfalse, no CT/AFRY/T057.
+User authorized Warehouse start, superseding earlier restriction. One start,
+6SELECTs, no table/config writes. Stop request403; user informed, auto-stop45min,
+no further SQL. No escalation.111tests pass/4skip, independent replay and
+746D308/294D309/357D310 files preserved. Exactsource/report/commands:
+SESSION-HANDOFF-20260908-EXTERNAL-PFC-BENCHMARK.md.
+Report build/lt-external-benchmark-20260908/RAPPORT-BENCHMARK-EXTERNE.md.
+Comparison manifest SHA256 13560c3518fec22dffcd0918b5d1a65a60da31dff89c9d71ec3554ff86abc5d0.
+
+
+## D-20260908-312 — First common-cutoff D304 snapshot; 20-day pilot started
+
+Decision: fixed D304 recipe, refreshed EEX Sep7 surface, actual valuation
+Sep8T09:45:22.774073UTC;1local daily record,19future days pending. External
+Sep8snapshots observed before commoncutoff, no equal vendorissuetime/PIT claim.
+Reason: remove D311's different decision cutoffs and establish reproducible
+daily revision monitoring without tuning toward external curves.
+Rejected: counting repeated same-day runs as new days; fabricating20snapshots;
+using externalprices in solver/shape; claiming forecast distances are accuracy;
+pretending local hashes establish independent registration or final truth.
+Invariants: D304rawshape unchanged; same solverweights/assembler/EEX;80PASS/
+9QUOTE_CONFLICT/0CRITICAL,monthlyresidual1.02e-11;all6false;noCT/AFRY/T057.
+27month commonlevel/shapeMAD:OMPEX2.893846/11.479800,LSEG16.334161/20.506840.
+159tests pass/4skip;independent replay/exports/prior-artifact preservation pass.
+OneEEXSELECT reused activeWarehouse;no start/stop retry/config/tablewrite.
+Manualstop403 inherited;auto-stop45min,finalstateRUNNING. GPU authorized unused.
+Dailyofflinebuilder/registry and futuretruthdraft delivered;19realday captures
+and independenttruth contracts remain future work, no background schedule.
+Exact commands/hashes:SESSION-HANDOFF-20260908-MATCHED-VINTAGE-PILOT.md.
+Report build/lt-matched-vintages-20260908/RAPPORT-PILOTE.md.
+Snapshot manifest SHA256 0f246e1524d35e2ce8625427851cfb943c8ccafb103a8db7a4cc4e93507ccb8c.
+
+## D-20260908-313 — Source-quality foundation and confirmed business scope
+
+Decision: retain D304/solver/assembler/EEX projection, qualify38current EEX
+source keys and6direct/3derived conflicts, and deliver a bounded daily
+collector plus a fixed-profile EUR diagnostic. All9conflicts remain visible
+and none is accepted. BLOC13 is excluded from the required roadmap pending
+a real confirmed use case. Granular client-source findings remain local.
+Reason: rounding compatibility does not authenticate a policy waiver, and
+generic profile valuation does not establish a real economic population.
+Rejected: monthly patches, automatic waivers, fabricated daily origins and
+inferred portfolio ownership. Invariants: all6false, noCT/AFRY/T057.
+Verification:134tests pass/4skip; source/CSV preservation and independent
+replay verified. Corrected collector history erasure on absent quote dates.
+Pilot1/20, no scheduler. Exact code/market evidence in the quality handoff.
+Public summary omits client identifiers and granular portfolio diagnostics.
+
+## D-20260908-314 — Separate client-source discovery
+
+Decision: qualify existing client-level sources for optional later economic
+valuation. Full business identifiers, source profiles and detailed coverage
+are retained locally. They do not represent the national Swiss system.
+Reason: source visibility and aggregate coverage do not establish business
+ownership, unit semantics or availability at historical forecast origins.
+Rejected: using customer budgets as national drivers, inferring FMV shares,
+extending missing horizons or counting versions as independent origins.
+Invariants: D304/solver/assembler/projection unchanged; BLOC13 not required;
+all6false, noCT/AFRY/T057.95tests pass/4skip; independent local review passed.
+Daily one-shot wrapper skips an already captured day without network.
+D315 explicitly prioritizes national PFC qualification over client work.
+
+## D-20260908-315 — National CH priority and user-authorized public audit checkpoint
+
+Decision: prioritize national Swiss hourly PFC quality. Client consumption/
+production profiles are optional economic exposure evidence and are not Swiss
+system proxies or prerequisites for further hourly work. Publish the reviewed
+current LT code/tests/protocols to the existing GitHub branch for the user's
+independent Claude audit, retaining raw artifacts and granular client details
+locally. Public summaries may differ from richer local business notes.
+Reason: the user explicitly corrected the national/client scope distinction
+and requested commit/push. The destination repository is public. D300 already
+provides real national source evidence; reuse it and qualify precise gaps.
+Rejected: blocking national work on client mappings, treating client budgets as
+national trajectories, publishing customer identifiers or heavy source data,
+rewriting existing Git history, force-pushing, or claiming public Git makes
+local artifacts independently available. No audit request sent externally.
+Invariants: D304 reference, D305–D307 comparisons, monthly solver authority,
+existing assembler/EEX projection, no per-month selection, noAFRY/T057/CT,
+all6authoritiesfalse. User GPU/Warehouse authorization persists. Neither code
+publication nor the local diagnostic population is production admission.
+Evidence: SESSION-HANDOFF-20260908-PUBLIC-AUDIT-CHECKPOINT.md and
+docs/model/PFC-CH-AUDIT-ENTRYPOINT-20260908.md; local checkpoint manifests,
+tests and exact Git receipt under build/lt-national-readiness-20260908/.

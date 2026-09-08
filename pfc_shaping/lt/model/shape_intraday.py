@@ -340,6 +340,51 @@ class ShapeIntraday:
 
         return pd.Series(f_q_values, index=timestamps, name="f_Q")
 
+    def price_conditioned_residual(
+        self,
+        hourly_prices: pd.Series,
+        timestamps: pd.DatetimeIndex,
+        calendar_df: pd.DataFrame,
+        *,
+        reference_date: pd.Timestamp,
+        entso_df: pd.DataFrame | None = None,
+    ) -> pd.Series:
+        """Reuse native factors in signed price space, preserving every hour.
+
+        The caller owns the hourly price (observed for disaggregation, forecast
+        for prediction). No ratio is formed and zero-price hours stay flat.
+        Centering also removes native quarter-dependent maturity roundoff/drift.
+        """
+        if (not isinstance(timestamps, pd.DatetimeIndex) or timestamps.tz is None
+                or timestamps.empty or not timestamps.is_unique
+                or not timestamps.is_monotonic_increasing):
+            raise ValueError("price conditioning requires a unique aware quarter grid")
+        utc = timestamps.tz_convert("UTC")
+        if np.any(utc.as_unit("ns").asi8 % pd.Timedelta(minutes=15).value):
+            raise ValueError("price conditioning requires aligned quarters")
+        parents = utc.floor("h")
+        hours = parents.unique()
+        if not pd.Series(1, index=parents).groupby(level=0).sum().eq(4).all():
+            raise ValueError("price conditioning requires four quarters per hour")
+        if (not isinstance(hourly_prices, pd.Series)
+                or not hourly_prices.index.equals(hours)
+                or hourly_prices.dtype.kind not in "fi"
+                or not np.isfinite(hourly_prices).all()):
+            raise ValueError("price conditioning requires exact finite hourly prices")
+        if (reference_date.tzinfo is None or not calendar_df.index.equals(timestamps)
+                or (entso_df is not None and not entso_df.index.equals(timestamps))):
+            raise ValueError("price conditioning requires aligned context and aware origin")
+        factors = self.apply(utc, calendar_df.set_axis(utc), entso_df=entso_df,
+                             reference_date=reference_date)
+        if not factors.index.equals(utc) or not np.isfinite(factors).all():
+            raise ValueError("price conditioning received invalid native factors")
+        residual = hourly_prices.reindex(parents).to_numpy() * (factors.to_numpy() - 1.)
+        result = pd.Series(residual, index=utc)
+        result -= result.groupby(parents).transform("mean")
+        if not np.isfinite(result).all():
+            raise ValueError("price conditioning overflow")
+        return pd.Series(result.to_numpy(), index=timestamps, name="signed_intraday_shape_eur_mwh")
+
     def save(self, path: str | Path) -> None:
         """Sauvegarde base_factors_ et corrections_ en deux Parquet."""
         path = Path(path)
@@ -403,7 +448,11 @@ class ShapeIntraday:
             cdf = pd.read_parquet(corr_path)
             for _, row in cdf.iterrows():
                 key = (row["saison"], row["type_jour"], int(row["heure"]))
-                obj.corrections_[key] = row.drop(["saison", "type_jour", "heure"]).to_dict()
+                # Parquet unions sparse coefficient keys across cells. Nulls
+                # represent absent optional corrections, whose default is zero.
+                obj.corrections_[key] = (
+                    row.drop(["saison", "type_jour", "heure"]).dropna().to_dict()
+                )
 
         return obj
 

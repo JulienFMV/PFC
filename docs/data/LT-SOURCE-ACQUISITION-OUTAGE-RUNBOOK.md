@@ -87,6 +87,95 @@ This parity selects the construction reference only. It does not prove source
 publication time, realized finality, causal availability, model input or
 production authority.
 
+The 4 September export preflight is frozen in
+`.planning/phases/14-lt-audit-remediation/ENTSOE-DAY-AHEAD-REALIZED-FINAL-EXPORT-PREFLIGHT-V1-20260904.json`.
+It binds the exact five selected SeriesKeys, July Swiss-local window, two UTC
+partitions and realized-export SQL hash. Three control-plane metadata GETs
+opened no business rows. They observed the PBI SQL Warehouse `STOPPED` and
+confirmed that the managed Delta source is partitioned by `_year` and
+`_month`, but exposed neither a current byte size nor a file count. Therefore
+the physical scan upper bound remains unproven and SQL execution is stopped.
+The earlier 47.9 MB value-blind profile is a useful reference, not a hard bound
+for this two-partition, wider export. No scan or cost ceiling has been approved.
+
+The next operator must obtain a current hard scan upper bound or platform
+export quote and observe the Warehouse already running for another authorized
+workload. Only then may a human review the exact ceiling. The operator must not
+start, resize or create compute and must not repeat statement
+`01f1a79c-0849-1281-af0c-ee155e8346ce`.
+
+The quote/contract request is now open as private producer-repository issue
+`FMVSA/opendata-lakehouse#4`. It requests the hard scan bound or platform
+quote, DBU/cloud-cost ceiling, output terms, assessment-cutoff rule and
+value-bound finality contract. The issue is coordination only: it authorizes
+no SQL and no Warehouse start. Wait for a complete response before cost review
+or export execution.
+
+After explicit user authorization on 4 September, a value-blind freshness and
+cost check used the PBI Warehouse once it was already `STARTING`; this client
+issued no start request. `DESCRIBE DETAIL` proves that Silver was modified at
+`2026-09-04T06:42:56Z` and currently contains 137 files totalling
+1,548,216,106 bytes. The bounded August/September day-ahead watermark query
+read 7,798,287 bytes from two files in 3.7 seconds and returned no prices.
+
+AT sequence 1, DE-LU sequence 1, FR and IT-North cover delivery through
+`2026-09-04T22:00:00Z`; CH stops at `2026-09-02T22:00:00Z`. All five report
+zero `dq_failed` rows in the bounded check. Thus the table is physically
+updated, but current CH completeness is not proven and a two-day delivery gap
+is visible, consistent with the recent source outage. The exact evidence is
+frozen in
+`.planning/phases/14-lt-audit-remediation/ENTSOE-DAY-AHEAD-FRESHNESS-COST-CHECK-V1-20260904.json`.
+
+The Warehouse had no active sessions or queries after the check. The client
+lacks permission to stop it: one explicit stop request returned HTTP 403, and
+the Warehouse remained `RUNNING` with its 45-minute auto-stop. This failure
+must not be retried; a platform owner may stop it sooner. The findings were
+posted to issue `FMVSA/opendata-lakehouse#4` without authorizing the July
+export at that time.
+
+The user then explicitly authorized advancing the historical July work while
+the September source recovery remains pending. A normalized, value-blind
+coverage query over the exact Swiss-local July window and frozen SeriesKeys
+read 65,771,005 bytes. Each of CH, AT sequence 1, DE-LU sequence 1, FR and
+IT-North expands to exactly 2,976 quarter-hours with zero missing,
+overlapping or invalid native intervals. This proves that the September CH gap
+does not affect the already-materialized July candidate.
+
+One bounded v2 latest-revision statement then read 31,967,426 bytes and
+returned 12,083 native rows through one 6,653,296-byte Arrow result chunk. The
+result is quarantined below
+`build/entsoe-july-candidate-20260904/latest-revision-candidate.parquet`; it is
+564,727 bytes with SHA-256
+`046ae86ab84a72c61ea44547cc386f85e49d37d325352f4bfca208a08e5a9baa`
+and semantic SHA-256
+`5a6d72b5531e843dc4e7920c519cc3d93189e70d91277662a763f6575967374e`.
+No value was printed, transmitted to GitHub or committed.
+
+Local validation accepts the exact SQL binding, five SeriesKeys, window,
+intervals, quality and raw-frame contract, then fails closed only on
+`evidence does not exactly cover selected SeriesKeys`. Therefore this is a
+latest-revision candidate, not yet `realized_final`. The exact non-value
+evidence is frozen in
+`.planning/phases/14-lt-audit-remediation/ENTSOE-DAY-AHEAD-JULY-CANDIDATE-CAPTURE-V1-20260904.json`.
+
+A subsequent producer-contract audit confirmed that the source intentionally
+retains the latest observed revision and uses a seven-day rolling lookback to
+capture corrections. It exposes no signed finality service. Waiting for such a
+receipt is therefore not a prerequisite for local adapter or reconciliation
+work. The explicit `realized_latest_candidate` lane now validates and replays
+the existing bytes while keeping `is_final=false`, consumer authority false and
+all model/publication/production authorities false.
+
+The self-contained replay is frozen below
+`build/entsoe-july-candidate-20260904/latest-revision-candidate-replay/` with
+build ID
+`b00f2b725c66d91e7b8ec681b578fd080be77837a6e75f9b1de675caade20a26`.
+It replays all 12,083 rows exactly without Databricks. Do not rerun the export.
+Issue 4 may still provide a finality assertion or source correction status, but
+only that optional evidence could promote the same hash-bound bytes to
+`realized_final`; its absence no longer blocks local replay or independent
+reconciliation.
+
 If the internal materialized Silver snapshot is unavailable, stop. Wait for
 producer recovery; do not replace ENTSO-E with legacy local or synthetic data.
 If the snapshot is available, the public outage still forbids any claim of
@@ -102,10 +191,27 @@ anything.
 
 ### LSEG
 
-Do not query LSEG speculatively. First validate the exact ENTSO-E realized
-frame, then request a matched CH/AT/DE-LU/FR extract and evidence for that same
-window and assessment cutoff. IT-North remains ENTSO-E-only. Any discrepancy
-blocks; it never licenses silent source substitution.
+The matched July reconciliation is complete. Its thresholds were frozen before
+opening the business values: 744 matched hours and full overlap per zone, with
+maximum p95, absolute bias and single-hour difference of `0.005 EUR/MWh`.
+CH, AT sequence 1, DE-LU sequence 1 and FR each matched the LSEG EPEX latest
+curve for all 744 hours with zero missing hours and exactly zero difference.
+IT-North remains complete in ENTSO-E but has no active LSEG EPEX cross-check.
+
+The preflight rejected the unpartitioned 11,544,235,073-byte LSEG vintage table
+without querying it. The bounded read instead used
+`prd.silver.ge_market_lseg_curve_values`, whose catalog size was 16,758,198
+bytes, below the frozen 32 MiB ceiling. The successful statement read
+13,141,107 bytes, returned 9,672 native rows and wrote nothing remotely. PBI
+was already running; no Warehouse was started, resized or created. Do not
+repeat the earlier 9.36 GB disambiguation query.
+
+This result validates latest-source consistency only. The LSEG extract is not
+point-in-time evidence, it does not prove ENTSO-E finality or original
+publication time, and it grants no model, monthly-level, publication or
+production authority. Any future discrepancy blocks; it never licenses silent
+source substitution. The frozen evidence is
+`.planning/phases/14-lt-audit-remediation/LSEG-ENTSOE-JULY-LATEST-RECONCILIATION-V1-20260904.json`.
 
 ## Incident recovery check
 

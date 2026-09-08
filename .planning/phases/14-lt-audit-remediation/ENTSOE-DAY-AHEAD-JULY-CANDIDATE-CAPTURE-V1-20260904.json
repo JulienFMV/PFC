@@ -1,0 +1,239 @@
+{
+  "schema_version": "fmv_entsoe_day_ahead_july_candidate_capture.v1",
+  "status": "PASS_QUARANTINED_LATEST_REVISION_CANDIDATE_PENDING_VALUE_BOUND_FINALITY",
+  "captured_at_utc": "2026-09-04T08:34:16.519Z",
+  "purpose": "ADVANCE_THE_COMPLETE_JULY_2026_CONSTRUCTION_EXPORT_WHILE_KEEPING_REALIZED_FINAL_AND_ALL_MODEL_AUTHORITIES_FALSE",
+  "authorization": {
+    "user_authorized_pbi_warehouse_use": true,
+    "user_authorized_advancing_july_while_waiting_for_entsoe_recovery": true,
+    "accepted_hard_storage_upper_bound_bytes": 1548216106,
+    "warehouse_started_by_this_client": false
+  },
+  "scope": {
+    "market_month": "2026-07",
+    "market_timezone": "Europe/Zurich",
+    "window_start_utc": "2026-06-30T22:00:00Z",
+    "window_end_utc": "2026-07-31T22:00:00Z",
+    "expected_quarter_hours_per_series": 2976,
+    "source_table": "prd.silver.ge_power_entsoe_time_series_vintages",
+    "series_selection": {
+      "ch_price": "day_ahead_prices||ch_price",
+      "at_price": "day_ahead_prices||at_price||1",
+      "de_lu_price": "day_ahead_prices||de_lu_price||1",
+      "fr_price": "day_ahead_prices||fr_price",
+      "it_nord_price": "day_ahead_prices||it_nord_price"
+    }
+  },
+  "legacy_profile_observation": {
+    "status": "BLOCKED_ENTSOE_DAY_AHEAD_PRD_PROFILE",
+    "interpretation": "HISTORICAL_V1_PROFILE_FLAGS_NORMALIZED_WIDE_INTERVALS_AND_BACKFILL_AVAILABILITY_ORDER_AND_IS_NOT_THE_V2_INTERVAL_ADMISSION_GATE",
+    "statement_id": "01f1a839-2d94-17af-a3d5-034530bd0fbc",
+    "query_sha256": "e48bc8b09d6f3676616ed42966d50a3f44d9eaf3649f9ce9c9543a0bc024259e",
+    "capture_relative_path": "build/entsoe-july-utc-profile-20260904/capture.json",
+    "capture_file_sha256": "d599bf08246ae431f7ffe76cec0c00740724cbf6f4bbb1c0e7fa14417e87b823",
+    "capture_content_id": "8373bcdaa840137d5a69db389160188b0fca7e184d104ce811a7d9af84fdf98a",
+    "result_rows": 7,
+    "query_metrics": {
+      "total_time_ms": 8124,
+      "read_bytes": 48299260,
+      "read_files_bytes": 189423656,
+      "read_files_count": 27,
+      "read_partitions_count": 5,
+      "rows_read_count": 5105307,
+      "rows_produced_count": 7,
+      "pruned_bytes": 7803035483,
+      "pruned_files_count": 689,
+      "write_remote_bytes": 0,
+      "spill_to_disk_bytes": 0,
+      "failed_task_count": 0
+    },
+    "admission_authority": false
+  },
+  "normalized_coverage": {
+    "status": "PASS_EXACT_FULL_WINDOW_VALUE_BLIND_COVERAGE",
+    "statement_id": "01f1a839-d542-1737-b4ff-0f1db847ad4f",
+    "assessed_at_utc": "2026-09-04T08:22:56.608Z",
+    "query_relative_path": "build/entsoe-july-coverage-20260904/query.sql",
+    "query_sha256": "e8b8f974677341f0275a85ff7f0c5edfc02e808203b4d7f5f165db07d866e806",
+    "capture_relative_path": "build/entsoe-july-coverage-20260904/receipt.json",
+    "capture_file_sha256": "81bf5ef7ee4b1e18da5356b255539ce6b50b4d8e453192d57d2c151b7cccfbdb",
+    "capture_content_id": "325284dbdf2d74942811ef16a4d7ba1bfce1058d52ca321f47e58d5dda61e3ec",
+    "business_value_columns_opened": 0,
+    "series": [
+      {
+        "field_name": "at_price",
+        "series_key": "day_ahead_prices||at_price||1",
+        "native_resolution": "PT15M",
+        "native_row_count": 2936,
+        "expanded_quarter_hour_count": 2976,
+        "missing_quarter_hour_count": 0,
+        "overlap_quarter_hour_count": 0,
+        "invalid_native_row_count": 0
+      },
+      {
+        "field_name": "ch_price",
+        "series_key": "day_ahead_prices||ch_price",
+        "native_resolution": "PT60M",
+        "native_row_count": 738,
+        "expanded_quarter_hour_count": 2976,
+        "missing_quarter_hour_count": 0,
+        "overlap_quarter_hour_count": 0,
+        "invalid_native_row_count": 0
+      },
+      {
+        "field_name": "de_lu_price",
+        "series_key": "day_ahead_prices||de_lu_price||1",
+        "native_resolution": "PT15M",
+        "native_row_count": 2923,
+        "expanded_quarter_hour_count": 2976,
+        "missing_quarter_hour_count": 0,
+        "overlap_quarter_hour_count": 0,
+        "invalid_native_row_count": 0
+      },
+      {
+        "field_name": "fr_price",
+        "series_key": "day_ahead_prices||fr_price",
+        "native_resolution": "PT15M",
+        "native_row_count": 2714,
+        "expanded_quarter_hour_count": 2976,
+        "missing_quarter_hour_count": 0,
+        "overlap_quarter_hour_count": 0,
+        "invalid_native_row_count": 0
+      },
+      {
+        "field_name": "it_nord_price",
+        "series_key": "day_ahead_prices||it_nord_price",
+        "native_resolution": "PT15M",
+        "native_row_count": 2772,
+        "expanded_quarter_hour_count": 2976,
+        "missing_quarter_hour_count": 0,
+        "overlap_quarter_hour_count": 0,
+        "invalid_native_row_count": 0
+      }
+    ],
+    "query_metrics": {
+      "total_time_ms": 3364,
+      "read_bytes": 65771005,
+      "read_files_bytes": 104344392,
+      "read_files_count": 4,
+      "read_partitions_count": 4,
+      "rows_read_count": 1140185,
+      "rows_produced_count": 5,
+      "pruned_bytes": 2992087820,
+      "pruned_files_count": 270,
+      "write_remote_bytes": 0,
+      "spill_to_disk_bytes": 0,
+      "failed_task_count": 0
+    }
+  },
+  "candidate_export": {
+    "status": "QUARANTINED_LATEST_REVISION_CANDIDATE_PENDING_FINALITY",
+    "statement_id": "01f1a83b-585c-1557-9635-6a5640331f9a",
+    "assessed_at_utc": "2026-09-04T08:33:46.008Z",
+    "query_relative_path": "docs/data/sql/databricks_prd_entsoe_day_ahead_realized_export_v2.sql",
+    "query_sha256": "9f4104e4db8b16bfa21e0fce26afb47d364f983b95209424293356489fe6d81a",
+    "manifest_relative_path": "build/entsoe-july-candidate-20260904/manifest.json",
+    "manifest_file_sha256": "5f02aa423fcdb27d8b60b6541f5024bf48fb326dbb6047205a6c6f29a6ea571e",
+    "manifest_content_id": "7f877d0c32ad77406fd8b50fd1e98e8554603ae34b1deaea7ca69d8880117639",
+    "parquet_relative_path": "build/entsoe-july-candidate-20260904/latest-revision-candidate.parquet",
+    "parquet_size_bytes": 564727,
+    "parquet_sha256": "046ae86ab84a72c61ea44547cc386f85e49d37d325352f4bfca208a08e5a9baa",
+    "semantic_sha256": "5a6d72b5531e843dc4e7920c519cc3d93189e70d91277662a763f6575967374e",
+    "raw_row_count": 12083,
+    "raw_column_count": 21,
+    "rows_by_field": {
+      "at_price": 2936,
+      "ch_price": 738,
+      "de_lu_price": 2923,
+      "fr_price": 2714,
+      "it_nord_price": 2772
+    },
+    "result_transport": {
+      "format": "ARROW_STREAM",
+      "external_download_count": 1,
+      "downloaded_result_bytes": 6653296,
+      "sas_url_persisted_or_logged": false
+    },
+    "query_metrics": {
+      "total_time_ms": 6955,
+      "read_bytes": 31967426,
+      "read_files_bytes": 52172196,
+      "read_files_count": 2,
+      "read_partitions_count": 2,
+      "rows_read_count": 570093,
+      "rows_produced_count": 12083,
+      "pruned_bytes": 1496043910,
+      "pruned_files_count": 135,
+      "write_remote_bytes": 0,
+      "spill_to_disk_bytes": 0,
+      "failed_task_count": 0
+    },
+    "price_values_persisted_below_build_only": true,
+    "price_values_printed_or_committed": false
+  },
+  "local_validation": {
+    "status": "PASS_RAW_EXPORT_CONTRACT_BLOCKED_ONLY_ON_FINALITY_EVIDENCE",
+    "relative_path": "build/entsoe-july-candidate-20260904/local-validation.json",
+    "file_sha256": "9df64223c610ebe0c4bed35131b9662d63c0eace12c01af2fecd732bbc9fd250",
+    "content_id": "3940c49b4331753fda82ebc26fb8dbb5cbe2797cfe1abb15f14c34770a2ebfcc",
+    "blocking_error": "evidence does not exactly cover selected SeriesKeys",
+    "realized_final_validation_complete": false
+  },
+  "failed_non_statement_attempts": {
+    "workspace_wrapper_precheck_failure_count": 1,
+    "workspace_wrapper_reason": "CAPTURE_MODULE_NOT_ALLOWLISTED",
+    "sql_connector_transport_attempt_count": 4,
+    "sql_connector_statement_count": 0,
+    "first_three_failures": "WINDOWS_CERTIFICATE_STORE_ASN1_NOT_ENOUGH_DATA_BEFORE_STATEMENT_SUBMISSION",
+    "fourth_attempt": "INTERRUPTED_AFTER_180_SECONDS_WITH_NO_QUERY_HISTORY_ENTRY_AND_NO_OUTPUT",
+    "statement_retry_count": 0
+  },
+  "execution": {
+    "increment_databricks_rest_api_requests": 13,
+    "increment_databricks_statements": 3,
+    "increment_query_history_gets": 3,
+    "increment_sql_connector_transport_attempts": 4,
+    "increment_external_result_downloads": 1,
+    "increment_raw_business_rows_returned": 12083,
+    "increment_warehouse_starts": 0,
+    "increment_warehouse_resizes": 0,
+    "increment_warehouse_creates": 0,
+    "increment_databricks_writes": 0,
+    "increment_remote_governance_writes": 1,
+    "cumulative_databricks_rest_api_requests": 86,
+    "cumulative_databricks_statements": 6,
+    "cumulative_raw_business_rows_returned": 12083,
+    "cumulative_warehouse_starts": 0,
+    "cumulative_warehouse_stop_requests": 1,
+    "cumulative_warehouse_stop_successes": 0,
+    "cumulative_remote_governance_writes": 3
+  },
+  "platform_coordination": {
+    "issue_url": "https://github.com/FMVSA/opendata-lakehouse/issues/4",
+    "candidate_finality_request_comment_url": "https://github.com/FMVSA/opendata-lakehouse/issues/4#issuecomment-5537931901",
+    "raw_business_values_transmitted": false
+  },
+  "warehouse_lifecycle": {
+    "state_before_each_successful_statement": "RUNNING",
+    "started_for_this_request": false,
+    "stop_retry_attempted": false,
+    "auto_stop_minutes": 45
+  },
+  "next_required_evidence": {
+    "kind": "PLATFORM_SIGNED_VALUE_BOUND_FINALITY_RECEIPT",
+    "must_bind_candidate_semantic_sha256": "5a6d72b5531e843dc4e7920c519cc3d93189e70d91277662a763f6575967374e",
+    "must_cover_all_five_series_keys": true,
+    "it_north_requires_platform_authority": true,
+    "independent_lseg_reconciliation_can_substitute_for_it_north": false
+  },
+  "authorities": {
+    "realized_finality_proven": false,
+    "causal_asof_authorized": false,
+    "model_input_authorized": false,
+    "model_selection_authorized": false,
+    "monthly_level_authorized": false,
+    "publication_authorized": false,
+    "production_authorized": false,
+    "trading_authorized": false
+  }
+}

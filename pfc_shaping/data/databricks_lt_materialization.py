@@ -206,7 +206,10 @@ def materialize_eex_forward_history(
         source["FactLoadTimestampUtc"],
         label="EEX fact load timestamp",
     )
-    quotation_date = pd.to_datetime(source["QuotationDateID"], errors="coerce")
+    # Match PRD's YYYYMMDD integer key before applying the origin cutoff.
+    quotation_date = pd.to_datetime(
+        source["QuotationDateID"].astype("string"), errors="coerce", format="mixed"
+    )
     if quotation_date.isna().any() or quotation_date.dt.tz is not None:
         raise DatabricksLTMaterializationError(
             "Gold EEX quotation date must contain valid timezone-naive dates"
@@ -510,6 +513,111 @@ def materialize_entsoe_current_features(
     )
 
 
+def materialize_entsoe_latest_observed_features(
+    *,
+    dimension: pd.DataFrame,
+    silver_vintages: pd.DataFrame,
+    mapping: EntsoeFeatureMapping,
+    window_start_utc: str | pd.Timestamp,
+    window_end_utc: str | pd.Timestamp,
+    as_of_utc: str | pd.Timestamp,
+) -> DatabricksMaterialization:
+    """Replay latest observed physical values for local calibration only.
+
+    A later response may replace part of an older variable-length block.
+    Expand before choosing the latest observation at each quarter-hour. This
+    path uses FMV observation times, not original-publication or finality
+    claims, and is not an admitted signed-snapshot replay mode.
+    """
+    projection = _validate_entsoe_mapping(dimension, mapping)
+    source = _canonical_silver_vintages(silver_vintages)
+    source_hash = dataframe_semantic_sha256(source)
+    source = source.loc[source["SeriesKey"].isin(projection["SeriesKey"])].copy()
+    start = _utc_scalar(window_start_utc, label="local window start")
+    end = _utc_scalar(window_end_utc, label="local window end")
+    origin = _utc_scalar(as_of_utc, label="local assessment")
+    if start >= end or end > origin or start.value % 900_000_000_000 or end.value % 900_000_000_000:
+        raise DatabricksLTMaterializationError("local window must be delivered and quarter-hour aligned")
+    for column in ("IntervalStartUtc", "IntervalEndUtc", "DateTimeUtc", "FirstObservedAtUtc", "LastObservedAtUtc"):
+        source[column] = _utc_series(source[column], label=f"local {column}")
+    if source["FirstObservedAtUtc"].gt(source["LastObservedAtUtc"]).any():
+        raise DatabricksLTMaterializationError("local first observation exceeds last observation")
+    dq = _strict_boolean_series(source["dq_failed"], label="local dq_failed")
+    eligible = (
+        source["FirstObservedAtUtc"].le(origin)
+        & source["LastObservedAtUtc"].le(origin)
+        & ~dq.fillna(True)
+        & source["IntervalEndUtc"].gt(start)
+        & source["IntervalStartUtc"].lt(end)
+    )
+    working = source.loc[eligible].copy()
+    if working.empty:
+        raise DatabricksLTMaterializationError("no delivered local observations in the requested window")
+    seconds = working["Resolution"].map(_resolution_seconds)
+    duration_ns = (working["IntervalEndUtc"] - working["IntervalStartUtc"]).map(lambda value: value.value)
+    resolution_ns = seconds * 1_000_000_000
+    invalid = (
+        ~seconds.isin((900, 1800, 3600))
+        | duration_ns.le(0)
+        | duration_ns.mod(resolution_ns).ne(0)
+        | working["IntervalEndUtc"].ne(working["DateTimeUtc"])
+    )
+    for column in ("IntervalStartUtc", "IntervalEndUtc"):
+        invalid |= working[column].map(lambda value: value.value).mod(resolution_ns).ne(0)
+    if invalid.any():
+        raise DatabricksLTMaterializationError("local block is not aligned to its native resolution")
+    working["FieldValue"] = pd.to_numeric(working["FieldValue"], errors="coerce")
+    if not np.isfinite(working["FieldValue"].to_numpy(dtype=float)).all() or working["FieldValue"].lt(0).any():
+        raise DatabricksLTMaterializationError("local physical values must be finite and nonnegative")
+    revision = pd.to_numeric(working["RevisionNumber"], errors="coerce")
+    if revision.isna().any() or revision.lt(0).any() or revision.mod(1).ne(0).any():
+        raise DatabricksLTMaterializationError("local revision number is invalid")
+    working["RevisionNumber"] = revision
+    # Bound expansion before allocating transport rows, including long blocks.
+    clipped_start = working["IntervalStartUtc"].clip(lower=start)
+    clipped_end = working["IntervalEndUtc"].clip(upper=end)
+    repeats = ((clipped_end - clipped_start).dt.total_seconds() / 900).astype(np.int64).to_numpy()
+    if sum(int(value) for value in repeats) > 5_000_000:
+        raise DatabricksLTMaterializationError("local block expansion exceeds five million rows")
+    expanded = working.loc[working.index.repeat(repeats)].copy()
+    points = _expanded_quarter_hour_timestamps(clipped_start, repeats)
+    expanded["IntervalStartUtc"] = points
+    expanded["IntervalEndUtc"] = points + pd.Timedelta(minutes=15)
+    expanded["DateTimeUtc"] = expanded["IntervalEndUtc"]
+    expanded["Resolution"] = "PT15M"
+    identity = ["SeriesKey", "IntervalStartUtc"]
+    order = ["LastObservedAtUtc", "RevisionNumber", "FirstObservedAtUtc"]
+    tied = expanded.duplicated([*identity, *order], keep=False)
+    if tied.any() and (
+        expanded.loc[tied].groupby([*identity, *order])["FieldValue"].nunique().gt(1).any()
+    ):
+        raise DatabricksLTMaterializationError("local observations contain a conflicting equal-order overlap")
+    selected = expanded.sort_values([*identity, *order, "VintageID"], kind="mergesort").drop_duplicates(identity, keep="last")
+    expected = pd.date_range(start, end, freq="15min", inclusive="left")
+    for key in projection["SeriesKey"]:
+        actual = pd.DatetimeIndex(selected.loc[selected["SeriesKey"].eq(key), "IntervalStartUtc"])
+        if not actual.equals(expected):
+            raise DatabricksLTMaterializationError(f"local observations have incomplete window coverage: {key}")
+    return _materialize_entsoe(
+        dimension_projection=projection,
+        facts=selected,
+        mapping=mapping,
+        mode="SILVER_LATEST_OBSERVED_LOCAL_ONLY",
+        as_of_utc=origin,
+        source_projection_sha256=source_hash,
+        selection_metrics={
+            "eligible_source_rows": len(working),
+            "excluded_source_rows": int((~eligible).sum()),
+            "expanded_transport_rows": len(expanded),
+            "superseded_or_repeated_transport_rows": len(expanded) - len(selected),
+            "observation_order": order,
+            "window_start_utc": start.isoformat(),
+            "window_end_utc": end.isoformat(),
+            "historical_pit_authorized": False,
+        },
+    )
+
+
 def materialize_spot_price_history(
     frame: pd.DataFrame,
     *,
@@ -709,7 +817,19 @@ def _validate_entsoe_mapping(
                 raise DatabricksLTMaterializationError(
                     f"ENTSO-E mapped series has the wrong group for {feature}: {key}"
                 )
-            if str(row["FieldName"]).lower() != "quantity":
+            fields = {
+                "load_mw": {"quantity", "ch_actual_load"},
+                "solar_mw": {"quantity", "ch_solar_actual"},
+                "wind_mw": {
+                    "quantity",
+                    "ch_wind_onshore_actual" if str(row["PsrType"]) == "B19" else "ch_wind_offshore_actual",
+                },
+                "cross_border_mw": {
+                    "quantity",
+                    f"{str(row['FromZone']).lower()}_to_{str(row['ToZone']).lower()}_crossborder_flow",
+                },
+            }
+            if str(row["FieldName"]).lower() not in fields[feature]:
                 raise DatabricksLTMaterializationError(
                     f"ENTSO-E mapped series is not a quantity field: {key}"
                 )
@@ -719,6 +839,10 @@ def _validate_entsoe_mapping(
                 ("BusinessType", "business_types", "BusinessType"),
             ):
                 allowed = policy[policy_key]
+                if feature == "cross_border_mw" and column == "ProcessType" and pd.isna(row[column]):
+                    # A11 physical-flow rows in the current PRD dictionary do
+                    # not carry the A16 process used by load/generation.
+                    continue
                 if allowed is not None and str(row[column]) not in allowed:
                     raise DatabricksLTMaterializationError(
                         f"ENTSO-E mapped series has the wrong {label} for {feature}: {key}"
@@ -924,7 +1048,7 @@ def _expanded_quarter_hour_timestamps(
     total = int(repeats.sum())
     group_starts = np.repeat(np.cumsum(repeats) - repeats, repeats)
     offsets = np.arange(total, dtype=np.int64) - group_starts
-    start_ns = np.repeat(start.array.asi8, repeats)
+    start_ns = np.repeat(start.array.as_unit("ns").asi8, repeats)
     return pd.to_datetime(start_ns + offsets * 900_000_000_000, utc=True)
 
 
@@ -1100,6 +1224,7 @@ __all__ = [
     "entsoe_feature_mapping_from_contract",
     "materialize_eex_forward_history",
     "materialize_entsoe_current_features",
+    "materialize_entsoe_latest_observed_features",
     "materialize_entsoe_pit_features",
     "materialize_spot_price_history",
 ]

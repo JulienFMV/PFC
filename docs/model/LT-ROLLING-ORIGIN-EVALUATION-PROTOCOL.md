@@ -6,8 +6,10 @@
 comparison without opening real truth. `evaluation_challengers` implements the
 four challengers only behind immutable synthetic fixtures, and
 `evaluation_engine` scores synthetic predictions without ranking them. The
-three modules reuse the existing LT estimand, origin-registry v2 and
-dependence/power design rather than creating a second statistical authority.
+companion `evaluation_reference` contract places the transparent seasonal
+baseline outside the five-model selection inventory. These modules reuse the
+existing LT estimand, origin-registry v2 and dependence/power design rather
+than creating a second statistical authority.
 
 The protocol is metadata only. Local Git and semantic hashes make changes
 visible, but they do not replace the required external registry, trusted time,
@@ -26,6 +28,15 @@ The comparison contains exactly one incumbent and four challengers:
 3. standardized Ridge;
 4. an additive cubic-spline Ridge GAM without interactions;
 5. deterministic CPU LightGBM with an explicit bounded grid.
+
+The market-constrained seasonal baseline is the primary promotion reference,
+not a sixth selectable model. It is scored separately before candidate ranking
+on the exact same origins, rows, masks, energy weights, metrics and horizon
+buckets. It has no hyperparameter tuning and cannot enter candidate selection.
+This preserves the exact five-model protocol while making the product charter's
+simple-baseline requirement explicit. Its companion semantic contract is
+`pfc_shaping.lt.evaluation_reference`; the real-data implementation and scorer
+remain pending.
 
 The incumbent has no tuning grid. Challenger tuning may occur only inside
 nested, externally registered development origins. Future-holdout tuning is
@@ -52,6 +63,14 @@ The weighted MLP uses an exact observation-level exponential loss, a frozen
 Ridge and additive spline-Ridge use training-only scaling. LightGBM requires
 exactly version 4.6.0, deterministic CPU mode and one worker; a missing or
 mismatched optional runtime fails explicitly.
+
+Available GPU compute does not change the frozen LightGBM identity or the
+seasonal reference: both remain deterministic CPU executions. GPU acceleration
+is reserved for separately qualified nonlinear work, frozen-weight inference,
+scenario transforms and repeated scoring. The current runtime contract forbids
+GPU fit or model selection until CPU/GPU parity, deterministic settings and
+runtime evidence have passed; the CPU float64 implementation remains the hard
+gate oracle.
 
 ## Metrics and authority
 
@@ -102,13 +121,147 @@ Synthetic fixtures must use unique ordered UTC timestamps, a strict
 pre-origin training information set, finite numeric features and an exact
 feature schema. Inputs are copied read-only. The scorer accepts only the exact
 five-candidate inventory and the same complete-case intersection for every
-candidate.
+candidate. The seasonal reference is deliberately absent from that selection
+inventory; its separate scorer is not yet implemented, so no synthetic or real
+reference score is claimed by v6.
 
 Synthetic fits and reports carry the source fixture identifier and an
 immutable negative authority object. Their manifests state
 `real_data_training_performed=false`, `real_truth_opened=false`,
 `countable_origin=false` and `ranking_or_selection_performed=false`. The code
 has no file, network, Databricks or CT access path.
+
+## Common PRD input boundary
+
+`pfc_shaping.lt.evaluation_inputs` is the pure bridge between already
+materialized enterprise PRD snapshots and the future real-data evaluation
+runner. It accepts no connector or query configuration. For one frozen origin,
+it requires exact training and prediction frames plus the explicit ordered
+hourly feature inventory frozen by `pfc_shaping.lt.evaluation_feature_inventory`.
+
+Training rows contain row identity, delivery time, maximum dependency
+availability, an incumbent-equivalent hourly `target_f_h` and features; both
+delivery and availability must be strictly before the origin. Raw
+`target_eur_mwh` is not accepted at this boundary. Prediction rows contain no
+target, must be delivered at or after the origin, and every feature dependency
+must be available no later than the origin. Source roles are bound by snapshot
+SHA-256 only.
+
+One complete-case mask per split is applied before any model sees the arrays.
+The resulting feature order and eligible rows are common to the seasonal
+reference, incumbent and all challengers. Outputs are detached read-only arrays
+with value and identity hashes, but all acquisition, training, truth-opening,
+selection, monthly-level, publication and production authorities remain false.
+
+The hourly candidate matrix contains exactly nine entries, in order:
+`hour_sin`, `hour_cos`, `month_sin`, `month_cos`, `dow_sin`, `dow_cos`,
+`is_holiday`, `hydro_fill` and `years_ahead`. Calendar and maturity values are
+deterministic from delivery/origin. Historical hydro is allowed only when its
+realized value was available before the origin; future hydro is the week-of-year
+climatology fitted strictly before that origin. Nulls are preserved until the
+one common mask is formed.
+
+The incumbent's three outage positions are not candidate data columns. The
+governed configuration disables outages, so they remain explicit fixed
+compatibility constants inside the incumbent replay. This is a disabled-feature
+state, not permission to turn missing observations or forecasts into zero.
+Raw PRD ENTSO-E load, solar, wind and cross-border actuals are excluded because
+their future same-target values do not exist at the origin. The causal
+`solar_regime`, `load_deviation` and `flow_deviation` climatologies remain
+separate quarter-hour shaping context applied identically downstream of every
+hourly candidate; they are not extra challenger-only predictors.
+
+`pfc_shaping.lt.evaluation_feature_builder` constructs this exact matrix from
+an already materialized three-column input: delivery UTC, hydro availability
+UTC and normalized hydro fill. It verifies the frozen origin, split-specific
+delivery side, hydro role, availability and prediction-climatology cutoff. It
+uses Europe/Zurich plus the existing Valais/German holiday precedence and calls
+the incumbent encoder directly. `hydro_fill` must already be a fraction in
+`[0,1]`; percentages, infinities and non-numeric values fail instead of being
+silently normalized. Missing hydro remains null for the downstream common
+mask. Exact input columns prevent raw ENTSO-E actuals or outage fields from
+entering this boundary.
+
+`prepare_constructed_prd_origin_inputs` performs the next and only assembly
+step. Training metadata supplies row identity, delivery, target availability
+and `target_f_h`; prediction metadata supplies only identity and delivery. The
+adapter requires exact one-to-one delivery timestamp sets, aligns feature
+values by timestamp rather than caller row position and computes training
+availability as `max(target availability, hydro availability)`. Prediction
+availability is the admitted hydro-climatology availability. Before delegation
+to the common PRD validator it reverifies feature shape, units, read-only state,
+negative authority and the value/delivery hashes of both constructed batches.
+No second masking or feature implementation is introduced. Construction and
+parity verification of `target_f_h` remain a separate prerequisite; callers
+cannot fit these arrays directly from raw price levels.
+
+## Candidate execution interface boundary
+
+`pfc_shaping.lt.evaluation_execution_contract` freezes the only compatible
+path found by the source audit. The incumbent is replayed through the
+hash-bound native `ShapeHourlyMLP.fit/apply` interfaces. It is not replaced by
+a generic MLP. The four challengers may consume the common nine-column matrix,
+but their learning target must reproduce the incumbent's hourly `f_H`
+construction: direct CH quarter-hour price divided by the Swiss-local daily
+mean, days with mean at most 5 EUR/MWh excluded, ratios clipped to `[0.2, 3.0]`
+and aggregated by Swiss-local date and clock hour with the incumbent weights.
+The repeated autumn clock hour is merged because that is the frozen incumbent
+behaviour; silently correcting it would change the baseline.
+
+At prediction time every candidate produces `f_H` on the native quarter-hour
+UTC delivery grid. Positivity floor, Swiss-local daily normalization and final
+`[0.4, 2.0]` clipping are applied exactly once. Those factors are not valid
+inputs to the EUR/MWh scoring engine. Each candidate must first pass through
+the same solver-level and downstream curve assembly; only the resulting full
+price curves are scored after separate energy-weighted local-month centering.
+The CH monthly BASE solver remains unchanged and authoritative.
+
+This contract is metadata-only and authority-negative. It does not authorize
+real-data fitting, use of the synthetic challenger laboratory as a real
+runner, truth opening, Warehouse or GPU execution, ranking, publication or
+production.
+
+`pfc_shaping.lt.evaluation_target_builder` implements the first pure step. It
+accepts only already-materialized CH delivery UTC, price-availability UTC and
+quarter-hour price columns. It checks the frozen origin and quarter-hour grid,
+sorts deterministically, reproduces the incumbent daily-ratio, clipping,
+recency-weighted local-hour aggregation and repeated-autumn-hour merge, and
+emits detached `target_f_h` metadata with exact identity, timestamp and value
+hashes. Each hourly target is represented by its earliest contributing UTC
+timestamp and is available only when its latest contributing price is
+available. Missing prices follow the incumbent's pre-target exclusion;
+infinities fail closed. Synthetic capture tests compare its target and first
+nine features directly with the preprocessing arrays passed by the hash-bound
+native incumbent to a no-training test double.
+
+`pfc_shaping.lt.evaluation_factor_postprocess` closes the corresponding
+challenger-only prediction seam. It accepts raw factors only for one of the
+four frozen challenger IDs and rejects the incumbent explicitly, preventing
+its native post-processing from being applied twice. On a timezone-aware
+quarter-hour grid at the frozen origin it applies the exact native sequence:
+floor at `0.1`, arithmetic normalization within each Swiss-local day, then
+clip to `[0.4, 2.0]`. The detached result binds raw values, delivery timestamps
+and final factors separately. A synthetic fixed-prediction test proves exact
+equality with `ShapeHourlyMLP.apply`; no model is fitted and the factors still
+carry no EUR/MWh, scoring, selection or production authority.
+
+`pfc_shaping.lt.evaluation_curve_assembly` closes the final local numerical
+seam without adding a second curve formula. It requires one solver-authority
+`PFCAssembler` retaining the exact native `ShapeHourlyMLP` and the exact four
+postprocessed challenger batches. A shallow assembler copy calls the incumbent
+`apply` natively; challenger copies override only that returned `f_H`. The
+override carries immutable copies of the incumbent `f_W` maps, while every
+candidate reuses the same monthly solver prices, quoted products, quarter-hour
+ENTSO-E context, intraday model and water-value input.
+
+The adapter rejects legacy monthly level paths, uncertainty output and the
+unfrozen solar, electrification and amplitude layers. Outage context is not an
+input because D291 excludes those disabled positions from the common candidate
+inventory. After assembly it requires bit-identical `B`, `f_S`, `f_W`, `f_Q`,
+`f_WV`, `delta_wv` and `f_bridge`, a completed final solver projection and
+EUR/MWh monthly means equal to `B`. It emits five detached read-only price
+vectors accepted directly by `SyntheticEvaluationSet`; it does not fit, open
+truth, score, rank or grant authority.
 
 ## External-registration preparation boundary
 

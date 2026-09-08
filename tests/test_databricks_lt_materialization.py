@@ -16,6 +16,7 @@ from pfc_shaping.data.databricks_lt_materialization import (
     entsoe_feature_mapping_from_contract,
     materialize_eex_forward_history,
     materialize_entsoe_current_features,
+    materialize_entsoe_latest_observed_features,
     materialize_entsoe_pit_features,
     materialize_spot_price_history,
 )
@@ -215,6 +216,30 @@ def test_eex_materialization_is_stable_under_source_row_order() -> None:
     pd.testing.assert_frame_equal(first.derived_frame, second.derived_frame)
 
 
+@pytest.mark.parametrize("date_encoding", ["integer", "compact_string", "mixed"])
+def test_eex_prd_date_keys_preserve_calendar_dates_and_cutoff(date_encoding: str) -> None:
+    source = _eex_daily_rows()
+    expected = materialize_eex_forward_history(source, as_of_utc="2026-08-21T12:00:00Z")
+    keys = [20260820, 20260821, 20260822]
+    if date_encoding == "compact_string":
+        keys = [str(key) for key in keys]
+    elif date_encoding == "mixed":
+        keys = [20260820, "2026-08-21", "20260822"]
+    source["QuotationDateID"] = keys
+    actual = materialize_eex_forward_history(source, as_of_utc="2026-08-21T12:00:00Z")
+    pd.testing.assert_frame_equal(actual.raw_frame, expected.raw_frame)
+    pd.testing.assert_frame_equal(actual.derived_frame, expected.derived_frame)
+    assert actual.audit == expected.audit
+
+
+@pytest.mark.parametrize("date_key", [20260230, 20261301, 0])
+def test_eex_materialization_rejects_invalid_prd_date_keys(date_key: int) -> None:
+    source = _eex_daily_rows()
+    source.loc[0, "QuotationDateID"] = date_key
+    with pytest.raises(DatabricksLTMaterializationError, match="valid timezone-naive dates"):
+        materialize_eex_forward_history(source, as_of_utc="2026-08-23T12:00:00Z")
+
+
 def test_eex_materialization_rejects_naive_origin() -> None:
     with pytest.raises(DatabricksLTMaterializationError, match="timezone-aware"):
         materialize_eex_forward_history(
@@ -258,6 +283,91 @@ def _silver_vintages() -> pd.DataFrame:
         )
     )
     return pd.DataFrame(rows)
+
+
+def _local_observed(vintages: pd.DataFrame, *, as_of: str = "2026-10-24T04:00:00Z"):
+    return materialize_entsoe_latest_observed_features(
+        dimension=_dimension(), silver_vintages=vintages, mapping=_mapping(),
+        window_start_utc="2026-10-24T00:00:00Z",
+        window_end_utc="2026-10-24T02:00:00Z", as_of_utc=as_of,
+    )
+
+
+def test_local_observed_replays_changed_blocks_without_claiming_pit() -> None:
+    source = _silver_vintages()
+    first_load = source["SK_ge_power_entsoe_time_series_vintages"].eq("V-1")
+    source.loc[first_load, ["IntervalEndUtc", "Date_Time_UTC"]] = pd.Timestamp("2026-10-24T02:00:00Z")
+    source.loc[first_load, ["first_seen_pull_ts_utc", "last_seen_pull_ts_utc"]] = pd.Timestamp("2026-10-24T02:20:00Z")
+    # PRD response creation follows the pull start; it is not historical publication.
+    source["publication_timestamp_utc"] = source["first_seen_pull_ts_utc"] + pd.Timedelta(minutes=3)
+    result = _local_observed(source)
+    assert result.raw_frame["load_mw"].tolist() == [999.0] * 4 + [110.0] * 4
+    assert result.audit["mode"] == "SILVER_LATEST_OBSERVED_LOCAL_ONLY"
+    assert result.audit["selection_metrics"]["superseded_or_repeated_transport_rows"] == 8
+    assert not any(result.audit["authorities"].values())
+    shuffled = _local_observed(source.sample(frac=1, random_state=9))
+    pd.testing.assert_frame_equal(result.raw_frame, shuffled.raw_frame)
+    assert result.audit == shuffled.audit
+
+
+def test_local_observed_excludes_later_observations() -> None:
+    result = _local_observed(_silver_vintages(), as_of="2026-10-24T03:00:00Z")
+    assert result.raw_frame["load_mw"].tolist() == [100.0] * 4 + [110.0] * 4
+    assert result.audit["selection_metrics"]["excluded_source_rows"] == 1
+
+
+def test_local_observed_rejects_conflicting_equal_order_overlap() -> None:
+    source = _silver_vintages().iloc[:-1].copy()
+    source.loc[0, ["IntervalEndUtc", "Date_Time_UTC"]] = pd.Timestamp("2026-10-24T02:00:00Z")
+    with pytest.raises(DatabricksLTMaterializationError, match="equal-order overlap"):
+        _local_observed(source)
+
+
+@pytest.mark.parametrize("defect", ["gap", "first_after_last", "off_grid", "string_dq", "nonfinite"])
+def test_local_observed_rejects_invalid_inputs(defect: str) -> None:
+    source = _silver_vintages()
+    if defect == "gap":
+        source = source.loc[~source["SK_ge_power_entsoe_time_series_vintages"].eq("V-2")]
+    elif defect == "first_after_last":
+        source.loc[0, "first_seen_pull_ts_utc"] = pd.Timestamp("2026-10-24T05:00:00Z")
+    elif defect == "off_grid":
+        source.loc[0, "IntervalStartUtc"] += pd.Timedelta(milliseconds=1)
+    elif defect == "string_dq":
+        source["dq_failed"] = source["dq_failed"].astype(object)
+        source.loc[0, "dq_failed"] = "false"
+    else:
+        source.loc[0, "field_value"] = float("inf")
+    with pytest.raises(DatabricksLTMaterializationError):
+        _local_observed(source)
+
+
+def test_entsoe_accepts_observed_prd_quantity_names_and_a11_null_process() -> None:
+    dimension = _dimension()
+    dimension["FieldName"] = ["ch_actual_load", "ch_solar_actual", "ch_wind_onshore_actual",
+                              "ch_wind_offshore_actual", "ch_to_de_lu_crossborder_flow", "de_lu_to_ch_crossborder_flow"]
+    dimension.loc[dimension["GroupName"].eq("crossborder_physical_flows"), "ProcessType"] = None
+    observed = materialize_entsoe_latest_observed_features(
+        dimension=dimension, silver_vintages=_silver_vintages(), mapping=_mapping(dimension),
+        window_start_utc="2026-10-24T00:00:00Z", window_end_utc="2026-10-24T02:00:00Z",
+        as_of_utc="2026-10-24T04:00:00Z",
+    )
+    assert observed.raw_frame["cross_border_mw"].eq(30.0).all()
+    dimension.loc[dimension["SeriesKey"].eq("FLOW_EXPORT"), "FieldName"] = "de_lu_to_ch_crossborder_flow"
+    with pytest.raises(DatabricksLTMaterializationError, match="quantity field"):
+        materialize_entsoe_latest_observed_features(
+            dimension=dimension, silver_vintages=_silver_vintages(), mapping=_mapping(dimension),
+            window_start_utc="2026-10-24T00:00:00Z", window_end_utc="2026-10-24T02:00:00Z",
+            as_of_utc="2026-10-24T04:00:00Z",
+        )
+
+
+def test_local_observed_preserves_arrow_microsecond_timestamps() -> None:
+    source = _silver_vintages()
+    expected = _local_observed(source)
+    for column in ("IntervalStartUtc", "IntervalEndUtc", "Date_Time_UTC"):
+        source[column] = source[column].astype("datetime64[us, UTC]")
+    actual = _local_observed(source)
+    pd.testing.assert_frame_equal(actual.raw_frame, expected.raw_frame)
 
 
 def _vintage_row(

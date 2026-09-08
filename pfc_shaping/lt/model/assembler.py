@@ -433,6 +433,9 @@ class PFCAssembler:
         outages_forecast: pd.DataFrame | None = None,
         reference_date: pd.Timestamp | None = None,
         country: str = "CH",
+        *,
+        signed_hourly_shape: pd.Series | None = None,
+        signed_intraday_shape: pd.Series | None = None,
     ) -> pd.DataFrame:
         """
         Construit la PFC 15min sur l'horizon N+3.
@@ -450,6 +453,13 @@ class PFCAssembler:
                              (None Ã¢â€ â€™ valeurs neutres utilisÃƒÂ©es)
             hydro_forecast : prÃƒÂ©visions fill_deviation rÃƒÂ©servoirs hydro CH
                              (None Ã¢â€ â€™ f_WV = 1.0 neutre)
+            signed_hourly_shape : optional monthly-neutral EUR/MWh shape on
+                complete Swiss hourly months. Replaces weekly/hourly factors;
+                requires the solver lane. No multiplicative damping or
+                intrahour information is inferred.
+            signed_intraday_shape : optional EUR/MWh residual with zero mean
+                in every native hour, used only with signed_hourly_shape.
+                Water value may compose through its existing additive API.
 
         Returns:
             DataFrame colonnes ['price_shape', 'f_S', 'f_W', 'f_H', 'f_Q',
@@ -476,6 +486,35 @@ class PFCAssembler:
             ``tests/test_shape_hourly_bowl.py::test_split_level_anomaly_drift_warning``
             (Plan 05C-02 Task 5) for the CI signal that the warning actually fires.
         """
+        if signed_intraday_shape is not None and signed_hourly_shape is None:
+            raise ValueError("signed intraday shape requires signed hourly shape")
+        if signed_hourly_shape is not None:
+            if self.monthly_level_authority.lower() != "solver" or country != "CH":
+                raise ValueError("signed hourly shape requires the CH monthly solver lane")
+            if not self.skip_legacy_level_cascade or not self.skip_legacy_base_smoothing:
+                raise ValueError("signed hourly shape requires both legacy level layers skipped")
+            if any(value is not None for value in (
+                entso_forecast, outages_forecast, self.unc,
+            )) or any((
+                self.enable_solar_modulation, self.enable_electrification_shape,
+                self.enable_intraday_amplitude_shrinkage, self.enforce_positivity,
+                self.enforce_m_factor_floor, self.enforce_floor,
+            )):
+                raise ValueError("signed hourly shape requires neutral ancillary layers and no floors")
+            if (self.wv is None) != (hydro_forecast is None):
+                raise ValueError("signed hourly shape requires both water model and hydro forecast")
+            if self.wv is not None:
+                if self.wv.enforce_floor or not callable(getattr(self.wv, "compute_delta_wv", None)):
+                    raise ValueError("signed hourly shape requires additive water value")
+                if (not isinstance(hydro_forecast.index, pd.DatetimeIndex)
+                        or hydro_forecast.index.tz is None
+                        or not hydro_forecast.index.is_unique
+                        or not hydro_forecast.index.is_monotonic_increasing
+                        or hydro_forecast.empty
+                        or "fill_deviation" not in hydro_forecast
+                        or not np.isfinite(hydro_forecast["fill_deviation"].to_numpy(dtype=float)).all()):
+                    raise ValueError("signed hourly shape requires finite aligned hydro forecast")
+
         if delivery_index is not None:
             idx = pd.DatetimeIndex(delivery_index)
             if idx.tz is None:
@@ -537,6 +576,12 @@ class PFCAssembler:
             raise ValueError(
                 "monthly_level_authority='solver' requires "
                 "skip_legacy_level_cascade=True and skip_legacy_base_smoothing=True"
+            )
+
+        if signed_hourly_shape is not None:
+            return self._build_signed_hourly_shape(
+                signed_hourly_shape, idx, cal, months_ahead, base_prices,
+                quoted_keys, reference_date, signed_intraday_shape, hydro_forecast,
             )
 
         # Ã¢â€â‚¬Ã¢â€â‚¬ Facteur saisonnier mensuel f_S Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
@@ -1385,6 +1430,95 @@ class PFCAssembler:
         raw_month_mean = price_raw.groupby(month_key).transform("mean")
         base_month_mean = base_level.groupby(month_key).transform("mean")
         return (price_raw + base_month_mean - raw_month_mean).rename("price_shape")
+
+    def _build_signed_hourly_shape(
+        self,
+        shape: pd.Series,
+        idx: pd.DatetimeIndex,
+        cal: pd.DataFrame,
+        months_ahead: pd.Series,
+        base_prices: dict,
+        quoted_keys: set[str] | None,
+        reference_date: pd.Timestamp | None,
+        intraday_shape: pd.Series | None,
+        hydro_forecast: pd.DataFrame | None,
+    ) -> pd.DataFrame:
+        """Assemble an explicit signed hourly prior through the shared projection.
+
+        The supplied shape already includes weekday variation. Its expansion
+        to quarters is transport, not learned detail. Explicit additive quarter
+        residuals preserve parent hours; water value uses its own monthly-neutral
+        additive API. Bridge and uncertainty remain excluded.
+        The existing multiplicative build is unchanged when the input is absent.
+        """
+        from pfc_shaping.lt.structural_readiness import center_signed_hourly_shape
+
+        if (not isinstance(shape, pd.Series)
+                or not pd.api.types.is_numeric_dtype(shape.dtype)
+                or pd.api.types.is_bool_dtype(shape.dtype)
+                or np.iscomplexobj(shape.to_numpy())):
+            raise ValueError("signed hourly shape must be a real numeric EUR/MWh Series")
+        centered = center_signed_hourly_shape(shape)
+        if np.max(np.abs(centered.to_numpy() - shape.to_numpy(dtype=float))) > 1e-9:
+            raise ValueError("signed hourly shape must already have zero monthly means")
+        expected = pd.date_range(
+            centered.index[0], centered.index[-1] + pd.Timedelta(hours=1),
+            freq="15min", inclusive="left",
+        )
+        if not idx.as_unit("ns").equals(expected.as_unit("ns")):
+            raise ValueError("signed hourly shape and delivery grid must cover the same complete months")
+        months = centered.index.tz_convert("Europe/Zurich").strftime("%Y-%m").unique()
+        if any(month not in base_prices for month in months):
+            raise ValueError("signed hourly shape requires an explicit solver BASE for every month")
+        intraday = self.si.apply(idx, cal, None, reference_date=reference_date)
+        if not intraday.index.equals(idx) or not np.array_equal(intraday.to_numpy(), np.ones(len(idx))):
+            raise ValueError("signed hourly shape requires neutral intraday factors")
+        base = self._resolve_base(idx, base_prices, country="CH")
+        if not np.isfinite(base.to_numpy()).all():
+            raise ValueError("signed hourly shape requires finite solver BASE levels")
+        expanded = pd.Series(np.repeat(centered.to_numpy(), 4), index=idx)
+        delta_q = pd.Series(0.0, index=idx)
+        if intraday_shape is not None:
+            if (not isinstance(intraday_shape, pd.Series)
+                    or not intraday_shape.index.equals(idx)
+                    or not pd.api.types.is_numeric_dtype(intraday_shape.dtype)
+                    or pd.api.types.is_bool_dtype(intraday_shape.dtype)
+                    or np.iscomplexobj(intraday_shape.to_numpy())
+                    or not np.isfinite(intraday_shape.to_numpy()).all()):
+                raise ValueError("signed intraday shape must be finite, numeric and exactly aligned")
+            if intraday_shape.groupby(idx.floor("h")).mean().abs().max() > 1e-9:
+                raise ValueError("signed intraday shape must already have zero parent-hour means")
+            delta_q = intraday_shape
+        delta_wv = pd.Series(0.0, index=idx)
+        if self.wv is not None:
+            if hydro_forecast.index[0] > idx[0] or hydro_forecast.index[-1] < idx[-1]:
+                raise ValueError("signed hourly shape requires hydro forecast covering delivery")
+            delta_wv = self.wv.compute_delta_wv(base, fill_df=hydro_forecast, calendar_df=cal)
+            if not delta_wv.index.equals(idx) or not np.isfinite(delta_wv.to_numpy()).all():
+                raise ValueError("signed hourly shape received invalid water-value delta")
+            if delta_wv.groupby(idx.tz_convert("Europe/Zurich").strftime("%Y-%m")).mean().abs().max() > 1e-9:
+                raise ValueError("signed hourly shape requires monthly-neutral water-value delta")
+        prior = self._preserve_monthly_base_means(base + expanded + delta_q + delta_wv, base, idx, country="CH")
+        final, calibrated = self._project_final_solver_products(
+            prior, idx=idx, base_prices=base_prices, quoted_keys=quoted_keys, country="CH",
+        )
+        frame = pd.DataFrame({
+            "price_shape": final, "B": base,
+            "f_S": 1.0, "f_W": 1.0, "f_H": 1.0, "f_Q": 1.0, "f_WV": 1.0,
+            "delta_wv": delta_wv, "f_bridge": 1.0,
+            "signed_hourly_shape_eur_mwh": expanded,
+            "price_pre_final_projection": prior,
+            "delta_final_product_projection": final - prior,
+            "profile_type": _profile_type_labels(months_ahead, index=idx),
+            "confidence": self._confidence_score(months_ahead),
+            "calibrated": calibrated, "p10": np.nan, "p90": np.nan,
+        }, index=idx)
+        frame.attrs["hourly_shape_contract"] = "signed-hourly-eur-mwh.v1"
+        if intraday_shape is not None or self.wv is not None:
+            frame["signed_intraday_shape_eur_mwh"] = delta_q
+            frame.attrs["composition_contract"] = "signed-additive-composition.v1"
+        self._check_energy_consistency(frame, base_prices, country="CH")
+        return frame
 
     def _project_final_solver_products(
         self,

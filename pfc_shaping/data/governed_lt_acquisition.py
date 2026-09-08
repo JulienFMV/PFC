@@ -796,6 +796,7 @@ def _transform_sfoe_csv(
     )
     if reader.fieldnames is None or tuple(reader.fieldnames) != required:
         raise GovernedLTAcquisitionError("SFOE OGD17 CSV schema is not exact")
+    start, end = _config_window(config)
     records: list[dict[str, float]] = []
     timestamps: list[pd.Timestamp] = []
     for row_number, row in enumerate(reader, start=1):
@@ -837,8 +838,14 @@ def _transform_sfoe_csv(
         ]
         if (
             any(value < 0 for value in (*regional_fill, *regional_capacity))
-            or not math.isclose(sum(regional_fill), fill, abs_tol=0.01)
-            or not math.isclose(sum(regional_capacity), capacity, abs_tol=0.01)
+            or (
+                # Historical totals outside the consumed window cannot affect it.
+                start <= timestamp < end
+                and (
+                    not math.isclose(sum(regional_fill), fill, abs_tol=0.01)
+                    or not math.isclose(sum(regional_capacity), capacity, abs_tol=0.01)
+                )
+            )
         ):
             raise GovernedLTAcquisitionError(
                 "SFOE OGD17 regional totals do not reconcile"
@@ -876,7 +883,6 @@ def _transform_sfoe_csv(
         raise GovernedLTAcquisitionError(
             "SFOE OGD17 observation date extends beyond received_at_utc"
         )
-    start, end = _config_window(config)
     frame = pd.DataFrame(records, index=index)
     frame = frame.loc[(frame.index >= start) & (frame.index < end)]
     if frame.empty:

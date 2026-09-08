@@ -154,7 +154,15 @@ def normalize_databricks_eex_daily_snapshot(
             )
 
     for column in ("QuotationDateID", "DeliveryStartDate", "DeliveryEndDate"):
-        source[column] = pd.to_datetime(source[column], errors="coerce")
+        values = source[column]
+        if column == "QuotationDateID":
+            # PRD stores YYYYMMDD as INT; numeric to_datetime means epoch nanoseconds.
+            values = values.astype("string")
+        source[column] = pd.to_datetime(
+            values,
+            errors="coerce",
+            format="mixed" if column == "QuotationDateID" else None,
+        )
         if source[column].isna().any():
             raise DatabricksEexDailyNormalizationError(
                 f"EEX daily snapshot has an invalid {column}"

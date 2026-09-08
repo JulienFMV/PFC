@@ -28,6 +28,20 @@ The materialization result always declares all scientific and production
 authorities false. Layer acceptance, immutable publication, signing and model
 admission are separate steps.
 
+`QuotationDateID` is an SQL `INT` calendar key (`YYYYMMDD`), not an epoch
+timestamp. Both the daily normalizer and the origin-filtering materializer
+parse it as a calendar date before filtering. Integer, compact-string and ISO
+representations yield the same dates and materialized evidence; invalid dates
+are rejected. Delivery-boundary and observation-time policies are unchanged.
+
+The downstream evaluation boundary is
+`pfc_shaping.lt.evaluation_inputs.prepare_prd_origin_inputs`. It consumes only
+already materialized frames, binds source snapshots by SHA-256, enforces the
+frozen-origin availability cutoff and produces one shared complete-case feature
+matrix for every benchmark participant. It contains no Databricks connector,
+does not choose the feature inventory and grants no training or truth-opening
+authority.
+
 ## ENTSO-E mapping contract
 
 No `SeriesID`, `SeriesKey`, `GroupName` or `FieldName` is guessed. The caller
@@ -74,6 +88,17 @@ ties at the same availability/revision/last-seen ordering fail closed.
 The Gold Latest path is current-serving only. It also requires known
 availability, but it does not become historical PIT evidence merely because
 the same transformation succeeds.
+
+For the frozen hourly comparison, PRD materialization does not imply automatic
+feature admission. Raw `load_mw`, `solar_mw`, `wind_mw` and `cross_border_mw`
+are realized training evidence, not future same-target inputs. Their admitted
+causal derivatives stay in the common quarter-hour shaping context. The exact
+nine-column hourly model matrix is owned by
+`pfc_shaping.lt.evaluation_feature_inventory`; the downstream PRD adapter
+rejects any different order or inventory. Its pure feature constructor expects
+the materialized `hydro_fill` in normalized fraction units `[0,1]` and retains
+nulls. Unit conversion and origin-frozen climatology construction therefore
+belong upstream and must be explicit; the constructor does neither implicitly.
 
 ## Time and interval policy
 
@@ -137,7 +162,41 @@ overlap, deduplication and cumulative-output replay are implemented as one
 deterministic proof. This prevents a cheap delta from being mistaken for a
 complete model history.
 
-## Remaining integration work
+## Local current-observation calibration (7 September 2026)
+
+`materialize_entsoe_latest_observed_features` is the explicit consumer for
+the user-authorized local CPU calibration. It consumes the exact PRD Silver
+export and hash-bound Gold dictionary on a complete, explicitly supplied
+delivered window. It does not add a signed snapshot replay mode or alter the
+historical PIT rules above.
+
+This consumer expands variable-length source blocks before selecting the
+latest observation for each SeriesKey and quarter-hour. Ordering is
+`LastObservedAtUtc`, `RevisionNumber`, then `FirstObservedAtUtc`; contradictory
+equal-order values fail. Future observations, failed DQ, invalid chronology,
+non-finite/negative quantities, misaligned native intervals, gaps and excessive
+expansion fail. Native timestamps are normalized to nanoseconds before interval
+arithmetic, including Arrow's microsecond timestamps. Exact descriptive PRD
+quantity names and null A11 flow process codes are accepted with the remaining
+unit, direction, document, business and PSR checks intact.
+
+The 7 September local run uses complete September 2025-August 2026 physical
+history. CH price history stops before the missing Swiss day 3 September;
+DE native quarter-hour training ends with complete August. No gaps are filled.
+The DE sequence is independently reconciled to the LSEG EPEX reference over
+the consumed period; its identity is not inferred from a sequence number alone.
+National SFOE hydro remains separate and is validated on consumed weeks.
+
+The consumer owns date/unit/calendar conversion, model feature semantics,
+coverage checks and exported-curve repricing. Data engineering owns producer
+recovery, source completeness, vintage/publication semantics and platform
+permissions. Independent evaluation owns prospective registration and the
+future holdout. Missing independent attestations do not block this local
+construction, and local success grants no scientific or production admission.
+Exact source hashes, commands, outputs and limitations are recorded in
+`SESSION-HANDOFF-20260907-LOCAL-PFC-SOURCE-INTEGRATION.md` (Phase 14).
+
+## Remaining governed integration work
 
 1. Generate the real SeriesKey mapping contract from the admitted Gold
    dimension inventory.

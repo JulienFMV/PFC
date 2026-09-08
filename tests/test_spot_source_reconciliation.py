@@ -5,6 +5,12 @@ import re
 import pandas as pd
 import pytest
 
+from pfc_shaping.validation.entsoe_day_ahead_export import (
+    RAW_COLUMNS,
+    REALIZED_SQL_SHA256,
+    DayAheadMarketUse,
+    validate_realized_latest_candidate,
+)
 from pfc_shaping.validation.entsoe_day_ahead_prd import (
     EXPECTED_FIELDS,
     PIT_COLUMNS,
@@ -14,15 +20,21 @@ from pfc_shaping.validation.entsoe_day_ahead_prd import (
 from pfc_shaping.validation.spot_source_reconciliation import (
     BLOCKED_STATUS,
     LSEG_CURVES,
+    LSEG_LATEST_SQL_PATH,
+    LSEG_LATEST_SQL_SHA256,
     LSEG_PIT_COLUMNS,
     LSEG_PIT_SQL_PATH,
     LSEG_PIT_SQL_SHA256,
     PASS_STATUS,
     SpotReconciliationPolicy,
     SpotSourceReconciliationError,
+    build_lseg_epex_actuals_latest_parameters,
     build_lseg_epex_actuals_pit_parameters,
+    reconcile_lseg_entsoe_latest_candidate,
     reconcile_lseg_entsoe_spot,
+    validate_lseg_epex_actuals_latest_extract,
     validate_lseg_epex_actuals_pit_extract,
+    verify_lseg_latest_sql_binding,
     verify_lseg_sql_binding,
 )
 
@@ -110,6 +122,57 @@ def _lseg_frame(
     return pd.DataFrame(rows, columns=LSEG_PIT_COLUMNS)
 
 
+def _candidate_raw_frame() -> pd.DataFrame:
+    rows: list[dict[str, object]] = []
+    for index, source in _entsoe_frame().iterrows():
+        series_key = str(source["series_key"])
+        classification = series_key.split("||")[2:]
+        rows.append(
+            {
+                "field_name": source["field_name"],
+                "series_key": series_key,
+                "classification_sequence": classification[0] if classification else None,
+                "interval_start_utc": source["interval_start_utc"],
+                "date_time_utc": source["interval_end_utc"],
+                "interval_end_utc": source["interval_end_utc"],
+                "resolution": source["resolution"],
+                "price_eur_per_mwh": source["price_eur_per_mwh"],
+                "publication_timestamp_utc": "2025-12-31T12:00:00Z",
+                "first_seen_pull_ts_utc": "2025-12-31T12:00:00Z",
+                "availability_basis": "FMV_FIRST_SEEN",
+                "availability_known": True,
+                "availability_timestamp_utc": "2025-12-31T12:00:00Z",
+                "is_historical": False,
+                "dq_failed": False,
+                "source_time_series_id": f"TS-{index}",
+                "source_document_mrid": f"DOC-{index}",
+                "source_document_revision_number": 1,
+                "source_snapshot_id": f"SNAP-{index}",
+                "source_file_path": f"entsoe/{index}.xml",
+                "vintage_id": f"VINTAGE-{index}",
+            }
+        )
+    return pd.DataFrame(rows, columns=RAW_COLUMNS)
+
+
+def _candidate_artifact(raw: pd.DataFrame):
+    return validate_realized_latest_candidate(
+        raw,
+        series_selection=_binding(),
+        market_uses={
+            "ch_price": DayAheadMarketUse.VALUATION_HEDGE_SCOPE,
+            "at_price": DayAheadMarketUse.OBSERVATION_RISK,
+            "de_lu_price": DayAheadMarketUse.VALUATION_HEDGE_SCOPE,
+            "fr_price": DayAheadMarketUse.OBSERVATION_RISK,
+            "it_nord_price": DayAheadMarketUse.OBSERVATION_RISK,
+        },
+        window_start_utc=START,
+        window_end_utc=END,
+        assessed_at_utc=AS_OF,
+        query_sha256=REALIZED_SQL_SHA256,
+    )
+
+
 def _entsoe_artifact(
     frame: pd.DataFrame | None = None,
     *,
@@ -140,6 +203,22 @@ def _lseg_artifact(
         window_end_utc=end,
         as_of_utc=as_of,
         pit_query_sha256=LSEG_PIT_SQL_SHA256,
+    )
+
+
+def _lseg_latest_artifact(
+    frame: pd.DataFrame | None = None,
+    *,
+    start: str = START,
+    end: str = END,
+    assessed_at: str = AS_OF,
+):
+    return validate_lseg_epex_actuals_latest_extract(
+        _lseg_frame(start=start, end=end) if frame is None else frame,
+        window_start_utc=start,
+        window_end_utc=end,
+        assessed_at_utc=assessed_at,
+        latest_query_sha256=LSEG_LATEST_SQL_SHA256,
     )
 
 
@@ -183,8 +262,20 @@ def test_sql_is_hash_bound_bounded_partition_pruned_and_price_only() -> None:
         r"\b(insert|update|delete|merge|create|replace|alter|drop|truncate)\b", normalized
     )
 
+    assert verify_lseg_latest_sql_binding() == LSEG_LATEST_SQL_SHA256
+    latest_sql = LSEG_LATEST_SQL_PATH.read_text(encoding="utf-8")
+    latest_normalized = re.sub(r"\s+", " ", latest_sql.lower())
+    assert "prd.silver.ge_market_lseg_curve_values" in latest_normalized
+    assert "ge_market_lseg_curve_value_vintages" not in latest_normalized
+    assert "v._silver_updated_ts <= p.assessed_at_utc" in latest_normalized
+    assert "limit 20001" in latest_normalized
+    assert not re.search(
+        r"\b(insert|update|delete|merge|create|replace|alter|drop|truncate)\b",
+        latest_normalized,
+    )
 
-def test_parameter_builder_is_month_bounded_and_actuals_as_of_is_post_window() -> None:
+
+def test_latest_parameter_builder_accepts_one_market_month_across_two_utc_months() -> None:
     assert build_lseg_epex_actuals_pit_parameters(
         window_start_utc=START,
         window_end_utc=END,
@@ -196,12 +287,23 @@ def test_parameter_builder_is_month_bounded_and_actuals_as_of_is_post_window() -
         "start_value_date": "2026-01-01",
         "end_value_date": "2026-01-01",
     }
-    with pytest.raises(SpotSourceReconciliationError, match="calendar month"):
+    with pytest.raises(SpotSourceReconciliationError, match="one UTC calendar month"):
         build_lseg_epex_actuals_pit_parameters(
-            window_start_utc="2026-01-31T00:00:00Z",
-            window_end_utc="2026-02-01T01:00:00Z",
-            as_of_utc="2026-02-02T00:00:00Z",
+            window_start_utc="2026-06-30T22:00:00Z",
+            window_end_utc="2026-07-31T22:00:00Z",
+            as_of_utc="2026-09-04T08:33:46.008Z",
         )
+    assert build_lseg_epex_actuals_latest_parameters(
+        window_start_utc="2026-06-30T22:00:00Z",
+        window_end_utc="2026-07-31T22:00:00Z",
+        assessed_at_utc="2026-09-04T08:33:46.008Z",
+    ) == {
+        "start_utc": "2026-06-30T22:00:00Z",
+        "end_utc": "2026-07-31T22:00:00Z",
+        "assessed_at_utc": "2026-09-04T08:33:46.008000Z",
+        "start_value_date": "2026-06-30",
+        "end_value_date": "2026-07-31",
+    }
     with pytest.raises(SpotSourceReconciliationError, match="precedes"):
         build_lseg_epex_actuals_pit_parameters(
             window_start_utc=START,
@@ -294,6 +396,32 @@ def test_exact_cross_source_reconciliation_passes_but_grants_no_model_authority(
     assert payload["authorities"]["model_input_authorized"] is False
     assert payload["authorities"]["monthly_level_authorized"] is False
     assert payload["layer_policy"]["mismatch_action"] == "BLOCK_NO_SILENT_SOURCE_SUBSTITUTION"
+
+
+def test_latest_candidate_reconciliation_passes_without_promoting_the_candidate() -> None:
+    raw = _candidate_raw_frame()
+    candidate = _candidate_artifact(raw)
+    report = reconcile_lseg_entsoe_latest_candidate(
+        entsoe_raw_frame=raw,
+        entsoe=candidate,
+        lseg=_lseg_latest_artifact(),
+        policy=_policy(),
+    )
+
+    assert report.status == PASS_STATUS
+    assert not candidate.frame["is_final"].any()
+    assert candidate.audit["authorities"]["consumer_contract_authorized"] is False
+    assert report.as_dict()["authorities"]["model_input_authorized"] is False
+
+    changed = raw.copy()
+    changed.loc[0, "price_eur_per_mwh"] += 1.0
+    with pytest.raises(SpotSourceReconciliationError, match="candidate audit binding"):
+        reconcile_lseg_entsoe_latest_candidate(
+            entsoe_raw_frame=changed,
+            entsoe=candidate,
+            lseg=_lseg_latest_artifact(),
+            policy=_policy(),
+        )
 
 
 def test_normalized_entsoe_blocks_expand_before_hourly_reconciliation() -> None:

@@ -9,10 +9,15 @@ query and its hash-bound receipts.
 | Contract | Temporal selection | Additional authority required | Consumer meaning |
 |---|---|---|---|
 | `causal_asof` | latest eligible vintage with `availability_timestamp_utc <= as_of_utc` | original-publication evidence for every `SOURCE_DOCUMENT_CREATED` series; none for `FMV_FIRST_SEEN` | value demonstrably available at the simulated origin |
+| `realized_latest_candidate` | latest observed revision inside a frozen assessment cutoff | none | reproducible local snapshot for adapter tests and independent reconciliation; `is_final=false` |
 | `realized_final` | latest observed revision inside a frozen assessment cutoff | finality evidence covering the exact delivery window and selected SeriesKeys | ex-post realized truth; never a PIT feature |
 
 Latest-revision ranking is not finality proof.  A returned-document
 `createdDateTime` is not original historical day-ahead publication proof.
+The candidate lane exists because the producer exposes retained latest
+revisions and rolling correction capture, not a signed finality service. It
+prevents that missing service from blocking local replay while preserving the
+meaning of `realized_final`.
 
 The selected market scope is explicit.  CH and DE-LU may be labelled as the
 valuation/hedging scope; FR, AT and IT-North may be labelled as
@@ -70,9 +75,16 @@ authority.
 
 ## Downstream authority
 
-Passing export validation authorizes only construction of the existing
-day-ahead consumer frame.  It grants no monthly-level, model-input, model
-selection, promotion or production authority.  The monthly BASE solver remains
-the sole level authority; spot values may become only realized targets,
-independent controls or duration-weighted zero-mean shapes after the remaining
-gates pass.
+Passing `realized_latest_candidate` validation authorizes only deterministic
+local replay and independent reconciliation; its consumer contract authority
+and `is_final` flag remain false. Passing either governed consumer export
+validation authorizes only construction of the existing day-ahead consumer
+frame. No lane grants monthly-level, model-input, model selection, promotion or
+production authority. The monthly BASE solver remains the sole level authority;
+spot values may become only realized targets, independent controls or
+duration-weighted zero-mean shapes after the remaining gates pass.
+
+An exact comparison with another provider's latest-observation curve validates
+cross-source consistency, not finality. In particular, matching LSEG latest
+values cannot turn a `realized_latest_candidate` into `realized_final`, prove
+historical point-in-time availability or cover a zone absent from LSEG.

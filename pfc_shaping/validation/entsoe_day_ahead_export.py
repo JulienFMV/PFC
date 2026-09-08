@@ -41,6 +41,7 @@ REALIZED_SQL_SHA256 = "9f4104e4db8b16bfa21e0fce26afb47d364f983b95209424293356489
 EXPORT_SCHEMA = "fmv_entsoe_day_ahead_consumer_export.v2"
 PREFLIGHT_SCHEMA = "fmv_entsoe_day_ahead_export_cost_preflight.v1"
 REPLAY_SCHEMA = "fmv_entsoe_day_ahead_export_replay.v1"
+REALIZED_LATEST_CANDIDATE_USAGE = "realized_latest_candidate"
 RESULT_ROW_LIMIT = 20_001
 MAX_WINDOW_DAYS = 32
 
@@ -385,6 +386,60 @@ def validate_realized_export(
     )
 
 
+def validate_realized_latest_candidate(
+    frame: pd.DataFrame,
+    *,
+    series_selection: Mapping[str, str],
+    market_uses: Mapping[str, DayAheadMarketUse | str],
+    window_start_utc: str | pd.Timestamp,
+    window_end_utc: str | pd.Timestamp,
+    assessed_at_utc: str | pd.Timestamp,
+    query_sha256: str,
+) -> DayAheadConsumerExport:
+    """Validate a replayable latest-revision snapshot without claiming finality."""
+
+    _expected_sha(query_sha256, REALIZED_SQL_SHA256, "realized query")
+    parameters = build_realized_export_parameters(
+        series_selection=series_selection,
+        window_start_utc=window_start_utc,
+        window_end_utc=window_end_utc,
+        assessed_at_utc=assessed_at_utc,
+    )
+    selection = _series_selection(series_selection)
+    uses = _market_uses(market_uses, selection)
+    assessed = _utc_timestamp(parameters["assessed_at_utc"], "realized assessment")
+    raw = _normalize_export_frame(
+        frame,
+        selection=selection,
+        window_start=_utc_timestamp(parameters["start_utc"], "realized start"),
+        window_end=_utc_timestamp(parameters["end_utc"], "realized end"),
+    )
+    if (
+        raw["first_seen_pull_ts_utc"].isna().any()
+        or raw["first_seen_pull_ts_utc"].gt(assessed).any()
+    ):
+        raise EntsoeDayAheadExportError(
+            "realized candidate contains a value not observed by the assessment cutoff"
+        )
+    consumer = _consumer_frame(
+        raw,
+        usage=REALIZED_LATEST_CANDIDATE_USAGE,
+        original_publication_keys=frozenset(),
+    )
+    return _result(
+        raw=raw,
+        consumer=consumer,
+        usage=REALIZED_LATEST_CANDIDATE_USAGE,
+        selection=selection,
+        market_uses=uses,
+        window_start=str(parameters["start_utc"]),
+        window_end=str(parameters["end_utc"]),
+        temporal_cutoff=_utc_text(assessed),
+        query_sha256=REALIZED_SQL_SHA256,
+        evidence=(),
+    )
+
+
 def assess_export_cost_preflight(
     *,
     usage: SpotUsage | str,
@@ -474,12 +529,21 @@ def build_export_replay_package(
     audit = dict(export.audit)
     if audit.get("schema_version") != EXPORT_SCHEMA:
         raise EntsoeDayAheadExportError("export replay audit schema is invalid")
-    if audit.get("raw_frame_semantic_sha256") != dataframe_semantic_sha256(raw_frame):
+    selection = audit.get("series_selection")
+    if not isinstance(selection, Mapping):
+        raise EntsoeDayAheadExportError("export replay series selection is invalid")
+    normalized_raw = _normalize_export_frame(
+        raw_frame,
+        selection={str(key): str(value) for key, value in selection.items()},
+        window_start=_utc_timestamp(audit.get("window_start_utc"), "export replay start"),
+        window_end=_utc_timestamp(audit.get("window_end_utc"), "export replay end"),
+    )
+    if audit.get("raw_frame_semantic_sha256") != dataframe_semantic_sha256(normalized_raw):
         raise EntsoeDayAheadExportError("raw export differs from its audit")
     if audit.get("consumer_frame_semantic_sha256") != dataframe_semantic_sha256(export.frame):
         raise EntsoeDayAheadExportError("consumer export differs from its audit")
     artifacts = {
-        "source/day-ahead-export.parquet": _parquet_payload(raw_frame),
+        "source/day-ahead-export.parquet": _parquet_payload(normalized_raw),
         "consumer/day-ahead-source.parquet": _parquet_payload(export.frame),
         "evidence/export-audit.json": _canonical_json_bytes(audit),
     }
@@ -734,7 +798,7 @@ def _normalize_export_frame(
 def _consumer_frame(
     raw: pd.DataFrame,
     *,
-    usage: SpotUsage,
+    usage: SpotUsage | str,
     original_publication_keys: frozenset[str],
 ) -> pd.DataFrame:
     consumer = pd.DataFrame(
@@ -773,7 +837,7 @@ def _result(
     *,
     raw: pd.DataFrame,
     consumer: pd.DataFrame,
-    usage: SpotUsage,
+    usage: SpotUsage | str,
     selection: Mapping[str, str],
     market_uses: Mapping[str, str],
     window_start: str,
@@ -782,10 +846,18 @@ def _result(
     query_sha256: str,
     evidence: Sequence[Mapping[str, object]],
 ) -> DayAheadConsumerExport:
+    usage_value = usage.value if isinstance(usage, SpotUsage) else usage
+    if usage_value not in {
+        SpotUsage.CAUSAL_ASOF.value,
+        SpotUsage.REALIZED_FINAL.value,
+        REALIZED_LATEST_CANDIDATE_USAGE,
+    }:
+        raise EntsoeDayAheadExportError("export usage is invalid")
+    is_candidate = usage_value == REALIZED_LATEST_CANDIDATE_USAGE
     audit = {
         "schema_version": EXPORT_SCHEMA,
-        "status": f"PASS_{usage.value.upper()}_EXPORT_NOT_MODEL_AUTHORITY",
-        "usage": usage.value,
+        "status": f"PASS_{usage_value.upper()}_EXPORT_NOT_MODEL_AUTHORITY",
+        "usage": usage_value,
         "query_sha256": query_sha256,
         "window_start_utc": window_start,
         "window_end_utc": window_end,
@@ -812,7 +884,7 @@ def _result(
             "original_publication": "EXTERNAL_EVIDENCE_ONLY",
         },
         "authorities": {
-            "consumer_contract_authorized": True,
+            "consumer_contract_authorized": not is_candidate,
             "point_in_time_filter_validated": usage is SpotUsage.CAUSAL_ASOF,
             "realized_finality_evidence_validated": usage is SpotUsage.REALIZED_FINAL,
             "trading_execution_authorized": False,
@@ -1047,10 +1119,7 @@ def _replay_export(raw: pd.DataFrame, audit: Mapping[str, object]) -> DayAheadCo
                 series_keys=tuple(str(value) for value in series_keys),
             )
         )
-    try:
-        usage = SpotUsage(str(audit.get("usage", "")))
-    except ValueError as exc:
-        raise EntsoeDayAheadExportError("export replay usage is invalid") from exc
+    usage_value = str(audit.get("usage", ""))
     common = {
         "series_selection": {str(key): str(value) for key, value in selection.items()},
         "market_uses": {str(key): str(value) for key, value in market_uses.items()},
@@ -1058,6 +1127,18 @@ def _replay_export(raw: pd.DataFrame, audit: Mapping[str, object]) -> DayAheadCo
         "window_end_utc": str(audit.get("window_end_utc", "")),
         "query_sha256": str(audit.get("query_sha256", "")),
     }
+    if usage_value == REALIZED_LATEST_CANDIDATE_USAGE:
+        if evidence:
+            raise EntsoeDayAheadExportError("latest-revision candidate must not carry evidence")
+        return validate_realized_latest_candidate(
+            raw,
+            assessed_at_utc=str(audit.get("temporal_cutoff_utc", "")),
+            **common,
+        )
+    try:
+        usage = SpotUsage(usage_value)
+    except ValueError as exc:
+        raise EntsoeDayAheadExportError("export replay usage is invalid") from exc
     if usage is SpotUsage.CAUSAL_ASOF:
         return validate_causal_export(
             raw,
@@ -1194,6 +1275,7 @@ __all__ = [
     "PREFLIGHT_SCHEMA",
     "REPLAY_SCHEMA",
     "RAW_COLUMNS",
+    "REALIZED_LATEST_CANDIDATE_USAGE",
     "REALIZED_SQL_SHA256",
     "DayAheadConsumerExport",
     "DayAheadExportCostAssessment",
@@ -1209,6 +1291,7 @@ __all__ = [
     "build_realized_export_parameters",
     "validate_causal_export",
     "validate_realized_export",
+    "validate_realized_latest_candidate",
     "verify_export_replay_package",
     "verify_export_sql_bindings",
 ]

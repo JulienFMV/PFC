@@ -63,7 +63,10 @@ source-specific reason why a field is unavailable.
 
 Evaluation uses frozen rolling-origin vintages and a pre-registered future
 holdout. The primary benchmark is a transparent market-constrained seasonal
-model; OMPEX is reported separately and remains advisory.
+model; OMPEX is reported separately and remains advisory. The seasonal model
+is a permanent primary reference outside the tunable candidate inventory. It
+must be scored first on the same origins, rows, masks and weights; it is not a
+sixth candidate and cannot participate in hyperparameter or model selection.
 
 Promotion targets:
 
