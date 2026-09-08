@@ -52,6 +52,7 @@ without installing anything. Do not claim the repo-wide lint debt is fixed.
 
 ## Exact changed public files
 
+- `.gitattributes` (follow-up from actual Windows CI: preserve operations JSON LF bytes)
 - `.github/workflows/publisher-runtime-v6.yml`
 - `README.md`
 - `pfc_shaping/data/databricks_lt_materialization.py`
@@ -123,3 +124,28 @@ staged file manifest, exact Git outputs and CI observation are stored in
 `public-review.json`, `publication.json` and `closure.json` below the task root.
 Remote Actions is an independent check, not implied by local success.
 No blanket merge, model promotion, scheduler or automatic day-2 capture.
+
+## Remote CI follow-up
+
+Implementation commit `c5b80a80f38905788fa93c2103b58b7eeb8874cd` pushed and
+remote head verified. `lt-model` run34236508592 passed. Publisher run34236508625
+passed dependency installation and static checks, then failed2/29tests because
+Git's Windows CRLF conversion changed the hash-bound operations JSON. This
+was hidden behind the earlier pandas import failure. It is a checkout issue,
+not a reason to relax the byte guard.
+
+Reproduced using `check_checkout_bytes.py before` with real
+`git -c core.autocrlf=true checkout-index` into a fresh local build directory.
+The checkout SHA was
+`a60e335701bfe92f1e9db087f260086d988c962595ddc4c41521f154c86ff883`,
+while the required Git blob SHA is
+`8d1af62295835df056cedb7faab8040ddbf0fdcfdeaba99f5288f066d33bf433`.
+Added only `deploy/publisher/operations-contract.json text eol=lf` to
+`.gitattributes`; `check_checkout_bytes.py after` verifies exact checkout bytes
+and acceptance by the existing strict contract. The contract JSON, its hash
+constant and publisher implementation are unchanged. See `checkout-before/`
+and `checkout-after/` receipts plus the follow-up publication and CI receipts.
+
+Additional preservation verification: `verify_prior_artifacts.py` confirms
+1,063 bound build files across D304, D305, D306, D307 and D312 closures, and
+the original one-record pilot registry still validates as v1. No new day.

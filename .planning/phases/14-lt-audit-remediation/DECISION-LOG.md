@@ -24971,3 +24971,13 @@ vendor-coverage admission. Source dates/effects/probabilities are not invented.
 Details: docs/model/PFC-CH-AUDIT-RESPONSE-20260908.md;
 SESSION-HANDOFF-20260908-AUDIT-RESPONSE.md; local evidence and publication
 receipts under build/lt-audit-response-20260908/.
+
+
+D317 remote CI follow-up: implementation commit c5b80a80f3 passed lt-model
+run34236508592. Publisher run34236508625 passed installation/lint, then exposed
+two hash/duplicate-fixture failures caused by Windows checkout CRLF conversion
+of deploy/publisher/operations-contract.json. Real core.autocrlf=true checkout
+reproduced the failure. Fix only the path-specific LF attribute; preserve the
+JSON, its hash and strict validator. Corrected checkout matches Git bytes;
+29 publisher tests pass locally. Keep the failed run and observe the next
+remote run separately; no implication of full production container admission.

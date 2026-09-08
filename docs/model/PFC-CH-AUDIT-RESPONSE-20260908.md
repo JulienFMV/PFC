@@ -56,7 +56,7 @@ ne valent pas fermeture. Aucun constat ne transforme une autorité en `true`.
 | F-11 | Retenu : ancrer tous les âges à l'origine ; le décalage constant s'annule dans les poids normalisés du cas actuel. |
 | F-12 | Retenu : paramètres/counters/origines et métriques asymétriques à expliciter dans la prochaine version, sans embellir les anciens rapports. |
 | F-13 | Corrigé : le test dépendant d'un fichier EEX local fait un skip explicite si ce fichier manque ; son hash reste contrôlé s'il existe. |
-| F-14 | Recette CI corrigée : installation du projet et de l'extra `test`, qui apporte pandas et les dépendances de conftest. Contrats publisher réussis localement ; résultat Actions distant à vérifier après push. |
+| F-14 | Installation du projet et de l'extra `test` corrigée. La première CI distante passe alors installation/lint mais expose une conversion CRLF du contrat d'opérations lié par hash (27 tests réussis, 2 échecs). Reproduit avec le vrai checkout Git, corrigé par une règle LF ciblée dans `.gitattributes`, sans modifier le JSON ni assouplir son hash. Résultat du second passage distant consigné dans la clôture. |
 | F-15 | Ouvert : pas de nettoyage global des 264 violations rapportées par Claude. Le runtime local utilisé ne contient ni ruff ni pip ; aucune réussite lint globale revendiquée. |
 | F-16 | Corrigé dans la lane PIT : `SOURCE_DOCUMENT_CREATED` est rejeté ; un horodatage de document ne prouve pas la publication originale. Sonde ancienne/nouvelle reproductible. |
 | F-17 | Affirmation corrigée dans README et les deux contrats Databricks : PIT atomique testé sur fixtures seulement. Les blocs PRD et `publication > first_seen` restent à qualifier ; aucun contournement du rejet. |
