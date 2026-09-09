@@ -1,5 +1,10 @@
 # PFC CH — Réponse à l'audit Claude, D317
 
+Suivi D318 : F-01/F-05/F-06/F-10 sécurisés dans les frontières expérimentales,
+benchmark figé exécuté, deux recettes rejetées, D304 conservé. Voir les
+[résultats et vérifications](PFC-CH-LEVEL-CONDITIONED-RESULTS-20260908.md).
+Les statuts ci-dessous décrivent l'état historique D317 avant ce nouveau lot.
+
 8 septembre 2026. Rapport indépendant conservé sans modification :
 [audit des 33 constats](PFC-CH-AUDIT-REPORT-20260908.md), commit source
 `719a18975229d5d13477c78a45c1aff6e3eebcfe`, importé par cherry-pick documentaire.

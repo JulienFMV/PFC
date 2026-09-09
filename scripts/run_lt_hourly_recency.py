@@ -13,6 +13,7 @@ import pandas as pd
 from pfc_shaping.data.calendar_ch import enrich_15min_index
 from pfc_shaping.data.databricks_eex_daily_snapshot import select_latest_quote_surface
 from pfc_shaping.lt.local_benchmark import AUTHORITIES, score_curves
+from pfc_shaping.lt.benchmark_safeguards import ForbiddenHourlyModel
 from pfc_shaping.lt.model.shape_hourly_mlp_hydro import HydroAlignedShapeHourlyMLP
 from pfc_shaping.lt.signed_benchmark import calendar_cell_reference, closed_month_targets
 from pfc_shaping.lt.structural_readiness import center_signed_hourly_shape
@@ -117,7 +118,7 @@ def main():
     if not grouped.count().eq(4).all() or not (grouped.max()-grouped.min()).eq(0).all():
         raise ValueError("CH truth is no longer repeated hourly")
     truth=truth.loc[truth.index<pd.Timestamp("2026-09-01",tz="Europe/Zurich")]
-    hourly_model=HydroAlignedShapeHourlyMLP.load(SOURCE/"fitted-models/hourly.pkl")
+    hourly_model=ForbiddenHourlyModel()
     reference=pd.Timestamp(json.loads((SOURCE/"curve-final/manifest.json").read_text())["valuation_at_utc"])
     scores, diagnostics, receipts, controls, monthly_records=[],[],[],[],[]
     for spec in folds+[dict(id="current",role="descriptive",origin_utc=reference.isoformat())]:

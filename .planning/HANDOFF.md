@@ -11,6 +11,21 @@ Read in this order:
 
 ## Current state
 
+- D318 completed locally; read
+  SESSION-HANDOFF-20260908-LEVEL-CONDITIONED.md and
+  docs/model/PFC-CH-LEVEL-CONDITIONED-RESULTS-20260908.md first. F-01/F-05/F-06/F-10
+  guarded; frozen CPU ridge1/10 both rejected. Shape MAE worsens4.268087%/0.505495%,
+  37/4adverse origin-regime cells;2/0unsupported adverse cells retained in vetoes.
+  D304 remains reference;7exact ablations,12fits/21assemblies,3288independent
+  metric replays,736passed/5skipped/0failed. Six experimental CSVs,54817hourly/
+  219268repeated-QH rows each recipe,Oct2026–Dec2032;39months beyond training
+  maturity.1063prior artifacts/2290input bindings preserved;pilot1/20,all6false.
+  First constructor-signature failure retained before fit/score; unchanged
+  protocol refrozen as run-v2 (plan SHA5668b23c6536ecbb7d6724c17307461ab9a9fb57db511a4a2044c9cb1dea5d4e).
+  No SQL/Warehouse/GPU/AFRY/T057, new pilot day, commit/push or remote CI.
+  New local evidence: build/lt-level-conditioned-20260908/. Six pre-existing
+  private/governance document differences preserved; never stage wholesale.
+
 - D317 audit response implemented; read
   SESSION-HANDOFF-20260908-AUDIT-RESPONSE.md and
   docs/model/PFC-CH-AUDIT-RESPONSE-20260908.md first. Claude audit imported

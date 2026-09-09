@@ -20,6 +20,10 @@ PRIOR=ROOT/'build/lt-hourly-recency-20260908/run-v2'
 
 
 def screen(comparison, assessment, candidates):
+    for frame in (comparison, assessment):
+        populated = frame.loc[frame.hours.gt(0), ['mae', 'rmse']]
+        if not np.isfinite(populated.to_numpy()).all():
+            raise ValueError('non-finite populated benchmark metric')
     gates=[]
     for row in comparison.loc[comparison.candidate.isin(candidates) & comparison.error_type.isin(['shape_error','ramp_error'])].itertuples():
         ref=comparison.loc[comparison.candidate.eq('signed-equal') & comparison.segment.eq(row.segment)&comparison.error_type.eq(row.error_type)].iloc[0]
@@ -49,7 +53,10 @@ def screen(comparison, assessment, candidates):
         per_origin=int((originframe.candidate.eq(candidate)&originframe.status.eq('REGRESSION')).sum())
         tails=g.loc[g.segment.isin(['SHAPE_LOW','SHAPE_HIGH','SHAPE_ABS_TAIL'])]
         tail_support=bool(len(tails)==6 and not tails.status.eq('UNSUPPORTED').any())
+        adverse = g.loc[g.status.eq('UNSUPPORTED') & ((g.mae_ratio > 1.05) | (g.rmse_ratio > 1.05))]
         selection.append(dict(candidate=candidate,mae_gain_vs_signed_pct=100*a,rmse_gain_vs_signed_pct=100*b,wins=wins,
+            unsupported_adverse_count=len(adverse), unsupported_adverse_segments=adverse.to_dict('records'),
+            evidence_class='EXPOSED_DEVELOPMENT_NO_HOLDOUT',
             regime_regressions=regressions,origin_regressions=per_origin,shape_tail_support=tail_support,
             local_screen_pass=bool(a>=.02 and b>=.02 and wins>=3 and regressions==0 and per_origin==0 and tail_support),adoption=False))
     return gateframe,originframe,allshape,selection

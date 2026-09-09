@@ -242,7 +242,8 @@ def main():
     revisions=[]
     pair_status=[]
     receipts=[]
-    model=HydroAlignedShapeHourlyMLP.load(SOURCE/'fitted-models/hourly.pkl')
+    from pfc_shaping.lt.benchmark_safeguards import ForbiddenHourlyModel
+    model=ForbiddenHourlyModel()
     (out/'revisions').mkdir()
     (out/'counterfactuals').mkdir()
     for pair in plan['pairs']:

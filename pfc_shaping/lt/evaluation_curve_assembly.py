@@ -167,7 +167,7 @@ def assemble_evaluation_curves(
     ):
         raise CurveAssemblyError("delivery grid must have exact 15-minute cadence")
 
-    prices = _validated_prices(base_prices)
+    prices = _validated_prices(base_prices, delivery)
     accepted_keys = _validated_quoted_keys(quoted_keys, prices)
     shared_inputs = {
         "base_prices": prices,
@@ -344,7 +344,7 @@ def _validate_common_assembly(
                 raise CurveAssemblyError(f"{candidate_id} changed common assembly component {name}")
 
 
-def _validated_prices(values: object) -> dict[str, float]:
+def _validated_prices(values: object, delivery: pd.DatetimeIndex) -> dict[str, float]:
     if not isinstance(values, Mapping) or not values:
         raise CurveAssemblyError("base_prices must be a non-empty mapping")
     result: dict[str, float] = {}
@@ -359,6 +359,9 @@ def _validated_prices(values: object) -> dict[str, float]:
         result[key] = value
     if not any(len(key) == 7 and key[4] == "-" and key[5:].isdigit() for key in result):
         raise CurveAssemblyError("solver assembly requires explicit monthly BASE levels")
+    missing = set(delivery.tz_convert("Europe/Zurich").strftime("%Y-%m")) - result.keys()
+    if missing:
+        raise CurveAssemblyError(f"explicit solver BASE required for every delivery month: {sorted(missing)}")
     return result
 
 

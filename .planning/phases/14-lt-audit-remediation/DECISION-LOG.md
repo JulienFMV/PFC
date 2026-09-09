@@ -24981,3 +24981,41 @@ reproduced the failure. Fix only the path-specific LF attribute; preserve the
 JSON, its hash and strict validator. Corrected checkout matches Git bytes;
 29 publisher tests pass locally. Keep the failed run and observe the next
 remote run separately; no implication of full production container admission.
+
+## D-20260908-318 — Guarded solver-level-conditioned signed CPU experiment
+
+Decision before results: close F-01 at the common evaluation input boundary,
+F-06 in runner and independent maturity verifier, replace future hourly fits
+with a forbidden-state sentinel for signed research, expose unsupported adverse
+regimes and require origin vetoes. Freeze two global slope recipes (ridge 1/10,
+54 calendar harmonic coefficients, fixed B/100 scaling) plus D304 ablation.
+Reason: learn with archived solver reconstructions and closed pre-origin targets
+instead of substituting realized monthly levels at training. The annual archive
+is sparse and retrospective, not independently PIT-qualified. An unsupported
+early origin uses an explicitly reported zero slope, never fabricated pairs.
+Rejected: realized-level oracle as model input, month-specific choices, new
+history/solver reconstructions to fill gaps, tuning after results, extrapolation
+clipping, interpreting exposed development as holdout or public hash as admission.
+Invariants: D304 retained, D305–D307 comparisons and existing pilot/artifacts
+preserved; solver/assembler/EEX projection unchanged; all six authorities false;
+no CT, AFRY, T057, SQL, Warehouse, GPU or new pilot capture. Local CPU four threads,
+at most14fits/21assemblies; independent arithmetic verification required.
+Protocol: docs/model/LT-LEVEL-CONDITIONED-EXPERIMENT-20260908.md. Frozen plan,
+pair/source/input hashes and results in build/lt-level-conditioned-20260908/.
+Results and final verification are recorded separately after execution.
+
+D318 result: retain D304; both fixed recipes fail. Shape MAE gain is
+-4.268087% (ridge1) and -0.505495% (ridge10); each wins2/4exposed origins.
+There are37/4adverse origin-regime-error cells, including2/0unsupported adverse
+cells. No new tuning or monthly choice follows.12actual fits/21assemblies;
+2021has no archived training pairs and remains the declared zero ablation.
+The7D304 ablations are exactly equal. Independent local replay verifies3288
+metrics and solver means within2.3988e-11EUR/MWh;736tests pass/5skip/0fail.
+Preservation:1063prior files,2290input bindings,pilot1/20,all6false. Six new
+experimental CSVs coverOct2026–Dec2032;39months exceed training maturity.
+Run-v1 stopped before fit/score on sentinel constructor signature; test and
+signature corrected, same protocol refrozen in run-v2 before any result.
+Executed plan SHA256:5668b23c6536ecbb7d6724c17307461ab9a9fb57db511a4a2044c9cb1dea5d4e.
+Evidence and limitations: SESSION-HANDOFF-20260908-LEVEL-CONDITIONED.md,
+docs/model/PFC-CH-LEVEL-CONDITIONED-RESULTS-20260908.md and local task root.
+No new remote CI/publication is implied; prior public checkpoint remains d07aca6c1745e4c052fc51e0df3fed3834d6c2e4.

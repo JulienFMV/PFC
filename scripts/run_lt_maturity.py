@@ -11,6 +11,7 @@ import pandas as pd
 
 from pfc_shaping.data.databricks_eex_daily_snapshot import select_latest_quote_surface
 from pfc_shaping.lt.local_benchmark import AUTHORITIES, score_curves
+from pfc_shaping.lt.benchmark_safeguards import ForbiddenHourlyModel, require_common_population
 from pfc_shaping.lt.model.shape_hourly_mlp_hydro import HydroAlignedShapeHourlyMLP
 from pfc_shaping.lt.structural_readiness import center_signed_hourly_shape
 from scripts.lt_maturity_experiment import basis, pairs, fit, leads
@@ -69,7 +70,7 @@ def main():
     print(json.dumps(dict(stage='plan_frozen', sha256=sha(out/'plan.json'))), flush=True)
     truth = pd.read_parquet(SOURCE/'prepared-inputs/epex-ch.parquet').price_eur_mwh
     truth = truth.loc[truth.index < pd.Timestamp('2026-09-01', tz='Europe/Zurich')]
-    model = HydroAlignedShapeHourlyMLP.load(SOURCE/'fitted-models/hourly.pkl')
+    model = ForbiddenHourlyModel()
     metrics_rows, events, revisions, supports, receipts = [], [], [], [], []
     previous_parts = {}
     for spec in specs:
@@ -95,6 +96,7 @@ def main():
         supports.append(dict(origin=label, hours=len(reference), training_max_lead=int(pair_frame.lead.max()),
             unsupported_hours=int((delivery_leads > pair_frame.lead.max()).sum()),
             beyond_36_hours=int((delivery_leads > 36).sum())))
+        populations = {}
         for candidate in CANDIDATES:
             dest = folder/candidate
             raw = reference.copy()
@@ -117,6 +119,7 @@ def main():
             if label != 'current':
                 for stage, column in [('final', 'price_shape'), ('pre_projection', 'price_pre_final_projection')]:
                     _, errors, _ = score_curves(frame[[column]].rename(columns={column: candidate}), truth, origin)
+                    require_common_population(populations.setdefault(stage, errors.index), errors.index, origin)
                     actual = truth.resample('h').mean().reindex(errors.index)
                     diagnostic = diagnostic_frame(frame[column].resample('h').mean().reindex(errors.index), actual)
                     diagnostic.to_parquet(dest/f'diagnostics-{stage}.parquet')

@@ -92,6 +92,7 @@ def main():
         levels = solver['assembler_base_prices'] if label == 'current' else solver['base_prices']
         surface = (select_latest_quote_surface(pd.read_parquet(SOURCE/'eex-replay/eex-normalized-history.parquet'))
                    if label == 'current' else pd.read_parquet(OLD/f'{label}/eex-surface.parquet'))
+        populations = {}
         for candidate in plan['candidates']:
             dest = run/label/candidate
             curve = pd.read_parquet(dest/'curve.parquet')
@@ -130,6 +131,8 @@ def main():
                     continue
                 diagnostic = pd.read_parquet(dest/f'diagnostics-{stage}.parquet')
                 idx = diagnostic.index
+                from pfc_shaping.lt.benchmark_safeguards import require_common_population
+                require_common_population(populations.setdefault(stage, idx), idx, origin)
                 pred, actual = h[column].reindex(idx), truth.reindex(idx)
                 group = idx.tz_convert('Europe/Zurich').strftime('%Y-%m')
                 le = pred.groupby(group).transform('mean')-actual.groupby(group).transform('mean')

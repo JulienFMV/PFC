@@ -13,6 +13,7 @@ import pandas as pd
 
 from pfc_shaping.data.databricks_eex_daily_snapshot import select_latest_quote_surface
 from pfc_shaping.lt.local_benchmark import AUTHORITIES, score_curves
+from pfc_shaping.lt.benchmark_safeguards import ForbiddenHourlyModel
 from pfc_shaping.lt.model.shape_hourly_mlp_hydro import HydroAlignedShapeHourlyMLP
 from pfc_shaping.lt.structural_readiness import center_signed_hourly_shape
 from scripts.run_lt_hourly_recency import diagnostic_frame, masks, stats
@@ -110,7 +111,7 @@ def main():
     print(json.dumps(dict(stage='plan_frozen', sha256=sha(out/'plan.json'))), flush=True)
     truth = pd.read_parquet(SOURCE/'prepared-inputs/epex-ch.parquet').price_eur_mwh
     truth = truth.loc[truth.index<pd.Timestamp('2026-09-01', tz='Europe/Zurich')]
-    model = HydroAlignedShapeHourlyMLP.load(SOURCE/'fitted-models/hourly.pkl')
+    model = ForbiddenHourlyModel()
     scores, diagnostics, monthly, receipts = [], [], [], []
     for spec in specs:
         label, origin = spec['id'], pd.Timestamp(spec['origin_utc'])
