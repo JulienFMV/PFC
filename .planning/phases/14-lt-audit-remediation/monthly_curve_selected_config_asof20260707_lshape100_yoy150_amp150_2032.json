@@ -1,0 +1,43 @@
+{
+  "schema_version": "monthly_curve_selected_config.v1",
+  "forward_snapshot_date": "2026-07-07",
+  "candidate": "20260708_asof20260707_lshape100_yoy150_amp150_2032",
+  "config_hash": "f95e81bf8987174eb8b553406de296fc8cfb67a3dfde35f006b88cc006a66469",
+  "active_config_hash_from_candidate_manifest": "f95e81bf8987174eb8b553406de296fc8cfb67a3dfde35f006b88cc006a66469",
+  "active_constraints_hash": "fd95393bd94c2ce5d6ff02ba5c57a0633d00cbc9f6acc540877802fc81a2a7ab",
+  "monthly_solution_hash": "3882baa358bb2479d4b25aec464b45d74c15713f36ee34d0389790e848430c9e",
+  "candidate_manifest": "output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/fan_asof20260707_lshape100_yoy150_amp150_2032.monthly_curve_manifest.json",
+  "export_manifest": "output/phase14/20260708_asof20260707_lshape100_yoy150_amp150_2032/fan_asof20260707_lshape100_yoy150_amp150_2032.monthly_curve_manifest.json",
+  "production_manifest": "pfc_shaping/model/artifacts/production_monthly_curve_manifest.json",
+  "canonical_config": {
+    "allow_template_structural_fallback": true,
+    "constraint_tolerance": 0.01,
+    "history_lookback_years": 6,
+    "history_weight": 0.5,
+    "lambda_prior": 1e-06,
+    "lambda_shape": 100.0,
+    "lambda_smooth_month": 0.1,
+    "lambda_smooth_yoy": 150.0,
+    "markets": [
+      "AT",
+      "DE",
+      "FR",
+      "IT"
+    ],
+    "max_prior_residual_eur_mwh": null,
+    "min_history_snapshots": 24,
+    "min_structural_snapshots": 24,
+    "neighbor_shrinkage": 0.5,
+    "panel_weight": 1.0,
+    "robust_panel_quantile": 0.5,
+    "stationarity_tolerance": 1e-07,
+    "structural_amplitude_eur_mwh": 150.0,
+    "structural_weight": 1.0
+  },
+  "production_manifest_triad_validated": true,
+  "production_approved": true,
+  "production_promotion_approved": true,
+  "promotion_scope": "PRODUCTION_EXPORT_SELECTED_TRIAD",
+  "selection_status": "PRODUCTION_APPROVED",
+  "selection_reason": "Phase 14 daily 2026-07-08 generation bound to as-of 2026-07-07 lshape100/yoy150/amp150: strict Power BI export passes, delivered-product source hierarchy is bound to exact artifact hashes, and production/local-export monthly solver manifests match on active config, active constraints, and monthly solution hashes."
+}

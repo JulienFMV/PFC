@@ -1,0 +1,127 @@
+table Duck_Season_Hour
+	lineageTag: 109ff8c3-9964-4859-8dad-9d28a4db8586
+
+	measure 'Duck Season Avg Weighted Price' = AVERAGE ( Duck_Season_Hour[price_weighted_mean_eur_mwh] )
+		formatString: 0.00
+		lineageTag: a5ee1905-7c08-4e74-b756-235001b5e62f
+
+	measure 'Duck Season Avg Fast Price' = AVERAGE ( Duck_Season_Hour[price_fast_eur_mwh] )
+		formatString: 0.00
+		lineageTag: 34359d43-12f0-4fb2-92a4-826b7ac44cdb
+
+	measure 'Duck Season Avg Structural Width' = AVERAGE ( Duck_Season_Hour[structural_width_eur_mwh] )
+		formatString: 0.00
+		lineageTag: b13db922-032c-4e44-870c-317245b72b96
+
+	column year
+		dataType: int64
+		formatString: 0
+		lineageTag: 4324dae9-d510-4c5f-b614-1a4c8f8bd5a9
+		summarizeBy: sum
+		sourceColumn: year
+
+		annotation SummarizationSetBy = Automatic
+
+	column season
+		dataType: string
+		lineageTag: 56ac4d67-6d0b-421f-8864-5ef1d929ff39
+		summarizeBy: none
+		sourceColumn: season
+
+	column hour
+		dataType: int64
+		formatString: 0
+		lineageTag: f6e000c2-a6b0-4b33-b2a7-2eeaf8e73da3
+		summarizeBy: sum
+		sourceColumn: hour
+
+		annotation SummarizationSetBy = Automatic
+
+	column price_slow_eur_mwh
+		dataType: double
+		formatString: 0.00
+		lineageTag: 2dd0d834-ed19-464e-ac2a-69e508f9009d
+		summarizeBy: sum
+		sourceColumn: price_slow_eur_mwh
+
+		annotation SummarizationSetBy = Automatic
+
+	column price_central_eur_mwh
+		dataType: double
+		formatString: 0.00
+		lineageTag: 31089e2d-b418-4254-a75e-726b1a708ece
+		summarizeBy: sum
+		sourceColumn: price_central_eur_mwh
+
+		annotation SummarizationSetBy = Automatic
+
+	column price_fast_eur_mwh
+		dataType: double
+		formatString: 0.00
+		lineageTag: 0c2b71b7-72d8-4634-b0b4-9c542597dd25
+		summarizeBy: sum
+		sourceColumn: price_fast_eur_mwh
+
+		annotation SummarizationSetBy = Automatic
+
+	column price_weighted_mean_eur_mwh
+		dataType: double
+		formatString: 0.00
+		lineageTag: 1fffa70d-3e55-4944-9ae5-4b0a015c350b
+		summarizeBy: sum
+		sourceColumn: price_weighted_mean_eur_mwh
+
+		annotation SummarizationSetBy = Automatic
+
+	column structural_p10_eur_mwh
+		dataType: double
+		formatString: 0.00
+		lineageTag: 842742d7-bd6e-4d02-9393-90be47e8cde8
+		summarizeBy: sum
+		sourceColumn: structural_p10_eur_mwh
+
+		annotation SummarizationSetBy = Automatic
+
+	column structural_p50_eur_mwh
+		dataType: double
+		formatString: 0.00
+		lineageTag: d7529fee-2729-48d1-81b4-5e339841d434
+		summarizeBy: sum
+		sourceColumn: structural_p50_eur_mwh
+
+		annotation SummarizationSetBy = Automatic
+
+	column structural_p90_eur_mwh
+		dataType: double
+		formatString: 0.00
+		lineageTag: 26b14e53-9533-430b-8ead-f41753b9c279
+		summarizeBy: sum
+		sourceColumn: structural_p90_eur_mwh
+
+		annotation SummarizationSetBy = Automatic
+
+	column structural_width_eur_mwh
+		dataType: double
+		formatString: 0.00
+		lineageTag: c15e22ce-0d42-4412-aa46-7b4cf32d95aa
+		summarizeBy: sum
+		sourceColumn: structural_width_eur_mwh
+
+		annotation SummarizationSetBy = Automatic
+
+	column hour_code
+		dataType: string
+		lineageTag: 5fd45edc-8ce6-4d36-a1e5-fceb3f5465c0
+		summarizeBy: none
+		sourceColumn: hour_code
+
+	partition Duck_Season_Hour = m
+		mode: import
+		source =
+				let
+				    Source = Csv.Document(File.Contents("\\fmvfs2\Data\Energy\GeCom\CONTROLLING RISK\Analyses diverses\Python - JB\PFC_LT\powerbi\data\duck_season_hour.csv"), [Delimiter=",", Columns=12, Encoding=65001, QuoteStyle=QuoteStyle.Csv]),
+				    Promoted = Table.PromoteHeaders(Source, [PromoteAllScalars=true]),
+				    Typed = Table.TransformColumnTypes(Promoted, {{"year", Int64.Type}, {"season", type text}, {"hour", Int64.Type}, {"price_slow_eur_mwh", type number}, {"price_central_eur_mwh", type number}, {"price_fast_eur_mwh", type number}, {"price_weighted_mean_eur_mwh", type number}, {"structural_p10_eur_mwh", type number}, {"structural_p50_eur_mwh", type number}, {"structural_p90_eur_mwh", type number}, {"structural_width_eur_mwh", type number}, {"hour_code", type text}})
+				in
+				    Typed
+

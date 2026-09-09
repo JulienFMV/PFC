@@ -1,0 +1,88 @@
+{
+  "schema_version": "fmv_entsoe_day_ahead_effective_series_selection_request.v1",
+  "status": "REQUEST_PREPARED_RESPONSE_NOT_RECEIVED_NO_EXECUTION_OR_MODEL_AUTHORITY",
+  "created_on": "2026-09-03",
+  "purpose": "OBTAIN_OWNER_SUPPLIED_EFFECTIVE_DATED_AT_AND_DE_LU_SERIES_SELECTION_FOR_THE_JULY_2026_REALIZED_FINAL_SMOKE_EXPORT",
+  "request_scope": {
+    "usage": "realized_final",
+    "market_month": "2026-07",
+    "market_timezone": "Europe/Zurich",
+    "window_start_utc": "2026-06-30T22:00:00Z",
+    "window_end_utc": "2026-07-31T22:00:00Z",
+    "utc_partitions": [
+      "2026-06",
+      "2026-07"
+    ],
+    "metadata_only": true,
+    "business_values_requested": false
+  },
+  "fixed_series": {
+    "ch_price": "day_ahead_prices||ch_price",
+    "fr_price": "day_ahead_prices||fr_price",
+    "it_nord_price": "day_ahead_prices||it_nord_price"
+  },
+  "owner_decisions_required": [
+    {
+      "field_name": "at_price",
+      "market_zone": "AT",
+      "candidate_series_keys": [
+        "day_ahead_prices||at_price||1",
+        "day_ahead_prices||at_price||2"
+      ]
+    },
+    {
+      "field_name": "de_lu_price",
+      "market_zone": "DE_LU",
+      "candidate_series_keys": [
+        "day_ahead_prices||de_lu_price||1",
+        "day_ahead_prices||de_lu_price||2"
+      ]
+    }
+  ],
+  "required_response_contract": {
+    "response_must_be_owner_supplied": true,
+    "exactly_one_rule_per_field": true,
+    "each_rule_must_equal_request_window": true,
+    "in_window_series_change_authorized": false,
+    "interval_semantics": "HALF_OPEN_UTC",
+    "exact_window_coverage_required": true,
+    "gaps_authorized": false,
+    "overlaps_authorized": false,
+    "implicit_default_authorized": false,
+    "candidate_averaging_authorized": false,
+    "consumer_inference_authorized": false,
+    "required_rule_fields": [
+      "field_name",
+      "market_zone",
+      "selected_series_key",
+      "classification_sequence",
+      "effective_from_utc",
+      "effective_to_utc",
+      "selection_basis",
+      "source_reference",
+      "owner_identity",
+      "evidence_document_sha256",
+      "asserted_at_utc"
+    ],
+    "selected_series_key_must_be_an_admitted_candidate": true,
+    "classification_sequence_must_match_selected_series_key": true,
+    "response_is_not_admitted_evidence_until_authenticated_and_bound": true
+  },
+  "execution": {
+    "databricks_connections": 0,
+    "databricks_statements": 0,
+    "warehouse_starts": 0,
+    "business_rows_opened": 0,
+    "network_calls": 0,
+    "remote_writes": 0
+  },
+  "authorities": {
+    "data_source_selection_authorized": false,
+    "model_input_authorized": false,
+    "model_selection_authorized": false,
+    "monthly_level_authorized": false,
+    "publication_authorized": false,
+    "production_authorized": false,
+    "trading_authorized": false
+  }
+}

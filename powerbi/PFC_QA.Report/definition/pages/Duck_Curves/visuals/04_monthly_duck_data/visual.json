@@ -1,0 +1,230 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.10.0/schema.json",
+  "name": "monthly_duck_data",
+  "position": {
+    "x": 20.425531914893618,
+    "y": 469.78723404255322,
+    "z": 0,
+    "height": 249.96960486322189,
+    "width": 599.14893617021278
+  },
+  "visual": {
+    "visualType": "tableEx",
+    "query": {
+      "queryState": {
+        "Values": {
+          "projections": [
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Duck_Month_Hour"
+                    }
+                  },
+                  "Property": "year"
+                }
+              },
+              "queryRef": "Duck_Month_Hour.year",
+              "nativeQueryRef": "year"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Duck_Month_Hour"
+                    }
+                  },
+                  "Property": "month_code"
+                }
+              },
+              "queryRef": "Duck_Month_Hour.month_code",
+              "nativeQueryRef": "month_code"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Duck_Month_Hour"
+                    }
+                  },
+                  "Property": "hour_code"
+                }
+              },
+              "queryRef": "Duck_Month_Hour.hour_code",
+              "nativeQueryRef": "hour_code"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Duck_Month_Hour"
+                    }
+                  },
+                  "Property": "price_weighted_mean_eur_mwh"
+                }
+              },
+              "queryRef": "Duck_Month_Hour.price_weighted_mean_eur_mwh",
+              "nativeQueryRef": "price_weighted_mean_eur_mwh"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Duck_Month_Hour"
+                    }
+                  },
+                  "Property": "price_fast_eur_mwh"
+                }
+              },
+              "queryRef": "Duck_Month_Hour.price_fast_eur_mwh",
+              "nativeQueryRef": "price_fast_eur_mwh"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Duck_Month_Hour"
+                    }
+                  },
+                  "Property": "structural_p10_eur_mwh"
+                }
+              },
+              "queryRef": "Duck_Month_Hour.structural_p10_eur_mwh",
+              "nativeQueryRef": "structural_p10_eur_mwh"
+            }
+          ]
+        }
+      }
+    },
+    "visualContainerObjects": {
+      "title": [
+        {
+          "properties": {
+            "show": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            },
+            "text": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Monthly duck data'"
+                }
+              }
+            },
+            "fontSize": {
+              "expr": {
+                "Literal": {
+                  "Value": "11D"
+                }
+              }
+            },
+            "bold": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  "filterConfig": {
+    "filters": [
+      {
+        "name": "49a48f60c3e0a99866ac",
+        "field": {
+          "Column": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "Duck_Month_Hour"
+              }
+            },
+            "Property": "year"
+          }
+        },
+        "type": "Advanced"
+      },
+      {
+        "name": "dccd36327556eaddb072",
+        "field": {
+          "Column": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "Duck_Month_Hour"
+              }
+            },
+            "Property": "month_code"
+          }
+        },
+        "type": "Categorical"
+      },
+      {
+        "name": "09fe8d1148e0b0583130",
+        "field": {
+          "Column": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "Duck_Month_Hour"
+              }
+            },
+            "Property": "hour_code"
+          }
+        },
+        "type": "Categorical"
+      },
+      {
+        "name": "a2b0301380ea7a3eab57",
+        "field": {
+          "Column": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "Duck_Month_Hour"
+              }
+            },
+            "Property": "price_weighted_mean_eur_mwh"
+          }
+        },
+        "type": "Advanced"
+      },
+      {
+        "name": "eb3010308236903b2e68",
+        "field": {
+          "Column": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "Duck_Month_Hour"
+              }
+            },
+            "Property": "price_fast_eur_mwh"
+          }
+        },
+        "type": "Advanced"
+      },
+      {
+        "name": "4d8fcc111b541371babd",
+        "field": {
+          "Column": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "Duck_Month_Hour"
+              }
+            },
+            "Property": "structural_p10_eur_mwh"
+          }
+        },
+        "type": "Advanced"
+      }
+    ]
+  }
+}

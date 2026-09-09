@@ -1,0 +1,7 @@
+﻿branch: fix/lt-audit-remediation
+head: ea78b55
+patch: .planning/phases/14-lt-audit-remediation/PHASE1-ROASTED-AUDIT-DIFF.patch
+handoff: .planning/phases/14-lt-audit-remediation/SESSION-HANDOFF-20260622-PHASE1-ROASTED.md
+decision_log: .planning/phases/14-lt-audit-remediation/DECISION-LOG.md
+tests_1: pytest tests/test_monthly_forward_curve_priors.py tests/test_monthly_forward_curve_integration.py tests/test_build_powerbi_exports_script.py tests/test_export_local_test_ch_hourly_csv_script.py -q => 64 passed in 74.32s
+tests_2: pytest tests/test_monthly_forward_curve_solver.py tests/test_audit_ch_hfc_seasonal_coherence_script.py -q => 18 passed in 3.32s

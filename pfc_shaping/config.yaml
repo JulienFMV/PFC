@@ -24,6 +24,7 @@ databricks:
     renewables:     "generation_15min"     # production solaire + éolienne
     eex_forwards:   "eex_forwards_euler"   # forwards calibrés par EULER
     hydro_reservoir_levels: "hydro_reservoir_weekly" # niveaux réservoirs SFOE/BFE
+    electrification_scenarios: "electrification_scenarios" # LT PV/battery/EV/heat-pump scenario inventory
 
 # ── energy-charts.info (Fraunhofer ISE) ────────────────────
 # API publique, sans authentification.
@@ -76,11 +77,35 @@ forwards:
   # Si le lecteur H: n'est pas monté, on tente le chemin UNC.
   eex_report_path: "H:\\Energy\\GeCom\\MARCHE & NEGOCE\\Prix\\EEX - ER\\Price_Report_EEX.xlsx"
   eex_report_path_unc: "\\\\fmvfs1\\data\\Energy\\GeCom\\MARCHE & NEGOCE\\Prix\\EEX - ER\\Price_Report_EEX.xlsx"
-  eex_markets: ["CH", "DE"]  # marchés à produire quotidiennement
+  eex_markets: ["CH", "DE", "FR"]  # marchés à produire quotidiennement
   eex_market: "CH"      # fallback compat
   eex_as_of_date: null  # null => dernière date non nulle disponible
 
 # ── Paramètres du modèle ────────────────────────────────────
+  monthly_curve_solver:
+    enabled: true
+    target_markets: ["CH"]
+    markets: ["DE", "FR", "AT", "IT"]
+    monthly_level_authority: "solver"
+    skip_legacy_level_cascade: true
+    skip_legacy_base_smoothing: true
+    lambda_prior: 0.000001
+    lambda_smooth_month: 0.1
+    lambda_smooth_yoy: 150.0
+    lambda_shape: 100.0
+    neighbor_shrinkage: 0.5
+    min_history_snapshots: 24
+    history_lookback_years: 6
+    min_structural_snapshots: 24
+    allow_template_structural_fallback: true
+    structural_amplitude_eur_mwh: 150.0
+    panel_weight: 1.0
+    history_weight: 0.5
+    structural_weight: 1.0
+    constraint_tolerance: 0.000000001
+    quote_conflict_tolerance: 0.01
+    stationarity_tolerance: 0.0000001
+
 model:
   # Lookback historique pour la calibration (mois)
   lookback_months: 12
@@ -149,7 +174,7 @@ flavors:
     24:  0.4
     36:  0.3
   # Percentile IC utilisé comme plancher prix client
-  client_percentile: "p90"
+  client_percentile: null
 
 # ── Paramètres d'export ─────────────────────────────────────
 export:
@@ -162,14 +187,28 @@ export:
   # Colonnes exportées
   columns:
     - price_shape
-    - p10
-    - p90
     - profile_type
     - confidence
     - calibrated
 
 # —— Quality gates (prod) ————————————————————————————————————————
 quality:
+  freshness:
+    fail_on_stale_inputs: true
+    min_finite_fraction: 0.95
+    recent_window_days: 7
+    min_recent_finite_fraction: 0.95
+    eex_max_age_business_days: 1
+    epex_max_age_hours: 48
+    epex_max_gap_hours: 1
+    entso_max_age_hours: 72
+    entso_max_gap_hours: 2
+    hydro_max_age_days: 10
+    hydro_max_gap_days: 14
+    outages_enabled: false
+    outages_max_age_hours: 48
+    outages_max_gap_hours: 2
+
   # Policy for external benchmark (HFC/OMPEX):
   # - advisory: never blocks publication, monitoring only
   # - strict: blocks run if thresholds are breached

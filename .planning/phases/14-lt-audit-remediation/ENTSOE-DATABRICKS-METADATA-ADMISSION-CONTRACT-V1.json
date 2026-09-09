@@ -1,0 +1,104 @@
+{
+  "schema_version": "fmv_entsoe_databricks_metadata_admission_contract.v1",
+  "status": "STATIC_OFFLINE_ADMISSION_CONTRACT_NO_EXECUTION_AUTHORITY",
+  "purpose": "admit a future content-bound ENTSO-E information_schema result locally before any data-value SQL is generated",
+  "source_query": {
+    "path": "docs/data/sql/entsoe_dev_gold_schema_inventory.sql",
+    "sha256": "dec7e207603e3a8b69f5808b42454575f1b4a985a25fa8aca3e5c6a2c95b72fa",
+    "statement_count": 1,
+    "metadata_source": "dev.information_schema.columns",
+    "row_limit": 1024,
+    "data_table_scan": false,
+    "executed_by_this_contract": false
+  },
+  "metadata_payload": {
+    "format": "CANONICAL_UTF8_LF_RFC4180_CSV",
+    "max_bytes": 262144,
+    "maximum_admissible_rows": 1023,
+    "exact_header": [
+      "table_catalog",
+      "table_schema",
+      "table_name",
+      "column_name",
+      "ordinal_position",
+      "data_type",
+      "is_nullable"
+    ],
+    "catalog": "dev",
+    "schema": "gold",
+    "exact_tables": [
+      "dimentsoeseries",
+      "factentsoetimeserieslatest",
+      "factentsoetimeseriesvintages"
+    ],
+    "required_order": [
+      "table_name",
+      "ordinal_position"
+    ],
+    "ordinal_positions_positive_contiguous_per_table": true,
+    "column_names_unique_case_insensitive_per_table": true,
+    "rows_unique_on_table_and_ordinal_position": true,
+    "all_three_tables_non_empty": true,
+    "limit_hit_is_admissible": false,
+    "data_values_allowed": false
+  },
+  "capture_receipt": {
+    "schema_version": "fmv_entsoe_databricks_metadata_capture_receipt.v1",
+    "required_exact_fields": [
+      "schema_version",
+      "query_sha256",
+      "statement_id",
+      "statement_state",
+      "captured_at_utc",
+      "row_count",
+      "result_truncated",
+      "payload_sha256",
+      "read_only_metadata_only",
+      "remote_write_count"
+    ],
+    "statement_state": "SUCCEEDED",
+    "result_truncated": false,
+    "read_only_metadata_only": true,
+    "remote_write_count": 0,
+    "statement_id_format": "UUID_LOWERCASE",
+    "captured_at_timezone": "UTC",
+    "caller_reference_time_required": true,
+    "maximum_capture_age_seconds": 3600
+  },
+  "admission_outputs": {
+    "canonical_schema_fingerprint_required": true,
+    "per_table_column_count_required": true,
+    "per_table_nullable_count_required": true,
+    "physical_column_mapping_verified": false,
+    "data_export_sql_generated": false
+  },
+  "quality_dimensions": [
+    "completeness",
+    "uniqueness",
+    "validity",
+    "consistency",
+    "schema_integrity",
+    "traceability"
+  ],
+  "execution_policy": {
+    "current_databricks_statement_budget": 0,
+    "current_warehouse_start_budget": 0,
+    "current_network_call_budget": 0,
+    "current_remote_write_budget": 0,
+    "connector_code_allowed": false,
+    "future_execution_requires_new_explicit_user_authorization": true
+  },
+  "authorities": {
+    "real_metadata_captured": false,
+    "databricks_schema_verified": false,
+    "entsoe_values_opened": false,
+    "physical_column_mapping_verified": false,
+    "point_in_time_availability_proven": false,
+    "training_authorized": false,
+    "selection_authorized": false,
+    "model_input_authorized": false,
+    "candidate_assembly_authorized": false,
+    "promotion_authorized": false,
+    "production_authorized": false
+  }
+}

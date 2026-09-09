@@ -1,0 +1,249 @@
+{
+  "schema_version": "fmv-eex-entsoe-external-time-batch-contract-v1",
+  "status": "PASS_LOCAL_RFC9162_MERKLE_AND_RFC3161_SCHEMA_ONLY_NO_EXTERNAL_TIME",
+  "purpose": "value-free deterministic verification contract for one four-envelope RFC 9162 Merkle batch and a fail-closed RFC 3161 request and validation-receipt schema without obtaining or trusting a real timestamp",
+  "selected_boundaries": {
+    "governed_acquisition_package_schema": "fmv-eex-entsoe-governed-acquisition-package-contract-v1",
+    "governed_acquisition_package_status": "PREPARED_D233_LOCAL_ZERO_EXECUTION_NO_MODEL_AUTHORITY",
+    "governed_acquisition_package_content_id": "4f6e644b15593e8d4ae2ca196e1d52a002d4255bdf42e7a137982edb854f0fa0",
+    "governed_acquisition_package_sha256": "97edaf93c639953365d20d7539380a706f0f8fdbec9476af94262fb1d4b2204d",
+    "governed_acquisition_package_decision": "D-20260805-233",
+    "entsoe_physical_mapping_contract_schema": "fmv_entsoe_physical_mapping_compiler_contract.v1",
+    "entsoe_physical_mapping_contract_content_id": "5dc43e18dcf107020e24638307a707d8c7afbf894ca1131e62907f8680ad0951",
+    "entsoe_physical_mapping_contract_sha256": "f33bc696d8e7a535f7700b40c13dc90d73e2526073400edcd2588e57432a9b3a",
+    "entsoe_physical_mapping_decision": "D-20260805-234",
+    "trust_registry_contract_content_id": "3ecf96f83be71c5beb24160793d5fcbce2d771edbda74e190bda3d5b851b54fa",
+    "trust_registry_contract_sha256": "e7fbf4f099bcc355073d0f5b591d988100df4168c22b172ce8fc08e4c4a0ed9c",
+    "trust_registry_decision": "D-20260805-229"
+  },
+  "leaf_contract": {
+    "schema_version": "fmv_source_envelope_timestamp_leaf.v1",
+    "canonical_json_encoding": "UTF8_NO_BOM_SORTED_KEYS_COMPACT_NO_TRAILING_NEWLINE",
+    "required_fields": [
+      "schema_version",
+      "capture_batch_id",
+      "challenge_nonce_sha256",
+      "envelope_role",
+      "envelope_sha256"
+    ],
+    "canonical_role_order": [
+      "eex_acquisition",
+      "eex_source_trusted_time",
+      "entsoe_acquisition",
+      "entsoe_source_trusted_time"
+    ],
+    "capture_batch_id_pattern": "^[a-z0-9][a-z0-9._-]{7,127}$",
+    "sha256_encoding": "LOWERCASE_HEX_64",
+    "same_capture_batch_and_challenge_required_for_all_leaves": true,
+    "exactly_one_leaf_per_role": true,
+    "duplicate_envelope_sha256_authorized": false,
+    "unknown_fields_authorized": false
+  },
+  "rfc9162_merkle_contract": {
+    "hash_algorithm": "SHA-256",
+    "hash_algorithm_oid": "2.16.840.1.101.3.4.2.1",
+    "tree_size": 4,
+    "leaf_hash_formula": "SHA256(0x00 || canonical_leaf_payload_bytes)",
+    "node_hash_formula": "SHA256(0x01 || left_child_hash || right_child_hash)",
+    "largest_power_of_two_split_rule_required": true,
+    "inclusion_path_length_for_four_leaf_tree": 2,
+    "proof_direction_derived_from_leaf_index_and_tree_size": true,
+    "caller_supplied_direction_bits_authorized": false,
+    "one_exact_inclusion_proof_per_role_required": true,
+    "constant_time_root_comparison_required": true,
+    "root_sha256_encoding": "LOWERCASE_HEX_64",
+    "empty_or_non_four_leaf_batch_authorized": false,
+    "proof_with_missing_extra_or_malformed_node_authorized": false
+  },
+  "rfc3161_request_contract": {
+    "request_version": 1,
+    "profile": "RFC3161_BATCH_ROOT",
+    "timestamped_object": "RFC9162_MERKLE_TREE_HASH_OF_FOUR_CANONICAL_SOURCE_ENVELOPE_LEAVES",
+    "message_imprint_hash_algorithm": "SHA-256",
+    "message_imprint_hash_algorithm_oid": "2.16.840.1.101.3.4.2.1",
+    "message_imprint_hashed_message_must_equal_exact_batch_root": true,
+    "nonce_required": true,
+    "nonce_positive_integer_decimal_string_required": true,
+    "request_policy_oid_required": true,
+    "cert_req_required": true,
+    "request_der_sha256_required_before_network_submission": true,
+    "network_submission_implemented_by_d235": false,
+    "tsa_policy_selected_or_endorsed_by_d235": false,
+    "self_signed_or_locally_self_timestamped_token_authorized": false
+  },
+  "future_real_rfc3161_validation_receipt_contract": {
+    "schema_version": "fmv_rfc3161_batch_timestamp_validation_receipt.v1",
+    "required_fields": [
+      "schema_version",
+      "capture_batch_id",
+      "challenge_receipt_sha256",
+      "challenge_nonce_sha256",
+      "batch_root_sha256",
+      "tree_size",
+      "canonical_role_order",
+      "timestamp_request_der_sha256",
+      "timestamp_response_der_sha256",
+      "timestamp_token_der_sha256",
+      "response_status",
+      "failure_info",
+      "tst_info_version",
+      "tsa_policy_oid",
+      "message_imprint_hash_algorithm_oid",
+      "message_imprint_hashed_message_hex",
+      "request_nonce_decimal",
+      "response_nonce_decimal",
+      "serial_number_hex",
+      "gen_time_utc",
+      "accuracy_micros",
+      "ordering",
+      "tsa_name",
+      "tsa_leaf_certificate_sha256",
+      "tsa_certificate_chain_sha256s",
+      "trusted_root_bundle_sha256",
+      "revocation_evidence_sha256s",
+      "validated_at_utc",
+      "validator_identity",
+      "validator_version",
+      "validator_artifact_sha256",
+      "cms_signature_verified",
+      "signed_attributes_verified",
+      "content_type_and_tst_info_verified",
+      "message_imprint_verified",
+      "nonce_verified",
+      "policy_verified",
+      "certificate_path_verified",
+      "exclusive_critical_timestamping_eku_verified",
+      "tsa_certificate_time_valid_at_gen_time_verified",
+      "tsa_not_revoked_at_gen_time_verified",
+      "trusted_root_pinned_before_request_verified",
+      "challenge_to_external_time_bracket_verified",
+      "maximum_external_time_lag_verified",
+      "actual_signature_generation_time_verified",
+      "historical_point_in_time_retroactively_proven"
+    ],
+    "response_status_allowed": [
+      "GRANTED"
+    ],
+    "failure_info_must_be_null_on_granted": true,
+    "tst_info_version_required": 1,
+    "message_imprint_must_equal_request_and_exact_batch_root": true,
+    "response_nonce_must_equal_request_nonce": true,
+    "gen_time_must_not_precede_governed_challenge_or_last_envelope": true,
+    "validation_time_must_not_precede_gen_time": true,
+    "maximum_gen_time_lag_after_last_envelope_seconds": 3600,
+    "certificate_chain_and_revocation_evidence_required": true,
+    "independent_token_byte_parsing_and_cryptographic_verification_required": true,
+    "receipt_booleans_without_independent_token_replay_authorized": false,
+    "actual_signature_generation_time_verified_must_be_false": true,
+    "historical_point_in_time_retroactively_proven_must_be_false": true
+  },
+  "synthetic_fixture": {
+    "status": "SYNTHETIC_SCHEMA_FIXTURE_ONLY_NOT_A_REAL_TIMESTAMP",
+    "capture_batch_id": "d235-synthetic-source-batch",
+    "challenge_nonce_sha256": "519a5bc19c48532774479546221e6cd75850ad6904261511508acbee82ada722",
+    "envelope_sha256_by_role": {
+      "eex_acquisition": "9b14d3eff1359818aa40855727e172fcbabd8feb3af563aeb3e8ce1e8a1b3224",
+      "eex_source_trusted_time": "cd31e182e7fc4e3ad06f4880ba10dceaa9bf7a61f6f46e2efbbd7bdba16ef86f",
+      "entsoe_acquisition": "8337a3ac3903d67bd7a1372f8352f637ba402371a76d29307b78f250faa5130a",
+      "entsoe_source_trusted_time": "280760655d2aeca94a6980bf7c6ac8d2e55fe10f835859b7eb2b0d2707f4b7cf"
+    },
+    "expected_leaf_sha256_by_role": {
+      "eex_acquisition": "d4fe2297fc67de64a39751930479c3e4e1b66887f2371bc27689d64173939242",
+      "eex_source_trusted_time": "6b836e501df6e867a622e472f7271b325f59e4824db4edacc3b8481cefb4d385",
+      "entsoe_acquisition": "248dab7180440ba8e5de644591bc6319aa019b6456fba8e0393713c00e208e64",
+      "entsoe_source_trusted_time": "ccd7f58e86d87990642d2a65fde6bbd86ca5769d1cd806b8bcf13c03b048f43c"
+    },
+    "expected_root_sha256": "496c92c29ab1b4f1ad0f3491cbd4e38f500936973bc6ff8e8ac8ebeb3b0aa85c",
+    "expected_inclusion_paths_by_role": {
+      "eex_acquisition": [
+        "6b836e501df6e867a622e472f7271b325f59e4824db4edacc3b8481cefb4d385",
+        "8e70e7aabed64df8ae293dd11a2f93ce902c26b3c54249e46c2f0fa7bbc01bd0"
+      ],
+      "eex_source_trusted_time": [
+        "d4fe2297fc67de64a39751930479c3e4e1b66887f2371bc27689d64173939242",
+        "8e70e7aabed64df8ae293dd11a2f93ce902c26b3c54249e46c2f0fa7bbc01bd0"
+      ],
+      "entsoe_acquisition": [
+        "ccd7f58e86d87990642d2a65fde6bbd86ca5769d1cd806b8bcf13c03b048f43c",
+        "88a55a70db9afd42a35d7c09e5cbc6770e709345da4e5846b004c88ba7c42444"
+      ],
+      "entsoe_source_trusted_time": [
+        "248dab7180440ba8e5de644591bc6319aa019b6456fba8e0393713c00e208e64",
+        "88a55a70db9afd42a35d7c09e5cbc6770e709345da4e5846b004c88ba7c42444"
+      ]
+    },
+    "rfc3161_request_template": {
+      "request_version": 1,
+      "profile": "RFC3161_BATCH_ROOT",
+      "message_imprint_hash_algorithm_oid": "2.16.840.1.101.3.4.2.1",
+      "message_imprint_hashed_message_hex": "496c92c29ab1b4f1ad0f3491cbd4e38f500936973bc6ff8e8ac8ebeb3b0aa85c",
+      "nonce_decimal": "340282366920938463463374607431768211507",
+      "request_policy_oid": "1.3.6.1.4.1.55555.1.235",
+      "request_policy_is_synthetic_placeholder": true,
+      "cert_req": true,
+      "request_der_present": false,
+      "network_submission_performed": false
+    },
+    "rfc3161_validation_receipt_fixture": {
+      "schema_version": "fmv_rfc3161_batch_timestamp_validation_receipt.v1",
+      "status": "SYNTHETIC_SCHEMA_FIXTURE_ONLY_NOT_CRYPTOGRAPHICALLY_VALIDATED",
+      "batch_root_sha256": "496c92c29ab1b4f1ad0f3491cbd4e38f500936973bc6ff8e8ac8ebeb3b0aa85c",
+      "timestamp_request_der_present": false,
+      "timestamp_response_der_present": false,
+      "timestamp_token_der_present": false,
+      "cms_signature_verified": false,
+      "message_imprint_verified": false,
+      "nonce_verified": false,
+      "policy_verified": false,
+      "certificate_path_verified": false,
+      "revocation_verified": false,
+      "independently_trusted_time_verified": false,
+      "actual_signature_generation_time_verified": false,
+      "historical_point_in_time_retroactively_proven": false
+    }
+  },
+  "access_counters": {
+    "databricks_connections": 0,
+    "databricks_statements": 0,
+    "warehouse_starts": 0,
+    "network_calls": 0,
+    "h_drive_accesses": 0,
+    "remote_writes": 0,
+    "timestamp_authority_requests": 0,
+    "real_dsse_envelopes_opened": 0,
+    "market_value_rows_opened": 0
+  },
+  "standards_basis": [
+    "https://www.rfc-editor.org/rfc/rfc9162#section-2.1.1",
+    "https://www.rfc-editor.org/rfc/rfc9162#section-2.1.3",
+    "https://www.rfc-editor.org/rfc/rfc3161#section-2.4.1",
+    "https://www.rfc-editor.org/rfc/rfc3161#section-2.4.2"
+  ],
+  "authorities": {
+    "synthetic_merkle_fixture_verified_after_successful_replay": true,
+    "real_source_envelopes_present": false,
+    "real_timestamp_request_der_present": false,
+    "real_timestamp_response_der_present": false,
+    "rfc3161_token_cryptographically_verified": false,
+    "independently_trusted_time_verified": false,
+    "same_snapshot_point_in_time_availability_proven": false,
+    "actual_signature_generation_time_verified": false,
+    "training_authorized": false,
+    "selection_authorized": false,
+    "model_input_authorized": false,
+    "candidate_assembly_authorized": false,
+    "promotion_authorized": false,
+    "production_authorized": false
+  },
+  "required_before_real_external_time_authority": [
+    "receive four exact real D229-role DSSE source envelopes from one governed challenge-bound capture batch",
+    "recompute the four canonical RFC 9162 leaves root and inclusion proofs over exact envelope bytes",
+    "generate and retain a DER TimeStampReq whose SHA-256 messageImprint equals the exact batch root and whose nonce is unpredictable",
+    "submit only after explicit authorization to an approved independently governed TSA policy",
+    "retain exact DER request response token certificate chain root bundle and revocation evidence hashes",
+    "independently parse CMS and TSTInfo bytes and verify status signature signed attributes content type imprint nonce policy certificate path exclusive critical timestamping EKU validity and revocation",
+    "verify the governed challenge to genTime bracket and maximum one-hour lag",
+    "keep actual signature-generation time and retroactive historical PIT claims false",
+    "obtain a separate causally later external-time batch for future training and selection envelopes"
+  ]
+}

@@ -1,0 +1,26 @@
+model Model
+	culture: en-US
+	defaultPowerBIDataSourceVersion: powerBI_V3
+	sourceQueryCulture: fr-CH
+	dataAccessOptions
+		legacyRedirects
+		returnErrorValuesAsNull
+
+annotation __PBI_TimeIntelligenceEnabled = 0
+
+annotation PBI_ProTooling = ["DevMode"]
+
+annotation PBI_QueryOrder = ["HFC_Hourly", "EEX_Residuals", "Duck_Month_Hour", "Duck_Month_Hour_Long", "Duck_Season_Hour", "Duck_Season_Hour_Long", "Annual_Shape", "Negative_Low_Hours", "Summary_Metrics"]
+
+ref table HFC_Hourly
+ref table EEX_Residuals
+ref table Duck_Month_Hour
+ref table Duck_Month_Hour_Long
+ref table Duck_Season_Hour
+ref table Duck_Season_Hour_Long
+ref table Annual_Shape
+ref table Negative_Low_Hours
+ref table Summary_Metrics
+
+ref cultureInfo en-US
+

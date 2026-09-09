@@ -17,6 +17,10 @@ import duckdb
 import numpy as np
 import pandas as pd
 
+from pfc_shaping.pipeline.probabilistic_output_governance import (
+    quarantine_legacy_intervals,
+)
+
 
 def init_db(db_path: str | Path) -> Path:
     db_path = Path(db_path)
@@ -143,6 +147,9 @@ def upsert_run_and_forecast(
     df = df.dropna(subset=["timestamp_local"])
     row_count = int(len(df))
     calibrated = bool(df.get("calibrated", pd.Series([False] * max(len(df), 1))).astype(bool).any())
+    df = quarantine_legacy_intervals(df, context=str(pfc_parquet_path))
+    df["p10"] = np.nan
+    df["p90"] = np.nan
 
     hourly = (
         df.set_index("timestamp_local")

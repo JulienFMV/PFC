@@ -1,0 +1,84 @@
+{
+  "accept_quote_conflict": true,
+  "candidate_csv": "output/phase14/20260623_parent_local_prior_lshape25_yoy10_structural_s126/ch_hfc_hourly_parent_local_prior_lshape25_yoy10_structural_s126_20260613_20301231.csv",
+  "decision": "Draft Phase 14 policy: quote-aware finer BASE/PEAK buckets are the delivered-product repricing authority when redundant parent quotes conflict and all finer buckets pass. This artifact is not production-approved.",
+  "expected_quote_conflict_count": 9,
+  "expected_quote_conflicts": [
+    {
+      "covered_by_quote_aware_products": "2026-07,2026-08,2026-09",
+      "gate_id": "hard_base_product_repricing",
+      "load_type": "BASE",
+      "product": "2026-Q3",
+      "quote_conflict_basis": "finer_quote_aware_buckets"
+    },
+    {
+      "covered_by_quote_aware_products": "2026-10,2026-11,2026-12",
+      "gate_id": "hard_base_product_repricing",
+      "load_type": "BASE",
+      "product": "2026-Q4",
+      "quote_conflict_basis": "finer_quote_aware_buckets"
+    },
+    {
+      "covered_by_quote_aware_products": "2027-Q1,2027-Q2,2027-Q3,2027-Q4",
+      "gate_id": "hard_base_product_repricing",
+      "load_type": "BASE",
+      "product": "2027",
+      "quote_conflict_basis": "finer_quote_aware_buckets"
+    },
+    {
+      "covered_by_quote_aware_products": "2026-07,2026-08,2026-09",
+      "gate_id": "hard_peak_product_repricing",
+      "load_type": "PEAK",
+      "product": "2026-Q3",
+      "quote_conflict_basis": "finer_quote_aware_buckets"
+    },
+    {
+      "covered_by_quote_aware_products": "2026-10,2026-11,2026-12",
+      "gate_id": "hard_peak_product_repricing",
+      "load_type": "PEAK",
+      "product": "2026-Q4",
+      "quote_conflict_basis": "finer_quote_aware_buckets"
+    },
+    {
+      "covered_by_quote_aware_products": "2027-Q1,2027-Q2,2027-Q3,2027-Q4",
+      "gate_id": "hard_peak_product_repricing",
+      "load_type": "PEAK",
+      "product": "2027",
+      "quote_conflict_basis": "finer_quote_aware_buckets"
+    },
+    {
+      "covered_by_quote_aware_products": "2026-Q3",
+      "gate_id": "implied_offpeak_identity",
+      "load_type": "OFFPEAK",
+      "product": "2026-Q3",
+      "quote_conflict_basis": "parent_base_peak_quote_conflict"
+    },
+    {
+      "covered_by_quote_aware_products": "2026-Q4",
+      "gate_id": "implied_offpeak_identity",
+      "load_type": "OFFPEAK",
+      "product": "2026-Q4",
+      "quote_conflict_basis": "parent_base_peak_quote_conflict"
+    },
+    {
+      "covered_by_quote_aware_products": "2027",
+      "gate_id": "implied_offpeak_identity",
+      "load_type": "OFFPEAK",
+      "product": "2027",
+      "quote_conflict_basis": "parent_base_peak_quote_conflict"
+    }
+  ],
+  "forwards_sha256": "c4bedaeb4cf7a04324bcf667be35ef9f92eeb2118c431109220076b114f9a3c5",
+  "forward_snapshot_date": "2026-06-17",
+  "input_csv_sha256": "464fe44b623ffbd15142eac68ea9ab01c7532b86d42b4611ea7d226f0af6665b",
+  "market": "CH",
+  "production_approved": false,
+  "quote_conflict_identity_hash": "b13d9c87813f9cbf9c43d8cbbe0bb533b029e0845b80e363aee7aaa2946a66f9",
+  "rejected_alternatives": [
+    "Patch delivered months to satisfy contradictory parent and finer quotes",
+    "Treat redundant parent quote conflicts as PASS without a manifest-backed policy",
+    "Hide source conflicts under UNSUPPORTED"
+  ],
+  "schema_version": "ch_quote_conflict_source_hierarchy_policy.v1",
+  "source_hierarchy": "quote_aware_finer_buckets_over_redundant_parent"
+}

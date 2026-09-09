@@ -1,0 +1,250 @@
+{
+  "schema_version": "fmv_lt_source_acquisition_outage_plan.v1",
+  "status": "BLOCKED_PENDING_GOVERNED_EEX_ENTSOE_DATABRICKS",
+  "created_on": "2026-09-02",
+  "updated_on": "2026-09-04",
+  "public_service_observation": {
+    "observed_on": "2026-09-02",
+    "reporter": "SMARD_BUNDESNETZAGENTUR",
+    "source_url": "https://www.smard.de/home/aktuelle-datenluecken-auf-smard-221352",
+    "reported_condition": "PARTIAL_DATA_GAPS_AND_STRONG_DELAYS_FROM_ENTSOE_TRANSPARENCY_PLATFORM_TECHNICAL_FAILURE",
+    "status": "EXTERNAL_CORROBORATION_NOT_GOVERNANCE_EVIDENCE",
+    "proves_internal_silver_unavailability": false,
+    "proves_source_freshness": false,
+    "proves_original_publication": false,
+    "proves_finality": false,
+    "authorizes_execution": false
+  },
+  "execution": {
+    "databricks_api_requests": 101,
+    "databricks_statements": 8,
+    "warehouse_starts": 0,
+    "warehouse_resizes": 0,
+    "warehouse_creates": 0,
+    "warehouse_stop_requests": 1,
+    "warehouse_stop_successes": 0,
+    "aggregate_business_value_comparisons": 2,
+    "raw_business_rows_returned": 21755,
+    "remote_writes": 4
+  },
+  "authorities": {
+    "model_input_authorized": false,
+    "model_selection_authorized": false,
+    "monthly_level_authorized": false,
+    "publication_authorized": false,
+    "production_authorized": false,
+    "trading_authorized": false
+  },
+  "lanes": {
+    "eex": {
+      "status": "LOCAL_BYTES_HASH_VALID_ADMISSION_EVIDENCE_PENDING",
+      "reuse_only": true,
+      "new_databricks_statement_authorized": false,
+      "direct_eex_api_route": "NO_GO_UNTIL_SEPARATELY_ATTESTED",
+      "snapshot": {
+        "path": "build/databricks-eex-daily/2026-08-05/eex_ch_power.ndjson",
+        "size_bytes": 29763661,
+        "sha256": "593e916b6aa18ad83f7bd7941ff68184cd71da8882ef4eb381de46d09ce64812"
+      },
+      "manifest": {
+        "path": "build/databricks-eex-daily/2026-08-05/manifest.json",
+        "size_bytes": 3810,
+        "sha256": "f8ec096be43851d85b16ec2b678d4a695fb0521c2c651e8bcf7c2491a29b50c1",
+        "declared_source_tables": [
+          "prd.gold.facteexpricedaily",
+          "prd.gold.dimeexproduct",
+          "prd.gold.dimeexdeliveryperiod"
+        ],
+        "declared_row_count": 82552
+      },
+      "bound_query_provenance": {
+        "status": "VERIFIED_LOCALLY_WITHOUT_OPENING_BUSINESS_ROWS",
+        "decision_id": "D-20260903-280",
+        "query_size_bytes": 625,
+        "query_sha256": "54a2e7e1752af4506673d2b5cbc2666f0deea45ec96e6d82561e4b265c78797a",
+        "manifest_sha256": "f8ec096be43851d85b16ec2b678d4a695fb0521c2c651e8bcf7c2491a29b50c1",
+        "artifact_sha256": "593e916b6aa18ad83f7bd7941ff68184cd71da8882ef4eb381de46d09ce64812"
+      },
+      "remaining_evidence": [
+        "INDEPENDENT_SOURCE_TIME_EVIDENCE",
+        "SIGNED_ENVELOPES_AND_EXTERNAL_TIME",
+        "CONVERSION_TO_EXISTING_SIGNED_EEX_VINTAGE_CATALOG"
+      ]
+    },
+    "entsoe": {
+      "status": "JULY_LATEST_CANDIDATE_RECONCILED_EXACTLY_PENDING_OPTIONAL_FINALITY_AND_SEPTEMBER_CH_BACKFILL",
+      "public_source_refresh_condition": "DEGRADED_REPORTED_2026-09-01",
+      "internal_silver_snapshot_condition": "JULY_EXACT_FULL_WINDOW_COVERAGE_VERIFIED_AND_LATEST_REVISION_CANDIDATE_CAPTURED",
+      "local_cost_preflight": "PASS_USER_ACCEPTED_1548216106_BYTE_HARD_STORAGE_BOUND_ACTUAL_EXPORT_READ_31967426_BYTES",
+      "warehouse_start_authorized": false,
+      "source_refresh_required_for_smoke_export": false,
+      "delivery_mode": "PLATFORM_OWNED_EXISTING_MATERIALIZED_SNAPSHOT_ONLY",
+      "sql_bindings": {
+        "causal_asof_sha256": "f86cfeeec6bb2dc6d9c579426df091d7d45b01f0bca848b47aba62500cedbc6d",
+        "realized_final_sha256": "9f4104e4db8b16bfa21e0fce26afb47d364f983b95209424293356489fe6d81a"
+      },
+      "realized_final_export_preflight": {
+        "path": ".planning/phases/14-lt-audit-remediation/ENTSOE-DAY-AHEAD-REALIZED-FINAL-EXPORT-PREFLIGHT-V1-20260904.json",
+        "canonical_json_sha256": "b520d9c44215341ddd6b09c68180d22dde45135c0b70627ba6c0f3d7a029fd1f",
+        "observed_at_utc": "2026-09-04T06:56:56.217Z",
+        "warehouse_state": "STOPPED",
+        "control_plane_get_count": 3,
+        "databricks_statement_count": 0,
+        "warehouse_start_count": 0,
+        "hard_scan_upper_bound_proven": false,
+        "execution_authorized": false
+      },
+      "freshness_cost_check": {
+        "path": ".planning/phases/14-lt-audit-remediation/ENTSOE-DAY-AHEAD-FRESHNESS-COST-CHECK-V1-20260904.json",
+        "canonical_json_sha256": "f60acd4b2f524fec23413428993555a55f8e114f3ab97fa6f224b9189ab6270b",
+        "silver_last_modified_utc": "2026-09-04T06:42:56Z",
+        "silver_size_in_bytes": 1548216106,
+        "silver_num_files": 137,
+        "freshness_query_read_bytes": 7798287,
+        "ch_max_delivery_end_utc": "2026-09-02T22:00:00Z",
+        "neighbor_max_delivery_end_utc": "2026-09-04T22:00:00Z",
+        "ch_delivery_gap_observed": true,
+        "databricks_statement_count": 2,
+        "warehouse_start_request_count": 0,
+        "warehouse_stop_request_status": "REJECTED_HTTP_403",
+        "business_price_rows_returned": 0,
+        "export_execution_authorized": false
+      },
+      "july_candidate_capture": {
+        "path": ".planning/phases/14-lt-audit-remediation/ENTSOE-DAY-AHEAD-JULY-CANDIDATE-CAPTURE-V1-20260904.json",
+        "canonical_json_sha256": "ec937b823551e301dc5b0c553301b2b21b1584c6b2c6a166d7803dab4206c56d",
+        "status": "PASS_QUARANTINED_LATEST_REVISION_CANDIDATE_PENDING_VALUE_BOUND_FINALITY",
+        "coverage_query_read_bytes": 65771005,
+        "coverage_quarter_hours_per_series": 2976,
+        "candidate_query_read_bytes": 31967426,
+        "candidate_raw_row_count": 12083,
+        "candidate_parquet_size_bytes": 564727,
+        "candidate_parquet_sha256": "046ae86ab84a72c61ea44547cc386f85e49d37d325352f4bfca208a08e5a9baa",
+        "candidate_semantic_sha256": "5a6d72b5531e843dc4e7920c519cc3d93189e70d91277662a763f6575967374e",
+        "local_validation_status": "PASS_RAW_EXPORT_CONTRACT_BLOCKED_ONLY_ON_FINALITY_EVIDENCE",
+        "warehouse_start_count": 0,
+        "realized_finality_proven": false,
+        "model_input_authorized": false,
+        "production_authorized": false
+      },
+      "july_latest_candidate_replay": {
+        "path": ".planning/phases/14-lt-audit-remediation/ENTSOE-DAY-AHEAD-JULY-LATEST-CANDIDATE-REPLAY-V1-20260904.json",
+        "canonical_json_sha256": "6dd70193fcfa4e7554519b3106554f3416af479b693b51654a7c6e4c73aea542",
+        "usage": "realized_latest_candidate",
+        "build_id": "b00f2b725c66d91e7b8ec681b578fd080be77837a6e75f9b1de675caade20a26",
+        "verification_status": "VERIFIED_SELF_CONTAINED_DAY_AHEAD_EXPORT_REPLAY",
+        "warehouse_rerun_required": false,
+        "finality_required_for_local_replay": false,
+        "realized_finality_proven": false,
+        "model_input_authorized": false,
+        "production_authorized": false
+      },
+      "july_lseg_reconciliation": {
+        "path": ".planning/phases/14-lt-audit-remediation/LSEG-ENTSOE-JULY-LATEST-RECONCILIATION-V1-20260904.json",
+        "canonical_json_sha256": "557f0965b9cfe60884d69c0709d3863030ee6aeba1adaab466b46d31a200b32b",
+        "status": "PASS_EXACT_LATEST_SOURCE_RECONCILIATION_NOT_FINALITY_OR_MODEL_AUTHORITY",
+        "query_sha256": "be9e94de41c9e0c65f1814be617e3abd591103d6b869c6c80444761e6de22fff",
+        "successful_query_read_bytes": 13141107,
+        "lseg_row_count": 9672,
+        "matched_hours_per_zone": 744,
+        "maximum_abs_difference_eur_per_mwh": 0.0,
+        "warehouse_start_count": 0,
+        "realized_finality_proven": false,
+        "model_input_authorized": false,
+        "production_authorized": false
+      },
+      "platform_coordination": {
+        "repository": "FMVSA/opendata-lakehouse",
+        "issue_number": 4,
+        "url": "https://github.com/FMVSA/opendata-lakehouse/issues/4",
+        "title": "[LT] Cost quote for bounded July 2026 ENTSO-E realized_final export",
+        "created_at_utc": "2026-09-04T07:38:22Z",
+        "created_by": "JulienFMV",
+        "state": "OPEN",
+        "assignee_count": 0,
+        "comment_count_at_verification": 3,
+        "latest_comment_url": "https://github.com/FMVSA/opendata-lakehouse/issues/4#issuecomment-5538187585",
+        "request_scope": "OPTIONAL_VALUE_BOUND_FINALITY_PROMOTION_FOR_CAPTURED_JULY_CANDIDATE_AND_SEPARATE_SEPTEMBER_CH_BACKFILL_STATUS",
+        "warehouse_start_authorized": false,
+        "sql_execution_authorized": false,
+        "model_input_authorized": false,
+        "production_authorized": false
+      },
+      "first_delivery_request": {
+        "purpose": "REALIZED_FINAL_ADAPTER_AND_LSEG_RECONCILIATION_SMOKE_ONLY",
+        "usage": "realized_final",
+        "market_month": "2026-07",
+        "market_timezone": "Europe/Zurich",
+        "window_start_utc": "2026-06-30T22:00:00Z",
+        "window_end_utc": "2026-07-31T22:00:00Z",
+        "utc_partitions": [
+          "2026-06",
+          "2026-07"
+        ],
+        "markets": [
+          "CH",
+          "DE_LU",
+          "AT",
+          "FR",
+          "IT_NORTH"
+        ],
+        "series_selection_status": "CONSTRUCTION_REFERENCE_SELECTION_FROZEN_FROM_EXACT_LSEG_PARITY",
+        "series_selection_request": {
+          "path": ".planning/phases/14-lt-audit-remediation/ENTSOE-DAY-AHEAD-EFFECTIVE-SERIES-SELECTION-REQUEST-V1-20260903.json",
+          "canonical_json_sha256": "6794566035e40b69eb5d104d09e317896b69502ca800513ef094ca46673d6cfb",
+          "owner_response_received": false,
+          "selection_authorized": false
+        },
+        "series_selection_evidence": {
+          "path": ".planning/phases/14-lt-audit-remediation/ENTSOE-DAY-AHEAD-EFFECTIVE-SERIES-SELECTION-EVIDENCE-V1-20260903.json",
+          "canonical_json_sha256": "968c3e0d5336f4ff38a130271456f7889c7a885e2e119ef62e5df596f7f8c0ab",
+          "at_series_key": "day_ahead_prices||at_price||1",
+          "de_lu_series_key": "day_ahead_prices||de_lu_price||1",
+          "construction_smoke_export_selection_frozen": true,
+          "governed_model_selection_authorized": false
+        },
+        "requires_existing_materialized_rows": true,
+        "requires_source_refresh": false,
+        "requires_value_bound_finality_evidence": true,
+        "requires_value_bound_finality_evidence_only_for_realized_final_promotion": true,
+        "local_replay_usage": "realized_latest_candidate",
+        "local_replay_blocked_by_missing_finality": false,
+        "holdout_authorized": false,
+        "model_input_authorized": false,
+        "execution_authorized_by_this_plan": false
+      },
+      "causal_history": {
+        "status": "BLOCKED_NO_RETROACTIVE_CAUSALITY",
+        "july_2026_backfill_may_be_used_as_causal_truth": false,
+        "future_causal_capture_requires_producer_recovery": true,
+        "future_causal_capture_requires_frozen_origin_protocol": true,
+        "original_publication_evidence_required_when_source_document_created": true
+      }
+    },
+    "lseg": {
+      "status": "JULY_LATEST_RECONCILIATION_PASS_EXACT_NO_MODEL_AUTHORITY",
+      "new_query_authorized": false,
+      "silent_source_substitution_authorized": false,
+      "it_north_covered_by_lseg": false,
+      "point_in_time_extract_used": false,
+      "realized_finality_proven": false
+    }
+  },
+  "completed_local_steps": [
+    "REUSE_AND_BIND_EXISTING_EEX_CAPTURE_WITHOUT_NEW_QUERY",
+    "PREPARE_ENTSOE_EFFECTIVE_DATED_SERIES_SELECTION_REQUEST",
+    "RESOLVE_ENTSOE_AT_AND_DE_LU_CONSTRUCTION_REFERENCE_BY_EXACT_LSEG_PARITY",
+    "PREPARE_EXACT_ENTSOE_JULY_REALIZED_EXPORT_AND_RUN_METADATA_COST_PREFLIGHT",
+    "OPEN_PLATFORM_COST_QUOTE_REQUEST_WITHOUT_EXECUTION_AUTHORITY",
+    "RUN_AUTHORIZED_VALUE_BLIND_FRESHNESS_AND_COST_CHECK_AND_REPORT_CH_GAP",
+    "VERIFY_EXACT_JULY_COVERAGE_AND_CAPTURE_QUARANTINED_LATEST_REVISION_CANDIDATE",
+    "BUILD_AND_VERIFY_AUTHORITY_NEGATIVE_REALIZED_LATEST_CANDIDATE_REPLAY",
+    "RECONCILE_JULY_ENTSOE_LATEST_CANDIDATE_EXACTLY_AGAINST_BOUNDED_LSEG_LATEST"
+  ],
+  "execution_order": [
+    "TRACK_SEPTEMBER_CH_BACKFILL_SEPARATELY_ON_FMVSA_OPENDATA_LAKEHOUSE_ISSUE_4",
+    "PROMOTE_THE_SAME_CAPTURED_BYTES_TO_REALIZED_FINAL_ONLY_IF_EXTERNAL_EVIDENCE_BINDS_EXACT_SEMANTIC_HASH_WINDOW_AND_SERIES_KEYS",
+    "FREEZE_FUTURE_CAUSAL_ORIGIN_AND_HOLDOUT_PROTOCOL_BEFORE_ANY_RETRAINING",
+    "COMPLETE_REMAINING_GOVERNED_EEX_ADMISSION_EVIDENCE_BEFORE_MODEL_USE"
+  ]
+}

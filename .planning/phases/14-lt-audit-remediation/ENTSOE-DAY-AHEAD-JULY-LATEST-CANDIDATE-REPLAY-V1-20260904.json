@@ -1,0 +1,71 @@
+{
+  "schema_version": "fmv_entsoe_day_ahead_july_latest_candidate_replay.v1",
+  "status": "PASS_VERIFIED_REALIZED_LATEST_CANDIDATE_REPLAY_NOT_FINAL_NOT_MODEL_AUTHORITY",
+  "resolved_on": "2026-09-04",
+  "purpose": "ALLOW_LOCAL_ADAPTER_REPLAY_AND_INDEPENDENT_RECONCILIATION_WITHOUT_INVENTING_REALIZED_FINALITY",
+  "source_contract_audit": {
+    "repository": "FMVSA/opendata-lakehouse",
+    "main_commit_sha": "545c56c5d08b9c360120eb5014f0d5a7fe7fd2f2",
+    "main_tree_sha": "ae253a9b352d8df087e0464158530175d995b553",
+    "entsoe_contract_blob_sha": "3f425866266c6fdede6ec8890e82dbbaaa9fb213",
+    "publication_cadence_blob_sha": "c062e5002b8ebcd7a8306415169eebfc0d779ddd",
+    "pipeline_blob_sha": "fc01d27e78fa2744d81b1b8ec78fd855a69f4c5e",
+    "producer_semantics": "LATEST_OBSERVED_REVISION_WITH_SEVEN_DAY_ROLLING_LOOKBACK_FOR_CORRECTIONS",
+    "signed_finality_service_found": false,
+    "inference": "A_PLATFORM_SIGNED_FINALITY_RECEIPT_IS_NOT_CURRENTLY_AVAILABLE_AND_MUST_NOT_BLOCK_AUTHORITY_NEGATIVE_LOCAL_REPLAY"
+  },
+  "captured_source": {
+    "relative_path": "build/entsoe-july-candidate-20260904/latest-revision-candidate.parquet",
+    "sha256": "046ae86ab84a72c61ea44547cc386f85e49d37d325352f4bfca208a08e5a9baa",
+    "semantic_sha256": "5a6d72b5531e843dc4e7920c519cc3d93189e70d91277662a763f6575967374e",
+    "row_count": 12083,
+    "warehouse_rerun_required": false
+  },
+  "local_replay": {
+    "usage": "realized_latest_candidate",
+    "relative_directory": "build/entsoe-july-candidate-20260904/latest-revision-candidate-replay",
+    "build_id": "b00f2b725c66d91e7b8ec681b578fd080be77837a6e75f9b1de675caade20a26",
+    "manifest_sha256": "c2c733cac80ae87f7b8b56572720ba02447a574d030313530f953c92d4b8b8a2",
+    "source_parquet_sha256": "a2a759bbadacbd34ae96dcc9fbfb3c8b66ef494eb8c65ac24c5b456a514fc76c",
+    "consumer_parquet_sha256": "3aadd9e8cbdeeba51d8b8cd56b42c6d9b90f914042d720ced154b80b0da90bda",
+    "audit_sha256": "937ecb22b58d5c849c61b279e1ec507d05206b7cae5c6c113c60b078df008689",
+    "raw_row_count": 12083,
+    "consumer_row_count": 12083,
+    "verification_status": "VERIFIED_SELF_CONTAINED_DAY_AHEAD_EXPORT_REPLAY",
+    "is_final": false,
+    "consumer_contract_authorized": false,
+    "independent_reconciliation_may_proceed_with_separate_authorization": true
+  },
+  "realized_final_promotion": {
+    "required_for_local_replay": false,
+    "required_for_independent_reconciliation": false,
+    "external_value_bound_finality_evidence_still_required": true,
+    "same_captured_bytes_must_be_reused": true,
+    "candidate_must_not_be_requeried": true
+  },
+  "platform_coordination": {
+    "issue_url": "https://github.com/FMVSA/opendata-lakehouse/issues/4",
+    "scope_correction_comment_url": "https://github.com/FMVSA/opendata-lakehouse/issues/4#issuecomment-5538187585",
+    "finality_response_is_optional_for_local_replay": true,
+    "september_ch_recovery_remains_separate": true,
+    "raw_business_values_transmitted": false
+  },
+  "execution": {
+    "databricks_api_requests": 0,
+    "databricks_statements": 0,
+    "warehouse_start_requests": 0,
+    "business_rows_downloaded": 0,
+    "remote_writes": 1
+  },
+  "authorities": {
+    "realized_finality_proven": false,
+    "causal_asof_authorized": false,
+    "consumer_contract_authorized": false,
+    "model_input_authorized": false,
+    "model_selection_authorized": false,
+    "monthly_level_authorized": false,
+    "publication_authorized": false,
+    "production_authorized": false,
+    "trading_authorized": false
+  }
+}

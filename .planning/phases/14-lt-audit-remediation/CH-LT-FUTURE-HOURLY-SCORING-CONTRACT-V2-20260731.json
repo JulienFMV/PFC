@@ -1,0 +1,37 @@
+{
+  "schema_version": "ch_lt_future_hourly_scoring_contract.v2",
+  "contract_id": "ae85de71a3745b4ea8b9704090f9bd742e26a41161c2d0b804f4888fb372653e",
+  "status": "OUTCOME_BLIND_LOCAL_SCORING_SPECIFICATION_V7_NO_GO",
+  "supersedes": {
+    "path": ".planning/phases/14-lt-audit-remediation/CH-LT-FUTURE-HOURLY-SCORING-CONTRACT-V1-20260731.json",
+    "sha256": "e6f0767de168c02fefa2a26cb90b147e8491d5a16cdd008ed137e1cd430a237a",
+    "contract_id": "698af6ba9989db27d20f404d8c4c23bf2f19cacb63c41d5d80a74a81e37d45a8",
+    "formula_policy": "INHERITED_EXACTLY_NO_POST_OUTCOME_CHANGE"
+  },
+  "selected_prediction_binding": {
+    "commitment_path": "build/ch-lt-structural-prediction-commitments/structural-dry-run-20260731T072027Z-v7-quant-contract/commitment.json",
+    "commitment_sha256": "67cc6fe722586cd4a02149252d1af7fbbb35e90a89e8bc7965f8d0bf87eda9b4",
+    "commitment_id": "799ed71cdeddb9bf81fdc63574f352174bd2ac432c83008a25c63b4cf4094d2a",
+    "predictions_path": "build/ch-lt-structural-prediction-commitments/structural-dry-run-20260731T072027Z-v7-quant-contract/predictions.json",
+    "predictions_sha256": "859c4622eb5b699f22242af0121141729d6c00472b6b9070bdb87c2ba9132302",
+    "prediction_set_id": "fb2f7dc3f5024e5cca92923c4f3a2e47b763a4528ad1df7bb7cc49eaf4f8ec84",
+    "hourly_shape_functional_contract_sha256": "a8cb845385d7da16b0e486b2fa16330d312c2d2f6a8fba2028e2e0d08a11fbbe"
+  },
+  "clarifications": {
+    "formula_source": "SUPERSEDED_V1_FORMULA_OBJECT_REMAINS_NORMATIVE",
+    "selected_prediction_functional_contract": "V7_EMBEDDED_CONTRACT_ONLY",
+    "conflict_rule": "ANY_DIVERGENCE_BETWEEN_V1_FORMULAS_V7_FUNCTIONALS_OR_THIS_BINDING_FAILS_CLOSED",
+    "negative_price_support_observed": false,
+    "negative_price_metrics_role": "DIAGNOSTIC_NOT_PROPER_PROBABILISTIC_SCORE",
+    "single_origin_role": "DIAGNOSTIC_ONLY_NO_MODEL_SELECTION_NO_INFERENCE"
+  },
+  "authority_boundary": {
+    "outcomes_opened": false,
+    "future_holdout_consumed": false,
+    "t057_consumed": false,
+    "scientific_admission": false,
+    "model_selection_authorized": false,
+    "production_authorization": false,
+    "promotion_gate": false
+  }
+}

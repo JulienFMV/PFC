@@ -1,0 +1,321 @@
+{
+  "schema_version": "ch_lt_estimand_and_economic_design.v1",
+  "scope": "FULL_DELIVERED_CH_LT_PFC",
+  "market": "CH",
+  "timezone": "Europe/Zurich",
+  "lifecycle": {
+    "state": "DRAFT_NOT_FROZEN",
+    "frozen_at_utc": null
+  },
+  "horizon_policy": {
+    "delivery_support": "FULL_LOCAL_DELIVERY_MONTHS_ONLY",
+    "lead_month_formula": "12_X_DELIVERY_YEAR_MINUS_ORIGIN_YEAR_PLUS_DELIVERY_MONTH_MINUS_ORIGIN_MONTH",
+    "eligible_lead_month_min": 1,
+    "eligible_lead_month_max": 36,
+    "current_partial_month_policy": "EXCLUDED",
+    "outside_support_policy": "UNSUPPORTED_NEVER_EXTRAPOLATED_AS_PASS",
+    "buckets": [
+      {
+        "bucket_id": "M01_M06",
+        "minimum_lead_month": 1,
+        "maximum_lead_month": 6
+      },
+      {
+        "bucket_id": "M07_M12",
+        "minimum_lead_month": 7,
+        "maximum_lead_month": 12
+      },
+      {
+        "bucket_id": "M13_M24",
+        "minimum_lead_month": 13,
+        "maximum_lead_month": 24
+      },
+      {
+        "bucket_id": "M25_M36",
+        "minimum_lead_month": 25,
+        "maximum_lead_month": 36
+      }
+    ]
+  },
+  "target_layers": [
+    {
+      "layer_id": "MARKET_CONSISTENCY",
+      "target": "FINAL_DELIVERED_CURVE_REPRICES_ORIGIN_AVAILABLE_CH_EEX_PRODUCTS",
+      "truth_role": "ORIGIN_AVAILABLE_HARD_CH_EEX_QUOTES",
+      "scoring": "BASE_PEAK_OFFPEAK_PRODUCT_REPRICING",
+      "level_authority": "MONTHLY_SOLVER",
+      "product_repricing_tolerance_eur_mwh": 1e-06,
+      "monthly_solver_level_tolerance_eur_mwh": 1e-09,
+      "cascade_invariance_tolerance_eur_mwh": 1e-08
+    },
+    {
+      "layer_id": "HOURLY_SHAPE",
+      "target": "DIRECT_CH_DAY_AHEAD_AUCTION_PRICE_AT_NATIVE_HOURLY_OR_FINER_RESOLUTION",
+      "truth_role": "SCORING_ONLY_NEVER_MONTHLY_LEVEL_AUTHORITY",
+      "scoring": "MONTHLY_LEVEL_NEUTRALIZED_PRICE_ERROR",
+      "maximum_native_interval_minutes": 60,
+      "hourly_aggregation": "ENERGY_WEIGHTED_FROM_NATIVE_IF_FINER"
+    },
+    {
+      "layer_id": "QUARTER_HOURLY_SHAPE",
+      "target": "DIRECT_CH_NATIVE_QUARTER_HOURLY_PRICE_FOR_ONE_FROZEN_MARKET_PRODUCT",
+      "truth_role": "SCORING_ONLY_NEVER_MONTHLY_LEVEL_AUTHORITY",
+      "scoring": "MONTHLY_LEVEL_NEUTRALIZED_PRICE_ERROR",
+      "required_native_resolution_minutes": 15,
+      "hourly_duplication_or_interpolation": "FORBIDDEN"
+    },
+    {
+      "layer_id": "PROBABILISTIC_SCENARIOS",
+      "target": "JOINT_CH_DELIVERED_PRICE_PATH_CONDITIONAL_ON_ORIGIN_INFORMATION_SET",
+      "truth_role": "DIRECT_CH_SCORING_TRUTH_ONLY_NEVER_MODEL_INPUT",
+      "scoring": "PROPER_UNIVARIATE_AND_MULTIVARIATE_SCORES_PLUS_CALIBRATION",
+      "monthly_level_authority": "ENSEMBLE_ENERGY_WEIGHTED_MONTHLY_EXPECTATION_EQUALS_SOLVER_FORWARD",
+      "temporal_independence_assumption": "FORBIDDEN"
+    }
+  ],
+  "truth_policy": {
+    "market": "CH",
+    "timezone": "Europe/Zurich",
+    "delivery_timestamp_axis": "UTC_WITH_EUROPE_ZURICH_LOCAL_MARKET_CALENDAR",
+    "price_unit": "EUR_PER_MWH",
+    "delivery_resolution_minutes": 15,
+    "negative_and_zero_prices_retained": true,
+    "spot_truth_is_model_input": false,
+    "post_delivery_truth_release_allowed_for_scoring_only": true,
+    "truth_product_id_freeze_boundary": "BEFORE_MODEL_DEVELOPMENT_SELECTION_TUNING_OR_SCORING",
+    "distinct_truth_products_must_not_be_pooled": true,
+    "all_fit_inputs_available_at_or_before_origin": true,
+    "later_revisions_forbidden": true,
+    "proxy_or_neighbor_truth_for_ch": "FORBIDDEN",
+    "ompex_role": "DIAGNOSTIC_BENCHMARK_ONLY_NEVER_TRUTH_INPUT_SELECTION_OR_GATE",
+    "monthly_level_authority": "SOLVER_WITH_HARD_CH_EEX_CONSTRAINTS"
+  },
+  "origin_design_policy": {
+    "primary_observation_and_weighting_unit": "UNIQUE_ORIGIN_AS_OF_UTC",
+    "duplicate_origin_as_of_utc": "FORBIDDEN",
+    "issuance_cadence_and_calendar_must_be_frozen": true,
+    "origin_density_cannot_change_weighting_without_new_design": true,
+    "overlapping_delivery_targets_require_clustered_dependence_treatment": true,
+    "minimum_unique_origins_by_horizon_and_stratum_from_power_design": true,
+    "same_frozen_origin_inventory_for_all_compared_models": true,
+    "post_selection_origin_reuse_for_confirmation": "FORBIDDEN"
+  },
+  "eligibility_policy": {
+    "same_rows_for_all_challengers_and_baselines": true,
+    "complete_case_intersection": [
+      "PREDICTION",
+      "BASELINE",
+      "DIRECT_NATIVE_TRUTH",
+      "ENERGY_WEIGHT",
+      "CALENDAR_LABELS"
+    ],
+    "missing_or_nonfinite": "UNSUPPORTED_NEVER_ZERO_OR_WIN",
+    "native_truth_resolution_mismatch": "UNSUPPORTED",
+    "derived_quarter_hour_truth_from_hourly": "FORBIDDEN",
+    "target_or_revision_leakage": "FAIL",
+    "dst_policy": "EXPECTED_UTC_INTERVALS_FOR_EUROPE_ZURICH_LOCAL_DELIVERY_MONTH",
+    "monthly_completeness_required": true,
+    "partial_month_policy": "UNSUPPORTED",
+    "origin_weighting": "EQUAL_WEIGHT_AFTER_WITHIN_ORIGIN_ENERGY_WEIGHTING",
+    "stratification_required": [
+      "LEAD_MONTH_BUCKET",
+      "SEASON",
+      "WEEKDAY_HOLIDAY",
+      "HOUR_RAMP",
+      "BASE_PEAK_OFFPEAK",
+      "HYDRO_REGIME",
+      "NEGATIVE_PRICE",
+      "PRICE_SPIKE",
+      "RENEWABLE_HIGH",
+      "CROSS_BORDER_STRESS"
+    ]
+  },
+  "calendar_policy": {
+    "definition_manifest_required_fields": [
+      "calendar_id",
+      "calendar_version",
+      "timezone",
+      "utc_interval_generation_rule",
+      "dst_fold_and_gap_rule",
+      "base_peak_offpeak_rule",
+      "weekday_holiday_rule",
+      "holiday_source_and_version",
+      "season_rule",
+      "stress_regime_definitions",
+      "manifest_sha256"
+    ],
+    "calendar_and_regime_freeze_boundary": "BEFORE_MODEL_DEVELOPMENT_SELECTION_TUNING_OR_SCORING",
+    "data_driven_stratum_redefinition_after_results": "FORBIDDEN"
+  },
+  "metric_policy": {
+    "monthly_shape_centering": "P_MINUS_ENERGY_WEIGHTED_LOCAL_DELIVERY_MONTH_MEAN_SEPARATELY_FOR_PREDICTION_AND_TRUTH",
+    "primary_metric": "MONTHLY_LEVEL_NEUTRALIZED_MAE_EUR_MWH",
+    "secondary_metrics": [
+      "MONTHLY_LEVEL_NEUTRALIZED_RMSE_EUR_MWH",
+      "MONTHLY_LEVEL_NEUTRALIZED_BIAS_EUR_MWH",
+      "P95_ABSOLUTE_ERROR_EUR_MWH",
+      "BASE_PEAK_OFFPEAK_WEIGHTED_ERROR_EUR_MWH",
+      "FIXED_PROFILE_CAPTURE_PRICE_ERROR_EUR_MWH",
+      "BLOC_13_CONTRACT_PAYOFF_ERROR_CHF",
+      "HYDRO_DISPATCH_REALIZED_NET_VALUE_OR_REGRET_CHF"
+    ],
+    "mape_primary_or_gate": false,
+    "market_repricing_scored_separately_from_spot_shape": true,
+    "quarter_hour_gate_requires_native_quarter_hour_truth": true,
+    "unsupported_layer_cannot_be_hidden_by_aggregate_pass": true
+  },
+  "statistical_decision_policy": {
+    "design_manifest_required_fields": [
+      "design_id",
+      "design_version",
+      "candidate_and_baseline_hypotheses",
+      "estimand_contrasts_by_layer_population_and_horizon",
+      "noninferiority_and_superiority_margins",
+      "economic_mde_by_population_and_horizon",
+      "familywise_alpha",
+      "target_power",
+      "multiplicity_family_and_correction",
+      "confidence_interval_method",
+      "dependence_cluster_and_overlap_model",
+      "minimum_unique_origins_by_horizon_and_stratum",
+      "effect_size_and_variance_source",
+      "missingness_and_unsupported_policy",
+      "model_selection_and_reuse_policy",
+      "manifest_sha256"
+    ],
+    "market_consistency_gates": "ABSOLUTE_HARD_GATES_NEVER_COMPENSATED",
+    "shape_comparison": "FROZEN_CANDIDATE_VERSUS_FROZEN_BASELINES_ON_IDENTICAL_ROWS",
+    "economic_comparison": "FULL_PRICE_OR_CASHFLOW_NOT_CENTERED_SHAPE_ONLY",
+    "post_hoc_threshold_or_family_change": "FORBIDDEN",
+    "pilot_selected_origins_reused_for_confirmation": "FORBIDDEN",
+    "all_reported_claims_require_predeclared_simultaneous_inference": true
+  },
+  "probabilistic_policy": {
+    "primary_representation": "JOINT_SCENARIO_PATHS_WITH_DERIVED_MARGINAL_QUANTILES",
+    "ensemble_monthly_forward_consistency": "ENERGY_WEIGHTED_SCENARIO_EXPECTATION_EQUALS_MONTHLY_SOLVER_FORWARD",
+    "scenario_specific_monthly_level_uncertainty": "ALLOWED_ONLY_WITH_ENSEMBLE_ZERO_MEAN_AND_FROZEN_COVARIANCE_DESIGN",
+    "shape_only_fixed_level_scenarios": "SEPARATE_DIAGNOSTIC_PRODUCT_ONLY",
+    "required_univariate_scores": [
+      "CRPS",
+      "WIS",
+      "PINBALL_LOSS"
+    ],
+    "required_calibration_diagnostics": [
+      "PIT_OR_RANDOMIZED_PIT",
+      "EMPIRICAL_COVERAGE_AND_INTERVAL_WIDTH",
+      "TAIL_EVENT_CALIBRATION"
+    ],
+    "required_multivariate_scores": [
+      "ENERGY_SCORE",
+      "VARIOGRAM_SCORE"
+    ],
+    "required_coherence_checks": [
+      "SCENARIO_QUANTILE_CONSISTENCY",
+      "TEMPORAL_AND_CROSS_HORIZON_DEPENDENCE",
+      "BASE_PEAK_OFFPEAK_AND_MONTHLY_AGGREGATION"
+    ],
+    "scenario_count_seed_engine_and_backend_must_be_frozen": true,
+    "cpu_gpu_reproducibility_tolerance_must_be_predeclared": true,
+    "monte_carlo_error_must_be_bounded_before_comparison": true
+  },
+  "profile_policy": {
+    "required_population_ids": [
+      "FIL",
+      "ACC",
+      "BLOC_13",
+      "HYDRO_DISPATCH"
+    ],
+    "fixed_profile_roles": [
+      "FIL",
+      "ACC"
+    ],
+    "fixed_profile_manifest_required_fields": [
+      "profile_id",
+      "profile_version",
+      "timestamp_utc",
+      "delivery_timezone",
+      "volume_mwh",
+      "direction",
+      "availability_rule",
+      "source_document_id",
+      "row_hash"
+    ],
+    "fixed_profile_volume_policy": "FINITE_NONNEGATIVE_MWH_SEPARATE_DIRECTION_FIELD",
+    "fixed_profile_direction_values": [
+      "GENERATION",
+      "CONSUMPTION"
+    ],
+    "fixed_profile_capture_price_formula": "SUM_PRICE_X_VOLUME_DIV_SUM_VOLUME",
+    "fixed_profile_pricing_basis": "FULL_DELIVERED_PRICE_NOT_MONTHLY_CENTERED_SHAPE",
+    "fixed_profile_direction_sign": {
+      "GENERATION": 1,
+      "CONSUMPTION": -1
+    },
+    "fixed_profile_signed_cashflow_formula": "DIRECTION_SIGN_X_SUM_FULL_PRICE_EUR_PER_MWH_X_VOLUME_MWH",
+    "fixed_profile_capture_error_formula": "ABS_PREDICTED_CAPTURE_PRICE_MINUS_REALIZED_CAPTURE_PRICE_EUR_MWH",
+    "zero_total_volume_policy": "UNSUPPORTED",
+    "capture_factor_role": "SECONDARY_ONLY_WHEN_REFERENCE_PRICE_ABS_GT_APPROVED_EPSILON",
+    "contract_payoff_roles": [
+      "BLOC_13"
+    ],
+    "contract_payoff_manifest_required_fields": [
+      "contract_id",
+      "contract_version",
+      "payoff_formula",
+      "underlying_and_legs",
+      "strike_or_collar_parameters",
+      "settlement_convention",
+      "delivery_timezone",
+      "position_sign_convention",
+      "transaction_and_imbalance_cost_rule",
+      "source_document_id",
+      "manifest_sha256"
+    ],
+    "bloc_13_profile_proxy_policy": "FORBIDDEN_WITHOUT_FROZEN_CONTRACT_PAYOFF_MANIFEST",
+    "chf_metric_fx_policy": "REQUIRES_FROZEN_ORIGIN_AVAILABLE_FX_FIXING_AND_CONVERSION_MANIFEST",
+    "negative_price_policy": "RETAIN_IN_PRICE_AND_CASHFLOW",
+    "pfc_flavors_default_capture_premium_role": "FORBIDDEN_AS_VALIDATION_OR_MDE_EVIDENCE",
+    "ompex_profile_role": "BENCHMARK_ONLY_NEVER_PROFILE_TRUTH"
+  },
+  "dispatch_policy": {
+    "profile_id": "HYDRO_DISPATCH",
+    "policy_freeze_boundary": "BEFORE_MODEL_DEVELOPMENT_SELECTION_TUNING_OR_SCORING",
+    "non_anticipative_information_set_bound_to_origin": true,
+    "physical_constraints_manifest_required": true,
+    "water_value_and_terminal_condition_manifest_required": true,
+    "transaction_imbalance_and_operating_cost_manifest_required": true,
+    "primary_economic_metric": "REALIZED_NET_VALUE_OR_REGRET_CHF",
+    "price_capture_premium_shortcut": "FORBIDDEN_AS_DECISION_VALUE_EVIDENCE",
+    "same_optimizer_constraints_information_and_decision_rule_class": true,
+    "model_specific_actions": "ALLOWED_ONLY_WHEN_NONANTICIPATIVE_AND_OPTIMIZED_FROM_EACH_ORIGIN_CURVE",
+    "realized_value_recourse": "ONLY_ACTIONS_ALLOWED_BY_THE_FROZEN_POLICY",
+    "regret_benchmark": "FEASIBLE_CLAIRVOYANT_REALIZED_NET_VALUE_MINUS_MODEL_POLICY_REALIZED_NET_VALUE",
+    "regret_benchmark_same_initial_terminal_state_and_constraints": true
+  },
+  "execution_controls": {
+    "schema_v1_authorizes_execution": false,
+    "production_authorization": false,
+    "promotion_gate": false,
+    "future_holdout_consumption": false,
+    "external_admission_required": true,
+    "exact_origin_target_mask_inventory_required": true,
+    "output_append_only": true
+  },
+  "evidence_bindings": {
+    "eex_quote_vintage_manifest_sha256": null,
+    "monthly_solver_configuration_manifest_sha256": null,
+    "candidate_baseline_identity_manifest_sha256": null,
+    "direct_ch_hourly_truth_manifest_sha256": null,
+    "direct_ch_quarter_hour_truth_manifest_sha256": null,
+    "statistical_design_manifest_sha256": null,
+    "calendar_and_strata_definition_manifest_sha256": null,
+    "probabilistic_scenario_design_manifest_sha256": null,
+    "fmv_profile_population_manifest_sha256": null,
+    "hydro_dispatch_policy_manifest_sha256": null,
+    "economic_valuation_and_fx_manifest_sha256": null,
+    "fmv_risk_mde_approval_receipt_sha256": null,
+    "origin_target_mask_inventory_sha256": null,
+    "market_consistency_audit_manifest_sha256": null
+  },
+  "contract_id": "da4090073a4566f662e47fa59e206e1485d683305a1134f2089ebb13a4daa344"
+}

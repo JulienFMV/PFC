@@ -1,0 +1,115 @@
+{
+  "schema_version": "fmv-eex-ch-short-tenor-registered-signer-binding-contract-v1",
+  "status": "PASS_LOCAL_REGISTERED_SIGNER_AND_ASSERTED_EVENT_TIME_BINDING_ONLY_NO_EXTERNAL_TIME",
+  "purpose": "value-free fail-closed replay binding exact D228 receipt signers to exact D229 registered lifecycle keys at signed-payload asserted event times without treating those assertions as signature timestamps or external authority",
+  "selected_boundaries": {
+    "signed_replay_contract_schema": "fmv-eex-ch-short-tenor-signed-replay-contract-v1",
+    "signed_replay_contract_content_id": "09dfd36125132a1a1c8089f603a381414853c393d23dda633354938843382606",
+    "signed_replay_contract_sha256": "f9f447f31458a88aaaf4ce5863f9f23dbd6a77d1683b7759885783457780a957",
+    "signed_replay_contract_decision": "D-20260805-228",
+    "trust_registry_contract_schema": "fmv-eex-ch-short-tenor-trust-registry-contract-v1",
+    "trust_registry_contract_content_id": "3ecf96f83be71c5beb24160793d5fcbce2d771edbda74e190bda3d5b851b54fa",
+    "trust_registry_contract_sha256": "e7fbf4f099bcc355073d0f5b591d988100df4168c22b172ce8fc08e4c4a0ed9c",
+    "trust_registry_contract_decision": "D-20260805-229"
+  },
+  "binding_profile": {
+    "exact_d228_signed_replay_reexecuted": true,
+    "exact_d229_threshold_registry_reexecuted_for_both_trusted_time_observations": true,
+    "d228_role_public_key_paths_must_be_identical_to_d229_registered_key_paths": true,
+    "d228_and_d229_caller_held_public_key_sha256s_must_match": true,
+    "training_receipt_signer_role": "training_execution",
+    "selection_receipt_signer_role": "selection_governance",
+    "time_observation_signer_role": "trusted_time",
+    "training_execution_asserted_event_time_source": "training_time_observation.observed_at_utc",
+    "selection_governance_asserted_event_time_source": "selection_time_observation.observed_at_utc",
+    "trusted_time_key_must_resolve_at_training_and_selection_observed_at_utc": true,
+    "caller_cannot_override_derived_signer_event_times": true,
+    "registry_head_issued_at_or_after_all_asserted_signer_event_times": true,
+    "maximum_registry_publication_lag_days": 31,
+    "registry_head_valid_at_caller_reference_time": true,
+    "all_relevant_resolved_registry_key_ids_must_equal_verified_d228_signer_key_ids": true,
+    "upstream_contract_ids_integrity_flags_false_authorities_and_zero_access_counters_rechecked": true,
+    "registry_owner_identifiers_remain_unverified_assertions": true
+  },
+  "temporal_limitations": {
+    "dsse_envelopes_contain_no_independently_timestamped_signature_generation_time": true,
+    "observed_at_utc_describes_the_execution_attestation_observation_not_receipt_signature_creation": true,
+    "time_observation_observed_at_utc_is_a_signed_payload_assertion_not_an_external_timestamp_token": true,
+    "local_asserted_event_time_resolution_is_not_independently_trusted_time": true,
+    "actual_signature_generation_time_lifecycle_acceptance_proven": false,
+    "backdating_resistance_proven": false,
+    "rfc3161_timestamp_authority_verified": false,
+    "transparency_log_inclusion_and_checkpoint_verified": false
+  },
+  "source_role_limitations": {
+    "eex_and_entsoe_source_acquisition_envelopes_opened": false,
+    "eex_and_entsoe_source_trusted_time_envelopes_opened": false,
+    "receipt_source_key_sets_mapped_to_named_registry_roles": false,
+    "source_signer_identity_or_event_time_bound": false,
+    "same_snapshot_point_in_time_availability_proven": false
+  },
+  "path_replay_contract": {
+    "all_inputs_absolute_stable_single_link_regular_files": true,
+    "caller_held_sha256_required_for_every_input": true,
+    "shared_d228_d229_role_key_paths_are_exactly_identical": true,
+    "shared_role_key_bytes_are_not_copied_to_an_alternate_identity": true,
+    "unknown_input_mapping_fields_fail_closed": true,
+    "verified_subreplay_bytes_are_rechecked_through_exact_hashes": true,
+    "no_network_h_drive_or_databricks_access": true,
+    "price_values_not_opened": true
+  },
+  "standards_basis": [
+    "https://in-toto.io/Statement/v1",
+    "https://slsa.dev/provenance/v1",
+    "https://theupdateframework.github.io/specification/v1.0.33/",
+    "https://www.rfc-editor.org/rfc/rfc3161",
+    "https://www.rfc-editor.org/rfc/rfc8032"
+  ],
+  "standards_scope": {
+    "in_toto_and_slsa_subject_provenance_bindings_replayed_from_d228": true,
+    "tuf_threshold_version_expiry_and_rollback_concepts_replayed_from_d229": true,
+    "rfc8032_ed25519_signature_profile_replayed": true,
+    "rfc3161_external_timestamp_requirement_reserved_not_claimed": true,
+    "tuf_metadata_compliance_claimed": false,
+    "rfc3161_compliance_claimed": false
+  },
+  "verified_by_local_replay": [
+    "exact D228 DSSE receipt and time-observation signature integrity",
+    "exact D229 threshold registry chain lifecycle and rollback integrity",
+    "same caller-anchored public-key files and hashes used by D228 and D229 for three signer roles",
+    "training execution selection governance and trusted-time signer key IDs resolve in the registry at signed-payload asserted event times",
+    "post-event registry head publication and bounded local publication lag"
+  ],
+  "not_verified_by_local_replay": [
+    "actual receipt or time-observation signature generation times",
+    "external organisational identity authority or registry-root bootstrap",
+    "independence accuracy non-backdating or authenticity of asserted times",
+    "named EEX and ENTSO-E source signer bindings or same-snapshot point-in-time availability",
+    "training selection model-input promotion production authority or superiority over OMPEX"
+  ],
+  "authorities": {
+    "local_d228_signature_integrity_verified_after_successful_replay": true,
+    "local_d229_registry_integrity_verified_after_successful_replay": true,
+    "local_registered_signer_identity_binding_verified_after_successful_replay": true,
+    "local_asserted_event_time_resolution_verified_after_successful_replay": true,
+    "actual_signature_generation_time_verified": false,
+    "external_owner_identity_verified": false,
+    "external_registry_authority_verified": false,
+    "independently_trusted_time_verified": false,
+    "point_in_time_availability_proven": false,
+    "training_authorized": false,
+    "selection_authorized": false,
+    "model_input_authorized": false,
+    "candidate_assembly_authorized": false,
+    "promotion_authorized": false,
+    "production_authorized": false
+  },
+  "required_before_authoritative_use": [
+    "externally governed registry owners quorum roots rotation publication and revocation notification",
+    "independent RFC3161-equivalent timestamps or governed transparency evidence for every exact DSSE envelope signature event",
+    "named signed EEX and ENTSO-E acquisition and source-time receipts mapped to registry roles",
+    "same-snapshot replay of every bound EEX and ENTSO-E point-in-time artifact",
+    "append-only or WORM registry receipt timestamp and incident retention",
+    "new independently frozen future holdout distinct from sealed T057"
+  ]
+}

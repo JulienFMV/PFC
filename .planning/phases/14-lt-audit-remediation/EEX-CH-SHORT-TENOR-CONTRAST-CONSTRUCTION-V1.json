@@ -1,0 +1,102 @@
+{
+  "schema_version": "fmv-eex-ch-short-tenor-contrast-construction-v1",
+  "purpose": "deterministic same-vintage construction of dormant additive CH short-tenor contrast observations",
+  "selected_inputs": {
+    "normalization_content_id": "2837dc4849dc4b573c441059574973e0b8cc0fbb5023203509cb2929dd636a3f",
+    "all_products_history_sha256": "896f0c9f839b7fc9364398ed0848b0f1886c2ee54d277bf327ae1a414833c06e",
+    "short_tenor_audit_content_id": "b09eb3250df5a3c0616eb169c512319c514ddf540251b405023d9351bd5d8bde",
+    "point_in_time_availability_proven": false
+  },
+  "input_contract": {
+    "market": "CH",
+    "commodity": "POWER",
+    "unit": "EUR/MWH",
+    "price_field": "SettlementPriceEurMWh_normalized_as_price",
+    "product_types": ["Day", "Week", "Weekend"],
+    "load_types": ["BASE", "PEAK"],
+    "quotation_vintage_key": "quotation_date",
+    "same_vintage_required": true,
+    "quotation_before_delivery_required": true,
+    "fill_forward_authorized": false,
+    "synthetic_quote_authorized": false,
+    "partial_strip_authorized": false
+  },
+  "families": {
+    "DAY_WITHIN_WEEK": {
+      "base_children": "seven exact DAY BASE children weighted by local delivery hours",
+      "peak_children": "five exact weekday DAY PEAK children weighted by twelve hours each",
+      "formula": "child_price_minus_complete_child_strip_hour_weighted_mean",
+      "parent_quote_role": "same-vintage consistency check only",
+      "maximum_abs_parent_child_residual_eur_mwh": 0.01
+    },
+    "DAY_WITHIN_WEEKEND": {
+      "base_children": "two exact weekend DAY BASE children weighted by local delivery hours",
+      "peak_children": "two exact weekend DAY PEAK children weighted by twelve hours each",
+      "formula": "child_price_minus_complete_child_strip_hour_weighted_mean",
+      "parent_quote_role": "same-vintage consistency check only",
+      "maximum_abs_parent_child_residual_eur_mwh": 0.01
+    },
+    "WEEKEND_VS_WEEKDAY_BASE": {
+      "required_quotes": "same-vintage WEEK BASE and its exact nested WEEKEND BASE",
+      "formula": "imply_weekday_from_week_energy_minus_weekend_energy_then_center_both_segments_on_week_base",
+      "complete_non_overlapping_partition_required": true
+    },
+    "BASE_PEAK_IMPLIED_OFFPEAK": {
+      "required_quotes": "same-vintage BASE and PEAK for one exact product",
+      "formula": "imply_offpeak_from_base_energy_minus_peak_energy_then_center_peak_and_offpeak_on_base",
+      "negative_implied_offpeak_allowed": true,
+      "exact_contract_hours_required": true
+    }
+  },
+  "output_contract": {
+    "grain": "quotation_date_x_contrast_id_x_local_delivery_day_x_short_block",
+    "short_blocks": ["SHORT_PEAK", "SHORT_OFFPEAK"],
+    "priced_segments": ["PEAK", "OFFPEAK", "BASE"],
+    "price_space": "additive_eur_per_mwh",
+    "hour_weighted_zero_parent_mean_required": true,
+    "maximum_abs_zero_parent_mean_residual_eur_mwh": 1e-10,
+    "families_remain_separate": true,
+    "automatic_component_summation_authorized": false,
+    "hourly_or_quarter_hour_inference_inside_block_authorized": false
+  },
+  "single_component_materialization": {
+    "supported_target_cadence": ["1h", "15min"],
+    "complete_contiguous_europe_zurich_months_required": true,
+    "quoted_component_support_must_be_fully_contained": true,
+    "outside_support_value": "additive_identity_zero_not_quote_fill",
+    "delivery_hours_must_match_target_index_exactly": true,
+    "automatic_component_combination_authorized": false,
+    "downstream_boundary": "EEX-CH-SHORT-TENOR-SHAPE-CONTRACT-V1_nullspace_projection"
+  },
+  "dormant_component_embedding": {
+    "operation": "embed_exactly_one_contrast_id_on_contiguous_complete_local_months",
+    "outside_quoted_component_support": "zero_additive_identity",
+    "zero_outside_support_is_quote_fill_forward": false,
+    "delivery_hours_must_match_target_index": true,
+    "native_block_constancy_required": true,
+    "next_operation": "D217_solver_neutral_nullspace_projection",
+    "component_blending_authorized": false,
+    "pipeline_wiring_authorized": false
+  },
+  "forbidden_inputs_and_operations": [
+    "OMPEX or another HFC benchmark as input, target, loss, amplitude or selection gate",
+    "AFRY restricted numeric values",
+    "mixed quotation vintages",
+    "partial, duplicated or overlapping child strips",
+    "fill-forward or synthetic quote creation",
+    "multiplicative price ratios",
+    "using parent-child quote residual as a shape level",
+    "combining contrast families without a future preregistered selection policy",
+    "model fitting, candidate assembly or production activation"
+  ],
+  "authorities": {
+    "local_deterministic_construction": true,
+    "descriptive_feature_design": true,
+    "point_in_time_availability_proven": false,
+    "rolling_origin_selection_authorized": false,
+    "amplitude_fitting_authorized": false,
+    "model_input_authorized": false,
+    "candidate_assembly_authorized": false,
+    "production_authorized": false
+  }
+}

@@ -1,0 +1,62 @@
+table Duck_Season_Hour_Long
+	lineageTag: 044c378b-f092-48d1-84f6-45fdaa9204c3
+
+	measure 'Duck Season Long Avg Price' = AVERAGE ( Duck_Season_Hour_Long[price_eur_mwh] )
+		formatString: 0.00
+		lineageTag: d6ca8563-ab3a-494d-a155-bf53259f0063
+
+	column year
+		dataType: int64
+		formatString: 0
+		lineageTag: 7cee85a2-3844-40e6-82d9-a6f464b9f615
+		summarizeBy: none
+		sourceColumn: year
+
+	column season
+		dataType: string
+		lineageTag: 59fe32ed-60c8-4fa9-8c76-b12334163869
+		summarizeBy: none
+		sourceColumn: season
+
+	column hour
+		dataType: int64
+		formatString: 0
+		lineageTag: 96c55317-791d-4ecf-b2c8-ea0aa38e7bfc
+		summarizeBy: none
+		sourceColumn: hour
+
+	column hour_code
+		dataType: string
+		lineageTag: 3633031d-b56f-48b4-b0f3-eaedd25f9370
+		summarizeBy: none
+		sourceColumn: hour_code
+
+	column series
+		dataType: string
+		lineageTag: b732ee3e-0373-4a57-8efc-882c152db0e3
+		summarizeBy: none
+		sourceColumn: series
+
+	column price_eur_mwh
+		dataType: double
+		formatString: 0.00
+		lineageTag: 8dd17442-7861-4838-ba4b-2130c9ab7def
+		summarizeBy: none
+		sourceColumn: price_eur_mwh
+
+	column series_label
+		dataType: string
+		lineageTag: 05ad59cd-4a5b-46ce-a818-7cf3b8115808
+		summarizeBy: none
+		sourceColumn: series_label
+
+	partition Duck_Season_Hour_Long = m
+		mode: import
+		source =
+				let
+				    Source = Csv.Document(File.Contents("\\fmvfs2\Data\Energy\GeCom\CONTROLLING RISK\Analyses diverses\Python - JB\PFC_LT\powerbi\data\duck_season_hour_long.csv"), [Delimiter=",", Columns=7, Encoding=65001, QuoteStyle=QuoteStyle.Csv]),
+				    Promoted = Table.PromoteHeaders(Source, [PromoteAllScalars=true]),
+				    Typed = Table.TransformColumnTypes(Promoted, {{"year", Int64.Type}, {"season", type text}, {"hour", Int64.Type}, {"hour_code", type text}, {"series", type text}, {"price_eur_mwh", type number}, {"series_label", type text}})
+				in
+				    Typed
+

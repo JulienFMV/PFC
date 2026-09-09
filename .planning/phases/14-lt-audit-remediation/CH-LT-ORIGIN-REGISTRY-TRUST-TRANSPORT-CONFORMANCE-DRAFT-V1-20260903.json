@@ -1,0 +1,230 @@
+{
+  "schema_version": "ch_lt_origin_registry_trust_transport_conformance.v1",
+  "contract_name": "ch_lt_origin_registry_trust_transport_conformance_20260903_v1",
+  "contract_id": "84839a92bc62426c964da9eaefcf719be80808c79089b7ac2142af14d033206b",
+  "lifecycle": {
+    "state": "LOCAL_HASH_FROZEN_SYNTHETIC_CONFORMANCE_ONLY_NOT_EXTERNALLY_ADMITTED",
+    "externally_frozen": false,
+    "fmv_approved": false,
+    "trust_root_admitted": false,
+    "registry_service_implemented": false,
+    "external_cas_worm_verified": false,
+    "countable_origin_authority": false
+  },
+  "bindings": {
+    "origin_registry_protocol_sha256": "6ea896ccdb35414b52237f2bcf1065755c3c10444b308ce905b60f472e68c697",
+    "origin_registry_protocol_id": "0fcf13246c50f6bc79d203437f7c5294495dc233f93873abbe2aeaf3dc282204",
+    "receipt_head_wire_contract_sha256": "1f9d1f6495f716b7afb3497195626b24fe427b7dedf3f6f001c00051d6688047",
+    "receipt_head_wire_contract_id": "290b108770dc799eeb83ca9f0a046aa8436878858224b68f757a5d9bfacbcc33",
+    "registry_domain_sha256": "3a991bd25fdc5c86a875cc755847446791f8946aa2fc4a396d4bb1b2319a26ce"
+  },
+  "canonicalization": {
+    "encoding": "ASCII",
+    "json": "RFC8785_EQUIVALENT_SORTED_KEYS_COMPACT_SEPARATORS_NO_FLOATS_NO_DUPLICATE_KEYS",
+    "payload_must_equal_canonical_reencoding": true,
+    "maximum_document_bytes": 4194304,
+    "sha256_text": "LOWERCASE_HEX_64",
+    "utc_text": "YYYY-MM-DDTHH:MM:SSZ",
+    "signature_value": "STANDARD_BASE64_CANONICAL_ED25519_64_BYTES"
+  },
+  "trust_bundle": {
+    "schema_version": "ch_lt_origin_registry_trust_bundle.v1",
+    "required_fields": [
+      "schema_version",
+      "contract_sha256",
+      "receipt_head_wire_contract_sha256",
+      "registry_domain_sha256",
+      "bundle_id",
+      "revision",
+      "previous_bundle_id",
+      "issued_at_utc",
+      "registry_keys",
+      "trust_root_signature"
+    ],
+    "registry_key_required_fields": [
+      "key_id",
+      "algorithm",
+      "public_key_base64",
+      "valid_from_utc",
+      "valid_until_utc",
+      "lifecycle_status"
+    ],
+    "lifecycle_status_values": [
+      "ACTIVE_FOR_NEW_SIGNATURES",
+      "HISTORICAL_VERIFY_ONLY",
+      "REVOKED_DO_NOT_TRUST",
+      "COMPROMISED_DO_NOT_TRUST"
+    ],
+    "invariants": [
+      "REGISTRY_KEYS_NONEMPTY_ORDERED_BY_KEY_ID_AND_KEY_IDS_UNIQUE",
+      "KEY_ID_EQUALS_SHA256_RAW_32_BYTE_ED25519_PUBLIC_KEY",
+      "VALID_FROM_UTC_LT_VALID_UNTIL_UTC",
+      "EXACTLY_ONE_ACTIVE_KEY_AND_ISSUED_AT_UTC_WITHIN_ITS_HALF_OPEN_VALIDITY_WINDOW",
+      "TRUST_ROOT_KEY_ID_IS_DISJOINT_FROM_EVERY_REGISTRY_KEY_ID",
+      "REVOKED_OR_COMPROMISED_KEYS_NEVER_VERIFY_RECEIPTS",
+      "HISTORICAL_KEYS_VERIFY_ONLY_SIGNATURES_CREATED_WITHIN_THEIR_FROZEN_VALIDITY_WINDOW"
+    ],
+    "identity_core": "ALL_REQUIRED_FIELDS_EXCEPT_BUNDLE_ID_AND_TRUST_ROOT_SIGNATURE",
+    "bundle_id_derivation": {
+      "algorithm": "SHA256",
+      "domain_ascii": "FMV_CH_LT_ORIGIN_REGISTRY_TRUST_BUNDLE_V1",
+      "preimage": "DOMAIN_ASCII || 0x00 || CANONICAL_JSON_IDENTITY_CORE"
+    },
+    "signature_document": "ALL_REQUIRED_FIELDS_EXCEPT_TRUST_ROOT_SIGNATURE_INCLUDING_BUNDLE_ID",
+    "signature_payload": {
+      "domain_ascii": "FMV_CH_LT_ORIGIN_REGISTRY_TRUST_BUNDLE_SIGNATURE_V1",
+      "preimage": "DOMAIN_ASCII || 0x00 || CANONICAL_JSON_SIGNATURE_DOCUMENT"
+    },
+    "signature_block_required_fields": [
+      "algorithm",
+      "key_id",
+      "value_base64"
+    ],
+    "signature_algorithm": "ED25519",
+    "trust_root_key_id_derivation": "SHA256_RAW_32_BYTE_ED25519_PUBLIC_KEY"
+  },
+  "trust_bundle_chain": {
+    "first_revision": 1,
+    "genesis_previous_bundle_id": null,
+    "subsequent_revision_step": 1,
+    "previous_bundle_id_binding": "EXACT_PRECEDING_BUNDLE_ID",
+    "issued_at_order": "STRICTLY_INCREASING",
+    "key_inventory": "APPEND_ONLY_RETAIN_ALL_PRIOR_KEY_IDS_AND_PUBLIC_BYTES_AND_VALIDITY_WINDOWS",
+    "allowed_status_transitions": {
+      "ACTIVE_FOR_NEW_SIGNATURES": [
+        "ACTIVE_FOR_NEW_SIGNATURES",
+        "HISTORICAL_VERIFY_ONLY",
+        "REVOKED_DO_NOT_TRUST",
+        "COMPROMISED_DO_NOT_TRUST"
+      ],
+      "HISTORICAL_VERIFY_ONLY": [
+        "HISTORICAL_VERIFY_ONLY",
+        "REVOKED_DO_NOT_TRUST",
+        "COMPROMISED_DO_NOT_TRUST"
+      ],
+      "REVOKED_DO_NOT_TRUST": [
+        "REVOKED_DO_NOT_TRUST"
+      ],
+      "COMPROMISED_DO_NOT_TRUST": [
+        "COMPROMISED_DO_NOT_TRUST"
+      ]
+    },
+    "trust_root_rotation": "OUT_OF_SCOPE_REQUIRES_NEW_EXTERNALLY_APPROVED_CONTRACT"
+  },
+  "transport_neutral_operations": {
+    "get_head": {
+      "result": "EMPTY_OR_EXACT_LATEST_COMMITTED_RECEIPT_BYTES",
+      "freshness": "SEPARATE_NONCE_BOUND_SIGNED_HEAD_OBSERVATION_REQUIRED_FOR_EXTERNAL_USE",
+      "local_cached_head_is_authority": false
+    },
+    "compare_and_append": {
+      "input": "EXACT_SIGNED_REQUEST_BYTES_AND_EXACT_MATCHING_SIGNED_RECEIPT_BYTES_FOR_SYNTHETIC_CONFORMANCE",
+      "atomicity": "ONE_LINEARIZATION_POINT_ACROSS_CAS_UNIQUENESS_AND_APPEND",
+      "required_order": [
+        "EXACT_OPERATION_RETRY_CHECK",
+        "REQUEST_ID_AND_DOMAIN_UNIQUENESS_CHECKS",
+        "CURRENT_HEAD_SEQUENCE_AND_PREDECESSOR_COMPARE",
+        "APPEND_EXACT_REQUEST_AND_RECEIPT_BYTES_OR_RETAIN_SANITIZED_REJECTION"
+      ],
+      "unique_fields": [
+        "registration_operation_id",
+        "request_id",
+        "cadence_slot_id",
+        "origin_id",
+        "origin_as_of_utc"
+      ],
+      "exact_committed_retry": "RETURN_IDENTICAL_RECEIPT_BYTES_WITHOUT_SECOND_APPEND",
+      "divergent_retry": "FAIL_CLOSED_WITHOUT_MUTATING_PRIOR_OPERATION_RESULT",
+      "duplicate_slot_or_origin": "FAIL_CLOSED_AND_RETAIN_NONCOUNTABLE_REJECTION",
+      "stale_head": "FAIL_CLOSED_AND_RETAIN_NONCOUNTABLE_REJECTION"
+    },
+    "lookup_operation": {
+      "key": "CANONICAL_REGISTRATION_OPERATION_UUID",
+      "expected_request_binding": "EXACT_BYTES_FOR_COMMITTED_OR_SHA256_FOR_SANITIZED_REJECTION",
+      "result": "IMMUTABLE_COMMITTED_RESULT_OR_IMMUTABLE_SANITIZED_REJECTION",
+      "unknown_operation": "FAIL_CLOSED"
+    }
+  },
+  "sanitized_rejection": {
+    "schema_version": "ch_lt_origin_registry_synthetic_rejection.v1",
+    "retained_fields": [
+      "rejection_id",
+      "registration_operation_id",
+      "request_id",
+      "request_sha256",
+      "error_code",
+      "expected_sequence",
+      "expected_previous_receipt_id",
+      "observed_head_sequence",
+      "observed_head_receipt_id"
+    ],
+    "forbidden_retention": [
+      "REQUEST_PAYLOAD",
+      "RECEIPT_PAYLOAD",
+      "EXCEPTION_TEXT",
+      "CREDENTIAL_OR_SECRET_BYTES"
+    ],
+    "rejection_id_derivation": {
+      "algorithm": "SHA256",
+      "domain_ascii": "FMV_CH_LT_ORIGIN_REGISTRY_SYNTHETIC_REJECTION_V1",
+      "preimage": "DOMAIN_ASCII || 0x00 || CANONICAL_JSON_RETAINED_FIELDS_EXCLUDING_REJECTION_ID"
+    },
+    "countable_origin": false
+  },
+  "synthetic_harness": {
+    "purpose": "DETERMINISTIC_IN_MEMORY_STATE_MACHINE_CONFORMANCE_ONLY",
+    "thread_safe_linearization_required": true,
+    "cryptographic_candidate_factory": "REVERIFY_TRUST_BUNDLE_RECEIPT_REQUEST_ENVELOPE_AND_SCHEDULE_BEFORE_STATE_TRANSITION",
+    "private_key_capability": false,
+    "signature_generation": false,
+    "clock_or_nonce_generation": false,
+    "filesystem_or_network_io": false,
+    "external_registry_service": false,
+    "cas_worm_authority": false,
+    "countable_origin_authority": false
+  },
+  "local_result_authority": {
+    "trust_root_cryptographically_verified_can_be_true": true,
+    "registry_key_lifecycle_locally_verified_can_be_true": true,
+    "synthetic_state_transition_can_be_true": true,
+    "trust_root_externally_admitted": false,
+    "external_cas_worm_verified": false,
+    "externally_registered": false,
+    "countable_origin": false,
+    "truth_open_authorized": false,
+    "model_training_authorized": false,
+    "model_selection_authorized": false,
+    "scientific_admission": false,
+    "production_authorization": false,
+    "promotion_gate": false
+  },
+  "missing_external_evidence": [
+    "FMV_EXTERNAL_TRUST_AND_TRANSPORT_CONTRACT_APPROVAL",
+    "TRUST_ROOT_IDENTITY_AND_PUBLIC_KEY_EXTERNAL_ADMISSION",
+    "INDEPENDENT_REGISTRY_SERVICE_IDENTITY_ACLS_AND_KEY_CUSTODY",
+    "REMOTE_LINEARIZABLE_COMPARE_AND_APPEND_WORM_EVIDENCE",
+    "TRUSTED_EXTERNAL_COMMIT_TIME_AUTHORITY",
+    "TRANSPORT_AUTHENTICATION_REPLAY_AND_AVAILABILITY_CONTROLS",
+    "INDEPENDENT_SERVICE_CONFORMANCE_AND_SECURITY_EVIDENCE"
+  ],
+  "prohibited_capabilities": [
+    "PRIVATE_KEY_OWNERSHIP",
+    "SIGNATURE_OR_NONCE_GENERATION",
+    "FILESYSTEM_DATABASE_OR_NETWORK_IO",
+    "CREDENTIAL_LOADING",
+    "EXTERNAL_REGISTRY_WRITE",
+    "TRUST_ROOT_ADMISSION",
+    "ORIGIN_COUNTING",
+    "TRUTH_OPEN",
+    "MODEL_TRAINING_OR_SELECTION",
+    "MONTHLY_SOLVER_LEVEL_CHANGE",
+    "CT_ACCESS",
+    "T057_ACCESS",
+    "PRODUCTION_OR_PROMOTION"
+  ],
+  "execution_authorized": false,
+  "production_authorization": false,
+  "promotion_gate": false,
+  "future_holdout_consumed": false,
+  "t057_consumed": false
+}

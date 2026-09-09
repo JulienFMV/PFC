@@ -1,0 +1,128 @@
+{
+  "schema_version": "fmv_entsoe_data_engineer_delivery_envelope_contract.v1",
+  "decision": "D-20260806-285",
+  "status": "VALUE_BLIND_DELIVERY_ENVELOPE_INTEGRITY_NO_DATA_OR_MODEL_AUTHORITY",
+  "purpose": "Bind the complete data-engineer delivery inventory and exact local bytes before any schema, row or value admission.",
+  "downstream_boundaries": {
+    "d244_parquet_streaming_contract_content_id": "9a79779d7ebe01b0e4dbfc65c40eaa23ead4f1f984685bc5055cc16f7a23969b",
+    "d245_incremental_quality_contract_content_id": "1baf72727872e0013fd6a70c1e04c2ef0eeabd0faf66659a7f17fb10956c4184",
+    "d270_cadence_package_contract_content_id": "db1ffcd92bb3ae720b44da02a6e6f151a630b9e3887bd84902e91cddc3cb717f",
+    "d284_derived_parquet_contract_content_id": "1ebcd75defc4e7641927117a56f19c718fa4278ef9fae2dfc16c735ee8b0635c"
+  },
+  "manifest": {
+    "schema_version": "fmv_entsoe_data_engineer_delivery_manifest.v1",
+    "evidence_class": "UNTRUSTED_DATA_ENGINEER_DELIVERY_CANDIDATE",
+    "snapshot_id_derivation": "CANONICAL_SHA256_OF_MANIFEST_WITHOUT_SNAPSHOT_ID",
+    "source_catalog": "dev",
+    "source_schema": "gold",
+    "source_tables": [
+      "dimentsoeseries",
+      "factentsoetimeserieslatest",
+      "factentsoetimeseriesvintages"
+    ],
+    "package_directory_name_equals_snapshot_id": true,
+    "package_must_be_under_repo_build": true,
+    "fixed_flat_inventory": true,
+    "manifest_must_be_stable_single_link": true,
+    "artifact_files_must_be_stable_single_link": true,
+    "artifact_hashing": "BOUNDED_STREAMING_SHA256_BEFORE_AND_AFTER",
+    "artifact_content_is_decoded": false,
+    "candidate_manifest_authorities": {
+      "local_delivery_envelope_integrity": false,
+      "source_authenticity": false,
+      "schema_correctness": false,
+      "data_quality": false,
+      "point_in_time": false,
+      "predictive_value": false,
+      "model_input": false,
+      "model_selection": false,
+      "candidate": false,
+      "promotion": false,
+      "production": false
+    }
+  },
+  "required_artifacts_in_order": [
+    {"role": "series_dimension", "relative_path": "series_dimension.parquet", "media_type": "application/vnd.apache.parquet", "maximum_size_bytes": 8589934592},
+    {"role": "series_resolution_history", "relative_path": "series_resolution_history.parquet", "media_type": "application/vnd.apache.parquet", "maximum_size_bytes": 8589934592},
+    {"role": "zone_history", "relative_path": "zone_history.parquet", "media_type": "application/vnd.apache.parquet", "maximum_size_bytes": 1073741824},
+    {"role": "latest_values", "relative_path": "latest_values.parquet", "media_type": "application/vnd.apache.parquet", "maximum_size_bytes": 274877906944},
+    {"role": "vintage_values", "relative_path": "vintage_values.parquet", "media_type": "application/vnd.apache.parquet", "maximum_size_bytes": 2199023255552},
+    {"role": "quality_summary", "relative_path": "quality_summary.json", "media_type": "application/json", "maximum_size_bytes": 67108864},
+    {"role": "series_quality", "relative_path": "series_quality.parquet", "media_type": "application/vnd.apache.parquet", "maximum_size_bytes": 17179869184},
+    {"role": "family_inventory", "relative_path": "family_inventory.json", "media_type": "application/json", "maximum_size_bytes": 67108864},
+    {"role": "gap_report", "relative_path": "gap_report.parquet", "media_type": "application/vnd.apache.parquet", "maximum_size_bytes": 68719476736},
+    {"role": "source_reconciliation", "relative_path": "source_reconciliation.parquet", "media_type": "application/vnd.apache.parquet", "maximum_size_bytes": 8589934592}
+  ],
+  "conditional_artifact": {
+    "role": "excluded_series",
+    "relative_path": "excluded_series.parquet",
+    "media_type": "application/vnd.apache.parquet",
+    "maximum_size_bytes": 8589934592,
+    "required_exactly_when_excluded_series_count_is_positive": true
+  },
+  "artifact_declaration": {
+    "fields": [
+      "role",
+      "relative_path",
+      "media_type",
+      "sha256",
+      "size_bytes",
+      "logical_record_count",
+      "schema_content_id",
+      "timestamp_bounds"
+    ],
+    "timestamp_bound_fields": ["minimum_utc", "maximum_utc"],
+    "required_timestamp_fields_by_role": {
+      "series_dimension": ["meta_load_timestamp_utc"],
+      "series_resolution_history": ["valid_from_utc", "valid_to_utc", "confirmation_timestamp_utc"],
+      "zone_history": ["valid_from_utc", "valid_to_utc"],
+      "latest_values": ["target_start_utc", "target_end_utc", "publication_timestamp_utc", "meta_load_timestamp_utc", "first_observed_at_utc"],
+      "vintage_values": ["target_start_utc", "target_end_utc", "publication_timestamp_utc", "pull_timestamp_utc", "meta_load_timestamp_utc", "first_observed_at_utc", "available_at_utc", "forecast_issue_utc"],
+      "quality_summary": [],
+      "series_quality": ["first_target_utc", "last_target_utc", "minimum_publication_timestamp_utc", "maximum_publication_timestamp_utc", "minimum_pull_timestamp_utc", "maximum_pull_timestamp_utc", "minimum_meta_load_timestamp_utc", "maximum_meta_load_timestamp_utc"],
+      "family_inventory": [],
+      "gap_report": ["start_utc", "end_utc", "reattempted_at_utc"],
+      "source_reconciliation": ["source_read_started_at_utc", "source_read_completed_at_utc"],
+      "excluded_series": []
+    },
+    "timestamp_bound_null_pair_means_no_observed_non_null_timestamp": true,
+    "one_sided_null_timestamp_bound_is_admissible": false
+  },
+  "limits": {
+    "maximum_manifest_bytes": 2097152,
+    "maximum_total_artifact_bytes": 3298534883328,
+    "streaming_hash_chunk_bytes": 8388608,
+    "maximum_artifact_count": 11,
+    "maximum_timestamp_fields_per_artifact": 16
+  },
+  "exclusion_policy": {
+    "zero_excluded_series_requires_absent_excluded_series_artifact": true,
+    "positive_excluded_series_requires_present_excluded_series_artifact": true,
+    "excluded_series_logical_record_count_must_equal_declared_count": true,
+    "silent_exclusion_is_admissible": false
+  },
+  "execution": {
+    "databricks_connection_count": 0,
+    "databricks_statement_count": 0,
+    "warehouse_start_count": 0,
+    "databricks_write_count": 0,
+    "network_call_count": 0,
+    "h_drive_access_count": 0,
+    "decoded_parquet_row_count": 0,
+    "decoded_json_artifact_count": 0,
+    "opened_real_value_row_count": 0
+  },
+  "authorities": {
+    "local_delivery_envelope_integrity": true,
+    "source_authenticity": false,
+    "schema_correctness": false,
+    "data_quality": false,
+    "point_in_time": false,
+    "predictive_value": false,
+    "model_input": false,
+    "model_selection": false,
+    "candidate": false,
+    "promotion": false,
+    "production": false
+  }
+}

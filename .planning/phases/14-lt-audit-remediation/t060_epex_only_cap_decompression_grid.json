@@ -1,0 +1,22 @@
+{
+  "evening_recovery_intensity": [
+    0.05
+  ],
+  "low_tail_intensity": [
+    0.2,
+    0.25
+  ],
+  "night_intensity": [
+    0.5,
+    0.55
+  ],
+  "peak_subshape_intensity": [
+    0.89
+  ],
+  "ramp_intensity": [
+    0.0
+  ],
+  "weekend_intensity": [
+    0.75
+  ]
+}

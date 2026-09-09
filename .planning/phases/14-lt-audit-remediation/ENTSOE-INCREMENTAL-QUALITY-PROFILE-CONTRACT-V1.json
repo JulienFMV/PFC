@@ -1,0 +1,126 @@
+{
+  "schema_version": "fmv_entsoe_incremental_quality_profile_contract.v1",
+  "status": "STATIC_OFFLINE_SYNTHETIC_INCREMENTAL_QUALITY_NO_REAL_ADMISSION",
+  "decision": "D-20260806-245",
+  "purpose": "profile exact normalized ENTSO-E quality from bounded Arrow batches and a bounded repo-local SQLite spill index without pandas, whole-table memory, Databricks execution or real-data authority",
+  "input_bindings": {
+    "d239_quality_contract_content_id": "7ff2d5b7808f636f2c181fa92b80cc4ae86dccdcaad84f6da8dc3d13499736ab",
+    "d239_quality_proof_content_id": "5e5aad7d04529e0efbb9926a1098a485ab3f797941ba2681c0a1609487f4df9b",
+    "d239_quality_proof_manifest_sha256": "2d733c356b34ad0280802ed9d77b47f4d445e4d82e2ac6c45595f26f81787789",
+    "d243_inventory_contract_content_id": "1e183fc51f2673cfc3fed0035dc4a5e3d84664f51ff8447a355264e5e819ddc6",
+    "d243_inventory_contract_sha256": "ba8f6945b4a43b54762fa475228edabea4018bfea5871f2581dc53536c0743a1",
+    "d243_inventory_query_sha256": "16a989d2b1528f79b3ecb7a2d9f8f221a6be67cc1c4d3c622516c8bd0dde95e7",
+    "d244_streaming_contract_content_id": "9a79779d7ebe01b0e4dbfc65c40eaa23ead4f1f984685bc5055cc16f7a23969b",
+    "d244_streaming_contract_sha256": "f5c7e34d383ec476fb8893348b91ac3aab011d42d36d7321b172d081461e8cca",
+    "d244_streaming_proof_content_id": "42c1065bf66117a2be2c792424f08d08511056d0df5f3b4b706ac57af1fcf564",
+    "d244_streaming_proof_manifest_sha256": "53e4fe281d405fea64e6f6084d0ae129f608c4f6ff88e944d60be3bf904177d4"
+  },
+  "quality_context": {
+    "schema_version": "fmv_entsoe_incremental_quality_context.v1",
+    "evidence_class": "SYNTHETIC_TEST_ONLY",
+    "exact_fields": [
+      "schema_version",
+      "evidence_class",
+      "snapshot_id",
+      "snapshot_reference_time_utc",
+      "sign_semantics_by_series",
+      "backfill_status_by_series",
+      "authorities"
+    ],
+    "content_addressed_root": "build/governed-source-intake/synthetic-quality-contexts/<context_content_id>",
+    "file_name": "context.json",
+    "exact_series_mapping_required": true,
+    "caller_boolean_admission_authorized": false
+  },
+  "streaming_policy": {
+    "compose_exact_d244_package_verifier_first": true,
+    "second_quality_pass_hash_before_and_after_required": true,
+    "record_batch_rows": 4096,
+    "pandas_import_authorized": false,
+    "whole_table_or_whole_parquet_materialization_authorized": false,
+    "raw_numeric_values_persisted_authorized": false,
+    "bounded_to_d244_artifact_row_and_byte_caps": true
+  },
+  "spill_index_policy": {
+    "engine": "SQLITE_STANDARD_LIBRARY",
+    "root": "build/governed-source-intake/incremental-quality-staging",
+    "max_database_bytes": 1073741824,
+    "page_size_bytes": 4096,
+    "max_page_count": 262144,
+    "cache_kib": 8192,
+    "journal_mode": "DELETE",
+    "synchronous": "FULL",
+    "temp_store": "FILE",
+    "locking_mode": "EXCLUSIVE",
+    "stored_numeric_market_values_authorized": false,
+    "stored_structural_keys_and_value_hashes_authorized": true,
+    "cleanup_required_on_success_and_failure": true,
+    "residual_database_or_journal_authorized": false
+  },
+  "quality_checks": {
+    "exact_grains": {
+      "series_dimension": [
+        "series_id"
+      ],
+      "latest_values": [
+        "series_id",
+        "target_ts_utc"
+      ],
+      "vintage_values": [
+        "series_id",
+        "target_ts_utc",
+        "as_of_utc"
+      ]
+    },
+    "required_dimension_to_fact_join_coverage": 1.0,
+    "required_dimension_series_coverage_in_each_fact": 1.0,
+    "required_latest_to_last_vintage_value_hash_match": true,
+    "required_latest_to_vintage_overlap_coverage_ratio": 1.0,
+    "minimum_seasonal_complete_utc_days": 730,
+    "required_native_grid_alignment": true,
+    "required_revision_and_load_chronology": "NON_DECREASING_BY_SERIES_TARGET_AS_OF",
+    "pre_target_groups_require_as_of_not_after_target": true,
+    "post_target_groups_require_as_of_not_before_target": true,
+    "snapshot_future_loads_authorized": false,
+    "sign_semantics_enforced_per_series": true,
+    "required_groups_borders_generation_units_enforced": true,
+    "latest_is_point_in_time_authorized": false,
+    "historical_backfill_is_retroactive_pit_authorized": false
+  },
+  "output_policy": {
+    "summary_schema_version": "fmv_entsoe_incremental_quality_profile.v1",
+    "series_profile_schema_version": "fmv_entsoe_incremental_series_profile.v1",
+    "raw_market_values_persisted_authorized": false,
+    "series_identifiers_persisted_authorized": false,
+    "series_identifier_sha256_authorized": true,
+    "report_counts_rates_time_bounds_and_severity": true,
+    "synthetic_profile_can_authorize_model": false
+  },
+  "execution_policy": {
+    "current_databricks_connection_budget": 0,
+    "current_databricks_statement_budget": 0,
+    "current_warehouse_start_budget": 0,
+    "current_network_call_budget": 0,
+    "current_h_drive_access_budget": 0,
+    "current_remote_write_budget": 0,
+    "connector_code_allowed": false,
+    "real_artifact_opening_authorized": false,
+    "d243_inventory_execution_authorized": false
+  },
+  "authorities": {
+    "synthetic_incremental_quality_profile_verified": true,
+    "real_artifact_receipt_admitted": false,
+    "real_artifact_hashes_verified": false,
+    "real_entsoe_values_opened": false,
+    "real_series_inventory_admitted": false,
+    "source_authenticity_verified": false,
+    "same_snapshot_point_in_time_availability_proven": false,
+    "seasonal_cross_market_diagnostic_authorized": false,
+    "training_authorized": false,
+    "selection_authorized": false,
+    "model_input_authorized": false,
+    "candidate_assembly_authorized": false,
+    "promotion_authorized": false,
+    "production_authorized": false
+  }
+}

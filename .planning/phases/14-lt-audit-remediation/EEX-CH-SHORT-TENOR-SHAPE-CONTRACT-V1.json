@@ -1,0 +1,86 @@
+{
+  "schema_version": "fmv-eex-ch-short-tenor-shape-contract-v1",
+  "purpose": "dormant additive DAY/WEEK/WEEKEND shape contract preserving solver-authoritative CH monthly levels",
+  "current_evidence": {
+    "normalization_content_id": "2837dc4849dc4b573c441059574973e0b8cc0fbb5023203509cb2929dd636a3f",
+    "short_tenor_audit_content_id": "b09eb3250df5a3c0616eb169c512319c514ddf540251b405023d9351bd5d8bde",
+    "point_in_time_availability_proven": false,
+    "model_input_authorized": false,
+    "production_authorized": false
+  },
+  "permitted_feature_families_after_future_pit_admission": {
+    "day_within_week_additive_contrast": {
+      "required_children_base": 7,
+      "required_children_peak": 5,
+      "same_quotation_vintage_required": true,
+      "hour_weighted_zero_parent_mean_required": true
+    },
+    "day_within_weekend_additive_contrast": {
+      "required_children_base": 2,
+      "required_children_peak": 2,
+      "same_quotation_vintage_required": true,
+      "hour_weighted_zero_parent_mean_required": true
+    },
+    "weekend_vs_weekday_base_additive_contrast": {
+      "complete_non_overlapping_week_partition_required": true,
+      "same_quotation_vintage_required": true,
+      "hour_weighted_zero_week_mean_required": true
+    },
+    "base_peak_implied_offpeak_additive_contrast": {
+      "exact_contract_hours_required": true,
+      "negative_implied_offpeak_allowed": true,
+      "same_quotation_vintage_required": true
+    }
+  },
+  "raw_signal_contract": {
+    "price_space": "additive_eur_per_mwh",
+    "delivery_timezone": "Europe/Zurich",
+    "supported_target_cadence": ["1h", "15min"],
+    "maximum_native_grain": "local_delivery_day_x_short_peak_block",
+    "short_peak_block": "08:00_inclusive_to_20:00_exclusive_every_delivery_day",
+    "arbitrary_within_block_hourly_shape_authorized": false,
+    "quarter_hour_shape_inference_authorized": false,
+    "complete_local_months_required": true,
+    "finite_values_required": true
+  },
+  "solver_projection_contract": {
+    "operation": "orthogonal_additive_projection_into_active_base_peak_offpeak_constraint_nullspace",
+    "monthly_base_level_authority": "solver",
+    "monthly_base_constraints_required_for_every_delivered_month": true,
+    "accepted_peak_constraints_preserved": true,
+    "maximum_abs_constraint_residual_eur_mwh": 1e-09,
+    "maximum_abs_monthly_mean_residual_eur_mwh": 1e-09,
+    "individual_month_patch_authorized": false
+  },
+  "forbidden_inputs_and_operations": [
+    "OMPEX or another HFC benchmark as model input, target, loss, feature or selection gate",
+    "AFRY restricted numeric values as model input",
+    "already-started delivery rows",
+    "mixed quotation vintages",
+    "partial or overlapping child strips",
+    "fill-forward or synthetic quote creation",
+    "multiplicative ratios that fail in negative-price space",
+    "monthly weekday-only PEAK semantics applied to short DAY or WEEKEND PEAK products",
+    "hourly or quarter-hour structure inferred inside a quoted short block",
+    "rewriting solver monthly means",
+    "activation before governed rolling-origin and holdout admission"
+  ],
+  "authorities": {
+    "local_mathematical_contract_testing": true,
+    "descriptive_feature_design": true,
+    "point_in_time_availability_proven": false,
+    "rolling_origin_selection_authorized": false,
+    "model_input_authorized": false,
+    "candidate_assembly_authorized": false,
+    "production_authorized": false
+  },
+  "required_before_activation": [
+    "signed EEX provider-vintage availability catalog",
+    "governed ENTSO-E Databricks evidence",
+    "pre-registered rolling-origin feature construction",
+    "new independently frozen future holdout distinct from sealed T057",
+    "stability evidence across seasons and coverage regimes",
+    "explicit feature amplitude and clipping policy selected without OMPEX",
+    "manifest-backed independent promotion gates"
+  ]
+}

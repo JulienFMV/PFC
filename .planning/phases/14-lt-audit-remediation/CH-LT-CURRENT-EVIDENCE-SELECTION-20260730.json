@@ -1,0 +1,56 @@
+{
+  "schema_version": "ch_lt_current_evidence_selection.v1",
+  "registry_id": "2a05f414b713ebda5a6489370be3eddfd08377ff3a63780ac7744fc45bf1b9fd",
+  "status": "CURRENT_LOCAL_DIAGNOSTIC_SELECTION_ONLY_NOT_AUTHORITY",
+  "as_of_utc_untrusted": "2026-07-30T02:50:44.544684Z",
+  "precedence": {
+    "prospective_capture_ledger": "CURRENT_PROSPECTIVE_SELECTION_V2_ONLY",
+    "market_time_regime": "MARKET_TIME_CONTRACT_V1_ONLY",
+    "cross_domain_rule": "MARKET_TIME_EMBEDDED_LEDGER_IS_A_FROZEN_AUDIT_SNAPSHOT_NOT_THE_CURRENT_PROSPECTIVE_LEDGER_SELECTION"
+  },
+  "current_prospective_capture_selection": {
+    "path": ".planning/phases/14-lt-audit-remediation/CH-LT-PROSPECTIVE-CAPTURE-LEDGER-SELECTION-V2-20260730.json",
+    "sha256": "e22cf06793ccd866e0b37577e76bd03b26ae7873c12889c6e672b1ddb730194a",
+    "selected_ledger_version": "v8",
+    "selected_ledger_path": "build/prospective-ledgers/ch-hourly-local-ledger-20260730-v8.json",
+    "selected_ledger_sha256": "ac347cb709fc1ae7c75bf516621901851c08656921e3b4d960eb695a8ad32433",
+    "selected_execution_receipt_sha256": "06cd8e34297e9f29b7a8b8ac65ea0e350d9cd6245393088efc4d22e1b2e63c49",
+    "current_for_local_structural_diagnostics": true,
+    "scientific_admission": false,
+    "production_authorization": false
+  },
+  "superseded_prospective_capture_selection": {
+    "path": ".planning/phases/14-lt-audit-remediation/CH-LT-PROSPECTIVE-CAPTURE-LEDGER-SELECTION-20260730.json",
+    "sha256": "7accb35de831693dec5de039a2400c874dce5151e3421d56181dabede09845fa",
+    "selected_ledger_version": "v5",
+    "may_be_used_as_current_prospective_selection": false,
+    "retention_role": "HISTORICAL_SELECTION_AND_MARKET_TIME_AUDIT_SNAPSHOT_ONLY"
+  },
+  "current_market_time_regime": {
+    "path": ".planning/phases/14-lt-audit-remediation/CH-MARKET-TIME-REGIME-CONTRACT-20260730.json",
+    "sha256": "71711ae80b64556b8deab88e70581e1c7a0ef7c684d672b2cb550f2058c19c25",
+    "contract_id": "898d35e37a2df9dc9814039698eb605fdf220ece33d2035c7c7a2ea1b7bc9dba",
+    "embedded_local_hourly_selection_version": "v5",
+    "embedded_local_hourly_selection_is_frozen_historical_snapshot": true,
+    "controls_current_prospective_capture_selection": false,
+    "controls_market_time_regime_only": true,
+    "transition_admitted": false,
+    "production_authorization": false
+  },
+  "operator_resolution": {
+    "must_resolve_current_evidence_through_this_registry": true,
+    "must_not_infer_current_ledger_from_market_time_embedded_snapshot": true,
+    "divergent_or_missing_link_fails_closed": true,
+    "v6_timeout_artifact_selectable": false,
+    "v7_future_chronology_rejection_selectable": false,
+    "full_day_v2_capture_prospective_ledger_eligible": false
+  },
+  "independent_rolling_origin_count": 0,
+  "future_holdout_consumed": false,
+  "t057_consumed": false,
+  "scientific_admission": false,
+  "candidate_assembly_eligible": false,
+  "publication_authorized": false,
+  "promotion_gate": false,
+  "production_authorization": false
+}

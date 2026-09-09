@@ -1,0 +1,71 @@
+{
+  "schema_version": "fmv_entsoe_cadence_package_binding_contract.v1",
+  "decision": "D-20260806-270",
+  "status": "SYNTHETIC_COMPOSITE_ONLY_NO_REAL_DATA_AUTHORITY",
+  "purpose": "bind an explicit UTC assessment window and an effective-dated native-resolution sidecar to one exact D244/D245 ENTSO-E Parquet snapshot while preserving bounded streaming and zero Databricks execution",
+  "predecessor_bindings": {
+    "d244_base_package_remains_exactly_three_roles": true,
+    "d245_incremental_quality_must_pass_first": true,
+    "d261_resolution_contract_schema": "fmv_entsoe_resolution_regime_contract.v2",
+    "d261_resolution_contract_sha256": "a661cd047ab498e2286ce4f082bca345b75318a2e94aebf8f54d325279fd0e7d",
+    "d261_resolution_contract_content_id": "450d3628bf7dc83e16d630fe001709b58561f74bdad66d73b155b199f5d96821"
+  },
+  "sidecar_package": {
+    "manifest_schema": "fmv_entsoe_cadence_sidecar_manifest.v1",
+    "artifact_role": "series_resolution_regimes",
+    "artifact_file_name": "series_resolution_regimes.parquet",
+    "content_addressed_directory_required": true,
+    "base_snapshot_id_binding_required": true,
+    "base_manifest_content_id_binding_required": true,
+    "quality_context_content_id_binding_required": true,
+    "explicit_assessment_start_end_required": true,
+    "metadata_as_of_not_before_assessment_end": true,
+    "exact_directory_inventory_required": true
+  },
+  "streaming_quality": {
+    "base_package_integrity_replayed": true,
+    "base_incremental_quality_replayed": true,
+    "base_value_columns_opened_by_cadence_pass": false,
+    "sidecar_schema_and_hash_verified": true,
+    "sqlite_spill_is_repo_local_and_ephemeral": true,
+    "expected_and_observed_targets_compared_as_sorted_streams": true,
+    "maximum_record_batch_rows": 2048,
+    "maximum_sidecar_rows": 1000000,
+    "maximum_expected_slots": 5000000,
+    "maximum_sqlite_bytes": 1073741824
+  },
+  "cadence_rules": {
+    "exact_series_coverage_required": true,
+    "left_closed_right_open_regimes": true,
+    "regime_gaps_or_overlaps_allowed": false,
+    "transition_must_close_previous_grid": true,
+    "dimension_resolution_checked_at_metadata_as_of": true,
+    "metadata_as_of_may_be_off_delivery_grid": true,
+    "owner_confirmation_not_after_metadata_as_of": true,
+    "clean_https_source_locator_required": true,
+    "observations_outside_assessment_window_allowed": false,
+    "leading_and_trailing_missing_slots_reported": true,
+    "implicit_upsampling_authorized": false,
+    "implicit_downsampling_authorized": false,
+    "implicit_forward_fill_authorized": false
+  },
+  "execution": {
+    "databricks_connection_budget": 0,
+    "databricks_statement_budget": 0,
+    "warehouse_start_budget": 0,
+    "databricks_write_budget": 0,
+    "network_call_budget": 0,
+    "h_drive_access_budget": 0
+  },
+  "authorities": {
+    "real_source_evidence": false,
+    "external_owner_identity": false,
+    "point_in_time_availability": false,
+    "value_quality": false,
+    "model_input": false,
+    "model_selection": false,
+    "candidate": false,
+    "promotion": false,
+    "production": false
+  }
+}

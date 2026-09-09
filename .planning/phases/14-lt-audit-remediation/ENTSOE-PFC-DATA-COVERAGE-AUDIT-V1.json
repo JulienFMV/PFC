@@ -1,0 +1,254 @@
+{
+  "schema_version": "fmv_entsoe_pfc_data_coverage_audit.v1",
+  "status": "PARTIAL_DEV_MACRO_COVERAGE_EXACT_CURRENT_INVENTORY_UNPROVEN_NO_MODEL_AUTHORITY",
+  "decision": "D-20260806-252",
+  "as_of_date": "2026-08-06",
+  "scope": {
+    "catalog": "dev",
+    "schema": "gold",
+    "dimension_table": "dimentsoeseries",
+    "latest_table": "factentsoetimeserieslatest",
+    "vintage_table": "factentsoetimeseriesvintages",
+    "intended_use": "CH LT PFC zero-mean shape evidence",
+    "monthly_level_authority": "solver"
+  },
+  "evidence_state": {
+    "real_table_schemas_observed": true,
+    "observed_dimension_column_count": 11,
+    "observed_latest_column_count": 8,
+    "observed_vintage_column_count": 10,
+    "macro_family_audit_date": "2026-08-03",
+    "current_exact_dimension_inventory_captured": false,
+    "d243_inventory_executed": false,
+    "current_real_fact_values_opened": false,
+    "coverage_can_be_classified_present_or_absent": false
+  },
+  "observed_macro_families_2026_08_03": [
+    "actual_load",
+    "day_ahead_prices",
+    "generation_actual",
+    "generation_forecast",
+    "renewables_forecast_unsplit",
+    "hydro_reservoir_storage",
+    "crossborder_physical_flows",
+    "scheduled_exchanges",
+    "ntc_day_ahead",
+    "ntc_month_ahead",
+    "ntc_year_ahead"
+  ],
+  "baseline_required_groups": [
+    "actual_load",
+    "day_ahead_prices",
+    "generation_actual",
+    "generation_forecast",
+    "hydro_reservoir_storage",
+    "load_forecast",
+    "renewables_forecast_day_ahead",
+    "renewables_forecast_intraday",
+    "crossborder_physical_flows",
+    "scheduled_exchanges",
+    "ntc_day_ahead",
+    "ntc_month_ahead",
+    "ntc_year_ahead"
+  ],
+  "baseline_unproven_dimensions": [
+    "load_forecast_exact_family",
+    "renewable_day_ahead_vs_intraday_horizon",
+    "generation_technology_breakdown",
+    "all_ch_border_and_direction_pairs",
+    "native_resolution_per_series",
+    "canonical_eur_per_mwh_price_unit",
+    "directional_sign_semantics",
+    "immutable_source_document_and_endpoint",
+    "source_quality_and_revision",
+    "owner_approved_point_in_time_rule"
+  ],
+  "required_generation_fields": [
+    "solar",
+    "wind",
+    "nuclear",
+    "hydro_run_of_river",
+    "hydro_reservoir",
+    "hydro_pumped_storage"
+  ],
+  "required_ch_borders": [
+    "CH-DE",
+    "CH-FR",
+    "CH-IT",
+    "CH-AT"
+  ],
+  "coupled_zone_requirements": [
+    {
+      "families": ["day_ahead_prices"],
+      "logical_zones": ["CH", "DE_LU", "FR", "IT_NORTH", "AT"],
+      "priority": "BASELINE_REQUIRED",
+      "reason": "Swiss hourly shape is jointly formed with directly coupled neighbouring price zones."
+    },
+    {
+      "families": ["actual_load", "load_forecast"],
+      "logical_zones": ["CH", "DE_LU", "FR", "IT_NORTH", "AT"],
+      "priority": "HIGH_VALUE_FOR_SUPERIORITY",
+      "reason": "Neighbouring residual-load regimes affect Swiss imports, exports and peak shape."
+    },
+    {
+      "families": ["generation_actual", "generation_forecast"],
+      "logical_zones": ["CH", "DE_LU", "FR", "IT_NORTH", "AT"],
+      "priority": "HIGH_VALUE_FOR_SUPERIORITY",
+      "reason": "French nuclear, German renewables and Alpine hydro are material Swiss price-shape drivers."
+    },
+    {
+      "families": ["renewables_forecast_day_ahead", "renewables_forecast_intraday"],
+      "logical_zones": ["CH", "DE_LU", "FR", "IT_NORTH", "AT"],
+      "priority": "HIGH_VALUE_FOR_SUPERIORITY",
+      "reason": "Forecast errors and ramps, rather than only actual output, drive scarcity and cross-border flows."
+    },
+    {
+      "families": ["hydro_reservoir_storage"],
+      "logical_zones": ["CH", "AT", "FR", "IT_NORTH"],
+      "priority": "HIGH_VALUE_FOR_SUPERIORITY",
+      "reason": "Alpine hydro opportunity cost and flexibility are regional rather than purely Swiss."
+    }
+  ],
+  "additional_high_value_families": [
+    "generation_unavailability",
+    "network_unavailability",
+    "installed_generation_capacity",
+    "available_generation_capacity",
+    "balancing_energy_prices",
+    "balancing_energy_volumes",
+    "imbalance_price",
+    "system_imbalance",
+    "reserve_capacity_procurement",
+    "reserve_capacity_prices",
+    "redispatch",
+    "countertrading",
+    "net_position",
+    "intraday_crosszonal_capacity_evolution"
+  ],
+  "exploratory_non_blocking_families": [
+    "actual_generation_per_unit",
+    "generation_curtailment",
+    "load_forecast_margin",
+    "flow_based_capacity_parameters",
+    "allocated_crosszonal_balancing_capacity",
+    "crosszonal_balancing_capacity_costs_and_benefits"
+  ],
+  "newly_identified_useful_families": [
+    {
+      "family": "intraday_energy_prices",
+      "priority": "HIGH_VALUE_FOR_SUPERIORITY",
+      "why": "Separates day-ahead structural shape from within-day scarcity and forecast-error repricing.",
+      "baseline_blocker": false
+    },
+    {
+      "family": "energy_storage_actual_and_capacity",
+      "priority": "HIGH_VALUE_FOR_SUPERIORITY",
+      "why": "Battery charging and discharging increasingly changes solar-hour troughs and evening ramps.",
+      "baseline_blocker": false
+    },
+    {
+      "family": "fcr_capacity_and_capacity_prices",
+      "priority": "HIGH_VALUE_FOR_SUPERIORITY",
+      "why": "Makes the generic reserve families product-complete alongside aFRR, mFRR and RR.",
+      "baseline_blocker": false
+    },
+    {
+      "family": "transmission_unavailability_impact_on_net_positions",
+      "priority": "HIGH_VALUE_FOR_SUPERIORITY",
+      "why": "Captures the economic impact of grid outages even when a revised NTC alone is incomplete.",
+      "baseline_blocker": false
+    },
+    {
+      "family": "long_term_flow_based_capacity_parameters",
+      "priority": "HIGH_VALUE_FOR_SUPERIORITY",
+      "why": "Neighbouring Core and Nordic long-term constraints can alter Swiss coupled-zone scarcity regimes.",
+      "baseline_blocker": false
+    },
+    {
+      "family": "short_term_adequacy_forecasts",
+      "priority": "EXPLORATORY_NON_BLOCKING",
+      "why": "Provides a direct adequacy and scarcity-regime signal when available with governed timestamps.",
+      "baseline_blocker": false
+    },
+    {
+      "family": "consumption_unit_unavailability",
+      "priority": "EXPLORATORY_NON_BLOCKING",
+      "why": "Large-load outages can explain exceptional residual-load and imbalance regimes.",
+      "baseline_blocker": false
+    },
+    {
+      "family": "bidding_zone_and_eic_configuration_history",
+      "priority": "BASELINE_METADATA_REQUIRED",
+      "why": "Prevents silent historical joins across renamed or reconfigured market areas.",
+      "baseline_blocker": true
+    },
+    {
+      "family": "balancing_elastic_demand_and_product_selection",
+      "priority": "EXPLORATORY_NON_BLOCKING",
+      "why": "May improve regime classification for reserve scarcity without becoming a monthly-level driver.",
+      "baseline_blocker": false
+    }
+  ],
+  "required_metadata": [
+    "native_resolution_per_series_and_regime",
+    "delivery_interval_start_after_right_edge_conversion",
+    "publication_pull_and_load_timestamps_preserved_separately",
+    "owner_approved_as_of_utc",
+    "immutable_source_document_id",
+    "source_endpoint",
+    "source_quality_or_reason",
+    "source_revision_or_declared_observation_order",
+    "direction_and_positive_sign_semantics",
+    "canonical_unit",
+    "forecast_horizon_and_process_type",
+    "balancing_product_and_up_down_direction",
+    "canonical_zone_eic_and_configuration_validity_window"
+  ],
+  "source_bindings": {
+    "d247_family_status_sha256": "c5232db312cd89d469b714b66d63cb0b6e6960ff53c00ec8c2f7ac4a2ca60c10",
+    "d251_mapping_handoff_sha256": "e331e746ec78f837811a46306fdc15e9520486147763895893abeeae252c96e2",
+    "d243_inventory_contract_sha256": "ba8f6945b4a43b54762fa475228edabea4018bfea5871f2581dc53536c0743a1",
+    "d250_mapping_contract_sha256": "4a0d69a770fe0b45063bc4e5b4be4b9aca1e86c546b40d2bf8816a001cd06b8f",
+    "d241_schema_proof_content_id": "d6c006609d881b51f08be6d60e01f68b59a40be8bdf2898ef0a98491f5771544",
+    "d241_schema_proof_manifest_sha256": "1835f93a517e9c6769079984a376fb9879b22d7c8ce2922aa42b0dd646627ada"
+  },
+  "official_sources": [
+    {
+      "id": "entsoe_mop",
+      "url": "https://www.entsoe.eu/data/transparency-platform/mop/",
+      "supports": "balancing categories, intraday offered capacity evolution, energy storage, intraday prices, flow-based parameters and MoP revisions"
+    },
+    {
+      "id": "entsoe_edi_library",
+      "url": "https://www.entsoe.eu/publications/electronic-data-interchange-edi-library/",
+      "supports": "Transparency schemas, balancing products, weather/prognosis exchange, short-term adequacy and outage planning interfaces"
+    },
+    {
+      "id": "entsoe_mop_v3r5_consultation",
+      "url": "https://consultations.entsoe.eu/markets/amendments-to-the-manual-of-procedures-mop-v3r5-of/",
+      "supports": "long-term flow-based parameters, outage impact on net positions, FCR algorithms and imbalance status changes"
+    }
+  ],
+  "execution": {
+    "databricks_connection_count": 0,
+    "databricks_statement_count": 0,
+    "warehouse_start_count": 0,
+    "network_call_count_excluding_official_documentation_review": 0,
+    "databricks_write_count": 0,
+    "real_entsoe_row_count_opened": 0,
+    "h_drive_access_count": 0
+  },
+  "authorities": {
+    "current_exact_family_inventory_proven": false,
+    "all_baseline_groups_proven": false,
+    "coupled_zone_coverage_proven": false,
+    "additional_family_presence_proven": false,
+    "point_in_time_availability_proven": false,
+    "model_input_authorized": false,
+    "training_authorized": false,
+    "selection_authorized": false,
+    "candidate_assembly_authorized": false,
+    "promotion_authorized": false,
+    "production_authorized": false
+  }
+}

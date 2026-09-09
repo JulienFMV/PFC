@@ -1,0 +1,124 @@
+{
+  "schema_version": "fmv_eex_entsoe_rfc3161_request_der_preflight_contract.v1",
+  "status": "PASS_LOCAL_REQUEST_DER_AND_CAPABILITY_PREFLIGHT_ONLY_NO_TSA_OR_TOKEN_AUTHORITY",
+  "decision": "D-20260805-237",
+  "purpose": "construct and independently replay one canonical RFC 3161 TimeStampReq for the exact D235 four-leaf Merkle root while proving that the current local dependency boundary is not sufficient to validate a real timestamp token",
+  "input_bindings": {
+    "external_time_batch_decision": "D-20260805-235",
+    "external_time_batch_contract_sha256": "e9da2a73dd1bd62b5357e1f507bff3ef8e48918806c918bd4fdb1f609a71d138",
+    "external_time_batch_contract_content_id": "8f0f13315c382da7163a1f451752a6ddf84857a50133d89d3a3a31f340b264d0",
+    "external_time_batch_proof_content_id": "93504d69834b299ce361352adce433509cf84bce0fbbb940be00a9bd59616ff1",
+    "external_time_batch_proof_manifest_sha256": "a10bbfa380652365684213197862139bf958dc33e706d81635cc2a6ae4582f02"
+  },
+  "request_profile": {
+    "asn1_type": "TimeStampReq",
+    "encoding": "DER_DEFINITE_LENGTH_SHORTEST_FORM",
+    "version": 1,
+    "message_imprint_hash_algorithm": "SHA-256",
+    "message_imprint_hash_algorithm_oid": "2.16.840.1.101.3.4.2.1",
+    "generated_sha2_algorithm_identifier_parameters": "ABSENT",
+    "d237_exact_generated_request_replay_parameters": [
+      "ABSENT"
+    ],
+    "general_rfc5754_interoperable_parser_must_accept_parameters": [
+      "ABSENT",
+      "NULL"
+    ],
+    "timestamped_datum": "RFC9162_FINAL_NODE_PREIMAGE_0X01_LEFT_SUBTREE_HASH_RIGHT_SUBTREE_HASH",
+    "timestamped_datum_size_bytes": 65,
+    "hashed_message_must_equal_sha256_of_timestamped_datum": true,
+    "hashed_message_must_equal_d235_merkle_root": true,
+    "request_policy_oid_required": true,
+    "request_policy_must_be_owner_approved_before_real_submission": true,
+    "nonce_required": true,
+    "nonce_minimum_entropy_bits_for_real_request": 128,
+    "nonce_positive_unsigned_integer_required": true,
+    "cert_req": true,
+    "extensions_allowed": false,
+    "canonical_reencoding_must_equal_input_der": true,
+    "maximum_request_der_bytes": 4096
+  },
+  "strict_der_rejections": [
+    "BER_INDEFINITE_LENGTH",
+    "NON_MINIMAL_OR_OVERRUN_LENGTH",
+    "TRAILING_BYTES",
+    "UNEXPECTED_TAG_OR_FIELD_ORDER",
+    "NON_MINIMAL_OR_NEGATIVE_INTEGER",
+    "NON_CANONICAL_OID",
+    "SHA256_ALGORITHM_PARAMETERS_PRESENT",
+    "WRONG_OR_TRUNCATED_HASHED_MESSAGE",
+    "MISSING_OR_PLACEHOLDER_REAL_POLICY",
+    "MISSING_ZERO_OR_TOO_SMALL_REAL_NONCE",
+    "CERT_REQ_MISSING_OR_FALSE",
+    "EXTENSIONS_PRESENT"
+  ],
+  "runtime_capability_preflight": {
+    "current_project_dependency": "cryptography==47.0.0",
+    "permitted_current_uses": [
+      "SHA256_PRIMITIVE",
+      "X509_CERTIFICATE_PARSING",
+      "PUBLIC_KEY_SIGNATURE_PRIMITIVES"
+    ],
+    "insufficient_current_capabilities": [
+      "FULL_CMS_SIGNEDDATA_PARSE_AND_SIGNERINFO_EXPOSURE",
+      "TSTINFO_PARSE_AND_SEMANTIC_REPLAY",
+      "RFC3161_SIGNINGCERTIFICATE_OR_SIGNINGCERTIFICATEV2_REPLAY",
+      "GENERIC_TIMESTAMPING_EKU_CERTIFICATE_PATH_VALIDATION",
+      "OFFLINE_REVOCATION_REPLAY_AT_GENTIME"
+    ],
+    "cryptography_pkcs7_certificate_extraction_is_token_verification": false,
+    "candidate_parser_dependency": "asn1crypto==1.5.1",
+    "candidate_parser_admitted_by_d237": false,
+    "candidate_end_to_end_validator_dependency": "pyHanko==0.35.2",
+    "candidate_end_to_end_validator_admitted_by_d237": false,
+    "real_token_acceptance_with_current_stack": false,
+    "shell_openssl_allowed": false
+  },
+  "synthetic_fixture": {
+    "evidence_class": "SYNTHETIC_CONFORMANCE_VECTOR_ONLY",
+    "tree_size": 4,
+    "left_subtree_hash_hex": "88a55a70db9afd42a35d7c09e5cbc6770e709345da4e5846b004c88ba7c42444",
+    "right_subtree_hash_hex": "8e70e7aabed64df8ae293dd11a2f93ce902c26b3c54249e46c2f0fa7bbc01bd0",
+    "final_node_preimage_hex": "0188a55a70db9afd42a35d7c09e5cbc6770e709345da4e5846b004c88ba7c424448e70e7aabed64df8ae293dd11a2f93ce902c26b3c54249e46c2f0fa7bbc01bd0",
+    "merkle_root_sha256": "496c92c29ab1b4f1ad0f3491cbd4e38f500936973bc6ff8e8ac8ebeb3b0aa85c",
+    "request_policy_oid": "1.3.6.1.4.1.55555.1.235",
+    "request_policy_is_synthetic_placeholder": true,
+    "nonce_decimal": "340282366920938463463374607431768211507",
+    "nonce_is_synthetic_fixed_value": true,
+    "request_der_hex": "3057020101302f300b06096086480165030402010420496c92c29ab1b4f1ad0f3491cbd4e38f500936973bc6ff8e8ac8ebeb3b0aa85c060b2b0601040183b20301816b021101000000000000000000000000000000330101ff",
+    "request_der_size_bytes": 89,
+    "request_der_sha256": "75fc863d2083fb1bc6d816d993cfb762764c6735c33acdecc4645b9db88ab3c4"
+  },
+  "standards": [
+    "https://www.rfc-editor.org/rfc/rfc3161#section-2.4.1",
+    "https://www.rfc-editor.org/rfc/rfc5754#section-2",
+    "https://www.rfc-editor.org/rfc/rfc5652#section-5.4",
+    "https://www.rfc-editor.org/rfc/rfc5816"
+  ],
+  "execution_budget": {
+    "databricks_connections": 0,
+    "databricks_statements": 0,
+    "warehouse_starts": 0,
+    "network_calls": 0,
+    "timestamp_authority_requests": 0,
+    "h_drive_accesses": 0,
+    "remote_writes": 0,
+    "real_dsse_envelopes_opened": 0,
+    "real_timestamp_tokens_opened": 0,
+    "market_value_rows_opened": 0
+  },
+  "authority_boundary": {
+    "synthetic_request_der_verified": true,
+    "approved_real_tsa_policy_present": false,
+    "real_unpredictable_nonce_generated": false,
+    "real_request_authorized_for_submission": false,
+    "real_request_submitted": false,
+    "real_timestamp_token_present": false,
+    "rfc3161_token_cryptographically_verified": false,
+    "independently_trusted_time_verified": false,
+    "point_in_time_availability_verified": false,
+    "model_input_authorized": false,
+    "candidate_authorized": false,
+    "production_authorized": false
+  }
+}

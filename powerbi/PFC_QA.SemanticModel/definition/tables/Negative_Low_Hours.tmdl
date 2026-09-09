@@ -1,0 +1,95 @@
+table Negative_Low_Hours
+	lineageTag: 62a313b0-32e6-4a0e-bb32-18dff2a28a17
+
+	column year
+		dataType: int64
+		formatString: 0
+		lineageTag: 5c464ba8-6b9a-4d7f-b83f-ede3ecece9ce
+		summarizeBy: none
+		sourceColumn: year
+
+	column month
+		dataType: int64
+		formatString: 0
+		lineageTag: e8bb8d97-90f3-4d69-b8d9-a27c3ed3b16f
+		summarizeBy: none
+		sourceColumn: month
+
+	column hour
+		dataType: int64
+		formatString: 0
+		lineageTag: cce0a000-ce32-4f11-89ea-f55392a4c77a
+		summarizeBy: none
+		sourceColumn: hour
+
+	column rows
+		dataType: int64
+		formatString: 0
+		lineageTag: 7feabc9d-7831-4ca7-8420-6026e8933897
+		summarizeBy: none
+		sourceColumn: rows
+
+	column weighted_negative_hours
+		dataType: int64
+		formatString: 0
+		lineageTag: 15ae11fe-9230-4833-8834-fd2ced543abf
+		summarizeBy: none
+		sourceColumn: weighted_negative_hours
+
+	column fast_negative_hours
+		dataType: int64
+		formatString: 0
+		lineageTag: 4394f4ef-6706-4c61-ae4f-aee9fda9514e
+		summarizeBy: none
+		sourceColumn: fast_negative_hours
+
+	column p10_negative_hours
+		dataType: int64
+		formatString: 0
+		lineageTag: 3eefaf54-3061-4f1e-9af0-e910ed4cb951
+		summarizeBy: none
+		sourceColumn: p10_negative_hours
+
+	column min_weighted_eur_mwh
+		dataType: double
+		formatString: 0.00
+		lineageTag: cb956adf-2287-432d-bfdf-8f287681f70f
+		summarizeBy: none
+		sourceColumn: min_weighted_eur_mwh
+
+	column min_fast_eur_mwh
+		dataType: double
+		formatString: 0.00
+		lineageTag: 2c33ccfb-d3ba-4045-b4db-9b730482e0fa
+		summarizeBy: none
+		sourceColumn: min_fast_eur_mwh
+
+	column min_p10_eur_mwh
+		dataType: double
+		formatString: 0.00
+		lineageTag: a87ecc43-4573-4eff-b35f-085eac1acffc
+		summarizeBy: none
+		sourceColumn: min_p10_eur_mwh
+
+	column month_code
+		dataType: string
+		lineageTag: 4dd766e1-962f-47f6-81bf-604c53dadca9
+		summarizeBy: none
+		sourceColumn: month_code
+
+	column hour_code
+		dataType: string
+		lineageTag: 65bf956e-df48-4c6d-9a97-14fa14cbcc13
+		summarizeBy: none
+		sourceColumn: hour_code
+
+	partition Negative_Low_Hours = m
+		mode: import
+		source =
+				let
+				    Source = Csv.Document(File.Contents("\\fmvfs2\Data\Energy\GeCom\CONTROLLING RISK\Analyses diverses\Python - JB\PFC_LT\powerbi\data\negative_low_hours.csv"), [Delimiter=",", Columns=12, Encoding=65001, QuoteStyle=QuoteStyle.Csv]),
+				    Promoted = Table.PromoteHeaders(Source, [PromoteAllScalars=true]),
+				    Typed = Table.TransformColumnTypes(Promoted, {{"year", Int64.Type}, {"month", Int64.Type}, {"hour", Int64.Type}, {"rows", Int64.Type}, {"weighted_negative_hours", Int64.Type}, {"fast_negative_hours", Int64.Type}, {"p10_negative_hours", Int64.Type}, {"min_weighted_eur_mwh", type number}, {"min_fast_eur_mwh", type number}, {"min_p10_eur_mwh", type number}, {"month_code", type text}, {"hour_code", type text}})
+				in
+				    Typed
+

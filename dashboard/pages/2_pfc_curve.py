@@ -3,18 +3,24 @@ Page 2 — Courbe PFC
 "La term structure complète"
 """
 
-import numpy as np
-import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
-
 from utils import (
-    COLORS, add_range_slider, export_csv_button, load_pfc, no_data_warning,
+    COLORS,
+    add_range_slider,
+    export_csv_button,
+    load_pfc,
+    no_data_warning,
     show_freshness_sidebar,
 )
 
+from pfc_shaping.pipeline.probabilistic_output_governance import (
+    deterministic_pfc_export_frame,
+    governed_intervals_available,
+)
+
 st.header("Courbe PFC N+3 ans")
-st.caption("Price Forward Curve 15min — base, peak, off-peak avec intervalles de confiance")
+st.caption("Price Forward Curve 15min — base, peak, off-peak")
 
 show_freshness_sidebar()
 
@@ -35,7 +41,10 @@ with st.sidebar:
     show_base = st.checkbox("Base", value=True)
     show_peak = st.checkbox("Peak (08-20 Lu-Ve)", value=True)
     show_offpeak = st.checkbox("Off-Peak", value=False)
-    show_bands = st.checkbox("Bandes IC 80%", value=True)
+    probabilistic_available = governed_intervals_available(pfc)
+    show_bands = (
+        st.checkbox("Bandes IC 80%", value=True) if probabilistic_available else False
+    )
 
 # ── Resample ──────────────────────────────────────────────────────────────
 freq = resample_map[resolution]
@@ -175,7 +184,11 @@ st.plotly_chart(fig_bar, use_container_width=True)
 
 # ── Export ────────────────────────────────────────────────────────────────
 with st.expander("Export"):
-    export_csv_button(pfc_r, "pfc_curve.csv", "Export PFC (résolution sélectionnée)")
+    export_csv_button(
+        deterministic_pfc_export_frame(pfc_r, context="dashboard PFC export"),
+        "pfc_curve.csv",
+        "Export PFC (résolution sélectionnée)",
+    )
 
 # ── Confidence profile ────────────────────────────────────────────────────
 if "confidence" in pfc.columns:

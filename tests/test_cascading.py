@@ -161,6 +161,51 @@ class TestContractCascader:
         # Q1 doit rester à 82.0 (pas écrasé)
         assert result["2025-Q1"] == 82.0
 
+    def test_annual_only_trend_guard_preserves_cal_and_winter_premium(self):
+        """Opt-in annual-only guard avoids extrapolated CH Jan/Oct inversion."""
+        base_ratios = ContractCascader._default_seasonal_ratios()
+        trends = {
+            "quarter": {1: -0.10, 2: 0.0, 3: 0.0, 4: 0.10},
+            "month": {1: -0.06, 10: 0.06},
+        }
+
+        default = ContractCascader()
+        default.seasonal_ratios_ = base_ratios
+        default.seasonal_trends_ = trends
+        default._reference_year_ = 2025
+        default_result = default.cascade({"2030": 68.86})
+
+        guarded = ContractCascader(disable_trend_for_annual_only=True)
+        guarded.seasonal_ratios_ = base_ratios
+        guarded.seasonal_trends_ = trends
+        guarded._reference_year_ = 2025
+        guarded_result = guarded.cascade({"2030": 68.86})
+
+        assert default_result[month_key(2030, 1)] < default_result[month_key(2030, 10)]
+        assert guarded_result[month_key(2030, 1)] > guarded_result[month_key(2030, 10)]
+
+        total_hours = 0
+        weighted_sum = 0.0
+        for month in range(1, 13):
+            total_h, _, _ = count_hours(2030, month, month)
+            total_hours += total_h
+            weighted_sum += guarded_result[month_key(2030, month)] * total_h
+        assert abs(weighted_sum / total_hours - 68.86) < 0.001
+
+    def test_annual_only_trend_guard_does_not_override_quoted_quarter(self):
+        """The annual-only guard must not move a quoted quarter."""
+        cascader = ContractCascader(disable_trend_for_annual_only=True)
+        cascader.seasonal_ratios_ = ContractCascader._default_seasonal_ratios()
+        cascader.seasonal_trends_ = {
+            "quarter": {1: -0.10, 2: 0.0, 3: 0.0, 4: 0.10},
+            "month": {1: -0.06, 10: 0.06},
+        }
+        cascader._reference_year_ = 2025
+
+        result = cascader.cascade({"2030": 68.86, "2030-Q4": 90.0})
+
+        assert result["2030-Q4"] == 90.0
+
     def test_partial_quarters(self):
         """Si 3 quarters connus, le 4ème est déduit par résidu."""
         cascader = ContractCascader()

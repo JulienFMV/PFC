@@ -202,10 +202,10 @@ def _run_backtest(
     Returns:
         BacktestResult with RMSE, MAE, bias, and per-agent contributions.
     """
-    from pfc_shaping.model.shape_hourly import ShapeHourly
-    from pfc_shaping.model.shape_intraday import ShapeIntraday
-    from pfc_shaping.model.assembler import PFCAssembler
-    from pfc_shaping.model.uncertainty import Uncertainty
+    from pfc_shaping.lt.model.shape_hourly import ShapeHourly
+    from pfc_shaping.lt.model.shape_intraday import ShapeIntraday
+    from pfc_shaping.lt.model.assembler import PFCAssembler
+    from pfc_shaping.lt.model.uncertainty import Uncertainty
     from pfc_shaping.data.forward_proxy import derive_base_prices
 
     # Split data: train on history, test on recent
@@ -231,6 +231,11 @@ def _run_backtest(
         lookback = int(hourly_p.get("fh_lookback_months", 36))
         sigma = hourly_p.get("gaussian_sigma", 0.5)
 
+        # Phase 5 D-A2-1 default (negative-ready): no explicit enforce_* kwargs.
+        # Legacy rollback per D-A2-3: pass enforce_positivity=True (smooth_base_prices),
+        # enforce_m_factor_floor=True (ArbitrageFreeCalibrator), enforce_floor=True
+        # (WaterValueCorrection), allow_negative_peak=False (ContractCascader) explicitly
+        # at the PFCAssembler construction site.
         sh = ShapeHourly(sigma=sigma)
         lb_cutoff = train.index.max() - pd.DateOffset(months=lookback)
         train_lb = train[train.index >= lb_cutoff]
@@ -472,7 +477,21 @@ class AutoResearchLoop:
             trial = _run_backtest(epex, self.agents, self.config, test_months)
 
             # 4. Keep or revert
+            # CR-02 (Phase 5 code review): capture rmse_before BEFORE any
+            # mutation and decide the action via an explicit flag, not by
+            # re-checking ``trial.rmse < current_rmse + 0.001`` after the
+            # keep-branch has already overwritten current_rmse. The previous
+            # implementation mutated current_rmse on line 482, then the
+            # history record on line 519 evaluated ``trial.rmse <
+            # current_rmse + 0.001`` — which is ALWAYS true after the keep
+            # branch (``trial.rmse < trial.rmse + 0.001`` is trivially true),
+            # and ALSO true in the revert branch whenever trial.rmse is
+            # within 1e-3 of current_rmse. Result: practically every
+            # iteration was logged as "keep" in history, polluting the
+            # Darwinian audit trail and producing wrong rmse_before values.
+            rmse_before_iter = current_rmse
             if trial.rmse < current_rmse:
+                action = "keep"
                 delta = current_rmse - trial.rmse
                 current_rmse = trial.rmse
                 baseline = trial
@@ -482,9 +501,10 @@ class AutoResearchLoop:
 
                 logger.info(
                     "KEEP: RMSE %.2f -> %.2f (delta=%.3f) [%s]",
-                    current_rmse + delta, current_rmse, delta, worst_name,
+                    rmse_before_iter, current_rmse, delta, worst_name,
                 )
             else:
+                action = "revert"
                 worst_agent.params = old_params
                 reverts += 1
                 worst_agent.n_reverts += 1
@@ -507,12 +527,13 @@ class AutoResearchLoop:
                 for name, agent in self.agents.items():
                     agent.update_weight(name in top_q)
 
-            # Record history
+            # Record history — use the explicit ``action`` flag and the
+            # rmse_before_iter snapshot captured above (CR-02 fix).
             self.history.append({
                 "iteration": iteration,
                 "target_agent": worst_name,
-                "action": "keep" if trial.rmse < current_rmse + 0.001 else "revert",
-                "rmse_before": float(current_rmse if trial.rmse < current_rmse + 0.001 else current_rmse),
+                "action": action,
+                "rmse_before": float(rmse_before_iter),
                 "rmse_after": float(trial.rmse),
                 "agent_weights": {n: a.weight for n, a in self.agents.items()},
                 "agent_params": {n: a.params.values for n, a in self.agents.items()},
@@ -568,14 +589,14 @@ class AutoResearchLoop:
             },
             "history": self.history[-100:],  # Keep last 100 iterations
         }
-        self.state_path.write_text(json.dumps(state, indent=2, default=str))
+        self.state_path.write_text(json.dumps(state, indent=2, default=str), encoding="utf-8")
         logger.info("Autoresearch state saved: %s", self.state_path)
 
     def load_state(self) -> None:
         """Load agent state from JSON."""
         if not self.state_path or not self.state_path.exists():
             return
-        state = json.loads(self.state_path.read_text())
+        state = json.loads(self.state_path.read_text(encoding="utf-8"))
         for name, agent_state in state.get("agents", {}).items():
             if name in self.agents:
                 self.agents[name].params.values.update(agent_state["params"])

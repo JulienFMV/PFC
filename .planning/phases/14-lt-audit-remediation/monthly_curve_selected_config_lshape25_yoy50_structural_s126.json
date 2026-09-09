@@ -1,0 +1,39 @@
+{
+  "active_config_hash_from_candidate_manifest": "9a29207f20efd39be80a33b3fa1ffc4c02b28daa2fd550e1db20837d1f8966db",
+  "active_constraints_hash": "efb01468d31e43f9c6cd66102ad5c573a9aacc8913e26b1a20139358174144cf",
+  "candidate_manifest": "output/phase14/20260624_parent_local_prior_lshape25_yoy50_structural_s126/ch_hfc_fan_chart_parent_local_prior_lshape25_yoy50_structural_s126_20260613_20301231.monthly_curve_manifest.json",
+  "canonical_config": {
+    "allow_template_structural_fallback": true,
+    "constraint_tolerance": 0.01,
+    "history_lookback_years": 6,
+    "history_weight": 0.5,
+    "lambda_prior": 1e-06,
+    "lambda_shape": 25.0,
+    "lambda_smooth_month": 0.1,
+    "lambda_smooth_yoy": 50.0,
+    "markets": [
+      "AT",
+      "DE",
+      "FR",
+      "IT"
+    ],
+    "max_prior_residual_eur_mwh": null,
+    "min_history_snapshots": 24,
+    "min_structural_snapshots": 24,
+    "neighbor_shrinkage": 0.5,
+    "panel_weight": 1.0,
+    "robust_panel_quantile": 0.5,
+    "stationarity_tolerance": 1e-07,
+    "structural_amplitude_eur_mwh": 110.0,
+    "structural_weight": 1.0
+  },
+  "config_hash": "9a29207f20efd39be80a33b3fa1ffc4c02b28daa2fd550e1db20837d1f8966db",
+  "monthly_solution_hash": "7a4e09fb58f0699ce022f0ccc7d7ec47245f660b011781a9b4ad5f5a56d81bd5",
+  "promotion_scope": "LOCAL_CANDIDATE_SELECTION_ONLY",
+  "production_manifest_triad_validated": false,
+  "production_promotion_approved": false,
+  "production_approved": true,
+  "schema_version": "monthly_curve_selected_config.v1",
+  "selection_reason": "Phase 14 candidate passed delivered-product audit with bound source hierarchy policy and strict Power BI gates; lambda_smooth_yoy=50 strengthens comparable residual/calendar cross-year shape coherence without post-solver month patching.",
+  "selection_status": "PRODUCTION_APPROVED"
+}

@@ -1,0 +1,96 @@
+{
+  "schema_version": "fmv_databricks_pfc_source_cost_preflight_contract.v1",
+  "decision": "D-20260806-292",
+  "status": "LOCAL_COST_PREFLIGHT_RECEIPT_VALIDATION_NO_EXECUTION_AUTHORITY",
+  "purpose": "Validate a value-blind data-engineer cost preflight before any spot, weather or Swissgrid business profile can be considered for a separate human GO.",
+  "request_binding": {
+    "relative_path": ".planning/phases/14-lt-audit-remediation/DATABRICKS-SPOT-WEATHER-SWISSGRID-DATA-ENGINEER-REQUEST-20260806.md",
+    "sha256": "1ab1f396fb37455d6b91f1bd2c374870dc3910214d894294e4e8c81397056b6b"
+  },
+  "profile_bindings": [
+    {
+      "profile_role": "SPOT",
+      "source_table": "dev.silver.ge_market_euler_spot",
+      "query_relative_path": "docs/data/sql/databricks_dev_spot_profile.sql",
+      "query_sha256": "2852484c01335a348475230d5cd9c91c1d6f6ad70edb4dddba93e9c8647656c0"
+    },
+    {
+      "profile_role": "WEATHER",
+      "source_table": "prd.silver.weather_meteoswiss_measurement|prd.silver.weather_meteoswiss_forecast|prd.silver.weather_openmeteo_forecast",
+      "query_relative_path": "docs/data/sql/databricks_prd_weather_profile.sql",
+      "query_sha256": "8183f34dfd9ce322b0ec4011145d62d4984e3250807c4aa107aec644ebae049c"
+    },
+    {
+      "profile_role": "SWISSGRID_BALANCING",
+      "source_table": "prd.silver.ge_power_swissgrid_cab",
+      "query_relative_path": "docs/data/sql/databricks_prd_swissgrid_balancing_profile.sql",
+      "query_sha256": "12bfcd9dbd12ac337c0e701116a50d612a8737507f75e487e9e5626101a32be3"
+    },
+    {
+      "profile_role": "SWISSGRID_TENDER",
+      "source_table": "prd.silver.ge_market_swissgrid_sdl_tenders",
+      "query_relative_path": "docs/data/sql/databricks_prd_swissgrid_tender_profile.sql",
+      "query_sha256": "acfe34cbf60c96ad221be1ec51dde4349164dccdef3d0cf843fa0723fdb814d2"
+    }
+  ],
+  "receipt_policy": {
+    "receipt_schema_version": "fmv_databricks_pfc_source_cost_preflight_receipt.v1",
+    "evidence_class": "DATA_ENGINEER_COST_PREFLIGHT_METADATA_ONLY",
+    "snapshot_id_derivation": "SHA256_CANONICAL_RECEIPT_WITHOUT_SNAPSHOT_ID",
+    "maximum_age_seconds": 86400,
+    "exact_profile_count": 4,
+    "maximum_metadata_statement_count": 4,
+    "maximum_runtime_seconds": 900,
+    "allowed_warehouse_states": [
+      "RUNNING_ALREADY_FOR_SEPARATE_AUTHORIZED_WORKLOAD",
+      "STOPPED",
+      "UNAVAILABLE"
+    ],
+    "allowed_estimate_methods": [
+      "QUERY_PLAN_ESTIMATE",
+      "DELTA_METADATA_UPPER_BOUND",
+      "PLATFORM_EXPORT_QUOTE",
+      "UNAVAILABLE"
+    ],
+    "cost_unit": "DBU",
+    "cost_owner_decision": "NOT_REVIEWED",
+    "business_profile_statement_count": 0,
+    "business_row_count_opened": 0,
+    "warehouse_start_count": 0,
+    "databricks_write_count": 0,
+    "retry_count": 0,
+    "phase_a_go_authorized": false,
+    "phase_b_go_authorized": false
+  },
+  "verdict_policy": {
+    "ready": "READY_FOR_HUMAN_COST_REVIEW_NO_EXECUTION_AUTHORITY",
+    "stopped": "STOP_NO_ACTIVE_WAREHOUSE",
+    "uncapped": "STOP_UNCAPPED_SCAN",
+    "ready_is_phase_a_go": false,
+    "human_cost_review_required": true
+  },
+  "execution": {
+    "databricks_connection_count": 0,
+    "databricks_statement_count": 0,
+    "business_row_count_opened": 0,
+    "warehouse_start_count": 0,
+    "databricks_write_count": 0,
+    "network_call_count": 0,
+    "h_drive_access_count": 0,
+    "remote_write_count": 0
+  },
+  "authorities": {
+    "local_receipt_integrity": true,
+    "cost_estimate_authenticity": false,
+    "phase_a_execution": false,
+    "phase_b_execution": false,
+    "point_in_time": false,
+    "predictive_value": false,
+    "model_input": false,
+    "model_selection": false,
+    "candidate": false,
+    "ompex_superiority": false,
+    "promotion": false,
+    "production": false
+  }
+}

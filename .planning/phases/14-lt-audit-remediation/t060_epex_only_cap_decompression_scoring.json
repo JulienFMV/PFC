@@ -1,0 +1,8 @@
+{
+  "duck_weight": 1.0,
+  "midday_weight": 1.25,
+  "night_weight": 0.75,
+  "ramp_penalty_weight": 1.25,
+  "solar_tail_weight": 1.5,
+  "weekend_weight": 1.25
+}

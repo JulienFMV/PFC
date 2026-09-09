@@ -18,7 +18,7 @@ Energy conservation constraint (hour-weighted average):
 where h_child_i is the number of delivery hours in child period i.
 
 Peak / Off-Peak decomposition:
-    Peak   = 08:00–20:00 Mon–Fri excl. Swiss national holidays (EEX standard)
+    Peak   = 08:00-20:00 Monday-Friday, public holidays included
     Base   = all hours
     OffPeak = (Base × total_h - Peak × peak_h) / offpeak_h
 """
@@ -28,6 +28,7 @@ from __future__ import annotations
 import calendar
 import logging
 import re
+import warnings
 from dataclasses import dataclass, field
 
 import holidays
@@ -64,7 +65,7 @@ class ContractSpec:
         end: Delivery period end (exclusive), timezone-aware UTC.
         product_type: One of 'Cal', 'Quarter', 'Month'.
         n_hours: Total delivery hours in the period.
-        n_peak_hours: Peak delivery hours (08:00-20:00 Mon-Fri excl. holidays).
+        n_peak_hours: Peak delivery hours (08:00-20:00 Monday-Friday).
         n_offpeak_hours: Off-peak delivery hours.
         price: Forward price in EUR/MWh (if known).
     """
@@ -196,14 +197,14 @@ def count_hours(
     Correctly handles DST transitions (CET ↔ CEST) and leap years by
     generating the full hourly index in local time.
 
-    Peak hours: 08:00–20:00 on weekdays (Mon–Fri) excluding national holidays.
+    Peak hours: 08:00-20:00 on weekdays (Mon-Fri), public holidays included.
 
     Args:
         year: Delivery year.
         month_start: First month of the period (inclusive).
         month_end: Last month of the period (inclusive).
         tz: Local timezone.
-        country: 'CH' or 'DE' — controls which holidays are excluded from peak.
+        country: Delivery country, retained for API compatibility.
 
     Returns:
         (total_hours, peak_hours, offpeak_hours)
@@ -216,18 +217,10 @@ def count_hours(
 
     total_hours = len(idx_utc)
 
-    # Collect holidays for all years that may be spanned
-    hol_years = set(idx_local.year.unique())
-    hol_set: set = set()
-    for y in hol_years:
-        hol_set |= _holidays_set(y, country=country)
-
-    # Peak mask: hour 08..19 on weekdays, not a holiday
+    # European EEX Peakload: hour 08..19 on every weekday, holidays included.
     is_weekday = idx_local.weekday < 5  # Mon=0 .. Fri=4
     is_peak_hour = (idx_local.hour >= 8) & (idx_local.hour < 20)
-    is_holiday = pd.Series(idx_local.date, index=idx_utc).isin(hol_set).values
-
-    peak_mask = is_weekday & is_peak_hour & ~is_holiday
+    peak_mask = is_weekday & is_peak_hour
     peak_hours = int(peak_mask.sum())
     offpeak_hours = total_hours - peak_hours
 
@@ -263,39 +256,116 @@ class ContractCascader:
 
     where h_i is the number of delivery hours in each child period.
 
+    Phase 5 D-A4-1 / NEG-04 — spread-additive peak synthesis:
+        When ``allow_negative_peak=True`` (default, Phase 5 negative-ready),
+        ``synthesize_peak_prices`` uses the spread-additive formula
+        ``peak = base + spread`` (sign-invariant, D-A4-1). When
+        ``allow_negative_peak=False`` (legacy rollback per D-A2-3), uses the
+        historical multiplicative ``peak = base × ratio`` with implicit
+        ``ratio >= 1`` (i.e., ``Peak >= Base``).
+
+        The ``fit_peak_spreads(spot_history)`` public method must be called to
+        populate ``peak_base_spreads_`` before ``synthesize_peak_prices`` is
+        invoked on the spread-additive path; absent that, a default spread of
+        5.0 €/MWh is used with a WARN log (RESEARCH Pitfall 4).
+
+        The legacy ``fit_peak_ratios`` method is DEPRECATED (Phase 5 D-A4-2)
+        with the codex-action-#2 unified shim contract: it ALWAYS delegates to
+        ``fit_peak_spreads`` AND populates ``peak_base_ratios_`` derived as
+        ``{m: 1.0 + spread / max(base_price_m, 1.0)}`` during the deprecation
+        window — legacy attribute readers continue to work.
+
     Attributes:
         tz: Local timezone for hour counting and peak/off-peak classification.
         seasonal_ratios_: Fitted seasonal ratios, populated by ``fit_seasonal_ratios``.
+        allow_negative_peak: When True (default), use spread-additive peak synthesis.
     """
 
-    def __init__(self, tz: str = "Europe/Zurich") -> None:
+    def __init__(
+        self,
+        tz: str = "Europe/Zurich",
+        allow_negative_peak: bool = True,
+        disable_trend_for_annual_only: bool = False,
+    ) -> None:
         self.tz = tz
+        self.allow_negative_peak = bool(allow_negative_peak)
+        self.disable_trend_for_annual_only = bool(disable_trend_for_annual_only)
         self.seasonal_ratios_: dict[str, dict[int, float]] | None = None
 
     # ------------------------------------------------------------------
     # Fitting seasonal ratios
     # ------------------------------------------------------------------
 
-    def fit_peak_ratios(
+    def fit_peak_spreads(
         self,
         spot_history: pd.DataFrame,
     ) -> "ContractCascader":
-        """Learn Peak/Base ratios from EPEX Spot history.
+        """Calibrate per-month peak-vs-base spreads in €/MWh (Phase 5 D-A4-1, NEG-04).
 
-        Computes average Peak/Base price ratio per month across available
-        full years. Used to synthesize Peak forwards when only Base is quoted.
+        For each month m in 1..12, computes:
+            spread_m = mean_t(spot_history[t] | t in peak hours of month m)
+                     - mean_t(spot_history[t] | t in base hours of month m)
+            base_price_m = mean_t(spot_history[t] | t in base hours of month m)
+                           (cached on ``self._base_price_per_month_`` for the
+                           codex-action-#2 ratios derivation in ``fit_peak_ratios``)
 
-        Args:
-            spot_history: DataFrame with ``price_eur_mwh`` column, tz-aware UTC index.
+        Stores ``self.peak_base_spreads_: dict[int, float]`` (keys 1..12, values
+        in €/MWh) AND ``self._base_price_per_month_: dict[int, float]``.
 
-        Returns:
-            self, for method chaining.
+        Sign-invariant: when consumed by ``synthesize_peak_prices`` under
+        ``allow_negative_peak=True``, the formula ``peak = base + spread``
+        produces the correct peak even when ``base < 0`` (negative monthly
+        forward), because the spread itself is computed in €/MWh, not as a ratio.
+
+        Codex action #7 fallback behavior: when ``spot_history`` is empty
+        (``.empty == True``) OR has fewer than 100 rows (insufficient data),
+        emits ``UserWarning`` and populates defaults:
+            peak_base_spreads_ = {m: 5.0 for m in 1..12}
+            _base_price_per_month_ = {m: 50.0 for m in 1..12}
+        The 100-row threshold represents roughly 4 days of hourly data —
+        insufficient for reliable monthly statistics.
+
+        Parameters
+        ----------
+        spot_history : pd.DataFrame
+            Historical EPEX-style spot prices with a tz-aware DatetimeIndex
+            and a ``price_eur_mwh`` column.
+
+        Returns
+        -------
+        ContractCascader
+            self, for method chaining (matches ``fit_peak_ratios`` API).
+
+        References
+        ----------
+        D-A4-1, NEG-04, RESEARCH §Architecture Patterns §Pattern 4,
+        RESEARCH §Common Pitfalls §Pitfall 4.
         """
-        if spot_history.empty or "price_eur_mwh" not in spot_history.columns:
+        _DEFAULT_SPREAD = 5.0
+        _DEFAULT_BASE = 50.0
+
+        # Codex action #7: insufficient data fallback
+        if spot_history.empty or len(spot_history) < 100 or "price_eur_mwh" not in spot_history.columns:
+            warnings.warn(
+                "fit_peak_spreads: spot_history is empty/insufficient — using default "
+                f"{_DEFAULT_SPREAD} €/MWh for all months. Provide at least 100 rows of "
+                "EPEX hourly data with a 'price_eur_mwh' column for calibrated spreads.",
+                UserWarning,
+                stacklevel=2,
+            )
+            self.peak_base_spreads_: dict[int, float] = {m: _DEFAULT_SPREAD for m in range(1, 13)}
+            self._base_price_per_month_: dict[int, float] = {m: _DEFAULT_BASE for m in range(1, 13)}
             return self
 
         df = spot_history[["price_eur_mwh"]].copy()
         if df.index.tz is None:
+            warnings.warn(
+                "fit_peak_spreads: spot_history index has no timezone — using default spread.",
+                UserWarning,
+                stacklevel=2,
+            )
+            self.peak_base_spreads_ = {m: _DEFAULT_SPREAD for m in range(1, 13)}
+            self._base_price_per_month_ = {m: _DEFAULT_BASE for m in range(1, 13)}
             return self
 
         idx_local = df.index.tz_convert(self.tz)
@@ -309,34 +379,136 @@ class ContractCascader:
         median_count = year_counts.median()
         full_years = year_counts[year_counts >= 0.95 * median_count].index.tolist()
 
-        if not full_years:
-            return self
+        spreads: dict[int, float] = {}
+        base_prices_per_month: dict[int, float] = {}
 
-        df_full = df[df["year"].isin(full_years)]
+        if full_years:
+            df_full = df[df["year"].isin(full_years)]
+            spread_acc: dict[int, list[float]] = {m: [] for m in range(1, 13)}
+            base_acc: dict[int, list[float]] = {m: [] for m in range(1, 13)}
 
-        peak_base_ratios: dict[int, list[float]] = {m: [] for m in range(1, 13)}
-        for yr in full_years:
-            yr_data = df_full[df_full["year"] == yr]
+            for yr in full_years:
+                yr_data = df_full[df_full["year"] == yr]
+                for m in range(1, 13):
+                    m_data = yr_data[yr_data["month"] == m]
+                    if len(m_data) < 24:
+                        continue
+                    base_avg = float(m_data["price_eur_mwh"].mean())
+                    peak_data = m_data.loc[m_data["is_peak"], "price_eur_mwh"]
+                    if len(peak_data) < 10 or np.isnan(peak_data.mean()):
+                        continue
+                    peak_avg = float(peak_data.mean())
+                    spread_acc[m].append(peak_avg - base_avg)
+                    base_acc[m].append(base_avg)
+
             for m in range(1, 13):
-                m_data = yr_data[yr_data["month"] == m]
-                if len(m_data) < 24:
-                    continue
-                base_avg = m_data["price_eur_mwh"].mean()
-                peak_avg = m_data.loc[m_data["is_peak"], "price_eur_mwh"].mean()
-                if base_avg > 0 and not np.isnan(peak_avg):
-                    peak_base_ratios[m].append(peak_avg / base_avg)
+                if spread_acc[m]:
+                    spreads[m] = float(np.mean(spread_acc[m]))
+                    base_prices_per_month[m] = float(np.mean(base_acc[m]))
+                else:
+                    spreads[m] = _DEFAULT_SPREAD
+                    base_prices_per_month[m] = _DEFAULT_BASE
+        else:
+            for m in range(1, 13):
+                spreads[m] = _DEFAULT_SPREAD
+                base_prices_per_month[m] = _DEFAULT_BASE
 
-        self.peak_base_ratios_ = {
-            m: float(np.mean(vals)) for m, vals in peak_base_ratios.items() if vals
-        }
+        self.peak_base_spreads_ = spreads
+        self._base_price_per_month_ = base_prices_per_month
 
-        if self.peak_base_ratios_:
-            logger.info(
-                "Peak/Base ratios fitted — range: [%.3f .. %.3f] (mean=%.3f)",
-                min(self.peak_base_ratios_.values()),
-                max(self.peak_base_ratios_.values()),
-                np.mean(list(self.peak_base_ratios_.values())),
+        logger.info(
+            "Peak/Base spreads fitted — range: [%.2f .. %.2f] €/MWh (mean=%.2f)",
+            min(spreads.values()),
+            max(spreads.values()),
+            float(np.mean(list(spreads.values()))),
+        )
+        return self
+
+    def fit_peak_ratios(
+        self,
+        spot_history: pd.DataFrame,
+    ) -> "ContractCascader":
+        """DEPRECATED — use ``fit_peak_spreads`` (Phase 5 D-A4-2, NEG-04).
+
+        UNIFIED SHIM CONTRACT per codex review action #2 (2026-05-19,
+        05-REVIEWS.md lines 96-97, 113-116): this method ALWAYS does THREE things:
+
+          1. Emit ``DeprecationWarning`` pointing to the migration target.
+          2. Delegate to ``fit_peak_spreads(spot_history)`` so
+             ``peak_base_spreads_`` is populated.
+          3. Derive ``peak_base_ratios_`` from ``peak_base_spreads_`` and
+             ``self._base_price_per_month_`` (cached by ``fit_peak_spreads``)
+             via ``{m: 1.0 + spread / max(base_price_m, 1.0)}``. This ensures
+             legacy callers that read ``self.peak_base_ratios_`` directly
+             (e.g., tests, dashboards) continue to work during the deprecation
+             window — they do NOT see ``AttributeError``.
+
+        Codex action #2 motivation: the original CONTEXT.md D-A4-2 proposed
+        ``NotImplementedError`` if ``spot_history`` was absent; RESEARCH
+        §Pattern 6 revised to a transparent shim WITHOUT the ratios derivation.
+        The codex review noted that the two earlier proposals were inconsistent
+        and that LEGACY ATTRIBUTE READERS would silently break without the
+        ratios derivation. This UNIFIED SHIM is the authoritative
+        deprecation-window behavior.
+
+        Migration: replace ``cascader.fit_peak_ratios(spot)`` with
+        ``cascader.fit_peak_spreads(spot)`` and rely on
+        ``peak_base_spreads_`` (€/MWh) instead of ``peak_base_ratios_``
+        (dimensionless multiplier).
+
+        RESEARCH §Dry-Run §callsite audit identified two callsites in
+        ``pfc_shaping/pipeline/production_phases.py`` (lines 344, 644). Both
+        are migrated in Plan 05-03 Task 4 (this plan). This shim is the
+        safety net for any callsite that has not yet been migrated.
+
+        Args:
+            spot_history: DataFrame with ``price_eur_mwh`` column, tz-aware UTC index.
+
+        Returns:
+            self, for method chaining.
+        """
+        warnings.warn(
+            "ContractCascader.fit_peak_ratios() is deprecated (Phase 5 D-A4-2). "
+            "Use fit_peak_spreads(spot_history) which calibrates spreads in "
+            "€/MWh (sign-invariant for negative forwards). Migration: replace "
+            "fit_peak_ratios(spot) with fit_peak_spreads(spot). The legacy "
+            "peak_base_ratios_ attribute is still populated during the "
+            "deprecation window (codex action #2 unified shim contract).",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        # Step 1+2: delegate transparently (populates peak_base_spreads_ AND
+        # _base_price_per_month_).
+        self.fit_peak_spreads(spot_history)
+        # WR-08 (Phase 5 code review): the shim previously relied on
+        # fit_peak_spreads always caching ``_base_price_per_month_`` as an
+        # implementation detail of its private contract. A future refactor of
+        # fit_peak_spreads that drops this cache would surface as an
+        # AttributeError here. Defensive fallback to a typical EEX-scale base
+        # price (50.0 €/MWh) when the cache is missing — same default as the
+        # ``max(., 50.0)`` fallback inside the dict-comprehension below — so
+        # the shim remains robust to implementation changes upstream.
+        base_per_month = getattr(self, "_base_price_per_month_", None)
+        if not base_per_month:
+            logger.warning(
+                "ContractCascader.fit_peak_ratios shim: _base_price_per_month_ "
+                "cache missing after fit_peak_spreads — falling back to a flat "
+                "50.0 €/MWh base for every month. Legacy peak_base_ratios_ "
+                "values will be approximate (typical EEX scale)."
             )
+            base_per_month = {m: 50.0 for m in range(1, 13)}
+            # Persist the fallback so subsequent reads see a populated cache.
+            self._base_price_per_month_ = base_per_month
+        # Step 3 (codex action #2): derive peak_base_ratios_ during deprecation
+        # window so legacy attribute readers do not see AttributeError.
+        # Formula: ratio_m = 1.0 + spread_m / max(base_price_m, 1.0). The
+        # max(., 1.0) avoids division by very small or zero base prices (which
+        # would produce unbounded ratios). For typical EEX scales (10-100 €/MWh
+        # base), this is a near-no-op safety floor.
+        self.peak_base_ratios_: dict[int, float] = {
+            m: 1.0 + spread / max(base_per_month.get(m, 50.0), 1.0)
+            for m, spread in self.peak_base_spreads_.items()
+        }
         return self
 
     def synthesize_peak_prices(
@@ -345,53 +517,126 @@ class ContractCascader:
     ) -> dict[str, float]:
         """Add synthetic Peak forwards where only Base exists.
 
-        For each Base product (Month, Quarter, Cal) that lacks a corresponding
-        Peak price, synthesizes one using historical Peak/Base ratios.
+        Phase 5 D-A4-1 / D-A4-3 / NEG-04 — two paths:
+          - ``allow_negative_peak=True`` (default, negative-ready): spread-additive
+            formula ``peak = base + spread`` where spread is in €/MWh. Sign-invariant:
+            with ``base=-10`` and ``spread=+5``, ``peak=-5`` (NOT the legacy
+            ``-10 × 1.05 = -10.5`` which inverts the spread semantic for negative base).
+            The modern fitter ``fit_peak_spreads`` does NOT constrain the sign of the
+            spread — a negative fitted spread (rare in EEX history but possible) flows
+            through unchanged.
+          - ``allow_negative_peak=False`` (legacy rollback per D-A4-3): historical
+            multiplicative ``peak = base × ratio``. The ratio is NOT enforced to be
+            ``>= 1`` — the legacy shim ``fit_peak_ratios`` derives ratios from spreads
+            via ``ratio = 1.0 + spread / max(base, 1.0)``, which produces ``ratio < 1``
+            whenever the underlying fitted spread is negative. The "Peak >= Base"
+            invariant is therefore informational only and CAN be violated by the
+            legacy path even when both base and ratio are positive. Additionally, for
+            negative base prices, ``peak = base × ratio`` inverts the spread semantic
+            (a 1.05 multiplier on a -10 base yields -10.5, i.e. Peak < Base) — callers
+            relying on operator rollback with negative base prices should be aware of
+            this incompatibility. Existing ``peak_base_ratios_`` cache is honored.
+
+        RESEARCH Pitfall 4: if ``fit_peak_spreads`` was never called on the
+        spread-additive path, a default spread of 5.0 €/MWh is used with a WARN log.
+
+        Codex action #2 unified shim: the ``fit_peak_ratios`` deprecation shim
+        populates BOTH ``peak_base_spreads_`` AND ``peak_base_ratios_`` during the
+        deprecation window, so both paths work regardless of which fit method was called.
 
         Args:
-            base_prices: Dict of forward prices (will be modified in-place).
+            base_prices: Dict of forward prices.
 
         Returns:
             The enriched dict with synthetic Peak entries added.
-        """
-        if not hasattr(self, "peak_base_ratios_") or not self.peak_base_ratios_:
-            default_ratio = 1.05  # conservative 5% peak premium
-            logger.warning("No fitted peak ratios — using default %.2f", default_ratio)
-            ratios = {m: default_ratio for m in range(1, 13)}
-        else:
-            ratios = self.peak_base_ratios_
 
+        References
+        ----------
+        D-A4-1, D-A4-3, NEG-04, RESEARCH §Architecture Patterns §Pattern 4,
+        codex action #2 unified shim contract.
+        """
         result = dict(base_prices)
         n_synth = 0
 
-        for key, price in list(base_prices.items()):
-            if "-Peak" in key or "-Offpeak" in key:
-                continue
-            peak_key = f"{key}-Peak"
-            if peak_key in result:
-                continue  # Already has market peak
+        if self.allow_negative_peak:
+            # Phase 5 D-A4-1 spread-additive path (default, negative-ready).
+            # RESEARCH Pitfall 4: fall back to default 5.0 €/MWh if fit_peak_spreads
+            # was never called.
+            spreads = getattr(self, "peak_base_spreads_", None)
+            if not spreads:
+                logger.warning(
+                    "ContractCascader.synthesize_peak_prices: no fitted "
+                    "peak_base_spreads_ — using default 5.0 €/MWh for all months. "
+                    "Call fit_peak_spreads(spot_history) before synthesize to "
+                    "calibrate per-month spreads (RESEARCH Pitfall 4)."
+                )
+                spreads = {m: 5.0 for m in range(1, 13)}
 
-            try:
-                ptype, year, sub = parse_key(key)
-            except ValueError:
-                continue
+            for key, price in list(base_prices.items()):
+                if "-Peak" in key or "-Offpeak" in key:
+                    continue
+                peak_key = f"{key}-Peak"
+                if peak_key in result:
+                    continue  # Already has market peak
 
-            if ptype == "Month" and sub is not None:
-                ratio = ratios.get(sub, 1.05)
-            elif ptype == "Quarter" and sub is not None:
-                # Average ratio across months in the quarter
-                months = QUARTER_MONTHS.get(sub, [])
-                ratio = np.mean([ratios.get(m, 1.05) for m in months])
-            elif ptype == "Cal":
-                ratio = np.mean(list(ratios.values()))
+                try:
+                    ptype, year, sub = parse_key(key)
+                except ValueError:
+                    continue
+
+                if ptype == "Month" and sub is not None:
+                    spread = spreads.get(sub, 5.0)
+                elif ptype == "Quarter" and sub is not None:
+                    months = QUARTER_MONTHS.get(sub, [])
+                    spread = float(np.mean([spreads.get(m, 5.0) for m in months]))
+                elif ptype == "Cal":
+                    spread = float(np.mean(list(spreads.values())))
+                else:
+                    continue
+
+                result[peak_key] = round(price + spread, 6)
+                n_synth += 1
+
+            if n_synth > 0:
+                logger.info("Synthesized %d Peak forwards (spread-additive, Phase 5 D-A4-1)", n_synth)
+        else:
+            # Legacy multiplicative path (operator rollback per D-A4-3).
+            # peak = base * ratio with implicit Peak >= Base (ratio >= 1).
+            if not hasattr(self, "peak_base_ratios_") or not self.peak_base_ratios_:
+                default_ratio = 1.05  # conservative 5% peak premium
+                logger.warning("No fitted peak ratios — using default %.2f", default_ratio)
+                ratios = {m: default_ratio for m in range(1, 13)}
             else:
-                continue
+                ratios = self.peak_base_ratios_
 
-            result[peak_key] = round(price * ratio, 6)
-            n_synth += 1
+            for key, price in list(base_prices.items()):
+                if "-Peak" in key or "-Offpeak" in key:
+                    continue
+                peak_key = f"{key}-Peak"
+                if peak_key in result:
+                    continue  # Already has market peak
 
-        if n_synth > 0:
-            logger.info("Synthesized %d Peak forwards from historical ratios", n_synth)
+                try:
+                    ptype, year, sub = parse_key(key)
+                except ValueError:
+                    continue
+
+                if ptype == "Month" and sub is not None:
+                    ratio = ratios.get(sub, 1.05)
+                elif ptype == "Quarter" and sub is not None:
+                    months = QUARTER_MONTHS.get(sub, [])
+                    ratio = np.mean([ratios.get(m, 1.05) for m in months])
+                elif ptype == "Cal":
+                    ratio = np.mean(list(ratios.values()))
+                else:
+                    continue
+
+                result[peak_key] = round(price * ratio, 6)
+                n_synth += 1
+
+            if n_synth > 0:
+                logger.info("Synthesized %d Peak forwards from historical ratios", n_synth)
+
         return result
 
     def fit_seasonal_ratios(
@@ -640,10 +885,14 @@ class ContractCascader:
             if ptype == "Cal"
         ]
 
+        annual_only_years: set[int] = set()
         for year, year_price in years:
-            ratios = self._get_ratios(target_year=year)
             q_keys = [quarter_key(year, q) for q in range(1, 5)]
             existing_qs = [k for k in q_keys if k in result]
+            annual_only = len(existing_qs) == 0
+            ratios = self._get_ratios(
+                target_year=None if (annual_only and self.disable_trend_for_annual_only) else year
+            )
 
             if len(existing_qs) == 4:
                 continue
@@ -653,6 +902,7 @@ class ContractCascader:
                     year, year_price, result, ratios["quarter"]
                 )
             else:
+                annual_only_years.add(year)
                 self._cascade_year_full(
                     year, year_price, result, ratios["quarter"]
                 )
@@ -667,7 +917,9 @@ class ContractCascader:
         ]
 
         for year, q, q_price in quarters:
-            ratios = self._get_ratios(target_year=year)
+            ratios = self._get_ratios(
+                target_year=None if (year in annual_only_years and self.disable_trend_for_annual_only) else year
+            )
             months = QUARTER_MONTHS[q]
             m_keys = [month_key(year, m) for m in months]
             existing_ms = [k for k in m_keys if k in result]

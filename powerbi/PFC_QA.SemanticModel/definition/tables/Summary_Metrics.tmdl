@@ -1,0 +1,25 @@
+table Summary_Metrics
+	lineageTag: 4f3ea2c6-d593-4a4b-86a6-02d8a5eb9239
+
+	column metric
+		dataType: string
+		lineageTag: 0ad2fe88-973f-4358-a89e-2d50ca22fe6b
+		summarizeBy: none
+		sourceColumn: metric
+
+	column value
+		dataType: string
+		lineageTag: 0b52394f-788d-46d1-8a96-484ec70af73f
+		summarizeBy: none
+		sourceColumn: value
+
+	partition Summary_Metrics = m
+		mode: import
+		source =
+				let
+				    Source = Csv.Document(File.Contents("\\fmvfs2\Data\Energy\GeCom\CONTROLLING RISK\Analyses diverses\Python - JB\PFC_LT\powerbi\data\summary_metrics.csv"), [Delimiter=",", Columns=2, Encoding=65001, QuoteStyle=QuoteStyle.Csv]),
+				    Promoted = Table.PromoteHeaders(Source, [PromoteAllScalars=true]),
+				    Typed = Table.TransformColumnTypes(Promoted, {{"metric", type text}, {"value", type text}})
+				in
+				    Typed
+

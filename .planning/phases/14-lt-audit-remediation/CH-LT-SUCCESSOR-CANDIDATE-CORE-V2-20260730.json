@@ -1,0 +1,213 @@
+{
+  "schema_version": "ch_lt_successor_candidate_core.v2",
+  "core_name": "ch_lt_successor_candidate_core_20260730_v2",
+  "lifecycle": {
+    "state": "LOCAL_HASH_CLOSED_RECEIPT_FREE_CORE_NOT_EXTERNALLY_FROZEN",
+    "hash_closed_locally": true,
+    "externally_frozen": false,
+    "frozen_at_utc": null,
+    "trusted_time_receipt_sha256": null,
+    "candidate_core_is_admitted_successor": false,
+    "candidate_core_can_execute": false,
+    "candidate_core_can_open_truth": false,
+    "post_external_freeze_change_requires_new_core": true
+  },
+  "policy_scaffold": {
+    "path": ".planning/phases/14-lt-audit-remediation/CH-LT-SUCCESSOR-CANDIDATE-CORE-20260730.json",
+    "sha256": "87c9447230efce8e5a1c56086d961075621ff521a1f1bee90aa2e1abf97960d9",
+    "core_id": "ab835ce1995377129f990d210bd1ba3490def226ce63e7cde25b57b553d3b4e9",
+    "role": "POLICY_BYTES_ONLY_V1_ASSESSMENT_AND_T057_REGISTRY_ACCESS_SUPERSEDED"
+  },
+  "outcome_blind_t057_tombstone": {
+    "path": ".planning/phases/14-lt-audit-remediation/T057-OUTCOME-BLIND-TOMBSTONE-20260730.json",
+    "sha256": "e7b7524375d431004c2dfe1aff9d7fea10a9bf7742c4044f53a9cda3cdb594ea",
+    "tombstone_id": "9d2afbe3593c5525bf67f16a0d4482fa24304d547f3649b84b74c7549daa3380"
+  },
+  "supersession": {
+    "v1_assessment_status": "CONTAMINATED_BY_OUTCOME_BEARING_T057_REGISTRY_READ_NOT_ADMITTED",
+    "v1_policy_bytes_reusable_without_v1_validator_or_registry_read": true,
+    "v1_execution_or_admission_use": "FORBIDDEN",
+    "legacy_t057_outcome_metadata_exposed": true,
+    "legacy_t057_confirmation_reuse": "PERMANENTLY_FORBIDDEN",
+    "new_independent_holdout_required": true,
+    "superseded_v1_json_pointers": [
+      "/lifecycle",
+      "/information_firewall",
+      "/candidate_and_baseline_graphs/selection_rule",
+      "/origin_fold_and_truth_design/inner_selection",
+      "/origin_fold_and_truth_design/minimum_inner_origins",
+      "/origin_fold_and_truth_design/minimum_unique_outer_origins_floor",
+      "/origin_fold_and_truth_design/minimum_unique_outer_origins_final",
+      "/origin_fold_and_truth_design/future_episode_policy",
+      "/origin_fold_and_truth_design/future_episode_count",
+      "/origin_fold_and_truth_design/future_episode_length_days",
+      "/deterministic_market_and_complexity_gates/maximum_condition_number",
+      "/dependence_power_and_multiplicity_design/block_length_rule",
+      "/dependence_power_and_multiplicity_design/confirmatory_family",
+      "/probabilistic_scenario_and_monte_carlo_design/scenario_count_rule",
+      "/probabilistic_scenario_and_monte_carlo_design/variogram_lags_quarter_hours",
+      "/probabilistic_scenario_and_monte_carlo_design/mc_error_gate"
+    ]
+  },
+  "outcome_blind_firewall": {
+    "allowed_t057_access": "OUTCOME_BLIND_TOMBSTONE_BYTES_ONLY",
+    "outcome_bearing_registry_bytes": "FORBIDDEN",
+    "referenced_t057_artifact_bytes": "FORBIDDEN",
+    "future_holdout_truth_reads": "FORBIDDEN",
+    "post_origin_truth_reads_during_fit_selection_generation": "FORBIDDEN",
+    "holdout_derived_hyperparameters_thresholds_graphs_or_required_n": "FORBIDDEN",
+    "ompex_role": "BENCHMARK_ONLY_FORBIDDEN_AS_INPUT_TRUTH_LEVEL_OR_MDE_EVIDENCE",
+    "future_holdout_consumed": false,
+    "t057_consumed": false
+  },
+  "selection_and_hypothesis_freeze": {
+    "candidate_families": [
+      "ROBUST_REGULARIZED_LINEAR_GAM_SHAPE_V1",
+      "MONOTONE_HIST_GRADIENT_BOOSTING_SHAPE_V1"
+    ],
+    "baseline_families": [
+      "MARKET_CONSTRAINED_SEASONAL_NAIVE_V1",
+      "INCUMBENT_CH_LT_FROZEN_V1"
+    ],
+    "family_specific_complexity_lattice_manifest_required": true,
+    "feature_group_leave_one_out_ablation_manifest_required": true,
+    "inner_origin_standard_error_method": "OVERLAP_AWARE_STUDENTIZED_BLOCK_BOOTSTRAP",
+    "within_family_rule": "ONE_STANDARD_ERROR_THEN_LOWEST_LATTICE_RANK",
+    "between_family_rule": "LOWEST_INNER_PRIMARY_LOSS_THEN_FIXED_FAMILY_ORDER_ON_TIE",
+    "fixed_family_tie_order": [
+      "ROBUST_REGULARIZED_LINEAR_GAM_SHAPE_V1",
+      "MONOTONE_HIST_GRADIENT_BOOSTING_SHAPE_V1"
+    ],
+    "tie_tolerance": 1e-12,
+    "exact_hypothesis_manifest_required_fields": [
+      "contrast_id",
+      "candidate_id",
+      "baseline_id",
+      "layer",
+      "horizon",
+      "regime",
+      "population",
+      "metric",
+      "direction",
+      "noninferiority_margin",
+      "superiority_margin",
+      "family_id",
+      "gate_order"
+    ],
+    "multiplicity": "HOLM_FWER_OVER_EXACT_CLOSED_PRIMARY_FAMILY",
+    "simultaneous_interval_method": "INVERTED_HOLM_ADJUSTED_TESTS_WITH_OVERLAP_AWARE_BOOTSTRAP_PVALUES",
+    "gatekeeping_order": [
+      "DETERMINISTIC_MARKET_HARD_GATES",
+      "DETERMINISTIC_SHAPE_NONINFERIORITY",
+      "PROBABILISTIC_CALIBRATION_AND_SCORE_NONINFERIORITY",
+      "ECONOMIC_NONINFERIORITY_AND_MATERIAL_IMPROVEMENT"
+    ]
+  },
+  "overlap_aware_dependence_and_power": {
+    "maximum_delivery_support_overlap_lag_origins": 35,
+    "minimum_resampling_block_length_origins": 36,
+    "block_length_rule": "MAX_36_AND_PREFROZEN_AUTOMATIC_DIRECT_CH_DEVELOPMENT_ESTIMATE_NO_UPPER_CAP",
+    "resampling_method": "STUDENTIZED_STATIONARY_BLOCK_BOOTSTRAP_IN_ORIGIN_TIME_ORDER",
+    "hac_cross_check": "NEWEY_WEST_HLN_WITH_LAG_AT_LEAST_35_NON_GATE",
+    "effective_cluster_definition": "UNIQUE_ORIGINS_DIVIDED_BY_FINAL_BLOCK_LENGTH_WITH_OVERLAP_PENALTY",
+    "minimum_effective_clusters": null,
+    "minimum_unique_outer_origins": null,
+    "minimum_inner_origins": null,
+    "sample_requirements_source": "DIRECT_CH_ADMITTED_DEVELOPMENT_POWER_SIMULATION_AND_FMV_RISK_MARGINS_ONLY",
+    "familywise_alpha": 0.05,
+    "target_power": 0.8,
+    "insufficient_effective_clusters_or_power": "UNSUPPORTED_NEVER_PASS",
+    "overlapping_origins_treated_as_independent": "FORBIDDEN",
+    "superseded_de_lu_pilot_required_n_reuse": "FORBIDDEN"
+  },
+  "native_regime_scoring_graphs": {
+    "pre_transition": {
+      "truth_resolution_minutes": 60,
+      "scenario_projection": "ENERGY_WEIGHTED_TO_NATIVE_HOURLY_PRODUCT_BEFORE_SCORING",
+      "variogram_lags_native_intervals": [
+        1,
+        4,
+        12,
+        24,
+        168
+      ]
+    },
+    "post_transition": {
+      "truth_resolution_minutes": 15,
+      "availability": "ONLY_AFTER_NATIVE_PRODUCT_AND_TRANSITION_ADMISSION",
+      "variogram_lags_native_intervals": [
+        1,
+        4,
+        16,
+        48,
+        96,
+        672
+      ]
+    },
+    "common_cross_regime_comparison": "NATIVE_HOURLY_PROJECTION_ONLY",
+    "aggregation_across_transition_boundary": "FORBIDDEN",
+    "hourly_duplication_as_quarter_hour_truth": "FORBIDDEN",
+    "regime_specific_variogram_graph_and_weight_manifests_required": true
+  },
+  "monte_carlo_design_correction": {
+    "positive_margin_rule": "TWO_SIDED_95_HALF_WIDTH_LE_MIN_0.10_MARGIN_AND_0.001_POSITIVE_FROZEN_REFERENCE_SCALE",
+    "zero_margin_noninferiority_rule": "ONE_SIDED_95_MC_CI_AND_HALF_WIDTH_LE_0.001_POSITIVE_FROZEN_REFERENCE_SCALE",
+    "scenario_count_search": "ASCENDING_POWERS_OF_TWO_FROM_4096_UNTIL_ALL_GATES_PASS",
+    "scenario_count": null,
+    "maximum_scenario_count": null,
+    "count_chunk_backend_and_order_frozen_in_DISTINCT_MC_DESIGN_MANIFEST_BEFORE_EXTERNAL_FREEZE": true,
+    "missing_positive_reference_scale_or_capacity": "UNSUPPORTED_NEVER_PASS",
+    "common_random_numbers": true,
+    "cpu_float64_oracle": true
+  },
+  "conditioning_and_stability_design": {
+    "jacobian_column_scaling": "ORIGIN_PRODUCT_QUOTE_TICK_OR_PREFROZEN_PERTURBATION_EUR_MWH",
+    "jacobian_row_scaling": "FINAL_CURVE_REPRICING_TOLERANCE_AND_ENERGY_WEIGHT",
+    "condition_number_threshold": null,
+    "threshold_rule": "PREFROZEN_BACKWARD_ERROR_AND_FORWARD_REPRICING_ERROR_BOUND",
+    "rank_tolerance": null,
+    "perturbation_grid_manifest_required": true,
+    "condition_number_is_standalone_pass_gate": false,
+    "unstable_or_rank_deficient": "UNSUPPORTED_NEVER_PASS"
+  },
+  "future_evaluation_design": {
+    "episode_count": null,
+    "episode_duration_days": null,
+    "derivation": "PREFROZEN_DIRECT_CH_POWER_AND_MINIMUM_EFFECTIVE_CALIBRATION_CELL_DESIGN",
+    "season_regime_population_tail_coverage_required": true,
+    "strictly_post_external_freeze": true,
+    "one_shot": true,
+    "may_only_increase_before_external_freeze": true,
+    "legacy_t057_excluded": true,
+    "insufficient_power_or_coverage": "UNSUPPORTED_NEVER_PASS"
+  },
+  "required_evidence_slots": [
+    {"requirement": "GOVERNED_POINT_IN_TIME_CH_AND_EEX_EVIDENCE", "status": "MISSING", "path": null, "sha256": null},
+    {"requirement": "NATIVE_CH_LAYER_TRUTH_AND_POST_EPISODE_OUTCOMES", "status": "MISSING", "path": null, "sha256": null},
+    {"requirement": "EXACT_ORIGIN_TARGET_MASK_AND_INNER_FOLD_INVENTORIES", "status": "MISSING", "path": null, "sha256": null},
+    {"requirement": "FROZEN_DETERMINISTIC_CANDIDATE_BASELINE_COMPLEXITY_AND_MARKET_GATES", "status": "MISSING", "path": null, "sha256": null},
+    {"requirement": "FROZEN_DEPENDENCE_POWER_AND_MULTIPLICITY_DESIGN", "status": "MISSING", "path": null, "sha256": null},
+    {"requirement": "FROZEN_PROBABILISTIC_SCENARIO_AND_MONTE_CARLO_DESIGN", "status": "MISSING", "path": null, "sha256": null},
+    {"requirement": "FMV_RISK_APPROVED_ECONOMIC_MATERIALITY", "status": "MISSING", "path": null, "sha256": null},
+    {"requirement": "QUALIFIED_CPU_ORACLE_AND_CPU_GPU_RUNTIME_PARITY", "status": "MISSING", "path": null, "sha256": null},
+    {"requirement": "INDEPENDENT_SECURITY_ITOPS_AND_QUANT_REVIEWS", "status": "MISSING", "path": null, "sha256": null},
+    {"requirement": "EXTERNAL_ADMISSION_ENVELOPE_AND_ONE_SHOT_LEDGER", "status": "MISSING", "path": null, "sha256": null}
+  ],
+  "admission_boundary": {
+    "candidate_core_is_evidence_slot_satisfaction": false,
+    "readiness_state": "AUTHORED_LOCAL_HASH_CLOSED_NOT_EXTERNALLY_FROZEN_NOT_ADMITTED",
+    "distinct_hash_bound_evidence_required_for_every_slot": true,
+    "independent_signed_admission_envelope_required": true,
+    "builder_inaccessible_external_cas_worm_and_fresh_head_required": true,
+    "predictions_and_scenarios_sealed_before_truth_open": true,
+    "monotone_one_shot_attempt_ledger_required": true,
+    "reviews_bind_core_and_all_evidence_hashes": true
+  },
+  "scientific_admission": false,
+  "execution_authorized": false,
+  "production_authorization": false,
+  "promotion_gate": false,
+  "future_holdout_consumed": false,
+  "t057_consumed": false,
+  "core_id": "7042b909a1ca0aeb63f26f76fccdea7256b526651685e4e1db713ca469cc3065"
+}

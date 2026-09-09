@@ -1,0 +1,56 @@
+{
+  "schema_version": "fmv_ompex_external_benchmark_access.v1",
+  "purpose": "permit exceptional read-only OMPEX benchmark refreshes without creating an operational dependency on H:",
+  "canonical_workspace": "C:\\Users\\jbattaglia\\PFC_LT",
+  "external_source": {
+    "system": "H: desk share",
+    "role": "OMPEX benchmark source only",
+    "default_runtime_input": false,
+    "routine_pipeline_dependency": false,
+    "scheduled_access_authorized": false,
+    "explicit_manual_refresh_required": true,
+    "read_only": true,
+    "writes_authorized": false,
+    "delete_move_or_rename_authorized": false,
+    "metadata_or_timestamp_mutation_authorized": false
+  },
+  "authorized_access_reasons": [
+    "freeze a new exact OMPEX vintage after the PFC candidate is frozen",
+    "refresh the price-free archive inventory occasionally",
+    "run an independent post-freeze benchmark comparison"
+  ],
+  "forbidden_access_reasons": [
+    "model training",
+    "feature construction",
+    "parameter tuning",
+    "candidate selection",
+    "routine PFC generation",
+    "production promotion",
+    "repeated rescanning during scoring"
+  ],
+  "local_execution": {
+    "all_mutable_inputs_and_outputs_under_canonical_workspace": true,
+    "code_tests_manifests_reports_and_runtime_artifacts_on_C": true,
+    "selected_vintage_must_be_captured_or_hash_bound_locally_before_scoring": true,
+    "scoring_may_depend_on_live_H_path": false,
+    "source_path_has_no_application_default": true,
+    "source_path_must_be_supplied_explicitly_for_refresh": true,
+    "H_unavailable_blocks_routine_PFC_work": false,
+    "H_unavailable_blocks_only_benchmark_refresh": true
+  },
+  "databricks": {
+    "required_for_ompex_refresh": false,
+    "warehouse_start_authorized": false,
+    "writes_authorized": false
+  },
+  "authority": {
+    "benchmark_refresh": true,
+    "model_input": false,
+    "training": false,
+    "tuning": false,
+    "selection": false,
+    "monthly_level": false,
+    "promotion": false,
+    "production": false
+  }
+}

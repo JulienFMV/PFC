@@ -1,0 +1,342 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.10.0/schema.json",
+  "name": "hourly_table",
+  "position": {
+    "x": 20,
+    "y": 30,
+    "z": 0,
+    "height": 620,
+    "width": 1220
+  },
+  "visual": {
+    "visualType": "tableEx",
+    "query": {
+      "queryState": {
+        "Values": {
+          "projections": [
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "HFC_Hourly"
+                    }
+                  },
+                  "Property": "timestamp_ch_text"
+                }
+              },
+              "queryRef": "HFC_Hourly.timestamp_ch_text",
+              "nativeQueryRef": "timestamp_ch_text"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "HFC_Hourly"
+                    }
+                  },
+                  "Property": "timestamp_utc_text"
+                }
+              },
+              "queryRef": "HFC_Hourly.timestamp_utc_text",
+              "nativeQueryRef": "timestamp_utc_text"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "HFC_Hourly"
+                    }
+                  },
+                  "Property": "hour_code"
+                }
+              },
+              "queryRef": "HFC_Hourly.hour_code",
+              "nativeQueryRef": "hour_code"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "HFC_Hourly"
+                    }
+                  },
+                  "Property": "price_weighted_mean_eur_mwh"
+                }
+              },
+              "queryRef": "HFC_Hourly.price_weighted_mean_eur_mwh",
+              "nativeQueryRef": "price_weighted_mean_eur_mwh"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "HFC_Hourly"
+                    }
+                  },
+                  "Property": "price_central_eur_mwh"
+                }
+              },
+              "queryRef": "HFC_Hourly.price_central_eur_mwh",
+              "nativeQueryRef": "price_central_eur_mwh"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "HFC_Hourly"
+                    }
+                  },
+                  "Property": "price_fast_eur_mwh"
+                }
+              },
+              "queryRef": "HFC_Hourly.price_fast_eur_mwh",
+              "nativeQueryRef": "price_fast_eur_mwh"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "HFC_Hourly"
+                    }
+                  },
+                  "Property": "structural_p10_eur_mwh"
+                }
+              },
+              "queryRef": "HFC_Hourly.structural_p10_eur_mwh",
+              "nativeQueryRef": "structural_p10_eur_mwh"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "HFC_Hourly"
+                    }
+                  },
+                  "Property": "structural_p90_eur_mwh"
+                }
+              },
+              "queryRef": "HFC_Hourly.structural_p90_eur_mwh",
+              "nativeQueryRef": "structural_p90_eur_mwh"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "HFC_Hourly"
+                    }
+                  },
+                  "Property": "is_eex_peak"
+                }
+              },
+              "queryRef": "HFC_Hourly.is_eex_peak",
+              "nativeQueryRef": "is_eex_peak"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "HFC_Hourly"
+                    }
+                  },
+                  "Property": "is_fast_negative"
+                }
+              },
+              "queryRef": "HFC_Hourly.is_fast_negative",
+              "nativeQueryRef": "is_fast_negative"
+            }
+          ]
+        }
+      }
+    },
+    "visualContainerObjects": {
+      "title": [
+        {
+          "properties": {
+            "show": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            },
+            "text": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Hourly records'"
+                }
+              }
+            },
+            "fontSize": {
+              "expr": {
+                "Literal": {
+                  "Value": "11D"
+                }
+              }
+            },
+            "bold": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  "filterConfig": {
+    "filters": [
+      {
+        "name": "438cdea30c614ad76c30",
+        "field": {
+          "Column": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "HFC_Hourly"
+              }
+            },
+            "Property": "timestamp_ch_text"
+          }
+        },
+        "type": "Categorical"
+      },
+      {
+        "name": "90cfd624c76a8601c0de",
+        "field": {
+          "Column": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "HFC_Hourly"
+              }
+            },
+            "Property": "timestamp_utc_text"
+          }
+        },
+        "type": "Categorical"
+      },
+      {
+        "name": "d918e7e3e34bd296652b",
+        "field": {
+          "Column": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "HFC_Hourly"
+              }
+            },
+            "Property": "hour_code"
+          }
+        },
+        "type": "Categorical"
+      },
+      {
+        "name": "c686840e97ae61995aa2",
+        "field": {
+          "Column": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "HFC_Hourly"
+              }
+            },
+            "Property": "price_weighted_mean_eur_mwh"
+          }
+        },
+        "type": "Advanced"
+      },
+      {
+        "name": "ea7d10d713d24093ea4c",
+        "field": {
+          "Column": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "HFC_Hourly"
+              }
+            },
+            "Property": "price_central_eur_mwh"
+          }
+        },
+        "type": "Advanced"
+      },
+      {
+        "name": "b1b6d9421a51ada079ec",
+        "field": {
+          "Column": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "HFC_Hourly"
+              }
+            },
+            "Property": "price_fast_eur_mwh"
+          }
+        },
+        "type": "Advanced"
+      },
+      {
+        "name": "2a783a47ea8ae39b100c",
+        "field": {
+          "Column": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "HFC_Hourly"
+              }
+            },
+            "Property": "structural_p10_eur_mwh"
+          }
+        },
+        "type": "Advanced"
+      },
+      {
+        "name": "89c185d4c990b90aa0d4",
+        "field": {
+          "Column": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "HFC_Hourly"
+              }
+            },
+            "Property": "structural_p90_eur_mwh"
+          }
+        },
+        "type": "Advanced"
+      },
+      {
+        "name": "1c83b4d4c575a7303b0e",
+        "field": {
+          "Column": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "HFC_Hourly"
+              }
+            },
+            "Property": "is_eex_peak"
+          }
+        },
+        "type": "Categorical"
+      },
+      {
+        "name": "11831d6474c6ad8a1516",
+        "field": {
+          "Column": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "HFC_Hourly"
+              }
+            },
+            "Property": "is_fast_negative"
+          }
+        },
+        "type": "Categorical"
+      }
+    ]
+  }
+}

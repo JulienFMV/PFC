@@ -1,0 +1,115 @@
+{
+  "schema_version": "fmv_ompex_independent_benchmark_contract.v1",
+  "purpose": "outcome-blind comparison of a frozen CH LT PFC with frozen OMPEX vintages against independent realised truth",
+  "status": "NO_GO_SCORING_PENDING_AUTHENTICATED_ORIGINS_TRUTH_AND_PREREGISTERED_MARGINS",
+  "benchmark_role": {
+    "ompex_is_truth": false,
+    "ompex_is_model_input": false,
+    "ompex_is_training_target": false,
+    "ompex_is_tuning_target": false,
+    "ompex_is_selection_criterion": false,
+    "ompex_is_promotion_authority": false,
+    "ompex_is_read_only_post_freeze_benchmark": true,
+    "candidate_and_ompex_are_scored_against_independent_truth": true
+  },
+  "freeze_and_point_in_time": {
+    "candidate_bytes_frozen_before_ompex_access": true,
+    "candidate_config_and_input_manifests_frozen": true,
+    "ompex_exact_filename_size_and_sha256_frozen": true,
+    "ompex_availability_at_origin_must_be_authenticated": true,
+    "delivery_start_utc_not_before_origin_required": true,
+    "latest_workbook_may_reconstruct_earlier_forecast": false,
+    "pre_origin_rows_may_be_scored_as_forecast": false,
+    "realised_truth_frozen_independently_after_delivery": true
+  },
+  "alignment": {
+    "timezone": "UTC",
+    "currency_unit": "EUR/MWh",
+    "ompex_native_resolution": "PT1H",
+    "ompex_native_quarter_hour": false,
+    "ompex_source_labels_structurally_match": "Europe/Zurich local hour-ending",
+    "ompex_hour_end_semantics_vendor_authenticated": false,
+    "automatic_alignment_selected_on_lowest_error_authorized": false,
+    "explicit_timestamp_contract_required_before_scoring": true,
+    "same_origin_target_window_and_missingness_mask_required": true
+  },
+  "cadence_regimes": {
+    "truth_native_resolution_must_be_registered_by_delivery_interval": true,
+    "hourly_truth_may_be_counted_as_four_independent_quarter_hours": false,
+    "hourly_ompex_stepwise_quarter_hour_transport_authorized_for_alignment_only": true,
+    "stepwise_transport_may_be_labelled_native_quarter_hour": false,
+    "effective_sample_size_cluster": "forecast_origin_and_native_hour",
+    "native_quarter_hour_accuracy_gate": "UNSUPPORTED_UNLESS_INDEPENDENT_PRICE_TRUTH_IS_NATIVE_PT15M",
+    "hourly_market_periods_are_scored_on_native_hourly_truth": true
+  },
+  "estimands": {
+    "primary": [
+      {
+        "id": "HOURLY_MAE_DELTA",
+        "definition": "MAE(candidate, independent hourly truth) - MAE(OMPEX, independent hourly truth)",
+        "direction": "lower_is_better",
+        "inference": "dependence-aware confidence interval clustered by independent forecast origin"
+      },
+      {
+        "id": "MONTHLY_LEVEL_INTEGRITY",
+        "definition": "candidate hard CH EEX monthly BASE and applicable PEAK residuals with no hourly rewrite of solver monthly means",
+        "direction": "zero_within_contractual_tolerance",
+        "inference": "hard integrity gate, not an OMPEX-fit metric"
+      },
+      {
+        "id": "NATIVE_QUARTER_HOUR_MAE_DELTA",
+        "definition": "MAE(candidate PT15M, independent native PT15M truth) - MAE(stepwise OMPEX transport, the same truth)",
+        "direction": "lower_is_better",
+        "inference": "cluster by forecast origin and native hour; never multiply effective N by four",
+        "availability": "only delivery regimes with native PT15M price truth"
+      }
+    ],
+    "mandatory_diagnostics": [
+      "bias",
+      "rmse",
+      "median_absolute_error",
+      "within_month_zero_mean_shape_error",
+      "ramp_error",
+      "negative_price_regime",
+      "tail_error",
+      "peak_offpeak",
+      "day_night",
+      "weekday_weekend_holiday",
+      "season",
+      "dst_transition",
+      "forecast_horizon_bucket",
+      "vintage_revision_stability",
+      "uncertainty_coverage_and_weighted_interval_score_when_available"
+    ]
+  },
+  "decision_rule": {
+    "literal_win_at_every_timestamp_required": false,
+    "meaning_of_superior_at_all_points_of_view": "superior on preregistered primary estimands, non-inferior on every mandatory protected subgroup, and clean on every integrity and operational guardrail",
+    "all_integrity_pit_calendar_and_provenance_gates_must_pass": true,
+    "primary_hourly_mae_upper_confidence_bound_must_be_below_preregistered_margin": true,
+    "all_mandatory_subgroups_must_pass_preregistered_noninferiority_margins": true,
+    "multiple_testing_control_required": true,
+    "strict_improvement_required_in_at_least_one_shape_tail_ramp_or_uncertainty_dimension": true,
+    "monthly_solver_constraints_must_remain_exact": true,
+    "missingness_or_imputation_advantage_forbidden": true,
+    "effect_sizes_margins_and_alpha_must_be_fmv_approved_before_outcomes": true,
+    "post_outcome_metric_or_margin_changes_authorized": false
+  },
+  "current_blockers": [
+    "OMPEX timestamp and filename availability semantics are not desk or vendor authenticated",
+    "the archive contains missing daily vintages and historical rows can be revised",
+    "independent governed realised truth and countable future origins are not yet frozen",
+    "FMV has not yet approved numeric superiority and subgroup noninferiority margins",
+    "governed ENTSO-E point-in-time evidence remains unavailable"
+  ],
+  "authority": {
+    "structural_parser_development": true,
+    "descriptive_archive_audit": true,
+    "model_training": false,
+    "model_tuning": false,
+    "model_selection": false,
+    "candidate_assembly": false,
+    "promotion": false,
+    "production": false
+  }
+}

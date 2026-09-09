@@ -1,0 +1,208 @@
+{
+  "schema_version": "fmv_lseg_entsoe_july_latest_reconciliation_evidence.v1",
+  "status": "PASS_EXACT_LATEST_SOURCE_RECONCILIATION_NOT_FINALITY_OR_MODEL_AUTHORITY",
+  "assessed_at_utc": "2026-09-04T08:33:46.008000Z",
+  "scope": {
+    "market_month": "2026-07",
+    "market_timezone": "Europe/Zurich",
+    "window_start_utc": "2026-06-30T22:00:00Z",
+    "window_end_utc": "2026-07-31T22:00:00Z",
+    "expected_utc_hours_per_zone": 744,
+    "lseg_crosscheck_zones": [
+      "CH",
+      "AT",
+      "DE_LU",
+      "FR"
+    ],
+    "entsoe_only_zones": [
+      "IT_NORD"
+    ],
+    "entsoe_series_selection": {
+      "ch_price": "day_ahead_prices||ch_price",
+      "at_price": "day_ahead_prices||at_price||1",
+      "de_lu_price": "day_ahead_prices||de_lu_price||1",
+      "fr_price": "day_ahead_prices||fr_price",
+      "it_nord_price": "day_ahead_prices||it_nord_price"
+    },
+    "lseg_curve_ids": {
+      "CH": "115688058",
+      "AT": "165444048",
+      "DE_LU": "165349556",
+      "FR": "165442712"
+    }
+  },
+  "preflight": {
+    "warehouse_state": "RUNNING",
+    "warehouse_started_for_request": false,
+    "warehouse_size": "2X-Small",
+    "warehouse_auto_stop_minutes": 45,
+    "rejected_vintage_table": {
+      "full_name": "prd.silver.ge_market_lseg_curve_value_vintages",
+      "reason": "UNPARTITIONED_11544235073_BYTE_TABLE_WOULD_REPEAT_PROHIBITED_HIGH_COST_SCAN",
+      "statistics_num_rows": 195575749,
+      "statistics_total_size_bytes": 11544235073,
+      "queried": false
+    },
+    "selected_latest_table": {
+      "full_name": "prd.silver.ge_market_lseg_curve_values",
+      "selection_reason": "SMALLEST_DIRECT_SILVER_CONTRACT_RETAINING_INTERVAL_PROVENANCE_DQ_AND_CAPTURE_TIMESTAMPS",
+      "statistics_num_rows": 757167,
+      "statistics_total_size_bytes": 16758198,
+      "partition_columns": []
+    },
+    "maximum_scan_bytes": 33554432,
+    "preflight_artifact": {
+      "path": "build/lseg-july-reconciliation-20260904/preflight.json",
+      "sha256": "16472e4342d50a92eca5fdbf26810546a20d066a5f4ce59393aba008bba05769"
+    },
+    "control_plane_get_count": 4,
+    "databricks_statement_count": 0,
+    "business_row_count_opened": 0
+  },
+  "query_contract": {
+    "path": "docs/data/sql/databricks_prd_lseg_epex_actuals_latest_extract.sql",
+    "sha256": "be9e94de41c9e0c65f1814be617e3abd591103d6b869c6c80444761e6de22fff",
+    "source_table": "prd.silver.ge_market_lseg_curve_values",
+    "read_only": true,
+    "maximum_rows": 20000,
+    "window_days": 31,
+    "utc_months_touched": 2
+  },
+  "capture_execution": {
+    "failed_compile_statement": {
+      "statement_id": "01f1a842-46c7-15ce-a770-87b5252a9b24",
+      "status": "FAILED_UNRESOLVED_CURVE_VALUE_VINTAGE_ID",
+      "read_bytes": 0,
+      "rows_produced": 0,
+      "total_time_ms": 713,
+      "retried_blindly": false
+    },
+    "successful_statement": {
+      "statement_id": "01f1a842-8df8-1f79-93d3-90abb9bc505f",
+      "status": "SUCCEEDED",
+      "read_bytes": 13141107,
+      "read_files_bytes": 16768719,
+      "read_files_count": 1,
+      "rows_read_count": 757816,
+      "rows_produced_count": 9672,
+      "pruned_bytes": 1161114,
+      "pruned_files_count": 2,
+      "total_time_ms": 2212,
+      "write_remote_bytes": 0,
+      "spill_bytes": 0,
+      "failed_task_count": 0
+    },
+    "warehouse_start_count": 0,
+    "warehouse_resize_count": 0,
+    "warehouse_create_count": 0,
+    "remote_write_count": 0
+  },
+  "source_artifacts": {
+    "entsoe": {
+      "path": "build/entsoe-july-candidate-20260904/latest-revision-candidate.parquet",
+      "row_count": 12083,
+      "size_bytes": 564727,
+      "sha256": "046ae86ab84a72c61ea44547cc386f85e49d37d325352f4bfca208a08e5a9baa",
+      "raw_frame_semantic_sha256": "5a6d72b5531e843dc4e7920c519cc3d93189e70d91277662a763f6575967374e",
+      "validated_reconciliation_frame_semantic_sha256": "2d3e45756ea31b0175bfb0ec95bdacc37de1c5da6368fe608054eb316454312c"
+    },
+    "lseg": {
+      "path": "build/lseg-july-reconciliation-20260904/lseg-epex-latest.parquet",
+      "row_count": 9672,
+      "size_bytes": 767668,
+      "sha256": "f99585749ad8e0bc113109a9f7a645e909dc4c12a7baed6a6ab18cb7c6b17e71",
+      "frame_semantic_sha256": "a600519b206bda9cdd0f94688bd3bdb51909dad1ea169e9710df71d3847fd081",
+      "capture_manifest_path": "build/lseg-july-reconciliation-20260904/capture-manifest.json",
+      "capture_manifest_sha256": "f193ca38914e682f2377173c9b97caaf5dd44911c6f68f2ce3f3098cca82eb74"
+    }
+  },
+  "reconciliation_policy": {
+    "frozen_before_business_values_were_compared": true,
+    "thresholds_changed_after_result": false,
+    "policy_id": "july-2026-latest-cross-source-half-cent-v1",
+    "minimum_matched_hours_per_zone": 744,
+    "minimum_hourly_overlap_ratio": 1.0,
+    "maximum_p95_abs_difference_eur_per_mwh": 0.005,
+    "maximum_absolute_bias_eur_per_mwh": 0.005,
+    "maximum_single_hour_abs_difference_eur_per_mwh": 0.005,
+    "semantic_sha256": "8321483bc06fa7caeab1fcdd3e1fa120413d38dcea48b54c53793cc6ec03aee5"
+  },
+  "reconciliation_result": {
+    "status": "PASS_SPOT_SOURCE_RECONCILIATION_NOT_MODEL_AUTHORITY",
+    "report_path": "build/lseg-july-reconciliation-20260904/reconciliation-report.json",
+    "report_sha256": "a941c9ca7f0076a844f972c07cc3149dde0c88d4857bdf1c7011400871e9cce0",
+    "severity_counts": {
+      "CRITICAL": 0,
+      "HIGH": 0,
+      "MEDIUM": 0,
+      "LOW": 0
+    },
+    "per_zone": {
+      "CH": {
+        "matched_hours": 744,
+        "entsoe_missing_hours": 0,
+        "lseg_missing_hours": 0,
+        "hourly_overlap_ratio": 1.0,
+        "mean_difference_eur_per_mwh": 0.0,
+        "p95_abs_difference_eur_per_mwh": 0.0,
+        "maximum_abs_difference_eur_per_mwh": 0.0,
+        "rmse_eur_per_mwh": 0.0
+      },
+      "AT": {
+        "matched_hours": 744,
+        "entsoe_missing_hours": 0,
+        "lseg_missing_hours": 0,
+        "hourly_overlap_ratio": 1.0,
+        "mean_difference_eur_per_mwh": 0.0,
+        "p95_abs_difference_eur_per_mwh": 0.0,
+        "maximum_abs_difference_eur_per_mwh": 0.0,
+        "rmse_eur_per_mwh": 0.0
+      },
+      "DE_LU": {
+        "matched_hours": 744,
+        "entsoe_missing_hours": 0,
+        "lseg_missing_hours": 0,
+        "hourly_overlap_ratio": 1.0,
+        "mean_difference_eur_per_mwh": 0.0,
+        "p95_abs_difference_eur_per_mwh": 0.0,
+        "maximum_abs_difference_eur_per_mwh": 0.0,
+        "rmse_eur_per_mwh": 0.0
+      },
+      "FR": {
+        "matched_hours": 744,
+        "entsoe_missing_hours": 0,
+        "lseg_missing_hours": 0,
+        "hourly_overlap_ratio": 1.0,
+        "mean_difference_eur_per_mwh": 0.0,
+        "p95_abs_difference_eur_per_mwh": 0.0,
+        "maximum_abs_difference_eur_per_mwh": 0.0,
+        "rmse_eur_per_mwh": 0.0
+      }
+    },
+    "it_north": {
+      "entsoe_complete_hours": 744,
+      "lseg_crosscheck_available": false,
+      "status": "ENTSOE_ONLY_NO_ACTIVE_LSEG_EPEX_CURVE"
+    }
+  },
+  "limitations": {
+    "lseg_extract_is_latest_not_point_in_time": true,
+    "reconciliation_proves_realized_finality": false,
+    "reconciliation_proves_original_publication_time": false,
+    "reconciliation_proves_causal_availability": false,
+    "it_north_independently_reconciled": false,
+    "september_ch_backfill_closed": false,
+    "silent_source_substitution_authorized": false
+  },
+  "authorities": {
+    "source_reconciliation_validated": true,
+    "realized_finality_proven": false,
+    "causal_history_authorized": false,
+    "model_input_authorized": false,
+    "model_selection_authorized": false,
+    "monthly_level_authorized": false,
+    "publication_authorized": false,
+    "production_authorized": false,
+    "trading_authorized": false
+  }
+}

@@ -1,0 +1,74 @@
+{
+  "schema_version": "fmv_entsoe_daily_capture_reservation_ledger_contract.v1",
+  "status": "STATIC_OFFLINE_DAILY_RESERVATION_LEDGER_NO_EXECUTION_AUTHORITY",
+  "decision": "D-20260805-238",
+  "purpose": "prove structurally that a future Europe/Zurich capture day is consumed at reservation time and cannot be reused",
+  "input_bindings": {
+    "governed_acquisition_package_decision": "D-20260805-233",
+    "governed_acquisition_package_contract_content_id": "4f6e644b15593e8d4ae2ca196e1d52a002d4255bdf42e7a137982edb854f0fa0",
+    "external_time_batch_decision": "D-20260805-235",
+    "external_time_batch_proof_content_id": "93504d69834b299ce361352adce433509cf84bce0fbbb940be00a9bd59616ff1",
+    "external_time_batch_proof_manifest_sha256": "a10bbfa380652365684213197862139bf958dc33e706d81635cc2a6ae4582f02",
+    "bounded_execution_decision": "D-20260805-236",
+    "bounded_execution_contract_content_id": "834cbba541395072886e1ba80012a76cc55a0a8990b6d354f6d1bfe110a12156",
+    "bounded_execution_proof_content_id": "772da4e0b22540bf22e1715ca146cc0a59adf0c7a9ec508e5a893d8495539247",
+    "bounded_execution_proof_manifest_sha256": "9d76631395176718b600ca0de8f7303ad8faea931c24298f514a54354da3d6e0"
+  },
+  "daily_policy": {
+    "capture_timezone": "Europe/Zurich",
+    "maximum_reservations_per_local_day": 1,
+    "reservation_consumes_day_before_warehouse_start": true,
+    "counted_states": [
+      "AUTHORIZED_RESERVED",
+      "EXECUTION_STARTED",
+      "SUCCEEDED",
+      "FAILED"
+    ],
+    "retry_uses_new_reservation_authorized": false,
+    "same_day_replacement_after_failure_authorized": false,
+    "unique_capture_batch_id_required": true,
+    "unique_proposal_content_id_required": true,
+    "strictly_increasing_reserved_at_utc_required": true,
+    "candidate_day_must_match_proposal_created_at_in_capture_timezone": true,
+    "candidate_must_embed_exact_valid_d236_proposal": true,
+    "monetary_cap_must_be_in_embedded_proposal": true
+  },
+  "ledger_policy": {
+    "schema_version": "fmv_entsoe_daily_capture_reservation_ledger.v1",
+    "evidence_class": "SYNTHETIC_TEST_ONLY",
+    "empty_ledger_is_valid": true,
+    "real_ledger_admission_authorized": false,
+    "atomic_persistence_implemented": false,
+    "cross_process_lock_implemented": false,
+    "external_monotone_head_verified": false
+  },
+  "candidate_policy": {
+    "schema_version": "fmv_entsoe_daily_capture_candidate.v1",
+    "evidence_class": "SYNTHETIC_TEST_ONLY",
+    "structural_eligibility_is_execution_authority": false,
+    "authorization_receipt_required_for_real_reservation": true,
+    "authorization_receipt_admission_implemented": false
+  },
+  "execution_policy": {
+    "current_databricks_connection_budget": 0,
+    "current_databricks_statement_budget": 0,
+    "current_warehouse_start_budget": 0,
+    "current_network_call_budget": 0,
+    "current_remote_write_budget": 0,
+    "connector_code_allowed": false,
+    "reservation_write_authorized": false,
+    "capture_execution_authorized": false
+  },
+  "authorities": {
+    "real_ledger_admitted": false,
+    "real_reservation_authorized": false,
+    "capture_execution_authorized": false,
+    "point_in_time_availability_proven": false,
+    "training_authorized": false,
+    "selection_authorized": false,
+    "model_input_authorized": false,
+    "candidate_assembly_authorized": false,
+    "promotion_authorized": false,
+    "production_authorized": false
+  }
+}

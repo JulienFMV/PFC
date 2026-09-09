@@ -1,0 +1,90 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.10.0/schema.json",
+  "name": "fast_neg",
+  "position": {
+    "x": 619.57446808510645,
+    "y": 125.47112462006079,
+    "z": 0,
+    "height": 117.68996960486322,
+    "width": 190.63829787234044
+  },
+  "visual": {
+    "visualType": "cardVisual",
+    "query": {
+      "queryState": {
+        "Data": {
+          "projections": [
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "HFC_Hourly"
+                    }
+                  },
+                  "Property": "Fast Negative Hours"
+                }
+              },
+              "queryRef": "HFC_Hourly.Fast Negative Hours",
+              "nativeQueryRef": "Fast Negative Hours"
+            }
+          ]
+        }
+      }
+    },
+    "visualContainerObjects": {
+      "title": [
+        {
+          "properties": {
+            "show": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            },
+            "text": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Fast negative hours'"
+                }
+              }
+            },
+            "fontSize": {
+              "expr": {
+                "Literal": {
+                  "Value": "11D"
+                }
+              }
+            },
+            "bold": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  "filterConfig": {
+    "filters": [
+      {
+        "name": "f277a66c85e0e80a4980",
+        "field": {
+          "Measure": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "HFC_Hourly"
+              }
+            },
+            "Property": "Fast Negative Hours"
+          }
+        },
+        "type": "Advanced"
+      }
+    ]
+  }
+}

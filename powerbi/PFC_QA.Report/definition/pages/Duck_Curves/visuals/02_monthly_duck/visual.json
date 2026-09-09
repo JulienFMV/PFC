@@ -1,0 +1,155 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.10.0/schema.json",
+  "name": "monthly_duck",
+  "position": {
+    "x": 20,
+    "y": 115,
+    "z": 0,
+    "height": 330,
+    "width": 600
+  },
+  "visual": {
+    "visualType": "lineChart",
+    "query": {
+      "queryState": {
+        "Category": {
+          "projections": [
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Duck_Month_Hour"
+                    }
+                  },
+                  "Property": "hour"
+                }
+              },
+              "queryRef": "Duck_Month_Hour.hour",
+              "nativeQueryRef": "hour",
+              "active": true
+            }
+          ]
+        },
+        "Series": {
+          "projections": [
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Duck_Month_Hour"
+                    }
+                  },
+                  "Property": "month_code"
+                }
+              },
+              "queryRef": "Duck_Month_Hour.month_code",
+              "nativeQueryRef": "month_code"
+            }
+          ]
+        },
+        "Y": {
+          "projections": [
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Duck_Month_Hour"
+                    }
+                  },
+                  "Property": "Duck Month Avg Weighted Price"
+                }
+              },
+              "queryRef": "Duck_Month_Hour.Duck Month Avg Weighted Price",
+              "nativeQueryRef": "Duck Month Avg Weighted Price"
+            }
+          ]
+        }
+      }
+    },
+    "visualContainerObjects": {
+      "title": [
+        {
+          "properties": {
+            "show": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            },
+            "text": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Monthly duck curve - weighted mean'"
+                }
+              }
+            },
+            "fontSize": {
+              "expr": {
+                "Literal": {
+                  "Value": "11D"
+                }
+              }
+            },
+            "bold": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  "filterConfig": {
+    "filters": [
+      {
+        "name": "6737470cdcadb771e7b1",
+        "field": {
+          "Column": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "Duck_Month_Hour"
+              }
+            },
+            "Property": "hour"
+          }
+        },
+        "type": "Advanced"
+      },
+      {
+        "name": "860b4e04b0152710ba42",
+        "field": {
+          "Column": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "Duck_Month_Hour"
+              }
+            },
+            "Property": "month_code"
+          }
+        },
+        "type": "Categorical"
+      },
+      {
+        "name": "40cd95db0ea40b1d82d5",
+        "field": {
+          "Measure": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "Duck_Month_Hour"
+              }
+            },
+            "Property": "Duck Month Avg Weighted Price"
+          }
+        },
+        "type": "Advanced"
+      }
+    ]
+  }
+}

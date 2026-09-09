@@ -7,6 +7,8 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+throw "Registration of the legacy direct publisher is disabled. Deploy the governed runner instead."
+
 $scriptPath = Join-Path $RepoRoot "pfc_shaping\tools\run_daily_pfc.ps1"
 $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`" -PythonExe `"$PythonExe`" -RepoRoot `"$RepoRoot`""
 $trigger = New-ScheduledTaskTrigger -Daily -At $RunAt

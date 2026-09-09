@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from pfc_shaping.model.pricefm_experimental import (
+from pfc_shaping.ct.model.pricefm_experimental import (
     BEST_PRICEFM_EXPERIMENT,
     blend_lear_with_pricefm,
     load_pricefm_forecast,

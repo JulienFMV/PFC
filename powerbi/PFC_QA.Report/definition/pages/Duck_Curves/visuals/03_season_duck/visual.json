@@ -1,0 +1,155 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.10.0/schema.json",
+  "name": "season_duck",
+  "position": {
+    "x": 640,
+    "y": 114.77203647416414,
+    "z": 0,
+    "height": 330.69908814589667,
+    "width": 600.12158054711244
+  },
+  "visual": {
+    "visualType": "lineChart",
+    "query": {
+      "queryState": {
+        "Category": {
+          "projections": [
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Duck_Season_Hour"
+                    }
+                  },
+                  "Property": "hour"
+                }
+              },
+              "queryRef": "Duck_Season_Hour.hour",
+              "nativeQueryRef": "hour",
+              "active": true
+            }
+          ]
+        },
+        "Series": {
+          "projections": [
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Duck_Season_Hour"
+                    }
+                  },
+                  "Property": "season"
+                }
+              },
+              "queryRef": "Duck_Season_Hour.season",
+              "nativeQueryRef": "season"
+            }
+          ]
+        },
+        "Y": {
+          "projections": [
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Duck_Season_Hour"
+                    }
+                  },
+                  "Property": "Duck Season Avg Weighted Price"
+                }
+              },
+              "queryRef": "Duck_Season_Hour.Duck Season Avg Weighted Price",
+              "nativeQueryRef": "Duck Season Avg Weighted Price"
+            }
+          ]
+        }
+      }
+    },
+    "visualContainerObjects": {
+      "title": [
+        {
+          "properties": {
+            "show": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            },
+            "text": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Seasonal duck curve - weighted mean'"
+                }
+              }
+            },
+            "fontSize": {
+              "expr": {
+                "Literal": {
+                  "Value": "11D"
+                }
+              }
+            },
+            "bold": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  "filterConfig": {
+    "filters": [
+      {
+        "name": "34abb66662017abde232",
+        "field": {
+          "Column": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "Duck_Season_Hour"
+              }
+            },
+            "Property": "hour"
+          }
+        },
+        "type": "Advanced"
+      },
+      {
+        "name": "30de5b00eaca1c86ec59",
+        "field": {
+          "Column": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "Duck_Season_Hour"
+              }
+            },
+            "Property": "season"
+          }
+        },
+        "type": "Categorical"
+      },
+      {
+        "name": "9a56ff7b1315621b6d8e",
+        "field": {
+          "Measure": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "Duck_Season_Hour"
+              }
+            },
+            "Property": "Duck Season Avg Weighted Price"
+          }
+        },
+        "type": "Advanced"
+      }
+    ]
+  }
+}

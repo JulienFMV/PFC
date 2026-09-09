@@ -1,0 +1,118 @@
+{
+  "schema_version": "fmv_ompex_benchmark_evidence_chain_reference_contract.v1",
+  "purpose": "price-free local reference for binding a frozen candidate, an at-origin OMPEX availability observation and independently published realised truth",
+  "status": "NON_PRODUCTION_LOCAL_REFERENCE_NEVER_COUNTABLE",
+  "receipt_sequence": [
+    {
+      "role": "candidate_freeze",
+      "schema": "ompex_benchmark_candidate_freeze.reference.v1",
+      "required_before": "target_start_utc",
+      "binds": [
+        "candidate commitment ID and SHA-256",
+        "candidate artifact SHA-256",
+        "configuration manifest SHA-256",
+        "input manifest SHA-256",
+        "origin and target window",
+        "data cutoff and freeze time",
+        "no prior OMPEX or truth access"
+      ]
+    },
+    {
+      "role": "ompex_availability",
+      "schema": "ompex_benchmark_availability.reference.v1",
+      "required_before": "origin_utc",
+      "binds": [
+        "candidate freeze receipt ID",
+        "exact OMPEX filename size and SHA-256",
+        "first availability observation and open times",
+        "timestamp-semantics contract SHA-256",
+        "asserted hour-end and at-origin availability semantics",
+        "no prior truth access"
+      ]
+    },
+    {
+      "role": "truth_publication",
+      "schema": "ompex_benchmark_truth_publication.reference.v1",
+      "required_after": "target_end_utc",
+      "binds": [
+        "candidate freeze and OMPEX availability receipt IDs",
+        "exact truth source size and SHA-256",
+        "PT1H UTC EUR/MWh semantics",
+        "publication and open times",
+        "independence from candidate and OMPEX",
+        "frozen registered revision"
+      ]
+    }
+  ],
+  "chronology": {
+    "origin_precedes_target": true,
+    "candidate_data_cutoff_not_after_origin": true,
+    "candidate_freeze_not_before_data_cutoff": true,
+    "candidate_freeze_not_after_target_start": true,
+    "ompex_first_availability_not_after_origin": true,
+    "ompex_open_not_before_candidate_freeze": true,
+    "truth_publication_not_before_target_end": true,
+    "truth_open_not_before_publication": true
+  },
+  "reference_cryptography": {
+    "signature_algorithm": "Ed25519",
+    "canonical_json_required": true,
+    "domain_separated_signatures": true,
+    "three_distinct_role_keys_required": true,
+    "caller_held_expected_hashes_required": true,
+    "duplicate_json_keys_rejected": true
+  },
+  "trust_boundary": {
+    "local_signature_integrity_verified": true,
+    "public_key_owner_identity_verified": false,
+    "external_authority_verified": false,
+    "trusted_time_verified": false,
+    "worm_retention_verified": false,
+    "real_receipt_admitted": false,
+    "price_values_opened_by_verifier": false,
+    "countable_origin_count": 0
+  },
+  "decision_authority": {
+    "scientific_scoring_authorized": false,
+    "model_selection_authorized": false,
+    "superiority_claim_authorized": false,
+    "promotion_authorized": false,
+    "production_authorized": false
+  },
+  "production_wire_requirements": [
+    "new production schemas and signing domains incompatible with this reference wire",
+    "externally governed trust-anchor registry binding organizations roles and public keys",
+    "key lifecycle revocation and rotation policy",
+    "trusted timestamp authority or equivalent independently verifiable time evidence",
+    "append-only WORM retention with replay and rollback protection",
+    "independent candidate registry desk or vendor OMPEX authority and truth publisher",
+    "authenticated OMPEX hour-ending and at-origin availability semantics",
+    "independent frozen truth revision published only after delivery",
+    "multiple independently frozen future origins and preregistered inference"
+  ],
+  "local_execution": {
+    "canonical_workspace": "C:/Users/jbattaglia/PFC_LT",
+    "receipt_and_public_key_inputs_must_be_local": true,
+    "outputs_must_be_below_build": true,
+    "h_drive_runtime_dependency": false,
+    "databricks_request_required": false,
+    "remote_write_authorized": false
+  },
+  "standards_basis": [
+    {
+      "reference": "RFC 8032",
+      "url": "https://www.rfc-editor.org/info/rfc8032",
+      "use": "EdDSA and Ed25519 signature specification"
+    },
+    {
+      "reference": "RFC 3161",
+      "url": "https://www.rfc-editor.org/info/rfc3161",
+      "use": "independent time-stamp authority protocol"
+    },
+    {
+      "reference": "NIST SP 800-89",
+      "url": "https://csrc.nist.gov/pubs/sp/800/89/final",
+      "use": "assurance that a public key is bound to the claimed signatory"
+    }
+  ]
+}

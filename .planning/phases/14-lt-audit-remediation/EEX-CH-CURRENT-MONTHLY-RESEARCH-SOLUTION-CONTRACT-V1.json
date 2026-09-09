@@ -1,0 +1,98 @@
+{
+  "schema_version": "fmv_eex_ch_current_monthly_research_solution_contract.v1",
+  "decision": "D-20260806-286",
+  "status": "LOCAL_CURRENT_EEX_MONTHLY_RESEARCH_SOLUTION_NO_PIT_OR_MODEL_AUTHORITY",
+  "purpose": "Materialize the current CH monthly BASE level from the exact selected local EEX surface while preserving PEAK only for later shaping.",
+  "predecessors": {
+    "d212_normalization_content_id": "2837dc4849dc4b573c441059574973e0b8cc0fbb5023203509cb2929dd636a3f",
+    "d212_normalization_manifest_sha256": "f91805f3004e746ac588e19aa6745ae0dc0f490a9ef5c49aae0918e7ec3f8f53",
+    "d212_surface_audit_content_id": "bb1a09932b4bbff31dfdbb4ada561befb02050413ee819b03bf6c28f4858ab54",
+    "d212_surface_audit_manifest_sha256": "7f5d565ad7191b5f455e7a29280de078422cd95b3a846d06dc8cc6f29bf131a0",
+    "d213_horizon_audit_content_id": "435ecbc737f95268f03f7f347dfafc4163f5b5a4cb5b8dc9cec87e05f1645108",
+    "d213_horizon_audit_manifest_sha256": "949a1598710ad6198b569fd4cb00a99750707e162dbc0c709fefaa04f28e0ed1"
+  },
+  "source_artifacts": {
+    "normalization_manifest_relative_path": "build/databricks-eex-daily/2026-08-05/normalizations-all-products/2837dc4849dc4b573c441059574973e0b8cc0fbb5023203509cb2929dd636a3f/manifest.json",
+    "solver_history_relative_path": "build/databricks-eex-daily/2026-08-05/normalizations-all-products/2837dc4849dc4b573c441059574973e0b8cc0fbb5023203509cb2929dd636a3f/eex_ch_cal_q_m_live_history.parquet",
+    "solver_history_sha256": "fc5de85d1870937955dcc93cbf1cea0e1d2f85d892b286f490a6de11650d7a25",
+    "solver_history_row_count": 34105,
+    "solver_latest_relative_path": "build/databricks-eex-daily/2026-08-05/normalizations-all-products/2837dc4849dc4b573c441059574973e0b8cc0fbb5023203509cb2929dd636a3f/eex_ch_cal_q_m_latest.parquet",
+    "solver_latest_sha256": "3b8c9a9831a3ff44b8b9880e914fa1bb1e60c4e03d0610d1fd40ab8b83490aaf",
+    "solver_latest_row_count": 38,
+    "surface_date": "2026-08-04",
+    "market": "CH",
+    "unit": "EUR/MWh",
+    "base_quote_count": 19,
+    "peak_quote_count": 19
+  },
+  "delivery_grid": {
+    "first_month": "2026-09",
+    "last_month": "2032-12",
+    "month_count": 76,
+    "timezone": "Europe/Zurich",
+    "calendar": "CH"
+  },
+  "solver_policy": {
+    "monthly_level_authority": "ONE_CH_BASE_SOLVER",
+    "hard_constraint_products": ["MONTH", "QUARTER", "YEAR"],
+    "hard_constraint_load_type": "BASE",
+    "peak_policy": "SEPARATE_SHAPING_SIDECAR_NO_MONTHLY_LEVEL_AUTHORITY",
+    "short_tenor_policy": "DAY_WEEK_WEEKEND_EXCLUDED_FROM_MONTHLY_LEVEL",
+    "neighbor_level_policy": "FORBIDDEN",
+    "entsoe_level_policy": "FORBIDDEN",
+    "afry_level_policy": "FORBIDDEN",
+    "ompex_level_policy": "FORBIDDEN",
+    "lambda_prior": 0.000001,
+    "lambda_smooth_month": 1.0,
+    "lambda_smooth_yoy": 0.25,
+    "lambda_shape": 1.0,
+    "constraint_tolerance_eur_mwh": 0.000000001,
+    "quote_conflict_tolerance_eur_mwh": 0.01,
+    "stationarity_tolerance": 0.0000001
+  },
+  "shape_prior_policy": {
+    "history_source": "D212_CH_BASE_CAL_Q_M_LIVE_HISTORY",
+    "run_timestamp": "2026-08-04T00:00:00Z",
+    "minimum_snapshots": 24,
+    "lookback_years": 6,
+    "minimum_structural_snapshots": 24,
+    "template_fallback_allowed": false,
+    "panel_weight": 0.0,
+    "history_weight": 0.5,
+    "structural_weight": 1.0,
+    "prior_must_be_zero_mean_within_each_active_parent": true,
+    "prior_may_rewrite_parent_level": false
+  },
+  "outputs": {
+    "monthly_solution_role": "monthly_base_solution",
+    "peak_sidecar_role": "peak_shaping_constraints",
+    "constraint_diagnostics_role": "base_constraint_diagnostics",
+    "prior_diagnostics_role": "shape_prior_diagnostics",
+    "price_bearing_outputs_must_remain_below_build": true,
+    "proof_may_persist_prices": false,
+    "outputs_are_content_addressed": true
+  },
+  "execution": {
+    "databricks_connection_count": 0,
+    "databricks_statement_count": 0,
+    "warehouse_start_count": 0,
+    "databricks_write_count": 0,
+    "network_call_count": 0,
+    "h_drive_access_count": 0,
+    "remote_write_count": 0
+  },
+  "authorities": {
+    "selected_local_eex_quote_bytes_bound": true,
+    "monthly_solver_mechanical_repricing": true,
+    "local_research_solution": true,
+    "source_authenticity": false,
+    "point_in_time": false,
+    "predictive_value": false,
+    "model_input": false,
+    "model_selection": false,
+    "candidate": false,
+    "ompex_superiority": false,
+    "promotion": false,
+    "production": false
+  }
+}

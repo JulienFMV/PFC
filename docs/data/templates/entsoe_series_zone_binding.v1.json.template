@@ -1,0 +1,30 @@
+{
+  "schema_version": "fmv_entsoe_series_zone_binding.v1",
+  "evidence_class": "REAL_OWNER_ASSERTED",
+  "inventory_content_id": "<D243_INVENTORY_CONTENT_ID_SHA256>",
+  "family_mapping_content_id": "<D253_FAMILY_MAPPING_CONTENT_ID_SHA256>",
+  "zone_registry_content_id": "<D254_ZONE_REGISTRY_CONTENT_ID_SHA256>",
+  "binding_owner": "<ACCOUNTABLE_DATA_OWNER>",
+  "bound_at_utc": "<YYYY-MM-DDTHH:MM:SSZ>",
+  "bindings": [
+    {
+      "signature_id": "<EXACT_D243_SIGNATURE_ID_SHA256>",
+      "source_zone_field": "<from_zone_OR_to_zone>",
+      "source_identifier_scheme": "<EIC_Y_CODE_OR_OWNER_CANONICAL_LABEL>",
+      "domain_kind": "BIDDING_ZONE",
+      "series_valid_from_utc": "<YYYY-MM-DDTHH:MM:SSZ>",
+      "series_valid_to_utc": "<YYYY-MM-DDTHH:MM:SSZ>",
+      "expected_logical_zone": "<CH_OR_DE_LU_OR_FR_OR_IT_NORTH_OR_AT>",
+      "zone_entry_id": "<EXACT_ZONE_REGISTRY_ENTRY_SHA256>",
+      "reason": "<WHY_THIS_EXACT_SIGNATURE_USES_THIS_ZONE_ENTRY_FOR_THIS_INTERVAL>"
+    }
+  ],
+  "authorities": {
+    "external_binding_owner_identity_verified": false,
+    "official_zone_registry_verified": false,
+    "real_fact_delivery_coverage_proven": false,
+    "point_in_time_availability_proven": false,
+    "model_input_authorized": false,
+    "production_authorized": false
+  }
+}

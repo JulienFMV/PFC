@@ -1,0 +1,82 @@
+{
+  "schema_version": "fmv_ompex_paired_truth_diagnostic_contract.v1",
+  "purpose": "descriptive same-grid comparison of a frozen CH LT candidate and a frozen OMPEX vintage against the same realised truth",
+  "status": "DESCRIPTIVE_ONLY_NO_SUPERIORITY_DECISION",
+  "superseded_legacy_behaviour": {
+    "select_alignment_by_lowest_candidate_ompex_distance": false,
+    "score_candidate_directly_against_ompex_as_truth": false,
+    "inner_join_or_drop_missing_rows": false,
+    "duplicate_timestamp_aggregation": false,
+    "implicit_live_h_drive_input": false
+  },
+  "required_inputs": {
+    "candidate": "exact local path and SHA-256",
+    "ompex_vintage": "exact local path and SHA-256",
+    "realised_truth": "exact local path and SHA-256",
+    "origin_utc": "explicit timezone-aware timestamp",
+    "target_window": "explicit half-open UTC native-hour interval"
+  },
+  "alignment": {
+    "timezone": "UTC",
+    "native_resolution": "PT1H",
+    "currency_unit": "EUR/MWh",
+    "same_complete_timestamp_grid_required": true,
+    "same_missingness_mask_required": true,
+    "automatic_alignment_selection_authorized": false,
+    "ompex_hour_end_semantics_vendor_authenticated": false
+  },
+  "descriptive_outputs": [
+    "candidate and OMPEX MAE RMSE bias median absolute error p95 and maximum absolute error against truth",
+    "paired hourly absolute-loss delta",
+    "ramp MAE delta",
+    "delivery block season truth sign truth tail horizon and DST diagnostics"
+  ],
+  "decision_boundary": {
+    "negative_mae_delta_is_a_descriptive_result_only": true,
+    "superiority_claim_authorized": false,
+    "model_selection_authorized": false,
+    "promotion_authorized": false,
+    "production_authorized": false,
+    "countable_origin_count": 0
+  },
+  "required_before_superiority_testing": [
+    "candidate freeze receipt preceding OMPEX access",
+    "authenticated OMPEX timestamp and at-origin availability semantics",
+    "independent governed realised-truth publication receipt",
+    "multiple independently frozen forecast origins",
+    "pre-outcome numeric superiority and protected-subgroup non-inferiority margins",
+    "dependence-aware inference clustered by forecast origin and native hour",
+    "family-wise multiple-testing control",
+    "separate manifest-backed monthly solver integrity gate"
+  ],
+  "methodological_basis": [
+    {
+      "work": "Diebold and Mariano (1995), Comparing Predictive Accuracy",
+      "doi": "10.3386/t0169",
+      "use": "paired loss-difference forecast comparison"
+    },
+    {
+      "work": "Giacomini and White (2006), Tests of Conditional Predictive Ability",
+      "doi": "10.1111/j.1468-0262.2006.00718.x",
+      "use": "out-of-sample and conditional predictive-ability framing"
+    },
+    {
+      "work": "Romano and Wolf (2005), Stepwise Multiple Testing as Formalized Data Snooping",
+      "doi": "10.1111/j.1468-0262.2005.00615.x",
+      "use": "future family-wise multiplicity control with dependent comparisons"
+    },
+    {
+      "work": "Lago et al. (2021), Forecasting day-ahead electricity prices: review, best practices and benchmark",
+      "doi": "10.1016/j.apenergy.2021.116983",
+      "use": "electricity-price forecast evaluation across meaningful periods and rigorous baselines"
+    }
+  ],
+  "local_execution": {
+    "canonical_workspace": "C:/Users/jbattaglia/PFC_LT",
+    "inputs_must_be_local_and_hash_bound": true,
+    "outputs_must_be_below_build": true,
+    "h_drive_runtime_dependency": false,
+    "databricks_request_required": false,
+    "remote_write_authorized": false
+  }
+}

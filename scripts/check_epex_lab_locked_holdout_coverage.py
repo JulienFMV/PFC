@@ -1,0 +1,499 @@
+"""Check whether a locked EPEX lab holdout has enough spot coverage to run.
+
+This helper reads a locked holdout plan and a candidate future EPEX spot parquet
+and reports whether the full pre-registered holdout window is covered. It does
+not run the holdout backtest and does not approve production promotion.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+import pandas as pd
+
+try:
+    from scripts.epex_lab_locked_holdout_policy import build_locked_plan_identity
+    from scripts.export_local_test_ch_hourly_csv import _parse_timestamp_ch
+except ModuleNotFoundError:  # pragma: no cover - direct script execution
+    from epex_lab_locked_holdout_policy import build_locked_plan_identity
+    from export_local_test_ch_hourly_csv import _parse_timestamp_ch
+
+
+PLAN_SCHEMA_VERSION = "epex_lab_locked_holdout_plan.v1"
+LOCKED_HOLDOUT_POLICY = "locked_future_no_ompex_holdout"
+SPOT_PRICE_COLUMN = "price_eur_mwh"
+CANDIDATE_TIMESTAMP_COLUMN = "timestamp_ch"
+CANDIDATE_UTC_OFFSET_COLUMN = "utc_offset_ch"
+CANDIDATE_PRICE_COLUMNS = [
+    "price_slow_eur_mwh",
+    "price_central_eur_mwh",
+    "price_fast_eur_mwh",
+    "price_weighted_mean_eur_mwh",
+    "structural_p10_eur_mwh",
+    "structural_p50_eur_mwh",
+    "structural_p90_eur_mwh",
+    "structural_width_eur_mwh",
+]
+
+
+def check_coverage(
+    *,
+    plan_json: Path,
+    spot_parquet: Path,
+    output: Path | None = None,
+) -> dict[str, Any]:
+    plan_json = _resolved_path(plan_json)
+    spot_parquet = _resolved_path(spot_parquet)
+    plan = _read_json(plan_json)
+    if plan.get("schema_version") != PLAN_SCHEMA_VERSION:
+        raise ValueError(f"plan must be {PLAN_SCHEMA_VERSION}")
+    start = _to_utc(plan["holdout_start_utc"])
+    end = _to_utc(plan["holdout_end_utc"])
+    if end <= start:
+        raise ValueError("holdout_end_utc must be after holdout_start_utc")
+    spot_frame = _load_spot_frame(spot_parquet)
+    spot = spot_frame.index
+    expected = pd.date_range(start, end, freq="h", inclusive="left")
+    latest_required = expected[-1] if len(expected) else None
+    observed_mask = (spot >= start) & (spot < end)
+    observed = spot[observed_mask]
+    observed_unique = pd.DatetimeIndex(observed.unique()).sort_values()
+    missing = expected.difference(observed_unique)
+    extra_duplicates = int(len(observed) - len(observed_unique))
+    price_column_present = SPOT_PRICE_COLUMN in spot_frame.columns
+    non_finite_price_rows = None
+    if price_column_present:
+        holdout_prices = pd.to_numeric(spot_frame.loc[observed_mask, SPOT_PRICE_COLUMN], errors="coerce")
+        finite_mask = np.isfinite(holdout_prices.to_numpy(dtype="float64", na_value=np.nan))
+        non_finite_price_rows = int((~finite_mask).sum())
+    holdout_prices_finite = bool(price_column_present and non_finite_price_rows == 0)
+    criteria = plan.get("pass_criteria") or {}
+    source_base_dirs = _plan_relative_base_dirs(plan_json)
+    baseline_source = _plan_source_file_status(
+        plan,
+        file_key="baseline_csv",
+        criteria=criteria,
+        base_dirs=source_base_dirs,
+    )
+    adjusted_source = _plan_source_file_status(
+        plan,
+        file_key="adjusted_csv",
+        criteria=criteria,
+        base_dirs=source_base_dirs,
+    )
+    baseline_candidate = _candidate_csv_status(baseline_source["resolved_path"], expected=expected)
+    adjusted_candidate = _candidate_csv_status(adjusted_source["resolved_path"], expected=expected)
+    candidate_timestamp_sets_identical = bool(
+        baseline_candidate["timestamp_set_sha256"]
+        and adjusted_candidate["timestamp_set_sha256"]
+        and baseline_candidate["timestamp_set_sha256"] == adjusted_candidate["timestamp_set_sha256"]
+    )
+    expected_candidate_timestamp_set_sha256 = (
+        criteria.get("candidate_timestamp_set_sha256")
+        or (plan.get("candidate_timestamp_identity") or {}).get("candidate_timestamp_set_sha256")
+    )
+    expected_candidate_timestamp_count = (
+        criteria.get("candidate_timestamp_count")
+        or (plan.get("candidate_timestamp_identity") or {}).get("candidate_timestamp_count")
+    )
+    candidate_timestamp_set_matches_plan = (
+        baseline_candidate["timestamp_set_sha256"] == adjusted_candidate["timestamp_set_sha256"]
+        == expected_candidate_timestamp_set_sha256
+        if expected_candidate_timestamp_set_sha256
+        else True
+    )
+    candidate_timestamp_count_matches_plan = (
+        baseline_candidate["timestamp_count"] == adjusted_candidate["timestamp_count"] == expected_candidate_timestamp_count
+        if expected_candidate_timestamp_count is not None
+        else True
+    )
+    min_hours = int(criteria.get("min_holdout_hours", len(expected)))
+    coverage = {
+        "schema_version": "epex_lab_locked_holdout_coverage.v1",
+        "read_only": True,
+        "promotion_gate": False,
+        "production_approved": False,
+        "plan_json": str(plan_json),
+        "spot_parquet": str(spot_parquet),
+        "spot_parquet_sha256": _sha256(spot_parquet),
+        "plan_id": plan.get("plan_id"),
+        "locked_plan_identity": build_locked_plan_identity(plan, plan_json=plan_json),
+        "holdout_start_utc": _iso(start),
+        "holdout_end_utc": _iso(end),
+        "latest_required_holdout_utc": _iso(latest_required),
+        "expected_holdout_hours": int(len(expected)),
+        "observed_holdout_hours": int(len(observed_unique)),
+        "duplicate_holdout_rows": extra_duplicates,
+        "spot_price_column": SPOT_PRICE_COLUMN,
+        "non_finite_holdout_price_rows": non_finite_price_rows,
+        "baseline_csv": baseline_source["path"],
+        "baseline_csv_resolved": baseline_source["resolved_path"],
+        "baseline_csv_sha256": baseline_source["expected_sha256"],
+        "baseline_candidate_timestamp_count": baseline_candidate["timestamp_count"],
+        "baseline_candidate_timestamp_min_utc": baseline_candidate["timestamp_min_utc"],
+        "baseline_candidate_timestamp_max_utc": baseline_candidate["timestamp_max_utc"],
+        "baseline_candidate_timestamp_set_sha256": baseline_candidate["timestamp_set_sha256"],
+        "baseline_candidate_missing_holdout_hours": baseline_candidate["missing_holdout_hours"],
+        "baseline_candidate_first_missing_holdout_utc": baseline_candidate["first_missing_holdout_utc"],
+        "baseline_candidate_last_missing_holdout_utc": baseline_candidate["last_missing_holdout_utc"],
+        "adjusted_csv": adjusted_source["path"],
+        "adjusted_csv_resolved": adjusted_source["resolved_path"],
+        "adjusted_csv_sha256": adjusted_source["expected_sha256"],
+        "adjusted_candidate_timestamp_count": adjusted_candidate["timestamp_count"],
+        "adjusted_candidate_timestamp_min_utc": adjusted_candidate["timestamp_min_utc"],
+        "adjusted_candidate_timestamp_max_utc": adjusted_candidate["timestamp_max_utc"],
+        "adjusted_candidate_timestamp_set_sha256": adjusted_candidate["timestamp_set_sha256"],
+        "expected_candidate_timestamp_count": expected_candidate_timestamp_count,
+        "expected_candidate_timestamp_set_sha256": expected_candidate_timestamp_set_sha256,
+        "adjusted_candidate_missing_holdout_hours": adjusted_candidate["missing_holdout_hours"],
+        "adjusted_candidate_first_missing_holdout_utc": adjusted_candidate["first_missing_holdout_utc"],
+        "adjusted_candidate_last_missing_holdout_utc": adjusted_candidate["last_missing_holdout_utc"],
+        "missing_holdout_hours": int(len(missing)),
+        "first_missing_holdout_utc": _iso(missing[0]) if len(missing) else None,
+        "last_missing_holdout_utc": _iso(missing[-1]) if len(missing) else None,
+        "min_required_holdout_hours": min_hours,
+        "spot_min_utc": _iso(spot.min()) if len(spot) else None,
+        "spot_max_utc": _iso(spot.max()) if len(spot) else None,
+        "spot_hours_until_holdout_start": _positive_hours_between(spot.max(), start) if len(spot) else None,
+        "spot_hours_until_latest_required_holdout": (
+            _positive_hours_between(spot.max(), latest_required) if len(spot) and latest_required is not None else None
+        ),
+        "checks": {
+            "plan_no_ompex": plan.get("ompex_used_in_model") is False
+            and plan.get("ompex_used_in_selection") is False
+            and plan.get("ompex_used_in_backtest") is False,
+            "plan_benchmark_policy_locked": plan.get("benchmark_policy") == LOCKED_HOLDOUT_POLICY,
+            "baseline_csv_path_present": baseline_source["path_present"],
+            "baseline_csv_file_exists": baseline_source["file_exists"],
+            "baseline_csv_sha256_present": baseline_source["expected_sha256_present"],
+            "baseline_csv_sha256_bound": baseline_source["sha256_bound"],
+            "baseline_candidate_required_columns_present": baseline_candidate["required_columns_present"],
+            "baseline_candidate_utc_offset_present": baseline_candidate["utc_offset_present"],
+            "baseline_candidate_timestamps_parseable": baseline_candidate["timestamps_parseable"],
+            "baseline_candidate_no_duplicate_timestamps": baseline_candidate["no_duplicate_timestamps"],
+            "baseline_candidate_price_columns_finite": baseline_candidate["price_columns_finite"],
+            "baseline_candidate_holdout_window_covered": baseline_candidate["holdout_window_covered"],
+            "adjusted_csv_path_present": adjusted_source["path_present"],
+            "adjusted_csv_file_exists": adjusted_source["file_exists"],
+            "adjusted_csv_sha256_present": adjusted_source["expected_sha256_present"],
+            "adjusted_csv_sha256_bound": adjusted_source["sha256_bound"],
+            "adjusted_candidate_required_columns_present": adjusted_candidate["required_columns_present"],
+            "adjusted_candidate_utc_offset_present": adjusted_candidate["utc_offset_present"],
+            "adjusted_candidate_timestamps_parseable": adjusted_candidate["timestamps_parseable"],
+            "adjusted_candidate_no_duplicate_timestamps": adjusted_candidate["no_duplicate_timestamps"],
+            "adjusted_candidate_price_columns_finite": adjusted_candidate["price_columns_finite"],
+            "adjusted_candidate_holdout_window_covered": adjusted_candidate["holdout_window_covered"],
+            "candidate_timestamp_sets_identical": candidate_timestamp_sets_identical,
+            "candidate_timestamp_set_matches_plan": candidate_timestamp_set_matches_plan,
+            "candidate_timestamp_count_matches_plan": candidate_timestamp_count_matches_plan,
+            "spot_parquet_non_empty": bool(len(spot)),
+            "spot_price_column_present": price_column_present,
+            "holdout_prices_finite": holdout_prices_finite,
+            "full_window_covered": int(len(missing)) == 0,
+            "min_holdout_hours_met": int(len(observed_unique)) >= min_hours,
+            "no_duplicate_holdout_rows": extra_duplicates == 0,
+        },
+    }
+    checks = coverage["checks"]
+    coverage["blocking_checks"] = sorted(name for name, passed in checks.items() if passed is not True)
+    ready = bool(
+        checks["plan_no_ompex"]
+        and checks["plan_benchmark_policy_locked"]
+        and checks["baseline_csv_path_present"]
+        and checks["baseline_csv_file_exists"]
+        and checks["baseline_csv_sha256_present"]
+        and checks["baseline_csv_sha256_bound"]
+        and checks["baseline_candidate_required_columns_present"]
+        and checks["baseline_candidate_utc_offset_present"]
+        and checks["baseline_candidate_timestamps_parseable"]
+        and checks["baseline_candidate_no_duplicate_timestamps"]
+        and checks["baseline_candidate_price_columns_finite"]
+        and checks["baseline_candidate_holdout_window_covered"]
+        and checks["adjusted_csv_path_present"]
+        and checks["adjusted_csv_file_exists"]
+        and checks["adjusted_csv_sha256_present"]
+        and checks["adjusted_csv_sha256_bound"]
+        and checks["adjusted_candidate_required_columns_present"]
+        and checks["adjusted_candidate_utc_offset_present"]
+        and checks["adjusted_candidate_timestamps_parseable"]
+        and checks["adjusted_candidate_no_duplicate_timestamps"]
+        and checks["adjusted_candidate_price_columns_finite"]
+        and checks["adjusted_candidate_holdout_window_covered"]
+        and checks["candidate_timestamp_sets_identical"]
+        and checks["candidate_timestamp_set_matches_plan"]
+        and checks["candidate_timestamp_count_matches_plan"]
+        and checks["spot_parquet_non_empty"]
+        and checks["spot_price_column_present"]
+        and checks["holdout_prices_finite"]
+        and checks["full_window_covered"]
+        and checks["min_holdout_hours_met"]
+        and checks["no_duplicate_holdout_rows"]
+    )
+    coverage["ready_to_run_backtest"] = ready
+    source_files_ok = all(
+        checks[name]
+        for name in [
+            "baseline_csv_path_present",
+            "baseline_csv_file_exists",
+            "baseline_csv_sha256_present",
+            "baseline_csv_sha256_bound",
+            "baseline_candidate_required_columns_present",
+            "baseline_candidate_utc_offset_present",
+            "baseline_candidate_timestamps_parseable",
+            "baseline_candidate_no_duplicate_timestamps",
+            "baseline_candidate_price_columns_finite",
+            "baseline_candidate_holdout_window_covered",
+            "adjusted_csv_path_present",
+            "adjusted_csv_file_exists",
+            "adjusted_csv_sha256_present",
+            "adjusted_csv_sha256_bound",
+            "adjusted_candidate_required_columns_present",
+            "adjusted_candidate_utc_offset_present",
+            "adjusted_candidate_timestamps_parseable",
+            "adjusted_candidate_no_duplicate_timestamps",
+            "adjusted_candidate_price_columns_finite",
+            "adjusted_candidate_holdout_window_covered",
+            "candidate_timestamp_sets_identical",
+            "candidate_timestamp_set_matches_plan",
+            "candidate_timestamp_count_matches_plan",
+        ]
+    )
+    input_policy_ok = all(
+        checks[name]
+        for name in [
+            "plan_no_ompex",
+            "plan_benchmark_policy_locked",
+            "spot_parquet_non_empty",
+            "spot_price_column_present",
+            "holdout_prices_finite",
+            "no_duplicate_holdout_rows",
+        ]
+    )
+    coverage["status"] = (
+        "READY_TO_RUN_HOLDOUT_BACKTEST"
+        if ready
+        else "NO_GO_LOCKED_HOLDOUT_SOURCE_MISSING_OR_HASH_MISMATCH"
+        if not source_files_ok
+        else "NO_GO_LOCKED_HOLDOUT_INPUT_INVALID"
+        if not input_policy_ok
+        else "WAITING_FOR_FULL_SPOT_COVERAGE"
+    )
+    coverage["next_action"] = (
+        "Run scripts/run_epex_lab_locked_holdout.py with the locked plan, expected plan SHA, refreshed spot parquet, and a fresh output dir."
+        if ready
+        else "Fix the locked baseline/adjusted CSV paths or hashes before running the holdout."
+        if not source_files_ok
+        else "Fix the locked holdout plan policy or supplied spot parquet before running the holdout."
+        if not input_policy_ok
+        else "Refresh the EPEX spot parquet after the holdout window is complete, then rerun this coverage check."
+    )
+    if output is not None:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps(_jsonable(coverage), indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return coverage
+
+
+def _plan_source_file_status(
+    plan: dict[str, Any],
+    *,
+    file_key: str,
+    criteria: dict[str, Any],
+    base_dirs: list[Path],
+) -> dict[str, Any]:
+    path_text = plan.get(file_key)
+    expected_sha = plan.get(f"{file_key}_sha256") or criteria.get(f"{file_key}_sha256")
+    path = _resolve_plan_source_path(path_text, base_dirs=base_dirs) if path_text else None
+    file_exists = bool(path is not None and path.exists())
+    actual_sha = _sha256(path) if path is not None and file_exists else None
+    return {
+        "path": str(path_text) if path_text else None,
+        "resolved_path": str(path) if path is not None else None,
+        "expected_sha256": expected_sha,
+        "actual_sha256": actual_sha,
+        "path_present": bool(str(path_text or "").strip()),
+        "file_exists": file_exists,
+        "expected_sha256_present": bool(str(expected_sha or "").strip()),
+        "sha256_bound": bool(expected_sha and actual_sha and expected_sha == actual_sha),
+    }
+
+
+def _candidate_csv_status(path_text: str | None, *, expected: pd.DatetimeIndex) -> dict[str, Any]:
+    missing_all = int(len(expected))
+    failed = {
+        "required_columns_present": False,
+        "utc_offset_present": False,
+        "timestamps_parseable": False,
+        "no_duplicate_timestamps": False,
+        "price_columns_finite": False,
+        "holdout_window_covered": False,
+        "timestamp_count": 0,
+        "timestamp_min_utc": None,
+        "timestamp_max_utc": None,
+        "timestamp_set_sha256": None,
+        "missing_holdout_hours": missing_all,
+        "first_missing_holdout_utc": _iso(expected[0]) if len(expected) else None,
+        "last_missing_holdout_utc": _iso(expected[-1]) if len(expected) else None,
+    }
+    if not path_text:
+        return failed
+    path = Path(str(path_text))
+    if not path.exists():
+        return failed
+    try:
+        frame = pd.read_csv(path)
+    except (OSError, pd.errors.EmptyDataError, pd.errors.ParserError, UnicodeDecodeError):
+        return failed
+    required = [CANDIDATE_TIMESTAMP_COLUMN, CANDIDATE_UTC_OFFSET_COLUMN, *CANDIDATE_PRICE_COLUMNS]
+    if not set(required).issubset(frame.columns):
+        return failed
+    status = {**failed, "required_columns_present": True, "utc_offset_present": True}
+    try:
+        ts = _parse_timestamp_ch(frame[CANDIDATE_TIMESTAMP_COLUMN], frame[CANDIDATE_UTC_OFFSET_COLUMN])
+        idx = pd.DatetimeIndex(ts).tz_convert("UTC")
+    except Exception:  # noqa: BLE001 - fail-closed for malformed candidate timestamps
+        return status
+    status["timestamps_parseable"] = True
+    status["no_duplicate_timestamps"] = not idx.has_duplicates
+    try:
+        numeric = frame[CANDIDATE_PRICE_COLUMNS].apply(pd.to_numeric, errors="coerce")
+        values = numeric.to_numpy(dtype="float64", na_value=np.nan)
+        status["price_columns_finite"] = bool(np.isfinite(values).all())
+    except (TypeError, ValueError):
+        status["price_columns_finite"] = False
+    observed_unique = pd.DatetimeIndex(idx.unique()).sort_values()
+    status["timestamp_count"] = int(len(observed_unique))
+    status["timestamp_min_utc"] = _iso(observed_unique[0]) if len(observed_unique) else None
+    status["timestamp_max_utc"] = _iso(observed_unique[-1]) if len(observed_unique) else None
+    status["timestamp_set_sha256"] = _timestamp_index_sha256(observed_unique)
+    missing = expected.difference(observed_unique)
+    status["missing_holdout_hours"] = int(len(missing))
+    status["first_missing_holdout_utc"] = _iso(missing[0]) if len(missing) else None
+    status["last_missing_holdout_utc"] = _iso(missing[-1]) if len(missing) else None
+    status["holdout_window_covered"] = int(len(missing)) == 0
+    return status
+
+
+def _timestamp_index_sha256(index: pd.DatetimeIndex) -> str:
+    digest = hashlib.sha256()
+    for item in index:
+        digest.update(_iso(item).encode("utf-8"))
+        digest.update(b"\n")
+    return digest.hexdigest()
+
+
+def _load_spot_frame(path: Path) -> pd.DataFrame:
+    frame = pd.read_parquet(path)
+    if not isinstance(frame.index, pd.DatetimeIndex):
+        raise ValueError("spot parquet must use a DatetimeIndex")
+    idx = frame.index
+    if idx.tz is None:
+        idx = idx.tz_localize("UTC")
+    else:
+        idx = idx.tz_convert("UTC")
+    frame = frame.copy()
+    frame.index = pd.DatetimeIndex(idx)
+    return frame.sort_index()
+
+
+def _to_utc(value: Any) -> pd.Timestamp:
+    ts = pd.Timestamp(value)
+    if ts.tzinfo is None:
+        ts = ts.tz_localize("UTC")
+    else:
+        ts = ts.tz_convert("UTC")
+    return ts
+
+
+def _iso(value: Any) -> str:
+    if value is None:
+        return None
+    return _to_utc(value).isoformat().replace("+00:00", "Z")
+
+
+def _positive_hours_between(left: Any, right: Any) -> float:
+    delta_hours = (_to_utc(right) - _to_utc(left)).total_seconds() / 3600.0
+    return float(max(0.0, delta_hours))
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _read_json(path: Path) -> dict[str, Any]:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _resolved_path(path: Path) -> Path:
+    return path.expanduser().resolve(strict=False)
+
+
+def _plan_relative_base_dirs(plan_json: Path) -> list[Path]:
+    plan_dir = plan_json.parent
+    candidates: list[Path] = []
+    repo_root = _repo_root_for_plan(plan_json)
+    if repo_root is not None:
+        candidates.append(repo_root)
+    candidates.extend([Path.cwd(), plan_dir])
+    out: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        resolved = _resolved_path(candidate)
+        key = str(resolved).casefold()
+        if key not in seen:
+            seen.add(key)
+            out.append(resolved)
+    return out
+
+
+def _repo_root_for_plan(plan_json: Path) -> Path | None:
+    for parent in [plan_json.parent, *plan_json.parents]:
+        if (parent / ".git").exists() or (parent / "AGENTS.md").exists():
+            return parent
+    return None
+
+
+def _resolve_plan_source_path(path_text: Any, *, base_dirs: list[Path]) -> Path:
+    raw = Path(str(path_text)).expanduser()
+    if raw.is_absolute():
+        return _resolved_path(raw)
+    candidates = [base_dir / raw for base_dir in base_dirs]
+    candidates.append(raw)
+    for candidate in candidates:
+        resolved = _resolved_path(candidate)
+        if resolved.exists():
+            return resolved
+    return _resolved_path(candidates[0])
+
+
+def _jsonable(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(key): _jsonable(val) for key, val in value.items()}
+    if isinstance(value, list):
+        return [_jsonable(item) for item in value]
+    if hasattr(value, "item"):
+        return value.item()
+    return value
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--plan-json", type=Path, required=True)
+    parser.add_argument("--spot-parquet", type=Path, required=True)
+    parser.add_argument("--output", type=Path, required=True)
+    args = parser.parse_args(argv)
+    summary = check_coverage(plan_json=args.plan_json, spot_parquet=args.spot_parquet, output=args.output)
+    print(json.dumps(_jsonable(summary), indent=2, sort_keys=True))
+    return 0 if summary.get("ready_to_run_backtest") is True else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

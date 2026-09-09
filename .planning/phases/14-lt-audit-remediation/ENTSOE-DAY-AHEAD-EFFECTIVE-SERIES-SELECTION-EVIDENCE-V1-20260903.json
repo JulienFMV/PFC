@@ -1,0 +1,130 @@
+{
+  "schema_version": "fmv_entsoe_day_ahead_effective_series_selection_evidence.v1",
+  "status": "PASS_CONSTRUCTION_REFERENCE_SELECTION_NOT_MODEL_OR_PRODUCTION_AUTHORITY",
+  "observed_at_utc": "2026-09-03T13:33:49.508000Z",
+  "scope": {
+    "usage": "realized_final",
+    "market_month": "2026-07",
+    "market_timezone": "Europe/Zurich",
+    "window_start_utc": "2026-06-30T22:00:00Z",
+    "window_end_utc": "2026-07-31T22:00:00Z",
+    "expected_quarter_hours_per_series": 2976
+  },
+  "producer_code_evidence": {
+    "repository": "FMVSA/opendata-lakehouse",
+    "deployed_commit": "a7e920d95b94b2db59180412f31213f917e8d8a3",
+    "required_parser_commit": "db3a93316cd431a95b4e096d8482e482fda3491e",
+    "finding": "A44_CLASSIFICATION_SEQUENCES_1_AND_2_ARE_DISTINCT_SOURCE_AUCTION_IDENTITIES_WITH_NO_PRODUCER_DEFAULT"
+  },
+  "comparison_execution": {
+    "statement_id": "01f1a79c-0849-1281-af0c-ee155e8346ce",
+    "state": "SUCCEEDED",
+    "started_at_utc": "2026-09-03T13:33:22.103000Z",
+    "finished_at_utc": "2026-09-03T13:33:49.508000Z",
+    "warehouse_state_before": "RUNNING",
+    "warehouse_start_count": 0,
+    "statement_count": 1,
+    "result_row_count": 4,
+    "result_truncated": false,
+    "raw_price_rows_returned": 0,
+    "aggregate_price_comparison_executed": true,
+    "query_text_history_status": "REDACTED_OR_UNAVAILABLE_NOT_HASH_BOUND",
+    "warehouse_id_sha256": "3f1905a33ac0c15557f450880efcdd01320ad36c116d5a80f914df1903e9fb2a",
+    "read_bytes": 9364142086,
+    "read_files": 102,
+    "pruned_bytes": 1533406893,
+    "pruned_files": 155,
+    "write_remote_bytes": 0,
+    "spill_to_disk_bytes": 0
+  },
+  "independent_reference": {
+    "provider": "EPEX Spot SE via LSEG",
+    "market": "auction_day_ahead",
+    "unit": "EUR/MWh",
+    "frequency": "15m",
+    "curves": {
+      "AT": "165444048",
+      "DE_LU": "165349556"
+    }
+  },
+  "comparison_metrics": [
+    {
+      "field_name": "at_price",
+      "classification_sequence": "1",
+      "entsoe_quarter_hours": 2976,
+      "overlapping_quarter_hours": 0,
+      "matched_lseg_quarter_hours": 2976,
+      "missing_lseg_quarter_hours": 0,
+      "mean_lseg_minus_entsoe_eur_per_mwh": 0.0,
+      "mae_eur_per_mwh": 0.0,
+      "rmse_eur_per_mwh": 0.0,
+      "p95_abs_error_eur_per_mwh": 0.0,
+      "correlation": 1.0,
+      "equal_to_half_cent_quarter_hours": 2976
+    },
+    {
+      "field_name": "at_price",
+      "classification_sequence": "2",
+      "entsoe_quarter_hours": 2976,
+      "overlapping_quarter_hours": 0,
+      "matched_lseg_quarter_hours": 2976,
+      "missing_lseg_quarter_hours": 0,
+      "mean_lseg_minus_entsoe_eur_per_mwh": 1.218189,
+      "mae_eur_per_mwh": 11.299412,
+      "rmse_eur_per_mwh": 16.209279,
+      "p95_abs_error_eur_per_mwh": 34.92,
+      "correlation": 0.960061613,
+      "equal_to_half_cent_quarter_hours": 4
+    },
+    {
+      "field_name": "de_lu_price",
+      "classification_sequence": "1",
+      "entsoe_quarter_hours": 2976,
+      "overlapping_quarter_hours": 0,
+      "matched_lseg_quarter_hours": 2976,
+      "missing_lseg_quarter_hours": 0,
+      "mean_lseg_minus_entsoe_eur_per_mwh": 0.0,
+      "mae_eur_per_mwh": 0.0,
+      "rmse_eur_per_mwh": 0.0,
+      "p95_abs_error_eur_per_mwh": 0.0,
+      "correlation": 1.0,
+      "equal_to_half_cent_quarter_hours": 2976
+    },
+    {
+      "field_name": "de_lu_price",
+      "classification_sequence": "2",
+      "entsoe_quarter_hours": 2976,
+      "overlapping_quarter_hours": 0,
+      "matched_lseg_quarter_hours": 2976,
+      "missing_lseg_quarter_hours": 0,
+      "mean_lseg_minus_entsoe_eur_per_mwh": -0.571563,
+      "mae_eur_per_mwh": 9.549943,
+      "rmse_eur_per_mwh": 14.263226,
+      "p95_abs_error_eur_per_mwh": 29.57,
+      "correlation": 0.973996024,
+      "equal_to_half_cent_quarter_hours": 2
+    }
+  ],
+  "construction_reference_selection": {
+    "at_price": "day_ahead_prices||at_price||1",
+    "de_lu_price": "day_ahead_prices||de_lu_price||1",
+    "selection_basis": "EXACT_FULL_WINDOW_LSEG_EPEX_ACTUAL_PRICE_PARITY",
+    "in_window_change_observed": false,
+    "construction_smoke_export_selection_frozen": true
+  },
+  "limitations": {
+    "owner_response_received": false,
+    "executed_query_text_hash_verified": false,
+    "source_publication_time_proven": false,
+    "realized_finality_proven": false,
+    "causal_asof_authorized": false
+  },
+  "authorities": {
+    "model_input_authorized": false,
+    "model_selection_authorized": false,
+    "monthly_level_authorized": false,
+    "publication_authorized": false,
+    "production_authorized": false,
+    "trading_authorized": false
+  }
+}

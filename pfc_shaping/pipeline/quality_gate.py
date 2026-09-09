@@ -8,8 +8,10 @@ Hard-fails on critical data quality issues to avoid publishing corrupted outputs
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import math
+from dataclasses import dataclass, field
 
+import numpy as np
 import pandas as pd
 
 
@@ -23,6 +25,94 @@ class QualityReport:
     checks_passed: int
     warnings: list[str]
     errors: list[str]
+    metrics: dict[str, object] = field(default_factory=dict)
+
+
+def input_grid_errors(
+    df: pd.DataFrame,
+    *,
+    name: str,
+    expected_cadence_seconds: int,
+    expected_phase_offset_seconds: int = 0,
+    min_grid_coverage: float = 0.95,
+) -> list[str]:
+    """Return fail-closed cadence and absolute UTC phase violations."""
+
+    try:
+        index = pd.DatetimeIndex(df.index)
+    except (TypeError, ValueError):
+        return [f"{name}.index_not_datetime"]
+    if index.tz is None:
+        return [f"{name}.index_timezone_naive"]
+    index = index.tz_convert("UTC").sort_values().unique()
+    if index.hasnans:
+        return [f"{name}.index_contains_nat"]
+    if len(index) < 2:
+        return [f"{name}.cadence_insufficient_rows"]
+    cadence_seconds = int(expected_cadence_seconds)
+    elapsed_seconds = (index[-1] - index[0]).total_seconds()
+    expected_rows = int(math.floor(elapsed_seconds / cadence_seconds)) + 1
+    coverage = len(index) / expected_rows if expected_rows > 0 else 0.0
+    errors: list[str] = []
+    if coverage < float(min_grid_coverage):
+        errors.append(f"{name}.grid_coverage={coverage:.6f}")
+    cadence_ns = cadence_seconds * 1_000_000_000
+    phase_ns = int(expected_phase_offset_seconds) * 1_000_000_000
+    if phase_ns < 0 or phase_ns >= cadence_ns:
+        errors.append(f"{name}.grid_phase_policy_invalid")
+    elif any((int(timestamp.value) - phase_ns) % cadence_ns != 0 for timestamp in index):
+        errors.append(f"{name}.grid_phase_mismatch")
+    deltas = pd.Series(index[1:] - index[:-1]).dt.total_seconds().to_numpy()
+    if any(
+        abs((float(delta) / cadence_seconds) - round(float(delta) / cadence_seconds)) > 1e-9
+        for delta in deltas
+    ):
+        errors.append(f"{name}.off_grid_timestamps")
+    return errors
+
+
+def weekly_local_grid_errors(
+    df: pd.DataFrame,
+    *,
+    name: str,
+    timezone: str,
+    weekday: int,
+    min_grid_coverage: float = 0.95,
+) -> list[str]:
+    """Validate one weekly civil-time grid without imposing a false UTC DST phase."""
+
+    try:
+        index = pd.DatetimeIndex(df.index)
+    except (TypeError, ValueError):
+        return [f"{name}.index_not_datetime"]
+    if index.tz is None:
+        return [f"{name}.index_timezone_naive"]
+    index = index.tz_convert("UTC").sort_values().unique()
+    if index.hasnans:
+        return [f"{name}.index_contains_nat"]
+    if len(index) < 2:
+        return [f"{name}.cadence_insufficient_rows"]
+    local = index.tz_convert(timezone)
+    errors: list[str] = []
+    if any(
+        timestamp.weekday() != weekday
+        or timestamp.hour != 0
+        or timestamp.minute != 0
+        or timestamp.second != 0
+        or timestamp.microsecond != 0
+        for timestamp in local
+    ):
+        errors.append(f"{name}.local_grid_phase_mismatch")
+    local_naive = local.tz_localize(None)
+    elapsed_days = (local_naive[-1] - local_naive[0]).days
+    expected_rows = elapsed_days // 7 + 1
+    coverage = len(local_naive) / expected_rows if expected_rows > 0 else 0.0
+    if coverage < float(min_grid_coverage):
+        errors.append(f"{name}.grid_coverage={coverage:.6f}")
+    deltas = local_naive[1:] - local_naive[:-1]
+    if any(delta % pd.Timedelta(days=7) != pd.Timedelta(0) for delta in deltas):
+        errors.append(f"{name}.off_grid_timestamps")
+    return errors
 
 
 def _is_tz_aware_index(df: pd.DataFrame) -> bool:
@@ -35,11 +125,18 @@ def validate_input_frame(
     name: str,
     required_columns: list[str],
     min_rows: int,
-    max_age_days: int,
+    max_age_days: float,
+    reference_timestamp: str | pd.Timestamp | None = None,
+    fail_on_stale: bool = False,
+    min_finite_fraction: float = 0.0,
+    recent_window_days: float | None = None,
+    min_recent_finite_fraction: float = 0.0,
+    max_finite_gap_days: float | None = None,
 ) -> QualityReport:
     warnings: list[str] = []
     errors: list[str] = []
     checks_passed = 0
+    metrics: dict[str, object] = {}
 
     if df is None:
         raise QualityGateError(f"{name}: dataframe is None")
@@ -60,24 +157,109 @@ def validate_input_frame(
         raise QualityGateError(f"{name}: DatetimeIndex must be timezone-aware")
     checks_passed += 1
 
+    if df.index.has_duplicates:
+        errors.append(f"{name}: DatetimeIndex contains duplicate timestamps")
+    else:
+        checks_passed += 1
+
     if not df.index.is_monotonic_increasing:
         errors.append(f"{name}: index is not monotonic increasing")
     else:
         checks_passed += 1
 
     latest_ts = df.index.max()
-    now = pd.Timestamp.now("UTC")
-    if now.tzinfo is None:
-        now = now.tz_localize("UTC")
-    age_days = (now - latest_ts.tz_convert("UTC")).total_seconds() / 86400.0
-    if age_days > max_age_days:
-        warnings.append(f"{name}: latest point is stale ({age_days:.1f} days)")
+    reference = pd.Timestamp(reference_timestamp) if reference_timestamp is not None else pd.Timestamp.now("UTC")
+    if reference.tzinfo is None:
+        reference = reference.tz_localize("UTC")
     else:
-        checks_passed += 1
+        reference = reference.tz_convert("UTC")
+    latest_utc = latest_ts.tz_convert("UTC")
+    if latest_utc > reference:
+        errors.append(
+            f"{name}: latest point {latest_utc.isoformat()} is after reference timestamp "
+            f"{reference.isoformat()}"
+        )
+    for column in required_columns:
+        values = pd.to_numeric(df[column], errors="coerce")
+        finite_mask = pd.Series(np.isfinite(values.to_numpy(dtype=float)), index=df.index)
+        finite_fraction = float(finite_mask.mean())
+        metrics[f"{column}.finite_fraction"] = finite_fraction
+        if finite_fraction < float(min_finite_fraction):
+            errors.append(
+                f"{name}.{column}: finite coverage is too low "
+                f"({finite_fraction:.4f} < {float(min_finite_fraction):.4f})"
+            )
+        else:
+            checks_passed += 1
+        if not finite_mask.any():
+            errors.append(f"{name}.{column}: no finite observations")
+            continue
+        finite_index_utc = df.index[finite_mask.to_numpy()].tz_convert("UTC")
+        if recent_window_days is not None:
+            window_start = reference - pd.Timedelta(days=float(recent_window_days))
+            index_utc = df.index.tz_convert("UTC")
+            recent_rows = (index_utc >= window_start) & (index_utc <= reference)
+            recent_fraction = (
+                float(finite_mask.to_numpy()[recent_rows].mean())
+                if bool(recent_rows.any())
+                else 0.0
+            )
+            metrics[f"{column}.recent_finite_fraction"] = recent_fraction
+            metrics[f"{column}.recent_window_days"] = float(recent_window_days)
+            if recent_fraction < float(min_recent_finite_fraction):
+                errors.append(
+                    f"{name}.{column}: recent finite coverage is too low "
+                    f"({recent_fraction:.4f} < {float(min_recent_finite_fraction):.4f})"
+                )
+            else:
+                checks_passed += 1
+        if max_finite_gap_days is not None:
+            gap_window_start = (
+                reference - pd.Timedelta(days=float(recent_window_days))
+                if recent_window_days is not None
+                else finite_index_utc.min()
+            )
+            recent_finite = finite_index_utc[
+                (finite_index_utc >= gap_window_start) & (finite_index_utc <= reference)
+            ]
+            gap_points = list(recent_finite)
+            max_gap_days = float("inf")
+            if gap_points:
+                boundaries = pd.DatetimeIndex([gap_window_start, *gap_points, reference]).sort_values()
+                max_gap_days = float(boundaries.to_series().diff().dt.total_seconds().max() / 86400.0)
+            metrics[f"{column}.max_finite_gap_days"] = max_gap_days
+            if max_gap_days > float(max_finite_gap_days):
+                errors.append(
+                    f"{name}.{column}: finite observation gap is too large "
+                    f"({max_gap_days:.3f} days > {float(max_finite_gap_days):.3f} days)"
+                )
+            else:
+                checks_passed += 1
+        latest_finite = df.index[finite_mask.to_numpy()].max().tz_convert("UTC")
+        metrics[f"{column}.latest_finite_timestamp"] = latest_finite.isoformat()
+        if latest_finite > reference:
+            errors.append(
+                f"{name}.{column}: latest finite point {latest_finite.isoformat()} "
+                f"is after reference timestamp {reference.isoformat()}"
+            )
+            continue
+        age_days = (reference - latest_finite).total_seconds() / 86400.0
+        metrics[f"{column}.age_days"] = age_days
+        if age_days > max_age_days:
+            message = (
+                f"{name}.{column}: latest finite point is stale "
+                f"({age_days:.1f} days > {max_age_days} days)"
+            )
+            if fail_on_stale:
+                errors.append(message)
+            else:
+                warnings.append(message)
+        else:
+            checks_passed += 1
 
     if errors:
         raise QualityGateError("; ".join(errors))
-    return QualityReport(name, checks_passed, warnings, errors)
+    return QualityReport(name, checks_passed, warnings, errors, metrics)
 
 
 def validate_pfc_output(

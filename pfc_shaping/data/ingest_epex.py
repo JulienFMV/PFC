@@ -25,7 +25,6 @@ import os
 import time
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 from dotenv import load_dotenv
 
@@ -171,11 +170,9 @@ def _clean(df: pd.DataFrame) -> pd.DataFrame:
         if len(missing) > 0:
             logger.warning("%d intervalles 15min manquants", len(missing))
 
-    # Spike flag par mois
-    monthly_p999 = df.groupby(df.index.to_period("M"))["price_eur_mwh"].transform(
-        lambda x: np.nanpercentile(np.abs(x), 99.9)
-    )
-    df["spike_flag"] = np.abs(df["price_eur_mwh"]) > monthly_p999
+    from pfc_shaping.data.lt_replay_transforms import clean_epex
+
+    df = clean_epex(df)
 
     if df["spike_flag"].sum() > 0:
         logger.info("%d spikes extrêmes flaggés (conservés)", df["spike_flag"].sum())

@@ -1,22 +1,27 @@
 """
 ingest_entso.py
 ---------------
-Ingestion des données réseau et renewables depuis l'API ENTSO-E Transparency
-(via entsoe-py) :
-  - Charge réseau Swissgrid 15min
-  - Production solaire 15min
-  - Production éolienne 15min
+Ingestion legacy des données réseau et renouvelables ENTSO-E (via entsoe-py).
+
+La cadence source est préservée. Une série horaire reste horaire ; ce module
+ne fabrique jamais quatre quarts d'heure par forward-fill. Dans un DataFrame
+mixte, les timestamps absents restent ``NaN`` et ne deviennent jamais des
+zéros économiques. L'admission modèle exige séparément le sidecar de régimes
+de cadence effectifs D260/D261.
 
 Clé API : variable d'environnement ENTSOE_API_KEY (ou fichier .env à la racine).
 
-Format de sortie canonique (Parquet local) :
-    index : DatetimeIndex UTC freq='15min'
+Format de sortie legacy local (Parquet local) :
+    index : union triée des timestamps natifs, en UTC
     colonnes :
         load_mw         — charge totale CH [MW]
         solar_mw        — production solaire CH [MW]
         wind_mw         — production éolienne CH [MW]
-        solar_regime    — {0=Faible, 1=Moyen, 2=Fort} (tertiles mensuels)
-        load_deviation  — écart normalisé vs moyenne mensuelle
+        solar_regime    — feature causale dérivée par le transform versionné
+        load_deviation  — feature causale dérivée par le transform versionné
+
+Le nom historique ``entso_15min.parquet`` est conservé uniquement pour
+compatibilité de chemin ; il ne prouve aucune granularité.
 """
 
 from __future__ import annotations
@@ -26,7 +31,6 @@ import os
 import time
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 from dotenv import load_dotenv
 
@@ -101,7 +105,7 @@ def load_from_api(
         DataFrame colonnes ['load_mw', 'solar_mw', 'wind_mw',
                             'nuclear_mw', 'hydro_ror_mw',
                             'hydro_reservoir_mw', 'hydro_pumped_mw']
-        index : DatetimeIndex UTC
+        index : union UTC des timestamps natifs, sans upsampling
     """
     client = _get_client()
 
@@ -112,15 +116,7 @@ def load_from_api(
 
     # --- Load ---
     df_load_raw = _retry(client.query_load, country_code, start=ts_start, end=ts_end)
-    if isinstance(df_load_raw, pd.DataFrame):
-        # query_load peut retourner DataFrame avec colonnes Forecasted/Actual
-        if "Actual Load" in df_load_raw.columns:
-            df_load = df_load_raw[["Actual Load"]].rename(columns={"Actual Load": "load_mw"})
-        else:
-            # Prendre la dernière colonne comme load
-            df_load = df_load_raw.iloc[:, -1].to_frame("load_mw")
-    else:
-        df_load = df_load_raw.to_frame("load_mw")
+    df_load = _extract_actual_load(df_load_raw, "load_mw")
 
     # --- Generation par type ---
     df_gen_raw = _retry(client.query_generation, country_code, start=ts_start, end=ts_end)
@@ -147,29 +143,11 @@ def load_from_api(
         }
     )
 
-    # --- Resample à 15min et joindre ---
+    # --- Préserver les grilles natives et joindre sur leur union ---
     for df_ in [df_load, df_gen]:
-        if df_.index.tz is None:
-            df_.index = df_.index.tz_localize("UTC")
+        _normalize_native_frame_in_place(df_)
 
-    # Resample si nécessaire (certaines séries sont horaires)
-    df_load_15 = _resample_to_15min(df_load)
-    df_gen_15 = _resample_to_15min(df_gen)
-
-    df = df_load_15.join(df_gen_15, how="outer").sort_index()
-    fill_zero_cols = [
-        c for c in [
-            "solar_mw",
-            "wind_mw",
-            "nuclear_mw",
-            "hydro_ror_mw",
-            "hydro_reservoir_mw",
-            "hydro_pumped_mw",
-        ]
-        if c in df.columns
-    ]
-    if fill_zero_cols:
-        df[fill_zero_cols] = df[fill_zero_cols].fillna(0.0)
+    df = df_load.join(df_gen, how="outer").sort_index()
 
     neighbor_df = _load_neighbor_power_features(client, ts_start, ts_end)
     if not neighbor_df.empty:
@@ -197,7 +175,7 @@ def _extract_generation_column(df_gen: pd.DataFrame, fuel_type: str) -> pd.Serie
     et les colonnes flat.
     """
     if df_gen.empty:
-        return pd.Series(0.0, index=df_gen.index, dtype=float)
+        return pd.Series(index=df_gen.index, dtype=float)
 
     fuel_norm = str(fuel_type).strip().lower()
 
@@ -205,57 +183,71 @@ def _extract_generation_column(df_gen: pd.DataFrame, fuel_type: str) -> pd.Serie
     if isinstance(df_gen.columns, pd.MultiIndex):
         matching = [col for col in df_gen.columns if str(col[0]).strip().lower() == fuel_norm]
         if not matching:
-            return pd.Series(0.0, index=df_gen.index, dtype=float)
+            return pd.Series(index=df_gen.index, dtype=float)
         # Préférer 'Actual Aggregated' sur 'Actual Consumption'
         for col in matching:
             if "Aggregated" in str(col[1]):
-                return df_gen[col].fillna(0.0)
-        return df_gen[matching[0]].fillna(0.0)
+                return df_gen[col].astype(float)
+        return df_gen[matching[0]].astype(float)
 
     # Flat columns
     matching = [c for c in df_gen.columns if fuel_norm in str(c).strip().lower()]
     if not matching:
-        return pd.Series(0.0, index=df_gen.index, dtype=float)
-    return df_gen[matching[0]].fillna(0.0)
+        return pd.Series(index=df_gen.index, dtype=float)
+    return df_gen[matching[0]].astype(float)
 
 
-def _resample_to_15min(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Si la fréquence est horaire (ou autre > 15min), forward-fill vers 15min.
-    Si déjà 15min ou plus fin, retourner tel quel.
-    """
-    if len(df) < 2:
-        return df
+def _extract_actual_load(
+    raw: pd.Series | pd.DataFrame,
+    name: str,
+) -> pd.DataFrame:
+    """Select actual load explicitly; reject ambiguous multi-column responses."""
 
-    median_delta = df.index.to_series().diff().median()
-    if median_delta > pd.Timedelta(minutes=15):
-        df = df.resample("15min").ffill()
-    return df
+    if isinstance(raw, pd.Series):
+        return raw.rename(name).to_frame()
+    if not isinstance(raw, pd.DataFrame):
+        raise TypeError("ENTSO-E load response must be a Series or DataFrame")
+    if "Actual Load" in raw.columns:
+        return raw[["Actual Load"]].rename(columns={"Actual Load": name})
+    if raw.shape[1] == 1:
+        return raw.iloc[:, 0].rename(name).to_frame()
+    raise ValueError("ENTSO-E load response has no unambiguous Actual Load column")
 
 
-def _to_15min_series(series: pd.Series | pd.DataFrame, name: str) -> pd.Series:
-    """Normalize ENTSO-E outputs to a named UTC 15min series."""
+def _normalize_native_frame_in_place(frame: pd.DataFrame) -> None:
+    """Normalize only timezone/order; never change the source observation grid."""
+
+    if not isinstance(frame.index, pd.DatetimeIndex):
+        raise ValueError("ENTSO-E source requires a DatetimeIndex")
+    if frame.index.has_duplicates:
+        raise ValueError("ENTSO-E source timestamps must be unique")
+    if frame.index.tz is None:
+        frame.index = frame.index.tz_localize("UTC")
+    else:
+        frame.index = frame.index.tz_convert("UTC")
+    frame.sort_index(inplace=True)
+
+
+def _normalize_native_series(series: pd.Series | pd.DataFrame, name: str) -> pd.Series:
+    """Return one named UTC series while preserving its exact native timestamps."""
+
     if isinstance(series, pd.DataFrame):
         if series.empty:
             return pd.Series(dtype=float, name=name)
+        if series.shape[1] != 1:
+            raise ValueError(f"ENTSO-E {name} response has ambiguous columns")
         series = series.iloc[:, 0]
 
-    series = series.rename(name).sort_index()
-    if series.index.tz is None:
-        series.index = series.index.tz_localize("UTC")
-
-    if len(series) > 1:
-        median_delta = series.index.to_series().diff().median()
-        if median_delta > pd.Timedelta(minutes=15):
-            series = series.resample("15min").ffill()
-    return series.astype(float)
+    frame = series.rename(name).to_frame()
+    _normalize_native_frame_in_place(frame)
+    return frame[name].astype(float)
 
 
 def _query_series_or_empty(func, *args, name: str, **kwargs) -> pd.Series:
     """Run ENTSO-E query and degrade gracefully if a border is unavailable."""
     try:
         raw = _retry(func, *args, **kwargs)
-        return _to_15min_series(raw, name)
+        return _normalize_native_series(raw, name)
     except Exception as exc:
         logger.warning("ENTSO-E query failed for %s: %s", name, exc)
         return pd.Series(dtype=float, name=name)
@@ -348,11 +340,16 @@ def _load_swiss_border_features(
             dayahead=True,
             name=f"scheduled_import_ch_{border_key}_mw",
         )
-        if not sched_export.empty or not sched_import.empty:
-            sched_idx = sched_export.index.union(sched_import.index)
-            sched_export = sched_export.reindex(sched_idx).fillna(0.0)
-            sched_import = sched_import.reindex(sched_idx).fillna(0.0)
-            frames.append((sched_export - sched_import).rename(f"scheduled_net_export_ch_{border_key}_mw"))
+        if not sched_export.empty:
+            frames.append(sched_export)
+        if not sched_import.empty:
+            frames.append(sched_import)
+        if not sched_export.empty and not sched_import.empty:
+            frames.append(
+                (sched_export - sched_import).rename(
+                    f"scheduled_net_export_ch_{border_key}_mw"
+                )
+            )
 
         flow_export = _query_series_or_empty(
             client.query_crossborder_flows,
@@ -370,11 +367,16 @@ def _load_swiss_border_features(
             end=ts_end,
             name=f"flow_import_ch_{border_key}_mw",
         )
-        if not flow_export.empty or not flow_import.empty:
-            flow_idx = flow_export.index.union(flow_import.index)
-            flow_export = flow_export.reindex(flow_idx).fillna(0.0)
-            flow_import = flow_import.reindex(flow_idx).fillna(0.0)
-            frames.append((flow_export - flow_import).rename(f"flow_net_export_ch_{border_key}_mw"))
+        if not flow_export.empty:
+            frames.append(flow_export)
+        if not flow_import.empty:
+            frames.append(flow_import)
+        if not flow_export.empty and not flow_import.empty:
+            frames.append(
+                (flow_export - flow_import).rename(
+                    f"flow_net_export_ch_{border_key}_mw"
+                )
+            )
 
         ntc_export = _query_series_or_empty(
             client.query_net_transfer_capacity_dayahead,
@@ -392,16 +394,21 @@ def _load_swiss_border_features(
             end=ts_end,
             name=f"ntc_import_ch_{border_key}_mw",
         )
-        if not ntc_export.empty or not ntc_import.empty:
-            ntc_idx = ntc_export.index.union(ntc_import.index)
-            ntc_export = ntc_export.reindex(ntc_idx).fillna(0.0)
-            ntc_import = ntc_import.reindex(ntc_idx).fillna(0.0)
-            frames.extend([
-                ntc_export.rename(f"ntc_export_ch_{border_key}_mw"),
-                ntc_import.rename(f"ntc_import_ch_{border_key}_mw"),
-                (ntc_export - ntc_import).rename(f"ntc_net_ch_{border_key}_mw"),
-                (ntc_export + ntc_import).rename(f"ntc_total_ch_{border_key}_mw"),
-            ])
+        if not ntc_export.empty:
+            frames.append(ntc_export)
+        if not ntc_import.empty:
+            frames.append(ntc_import)
+        if not ntc_export.empty and not ntc_import.empty:
+            frames.extend(
+                [
+                    (ntc_export - ntc_import).rename(
+                        f"ntc_net_ch_{border_key}_mw"
+                    ),
+                    (ntc_export + ntc_import).rename(
+                        f"ntc_total_ch_{border_key}_mw"
+                    ),
+                ]
+            )
 
     if not frames:
         return pd.DataFrame()
@@ -421,16 +428,8 @@ def _load_neighbor_power_features(
     for key, zone_code in NEIGHBOR_ZONES.items():
         try:
             load_raw = _retry(client.query_load, zone_code, start=ts_start, end=ts_end)
-            if isinstance(load_raw, pd.DataFrame):
-                if "Actual Load" in load_raw.columns:
-                    load_df = load_raw[["Actual Load"]].rename(columns={"Actual Load": f"load_{key}_mw"})
-                else:
-                    load_df = load_raw.iloc[:, -1].to_frame(f"load_{key}_mw")
-            else:
-                load_df = load_raw.to_frame(f"load_{key}_mw")
-            if load_df.index.tz is None:
-                load_df.index = load_df.index.tz_localize("UTC")
-            load_df = _resample_to_15min(load_df)
+            load_df = _extract_actual_load(load_raw, f"load_{key}_mw")
+            _normalize_native_frame_in_place(load_df)
         except Exception as exc:
             logger.warning("ENTSO-E neighbor load failed for %s: %s", key, exc)
             load_df = pd.DataFrame()
@@ -443,9 +442,7 @@ def _load_neighbor_power_features(
                 + _extract_generation_column(gen_raw, "Wind Offshore")
             ).rename(f"wind_{key}_mw")
             gen_df = pd.concat([solar, wind], axis=1)
-            if gen_df.index.tz is None:
-                gen_df.index = gen_df.index.tz_localize("UTC")
-            gen_df = _resample_to_15min(gen_df)
+            _normalize_native_frame_in_place(gen_df)
         except Exception as exc:
             logger.warning("ENTSO-E neighbor generation failed for %s: %s", key, exc)
             gen_df = pd.DataFrame()
@@ -454,9 +451,6 @@ def _load_neighbor_power_features(
             continue
 
         zone_df = load_df.join(gen_df, how="outer").sort_index()
-        for col in [f"solar_{key}_mw", f"wind_{key}_mw"]:
-            if col in zone_df.columns:
-                zone_df[col] = zone_df[col].fillna(0.0)
 
         if key == "de":
             load_col = "load_de_mw"
@@ -464,7 +458,7 @@ def _load_neighbor_power_features(
             wind_col = "wind_de_mw"
             if all(col in zone_df.columns for col in [load_col, solar_col, wind_col]):
                 zone_df["residual_load_de_mw"] = (
-                    zone_df[load_col] - zone_df[solar_col].fillna(0.0) - zone_df[wind_col].fillna(0.0)
+                    zone_df[load_col] - zone_df[solar_col] - zone_df[wind_col]
                 )
 
         frames.append(zone_df)
@@ -490,75 +484,9 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
         (cross_border_mw - mean_mensuel) / std_mensuel
         Capture la flexibilité hydro CH (export peak / import offpeak).
     """
-    df = df.copy()
+    from pfc_shaping.data.lt_replay_transforms import build_entso_features
 
-    def _solar_regime(x: pd.Series) -> pd.Series:
-        q33, q66 = np.nanpercentile(x, [33, 66])
-        if not np.isfinite(q33) or not np.isfinite(q66) or q33 >= q66:
-            return pd.Series(1.0, index=x.index)
-        return pd.cut(
-            x,
-            bins=[-np.inf, q33, q66, np.inf],
-            labels=[0, 1, 2],
-            duplicates="drop",
-        ).astype(float)
-
-    df["solar_regime"] = df.groupby(df.index.to_period("M"))["solar_mw"].transform(_solar_regime)
-
-    monthly_mean = df.groupby(df.index.to_period("M"))["load_mw"].transform("mean")
-    monthly_std = df.groupby(df.index.to_period("M"))["load_mw"].transform("std")
-    df["load_deviation"] = (df["load_mw"] - monthly_mean) / monthly_std.replace(0, np.nan)
-
-    # Flow deviation : z-score mensuel du flux transfrontalier
-    if "cross_border_mw" in df.columns:
-        flow_mean = df.groupby(df.index.to_period("M"))["cross_border_mw"].transform("mean")
-        flow_std = df.groupby(df.index.to_period("M"))["cross_border_mw"].transform("std")
-        df["flow_deviation"] = (df["cross_border_mw"] - flow_mean) / flow_std.replace(0, np.nan)
-        df["flow_deviation"] = df["flow_deviation"].fillna(0)
-    else:
-        df["flow_deviation"] = 0.0
-
-    for border_key in SWISS_BORDERS:
-        sched_col = f"scheduled_net_export_ch_{border_key}_mw"
-        if sched_col in df.columns:
-            monthly = df.groupby(df.index.to_period("M"))[sched_col]
-            df[f"{sched_col}_zscore"] = monthly.transform(
-                lambda x: (x - x.mean()) / x.std() if x.std() > 0 else 0
-            ).fillna(0.0)
-
-        ntc_total_col = f"ntc_total_ch_{border_key}_mw"
-        if ntc_total_col in df.columns:
-            monthly = df.groupby(df.index.to_period("M"))[ntc_total_col]
-            df[f"{ntc_total_col}_zscore"] = monthly.transform(
-                lambda x: (x - x.mean()) / x.std() if x.std() > 0 else 0
-            ).fillna(0.0)
-
-        ntc_net_col = f"ntc_net_ch_{border_key}_mw"
-        if ntc_net_col in df.columns:
-            monthly = df.groupby(df.index.to_period("M"))[ntc_net_col]
-            df[f"{ntc_net_col}_zscore"] = monthly.transform(
-                lambda x: (x - x.mean()) / x.std() if x.std() > 0 else 0
-            ).fillna(0.0)
-
-        export_col = f"ntc_export_ch_{border_key}_mw"
-        import_col = f"ntc_import_ch_{border_key}_mw"
-        if export_col in df.columns and import_col in df.columns:
-            denom = (df[export_col].fillna(0.0) + df[import_col].fillna(0.0)).replace(0, np.nan)
-            df[f"ntc_balance_ch_{border_key}"] = (
-                (df[export_col].fillna(0.0) - df[import_col].fillna(0.0)) / denom
-            ).fillna(0.0)
-
-    if "fr_nuclear_unavailable_mw" in df.columns:
-        unavailable = df["fr_nuclear_unavailable_mw"].fillna(0.0).clip(lower=0.0)
-        q75 = float(unavailable.quantile(0.75)) if len(unavailable) else 0.0
-        q90 = float(unavailable.quantile(0.90)) if len(unavailable) else 0.0
-        scale = max(q90, 1.0)
-        stress_threshold = max(5000.0, q75)
-        df["fr_nuclear_unavailable_mw"] = unavailable
-        df["fr_nuclear_unavailability_ratio"] = (unavailable / scale).clip(upper=1.5)
-        df["fr_nuclear_stress_flag"] = (unavailable >= stress_threshold).astype(float)
-
-    return df
+    return build_entso_features(df)
 
 
 def load_parquet(path: str | Path = DEFAULT_PARQUET) -> pd.DataFrame:
@@ -573,29 +501,24 @@ def fetch_and_cache(
     country_code: str = "CH",
 ) -> pd.DataFrame:
     """
-    Télécharge depuis l'API ENTSO-E, fusionne avec le cache local et sauvegarde.
-    Recalcule les features sur l'ensemble.
+    Télécharge une capture ENTSO-E neuve et la sauvegarde localement.
+
+    Le chemin doit être absent. Un ancien cache peut contenir des quarts
+    d'heure fabriqués par l'implémentation historique et ne peut pas être
+    distingué d'une capture native sans sidecar D260/D261. La fusion échoue
+    donc avant tout appel réseau ; utiliser un nouveau chemin immuable.
 
     Returns:
         DataFrame canonique complet mis à jour
     """
-    new_raw = load_from_api(start, end, country_code)
-
     parquet_path = Path(parquet_path)
     if parquet_path.exists():
-        existing = load_parquet(parquet_path)
-        raw_cols = [
-            c for c in existing.columns
-            if c in {"load_mw", "solar_mw", "wind_mw", "cross_border_mw", "nuclear_mw", "hydro_ror_mw",
-                     "hydro_reservoir_mw", "hydro_pumped_mw", "fr_nuclear_unavailable_mw"}
-            or c.startswith(("load_", "solar_", "wind_", "residual_load_"))
-            or c.startswith(("scheduled_", "flow_net_export_", "ntc_export_", "ntc_import_", "ntc_net_", "ntc_total_"))
-        ]
-        existing_raw = existing[[c for c in raw_cols if c in existing.columns]]
-        combined = pd.concat([existing_raw, new_raw])
-        combined = combined[~combined.index.duplicated(keep="last")].sort_index()
-    else:
-        combined = new_raw
+        raise FileExistsError(
+            "existing ENTSO-E cache has unproven native cadence; "
+            "immutable capture path must be new"
+        )
+
+    combined = load_from_api(start, end, country_code)
 
     combined = build_features(combined)
 

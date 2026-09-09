@@ -1,0 +1,133 @@
+{
+  "schema_version": "fmv-afry-source-registration-v2",
+  "release_id": "AFRY_CH_2026_Q2_V100",
+  "first_observed_at_utc": "2026-08-03T09:22:51.244Z",
+  "license_classification": "restricted_client_engagement",
+  "raw_or_derived_values_allowed_in_git": false,
+  "rag_indexing_allowed": false,
+  "monthly_level_authority": false,
+  "scenario_mapping_approved": false,
+  "model_input_authorized": false,
+  "production_authorized": false,
+  "release_schedule": {
+    "cadence": "annual",
+    "expected_arrival_month": 7,
+    "timezone": "Europe/Zurich"
+  },
+  "content_contract": {
+    "hourly_prices": {
+      "price_area": "SWI",
+      "weather_years": [2012, 2014, 2015, 2017, 2018],
+      "representative_hours_per_group": 8760,
+      "negative_zero_tolerance_eur_mwh": 0.000005,
+      "sheets": [
+        {
+          "title": "Hourly WP High (2027-2034)",
+          "scenario_vendor": "High",
+          "delivery_years": [2027, 2028, 2029, 2030, 2031, 2032, 2033, 2034]
+        },
+        {
+          "title": "Hourly WP High (2035+)",
+          "scenario_vendor": "High",
+          "delivery_years": [2035, 2036, 2037, 2038, 2039, 2040, 2041, 2042, 2043, 2044, 2045, 2050, 2055, 2060]
+        },
+        {
+          "title": "Hourly WP Central (2027-2034)",
+          "scenario_vendor": "Central",
+          "delivery_years": [2027, 2028, 2029, 2030, 2031, 2032, 2033, 2034]
+        },
+        {
+          "title": "Hourly WP Central (2035+)",
+          "scenario_vendor": "Central",
+          "delivery_years": [2035, 2036, 2037, 2038, 2039, 2040, 2041, 2042, 2043, 2044, 2045, 2050, 2055, 2060]
+        },
+        {
+          "title": "Hourly WP Low (2027-2034)",
+          "scenario_vendor": "Low",
+          "delivery_years": [2027, 2028, 2029, 2030, 2031, 2032, 2033, 2034]
+        },
+        {
+          "title": "Hourly WP Low (2035+)",
+          "scenario_vendor": "Low",
+          "delivery_years": [2035, 2036, 2037, 2038, 2039, 2040, 2041, 2042, 2043, 2044, 2045, 2050, 2055, 2060]
+        },
+        {
+          "title": "Hourly WP DelTr (2027-2034)",
+          "scenario_vendor": "Delayed Transition",
+          "delivery_years": [2027, 2028, 2029, 2030, 2031, 2032, 2033, 2034]
+        },
+        {
+          "title": "Hourly WP DelTr (2035+)",
+          "scenario_vendor": "Delayed Transition",
+          "delivery_years": [2035, 2036, 2037, 2038, 2039, 2040, 2041, 2042, 2043, 2044, 2045, 2050, 2055, 2060]
+        }
+      ]
+    },
+    "annual_scenarios": {
+      "first_delivery_year_offset": 1,
+      "delivery_year_count": 34,
+      "delivery_years": [2027, 2028, 2029, 2030, 2031, 2032, 2033, 2034, 2035, 2036, 2037, 2038, 2039, 2040, 2041, 2042, 2043, 2044, 2045, 2046, 2047, 2048, 2049, 2050, 2051, 2052, 2053, 2054, 2055, 2056, 2057, 2058, 2059, 2060],
+      "structural_required_non_null_fields": [
+        "demand_twh",
+        "peak_load_gw",
+        "pv_gw",
+        "pv_twh",
+        "wind_gw",
+        "wind_twh",
+        "battery_power_gw",
+        "electrolysis_twh",
+        "hydro_twh",
+        "hydro_capacity_gw",
+        "nuclear_gw",
+        "gas_gw",
+        "net_import_twh",
+        "gas_eur_mwh",
+        "coal_eur_mwh",
+        "co2_eur_t"
+      ],
+      "structural_declared_nullable_fields": [
+        "measurement_date",
+        "delivery_month",
+        "scenario_weight",
+        "battery_energy_gwh",
+        "hydro_reservoir_twh"
+      ]
+    }
+  },
+  "supporting_documents": [
+    {
+      "role": "commodity_and_modelling_annex",
+      "path": "build/afry-restricted-source-intake/2026Q2/AFRY_CommodityAndModellingAnnex_2026Q2_v100.pdf",
+      "sha256": "9eaa00233074fac38efe9f9d048f0f9524d833a0ef9313d5acc50773a4acfbe1",
+      "publisher_release_date": "2026-06-25",
+      "content_use": "semantic_context_only"
+    },
+    {
+      "role": "quarterly_update_note",
+      "path": "build/afry-restricted-source-intake/2026Q2/AFRY_QUN_Switzerland_2026_Q2_v100.pdf",
+      "sha256": "dc0c0c2c06ddf95d523c418e7ae4899c0aed1ed0f8940566992e4008596769e8",
+      "publisher_release_date": "2026-07-16",
+      "content_use": "semantic_context_only"
+    }
+  ],
+  "semantic_contract": {
+    "path": ".planning/phases/14-lt-audit-remediation/AFRY-CH-2026-Q2-SEMANTIC-CONTRACT.json",
+    "sha256": "116fe6ba2ccbb25539c6dea0300eaedfcbe6093d4fb20e57346d96555bac4895"
+  },
+  "sources": [
+    {
+      "role": "annual_scenarios",
+      "path": "data/AFRY_DATA_Switzerland_2026_Q2_v100.xlsx",
+      "sha256": "460c5030b1f2c1b0e281dfd93fa5ef120a0b19c62af8a39d066313b7c7f926ea",
+      "publisher_release_date": "2026-06-26",
+      "declared_money_basis": "real January 2026 unless otherwise stated"
+    },
+    {
+      "role": "hourly_prices",
+      "path": "data/AFRY_HOURLY_DATA_Switzerland_2026_Q2_v100.xlsx",
+      "sha256": "903850cff94738eba2845366b99423bef87c9c59fe122ae82de681d0199318f8",
+      "publisher_release_date": "2026-07-24",
+      "declared_money_basis": "real January 2026"
+    }
+  ]
+}

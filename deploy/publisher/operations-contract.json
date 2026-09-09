@@ -1,0 +1,98 @@
+{
+  "schema_version": "fmv_lt_snapshot_publisher_container_operations.v1",
+  "workload_model": "ONE_SHOT_GOVERNED_JOB",
+  "platform": "windows/amd64",
+  "runtime": {
+    "user": "ContainerUser",
+    "isolation_mode": "PROCESS_EXPLICIT_HOST_BASE_OSVERSION_COMPATIBILITY_REQUIRED",
+    "bind_mount_principal": "CONTAINERUSER_WITH_EXTERNAL_HOST_ACL_ATTESTATION",
+    "root_filesystem_requirement": "DOCKER_RUN_READ_ONLY",
+    "network_requirement": "DENY_BY_DEFAULT_PHASE_ENDPOINT_ALLOWLIST_ONLY",
+    "scratch_mount": "EXPLICIT_RW_NAMED_OR_BIND_MOUNT_NO_ANONYMOUS_FALLBACK",
+    "input_mount": "EXPLICIT_RO_DIRECTORY_MOUNT",
+    "data_mount": "PREPARE_AND_FINALIZE_EXPLICIT_RW_FMV_DATA_ROOT",
+    "evidence_mount": "CAS_AND_FINALIZE_EXPLICIT_RW_RECEIPT_OBSERVATION_ROOT",
+    "secrets": "READ_ONLY_DIRECTORY_MOUNTS_PRESENT_AT_START_PATHS_DEFERRED_POST_ADMISSION"
+  },
+  "observability": {
+    "streams": "STRUCTURED_JSON_STDOUT_AND_STDERR_NO_SECRET_VALUES",
+    "admission_metric_schema": "fmv_lt_snapshot_publisher_admission_metric.v1",
+    "required_metrics": [
+      "pfc_publisher_job_total",
+      "pfc_publisher_admission_duration_seconds",
+      "pfc_publisher_admission_slo_breach_total",
+      "pfc_publisher_anchor_conflict_total",
+      "pfc_publisher_projection_repair_total",
+      "pfc_publisher_indeterminate_authority_total"
+    ],
+    "required_alerts": [
+      "ANY_EXIT_50_OR_52",
+      "EXIT_51_REPAIR_REQUIRED",
+      "ADMISSION_SLO_BREACH",
+      "SUPERVISOR_RESIDUE",
+      "SCRATCH_CAPACITY_BELOW_FLOOR",
+      "ANCHOR_CONFLICT_BURST"
+    ],
+    "low_cardinality_labels": [
+      "phase",
+      "status",
+      "exit_code",
+      "environment"
+    ],
+    "log_only_high_cardinality_fields": [
+      "operation_id",
+      "intent_id",
+      "receipt_id",
+      "observation_id",
+      "artifact_sha256"
+    ]
+  },
+  "lifecycle": {
+    "restart_policy": "NEVER",
+    "exit_policy": {
+      "0": "SUCCESS_NO_RETRY",
+      "2": "USAGE_OR_CONFIGURATION_ERROR_NO_RETRY_UNTIL_CORRECTED",
+      "30": "GOVERNANCE_PENDING_NO_AUTOMATIC_RETRY_NEW_AUTHORITY_EVIDENCE_REQUIRED",
+      "40": "CAS_CONFLICT_NO_BLIND_RETRY_RECONCILE_FRESH_HEAD_AND_NEW_INTENT",
+      "41": "TRANSITION_BUSY_RETRY_EXACT_OPERATION_WITH_BOUNDED_BACKOFF",
+      "50": "INTEGRITY_OR_ADMISSION_FAILURE_QUARANTINE_AND_INCIDENT_NO_AUTOMATIC_RETRY",
+      "51": "COMMITTED_PROJECTION_REPAIR_OPERATOR_REPAIR_THEN_FINALIZE_SAME_OPERATION_NO_NEW_CAS",
+      "52": "INDETERMINATE_LOOKUP_EXACT_OPERATION_BEFORE_BOUNDED_RETRY"
+    },
+    "retryable_exit_codes": [
+      41,
+      52
+    ],
+    "retry_backoff_seconds": [
+      5,
+      15,
+      30,
+      60,
+      120
+    ],
+    "maximum_retry_count": 5,
+    "maximum_total_attempts": 6,
+    "same_operation_id_required": true
+  },
+  "rollback": {
+    "automatic_rollback": false,
+    "image": "PREVIOUS_INDEPENDENTLY_ATTESTED_IMAGE_DIGEST_WITH_SIGNED_TWO_PERSON_AUTHORIZATION",
+    "data_head": "NEVER_REWIND_EXTERNAL_CAS_HEAD",
+    "data_correction": "PUBLISH_NEW_SIGNED_COMPENSATING_GENERATION",
+    "compatibility_gate": "SIGNED_TARGET_DIGEST_PROTOCOL_SCHEMA_TRUST_REGISTRY_DOMAIN_AND_FRESH_CAS_HEAD_BINDING_REQUIRED",
+    "rollback_evidence": "PRESERVE_FAILED_AND_REPLACEMENT_DIGESTS_MANIFESTS_LOGS_AND_AUTHORIZATION"
+  },
+  "external_proofs": [
+    "SIGNED_BASE_IMAGE_ALLOWLIST_AND_PROVENANCE",
+    "HOST_BASE_OSVERSION_PROCESS_ISOLATION_AND_BIND_MOUNT_PRINCIPAL_ATTESTATION",
+    "LOCKED_HOST_BUILD_PYTHON_JIT_RUNNER_AND_ISOLATED_DAEMON_ATTESTATION",
+    "CONTAINERIZED_PREPARE_CAS_FINALIZE_MOUNT_SECRET_NETWORK_AND_EXIT_POLICY_DRILL",
+    "INDEPENDENT_TWO_BUILDER_FINAL_IMAGE_REPRODUCIBILITY",
+    "SIGNED_IMAGE_PROVENANCE_AND_SBOM",
+    "REGISTRY_IMMUTABILITY_AND_DIGEST_RETENTION",
+    "SERVICE_IDENTITY_AND_ACL_ATTESTATION",
+    "METRICS_EXPORT_AND_ALERT_DELIVERY_TEST",
+    "BACKUP_RESTORE_AND_DISASTER_RECOVERY_EXERCISE"
+  ],
+  "production_authorization": false
+}

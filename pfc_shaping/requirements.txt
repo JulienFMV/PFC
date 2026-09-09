@@ -30,12 +30,14 @@ holidays==0.83
 # Configuration
 PyYAML==6.0.3
 duckdb>=1.1.0
+cryptography==47.0.0  # Ed25519 promotion receipt authentication
 
 # Tests
 pytest==8.4.2
 
 # Optionnel : visualisation (backtest / diagnostic)
-# matplotlib>=3.7.0
+matplotlib>=3.7.0  # Phase 10: scorecard figures PNG (Plan 10-04)
+statsmodels==0.14.6  # Phase 10: MZ regression (Pillar 2) + DM HAC variance (Plan 10-03)
 # seaborn>=0.12.0
 
 # Optionnel : planificateur (alternative à cron)

@@ -1,0 +1,46 @@
+schema_version: monthly_curve_lambda_grid_v1
+purpose: research_offline_only
+production_approved: false
+
+defaults:
+  lambda_prior: 1.0e-6
+  min_history_snapshots: 24
+  constraint_tolerance: 0.01
+  stationarity_tolerance: 1.0e-7
+
+calibration:
+  market: CH
+  load_type: BASE
+  timezone: Europe/Zurich
+  neighbor_markets: [DE, FR, AT, IT]
+  min_valid_origins: 3
+  min_withheld_monthly: 3
+  min_withheld_quarterly: 2
+  min_history_snapshots: 24
+  max_withheld_per_origin: 4
+  quote_consistency_tolerance: 0.01
+  hard_constraint_tolerance: 1.0e-8
+  history_lookback_years: 6
+  structural_weight: 0.5
+  panel_weight: 1.0
+  history_weight: 0.25
+  allow_template_structural_fallback: false
+  structural_amplitude_eur_mwh: 20.0
+  min_structural_snapshots: 24
+  identifiability_min_abs_error_improvement: 0.05
+  identifiability_min_rel_error_improvement: 0.01
+
+smoke:
+  min_valid_origins: 1
+  min_withheld_monthly: 1
+  min_withheld_quarterly: 1
+  min_history_snapshots: 2
+  max_withheld_per_origin: 2
+  min_structural_snapshots: 2
+
+grid:
+  lambda_smooth_month: [0.0, 0.1, 1.0, 10.0, 100.0]
+  lambda_smooth_yoy: [0.0, 0.1, 1.0, 10.0]
+  lambda_shape: [0.0, 0.25, 1.0, 4.0]
+  neighbor_shrinkage: [0.25, 0.5, 0.75]
+  history_lookback_years: [3, 5, 6]

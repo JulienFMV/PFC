@@ -38,7 +38,7 @@ print("status:fitting_lear", flush=True)
 sys.path.insert(0, ".")
 
 try:
-    from pfc_shaping.model.lear_forecaster import LEARForecaster
+    from pfc_shaping.ct.model.lear_forecaster import LEARForecaster
 
     lear = LEARForecaster()
     lear.fit(

@@ -1,0 +1,118 @@
+table Duck_Month_Hour
+	lineageTag: fa03b83a-3b9d-4638-a33a-b9198bb841e1
+
+	measure 'Duck Month Avg Weighted Price' = AVERAGE ( Duck_Month_Hour[price_weighted_mean_eur_mwh] )
+		formatString: 0.00
+		lineageTag: f9f6babf-ce82-4b05-8e61-c642117c9f2d
+
+	measure 'Duck Month Avg Central Price' = AVERAGE ( Duck_Month_Hour[price_central_eur_mwh] )
+		formatString: 0.00
+		lineageTag: 248b3056-529a-4380-8d4c-3b2b157f79c8
+
+	measure 'Duck Month Avg Fast Price' = AVERAGE ( Duck_Month_Hour[price_fast_eur_mwh] )
+		formatString: 0.00
+		lineageTag: 7cdf2fbc-92dc-4ccb-b3e9-2ca2d4b4428e
+
+	measure 'Duck Month Avg Structural Width' = AVERAGE ( Duck_Month_Hour[structural_width_eur_mwh] )
+		formatString: 0.00
+		lineageTag: 40bc5075-6ea0-4f20-888a-fb24ca84fd49
+
+	column year
+		dataType: int64
+		formatString: 0
+		lineageTag: 5dc460de-2d54-4002-9607-5fc2bce02b92
+		summarizeBy: none
+		sourceColumn: year
+
+	column month
+		dataType: int64
+		formatString: 0
+		lineageTag: 51764e80-c57c-4c5b-bc8c-ca663f163ef2
+		summarizeBy: none
+		sourceColumn: month
+
+	column hour
+		dataType: int64
+		formatString: 0
+		lineageTag: fe212efc-1ea9-4138-bc58-dd2f36cc2e1f
+		summarizeBy: none
+		sourceColumn: hour
+
+	column price_slow_eur_mwh
+		dataType: double
+		formatString: 0.00
+		lineageTag: b563a2bd-e433-4fbd-8820-b5f4fe822dce
+		summarizeBy: none
+		sourceColumn: price_slow_eur_mwh
+
+	column price_central_eur_mwh
+		dataType: double
+		formatString: 0.00
+		lineageTag: 23f455e3-598b-4904-983e-572b7d44e559
+		summarizeBy: none
+		sourceColumn: price_central_eur_mwh
+
+	column price_fast_eur_mwh
+		dataType: double
+		formatString: 0.00
+		lineageTag: d9d3fdbf-5acf-4d4e-843c-93c0d866a05e
+		summarizeBy: none
+		sourceColumn: price_fast_eur_mwh
+
+	column price_weighted_mean_eur_mwh
+		dataType: double
+		formatString: 0.00
+		lineageTag: 46db3713-6f59-4836-bdaf-7b37396a8985
+		summarizeBy: none
+		sourceColumn: price_weighted_mean_eur_mwh
+
+	column structural_p10_eur_mwh
+		dataType: double
+		formatString: 0.00
+		lineageTag: 2a4f7269-1228-40ea-9459-78049748d013
+		summarizeBy: none
+		sourceColumn: structural_p10_eur_mwh
+
+	column structural_p50_eur_mwh
+		dataType: double
+		formatString: 0.00
+		lineageTag: 32c6e0a7-e36f-4d79-8ab0-a0b2ac5e5351
+		summarizeBy: none
+		sourceColumn: structural_p50_eur_mwh
+
+	column structural_p90_eur_mwh
+		dataType: double
+		formatString: 0.00
+		lineageTag: 5de6585b-3474-4d98-bece-352e3137e8cf
+		summarizeBy: none
+		sourceColumn: structural_p90_eur_mwh
+
+	column structural_width_eur_mwh
+		dataType: double
+		formatString: 0.00
+		lineageTag: 4bd154e2-3539-4a6f-933c-be8a6aa6082b
+		summarizeBy: none
+		sourceColumn: structural_width_eur_mwh
+
+	column month_code
+		dataType: string
+		lineageTag: 71fb31e6-616e-40ee-8049-4f9924808b3f
+		summarizeBy: none
+		sourceColumn: month_code
+
+	column hour_code
+		dataType: string
+		lineageTag: 3a560047-3314-4d1b-841c-44af89bb61a9
+		summarizeBy: none
+		sourceColumn: hour_code
+
+	partition Duck_Month_Hour = m
+		mode: import
+		source =
+				let
+				    Source = Csv.Document(File.Contents("\\fmvfs2\Data\Energy\GeCom\CONTROLLING RISK\Analyses diverses\Python - JB\PFC_LT\powerbi\data\duck_month_hour.csv"), [Delimiter=",", Columns=13, Encoding=65001, QuoteStyle=QuoteStyle.Csv]),
+				    Promoted = Table.PromoteHeaders(Source, [PromoteAllScalars=true]),
+				    Typed = Table.TransformColumnTypes(Promoted, {{"year", Int64.Type}, {"month", Int64.Type}, {"hour", Int64.Type}, {"price_slow_eur_mwh", type number}, {"price_central_eur_mwh", type number}, {"price_fast_eur_mwh", type number}, {"price_weighted_mean_eur_mwh", type number}, {"structural_p10_eur_mwh", type number}, {"structural_p50_eur_mwh", type number}, {"structural_p90_eur_mwh", type number}, {"structural_width_eur_mwh", type number}, {"month_code", type text}, {"hour_code", type text}})
+				in
+				    Typed
+

@@ -1,0 +1,251 @@
+{
+  "schema_version": "fmv_entsoe_parquet_streaming_integrity_preflight_contract.v1",
+  "status": "STATIC_OFFLINE_SYNTHETIC_PARQUET_STREAMING_PREFLIGHT_NO_REAL_ADMISSION",
+  "decision": "D-20260806-244",
+  "purpose": "verify bounded Parquet mechanics on a synthetic repo-local ENTSO-E package without a full-table pandas load, real artifact authority, connector import or Databricks execution",
+  "input_bindings": {
+    "d240_contract_content_id": "c4b69dd9e1ba790a5bfe3ec3c2ddc7c6555d907902f7ff429d582b820d43369e",
+    "d240_contract_sha256": "26631c82495df6f4616c2841bc73cbb5b9da13f5a265091fac5bcfcb5a21fe49",
+    "d240_proof_content_id": "5595a20c5b997485bbaa0e3aa41f90b131190e3e89d812b1acfdfaaebc88536b",
+    "d240_proof_manifest_sha256": "97fc381771033c31da4f79789750638c70676bf32d1d3e844edc2609b3448ec3",
+    "d241_real_schema_proof_content_id": "d6c006609d881b51f08be6d60e01f68b59a40be8bdf2898ef0a98491f5771544",
+    "d241_real_schema_proof_manifest_sha256": "1835f93a517e9c6769079984a376fb9879b22d7c8ce2922aa42b0dd646627ada",
+    "d241_real_schema_capture_content_id": "d69fdab73ba1d9c55f70f77925f2253d583564d06d922f2b41e035763bca176f",
+    "d241_real_schema_status": "FAIL_REAL_CONTROL_PLANE_SCHEMA_INCOMPATIBLE_NO_MODEL_AUTHORITY"
+  },
+  "package_manifest": {
+    "schema_version": "fmv_entsoe_parquet_package_manifest.v1",
+    "evidence_class": "SYNTHETIC_TEST_ONLY",
+    "exact_top_level_fields": [
+      "schema_version",
+      "evidence_class",
+      "snapshot_id",
+      "capture_batch_id",
+      "proposal_content_id",
+      "reservation_id",
+      "snapshot_reference_time_utc",
+      "created_at_utc",
+      "artifacts",
+      "authorities"
+    ],
+    "snapshot_id_derivation": "CANONICAL_SHA256_OF_CAPTURE_BINDINGS_AND_ARTIFACT_DECLARATIONS",
+    "snapshot_directory_template": "build/governed-source-intake/synthetic-parquet-fixtures/<snapshot_id>",
+    "manifest_file_name": "manifest.json",
+    "exact_directory_inventory_required": true,
+    "unknown_fields_fail_closed": true
+  },
+  "artifact_declaration": {
+    "exact_fields": [
+      "role",
+      "format",
+      "relative_path",
+      "sha256",
+      "size_bytes",
+      "row_count",
+      "row_group_count",
+      "columns",
+      "column_types",
+      "normalized_schema_sha256",
+      "arrow_schema_sha256",
+      "compression",
+      "parquet_format_version",
+      "created_by"
+    ],
+    "exact_role_order": [
+      "series_dimension",
+      "latest_values",
+      "vintage_values"
+    ],
+    "format": "PARQUET",
+    "file_names": {
+      "series_dimension": "series_dimension.parquet",
+      "latest_values": "latest_values.parquet",
+      "vintage_values": "vintage_values.parquet"
+    },
+    "parquet_magic": "PAR1",
+    "allowed_compression": [
+      "ZSTD",
+      "SNAPPY"
+    ],
+    "allowed_parquet_format_versions": [
+      "1.0",
+      "2.4",
+      "2.6"
+    ],
+    "schema_hash_derivation": "CANONICAL_SHA256_OF_ROLE_COLUMNS_AND_LOGICAL_TYPES",
+    "arrow_schema_hash_derivation": "CANONICAL_SHA256_OF_ORDERED_FIELD_NAME_ARROW_TYPE_AND_NULLABILITY_WITH_NO_SCHEMA_METADATA"
+  },
+  "normalized_logical_types": {
+    "series_dimension": {
+      "series_id": "string",
+      "group_name": "string",
+      "field_name": "string",
+      "from_zone": "string",
+      "to_zone": "string",
+      "unit": "string",
+      "native_resolution": "string",
+      "source_endpoint": "string",
+      "document_id": "string"
+    },
+    "latest_values": {
+      "series_id": "string",
+      "target_ts_utc": "timestamp_utc",
+      "value": "float64_finite",
+      "is_historical": "boolean",
+      "quality_flag": "string",
+      "revision_number": "int64_non_negative",
+      "meta_load_timestamp_utc": "timestamp_utc"
+    },
+    "vintage_values": {
+      "series_id": "string",
+      "target_ts_utc": "timestamp_utc",
+      "as_of_utc": "timestamp_utc",
+      "value": "float64_finite",
+      "quality_flag": "string",
+      "revision_number": "int64_non_negative",
+      "meta_load_timestamp_utc": "timestamp_utc"
+    }
+  },
+  "arrow_types": {
+    "series_dimension": {
+      "series_id": "string",
+      "group_name": "string",
+      "field_name": "string",
+      "from_zone": "string",
+      "to_zone": "string",
+      "unit": "string",
+      "native_resolution": "string",
+      "source_endpoint": "string",
+      "document_id": "string"
+    },
+    "latest_values": {
+      "series_id": "string",
+      "target_ts_utc": "timestamp[ns, tz=UTC]",
+      "value": "double",
+      "is_historical": "bool",
+      "quality_flag": "string",
+      "revision_number": "int64",
+      "meta_load_timestamp_utc": "timestamp[ns, tz=UTC]"
+    },
+    "vintage_values": {
+      "series_id": "string",
+      "target_ts_utc": "timestamp[ns, tz=UTC]",
+      "as_of_utc": "timestamp[ns, tz=UTC]",
+      "value": "double",
+      "quality_flag": "string",
+      "revision_number": "int64",
+      "meta_load_timestamp_utc": "timestamp[ns, tz=UTC]"
+    }
+  },
+  "bounded_streaming": {
+    "hash_chunk_bytes": 1048576,
+    "record_batch_rows": 4096,
+    "max_footer_bytes": 16777216,
+    "max_total_file_bytes": 4294967296,
+    "max_total_uncompressed_bytes": 17179869184,
+    "max_row_groups_per_artifact": 8192,
+    "max_rows_per_row_group": 1000000,
+    "max_uncompressed_bytes_per_row_group": 268435456,
+    "max_uncompressed_to_file_ratio": 1000,
+    "max_record_batch_bytes": 67108864,
+    "max_string_value_bytes": 1048576,
+    "thrift_string_size_limit": 1048576,
+    "thrift_container_size_limit": 1000000,
+    "per_role_max_file_bytes": {
+      "series_dimension": 67108864,
+      "latest_values": 1073741824,
+      "vintage_values": 3221225472
+    },
+    "per_role_max_rows": {
+      "series_dimension": 100000,
+      "latest_values": 100000000,
+      "vintage_values": 250000000
+    },
+    "empty_artifact_authorized": false,
+    "full_file_bytes_materialized_in_python_authorized": false,
+    "pandas_import_or_dataframe_materialization_authorized": false,
+    "hash_before_and_after_scan_must_match": true,
+    "same_open_descriptor_used_for_hash_and_scan": true,
+    "page_checksum_verification_enabled": true,
+    "every_record_batch_must_be_visited": true,
+    "null_nonfinite_and_negative_revision_values_rejected_during_scan": true
+  },
+  "filesystem_policy": {
+    "canonical_workspace_required": "C:\\Users\\jbattaglia\\PFC_LT",
+    "artifact_tree_must_be_below_build": true,
+    "links_reparse_points_and_hardlinks_authorized": false,
+    "absolute_paths_inside_manifest_authorized": false,
+    "parent_traversal_authorized": false,
+    "artifact_paths_must_be_distinct": true,
+    "real_artifact_opening_authorized": false
+  },
+  "derived_receipt": {
+    "schema_version": "fmv_entsoe_parquet_streaming_integrity_receipt.v1",
+    "evidence_class": "SYNTHETIC_TEST_ONLY",
+    "caller_supplied_receipt_authorized": false,
+    "exact_top_level_fields": [
+      "schema_version",
+      "evidence_class",
+      "snapshot_id",
+      "package_manifest_content_id",
+      "verified_at_utc",
+      "pyarrow_version",
+      "artifacts",
+      "authorities"
+    ],
+    "artifact_receipt_fields": [
+      "role",
+      "sha256",
+      "size_bytes",
+      "row_count",
+      "row_group_count",
+      "record_batch_count",
+      "total_uncompressed_bytes",
+      "normalized_schema_sha256",
+      "arrow_schema_sha256",
+      "compression",
+      "parquet_format_version",
+      "created_by"
+    ],
+    "receipt_is_source_authenticity_evidence": false,
+    "receipt_is_external_time_evidence": false,
+    "receipt_is_real_capture_evidence": false,
+    "receipt_is_quality_profile_evidence": false
+  },
+  "integration_policy": {
+    "d239_full_quality_profile_run_in_this_batch": false,
+    "future_incremental_quality_profiler_required": true,
+    "normalized_parquet_is_target_interface_not_current_unity_catalog_raw_schema": true,
+    "current_raw_unity_catalog_export_admission_authorized": false,
+    "d241_missing_mapping_fields_must_not_be_fabricated": true,
+    "real_package_admission_requires_independent_signed_receipt_external_time_and_governed_export": true,
+    "synthetic_or_legacy_substitution_for_empirical_evidence_authorized": false
+  },
+  "execution_policy": {
+    "current_databricks_connection_budget": 0,
+    "current_databricks_statement_budget": 0,
+    "current_warehouse_start_budget": 0,
+    "current_network_call_budget": 0,
+    "current_h_drive_access_budget": 0,
+    "current_remote_write_budget": 0,
+    "connector_code_allowed": false,
+    "real_artifact_opening_authorized": false
+  },
+  "authorities": {
+    "synthetic_parquet_stream_integrity_verified": true,
+    "real_artifact_receipt_admitted": false,
+    "real_artifact_hashes_verified": false,
+    "real_entsoe_values_opened": false,
+    "source_authenticity_verified": false,
+    "external_time_verified": false,
+    "same_snapshot_point_in_time_availability_proven": false,
+    "incremental_quality_profile_verified": false,
+    "seasonal_cross_market_diagnostic_authorized": false,
+    "training_authorized": false,
+    "selection_authorized": false,
+    "model_input_authorized": false,
+    "candidate_assembly_authorized": false,
+    "promotion_authorized": false,
+    "production_authorized": false
+  }
+}

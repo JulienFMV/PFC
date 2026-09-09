@@ -1,0 +1,192 @@
+{
+  "schema_version": "fmv-eex-ch-short-tenor-combination-contract-v1",
+  "status": "PASS_LOCAL_STRUCTURE_ONLY_NO_EMPIRICAL_EXECUTION",
+  "purpose": "dormant explicit linear combination and outcome-blind future-selection boundary for solver-neutral CH EEX short-tenor components",
+  "scientific_basis": [
+    {
+      "reference": "Lago_Marcjasz_DeSchutter_Weron_2021_Applied_Energy_116983",
+      "doi": "10.1016/j.apenergy.2021.116983",
+      "url": "https://doi.org/10.1016/j.apenergy.2021.116983",
+      "adopted_principle": "compare transparent and nonlinear challengers on common evidence with rigorous out-of-sample significance testing"
+    },
+    {
+      "reference": "Ziel_Weron_2018_Energy_Economics_70_396_420",
+      "doi": "10.1016/j.eneco.2017.12.016",
+      "url": "https://doi.org/10.1016/j.eneco.2017.12.016",
+      "adopted_principle": "regularized high-dimensional structures and forecast combinations require empirical validation because no one structure dominates every season or hour"
+    },
+    {
+      "reference": "Giacomini_White_2006_Econometrica_74_1545_1578",
+      "doi": "10.1111/j.1468-0262.2006.00718.x",
+      "url": "https://doi.org/10.1111/j.1468-0262.2006.00718.x",
+      "adopted_principle": "evaluate estimated competing forecasts out of sample and preserve the forecast-origin information set"
+    },
+    {
+      "reference": "Romano_Wolf_2005_Econometrica_73_1237_1282",
+      "doi": "10.1111/j.1468-0262.2005.00615.x",
+      "url": "https://doi.org/10.1111/j.1468-0262.2005.00615.x",
+      "adopted_principle": "control familywise error under dependent multiple comparisons with studentized stepwise inference"
+    },
+    {
+      "reference": "Hansen_Lunde_Nason_2011_Econometrica_79_453_497",
+      "doi": "10.3982/ECTA5771",
+      "url": "https://doi.org/10.3982/ECTA5771",
+      "adopted_principle": "report model-confidence-set uncertainty as a diagnostic when evidence cannot distinguish one winner"
+    }
+  ],
+  "selected_boundary_evidence": {
+    "normalization_content_id": "2837dc4849dc4b573c441059574973e0b8cc0fbb5023203509cb2929dd636a3f",
+    "short_tenor_audit_content_id": "b09eb3250df5a3c0616eb169c512319c514ddf540251b405023d9351bd5d8bde",
+    "contrast_construction_content_id": "309b9f07236d1cfb32b3d92c1ed5413bde6966fa383629882a539ccbd60e9cb5",
+    "contrast_construction_manifest_sha256": "57b571bef311cf22955edc415e650f55671ad2f243141d4f334ccac425d8bb0f",
+    "contrast_construction_decision": "D-20260805-225",
+    "shape_projection_content_id": "4da441b09c5559d772fd507214b2989489314bd9114a9328752a150f3957450a",
+    "shape_projection_decision": "D-20260805-219",
+    "successor_core_path": ".planning/phases/14-lt-audit-remediation/CH-LT-SUCCESSOR-CANDIDATE-CORE-V3-20260730.json",
+    "successor_core_sha256": "e2c2a6f9d3ca677991f3f76f03dec1328492e2f60a4015b7796a2ff6aa6f905a",
+    "successor_core_id": "d86dab183dd95a2ca3cda0862f2c9f50cec01716a37c6cdc1c3a15763254dcc3",
+    "point_in_time_availability_proven": false,
+    "model_input_authorized": false,
+    "production_authorized": false
+  },
+  "mathematical_operation": {
+    "price_space": "additive_eur_per_mwh",
+    "component_keys_and_coefficient_keys_must_match_exactly": true,
+    "all_provenance_content_ids_pairwise_distinct": true,
+    "component_projection": "each_component_through_D219_active_constraint_nullspace",
+    "combination": "explicit_finite_scalar_weighted_sum",
+    "final_projection": "D219_idempotence_and_combined_residual_audit",
+    "linearity_residual_tolerance_eur_mwh": 1e-09,
+    "automatic_weight_default_authorized": false,
+    "automatic_component_discovery_authorized": false,
+    "silent_coefficient_clipping_authorized": false,
+    "silent_signal_clipping_authorized": false,
+    "hard_rejection_on_explicit_cap_breach": true,
+    "post_projection_clipping_authorized": false
+  },
+  "required_explicit_runtime_bindings": [
+    "source_contrast_bundle_content_id",
+    "combination_policy_content_id",
+    "training_receipt_content_id",
+    "selection_receipt_content_id",
+    "one_coefficient_per_exact_component_key",
+    "positive_coefficient_absolute_cap",
+    "positive_per_component_contribution_absolute_cap_eur_mwh",
+    "positive_combined_raw_signal_absolute_cap_eur_mwh",
+    "valuation_timestamp_before_first_delivery",
+    "complete_monthly_solver_levels"
+  ],
+  "future_empirical_selection_policy": {
+    "current_execution_authorized": false,
+    "origin_cadence": "MONTHLY",
+    "confirmatory_unit": "UNIQUE_ORIGIN_AS_OF_UTC_WITH_NATIVE_DELIVERY_INTERVAL_IDENTITY_PRESERVED",
+    "same_outer_origins_targets_and_eligibility_masks_required": true,
+    "selection_nested_inside_each_outer_origin": true,
+    "selection_holdout_origin_overlap_authorized": false,
+    "minimum_inner_origins": null,
+    "minimum_inner_origins_rule": "PREFROZEN_DIRECT_CH_DEPENDENCE_AND_POWER_DESIGN_ONLY",
+    "minimum_effective_clusters": null,
+    "embargo_months": null,
+    "embargo_rule": "PREFROZEN_CONTRAST_SPECIFIC_MAXIMUM_OF_MECHANICAL_OVERLAP_AND_DATA_AVAILABILITY_LAG",
+    "coefficients_refit_per_outer_origin": true,
+    "caps_selected_from_prefrozen_training_only_lattice_per_outer_origin": true,
+    "missing_component_policy": "UNSUPPORTED_NEVER_ZERO_FILLED_OR_CARRIED_FORWARD",
+    "candidate_families": [
+      "ROBUST_REGULARIZED_LINEAR_GAM_SHAPE_V1",
+      "MONOTONE_HIST_GRADIENT_BOOSTING_SHAPE_V1"
+    ],
+    "baseline_families": [
+      "MARKET_CONSTRAINED_SEASONAL_NAIVE_V1",
+      "INCUMBENT_CH_LT_FROZEN_V1"
+    ],
+    "within_family_rule": "ONE_STANDARD_ERROR_THEN_LOWEST_LATTICE_RANK",
+    "between_family_rule": "LOWEST_INNER_PRIMARY_LOSS_THEN_FIXED_FAMILY_ORDER_ON_TIE",
+    "fixed_family_tie_order": [
+      "ROBUST_REGULARIZED_LINEAR_GAM_SHAPE_V1",
+      "MONOTONE_HIST_GRADIENT_BOOSTING_SHAPE_V1"
+    ],
+    "candidate_and_hyperparameter_grid_hash_required": true,
+    "feature_group_leave_one_out_ablation_required": true,
+    "effective_degrees_of_freedom_required": true,
+    "regularization_and_condition_number_required": true,
+    "primary_loss": "NATIVE_REGIME_WITHIN_MONTH_SHAPE_MAE_EUR_MWH",
+    "mandatory_diagnostics": [
+      "BIAS_EUR_MWH",
+      "RMSE_EUR_MWH",
+      "MEDIAN_ABSOLUTE_ERROR_EUR_MWH",
+      "RAMP_ERROR_EUR_MWH",
+      "NEGATIVE_PRICE_REGIME_MAE_EUR_MWH",
+      "TAIL_MAE_EUR_MWH",
+      "PEAK_OFFPEAK_MAE_EUR_MWH",
+      "WEEKDAY_WEEKEND_HOLIDAY_MAE_EUR_MWH",
+      "SEASON_MAE_EUR_MWH",
+      "DST_TRANSITION_MAE_EUR_MWH",
+      "FORECAST_HORIZON_BUCKET_MAE_EUR_MWH",
+      "VINTAGE_REVISION_STABILITY_EUR_MWH"
+    ],
+    "common_origin_paired_loss_testing_required": true,
+    "dependence_method": "CONTRAST_SPECIFIC_OVERLAP_AWARE_STUDENTIZED_STATIONARY_BLOCK_BOOTSTRAP",
+    "multiplicity": "HOLM_FWER_OVER_EXACT_FROZEN_PRIMARY_FAMILY",
+    "model_confidence_set_role": "DIAGNOSTIC_ONLY_NEVER_OVERRIDES_CONFIRMATORY_GATES",
+    "hourly_market_regime_scored_on_native_hourly_truth": true,
+    "hourly_truth_may_be_replicated_as_four_independent_quarter_hours": false,
+    "future_holdout_strictly_post_external_freeze": true,
+    "future_holdout_one_shot": true,
+    "legacy_t057_excluded": true,
+    "numeric_coefficients_or_caps_selected_in_this_contract": false
+  },
+  "numeric_decisions_pending_external_freeze": {
+    "coefficient_lattice": null,
+    "coefficient_absolute_cap": null,
+    "per_component_contribution_absolute_cap_eur_mwh": null,
+    "combined_signal_absolute_cap_eur_mwh": null,
+    "superiority_margin_eur_mwh": null,
+    "noninferiority_margins_eur_mwh": null,
+    "minimum_marginal_power_by_contrast": null,
+    "required_unique_outer_origins_by_contrast": null,
+    "post_outcome_changes_authorized": false
+  },
+  "outcome_blind_firewall": {
+    "ompex_role": "POST_CANDIDATE_READ_ONLY_BENCHMARK_ONLY",
+    "ompex_allowed_for_training_tuning_selection_caps_or_margins": false,
+    "afry_role": "RESTRICTED_DESCRIPTIVE_TEACHER_CANDIDATE_ONLY",
+    "afry_numeric_values_allowed": false,
+    "t057_role": "SEALED_AND_EXCLUDED",
+    "local_non_pit_eex_allowed_as_rolling_origin_evidence": false,
+    "legacy_or_synthetic_entsoe_substitution_allowed": false,
+    "outcomes_opened": false,
+    "future_holdout_consumed": false
+  },
+  "forbidden_inputs_and_operations": [
+    "OMPEX as input target truth loss coefficient cap margin or selection gate",
+    "AFRY restricted numeric values as input target coefficient or selection gate",
+    "sealed T057 outcomes",
+    "local non-PIT EEX chronology as rolling-origin evidence",
+    "legacy or synthetic ENTSO-E substitution",
+    "mixed quotation vintages or filled missing components",
+    "coefficient or signal clipping after D219 projection",
+    "individual month patches",
+    "assembler or production wiring before external admission"
+  ],
+  "authorities": {
+    "local_mathematical_combination_testing": true,
+    "descriptive_policy_design": true,
+    "training_receipt_authentication_performed": false,
+    "selection_receipt_authentication_performed": false,
+    "point_in_time_availability_proven": false,
+    "rolling_origin_selection_authorized": false,
+    "model_input_authorized": false,
+    "candidate_assembly_authorized": false,
+    "production_authorized": false
+  },
+  "required_before_empirical_use": [
+    "signed EEX provider-vintage availability catalog",
+    "governed ENTSO-E Databricks evidence",
+    "frozen exact origin target mask and inner-fold inventories",
+    "hash-bound candidate and hyperparameter grid",
+    "FMV-approved numeric margins caps effects and power floors frozen before outcomes",
+    "train-only coefficient and cap selection implementation",
+    "new independently frozen future holdout distinct from sealed T057",
+    "independent external admission envelope and one-shot execution capability"
+  ]
+}

@@ -1,0 +1,156 @@
+{
+  "schema_version": "fmv-eex-ch-short-tenor-trust-registry-contract-v1",
+  "status": "PASS_LOCAL_THRESHOLD_REGISTRY_LIFECYCLE_REPLAY_ONLY_NO_EXTERNAL_IDENTITY",
+  "purpose": "value-free fail-closed profile for threshold-signed trust-anchor registry chain and key-lifecycle replay without opening market data or granting model authority",
+  "selected_boundary": {
+    "signed_replay_contract_schema": "fmv-eex-ch-short-tenor-signed-replay-contract-v1",
+    "signed_replay_contract_content_id": "09dfd36125132a1a1c8089f603a381414853c393d23dda633354938843382606",
+    "signed_replay_contract_sha256": "f9f447f31458a88aaaf4ce5863f9f23dbd6a77d1683b7759885783457780a957",
+    "signed_replay_contract_decision": "D-20260805-228"
+  },
+  "registry_profile": {
+    "schema_version": "fmv_external_trust_anchor_registry.v1",
+    "payload_type": "application/vnd.fmv.pfc.trust-registry+json",
+    "signature_algorithm": "Ed25519",
+    "key_id_rule": "sha256_subject_public_key_info_der",
+    "monotonic_positive_sequence_without_gaps": true,
+    "first_sequence_has_null_predecessor": true,
+    "later_sequences_bind_previous_registry_payload_sha256": true,
+    "every_chain_envelope_matches_caller_held_sha256": true,
+    "head_sequence_and_envelope_sha256_are_caller_held": true,
+    "issued_at_monotonic_and_before_predecessor_expiry": true,
+    "head_valid_at_caller_reference_time": true,
+    "maximum_registry_ttl_days": 31,
+    "canonical_json_and_standard_base64_required": true,
+    "duplicate_or_unknown_fields_rejected": true,
+    "entries_sorted_by_role_valid_from_and_key_id": true,
+    "prior_entry_and_event_histories_are_immutable_prefixes": true
+  },
+  "governance_quorum_profile": {
+    "governance_key_count": 3,
+    "signature_threshold": 2,
+    "governance_keys_external_to_registry_entries": true,
+    "governance_policy_id_binds_threshold_and_sorted_key_ids": true,
+    "every_envelope_signature_matches_one_unique_caller_supplied_key": true,
+    "key_id_checked_only_after_cryptographic_key_match": true,
+    "key_id_never_selects_a_trust_anchor": true,
+    "signature_key_ids_sorted_unique_and_allowed": true,
+    "root_bootstrap_and_governance_key_rotation_not_claimed": true
+  },
+  "required_roles": [
+    "eex_acquisition",
+    "eex_source_trusted_time",
+    "entsoe_acquisition",
+    "entsoe_source_trusted_time",
+    "selection_governance",
+    "training_execution",
+    "trusted_time"
+  ],
+  "role_separation_policy": {
+    "all_registered_public_key_identities_globally_disjoint": true,
+    "governance_quorum_keys_disjoint_from_every_registered_key": true,
+    "training_execution_owner_differs_from_selection_governance_owner": true,
+    "trusted_time_owner_differs_from_every_non_time_owner": true,
+    "eex_source_trusted_time_owner_differs_from_eex_acquisition_owner": true,
+    "entsoe_source_trusted_time_owner_differs_from_entsoe_acquisition_owner": true,
+    "owner_identifiers_are_assertions_until_externally_verified": true
+  },
+  "lifecycle_event_profile": {
+    "event_types": [
+      "ISSUED",
+      "ACTIVATED",
+      "RETIRED",
+      "REVOKED",
+      "COMPROMISED"
+    ],
+    "event_ids_bind_canonical_event_core": true,
+    "issued_and_activated_events_required": true,
+    "terminal_event_unique_and_last": true,
+    "recorded_at_not_before_effective_at_and_not_after_registry_issue": true,
+    "issued_effective_at_matches_key_issued_at": true,
+    "activated_effective_at_matches_key_valid_from": true,
+    "finite_valid_until_required_for_every_key": true,
+    "retired_effective_at_matches_key_valid_until": true,
+    "revoked_or_compromised_invalid_since_must_be_within_validity": true,
+    "compromise_reason_is_key_compromise_and_incident_id_required": true,
+    "revocation_reason_and_incident_id_required": true,
+    "private_key_material_forbidden": true
+  },
+  "rotation_and_resolution_policy": {
+    "half_open_validity_intervals": "valid_from_utc <= event_time_utc < valid_until_utc",
+    "no_overlapping_validity_intervals_within_role": true,
+    "replacement_chain_is_complete_acyclic_and_same_owner_role": true,
+    "scheduled_rotation_boundary_equals_retired_predecessor_valid_until": true,
+    "incident_replacement_valid_from_not_before_invalid_since_and_may_leave_fail_closed_gap": true,
+    "replacement_predecessor_has_terminal_event_and_normal_retirement_reason_is_rotated": true,
+    "exactly_one_key_resolves_per_required_role_at_registry_issue": true,
+    "exactly_one_key_resolves_per_required_role_and_caller_event_time": true,
+    "retired_keys_resolve_only_events_before_valid_until": true,
+    "revoked_or_compromised_keys_resolve_only_events_before_invalid_since": true,
+    "caller_event_times_are_not_independently_trusted": true
+  },
+  "path_replay_contract": {
+    "registry_envelope_governance_key_and_registered_key_paths_absolute": true,
+    "stable_single_link_regular_files_required": true,
+    "all_input_paths_pairwise_distinct": true,
+    "caller_held_sha256_required_for_every_envelope_and_public_key_file": true,
+    "canonical_ed25519_public_key_pem_required": true,
+    "derived_key_id_must_match_registry_entry": true,
+    "exact_registered_key_path_set_equals_head_registry_key_set": true,
+    "verified_bytes_reused_without_alternate_reload": true,
+    "no_network_h_drive_or_databricks_access": true,
+    "price_values_not_opened": true
+  },
+  "standards_basis": [
+    "https://doi.org/10.6028/NIST.SP.800-57pt1r5",
+    "https://theupdateframework.github.io/specification/v1.0.33/",
+    "https://www.rfc-editor.org/rfc/rfc5280",
+    "https://www.rfc-editor.org/rfc/rfc8032",
+    "https://www.rfc-editor.org/rfc/rfc3161"
+  ],
+  "standards_scope": {
+    "nist_key_lifecycle_and_cryptoperiod_principles_adopted": true,
+    "tuf_threshold_version_expiry_and_rollback_resistance_concepts_adopted": true,
+    "rfc5280_invalidity_date_and_revocation_reason_semantics_adapted": true,
+    "rfc8032_eddsa_algorithm_profile_adopted": true,
+    "rfc3161_independent_timestamp_requirement_reserved_for_external_authority": true,
+    "tuf_metadata_compliance_claimed": false,
+    "x509_or_rfc5280_certificate_profile_compliance_claimed": false
+  },
+  "verified_by_local_replay": [
+    "exact chain envelope and public-key bytes match caller-held hashes",
+    "DSSE Ed25519 threshold integrity using a caller-supplied three-key governance set",
+    "canonical registry sequence predecessor expiry and head checkpoint bindings",
+    "registered key identity owner-separation and append-only lifecycle histories",
+    "rotation revocation compromise and caller-event-time key resolution rules"
+  ],
+  "not_verified_by_local_replay": [
+    "external organisational ownership or authority of owner and governance identifiers",
+    "secure governance-root bootstrap rotation publication revocation notification or incident handling",
+    "independence accuracy or authenticity of registry reference time and signature event times",
+    "same-snapshot EEX and ENTSO-E point-in-time availability",
+    "predictive quality or superiority over OMPEX"
+  ],
+  "authorities": {
+    "local_threshold_signature_integrity_verified_after_successful_replay": true,
+    "local_rollback_freeze_and_lifecycle_consistency_verified_after_successful_replay": true,
+    "external_owner_identity_verified": false,
+    "external_registry_authority_verified": false,
+    "independently_trusted_time_verified": false,
+    "point_in_time_availability_proven": false,
+    "training_authorized": false,
+    "selection_authorized": false,
+    "model_input_authorized": false,
+    "candidate_assembly_authorized": false,
+    "promotion_authorized": false,
+    "production_authorized": false
+  },
+  "required_before_authoritative_use": [
+    "externally identified owners approve and publish the signed registry through governed infrastructure",
+    "independently bootstrapped governance quorum with governed root-key rotation and notification channel",
+    "independently verified trusted-time authority for registry reference and historical signature event times",
+    "same-snapshot replay of every bound EEX and ENTSO-E PIT artifact",
+    "append-only or WORM registry checkpoint event and incident retention",
+    "new independently frozen future holdout distinct from sealed T057"
+  ]
+}

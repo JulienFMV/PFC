@@ -1,0 +1,67 @@
+{
+  "schema_version": "ch_lt_prospective_capture_ledger_selection.v1",
+  "status": "SELECTED_LOCAL_DIAGNOSTIC_ONLY_NOT_PIT_AUTHORITY",
+  "selected": {
+    "version": "v5",
+    "path": "build/prospective-ledgers/ch-hourly-local-ledger-20260730-v5.json",
+    "sha256": "089aaa82d1025fd550cd9cdceba6a20cfb1aef1871a57f4cdca2c2e23470bdb6",
+    "ledger_id": "b1698c22e28df075aacfecd04c752e7c028d9283229b64ca0c34b4555352264d",
+    "execution_receipt_path": "build/prospective-ledgers/ch-hourly-local-ledger-execution-receipt-20260730-v5.json",
+    "execution_receipt_sha256": "439b3a155c8912f8b96a088aa720e1eb0180d84695f65b25b7de06d2ec6cfd37",
+    "runtime_receipt_path": "build/launcherless-runtime-receipt-20260730-v26.json",
+    "runtime_receipt_sha256": "0ac27e95ec28835e3a34e17d62f8903655874737d580ab01656502d5991fa87f",
+    "project_wheel_sha256": "7f4801114f6e247505110030fa02af21fbd4978dccabdc8767a4454e2ea6d4b3",
+    "project_source_revision": "98f51af0f735db7faa7e5f4156686e9e29fba2d8daaeb15ce72440f93b21ea48",
+    "selectable_for_local_structural_diagnostics": true,
+    "scientific_admission": false,
+    "production_authorization": false
+  },
+  "superseded": [
+    {
+      "version": "v1",
+      "path": "build/prospective-ledgers/ch-hourly-local-ledger-20260730-v1.json",
+      "sha256": "d499e4f465966f07b2e9042365bc11437f592a315048ab95973955a4ae5e1e31",
+      "selectable": false,
+      "reason": "HISTORICAL_OVERCLAIM_NATIVE_HOURLY_TRUTH_ELIGIBILITY"
+    },
+    {
+      "version": "v2",
+      "path": "build/prospective-ledgers/ch-hourly-local-ledger-20260730-v2.json",
+      "sha256": "7bbde931da7578ed6954830931941027832ce99ae45ba0c4897bac2aaaaad2c3",
+      "selectable": false,
+      "reason": "HISTORICAL_OVERCLAIM_NATIVE_HOURLY_TRUTH_ELIGIBILITY"
+    },
+    {
+      "version": "v3",
+      "path": "build/prospective-ledgers/ch-hourly-local-ledger-20260730-v3.json",
+      "sha256": "7805e59dc4debffba4f1656d4423e3be8fd91bb6f26d983383ed86196235cb0e",
+      "selectable": false,
+      "reason": "PRE_EXACT_REPLAY_AND_CLAIM_SMUGGLING_HARDENING"
+    },
+    {
+      "version": "v4",
+      "path": "build/prospective-ledgers/ch-hourly-local-ledger-20260730-v4.json",
+      "sha256": "089aaa82d1025fd550cd9cdceba6a20cfb1aef1871a57f4cdca2c2e23470bdb6",
+      "selectable": false,
+      "reason": "BYTE_IDENTICAL_LEDGER_WITHOUT_V26_DURABLE_EXECUTION_RECEIPT"
+    }
+  ],
+  "permitted_claims": [
+    "LOCAL_CAPTURE_CONTIGUITY",
+    "NATIVE_HOURLY_CADENCE_OBSERVED",
+    "EXACT_LOCAL_PROVIDER_REPLAY",
+    "HASH_BOUND_LOCAL_INTEGRITY_AT_CONSTRUCTION"
+  ],
+  "forbidden_claims": [
+    "POINT_IN_TIME_AUTHORITY",
+    "NATIVE_HOURLY_OR_QUARTER_HOUR_SCIENTIFIC_TRUTH",
+    "OFFICIAL_PRODUCT_AUCTION_SESSION_OR_SETTLEMENT_IDENTITY",
+    "ROLLING_ORIGIN_OR_HOLDOUT_EVIDENCE",
+    "TRAINING_MODEL_SELECTION_OR_CANDIDATE_AUTHORITY",
+    "PUBLICATION_PROMOTION_OR_PRODUCTION_AUTHORITY"
+  ],
+  "future_holdout_consumed": false,
+  "t057_consumed": false,
+  "promotion_gate": false,
+  "production_authorization": false
+}

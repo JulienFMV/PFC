@@ -1,0 +1,90 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.10.0/schema.json",
+  "name": "duck_spread",
+  "position": {
+    "x": 219.81762917933131,
+    "y": 243.16109422492403,
+    "z": 0,
+    "height": 136.17021276595744,
+    "width": 190.63829787234044
+  },
+  "visual": {
+    "visualType": "cardVisual",
+    "query": {
+      "queryState": {
+        "Data": {
+          "projections": [
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "HFC_Hourly"
+                    }
+                  },
+                  "Property": "Evening Midday Spread"
+                }
+              },
+              "queryRef": "HFC_Hourly.Evening Midday Spread",
+              "nativeQueryRef": "Evening Midday Spread"
+            }
+          ]
+        }
+      }
+    },
+    "visualContainerObjects": {
+      "title": [
+        {
+          "properties": {
+            "show": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            },
+            "text": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Evening/midday spread'"
+                }
+              }
+            },
+            "fontSize": {
+              "expr": {
+                "Literal": {
+                  "Value": "11D"
+                }
+              }
+            },
+            "bold": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  "filterConfig": {
+    "filters": [
+      {
+        "name": "b0be73640c548ba2a708",
+        "field": {
+          "Measure": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "HFC_Hourly"
+              }
+            },
+            "Property": "Evening Midday Spread"
+          }
+        },
+        "type": "Advanced"
+      }
+    ]
+  }
+}

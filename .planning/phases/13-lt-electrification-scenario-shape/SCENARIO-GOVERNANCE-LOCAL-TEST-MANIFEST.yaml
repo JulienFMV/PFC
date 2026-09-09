@@ -1,0 +1,139 @@
+governance_version: 1
+decision_id: phase13_lt_ch_2030_local_test_agent_approved_v0
+status: agent_approved_local_test
+approved_for_production: false
+approved_for_local_test: true
+approval_date: 2026-06-12
+approved_by: []
+local_test_approved_by_agents:
+  - role: quant_scenario_reviewer
+    verdict: no_go_production_ok_local_test_ch_pfc
+    non_voting_for_production: true
+    review_file: .planning/phases/13-lt-electrification-scenario-shape/SCENARIO-GOVERNANCE-EXPERT-REVIEWS.md
+  - role: data_engineering_vintage_safety_reviewer
+    verdict: no_go_production_ok_local_test_with_traceable_proxy_flags
+    non_voting_for_production: true
+    review_file: .planning/phases/13-lt-electrification-scenario-shape/SCENARIO-GOVERNANCE-EXPERT-REVIEWS.md
+  - role: model_risk_validation_reviewer
+    verdict: no_go_production_ok_controlled_research_behind_flag_off
+    non_voting_for_production: true
+    review_file: .planning/phases/13-lt-electrification-scenario-shape/SCENARIO-GOVERNANCE-EXPERT-REVIEWS.md
+
+scope:
+  countries: [CH, DE, FR, IT, AT]
+  scenarios: [slow, central, fast]
+  years: [2030]
+
+scenario_weights:
+  slow: 0.25
+  central: 0.50
+  fast: 0.25
+
+scenario_mapping:
+  slow:
+    supply: TYNDP LOW
+    neighbour_demand: lower of TYNDP Distributed Energy / Global Ambition 2030 bridge
+    ch_overlay: EP2050 local slow mapping
+  central:
+    supply: TYNDP Best Estimate
+    neighbour_demand: midpoint of bridged slow and fast demand
+    ch_overlay: EP2050 internal midpoint
+  fast:
+    supply: TYNDP HIGH
+    neighbour_demand: higher of TYNDP Distributed Energy / Global Ambition 2030 bridge
+    ch_overlay: EP2050 local fast mapping
+
+source_components:
+  - source_id: tyndp2024_supply
+    name: ENTSO-E/ENTSOG TYNDP 2024 Supply Inputs
+    local_path: data/electrification_scenarios_tyndp2024_supply.parquet
+    publication_date: 2024-05-31
+    status: official_partial
+  - source_id: tyndp2024_neighbor_demand_bridge
+    name: TYNDP 2024 Demand REF2019-to-2040 bridge
+    local_path: data/electrification_scenarios_tyndp2024_neighbor_demand_bridge_2030.parquet
+    publication_date: 2026-06-11
+    status: internal_proxy_partial
+  - source_id: ch_ep2050_enriched
+    name: CH EP2050 enriched slow/central/fast local mapping
+    local_path: data/electrification_scenarios_ep2050_enriched_slow_central_fast.parquet
+    publication_date: 2026-06-05
+    status: local_proxy_partial
+  - source_id: internal_p0_structural_bridge
+    name: Internal P0 structural bridge
+    local_path: data/electrification_scenarios_composed_p0_bridge_2030.parquet
+    publication_date: 2026-06-11
+    status: internal_proxy_partial
+  - source_id: swissgrid_ntc_2026_baseline
+    name: Swissgrid 2026 cross-border NTC baseline
+    local_path: data/electrification_scenarios_swissgrid_ntc_baseline_2026.parquet
+    publication_date: 2026-06-08
+    status: official_observed_baseline_proxy
+  - source_id: ember_yearly_2026_baseline
+    name: Ember yearly electricity data baseline
+    local_path: data/electrification_scenarios_ember_yearly_baseline_2026.parquet
+    publication_date: 2026-04-24
+    status: official_historical_baseline_proxy
+  - source_id: lt_field_neutralization_policy_20260612
+    name: LT field neutralization policy
+    local_path: data/electrification_scenarios_prod_candidate_neutralized_2030.parquet
+    publication_date: 2026-06-12
+    status: governed_neutralization_draft
+  - source_id: bfe_energiedashboard_daily_20260612
+    name: BFE Energiedashboard daily actuals
+    local_path: data/bfe_energiedashboard_daily.parquet
+    publication_date: 2026-06-12
+    status: official_actual_not_lt_scenario
+  - source_id: bfe_speicherseen_weekly_20260612
+    name: BFE weekly Swiss storage-lake reservoir content
+    local_path: data/bfe_hydro_reservoir_weekly.parquet
+    publication_date: 2026-06-12
+    status: official_actual_not_lt_scenario
+  - source_id: bfe_electricity_production_plants_20260612
+    name: BFE electricity production plants in operation
+    local_path: data/bfe_ch_installed_capacity_actuals.parquet
+    publication_date: 2026-06-12
+    status: official_actual_not_lt_scenario
+  - source_id: bfe_wasta_hydropower_plants_20260612
+    name: BFE WASTA hydropower plant statistics
+    local_path: data/bfe_wasta_hydro_summary.parquet
+    publication_date: 2026-06-12
+    status: official_actual_not_lt_scenario
+
+rules:
+  allow_proxy_or_partial_quality_flags: true
+  require_complete_critical_values: true
+  require_weights_sum_to_one: true
+  require_vintage_safe_sources: true
+  require_source_component_links: true
+  require_zero_justification: true
+  conditional_critical_groups:
+    cross_border_balance:
+      require_any:
+        - [net_import_twh]
+        - [import_twh, export_twh]
+  country_scoped_critical_fields:
+    hydro_reservoir_twh: [CH]
+  zero_allowed_fields:
+    - nuclear_gw
+  physical_bounds:
+    managed_charging_share: {min: 0.0, max: 1.0}
+    battery_energy_gwh: {min: 0.0, max: 1000.0}
+    battery_power_gw: {min: 0.0, max: 300.0}
+    ntc_ch_at_gw: {min: 0.0, max: 30.0}
+    ntc_ch_de_gw: {min: 0.0, max: 30.0}
+    ntc_ch_fr_gw: {min: 0.0, max: 30.0}
+    ntc_ch_it_gw: {min: 0.0, max: 30.0}
+    pv_gw: {min: 0.0, max: 1000.0}
+    wind_gw: {min: 0.0, max: 1000.0}
+
+local_test_constraints:
+  production_activation_allowed: false
+  model_flags_default_off_required: true
+  required_runtime_flags:
+    - enable_electrification_shape=True
+    - require_electrification_scenarios=True
+  allowed_use:
+    - local PFC CH diagnostics
+    - structural fan chart review
+    - validation of data wiring and governance controls

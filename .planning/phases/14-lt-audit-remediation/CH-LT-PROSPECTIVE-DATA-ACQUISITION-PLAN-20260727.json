@@ -1,0 +1,228 @@
+{
+  "schema_version": "ch_lt_prospective_data_acquisition_plan.v1",
+  "plan_id": "a0faf97bc10b4d51e23b21c200a73cdd95f92ffa9f8ea7976bc4a10859a8688f",
+  "lifecycle_state": "DRAFT_BLOCKED_EXTERNAL_AUTHORITIES_AND_LICENSED_FEEDS_ABSENT",
+  "as_of_utc": "2026-07-27T00:00:00Z",
+  "scope": "FRESH_CH_LT_LEVEL_HOURLY_AND_QUARTER_HOURLY_EVIDENCE",
+  "market": "CH",
+  "timezone": "Europe/Zurich",
+  "scientific_boundary": {
+    "monthly_level_authority": "SOLVER_WITH_HARD_GOVERNED_CH_EEX_FORWARD_QUOTES",
+    "hourly_shape_truth": "CH_DAY_AHEAD_AUCTION_PRICE_NATIVE_HOURLY",
+    "quarter_hour_shape_truth_status": "UNSUPPORTED_15MIN_UNTIL_CH_EXPLICIT_AUCTION_GO_LIVE_AND_PRODUCT_IDENTITY_ARE_PROVEN",
+    "future_quarter_hour_shape_truth": "CH_EXPLICIT_DAY_AHEAD_15MIN_AUCTION_PRODUCT_TO_BE_FROZEN_AFTER_CONFIRMED_GO_LIVE",
+    "intraday_continuous_15min_role": "SEPARATE_DIAGNOSTIC_PRODUCT_NEVER_DAY_AHEAD_TRUTH",
+    "cross_product_absolute_level_pooling": false,
+    "hourly_duplication_as_quarter_hour_truth": false,
+    "neighbor_proxy_as_direct_ch_truth": false,
+    "swissgrid_imbalance_as_spot_truth": false,
+    "ompex_role": "DIAGNOSTIC_BENCHMARK_ONLY"
+  },
+  "acquisition_tracks": [
+    {
+      "track_id": "CH_DAY_AHEAD_HOURLY_ENERGY_CHARTS",
+      "role": "epex_ch",
+      "source_system": "ENERGY_CHARTS_API",
+      "endpoint": "https://api.energy-charts.info/price",
+      "source_product": "DAY_AHEAD_PRICE_CH",
+      "capture_window_start_utc": "2026-06-26T22:00:00Z",
+      "capture_window_end_utc": "2026-07-26T22:00:00Z",
+      "raw_cadence_seconds": 3600,
+      "expected_source_observation_count": 720,
+      "local_capture_route_implemented": true,
+      "provider_parser_route_implemented": true,
+      "native_hourly_truth_eligible_after_external_admission": true,
+      "native_quarter_hour_truth_eligible": false,
+      "allowed_uses_after_external_admission": [
+        "HOURLY_SHAPE_TRAINING",
+        "HOURLY_SHAPE_ROLLING_ORIGIN_SCORING"
+      ],
+      "forbidden_uses": [
+        "MONTHLY_LEVEL_AUTHORITY",
+        "NATIVE_QUARTER_HOUR_TRUTH",
+        "FUTURE_OUTCOME_BEFORE_PREDICTION_SEAL"
+      ],
+      "current_status": "CAPTURE_ROUTE_READY_EXTERNAL_ADMISSION_ABSENT",
+      "current_admissible": false,
+      "blockers": [
+        "INDEPENDENT_TRUSTED_TIME_ABSENT",
+        "INDEPENDENT_SIGNATURE_ABSENT",
+        "BUILDER_INACCESSIBLE_IMMUTABLE_NAMESPACE_ABSENT",
+        "EXTERNAL_CAS_RECEIPT_AND_FRESH_HEAD_ABSENT"
+      ]
+    },
+    {
+      "track_id": "CH_INTRADAY_CONTINUOUS_15MIN_EPEX",
+      "role": "epex_ch_intraday_continuous_15min",
+      "source_system": "EPEX_SPOT_LICENSED_MARKET_DATA",
+      "source_locator": "EPEX_SPOT_MARKET_RESULTS_OR_LICENSED_WEBSHOP_FEED",
+      "market_area": "CH",
+      "trading_modality": "CONTINUOUS",
+      "product": "15_MIN",
+      "price_statistic": "VOLUME_WEIGHTED_AVERAGE_EUR_MWH",
+      "volume_statistic": "TRADED_VOLUME_MWH",
+      "capture_window_start_utc": "2026-06-26T22:00:00Z",
+      "capture_window_end_utc": "2026-07-26T22:00:00Z",
+      "raw_cadence_seconds": 900,
+      "positive_volume_required": true,
+      "zero_or_missing_volume_policy": "UNSUPPORTED_NEVER_PRICE_ZERO_OR_IMPUTED",
+      "complete_four_quarters_per_local_hour_required": true,
+      "dst_policy": "EXPECTED_UTC_INTERVALS_MAPPED_TO_EUROPE_ZURICH_LOCAL_DELIVERY_HOURS",
+      "current_repo_adapter_implemented": false,
+      "licensed_provider_access_bound": false,
+      "product_identity_manifest_frozen": false,
+      "native_quarter_hour_product_observation_eligible_after_external_admission": true,
+      "authoritative_ch_day_ahead_quarter_hour_truth_eligible": false,
+      "allowed_uses_after_external_admission": [
+        "SEPARATE_INTRADAY_PRODUCT_DIAGNOSTIC",
+        "ZERO_MEAN_WITHIN_HOUR_TRANSFER_SENSITIVITY_NOT_MODEL_SELECTION"
+      ],
+      "forbidden_uses": [
+        "DAY_AHEAD_ABSOLUTE_LEVEL_TRUTH",
+        "MONTHLY_LEVEL_AUTHORITY",
+        "ZERO_VOLUME_PRICE_AS_OBSERVATION",
+        "POOLING_WITH_DAY_AHEAD_WITHOUT_PRODUCT_INDICATOR",
+        "FUTURE_OUTCOME_BEFORE_PREDICTION_SEAL"
+      ],
+      "current_status": "AUXILIARY_DIAGNOSTIC_BLOCKED_LICENSED_FEED_ADAPTER_AND_PRODUCT_MANIFEST_ABSENT",
+      "current_admissible": false,
+      "blockers": [
+        "LICENSED_PROVIDER_FEED_AND_DATA_USE_RIGHTS_NOT_BOUND",
+        "EXACT_PROVIDER_SCHEMA_AND_REQUEST_IDENTITY_NOT_FROZEN",
+        "PRODUCT_SESSION_AND_PRICE_STATISTIC_MANIFEST_NOT_FROZEN",
+        "POINT_IN_TIME_AVAILABLE_AT_AND_REVISION_POLICY_NOT_IMPLEMENTED",
+        "INDEPENDENT_TRUSTED_TIME_SIGNATURE_AND_EXTERNAL_CAS_ABSENT"
+      ]
+    },
+    {
+      "track_id": "CH_EXPLICIT_AUCTION_15MIN_GO_LIVE_MONITOR",
+      "role": "epex_ch_explicit_auction_15min",
+      "source_system": "EPEX_SPOT_AND_SWISSGRID_OFFICIAL_NOTICES",
+      "target_product": "CH_EXPLICIT_DAY_AHEAD_15MIN_AUCTION",
+      "planned_go_live_window": "Q3_2026",
+      "confirmed_go_live": false,
+      "first_delivery_date": null,
+      "official_notice_bytes_sha256": null,
+      "licensed_market_data_schema_sha256": null,
+      "current_day_ahead_reference_cadence_seconds": 3600,
+      "future_target_cadence_seconds": 900,
+      "current_status": "PLANNED_NOT_CONFIRMED_UNSUPPORTED_15MIN",
+      "current_admissible": false,
+      "blockers": [
+        "OFFICIAL_GO_LIVE_NOTICE_BYTES_ABSENT",
+        "FIRST_DELIVERY_DATE_NOT_CONFIRMED",
+        "EXACT_AUCTION_PRODUCT_SESSION_AND_SETTLEMENT_IDENTITY_NOT_FROZEN",
+        "LICENSED_PROVIDER_FEED_AND_DATA_USE_RIGHTS_NOT_BOUND",
+        "SUFFICIENT_POST_GO_LIVE_HISTORY_NOT_AVAILABLE",
+        "INDEPENDENT_TRUSTED_TIME_SIGNATURE_AND_EXTERNAL_CAS_ABSENT"
+      ]
+    },
+    {
+      "track_id": "CH_EEX_FORWARD_POINT_IN_TIME",
+      "role": "eex_forward_source",
+      "source_system": "LICENSED_EEX_OR_APPROVED_DESK_PROVIDER",
+      "source_product_family": "CH_BASE_PEAK_OFFPEAK_MONTH_QUARTER_CALENDAR",
+      "price_statistic": "FROZEN_DESK_APPROVED_SETTLEMENT_OR_MID_CONVENTION",
+      "quote_timestamp_required": true,
+      "available_at_required": true,
+      "exact_provider_raw_bytes_required": true,
+      "monthly_solver_authority_input": true,
+      "current_repo_source_kind": "TEST_FIXTURE",
+      "current_status": "BLOCKED_FRESH_LICENSED_POINT_IN_TIME_SOURCE_ABSENT",
+      "current_admissible": false,
+      "blockers": [
+        "FRESH_PROVIDER_RAW_BYTES_ABSENT",
+        "QUOTE_CONVENTION_AND_PRODUCT_IDENTITY_NOT_FROZEN",
+        "INDEPENDENT_TRUSTED_TIME_SIGNATURE_AND_EXTERNAL_CAS_ABSENT"
+      ]
+    }
+  ],
+  "admission_controls": {
+    "exact_provider_raw_bytes": true,
+    "source_specific_replay_equality": true,
+    "available_at_complete_and_le_origin": true,
+    "independent_trusted_time_receipt": true,
+    "independent_signature": true,
+    "builder_inaccessible_immutable_namespace": true,
+    "external_cas_receipt_and_fresh_authenticated_head": true,
+    "no_link_reparse_or_hardlink_alias": true,
+    "prediction_and_scenario_sealed_before_truth_open": true,
+    "one_shot_future_holdout_ledger": true
+  },
+  "primary_source_observations": [
+    {
+      "source": "ENERGY_CHARTS_API_V1_6",
+      "url": "https://api.energy-charts.info/",
+      "observation": "The price endpoint is explicitly identified as Day Ahead Price and supports CH.",
+      "retrieved_on": "2026-07-27",
+      "content_bytes_captured": false,
+      "admission_evidence": false
+    },
+    {
+      "source": "EPEX_SPOT_MARKET_RESULTS",
+      "url": "https://www.epexspot.com/en/market-results?market_area=CH&modality=Continuous&product=15&data_mode=table",
+      "observation": "The official market-results interface exposes Continuous 15min CH with low, high, last, weighted-average and volume fields; commercial use requires EPEX approval.",
+      "retrieved_on": "2026-07-27",
+      "content_bytes_captured": false,
+      "admission_evidence": false
+    },
+    {
+      "source": "SWISSGRID_BALANCING_ROADMAP_2026_2030",
+      "url": "https://www.swissgrid.ch/content/dam/swissgrid/about-us/newsroom/publications/balancing-roadmap-en.pdf",
+      "observation": "Swiss explicit day-ahead and intraday 15-minute auctions are planned for Q3 2026; Switzerland remains outside SDAC and SIDC at publication time.",
+      "retrieved_on": "2026-07-27",
+      "content_bytes_captured": false,
+      "admission_evidence": false
+    }
+  ],
+  "next_actions": [
+    {
+      "order": 1,
+      "action": "CAPTURE_CH_DAY_AHEAD_HOURLY_PROVIDER_BYTES",
+      "route": "scripts/capture_public_energy_charts_lt.py",
+      "non_production_only": true
+    },
+    {
+      "order": 2,
+      "action": "MONITOR_AND_ARCHIVE_OFFICIAL_CH_EXPLICIT_15MIN_AUCTION_GO_LIVE_NOTICE",
+      "route": "SWISSGRID_AND_EPEX_OFFICIAL_NOTICE_BYTES",
+      "non_production_only": true
+    },
+    {
+      "order": 3,
+      "action": "AFTER_CONFIRMED_GO_LIVE_OBTAIN_LICENSED_CH_EXPLICIT_DAY_AHEAD_15MIN_FEED",
+      "route": "EXTERNAL_FMV_DATA_OWNER_AND_EPEX",
+      "non_production_only": true
+    },
+    {
+      "order": 4,
+      "action": "OPTIONALLY_OBTAIN_CONTINUOUS_15MIN_FEED_FOR_SEPARATE_DIAGNOSTIC_ONLY",
+      "route": "EXTERNAL_FMV_DATA_OWNER_AND_EPEX",
+      "non_production_only": true
+    },
+    {
+      "order": 5,
+      "action": "OBTAIN_FRESH_LICENSED_CH_EEX_FORWARD_SNAPSHOT",
+      "route": "EXTERNAL_FMV_DATA_OWNER_AND_APPROVED_PROVIDER",
+      "non_production_only": true
+    },
+    {
+      "order": 6,
+      "action": "PUBLISH_INDEPENDENTLY_SIGNED_SNAPSHOTS_TO_EXTERNAL_CAS",
+      "route": "INSTALLED_PUBLISHER_RUNTIME_V6_AND_EXTERNAL_AUTHORITIES",
+      "non_production_only": true
+    },
+    {
+      "order": 7,
+      "action": "BUILD_NEW_HASH_BOUND_CH_CANDIDATE_WITHOUT_REUSING_PILOT_OR_T057_FOR_SELECTION",
+      "route": "UNIQUE_LT_PIPELINE",
+      "non_production_only": true
+    }
+  ],
+  "execution_authorized": false,
+  "scientific_admission": false,
+  "production_authorization": false,
+  "promotion_gate": false,
+  "future_holdout_consumed": false,
+  "t057_consumed": false
+}

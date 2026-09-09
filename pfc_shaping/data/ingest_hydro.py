@@ -212,66 +212,28 @@ def build_water_value(df: pd.DataFrame) -> pd.DataFrame:
             et index DatetimeIndex UTC
 
     Returns:
-        DataFrame enrichi avec colonnes supplémentaires ['fill_deviation', 'water_value_proxy']
+        DataFrame enrichi avec ``fill_deviation``, ``water_value_proxy``,
+        ``water_value_supported``, le nombre d'historiques, la moyenne, l'écart
+        type et l'erreur standard de référence.
+
+        ``water_value_supported`` reste faux tant que cinq observations
+        antérieures de la même semaine ISO ne sont pas disponibles dans la
+        fenêtre causale de dix ans, ou lorsque l'échelle historique est nulle.
+        Les diagnostics non supportés utilisent des zéros sentinelles liés au
+        statut faux; ils ne sont jamais présentés comme une estimation valide.
     """
-    df = df.copy()
+    from pfc_shaping.data.lt_replay_transforms import build_hydro_water_value
 
-    # Semaine ISO calendaire (1-53) pour le regroupement saisonnier
-    df["iso_week"] = df.index.isocalendar().week.values.astype(int)
-
-    # Calcul du z-score par semaine calendaire sur fenêtre glissante
-    df["fill_deviation"] = np.nan
-
-    for iso_week in df["iso_week"].unique():
-        mask_week = df["iso_week"] == iso_week
-        week_data = df.loc[mask_week, "fill_pct"]
-
-        if len(week_data) < 3:
-            logger.debug("Semaine ISO %d : %d obs (insuffisant pour z-score)", iso_week, len(week_data))
-            continue
-
-        # Fenêtre glissante : pour chaque observation, calculer mean/std
-        # sur les ROLLING_WINDOW_YEARS années précédentes
-        for idx in week_data.index:
-            cutoff = idx - pd.DateOffset(years=ROLLING_WINDOW_YEARS)
-            historical = week_data.loc[(week_data.index >= cutoff) & (week_data.index < idx)]
-
-            if len(historical) < 3:
-                # Pas assez d'historique — utiliser tout ce qui est disponible avant
-                historical = week_data.loc[week_data.index < idx]
-
-            if len(historical) < 2:
-                continue
-
-            hist_mean = historical.mean()
-            hist_std = historical.std()
-
-            if hist_std > 0:
-                df.loc[idx, "fill_deviation"] = (week_data.loc[idx] - hist_mean) / hist_std
-            else:
-                df.loc[idx, "fill_deviation"] = 0.0
-
-    # Remplir les NaN restants (premières années sans historique)
-    n_missing = df["fill_deviation"].isna().sum()
-    if n_missing > 0:
-        logger.info(
-            "%d semaines sans fill_deviation calculable (historique insuffisant) — rempli à 0.0",
-            n_missing,
-        )
-        df["fill_deviation"] = df["fill_deviation"].fillna(0.0)
-
-    # Water value proxy : fill_deviation seul (snow_cover non disponible)
-    df["water_value_proxy"] = df["fill_deviation"]
-
-    # Nettoyage colonne intermédiaire
-    df.drop(columns=["iso_week"], inplace=True)
-
+    result = build_hydro_water_value(df)
     logger.info(
-        "Water value calculé : fill_deviation mean=%.2f std=%.2f",
-        df["fill_deviation"].mean(),
-        df["fill_deviation"].std(),
+        "Water value calculé : fill_deviation mean=%.2f std=%.2f, "
+        "support=%d/%d",
+        result["fill_deviation"].mean(),
+        result["fill_deviation"].std(),
+        int(result["water_value_supported"].sum()),
+        len(result),
     )
-    return df
+    return result
 
 
 # ---------------------------------------------------------------------------

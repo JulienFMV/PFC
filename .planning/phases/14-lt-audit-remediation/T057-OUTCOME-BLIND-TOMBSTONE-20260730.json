@@ -1,0 +1,31 @@
+{
+  "schema_version": "t057_outcome_blind_tombstone.v1",
+  "tombstone_name": "t057_outcome_blind_tombstone_20260730_v1",
+  "superseded_registry_identity": {
+    "sha256": "0efec38b768b5e14add6cbc35c9b0cf9f10eb23f2cbf040813e68fe734ca4cf6",
+    "role": "OUTCOME_BEARING_REGISTRY_IDENTITY_ONLY_SOURCE_BYTES_FORBIDDEN"
+  },
+  "access_policy": {
+    "allowed_successor_access": "THIS_TOMBSTONE_ONLY",
+    "superseded_registry_bytes": "FORBIDDEN",
+    "referenced_artifact_bytes": "FORBIDDEN",
+    "outcome_score_signal_count_duration_or_effective_claim_bytes": "FORBIDDEN",
+    "path_following": "FORBIDDEN",
+    "identity_hash_may_be_used_only_as_DENYLIST_TOMBSTONE": true
+  },
+  "forbidden_input_classes": [
+    "T057_OUTCOME",
+    "T057_SCORE",
+    "T057_SIGNAL",
+    "T057_EFFECTIVE_CLAIM",
+    "T057_REFERENCED_ARTIFACT",
+    "FUTURE_HOLDOUT_TRUTH",
+    "HOLDOUT_DERIVED_HYPERPARAMETER_THRESHOLD_OR_GRAPH"
+  ],
+  "scientific_admission": false,
+  "execution_authorized": false,
+  "production_authorization": false,
+  "promotion_gate": false,
+  "t057_consumed": false,
+  "tombstone_id": "9d2afbe3593c5525bf67f16a0d4482fa24304d547f3649b84b74c7549daa3380"
+}

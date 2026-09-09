@@ -1,0 +1,782 @@
+"""Run a diagnostic sparse-year monthly BASE curve proof.
+
+This script is deliberately not a production path.  It exercises the new
+monthly constraint system, zero-mean shape priors and KKT solver on the local
+EEX history parquet, then emits machine-readable diagnostics for 2027-2030.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+import sys
+
+import pandas as pd
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from pfc_shaping.calibration.monthly_curve_audit import (
+    audit_monthly_curve_shape,
+    build_monthly_curve_governance_gates,
+)
+from pfc_shaping.calibration.monthly_curve_lambda_calibration import config_hash
+from pfc_shaping.calibration.monthly_curve_priors import (
+    build_fused_shape_prior,
+    build_history_shape_prior,
+    build_neighbor_panel_shape_prior,
+    build_structural_monthly_shape_prior_from_history,
+    quote_coverage_by_horizon,
+)
+from pfc_shaping.calibration.monthly_forward_curve import (
+    MarketQuote,
+    MonthlyCurveConfig,
+    build_monthly_constraint_system,
+    solve_monthly_forward_curve_from_constraints,
+)
+from pfc_shaping.pipeline.monthly_curve_authority import (
+    _hash_frame as _monthly_authority_hash_frame,
+    _sha256_json as _monthly_authority_sha256_json,
+)
+
+
+def main() -> None:
+    args = _parse_args()
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    history = pd.read_parquet(args.forwards)
+    history["date"] = pd.to_datetime(history["date"]).dt.tz_localize(None).dt.normalize()
+    months = pd.period_range(args.start, args.end, freq="M")
+    neighbor_markets = tuple(
+        market.strip().upper()
+        for market in str(args.neighbor_markets).split(",")
+        if market.strip()
+    )
+
+    own_quotes = _latest_quotes(history, args.market, "BASE")
+    run_timestamp = max(q.snapshot_date for q in own_quotes if q.snapshot_date is not None)
+    constraints = build_monthly_constraint_system(
+        months,
+        own_quotes,
+        market=args.market,
+        timezone=args.timezone,
+        constraint_tolerance=float(args.quote_consistency_tolerance),
+    )
+
+    neighbor_prices = {
+        market: {quote.product: quote.price for quote in _latest_quotes(history, market, "BASE")}
+        for market in neighbor_markets
+    }
+    panel = build_neighbor_panel_shape_prior(
+        constraints,
+        neighbor_prices,
+        neighbor_markets=neighbor_markets,
+        neighbor_shrinkage=float(args.neighbor_shrinkage),
+        run_timestamp=run_timestamp,
+    )
+    structural = build_structural_monthly_shape_prior_from_history(
+        constraints,
+        history,
+        market=args.market,
+        load_type="BASE",
+        run_timestamp=run_timestamp,
+        min_snapshots=int(args.min_structural_snapshots),
+        lookback_years=int(args.history_lookback_years),
+        fallback_to_template=bool(args.allow_template_structural_fallback),
+        fallback_amplitude_eur_mwh=float(args.structural_amplitude_eur_mwh),
+    )
+    historical = build_history_shape_prior(
+        constraints,
+        history,
+        market=args.market,
+        load_type="BASE",
+        run_timestamp=run_timestamp,
+        min_snapshots=int(args.min_history_snapshots),
+        lookback_years=int(args.history_lookback_years),
+    )
+    fused = build_fused_shape_prior(
+        constraints,
+        panel_prior=panel,
+        history_prior=historical,
+        structural_prior=structural,
+        weights={
+            "panel": float(args.panel_weight),
+            "history": float(args.history_weight),
+            "structural": float(args.structural_weight),
+        },
+    )
+    config = MonthlyCurveConfig(
+        lambda_prior=float(args.lambda_prior),
+        lambda_smooth_month=float(args.lambda_smooth_month),
+        lambda_smooth_yoy=float(args.lambda_smooth_yoy),
+        lambda_shape=float(args.lambda_shape),
+        neighbor_shrinkage=float(args.neighbor_shrinkage),
+        min_history_snapshots=int(args.min_history_snapshots),
+        constraint_tolerance=float(args.quote_consistency_tolerance),
+    )
+    result = solve_monthly_forward_curve_from_constraints(
+        constraints,
+        config=config,
+        shape_prior=fused,
+    )
+    active_config_hash = str(args.active_config_hash or config_hash(config))
+    selected_config_hash = _selected_config_hash(args)
+    monthly_solution_hash = _monthly_solution_hash(result)
+    active_constraints_hash = _monthly_authority_hash_frame(constraints.rows)
+
+    monthly = _monthly_curve_frame(result.monthly_curve, constraints)
+    historical_thresholds = (
+        pd.read_csv(args.historical_thresholds)
+        if args.historical_thresholds is not None
+        else pd.DataFrame()
+    )
+    leakage_max_abs = _neighbor_level_leakage_check(
+        constraints=constraints,
+        neighbor_prices=neighbor_prices,
+        neighbor_markets=neighbor_markets,
+        historical=historical,
+        structural=structural,
+        config=config,
+        run_timestamp=run_timestamp,
+        args=args,
+    )
+    audit_gates = audit_monthly_curve_shape(
+        result.monthly_curve,
+        constraints,
+        year_pairs=[(2028, 2029)],
+        historical_thresholds=historical_thresholds if not historical_thresholds.empty else None,
+        neighbor_level_leakage_max_abs=leakage_max_abs,
+        leakage_tolerance=float(args.leakage_tolerance),
+    )
+    governance_gates = _build_sparse_proof_governance_gates(
+        args=args,
+        run_timestamp=run_timestamp,
+        own_quotes=own_quotes,
+        neighbor_quotes=tuple(
+            quote
+            for market in neighbor_markets
+            for quote in _latest_quotes(history, market, "BASE")
+        ),
+        eex_history=history,
+        active_config_hash=active_config_hash
+        if (bool(args.require_lambda_artifact) or selected_config_hash or args.active_config_hash)
+        else None,
+        selected_config_hash=selected_config_hash,
+    )
+    audit_gates = pd.concat([audit_gates, governance_gates], ignore_index=True)
+    checks = _sparse_year_checks(
+        monthly,
+        constraints,
+        audit_gates=audit_gates,
+        year_a=2028,
+        year_b=2029,
+    )
+    seam_checks = _sparse_year_seam_checks(monthly, constraints)
+    active_snapshot_coverage = _active_snapshot_quote_coverage(monthly)
+    _assert_proof(
+        result=result,
+        audit_gates=audit_gates,
+        leakage_max_abs=leakage_max_abs,
+        args=args,
+    )
+    coverage = quote_coverage_by_horizon(history)
+    _write_outputs(
+        output_dir=output_dir,
+        monthly=monthly,
+        constraints=constraints.rows,
+        quote_diagnostics=constraints.quote_diagnostics,
+        residuals=result.residuals,
+        priors=result.priors,
+        diagnostics=result.diagnostics,
+        panel_diagnostics=panel.diagnostics,
+        history_diagnostics=historical.diagnostics,
+        fused_diagnostics=fused.diagnostics,
+        checks=checks,
+        seam_checks=seam_checks,
+        active_snapshot_coverage=active_snapshot_coverage,
+        audit_gates=audit_gates,
+        coverage=coverage,
+        historical_thresholds=historical_thresholds,
+        manifest={
+            "script": Path(__file__).as_posix(),
+            "market": args.market,
+            "start": args.start,
+            "end": args.end,
+            "forwards": str(args.forwards),
+            "latest_snapshot": str(run_timestamp),
+            "neighbor_markets": neighbor_markets,
+            "panel_status": panel.status,
+            "history_status": historical.status,
+            "fused_status": fused.status,
+            "structural_status": structural.status,
+            "neighbor_level_leakage_max_abs": leakage_max_abs,
+            "historical_thresholds": str(args.historical_thresholds) if args.historical_thresholds else "",
+            "active_config_hash": active_config_hash,
+            "selected_config_hash": selected_config_hash,
+            "monthly_solution_hash": monthly_solution_hash,
+            "active_constraints_hash": active_constraints_hash,
+            "production_monthly_solution_hash": str(args.production_monthly_solution_hash or ""),
+            "export_monthly_solution_hash": str(args.export_monthly_solution_hash or ""),
+            "production_active_constraints_hash": str(args.production_active_constraints_hash or ""),
+            "export_active_constraints_hash": str(args.export_active_constraints_hash or ""),
+            "solver_kkt": result.kkt,
+            "gate_summary": audit_gates["status"].value_counts().to_dict(),
+            "active_snapshot_coverage_summary": active_snapshot_coverage["status"].value_counts().to_dict()
+            if not active_snapshot_coverage.empty
+            else {},
+            "config": config.__dict__,
+            "production_approved": False,
+        },
+    )
+    if not args.no_plot:
+        _plot_monthly(output_dir / "monthly_curve_2027_2030.png", monthly)
+
+    pivot = monthly.pivot(index="month", columns="year", values="price_eur_mwh").round(2)
+    print(pivot.to_string())
+    print(f"max_abs_constraint_residual={result.kkt['max_abs_constraint_residual']:.3e}")
+    print(f"neighbor_level_leakage_max_abs={leakage_max_abs:.3e}")
+    print(f"gate_summary={audit_gates['status'].value_counts().to_dict()}")
+    print(
+        f"panel_status={panel.status} history_status={historical.status} "
+        f"structural_status={structural.status} fused_status={fused.status}"
+    )
+    print(f"wrote {output_dir}")
+
+
+def _latest_quotes(history: pd.DataFrame, market: str, load_type: str) -> tuple[MarketQuote, ...]:
+    market = str(market).upper()
+    load_type = str(load_type).upper()
+    sub = history[
+        (history["market"].astype(str).str.upper() == market)
+        & (history["load_type"].astype(str).str.upper() == load_type)
+    ].copy()
+    if sub.empty:
+        raise ValueError(f"no EEX quotes for market={market}, load_type={load_type}")
+    latest = sub["date"].max()
+    snap = sub[sub["date"].eq(latest)]
+    return tuple(
+        MarketQuote(
+            market=market,
+            product=str(row.product),
+            load_type=load_type,
+            price=float(row.price),
+            snapshot_date=pd.Timestamp(row.date),
+            source=str(row.source),
+            available_at=pd.Timestamp(row.date),
+        )
+        for row in snap.itertuples(index=False)
+    )
+
+
+def _neighbor_level_leakage_check(
+    *,
+    constraints,
+    neighbor_prices: dict[str, dict[str, float]],
+    neighbor_markets: tuple[str, ...],
+    historical,
+    structural,
+    config: MonthlyCurveConfig,
+    run_timestamp: pd.Timestamp,
+    args: argparse.Namespace,
+) -> float:
+    shifted = {
+        market: {
+            product: float(price) + float(args.leakage_shift_eur_mwh)
+            for product, price in prices.items()
+        }
+        for market, prices in neighbor_prices.items()
+    }
+    base_panel = build_neighbor_panel_shape_prior(
+        constraints,
+        neighbor_prices,
+        neighbor_markets=neighbor_markets,
+        neighbor_shrinkage=float(args.neighbor_shrinkage),
+        run_timestamp=run_timestamp,
+    )
+    shifted_panel = build_neighbor_panel_shape_prior(
+        constraints,
+        shifted,
+        neighbor_markets=neighbor_markets,
+        neighbor_shrinkage=float(args.neighbor_shrinkage),
+        run_timestamp=run_timestamp,
+    )
+    base_fused = build_fused_shape_prior(
+        constraints,
+        panel_prior=base_panel,
+        history_prior=historical,
+        structural_prior=structural,
+        weights={
+            "panel": float(args.panel_weight),
+            "history": float(args.history_weight),
+            "structural": float(args.structural_weight),
+        },
+    )
+    shifted_fused = build_fused_shape_prior(
+        constraints,
+        panel_prior=shifted_panel,
+        history_prior=historical,
+        structural_prior=structural,
+        weights={
+            "panel": float(args.panel_weight),
+            "history": float(args.history_weight),
+            "structural": float(args.structural_weight),
+        },
+    )
+    base = solve_monthly_forward_curve_from_constraints(
+        constraints,
+        config=config,
+        shape_prior=base_fused,
+    )
+    shifted_result = solve_monthly_forward_curve_from_constraints(
+        constraints,
+        config=config,
+        shape_prior=shifted_fused,
+    )
+    return float((base.monthly_curve - shifted_result.monthly_curve).abs().max())
+
+
+def _build_sparse_proof_governance_gates(
+    *,
+    args: argparse.Namespace,
+    run_timestamp: pd.Timestamp,
+    own_quotes: tuple[MarketQuote, ...],
+    neighbor_quotes: tuple[MarketQuote, ...],
+    eex_history: pd.DataFrame,
+    active_config_hash: str | None,
+    selected_config_hash: str | None,
+) -> pd.DataFrame:
+    return build_monthly_curve_governance_gates(
+        run_timestamp=run_timestamp,
+        own_quotes=own_quotes,
+        neighbor_quotes=neighbor_quotes,
+        eex_history=eex_history,
+        active_config_hash=active_config_hash,
+        selected_config_hash=selected_config_hash,
+        production_monthly_solution_hash=_optional_text(args.production_monthly_solution_hash),
+        export_monthly_solution_hash=_optional_text(args.export_monthly_solution_hash),
+        production_active_constraints_hash=_optional_text(args.production_active_constraints_hash),
+        export_active_constraints_hash=_optional_text(args.export_active_constraints_hash),
+        require_lambda_artifact=bool(args.require_lambda_artifact),
+        require_path_parity=bool(args.require_path_parity),
+    )
+
+
+def _assert_proof(
+    *,
+    result,
+    audit_gates: pd.DataFrame,
+    leakage_max_abs: float,
+    args: argparse.Namespace,
+) -> None:
+    repricing = float(result.kkt["max_abs_constraint_residual"])
+    if repricing > float(args.repricing_tolerance):
+        raise SystemExit(
+            f"proof failed: repricing residual {repricing:.3e} > {float(args.repricing_tolerance):.3e}"
+        )
+    if leakage_max_abs > float(args.leakage_tolerance):
+        raise SystemExit(
+            f"proof failed: neighbor level leakage {leakage_max_abs:.3e} > {float(args.leakage_tolerance):.3e}"
+        )
+    critical = audit_gates[audit_gates["status"].astype(str).eq("CRITICAL")]
+    if not critical.empty and not bool(args.allow_critical_gates):
+        products = ", ".join(critical["product"].astype(str).head(5).tolist())
+        raise SystemExit(f"proof failed: critical audit gates present: {products}")
+
+
+def _monthly_curve_frame(curve: pd.Series, constraints) -> pd.DataFrame:
+    rows = []
+    parent_map = {
+        str(row["product"]): str(row["parent_product"])
+        for _, row in constraints.rows.iterrows()
+    }
+    for month, price in curve.items():
+        bucket = constraints.month_buckets.loc[month]
+        bucket_text = "" if pd.isna(bucket) else str(bucket)
+        rows.append(
+            {
+                "month_key": str(month),
+                "year": int(month.year),
+                "month": int(month.month),
+                "price_eur_mwh": float(price),
+                "parent_block_id": bucket_text,
+                "parent_product": parent_map.get(bucket_text, bucket_text),
+                "parent_target_eur_mwh": constraints.bucket_targets.get(bucket_text),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _sparse_year_checks(
+    monthly: pd.DataFrame,
+    constraints,
+    *,
+    audit_gates: pd.DataFrame | None = None,
+    year_a: int,
+    year_b: int,
+) -> pd.DataFrame:
+    rows = []
+    prices = {
+        (int(row.year), int(row.month)): float(row.price_eur_mwh)
+        for row in monthly.itertuples(index=False)
+    }
+    parent = {
+        (int(row.year), int(row.month)): str(row.parent_block_id)
+        for row in monthly.itertuples(index=False)
+    }
+    cal_a = _quote_target(constraints, str(year_a))
+    cal_b = _quote_target(constraints, str(year_b))
+    same_month_gate_map: dict[tuple[int, int], dict[str, object]] = {}
+    comparable_gate_map: dict[tuple[int, int], dict[str, object]] = {}
+    if audit_gates is not None and not audit_gates.empty:
+        relevant = audit_gates[
+            audit_gates["gate_id"].astype(str).isin(
+                {"same_month_rank_consistency", "residual_vs_implied_comparable_block"}
+            )
+        ].copy()
+        for row in relevant.itertuples(index=False):
+            year = int(row.year)
+            month = int(row.month)
+            payload = {
+                "status": str(row.status),
+                "severity": str(row.severity),
+                "metric_name": str(row.metric_name),
+                "metric_value": float(row.metric_value),
+                "evidence": str(row.evidence),
+                "threshold_source": str(row.threshold_source),
+            }
+            key = (year, month)
+            gate_id = str(row.gate_id)
+            if gate_id == "same_month_rank_consistency":
+                same_month_gate_map[key] = payload
+            elif gate_id == "residual_vs_implied_comparable_block":
+                comparable_gate_map[key] = payload
+    for month in range(1, 13):
+        if (year_a, month) not in prices or (year_b, month) not in prices:
+            continue
+        same_month_gate = same_month_gate_map.get((year_a, month), {})
+        comparable_gate = comparable_gate_map.get((year_a, month), {})
+        rows.append(
+            {
+                "year_a": year_a,
+                "year_b": year_b,
+                "month": month,
+                "calendar_spread_eur_mwh": None if cal_a is None or cal_b is None else cal_a - cal_b,
+                "month_spread_eur_mwh": prices[(year_a, month)] - prices[(year_b, month)],
+                "price_a_eur_mwh": prices[(year_a, month)],
+                "price_b_eur_mwh": prices[(year_b, month)],
+                "parent_block_a": parent[(year_a, month)],
+                "parent_block_b": parent[(year_b, month)],
+                "status": "INFO",
+                "same_month_gate_status": same_month_gate.get("status", ""),
+                "same_month_gate_severity": same_month_gate.get("severity", ""),
+                "same_month_gate_metric_name": same_month_gate.get("metric_name", ""),
+                "same_month_gate_metric_value": same_month_gate.get("metric_value", float("nan")),
+                "same_month_gate_threshold_source": same_month_gate.get("threshold_source", ""),
+                "same_month_gate_evidence": same_month_gate.get("evidence", ""),
+                "comparable_block_gate_status": comparable_gate.get("status", ""),
+                "comparable_block_gate_severity": comparable_gate.get("severity", ""),
+                "comparable_block_gate_metric_name": comparable_gate.get("metric_name", ""),
+                "comparable_block_gate_metric_value": comparable_gate.get("metric_value", float("nan")),
+                "comparable_block_gate_threshold_source": comparable_gate.get("threshold_source", ""),
+                "comparable_block_gate_evidence": comparable_gate.get("evidence", ""),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _sparse_year_seam_checks(monthly: pd.DataFrame, constraints) -> pd.DataFrame:
+    rows: list[dict[str, object]] = []
+    path = monthly.sort_values(["year", "month"]).reset_index(drop=True)
+    bucket_targets = {str(k): float(v) for k, v in constraints.bucket_targets.items()}
+
+    def synthetic_or_unquoted(bucket: str) -> bool:
+        return bucket.endswith("-RESIDUAL") or bucket.isdigit() or "-Q" in bucket
+
+    for year, group in path.groupby("year", sort=True):
+        group = group.reset_index(drop=True)
+        for idx in range(1, len(group)):
+            prev = group.iloc[idx - 1]
+            curr = group.iloc[idx]
+            prev_bucket = str(prev["parent_block_id"])
+            curr_bucket = str(curr["parent_block_id"])
+            if prev_bucket == curr_bucket:
+                if not (curr_bucket.endswith("-RESIDUAL") or curr_bucket.isdigit()):
+                    continue
+                delta = float(curr["price_eur_mwh"] - prev["price_eur_mwh"])
+                severity = "ok"
+                reason = "month-to-month path plausible"
+                if abs(delta) > 25.0:
+                    severity = "critical"
+                    reason = "large adjacent monthly jump inside synthetic bucket"
+                elif abs(delta) > 18.0:
+                    severity = "warning"
+                    reason = "elevated adjacent monthly jump inside synthetic bucket"
+                rows.append(
+                    {
+                        "year": int(year),
+                        "bucket": curr_bucket,
+                        "from_bucket": curr_bucket,
+                        "to_bucket": curr_bucket,
+                        "from_month": int(prev["month"]),
+                        "to_month": int(curr["month"]),
+                        "from_mean_eur_mwh": float(prev["price_eur_mwh"]),
+                        "to_mean_eur_mwh": float(curr["price_eur_mwh"]),
+                        "delta_eur_mwh": delta,
+                        "residual_edge_deviation_eur_mwh": float("nan"),
+                        "check_type": "adjacent_delta",
+                        "severity": severity,
+                        "reason": reason,
+                    }
+                )
+                continue
+
+            if not (synthetic_or_unquoted(prev_bucket) or synthetic_or_unquoted(curr_bucket)):
+                continue
+
+            delta = float(curr["price_eur_mwh"] - prev["price_eur_mwh"])
+            severity = "ok"
+            reason = "inter-bucket monthly seam plausible"
+            residual_edge_deviation = float("nan")
+            residual_bucket = (
+                curr_bucket
+                if curr_bucket.endswith("-RESIDUAL")
+                else prev_bucket
+                if prev_bucket.endswith("-RESIDUAL")
+                else ""
+            )
+            if residual_bucket:
+                residual_target = bucket_targets.get(residual_bucket)
+                if residual_target is not None:
+                    residual_month_mean = float(
+                        curr["price_eur_mwh"] if curr_bucket == residual_bucket else prev["price_eur_mwh"]
+                    )
+                    residual_edge_deviation = float(residual_month_mean - residual_target)
+                    if abs(residual_edge_deviation) > 15.0:
+                        severity = "critical"
+                        reason = "edge month is materially away from residual target"
+                    elif abs(residual_edge_deviation) > 10.0:
+                        severity = "warning"
+                        reason = "edge month is away from residual target"
+            if severity == "ok":
+                if abs(delta) > 35.0:
+                    severity = "critical"
+                    reason = "large unverified inter-bucket monthly seam"
+                elif abs(delta) > 25.0:
+                    severity = "warning"
+                    reason = "elevated unverified inter-bucket monthly seam"
+            rows.append(
+                {
+                    "year": int(year),
+                    "bucket": f"{prev_bucket}->{curr_bucket}",
+                    "from_bucket": prev_bucket,
+                    "to_bucket": curr_bucket,
+                    "from_month": int(prev["month"]),
+                    "to_month": int(curr["month"]),
+                    "from_mean_eur_mwh": float(prev["price_eur_mwh"]),
+                    "to_mean_eur_mwh": float(curr["price_eur_mwh"]),
+                    "delta_eur_mwh": delta,
+                    "residual_edge_deviation_eur_mwh": residual_edge_deviation,
+                    "check_type": "inter_bucket_seam",
+                    "severity": severity,
+                    "reason": reason,
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def _active_snapshot_quote_coverage(monthly: pd.DataFrame) -> pd.DataFrame:
+    rows: list[dict[str, object]] = []
+
+    def bucket_kind(bucket: str) -> str:
+        if not bucket:
+            return "unassigned"
+        if bucket.endswith("-RESIDUAL"):
+            return "residual"
+        if len(bucket) == 4 and bucket.isdigit():
+            return "calendar"
+        if "-Q" in bucket:
+            return "quarter"
+        if len(bucket) == 7 and bucket[4] == "-":
+            return "month"
+        return "other"
+
+    for year, group in monthly.groupby("year", sort=True):
+        group = group.sort_values("month").reset_index(drop=True)
+        buckets = [str(v or "") for v in group["parent_block_id"].tolist()]
+        assigned = [bucket for bucket in buckets if bucket]
+        unique_buckets = list(dict.fromkeys(assigned))
+        kinds = list(dict.fromkeys(bucket_kind(bucket) for bucket in unique_buckets))
+        assigned_month_count = sum(1 for bucket in buckets if bucket)
+        unassigned_month_count = len(buckets) - assigned_month_count
+        if assigned_month_count == 0:
+            status = "unquoted_year_fallback"
+            reason = "no active CH quote covers this delivery year in the snapshot"
+        elif unassigned_month_count > 0:
+            status = "partial_year_quote_coverage"
+            reason = "only part of the delivery year is covered by active CH quotes"
+        else:
+            status = "fully_assigned"
+            reason = "every delivery month is assigned to an active CH quote or implied residual bucket"
+        rows.append(
+            {
+                "year": int(year),
+                "month_count": int(len(group)),
+                "assigned_month_count": int(assigned_month_count),
+                "unassigned_month_count": int(unassigned_month_count),
+                "active_buckets": "|".join(unique_buckets),
+                "bucket_kinds": "|".join(kinds),
+                "status": status,
+                "reason": reason,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _quote_target(constraints, product: str) -> float | None:
+    diag = constraints.quote_diagnostics
+    if diag.empty:
+        return None
+    row = diag[diag["product"].astype(str).eq(str(product))]
+    if row.empty:
+        return None
+    return float(row["target"].iloc[0])
+
+
+def _write_outputs(
+    *,
+    output_dir: Path,
+    monthly: pd.DataFrame,
+    constraints: pd.DataFrame,
+    quote_diagnostics: pd.DataFrame,
+    residuals: pd.DataFrame,
+    priors: pd.DataFrame,
+    diagnostics: pd.DataFrame,
+    panel_diagnostics: pd.DataFrame,
+    history_diagnostics: pd.DataFrame,
+    fused_diagnostics: pd.DataFrame,
+    checks: pd.DataFrame,
+    seam_checks: pd.DataFrame,
+    active_snapshot_coverage: pd.DataFrame,
+    audit_gates: pd.DataFrame,
+    coverage: pd.DataFrame,
+    historical_thresholds: pd.DataFrame,
+    manifest: dict[str, object],
+) -> None:
+    monthly.to_csv(output_dir / "monthly_curve.csv", index=False)
+    constraints.to_csv(output_dir / "monthly_curve_constraints.csv", index=False)
+    quote_diagnostics.to_csv(output_dir / "quote_diagnostics.csv", index=False)
+    residuals.to_csv(output_dir / "monthly_curve_residuals.csv", index=False)
+    priors.to_csv(output_dir / "monthly_curve_priors.csv", index=False)
+    diagnostics.to_csv(output_dir / "monthly_curve_diagnostics.csv", index=False)
+    panel_diagnostics.to_csv(output_dir / "panel_prior_diagnostics.csv", index=False)
+    history_diagnostics.to_csv(output_dir / "history_prior_diagnostics.csv", index=False)
+    fused_diagnostics.to_csv(output_dir / "fused_prior_diagnostics.csv", index=False)
+    checks.to_csv(output_dir / "sparse_year_checks.csv", index=False)
+    seam_checks.to_csv(output_dir / "sparse_year_seam_checks.csv", index=False)
+    active_snapshot_coverage.to_csv(output_dir / "active_snapshot_quote_coverage.csv", index=False)
+    audit_gates.to_csv(output_dir / "audit_gates.csv", index=False)
+    coverage.to_csv(output_dir / "monthly_quote_coverage_by_horizon.csv", index=False)
+    if not historical_thresholds.empty:
+        historical_thresholds.to_csv(output_dir / "historical_thresholds.csv", index=False)
+    (output_dir / "manifest.json").write_text(
+        json.dumps(manifest, indent=2, sort_keys=True, default=str),
+        encoding="utf-8",
+    )
+
+
+def _monthly_solution_hash(result) -> str:
+    monthly_payload = {str(k): round(float(v), 10) for k, v in result.monthly_curve.sort_index().items()}
+    return _monthly_authority_sha256_json(monthly_payload)
+
+
+def _selected_config_hash(args: argparse.Namespace) -> str | None:
+    if args.selected_config_hash:
+        return str(args.selected_config_hash)
+    if args.selected_config_artifact is None:
+        return None
+    path = Path(args.selected_config_artifact)
+    if not path.exists():
+        raise ValueError(f"selected config artifact not found: {path}")
+    if path.suffix.lower() == ".json":
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    else:
+        import yaml
+
+        payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    selected = payload.get("config_hash")
+    if not selected:
+        raise ValueError(f"selected config artifact missing config_hash: {path}")
+    return str(selected)
+
+
+def _optional_text(value: object) -> str | None:
+    text = str(value or "")
+    return text or None
+
+
+def _plot_monthly(path: Path, monthly: pd.DataFrame) -> None:
+    import matplotlib.pyplot as plt
+
+    fig, ax = plt.subplots(figsize=(9, 5))
+    for year, group in monthly.groupby("year", sort=True):
+        ax.plot(group["month"], group["price_eur_mwh"], marker="o", linewidth=1.8, label=str(year))
+    ax.set_title("Diagnostic monthly BASE curve")
+    ax.set_xlabel("Month")
+    ax.set_ylabel("EUR/MWh")
+    ax.grid(True, alpha=0.25)
+    ax.legend(title="Year")
+    fig.tight_layout()
+    fig.savefig(path, dpi=160)
+    plt.close(fig)
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--forwards", type=Path, default=Path("data/eex_forwards_history.parquet"))
+    parser.add_argument("--output-dir", type=Path, default=Path("output/monthly_curve_sparse_year_proof"))
+    parser.add_argument("--market", default="CH")
+    parser.add_argument("--start", default="2027-01")
+    parser.add_argument("--end", default="2030-12")
+    parser.add_argument("--timezone", default="Europe/Zurich")
+    parser.add_argument("--neighbor-markets", default="DE,FR,AT,IT")
+    parser.add_argument("--quote-consistency-tolerance", type=float, default=0.01)
+    parser.add_argument("--lambda-prior", type=float, default=1e-6)
+    parser.add_argument("--lambda-smooth-month", type=float, default=1.0)
+    parser.add_argument("--lambda-smooth-yoy", type=float, default=0.25)
+    parser.add_argument("--lambda-shape", type=float, default=4.0)
+    parser.add_argument("--neighbor-shrinkage", type=float, default=0.5)
+    parser.add_argument("--structural-amplitude-eur-mwh", type=float, default=110.0)
+    parser.add_argument("--min-structural-snapshots", type=int, default=24)
+    parser.add_argument(
+        "--allow-template-structural-fallback",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    parser.add_argument("--panel-weight", type=float, default=1.0)
+    parser.add_argument("--history-weight", type=float, default=0.25)
+    parser.add_argument("--structural-weight", type=float, default=1.0)
+    parser.add_argument("--min-history-snapshots", type=int, default=24)
+    parser.add_argument("--history-lookback-years", type=int, default=6)
+    parser.add_argument("--repricing-tolerance", type=float, default=1e-8)
+    parser.add_argument("--leakage-shift-eur-mwh", type=float, default=1000.0)
+    parser.add_argument("--leakage-tolerance", type=float, default=1e-8)
+    parser.add_argument("--historical-thresholds", type=Path, default=None)
+    parser.add_argument("--require-lambda-artifact", action="store_true")
+    parser.add_argument("--active-config-hash", default="")
+    parser.add_argument("--selected-config-hash", default="")
+    parser.add_argument("--selected-config-artifact", type=Path, default=None)
+    parser.add_argument("--require-path-parity", action="store_true")
+    parser.add_argument("--production-monthly-solution-hash", default="")
+    parser.add_argument("--export-monthly-solution-hash", default="")
+    parser.add_argument("--production-active-constraints-hash", default="")
+    parser.add_argument("--export-active-constraints-hash", default="")
+    parser.add_argument("--allow-critical-gates", action="store_true")
+    parser.add_argument("--no-plot", action="store_true")
+    return parser.parse_args()
+
+
+if __name__ == "__main__":
+    main()
